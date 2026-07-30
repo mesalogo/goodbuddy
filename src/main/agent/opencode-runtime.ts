@@ -19,6 +19,7 @@ export type OpenCodeRuntimeOptions = {
 }
 
 export class OpenCodeRuntime implements AgentRuntime {
+  readonly requiresToolApproval = true
   private client?: OpencodeClient
   private server?: OpenCodeServer
   private readonly sessions = new Map<string, string>()
@@ -108,7 +109,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     signal: AbortSignal
   ): AsyncGenerator<AgentEvent, void, void> {
     const client = await this.getClient()
-    const directory = request.workspace ?? this.options.defaultWorkspace
+    const directory = this.options.defaultWorkspace
     const sessionId = await this.getSessionId(client, request, directory)
 
     yield {

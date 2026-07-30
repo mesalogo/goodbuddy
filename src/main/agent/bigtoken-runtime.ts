@@ -57,6 +57,7 @@ function getTextDelta(value: unknown): string | undefined {
 }
 
 export class BigtokenAgentRuntime implements AgentRuntime {
+  readonly requiresToolApproval = false
   private readonly conversations = new Map<string, ConversationMessage[]>()
   private readonly fetcher: typeof fetch
 
@@ -84,10 +85,38 @@ export class BigtokenAgentRuntime implements AgentRuntime {
     ]
   }
 
+  private saveConversation(
+    conversationId: string,
+    messages: ConversationMessage[]
+  ): void {
+    const retained: ConversationMessage[] = []
+    let bytes = 0
+    for (const message of messages.slice(-20).reverse()) {
+      const messageBytes = Buffer.byteLength(message.content)
+      if (bytes + messageBytes > 512 * 1024) {
+        break
+      }
+      retained.unshift(message)
+      bytes += messageBytes
+    }
+    this.conversations.delete(conversationId)
+    this.conversations.set(conversationId, retained)
+    while (this.conversations.size > 50) {
+      const oldest = this.conversations.keys().next().value
+      if (oldest) {
+        this.conversations.delete(oldest)
+      }
+    }
+  }
+
   async *run(
     request: AgentRequest,
     signal: AbortSignal
   ): AsyncGenerator<AgentEvent, void, void> {
+    if (!this.options.apiKey) {
+      throw new Error('请先在设置中配置 Bigtoken API Key')
+    }
+
     yield {
       requestId: request.requestId,
       type: 'status',
@@ -137,71 +166,84 @@ export class BigtokenAgentRuntime implements AgentRuntime {
     let buffer = ''
     let answer = ''
     let completed = false
+    let streamEnded = false
 
-    while (!completed) {
-      const { done, value } = await reader.read()
-      buffer += decoder.decode(value, { stream: !done }).replaceAll(
-        '\r\n',
-        '\n'
-      )
+    try {
+      while (!completed) {
+        const { done, value } = await reader.read()
+        streamEnded = done
+        buffer += decoder.decode(value, { stream: !done }).replaceAll(
+          '\r\n',
+          '\n'
+        )
 
-      const blocks = buffer.split('\n\n')
-      buffer = blocks.pop() ?? ''
-
-      for (const block of blocks) {
-        const data = block
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trimStart())
-          .join('\n')
-
-        if (!data || data === '[DONE]') {
-          continue
+        if (Buffer.byteLength(buffer) > 1024 * 1024) {
+          throw new Error('Bigtoken 流式响应块超过安全限制')
         }
 
-        let event: unknown
-        try {
-          event = JSON.parse(data)
-        } catch {
-          continue
-        }
+        const blocks = buffer.split('\n\n')
+        buffer = blocks.pop() ?? ''
 
-        const error = getErrorMessage(event)
-        if (error) {
-          throw new Error(error)
-        }
+        for (const block of blocks) {
+          const data = block
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n')
 
-        const delta = getTextDelta(event)
-        if (delta) {
-          answer += delta
-          yield {
-            requestId: request.requestId,
-            type: 'text',
-            delta
+          if (!data || data === '[DONE]') {
+            continue
+          }
+
+          let event: unknown
+          try {
+            event = JSON.parse(data)
+          } catch {
+            continue
+          }
+
+          const error = getErrorMessage(event)
+          if (error) {
+            throw new Error(error.slice(0, 1_000))
+          }
+
+          const delta = getTextDelta(event)
+          if (delta) {
+            answer += delta
+            yield {
+              requestId: request.requestId,
+              type: 'text',
+              delta
+            }
+          }
+
+          if (
+            event &&
+            typeof event === 'object' &&
+            'type' in event &&
+            event.type === 'message_stop'
+          ) {
+            completed = true
+            break
           }
         }
 
-        if (
-          event &&
-          typeof event === 'object' &&
-          'type' in event &&
-          event.type === 'message_stop'
-        ) {
+        if (done) {
           completed = true
-          break
         }
       }
-
-      if (done) {
-        completed = true
+    } finally {
+      if (!streamEnded) {
+        await reader.cancel().catch(() => undefined)
       }
+      reader.releaseLock()
     }
 
     if (!answer) {
       throw new Error('Bigtoken 返回了空内容')
     }
 
-    this.conversations.set(request.conversationId, [
+    this.saveConversation(request.conversationId, [
       ...messages,
       { role: 'assistant', content: answer }
     ])

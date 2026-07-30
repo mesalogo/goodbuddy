@@ -25,6 +25,8 @@ function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
 }
 
 export class DemoAgentRuntime implements AgentRuntime {
+  readonly requiresToolApproval = false
+
   async getStatus(): Promise<AgentRuntimeStatus> {
     return {
       id: 'demo',

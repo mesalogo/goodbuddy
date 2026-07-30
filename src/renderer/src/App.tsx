@@ -21,8 +21,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentEvent,
   AgentRuntimeStatus,
-  AppInfo
+  AppInfo,
+  ContextAttachment
 } from '../../shared/contracts'
+import { SettingsPanel } from './SettingsPanel'
 
 type ToolActivity = {
   name: string
@@ -38,6 +40,11 @@ type Message = {
   state: 'streaming' | 'complete' | 'error'
   status?: string
   tools?: ToolActivity[]
+  approval?: {
+    id: string
+    title: string
+    description: string
+  }
 }
 
 type Conversation = {
@@ -120,6 +127,9 @@ function App(): React.JSX.Element {
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
   const [appInfo, setAppInfo] = useState<AppInfo>()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [attachments, setAttachments] = useState<ContextAttachment[]>([])
+  const [contextError, setContextError] = useState<string>()
   const activeRuns = useRef(new Map<string, ActiveRun>())
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -186,11 +196,22 @@ function App(): React.JSX.Element {
           }
           return { ...message, tools }
         })
+      } else if (event.type === 'approval') {
+        updateMessage(run.conversationId, run.messageId, (message) => ({
+          ...message,
+          status: undefined,
+          approval: {
+            id: event.approvalId,
+            title: event.title,
+            description: event.description
+          }
+        }))
       } else {
         updateMessage(run.conversationId, run.messageId, (message) => ({
           ...message,
           state: event.type === 'error' ? 'error' : 'complete',
           status: event.type === 'error' ? event.message : undefined,
+          approval: undefined,
           content:
             event.type === 'error' && !message.content
               ? event.message
@@ -203,7 +224,10 @@ function App(): React.JSX.Element {
   )
 
   useEffect(() => {
-    localStorage.setItem(storageKey, JSON.stringify(conversations))
+    const timeout = setTimeout(() => {
+      localStorage.setItem(storageKey, JSON.stringify(conversations))
+    }, 200)
+    return () => clearTimeout(timeout)
   }, [conversations])
 
   useEffect(() => {
@@ -216,6 +240,12 @@ function App(): React.JSX.Element {
         const conversation = createConversation()
         setConversations((current) => [conversation, ...current])
         setActiveId(conversation.id)
+        setAttachments((current) => {
+          for (const attachment of current) {
+            void window.goodbuddy.context.remove(attachment.id)
+          }
+          return []
+        })
         inputRef.current?.focus()
       })
     return () => {
@@ -225,10 +255,13 @@ function App(): React.JSX.Element {
   }, [handleAgentEvent])
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: 'smooth'
+    const frame = requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'auto'
+      })
     })
+    return () => cancelAnimationFrame(frame)
   }, [activeConversation?.messages])
 
   const newConversation = (): void => {
@@ -236,6 +269,10 @@ function App(): React.JSX.Element {
     setConversations((current) => [conversation, ...current])
     setActiveId(conversation.id)
     setInput('')
+    for (const attachment of attachments) {
+      void window.goodbuddy.context.remove(attachment.id)
+    }
+    setAttachments([])
     inputRef.current?.focus()
   }
 
@@ -292,8 +329,13 @@ function App(): React.JSX.Element {
       await window.goodbuddy.agent.run({
         requestId,
         conversationId,
-        prompt
+        prompt,
+        contextIds: attachments.map((attachment) => attachment.id)
       })
+      for (const attachment of attachments) {
+        void window.goodbuddy.context.remove(attachment.id)
+      }
+      setAttachments([])
     } catch (error) {
       handleAgentEvent({
         requestId,
@@ -309,6 +351,29 @@ function App(): React.JSX.Element {
     )?.[0]
     if (requestId) {
       await window.goodbuddy.agent.cancel(requestId)
+    }
+  }
+
+  const respondToApproval = async (
+    conversationId: string,
+    messageId: string,
+    approvalId: string,
+    approved: boolean
+  ): Promise<void> => {
+    try {
+      await window.goodbuddy.agent.respondApproval(approvalId, approved)
+      updateMessage(conversationId, messageId, (message) => ({
+        ...message,
+        approval: undefined,
+        status: approved
+          ? '已授权，Agent 正在执行'
+          : '已拒绝工具执行'
+      }))
+    } catch {
+      updateMessage(conversationId, messageId, (message) => ({
+        ...message,
+        status: '审批响应失败，请重试'
+      }))
     }
   }
 
@@ -378,7 +443,11 @@ function App(): React.JSX.Element {
         </div>
 
         <div className="sidebar-footer">
-          <button className="user-card" type="button">
+          <button
+            className="user-card"
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+          >
             <span className="avatar">GB</span>
             <span className="user-card__copy">
               <strong>本地工作区</strong>
@@ -486,6 +555,43 @@ function App(): React.JSX.Element {
                       <small>{tool.state}</small>
                     </div>
                   ))}
+                  {message.approval && (
+                    <div className="approval-card">
+                      <ShieldCheck size={18} />
+                      <div>
+                        <strong>{message.approval.title}</strong>
+                        <p>{message.approval.description}</p>
+                      </div>
+                      <button
+                        className="approval-card__deny"
+                        onClick={() =>
+                          void respondToApproval(
+                            activeConversation.id,
+                            message.id,
+                            message.approval!.id,
+                            false
+                          )
+                        }
+                        type="button"
+                      >
+                        拒绝
+                      </button>
+                      <button
+                        className="approval-card__allow"
+                        onClick={() =>
+                          void respondToApproval(
+                            activeConversation.id,
+                            message.id,
+                            message.approval!.id,
+                            true
+                          )
+                        }
+                        type="button"
+                      >
+                        允许
+                      </button>
+                    </div>
+                  )}
                   {message.status && (
                     <div
                       className={
@@ -506,6 +612,39 @@ function App(): React.JSX.Element {
 
         <footer className="composer-wrap">
           <div className="composer">
+            {attachments.length > 0 && (
+              <div className="context-list">
+                {attachments.map((attachment) => (
+                  <div
+                    className="context-chip"
+                    key={attachment.id}
+                    title={attachment.preview}
+                  >
+                    <FileText size={14} />
+                    <span>
+                      <strong>{attachment.name}</strong>
+                      <small>
+                        {Math.max(1, Math.ceil(attachment.size / 1024))} KB
+                      </small>
+                    </span>
+                    <button
+                      aria-label={`移除 ${attachment.name}`}
+                      onClick={() => {
+                        void window.goodbuddy.context.remove(attachment.id)
+                        setAttachments((current) =>
+                          current.filter(
+                            (item) => item.id !== attachment.id
+                          )
+                        )
+                      }}
+                      type="button"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               aria-label="向 GoodBuddy 提问"
               placeholder="给 GoodBuddy 发消息…"
@@ -522,7 +661,33 @@ function App(): React.JSX.Element {
             />
             <div className="composer__toolbar">
               <div className="composer__attachments">
-                <button type="button" aria-label="添加附件" title="下一阶段开放">
+                <button
+                  type="button"
+                  aria-label="添加附件"
+                  onClick={() => {
+                    setContextError(undefined)
+                    void window.goodbuddy.context
+                      .selectFiles()
+                      .then((selected) => {
+                        setAttachments((current) => [
+                          ...current,
+                          ...selected.filter(
+                            (item) =>
+                              !current.some(
+                                (existing) => existing.id === item.id
+                              )
+                          )
+                        ])
+                      })
+                      .catch((reason: unknown) => {
+                        setContextError(
+                          reason instanceof Error
+                            ? reason.message
+                            : '添加文件失败'
+                        )
+                      })
+                  }}
+                >
                   <Paperclip size={18} />
                 </button>
                 <span className="divider" />
@@ -555,11 +720,19 @@ function App(): React.JSX.Element {
             </div>
           </div>
           <p className="composer-hint">
-            AI 可能会犯错。工具执行前请检查参数和权限。
+            {contextError ??
+              'AI 可能会犯错。工具执行前请检查参数和权限。'}
             {appInfo?.shortcut && ` 快捷唤起：${appInfo.shortcut}`}
           </p>
         </footer>
       </main>
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={() => {
+          void window.goodbuddy.agent.getStatus().then(setRuntime)
+        }}
+      />
     </div>
   )
 }

@@ -6,5 +6,10 @@ export const ipcChannels = {
   agentStatus: 'agent:get-status',
   agentRun: 'agent:run',
   agentCancel: 'agent:cancel',
-  agentEvent: 'agent:event'
+  agentApprovalRespond: 'agent:approval:respond',
+  agentEvent: 'agent:event',
+  runtimeSettingsGet: 'settings:runtime:get',
+  runtimeSettingsUpdate: 'settings:runtime:update',
+  contextSelectFiles: 'context:select-files',
+  contextRemove: 'context:remove'
 } as const

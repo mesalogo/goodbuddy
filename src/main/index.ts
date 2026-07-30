@@ -4,13 +4,24 @@ import {
   globalShortcut,
   Menu,
   nativeImage,
+  safeStorage,
   session,
   Tray
 } from 'electron'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { createAgentRuntime } from './agent/create-runtime'
+import { AgentRuntimeController } from './agent/runtime-controller'
+import { ContextManager } from './context-manager'
 import { registerIpcHandlers } from './ipc'
-import { createMainWindow, showWindow, toggleWindow } from './window'
+import { RuntimeSettingsStore } from './runtime-settings-store'
+import { ToolApprovalBroker } from './tool-approval-broker'
+import {
+  createMainWindow,
+  loadMainWindow,
+  showWindow,
+  toggleWindow
+} from './window'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -23,9 +34,7 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let isQuitting = false
 let removeIpcHandlers: (() => void) | undefined
-const runtime = createAgentRuntime(
-  process.env.GOODBUDDY_WORKSPACE ?? homedir()
-)
+let runtime: AgentRuntimeController | undefined
 
 function createTrayIcon(): Electron.NativeImage {
   const svg = [
@@ -84,7 +93,7 @@ if (hasSingleInstanceLock) {
     }
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     app.setAppUserModelId('live.digiman.goodbuddy')
 
     session.defaultSession.setPermissionRequestHandler(
@@ -94,6 +103,31 @@ if (hasSingleInstanceLock) {
 
     mainWindow = createMainWindow(() => isQuitting)
     tray = buildTray()
+    const defaultWorkspace = process.env.GOODBUDDY_WORKSPACE ?? homedir()
+    const settingsStore = new RuntimeSettingsStore(
+      join(app.getPath('userData'), 'runtime-settings.json'),
+      {
+        isAvailable: () =>
+          safeStorage.isEncryptionAvailable() &&
+          (process.platform !== 'linux' ||
+            [
+              'gnome_libsecret',
+              'kwallet',
+              'kwallet5',
+              'kwallet6'
+            ].includes(safeStorage.getSelectedStorageBackend())),
+        encrypt: (value) => safeStorage.encryptString(value),
+        decrypt: (value) => safeStorage.decryptString(value)
+      }
+    )
+    runtime = new AgentRuntimeController(
+      createAgentRuntime(
+        defaultWorkspace,
+        await settingsStore.getResolvedSettings()
+      )
+    )
+    const contextManager = new ContextManager()
+    const approvalBroker = new ToolApprovalBroker()
 
     const shortcutRegistered = globalShortcut.register(shortcut, () => {
       if (mainWindow) {
@@ -104,8 +138,23 @@ if (hasSingleInstanceLock) {
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
-      shortcutRegistered ? shortcut : '未注册'
+      shortcutRegistered ? shortcut : '未注册',
+      settingsStore,
+      contextManager,
+      approvalBroker,
+      defaultWorkspace,
+      async () => {
+        if (runtime) {
+          await runtime.replace(
+            createAgentRuntime(
+              defaultWorkspace,
+              await settingsStore.getResolvedSettings()
+            )
+          )
+        }
+      }
     )
+    loadMainWindow(mainWindow)
 
     app.on('activate', () => {
       if (mainWindow) {
@@ -123,5 +172,5 @@ app.on('will-quit', () => {
   removeIpcHandlers?.()
   globalShortcut.unregisterAll()
   tray?.destroy()
-  void runtime.dispose()
+  void runtime?.dispose()
 })

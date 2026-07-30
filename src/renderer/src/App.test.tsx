@@ -1,5 +1,12 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, DesktopApi } from '../../shared/contracts'
 import App from './App'
 
@@ -28,23 +35,55 @@ const api: DesktopApi = {
     })),
     run,
     cancel: vi.fn(async () => {}),
+    respondApproval: vi.fn(async () => {}),
     onEvent: vi.fn((listener) => {
       agentListener = listener
       return () => {
         agentListener = undefined
       }
     })
+  },
+  settings: {
+    getRuntime: vi.fn<DesktopApi['settings']['getRuntime']>(async () => ({
+      provider: 'auto',
+      bigtokenBaseUrl: 'https://bigtoken.ai',
+      bigtokenModel: 'sonnet-5',
+      apiKeyConfigured: false,
+      credentialSource: 'none',
+      secureStorageAvailable: true,
+      toolApproval: 'always'
+    })),
+    updateRuntime: vi.fn<DesktopApi['settings']['updateRuntime']>(
+      async (input) => ({
+        provider: input.provider,
+        bigtokenBaseUrl: input.bigtokenBaseUrl,
+        bigtokenModel: input.bigtokenModel,
+        apiKeyConfigured: input.apiKey.action === 'replace',
+        credentialSource:
+          input.apiKey.action === 'replace' ? 'encrypted' : 'none',
+        secureStorageAvailable: true,
+        toolApproval: input.toolApproval
+      })
+    )
+  },
+  context: {
+    selectFiles: vi.fn(async () => []),
+    remove: vi.fn(async () => {})
   }
 }
 
 describe('App', () => {
   beforeEach(() => {
     localStorage.clear()
-    run.mockReset()
+    vi.clearAllMocks()
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: api
     })
+  })
+
+  afterEach(() => {
+    cleanup()
   })
 
   it('sends a prompt and renders streamed agent content', async () => {
@@ -75,5 +114,35 @@ describe('App', () => {
     })
 
     expect(await screen.findByText('这是回答内容')).toBeInTheDocument()
+  })
+
+  it('configures a runtime without reading an existing API key', async () => {
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('本地工作区'))
+    expect(
+      await screen.findByRole('heading', {
+        name: '模型与 Agent Runtime'
+      })
+    ).toBeInTheDocument()
+
+    const apiKeyInput = screen.getByLabelText('API Key')
+    expect(apiKeyInput).toHaveValue('')
+    fireEvent.change(apiKeyInput, {
+      target: { value: 'test-api-key' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(api.settings.updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          apiKey: {
+            action: 'replace',
+            value: 'test-api-key'
+          }
+        })
+      )
+    )
+    await waitFor(() => expect(apiKeyInput).toHaveValue(''))
   })
 })

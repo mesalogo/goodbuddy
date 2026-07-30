@@ -12,6 +12,14 @@ function isAllowedExternalUrl(url: string): boolean {
   }
 }
 
+function hasSameOrigin(url: string, allowedUrl: string): boolean {
+  try {
+    return new URL(url).origin === new URL(allowedUrl).origin
+  } catch {
+    return false
+  }
+}
+
 export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
   const window = new BrowserWindow({
     width: 1180,
@@ -49,18 +57,20 @@ export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
 
   window.webContents.on('will-navigate', (event, url) => {
     const developmentUrl = process.env.ELECTRON_RENDERER_URL
-    if (!developmentUrl || !url.startsWith(developmentUrl)) {
+    if (!developmentUrl || !hasSameOrigin(url, developmentUrl)) {
       event.preventDefault()
     }
   })
 
+  return window
+}
+
+export function loadMainWindow(window: BrowserWindow): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     void window.loadFile(join(currentDirectory, '../renderer/index.html'))
   }
-
-  return window
 }
 
 export function showWindow(window: BrowserWindow): void {
