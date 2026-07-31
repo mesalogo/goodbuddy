@@ -3,6 +3,7 @@ out/
 dist/
 coverage/
 .vite/
+.runtime-resources/
 *.log
 *.tsbuildinfo
 .env

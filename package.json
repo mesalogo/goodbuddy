@@ -2,7 +2,8 @@
   "name": "goodbuddy",
   "version": "0.1.0",
   "private": true,
-  "description": "Cross-platform AI desktop assistant",
+  "description": "Secure cross-platform AI desktop workspace",
+  "license": "UNLICENSED",
   "main": "./out/main/index.js",
   "type": "module",
   "scripts": {
@@ -13,30 +14,84 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "npm run typecheck && electron-vite build",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
+    "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb --x64 --arm64",
+    "portable": "npm run build && node build/build-portable.cjs"
   },
   "build": {
     "appId": "live.digiman.goodbuddy",
     "productName": "GoodBuddy",
     "directories": {
+      "buildResources": "build",
       "output": "dist"
     },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "beforePack": "build/runtime-hooks.cjs",
+    "asar": true,
+    "compression": "maximum",
     "files": [
       "out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "resources/skills",
+        "to": "skills",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": ".runtime-resources/${arch}",
+        "to": "runtimes/opencode",
+        "filter": [
+          "opencode",
+          "opencode.exe"
+        ]
+      },
+      {
+        "from": "node_modules/opencode-ai/LICENSE",
+        "to": "licenses/opencode-ai-LICENSE"
+      },
+      {
+        "from": "node_modules/@continuedev/cli",
+        "to": "runtimes/continue",
+        "filter": [
+          "package.json",
+          "dist/cn.js",
+          "dist/index.js",
+          "dist/xhr-sync-worker.js"
+        ]
+      },
+      {
+        "from": "node_modules/typescript/LICENSE.txt",
+        "to": "licenses/continuedev-cli-LICENSE"
+      }
+    ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
     "mac": {
+      "icon": "build/icon.png",
       "target": [
         "dmg"
       ],
       "category": "public.app-category.productivity"
     },
     "linux": {
+      "icon": "build/icon.png",
       "target": [
         "AppImage",
         "deb"
@@ -45,18 +100,27 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@opencode-ai/sdk": "^1.18.9",
     "cross-spawn": "^7.0.6",
+    "fflate": "^0.8.3",
+    "html-to-text": "^10.0.0",
     "lucide-react": "^1.27.0",
+    "pdfjs-dist": "^6.2.108",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@continuedev/cli": "1.5.47",
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@types/cross-spawn": "^6.0.6",
+    "@types/html-to-text": "^9.0.4",
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -68,6 +132,9 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.8.0",
     "jsdom": "^30.0.1",
+    "opencode-ai": "1.18.9",
+    "png-to-ico": "^3.0.2",
+    "tar": "7.5.22",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vite": "^7.3.6",

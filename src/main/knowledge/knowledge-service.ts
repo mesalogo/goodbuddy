@@ -1,0 +1,822 @@
+import {
+  cp,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rm,
+  stat
+} from 'node:fs/promises'
+import { watch, type FSWatcher } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve
+} from 'node:path'
+import { chunkDocument, parseDocument, supportedDocumentExtensions } from './document-parser'
+import {
+  extractKnowledgeGraph,
+  normalizeEntityAlias,
+  type ExtractStructured
+} from './graph-extractor'
+import { KnowledgeDatabase } from './knowledge-database'
+import type {
+  CreateKnowledgeBaseInput,
+  Document,
+  GraphStrategy,
+  GraphEntity,
+  GraphRelation,
+  KnowledgeBase,
+  KnowledgeSource,
+  SearchResult
+} from './types'
+import { UrlImporter } from './url-importer'
+
+type ScannedFile = {
+  absolutePath: string
+  relativePath: string
+  size: number
+}
+
+export type KnowledgeLibrarySnapshot = KnowledgeBase & {
+  sourceCount: number
+  documentCount: number
+  indexedDocumentCount: number
+}
+
+export type KnowledgeSourceSnapshot = KnowledgeSource & {
+  documentCount: number
+  progress: number
+  lastSyncedAt?: string
+}
+
+export type KnowledgeDocumentSnapshot = Document & {
+  chunkCount: number
+  status: 'queued' | 'parsing' | 'indexing' | 'ready' | 'failed'
+  size?: number
+  error?: string
+}
+
+export type KnowledgeSnapshot = {
+  libraries: KnowledgeLibrarySnapshot[]
+  sources: KnowledgeSourceSnapshot[]
+  documents: KnowledgeDocumentSnapshot[]
+  entities: GraphEntity[]
+  relations: GraphRelation[]
+  evidence: ReturnType<KnowledgeDatabase['listEvidence']>
+}
+
+export type KnowledgeServiceOptions = {
+  databasePath: string
+  managedRoot: string
+  extractStructured?: ExtractStructured
+  urlImporter?: UrlImporter
+}
+
+const supportedExtensions = new Set<string>(supportedDocumentExtensions)
+const maximumFileBytes = 20 * 1024 * 1024
+const maximumSourceBytes = 500 * 1024 * 1024
+const maximumFilesPerSource = 2_000
+
+function isInside(root: string, candidate: string): boolean {
+  const path = relative(resolve(root), resolve(candidate))
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
+}
+
+function mimeTypeFor(path: string): string {
+  const extension = extname(path).toLowerCase()
+  const types: Record<string, string> = {
+    '.csv': 'text/csv',
+    '.docx':
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+    '.json': 'application/json',
+    '.md': 'text/markdown',
+    '.pdf': 'application/pdf',
+    '.pptx':
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.txt': 'text/plain',
+    '.xlsx':
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xml': 'application/xml'
+  }
+  return types[extension] ?? 'text/plain'
+}
+
+export class KnowledgeService {
+  readonly database: KnowledgeDatabase
+  private readonly managedRoot: string
+  private readonly extractStructured?: ExtractStructured
+  private readonly urlImporter: UrlImporter
+  private readonly watchers = new Map<string, FSWatcher>()
+  private readonly syncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly activeSyncs = new Map<string, Promise<void>>()
+
+  constructor(options: KnowledgeServiceOptions) {
+    this.database = new KnowledgeDatabase(options.databasePath)
+    this.managedRoot = resolve(options.managedRoot)
+    this.extractStructured = options.extractStructured
+    this.urlImporter = options.urlImporter ?? new UrlImporter()
+  }
+
+  async initialize(): Promise<void> {
+    await mkdir(this.managedRoot, { recursive: true })
+    this.database.initialize()
+    for (const library of this.database.listKnowledgeBases()) {
+      for (const source of this.database.listSources(library.id)) {
+        if (
+          library.storageMode === 'reference' &&
+          source.type !== 'url' &&
+          source.status === 'ready'
+        ) {
+          this.startWatcher(source)
+        }
+      }
+    }
+  }
+
+  async dispose(): Promise<void> {
+    for (const timer of this.syncTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.syncTimers.clear()
+    for (const watcher of this.watchers.values()) {
+      watcher.close()
+    }
+    this.watchers.clear()
+    await Promise.allSettled(this.activeSyncs.values())
+    this.database.close()
+  }
+
+  createLibrary(input: CreateKnowledgeBaseInput): KnowledgeBase {
+    return this.database.createKnowledgeBase(input)
+  }
+
+  async deleteLibrary(id: string): Promise<boolean> {
+    const library = this.database.getKnowledgeBase(id)
+    if (!library) {
+      return false
+    }
+    for (const source of this.database.listSources(id)) {
+      this.stopWatcher(source.id)
+    }
+    const deleted = this.database.deleteKnowledgeBase(id)
+    if (deleted && library.storageMode === 'managed') {
+      const path = join(this.managedRoot, id)
+      if (isInside(this.managedRoot, path)) {
+        await rm(path, { recursive: true, force: true })
+      }
+    }
+    return deleted
+  }
+
+  snapshot(selectedLibraryId?: string): KnowledgeSnapshot {
+    const libraries = this.database.listKnowledgeBases().map((library) => {
+      const sources = this.database.listSources(library.id)
+      const documents = this.database.listDocuments(library.id)
+      return {
+        ...library,
+        sourceCount: sources.length,
+        documentCount: documents.length,
+        indexedDocumentCount: documents.filter(
+          (document) => document.metadata.status !== 'failed'
+        ).length
+      }
+    })
+    const libraryId = selectedLibraryId ?? libraries[0]?.id
+    if (!libraryId) {
+      return {
+        libraries,
+        sources: [],
+        documents: [],
+        entities: [],
+        relations: [],
+        evidence: []
+      }
+    }
+    const sources = this.database.listSources(libraryId).map((source) => ({
+      ...source,
+      documentCount: this.database
+        .listDocuments(libraryId)
+        .filter((document) => document.sourceId === source.id).length,
+      progress:
+        typeof source.metadata.progress === 'number'
+          ? source.metadata.progress
+          : source.status === 'ready'
+            ? 100
+            : 0,
+      lastSyncedAt:
+        typeof source.metadata.lastSyncedAt === 'string'
+          ? source.metadata.lastSyncedAt
+          : undefined
+    }))
+    const documents = this.database.listDocuments(libraryId).map((document) => {
+      const status =
+        typeof document.metadata.status === 'string' &&
+        ['queued', 'parsing', 'indexing', 'ready', 'failed'].includes(
+          document.metadata.status
+        )
+          ? (document.metadata.status as KnowledgeDocumentSnapshot['status'])
+          : 'ready'
+      return {
+        ...document,
+        chunkCount: this.database.listChunks(document.id).length,
+        status,
+        size:
+          typeof document.metadata.size === 'number'
+            ? document.metadata.size
+            : undefined,
+        error:
+          typeof document.metadata.error === 'string'
+            ? document.metadata.error
+            : undefined
+      }
+    })
+    return {
+      libraries,
+      sources,
+      documents,
+      entities: this.database.listEntities(libraryId),
+      relations: this.database.listRelations(libraryId),
+      evidence: this.database.listEvidence(libraryId)
+    }
+  }
+
+  search(knowledgeBaseId: string, query: string, limit = 6): SearchResult[] {
+    return this.database.search({
+      knowledgeBaseId,
+      query,
+      limit
+    })
+  }
+
+  async importPaths(
+    knowledgeBaseId: string,
+    selectedPaths: string[],
+    graphStrategy?: Exclude<GraphStrategy, 'ask'>
+  ): Promise<void> {
+    const library = this.requireLibrary(knowledgeBaseId)
+    const effectiveLibrary = graphStrategy
+      ? { ...library, graphStrategy }
+      : library
+    if (selectedPaths.length === 0 || selectedPaths.length > 20) {
+      throw new Error('每次请选择 1 至 20 个文件或目录')
+    }
+    for (const selectedPath of selectedPaths) {
+      const canonicalPath = await realpath(selectedPath)
+      const fileStat = await lstat(canonicalPath)
+      if (fileStat.isSymbolicLink()) {
+        throw new Error('不能导入符号链接')
+      }
+      const sourceId = randomUUID()
+      const sourceType = fileStat.isDirectory() ? 'directory' : 'file'
+      const target =
+        library.storageMode === 'managed'
+          ? join(
+              this.managedRoot,
+              knowledgeBaseId,
+              sourceId,
+              basename(canonicalPath)
+            )
+          : canonicalPath
+      let source = this.database.upsertSource({
+        id: sourceId,
+        knowledgeBaseId,
+        type: sourceType,
+        location: target,
+        displayName: basename(canonicalPath),
+        status: 'indexing',
+        metadata: {
+          originalLocation: canonicalPath,
+          progress: 0
+        }
+      })
+      try {
+        if (library.storageMode === 'managed') {
+          await this.copySupportedSource(canonicalPath, target)
+        }
+        await this.indexSource(effectiveLibrary, source)
+        source = this.database.upsertSource({
+          ...source,
+          status: 'ready',
+          metadata: {
+            ...source.metadata,
+            progress: 100,
+            lastSyncedAt: new Date().toISOString()
+          }
+        })
+        if (library.storageMode === 'reference') {
+          this.startWatcher(source)
+        }
+      } catch (error) {
+        this.database.upsertSource({
+          ...source,
+          status: 'error',
+          lastError:
+            error instanceof Error
+              ? error.message.slice(0, 1_000)
+              : '来源导入失败',
+          metadata: {
+            ...source.metadata,
+            progress: 0
+          }
+        })
+        throw error
+      }
+    }
+  }
+
+  async importUrl(
+    knowledgeBaseId: string,
+    input: string,
+    signal: AbortSignal,
+    sourceId?: string,
+    graphStrategy?: Exclude<GraphStrategy, 'ask'>
+  ): Promise<void> {
+    const library = this.requireLibrary(knowledgeBaseId)
+    const effectiveLibrary = graphStrategy
+      ? { ...library, graphStrategy }
+      : library
+    const result = await this.urlImporter.import(input, signal)
+    let source = this.database.upsertSource({
+      id: sourceId,
+      knowledgeBaseId,
+      type: 'url',
+      location: result.url,
+      displayName: result.title,
+      status: 'indexing',
+      metadata: {
+        etag: result.etag ?? '',
+        lastModified: result.lastModified ?? '',
+        contentType: result.contentType,
+        discoveredUrls: result.discoveredUrls
+      }
+    })
+    try {
+      const document = this.database.upsertDocument(
+        {
+          knowledgeBaseId,
+          sourceId: source.id,
+          externalId: result.url,
+          title: result.title,
+          mimeType: result.contentType,
+          sourceLocation: result.url,
+          checksum: createHash('sha256')
+            .update(result.document.content)
+            .digest('hex'),
+          metadata: {
+            status: 'ready',
+            size: Buffer.byteLength(result.document.content)
+          }
+        },
+        chunkDocument(result.document).map((chunk) => ({
+          ordinal: chunk.position,
+          content: chunk.content,
+          location: chunk.locator
+        }))
+      )
+      await this.extractGraph(effectiveLibrary, document)
+      source = this.database.upsertSource({
+        ...source,
+        status: 'ready',
+        metadata: {
+          ...source.metadata,
+          progress: 100,
+          lastSyncedAt: new Date().toISOString()
+        }
+      })
+    } catch (error) {
+      this.database.upsertSource({
+        ...source,
+        status: 'error',
+        lastError: error instanceof Error ? error.message.slice(0, 1_000) : 'URL 导入失败'
+      })
+      throw error
+    }
+  }
+
+  pauseSource(sourceId: string): void {
+    const source = this.requireSource(sourceId)
+    this.stopWatcher(sourceId)
+    this.database.upsertSource({
+      ...source,
+      status: 'paused'
+    })
+  }
+
+  async syncSource(sourceId: string): Promise<void> {
+    const existing = this.activeSyncs.get(sourceId)
+    if (existing) {
+      return existing
+    }
+    const operation = this.performSyncSource(sourceId).finally(() => {
+      this.activeSyncs.delete(sourceId)
+    })
+    this.activeSyncs.set(sourceId, operation)
+    return operation
+  }
+
+  async retrySource(sourceId: string): Promise<void> {
+    return this.syncSource(sourceId)
+  }
+
+  async removeSource(sourceId: string): Promise<boolean> {
+    const source = this.requireSource(sourceId)
+    const library = this.requireLibrary(source.knowledgeBaseId)
+    this.stopWatcher(sourceId)
+    const removed = this.database.removeSource(sourceId)
+    if (
+      removed &&
+      library.storageMode === 'managed' &&
+      source.type !== 'url' &&
+      isInside(this.managedRoot, source.location)
+    ) {
+      await rm(
+        join(this.managedRoot, library.id, source.id),
+        { recursive: true, force: true }
+      )
+    }
+    return removed
+  }
+
+  private async performSyncSource(sourceId: string): Promise<void> {
+    let source = this.requireSource(sourceId)
+    const library = this.requireLibrary(source.knowledgeBaseId)
+    if (source.type === 'url') {
+      await this.importUrl(
+        library.id,
+        source.location,
+        new AbortController().signal,
+        source.id
+      )
+      return
+    }
+    source = this.database.upsertSource({
+      ...source,
+      status: 'indexing',
+      lastError: null,
+      metadata: { ...source.metadata, progress: 0 }
+    })
+    try {
+      await this.indexSource(library, source)
+      source = this.database.upsertSource({
+        ...source,
+        status: 'ready',
+        metadata: {
+          ...source.metadata,
+          progress: 100,
+          lastSyncedAt: new Date().toISOString()
+        }
+      })
+      if (library.storageMode === 'reference') {
+        this.startWatcher(source)
+      }
+    } catch (error) {
+      this.database.upsertSource({
+        ...source,
+        status: 'error',
+        lastError:
+          error instanceof Error ? error.message.slice(0, 1_000) : '同步失败'
+      })
+      throw error
+    }
+  }
+
+  private async indexSource(
+    library: KnowledgeBase,
+    source: KnowledgeSource
+  ): Promise<void> {
+    const files = await this.scanSource(source.location)
+    const existing = this.database
+      .listDocuments(library.id)
+      .filter((document) => document.sourceId === source.id)
+    const currentExternalIds = new Set(files.map((file) => file.relativePath))
+    for (const document of existing) {
+      if (!currentExternalIds.has(document.externalId)) {
+        this.database.removeDocument(document.id)
+      }
+    }
+
+    const failures: string[] = []
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]
+      if (!file) {
+        continue
+      }
+      try {
+        const buffer = await this.readBoundedFile(file.absolutePath)
+        const checksum = createHash('sha256').update(buffer).digest('hex')
+        const previous = existing.find(
+          (document) => document.externalId === file.relativePath
+        )
+        if (previous?.checksum === checksum) {
+          continue
+        }
+        const parsed = await parseDocument(
+          basename(file.absolutePath),
+          buffer
+        )
+        const document = this.database.upsertDocument(
+          {
+            knowledgeBaseId: library.id,
+            sourceId: source.id,
+            externalId: file.relativePath,
+            title: parsed.title,
+            mimeType: mimeTypeFor(file.absolutePath),
+            sourceLocation: file.absolutePath,
+            checksum,
+            metadata: {
+              status: 'ready',
+              size: file.size
+            }
+          },
+          chunkDocument(parsed).map((chunk) => ({
+            ordinal: chunk.position,
+            content: chunk.content,
+            location: chunk.locator
+          }))
+        )
+        this.database.removeEvidenceForDocument(document.id)
+        await this.extractGraph(library, document)
+      } catch (error) {
+        failures.push(
+          `${file.relativePath}: ${
+            error instanceof Error ? error.message : '解析失败'
+          }`
+        )
+      }
+      this.database.upsertSource({
+        ...source,
+        status: 'indexing',
+        metadata: {
+          ...source.metadata,
+          progress: Math.round(((index + 1) / Math.max(files.length, 1)) * 100)
+        }
+      })
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `${failures.length} 个文件处理失败：${failures.slice(0, 5).join('；')}`
+      )
+    }
+  }
+
+  private async extractGraph(
+    library: KnowledgeBase,
+    document: Document
+  ): Promise<void> {
+    if (!library.graphEnabled || library.graphStrategy === 'ask') {
+      return
+    }
+    const chunks = this.database.listChunks(document.id)
+    const result = await extractKnowledgeGraph(
+      chunks.map((chunk) => ({
+        id: chunk.id,
+        content: chunk.content
+      })),
+      {
+        strategy: library.graphStrategy,
+        extractStructured: this.extractStructured
+      }
+    )
+    const existingEntities = this.database.listEntities(library.id)
+    const entityIds = new Map<string, string>()
+    for (const entity of result.entities) {
+      const normalized = normalizeEntityAlias(entity.name)
+      const existing = existingEntities.find(
+        (candidate) =>
+          normalizeEntityAlias(candidate.name) === normalized ||
+          candidate.aliases.some(
+            (alias) => normalizeEntityAlias(alias) === normalized
+          )
+      )
+      const stored = existing
+        ? this.database.updateEntity(existing.id, {
+            aliases: [...new Set([...existing.aliases, ...entity.aliases])]
+          })
+        : this.database.createEntity({
+            knowledgeBaseId: library.id,
+            name: entity.name,
+            type: entity.type,
+            aliases: entity.aliases,
+            locked: false
+          })
+      entityIds.set(entity.id, stored.id)
+      for (const evidence of entity.evidence) {
+        this.database.createEvidence({
+          knowledgeBaseId: library.id,
+          entityId: stored.id,
+          documentId: document.id,
+          chunkId: evidence.chunkId,
+          quote: evidence.quote,
+          location: this.database
+            .listChunks(document.id)
+            .find((chunk) => chunk.id === evidence.chunkId)?.location
+        })
+      }
+    }
+    const existingRelations = this.database.listRelations(library.id)
+    for (const relation of result.relations) {
+      const sourceEntityId = entityIds.get(relation.sourceId)
+      const targetEntityId = entityIds.get(relation.targetId)
+      if (!sourceEntityId || !targetEntityId) {
+        continue
+      }
+      const existing = existingRelations.find(
+        (candidate) =>
+          candidate.sourceEntityId === sourceEntityId &&
+          candidate.targetEntityId === targetEntityId &&
+          candidate.type === relation.type
+      )
+      const stored =
+        existing ??
+        this.database.createRelation({
+          knowledgeBaseId: library.id,
+          sourceEntityId,
+          targetEntityId,
+          type: relation.type,
+          locked: false
+        })
+      for (const evidence of relation.evidence) {
+        this.database.createEvidence({
+          knowledgeBaseId: library.id,
+          relationId: stored.id,
+          documentId: document.id,
+          chunkId: evidence.chunkId,
+          quote: evidence.quote,
+          location: this.database
+            .listChunks(document.id)
+            .find((chunk) => chunk.id === evidence.chunkId)?.location
+        })
+      }
+    }
+  }
+
+  private async scanSource(rootPath: string): Promise<ScannedFile[]> {
+    const canonicalRoot = await realpath(rootPath)
+    const rootStat = await lstat(canonicalRoot)
+    const files: ScannedFile[] = []
+    let totalBytes = 0
+    const visit = async (path: string): Promise<void> => {
+      const entries = await readdir(path, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) {
+          continue
+        }
+        const child = join(path, entry.name)
+        if (entry.isDirectory()) {
+          await visit(child)
+        } else if (
+          entry.isFile() &&
+          supportedExtensions.has(extname(entry.name).toLowerCase())
+        ) {
+          const fileStat = await stat(child)
+          if (fileStat.size > maximumFileBytes) {
+            continue
+          }
+          totalBytes += fileStat.size
+          if (
+            files.length >= maximumFilesPerSource ||
+            totalBytes > maximumSourceBytes
+          ) {
+            throw new Error('来源超过 2,000 个文件或 500MB 配额')
+          }
+          files.push({
+            absolutePath: child,
+            relativePath: relative(canonicalRoot, child) || basename(child),
+            size: fileStat.size
+          })
+        }
+      }
+    }
+    if (rootStat.isFile()) {
+      if (!supportedExtensions.has(extname(canonicalRoot).toLowerCase())) {
+        throw new Error('不支持该文档类型')
+      }
+      files.push({
+        absolutePath: canonicalRoot,
+        relativePath: basename(canonicalRoot),
+        size: rootStat.size
+      })
+    } else if (rootStat.isDirectory()) {
+      await visit(canonicalRoot)
+    } else {
+      throw new Error('来源必须是文件或目录')
+    }
+    if (files.length === 0) {
+      throw new Error('来源中没有可索引的受支持文档')
+    }
+    return files
+  }
+
+  private async copySupportedSource(
+    sourcePath: string,
+    targetPath: string
+  ): Promise<void> {
+    const files = await this.scanSource(sourcePath)
+    const sourceStat = await lstat(sourcePath)
+    if (sourceStat.isFile()) {
+      await mkdir(resolve(targetPath, '..'), { recursive: true })
+      await cp(files[0]?.absolutePath ?? sourcePath, targetPath, {
+        force: false,
+        errorOnExist: true
+      })
+      return
+    }
+    for (const file of files) {
+      const target = join(targetPath, file.relativePath)
+      if (!isInside(targetPath, target)) {
+        throw new Error('来源目录包含越界路径')
+      }
+      await mkdir(resolve(target, '..'), { recursive: true })
+      await cp(file.absolutePath, target, {
+        force: false,
+        errorOnExist: true
+      })
+    }
+  }
+
+  private async readBoundedFile(path: string): Promise<Buffer> {
+    const handle = await open(path, 'r')
+    try {
+      const fileStat = await handle.stat()
+      if (!fileStat.isFile() || fileStat.size > maximumFileBytes) {
+        throw new Error('文件超过 20MB 或不是普通文件')
+      }
+      const buffer = Buffer.alloc(fileStat.size + 1)
+      const result = await handle.read(buffer, 0, buffer.length, 0)
+      if (result.bytesRead > maximumFileBytes) {
+        throw new Error('文件超过 20MB')
+      }
+      return buffer.subarray(0, result.bytesRead)
+    } finally {
+      await handle.close()
+    }
+  }
+
+  private startWatcher(source: KnowledgeSource): void {
+    this.stopWatcher(source.id)
+    try {
+      const watcher = watch(
+        source.location,
+        {
+          recursive: source.type === 'directory',
+          persistent: false
+        },
+        () => {
+          const current = this.syncTimers.get(source.id)
+          if (current) {
+            clearTimeout(current)
+          }
+          this.syncTimers.set(
+            source.id,
+            setTimeout(() => {
+              this.syncTimers.delete(source.id)
+              void this.syncSource(source.id).catch(() => undefined)
+            }, 800)
+          )
+        }
+      )
+      watcher.on('error', () => this.stopWatcher(source.id))
+      this.watchers.set(source.id, watcher)
+    } catch {
+      this.stopWatcher(source.id)
+    }
+  }
+
+  private stopWatcher(sourceId: string): void {
+    this.watchers.get(sourceId)?.close()
+    this.watchers.delete(sourceId)
+    const timer = this.syncTimers.get(sourceId)
+    if (timer) {
+      clearTimeout(timer)
+      this.syncTimers.delete(sourceId)
+    }
+  }
+
+  private requireLibrary(id: string): KnowledgeBase {
+    const library = this.database.getKnowledgeBase(id)
+    if (!library) {
+      throw new Error('知识库不存在')
+    }
+    return library
+  }
+
+  private requireSource(id: string): KnowledgeSource {
+    for (const library of this.database.listKnowledgeBases()) {
+      const source = this.database
+        .listSources(library.id)
+        .find((item) => item.id === id)
+      if (source) {
+        return source
+      }
+    }
+    throw new Error('知识来源不存在')
+  }
+}

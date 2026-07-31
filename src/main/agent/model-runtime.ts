@@ -1,19 +1,43 @@
 import type {
   AgentEvent,
-  AgentRequest,
   AgentRuntimeStatus
 } from '../../shared/contracts'
-import type { AgentRuntime } from './runtime'
+import { createAnthropicMessagesUrl } from './anthropic-endpoint'
+import type {
+  AgentExecutionRequest,
+  AgentRuntime
+} from './runtime'
 
 type ConversationMessage = {
   role: 'user' | 'assistant'
   content: string
 }
 
-export type BigtokenRuntimeOptions = {
+type ApiMessage = {
+  role: 'user' | 'assistant'
+  content:
+    | string
+    | Array<
+        | {
+            type: 'image'
+            source: {
+              type: 'base64'
+              media_type: 'image/png' | 'image/jpeg'
+              data: string
+            }
+          }
+        | {
+            type: 'text'
+            text: string
+          }
+      >
+}
+
+export type ModelRuntimeOptions = {
   apiKey: string
   baseUrl: string
   model: string
+  skillInstructions?: string
   fetcher?: typeof fetch
 }
 
@@ -56,32 +80,126 @@ function getTextDelta(value: unknown): string | undefined {
   return undefined
 }
 
-export class BigtokenAgentRuntime implements AgentRuntime {
+function parseStreamBlock(block: string): {
+  delta?: string
+  stopped: boolean
+} {
+  const data = block
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n')
+  if (!data || data === '[DONE]') {
+    return { stopped: false }
+  }
+  let event: unknown
+  try {
+    event = JSON.parse(data)
+  } catch {
+    return { stopped: false }
+  }
+  const error = getErrorMessage(event)
+  if (error) {
+    throw new Error(error.slice(0, 1_000))
+  }
+  return {
+    delta: getTextDelta(event),
+    stopped:
+      event !== null &&
+      typeof event === 'object' &&
+      'type' in event &&
+      event.type === 'message_stop'
+  }
+}
+
+export class ModelAgentRuntime implements AgentRuntime {
   readonly requiresToolApproval = false
   private readonly conversations = new Map<string, ConversationMessage[]>()
   private readonly fetcher: typeof fetch
 
-  constructor(private readonly options: BigtokenRuntimeOptions) {
+  constructor(private readonly options: ModelRuntimeOptions) {
     this.fetcher = options.fetcher ?? fetch
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
     return {
-      id: 'bigtoken',
+      id: 'model',
       label: this.options.model,
       available: Boolean(this.options.apiKey),
-      detail: `Bigtoken Anthropic API · ${this.options.baseUrl}`
+      detail: `Anthropic Messages 兼容模型接口 · ${this.options.baseUrl}`
     }
   }
 
-  private getMessages(request: AgentRequest): ConversationMessage[] {
-    const history = this.conversations.get(request.conversationId) ?? []
+  async testConnection(): Promise<AgentRuntimeStatus> {
+    if (!this.options.apiKey) {
+      return this.getStatus()
+    }
+    const response = await this.fetcher(
+      createAnthropicMessagesUrl(this.options.baseUrl),
+      {
+        method: 'POST',
+        headers: {
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+          'x-api-key': this.options.apiKey
+        },
+        body: JSON.stringify({
+          model: this.options.model,
+          max_tokens: 1,
+          stream: false,
+          messages: [{ role: 'user', content: 'Reply OK.' }]
+        })
+      }
+    )
+    if (!response.ok) {
+      let detail: string | undefined
+      try {
+        detail = getErrorMessage(await response.json())
+      } catch {
+        detail = undefined
+      }
+      throw new Error(
+        detail?.slice(0, 1_000) ??
+          `模型接口连接测试失败（HTTP ${response.status}）`
+      )
+    }
+    await response.body?.cancel().catch(() => undefined)
+    return {
+      id: 'model',
+      label: this.options.model,
+      available: true,
+      detail: `已验证模型接口连接 · ${this.options.baseUrl}`
+    }
+  }
+
+  private getMessages(request: AgentExecutionRequest): ApiMessage[] {
+    const history =
+      request.history && request.history.length > 0
+        ? request.history
+        : this.conversations.get(request.conversationId) ?? []
+    const content: ApiMessage['content'] =
+      request.images && request.images.length > 0
+        ? [
+            ...request.images.map((image) => ({
+              type: 'image' as const,
+              source: {
+                type: 'base64' as const,
+                media_type: image.mediaType,
+                data: image.data
+              }
+            })),
+            {
+              type: 'text' as const,
+              text: request.prompt
+            }
+          ]
+        : request.prompt
     return [
       ...history.slice(-20),
       {
         role: 'user',
-        content: request.prompt
-      } satisfies ConversationMessage
+        content
+      }
     ]
   }
 
@@ -110,11 +228,11 @@ export class BigtokenAgentRuntime implements AgentRuntime {
   }
 
   async *run(
-    request: AgentRequest,
+    request: AgentExecutionRequest,
     signal: AbortSignal
   ): AsyncGenerator<AgentEvent, void, void> {
     if (!this.options.apiKey) {
-      throw new Error('请先在设置中配置 Bigtoken API Key')
+      throw new Error('请先在设置中配置模型接口 API Key')
     }
 
     yield {
@@ -125,7 +243,7 @@ export class BigtokenAgentRuntime implements AgentRuntime {
 
     const messages = this.getMessages(request)
     const response = await this.fetcher(
-      new URL('/v1/messages', this.options.baseUrl),
+      createAnthropicMessagesUrl(this.options.baseUrl),
       {
         method: 'POST',
         headers: {
@@ -137,8 +255,12 @@ export class BigtokenAgentRuntime implements AgentRuntime {
           model: this.options.model,
           max_tokens: 4096,
           stream: true,
-          system:
+          system: [
             'You are GoodBuddy, a secure desktop assistant. Answer clearly in the language used by the user. Never claim to have used desktop tools unless a tool result was provided.',
+            this.options.skillInstructions
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
           messages
         }),
         signal
@@ -153,23 +275,23 @@ export class BigtokenAgentRuntime implements AgentRuntime {
         detail = undefined
       }
       throw new Error(
-        detail ?? `Bigtoken 请求失败（HTTP ${response.status}）`
+        detail ?? `模型接口请求失败（HTTP ${response.status}）`
       )
     }
 
     if (!response.body) {
-      throw new Error('Bigtoken 未返回流式响应')
+      throw new Error('模型接口未返回流式响应')
     }
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     let answer = ''
-    let completed = false
+    let receivedStop = false
     let streamEnded = false
 
     try {
-      while (!completed) {
+      while (!receivedStop) {
         const { done, value } = await reader.read()
         streamEnded = done
         buffer += decoder.decode(value, { stream: !done }).replaceAll(
@@ -178,36 +300,19 @@ export class BigtokenAgentRuntime implements AgentRuntime {
         )
 
         if (Buffer.byteLength(buffer) > 1024 * 1024) {
-          throw new Error('Bigtoken 流式响应块超过安全限制')
+          throw new Error('模型接口流式响应块超过安全限制')
         }
 
         const blocks = buffer.split('\n\n')
         buffer = blocks.pop() ?? ''
+        if (done && buffer.trim()) {
+          blocks.push(buffer)
+          buffer = ''
+        }
 
         for (const block of blocks) {
-          const data = block
-            .split('\n')
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart())
-            .join('\n')
-
-          if (!data || data === '[DONE]') {
-            continue
-          }
-
-          let event: unknown
-          try {
-            event = JSON.parse(data)
-          } catch {
-            continue
-          }
-
-          const error = getErrorMessage(event)
-          if (error) {
-            throw new Error(error.slice(0, 1_000))
-          }
-
-          const delta = getTextDelta(event)
+          const parsed = parseStreamBlock(block)
+          const { delta } = parsed
           if (delta) {
             answer += delta
             yield {
@@ -217,19 +322,14 @@ export class BigtokenAgentRuntime implements AgentRuntime {
             }
           }
 
-          if (
-            event &&
-            typeof event === 'object' &&
-            'type' in event &&
-            event.type === 'message_stop'
-          ) {
-            completed = true
+          if (parsed.stopped) {
+            receivedStop = true
             break
           }
         }
 
         if (done) {
-          completed = true
+          break
         }
       }
     } finally {
@@ -239,12 +339,18 @@ export class BigtokenAgentRuntime implements AgentRuntime {
       reader.releaseLock()
     }
 
+    if (!receivedStop) {
+      throw new Error('模型接口流式响应意外中断')
+    }
     if (!answer) {
-      throw new Error('Bigtoken 返回了空内容')
+      throw new Error('模型接口返回了空内容')
     }
 
     this.saveConversation(request.conversationId, [
-      ...messages,
+      ...(request.history ??
+        this.conversations.get(request.conversationId) ??
+        []).slice(-20),
+      { role: 'user', content: request.prompt },
       { role: 'assistant', content: answer }
     ])
 

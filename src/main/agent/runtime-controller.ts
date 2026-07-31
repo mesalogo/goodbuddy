@@ -3,7 +3,10 @@ import type {
   AgentRequest,
   AgentRuntimeStatus
 } from '../../shared/contracts'
-import type { AgentRuntime } from './runtime'
+import type {
+  AgentRuntime,
+  RuntimeAuthorizer
+} from './runtime'
 
 type RuntimeSlot = {
   runtime: AgentRuntime
@@ -61,16 +64,43 @@ export class AgentRuntimeController implements AgentRuntime {
     return this.current.runtime.getStatus()
   }
 
+  testConnection(): Promise<AgentRuntimeStatus> {
+    return this.current.runtime.testConnection?.() ?? this.getStatus()
+  }
+
   async *run(
     request: AgentRequest,
     signal: AbortSignal,
-    authorize?: (requiresToolApproval: boolean) => Promise<void>
+    authorize?: RuntimeAuthorizer
   ): AsyncGenerator<AgentEvent, void, void> {
     const slot = this.current
+    const toolsAllowed = request.workMode === 'execute'
+    const effectiveAuthorize: RuntimeAuthorizer | undefined = toolsAllowed
+      ? authorize
+      : async () => 'deny'
     slot.activeRequests += 1
     try {
-      await authorize?.(slot.runtime.requiresToolApproval)
-      for await (const event of slot.runtime.run(request, signal)) {
+      if (
+        toolsAllowed &&
+        slot.runtime.requiresToolApproval &&
+        effectiveAuthorize
+      ) {
+        const decision = await effectiveAuthorize({
+          scopeKey: 'runtime:whole-run',
+          title: '允许 Agent 使用工作区工具？',
+          description:
+            '该 Runtime 尚不能报告单个工具调用，可能读取或修改工作区文件并执行命令。',
+          allowPermanent: false
+        })
+        if (decision === 'deny') {
+          throw new Error('用户拒绝了 Agent 工具执行')
+        }
+      }
+      for await (const event of slot.runtime.run(
+        request,
+        signal,
+        effectiveAuthorize
+      )) {
         if (slot !== this.current) {
           return
         }

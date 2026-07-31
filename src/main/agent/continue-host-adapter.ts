@@ -1,0 +1,707 @@
+import spawn from 'cross-spawn'
+import { createHash, randomBytes } from 'node:crypto'
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  resolve
+} from 'node:path'
+import { z } from 'zod'
+import type {
+  ApprovalDecision,
+  RuntimeSettings
+} from '../../shared/contracts'
+import type { RuntimeAuthorizer } from './runtime'
+import type { ResolvedModelProfile } from '../runtime-settings-store'
+import {
+  addContinuePermanentPermission,
+  createContinuePermissionRule
+} from './continue-permissions'
+import { getAvailableLoopbackPort } from './loopback-port'
+import { buildRuntimeEnvironment } from './process-environment'
+import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
+
+const supportedVersion = '1.5.47'
+const supportedBundleHashes = new Set([
+  '500cf1ae9637ba397fcb5ae0856fdd31b9ad49ba45a32e277477452be196e5d6'
+])
+const maximumBundleBytes = 32 * 1024 * 1024
+const maximumStateBytes = 8 * 1024 * 1024
+const utilityBootstrap = [
+  "import { pathToFileURL } from 'node:url'",
+  'const entryPath = process.argv[2]',
+  "if (!entryPath) throw new Error('Missing Continue host entry')",
+  'process.argv = process.argv.slice(2)',
+  'await import(pathToFileURL(entryPath).href)',
+  ''
+].join('\n')
+
+const stateSchema = z.object({
+  session: z.object({
+    history: z.array(z.unknown()).max(5_000)
+  }),
+  isProcessing: z.boolean(),
+  messageQueueLength: z.number().int().min(0),
+  pendingPermission: z
+    .object({
+      toolName: z.string().min(1).max(128),
+      toolArgs: z.record(z.string(), z.unknown()),
+      requestId: z.string().min(1).max(256),
+      toolCallPreview: z.array(z.unknown()).max(100).optional()
+    })
+    .nullable()
+})
+
+type ContinueHostState = z.infer<typeof stateSchema>
+
+type PreparedHost = {
+  entryPath: string
+  version: string
+}
+
+export type ContinueHostAdapterOptions = {
+  binaryPath: string
+  configPath: string
+  workspace: string
+  cacheRoot: string
+  mode?: RuntimeSettings['continueMode']
+  trustedBundleHashes?: string[]
+  launchHost?: ContinueHostLauncher
+  modelProfile?: ResolvedModelProfile
+}
+
+export type ContinueHostChild = {
+  exitCode: number | null
+  killed: boolean
+  pid?: number
+  stderr?: {
+    on: (
+      event: 'data',
+      listener: (chunk: Buffer | string) => void
+    ) => unknown
+  } | null
+  once: (
+    event: 'error',
+    listener: (error: Error) => void
+  ) => unknown
+  kill: (signal?: NodeJS.Signals) => unknown
+}
+
+export type ContinueHostLauncher = (
+  entryPath: string,
+  args: string[],
+  options: {
+    cwd: string
+    env: NodeJS.ProcessEnv
+  }
+) => ContinueHostChild
+
+function hashContents(value: string | Buffer): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function replaceExactly(
+  source: string,
+  marker: string,
+  replacement: string
+): string {
+  const first = source.indexOf(marker)
+  if (first < 0 || source.indexOf(marker, first + marker.length) >= 0) {
+    throw new Error('Continue CLI 版本与宿主适配层不兼容')
+  }
+  return `${source.slice(0, first)}${replacement}${source.slice(
+    first + marker.length
+  )}`
+}
+
+async function isFile(filePath: string): Promise<boolean> {
+  try {
+    return (await stat(filePath)).isFile()
+  } catch {
+    return false
+  }
+}
+
+async function resolveDistribution(binaryPath: string): Promise<string> {
+  const canonical = await realpath(binaryPath).catch(() => binaryPath)
+  const candidates = [
+    basename(canonical).toLowerCase() === 'cn.js'
+      ? dirname(canonical)
+      : '',
+    join(dirname(canonical), 'node_modules', '@continuedev', 'cli', 'dist'),
+    join(dirname(binaryPath), 'node_modules', '@continuedev', 'cli', 'dist')
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    if (
+      (await isFile(join(candidate, 'cn.js'))) &&
+      (await isFile(join(candidate, 'index.js')))
+    ) {
+      return candidate
+    }
+  }
+  throw new Error(
+    '当前 Continue 二进制不包含可适配的宿主模块，请使用 npm 安装的 Continue CLI 1.5.47'
+  )
+}
+
+function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolveDelay, reject) => {
+    const finish = (): void => {
+      signal.removeEventListener('abort', abort)
+      resolveDelay()
+    }
+    const timeout = setTimeout(finish, milliseconds)
+    const abort = (): void => {
+      clearTimeout(timeout)
+      signal.removeEventListener('abort', abort)
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
+function safeArgumentSummary(
+  toolArguments: Record<string, unknown>,
+  preview?: unknown[]
+): string {
+  const previewText = preview
+    ?.flatMap((item) => {
+      if (!item || typeof item !== 'object') {
+        return []
+      }
+      const value = item as Record<string, unknown>
+      return typeof value.content === 'string' ? [value.content] : []
+    })
+    .join(' ')
+    .trim()
+  if (previewText) {
+    return previewText
+      .replace(/\bBearer\s+\S+/giu, 'Bearer [REDACTED]')
+      .replace(
+        /\b(api[-_ ]?key|token|secret|password|authorization)\b(\s*[:=]\s*|\s+)(["']?)[^\s"',}]+/giu,
+        '$1$2[REDACTED]'
+      )
+      .slice(0, 1_000)
+  }
+  const redacted = Object.fromEntries(
+    Object.entries(toolArguments).map(([key, value]) => [
+      key,
+      /token|secret|password|api.?key|authorization/iu.test(key)
+        ? '[REDACTED]'
+        : value
+    ])
+  )
+  return JSON.stringify(redacted).slice(0, 1_000)
+}
+
+function extractAssistantText(history: unknown[], startIndex: number): string {
+  for (const item of history.slice(startIndex).reverse()) {
+    if (!item || typeof item !== 'object') {
+      continue
+    }
+    const message = (item as Record<string, unknown>).message
+    if (!message || typeof message !== 'object') {
+      continue
+    }
+    const record = message as Record<string, unknown>
+    if (
+      record.role === 'assistant' &&
+      typeof record.content === 'string' &&
+      record.content.trim()
+    ) {
+      return record.content.trim()
+    }
+  }
+  return ''
+}
+
+export class ContinueHostAdapter {
+  private readonly children = new Set<ContinueHostChild>()
+  private preparation?: Promise<PreparedHost>
+
+  constructor(private readonly options: ContinueHostAdapterOptions) {}
+
+  private async prepare(): Promise<PreparedHost> {
+    if (!isAbsolute(this.options.cacheRoot)) {
+      throw new Error('Continue 宿主缓存目录必须是绝对路径')
+    }
+    const distribution = await resolveDistribution(this.options.binaryPath)
+    const packagePath = resolve(distribution, '..', 'package.json')
+    const packageValue = JSON.parse(await readFile(packagePath, 'utf8')) as {
+      version?: unknown
+    }
+    if (packageValue.version !== supportedVersion) {
+      throw new Error(
+        `Continue 宿主适配层仅支持 ${supportedVersion}，当前版本为 ${
+          typeof packageValue.version === 'string'
+            ? packageValue.version
+            : 'unknown'
+        }`
+      )
+    }
+
+    const sourceBundlePath = join(distribution, 'index.js')
+    const sourceBundle = await readFile(sourceBundlePath, 'utf8')
+    if (Buffer.byteLength(sourceBundle) > maximumBundleBytes) {
+      throw new Error('Continue CLI bundle 超过安全大小限制')
+    }
+    const sourceHash = hashContents(sourceBundle)
+    const trustedHashes = new Set(
+      this.options.trustedBundleHashes ?? supportedBundleHashes
+    )
+    if (!trustedHashes.has(sourceHash)) {
+      throw new Error('Continue CLI bundle 未通过宿主兼容性校验')
+    }
+
+    const serveInitializationMarker =
+      'toolPermissionOverrides:s,headless:!0});let[a,u,l,c]'
+    const permissionOptionsMarker =
+      'i={allow:o.allow,ask:o.ask,exclude:o.exclude,isHeadless:e.headless}'
+    const permissionInitializeMarker =
+      'E6t.initialize({isHeadless:e.headless},r,n)'
+    const serverMarker =
+      'let j=(0,atn.default)();j.use(atn.default.json()),j.get("/state"'
+    const listenMarker =
+      'listen(i,async()=>{console.log(Ht.green(`Server started on http://localhost:${i}`))'
+    const versionCheckMarker =
+      'async function SCt(e){return n5e||'
+    let patched = replaceExactly(
+      sourceBundle,
+      serveInitializationMarker,
+      'toolPermissionOverrides:s,headless:!0,interactivePermissions:!0});let[a,u,l,c]'
+    )
+    patched = replaceExactly(
+      patched,
+      permissionOptionsMarker,
+      'i={allow:o.allow,ask:o.ask,exclude:o.exclude,isHeadless:e.interactivePermissions?!1:e.headless}'
+    )
+    patched = replaceExactly(
+      patched,
+      permissionInitializeMarker,
+      'E6t.initialize({isHeadless:e.interactivePermissions?!1:e.headless},r,n)'
+    )
+    patched = replaceExactly(
+      patched,
+      serverMarker,
+      'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"1mb"})),j.get("/state"'
+    )
+    patched = replaceExactly(
+      patched,
+      listenMarker,
+      'listen(i,"127.0.0.1",async()=>{console.log(Ht.green(`Server started on http://localhost:${i}`))'
+    )
+    patched = replaceExactly(
+      patched,
+      versionCheckMarker,
+      'async function SCt(e){if(process.env.GOODBUDDY_DISABLE_CONTINUE_UPDATES==="1")return null;return n5e||'
+    )
+    const patchedHash = hashContents(patched)
+    const digest = sourceHash.slice(0, 16)
+    const targetRoot = join(
+      this.options.cacheRoot,
+      `host-v2-${supportedVersion}-${digest}`
+    )
+    const targetDist = join(targetRoot, 'dist')
+    const targetBundle = join(targetDist, 'index.js')
+    const readyMarker = join(targetRoot, '.ready')
+    if (
+      (await isFile(readyMarker)) &&
+      (await isFile(join(targetDist, 'cn.js'))) &&
+      (await isFile(join(targetDist, 'utility-bootstrap.mjs'))) &&
+      (await isFile(targetBundle)) &&
+      hashContents(await readFile(targetBundle)) === patchedHash
+    ) {
+      return {
+        entryPath: join(targetDist, 'cn.js'),
+        version: supportedVersion
+      }
+    }
+    await rm(targetRoot, { recursive: true, force: true })
+
+    const stagingRoot = `${targetRoot}.staging-${crypto.randomUUID()}`
+    const stagingDist = join(stagingRoot, 'dist')
+    try {
+      await mkdir(stagingDist, { recursive: true })
+      await Promise.all([
+        writeFile(join(stagingDist, 'index.js'), patched, 'utf8'),
+        copyFile(join(distribution, 'cn.js'), join(stagingDist, 'cn.js')),
+        copyFile(
+          join(distribution, 'xhr-sync-worker.js'),
+          join(stagingDist, 'xhr-sync-worker.js')
+        ),
+        writeFile(
+          join(stagingDist, 'utility-bootstrap.mjs'),
+          utilityBootstrap,
+          'utf8'
+        ),
+        copyFile(packagePath, join(stagingRoot, 'package.json'))
+      ])
+      await writeFile(
+        join(stagingRoot, '.ready'),
+        JSON.stringify({ sourceHash, patchedHash }),
+        'utf8'
+      )
+      await mkdir(this.options.cacheRoot, { recursive: true })
+      await rename(stagingRoot, targetRoot).catch(async (error) => {
+        if (
+          !(await isFile(targetBundle)) ||
+          hashContents(await readFile(targetBundle)) !== patchedHash
+        ) {
+          throw error
+        }
+      })
+    } finally {
+      await rm(stagingRoot, { recursive: true, force: true })
+    }
+    return {
+      entryPath: join(targetDist, 'cn.js'),
+      version: supportedVersion
+    }
+  }
+
+  getPreparedHost(): Promise<PreparedHost> {
+    this.preparation ??= this.prepare().catch((error) => {
+      this.preparation = undefined
+      throw error
+    })
+    return this.preparation
+  }
+
+  private async request(
+    origin: string,
+    token: string,
+    path: string,
+    init: RequestInit = {}
+  ): Promise<unknown> {
+    const response = await fetch(`${origin}${path}`, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...init.headers
+      },
+      redirect: 'error',
+      signal: init.signal
+    })
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    if (contentLength > maximumStateBytes) {
+      throw new Error('Continue 宿主响应超过安全大小限制')
+    }
+    const body = await response.text()
+    if (Buffer.byteLength(body) > maximumStateBytes) {
+      throw new Error('Continue 宿主响应超过安全大小限制')
+    }
+    if (!response.ok) {
+      throw new Error(`Continue 宿主请求失败（HTTP ${response.status}）`)
+    }
+    return body ? JSON.parse(body) : undefined
+  }
+
+  private async waitForStartup(
+    child: ContinueHostChild,
+    getChildFailure: () => Error | undefined,
+    origin: string,
+    token: string,
+    signal: AbortSignal
+  ): Promise<ContinueHostState> {
+    const expiresAt = Date.now() + 30_000
+    while (Date.now() < expiresAt) {
+      signal.throwIfAborted()
+      const childFailure = getChildFailure()
+      if (childFailure) {
+        throw childFailure
+      }
+      if (child.exitCode !== null) {
+        throw new Error('Continue 宿主在启动期间退出')
+      }
+      try {
+        return stateSchema.parse(
+          await this.request(origin, token, '/state', { signal })
+        )
+      } catch {
+        await delay(150, signal)
+      }
+    }
+    throw new Error('Continue 宿主启动超时')
+  }
+
+  async run(
+    prompt: string,
+    signal: AbortSignal,
+    authorize: RuntimeAuthorizer
+  ): Promise<string> {
+    signal.throwIfAborted()
+    let generatedConfigPath: string | undefined
+    if (this.options.modelProfile) {
+      if (!this.options.modelProfile.apiKey) {
+        throw new Error('Continue 独立模型连接尚未配置 API Key')
+      }
+      await mkdir(this.options.cacheRoot, { recursive: true })
+      generatedConfigPath = join(
+        this.options.cacheRoot,
+        `model-config-${crypto.randomUUID()}.yaml`
+      )
+      await writeFile(
+        generatedConfigPath,
+        JSON.stringify({
+          name: 'GoodBuddy Runtime',
+          version: '1.0.0',
+          schema: 'v1',
+          models: [
+            {
+              name: this.options.modelProfile.name,
+              provider: 'anthropic',
+              model: this.options.modelProfile.modelName,
+              apiKey: '${{ secrets.ANTHROPIC_API_KEY }}',
+              apiBase: createAnthropicApiBaseUrl(
+                this.options.modelProfile.baseUrl
+              ),
+              roles: ['chat']
+            }
+          ]
+        }),
+        { encoding: 'utf8', mode: 0o600, flag: 'wx' }
+      )
+    }
+    const [{ entryPath }, port] = await Promise.all([
+      this.getPreparedHost(),
+      getAvailableLoopbackPort()
+    ]).catch(async (error) => {
+      if (generatedConfigPath) {
+        await rm(generatedConfigPath, { force: true })
+      }
+      throw error
+    })
+    const token = randomBytes(32).toString('base64url')
+    const origin = `http://127.0.0.1:${port}`
+    const isolatedGlobalDirectory = join(
+      this.options.cacheRoot,
+      'isolated-global'
+    )
+    await mkdir(isolatedGlobalDirectory, { recursive: true, mode: 0o700 })
+    const args: string[] = []
+    const configPath =
+      generatedConfigPath ?? this.options.configPath.trim()
+    if (configPath) {
+      args.push('--config', configPath)
+    }
+    if (this.options.mode === 'chat') {
+      args.push('--readonly')
+    }
+    args.push('serve', '--port', String(port), '--timeout', '300')
+    const environment = buildRuntimeEnvironment({
+      CONTINUE_CLI_DISABLE_COMMIT_SIGNATURE: '1',
+      CONTINUE_CLI_AUTO_UPDATED: '1',
+      CONTINUE_CLI_ENABLE_TELEMETRY: '0',
+      CONTINUE_METRICS_ENABLED: '0',
+      CONTINUE_GLOBAL_DIR: isolatedGlobalDirectory,
+      FORCE_NO_TTY: '1',
+      GOODBUDDY_CONTINUE_HOST_TOKEN: token,
+      GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1',
+      OTEL_EXPORTER_OTLP_ENDPOINT: '',
+      OTEL_EXPORTER_OTLP_HEADERS: '',
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: '',
+      OTEL_METRICS_EXPORTER: '',
+      OTEL_LOG_USER_PROMPTS: '0'
+    })
+    if (this.options.modelProfile?.apiKey) {
+      environment.ANTHROPIC_API_KEY = this.options.modelProfile.apiKey
+    }
+    let child: ContinueHostChild
+    try {
+      child = (
+        this.options.launchHost ??
+        ((hostEntryPath, hostArgs, hostOptions) =>
+          spawn(
+            process.platform === 'win32' ? 'node.exe' : 'node',
+            [hostEntryPath, ...hostArgs],
+            {
+              ...hostOptions,
+              shell: false,
+              stdio: ['ignore', 'ignore', 'pipe'],
+              windowsHide: true
+            }
+          ))
+      )(entryPath, args, {
+        cwd: this.options.workspace,
+        env: environment
+      })
+    } catch (error) {
+      if (generatedConfigPath) {
+        await rm(generatedConfigPath, { force: true })
+      }
+      throw error
+    }
+    this.children.add(child)
+    let childFailure: Error | undefined
+    child.once('error', (error) => {
+      childFailure = new Error('Continue 宿主进程启动失败', {
+        cause: error
+      })
+    })
+    let stderrBytes = 0
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderrBytes += Buffer.byteLength(chunk)
+      if (stderrBytes > 64 * 1024) {
+        this.terminate(child)
+      }
+    })
+    const abort = (): void => {
+      this.terminate(child)
+    }
+    signal.addEventListener('abort', abort, { once: true })
+
+    try {
+      const initialState = await this.waitForStartup(
+        child,
+        () => childFailure,
+        origin,
+        token,
+        signal
+      )
+      const startIndex = initialState.session.history.length
+      await this.request(origin, token, '/message', {
+        method: 'POST',
+        body: JSON.stringify({ message: prompt }),
+        signal
+      })
+
+      const expiresAt = Date.now() + 10 * 60_000
+      let handledPermissionId: string | undefined
+      while (Date.now() < expiresAt) {
+        signal.throwIfAborted()
+        if (childFailure) {
+          throw childFailure
+        }
+        if (child.exitCode !== null) {
+          throw new Error(
+            `Continue 宿主意外退出（code ${child.exitCode}）`
+          )
+        }
+        const state = stateSchema.parse(
+          await this.request(origin, token, '/state', { signal })
+        )
+        const pending = state.pendingPermission
+        if (pending && pending.requestId !== handledPermissionId) {
+          handledPermissionId = pending.requestId
+          let rule: string | undefined
+          try {
+            rule = createContinuePermissionRule(
+              pending.toolName,
+              pending.toolArgs
+            )
+          } catch {
+            rule = undefined
+          }
+          const argumentDigest = createHash('sha256')
+            .update(JSON.stringify(pending.toolArgs))
+            .digest('hex')
+            .slice(0, 16)
+          const decision: ApprovalDecision = await authorize({
+            scopeKey: `continue:${
+              rule ?? `${pending.toolName}:${argumentDigest}`
+            }`,
+            title: `Continue 请求调用 ${pending.toolName}`,
+            description: '仅在你选择允许后，Continue 才会执行此工具调用。',
+            toolName: pending.toolName,
+            argumentSummary: safeArgumentSummary(
+              pending.toolArgs,
+              pending.toolCallPreview
+            ),
+            allowPermanent: Boolean(rule)
+          })
+          if (decision === 'permanent' && !rule) {
+            throw new Error('该工具调用无法生成安全的永久权限规则')
+          }
+          if (decision === 'permanent' && rule) {
+            await addContinuePermanentPermission(rule)
+          }
+          await this.request(origin, token, '/permission', {
+            method: 'POST',
+            body: JSON.stringify({
+              requestId: pending.requestId,
+              approved: decision !== 'deny'
+            }),
+            signal
+          })
+        }
+        if (
+          !state.isProcessing &&
+          state.messageQueueLength === 0 &&
+          !state.pendingPermission &&
+          state.session.history.length > startIndex
+        ) {
+          const text = extractAssistantText(
+            state.session.history,
+            startIndex
+          )
+          if (!text) {
+            throw new Error('Continue 宿主未返回最终回复')
+          }
+          return text
+        }
+        await delay(150, signal)
+      }
+      throw new Error('Continue 宿主执行超时')
+    } finally {
+      signal.removeEventListener('abort', abort)
+      try {
+        const cleanupSignal = AbortSignal.timeout(1_000)
+        if (signal.aborted) {
+          await this.request(origin, token, '/pause', {
+            method: 'POST',
+            signal: cleanupSignal
+          }).catch(() => undefined)
+        }
+        await this.request(origin, token, '/exit', {
+          method: 'POST',
+          signal: cleanupSignal
+        }).catch(() => undefined)
+      } finally {
+        this.terminate(child)
+        this.children.delete(child)
+        if (generatedConfigPath) {
+          await rm(generatedConfigPath, { force: true })
+        }
+      }
+    }
+  }
+
+  private terminate(child: ContinueHostChild): void {
+    if (child.exitCode !== null || child.killed) {
+      return
+    }
+    if (process.platform === 'win32' && child.pid) {
+      const killer = spawn(
+        'taskkill.exe',
+        ['/PID', String(child.pid), '/T', '/F'],
+        {
+          shell: false,
+          stdio: 'ignore',
+          windowsHide: true
+        }
+      )
+      killer.unref()
+    } else {
+      child.kill('SIGTERM')
+    }
+  }
+
+  dispose(): void {
+    for (const child of this.children) {
+      this.terminate(child)
+    }
+    this.children.clear()
+  }
+}

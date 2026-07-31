@@ -1,76 +1,85 @@
 import type {
+  ApprovalDecision,
   AgentEvent,
   RuntimeSettings
 } from '../shared/contracts'
 
 type PendingApproval = {
-  policy: RuntimeSettings['toolApproval']
-  workspace: string
-  resolve: (approved: boolean) => void
+  conversationId: string
+  scopeKey: string
+  resolve: (decision: ApprovalDecision) => void
   timeout: ReturnType<typeof setTimeout>
+}
+
+export type ToolApprovalRequest = {
+  policy?: RuntimeSettings['toolApproval']
+  requestId: string
+  conversationId: string
+  scopeKey: string
+  title: string
+  description: string
+  toolName?: string
+  argumentSummary?: string
+  allowPermanent?: boolean
 }
 
 export class ToolApprovalBroker {
   private readonly pending = new Map<string, PendingApproval>()
-  private sessionGranted = false
-  private readonly workspaceGrants = new Set<string>()
+  private readonly sessionGrants = new Set<string>()
 
   async request(
-    policy: RuntimeSettings['toolApproval'],
-    requestId: string,
-    workspace: string,
+    request: ToolApprovalRequest,
     signal: AbortSignal,
     send: (event: AgentEvent) => void
-  ): Promise<void> {
+  ): Promise<ApprovalDecision> {
     if (signal.aborted) {
       throw signal.reason
     }
-    if (policy === 'session' && this.sessionGranted) {
-      return
+    const grantKey = this.getGrantKey(
+      request.conversationId,
+      request.scopeKey
+    )
+    if (this.sessionGrants.has(grantKey)) {
+      return 'session'
     }
-    if (policy === 'workspace' && this.workspaceGrants.has(workspace)) {
-      return
-    }
-    if (policy === 'policy') {
-      throw new Error('企业策略尚未授权 Agent 工具执行')
+    if (request.policy === 'policy') {
+      throw new Error('当前策略已禁止 Agent 工具执行')
     }
 
     const approvalId = crypto.randomUUID()
-    const approved = await new Promise<boolean>((resolve) => {
-      const finish = (result: boolean): void => {
+    return new Promise<ApprovalDecision>((resolve) => {
+      const finish = (decision: ApprovalDecision): void => {
         signal.removeEventListener('abort', abort)
-        resolve(result)
+        resolve(decision)
       }
       const abort = (): void => {
-        this.respond(approvalId, false)
+        this.respond(approvalId, 'deny')
       }
       const timeout = setTimeout(() => {
-        this.respond(approvalId, false)
+        this.respond(approvalId, 'deny')
       }, 120_000)
 
       this.pending.set(approvalId, {
-        policy,
-        workspace,
+        conversationId: request.conversationId,
+        scopeKey: request.scopeKey,
         resolve: finish,
         timeout
       })
       signal.addEventListener('abort', abort, { once: true })
       send({
-        requestId,
+        requestId: request.requestId,
         type: 'approval',
         approvalId,
-        title: '允许 Agent 使用工作区工具？',
-        description:
-          '该 Runtime 可能读取或修改工作区文件并执行命令。执行过程仍会显示在对话中。'
+        title: request.title,
+        description: request.description,
+        toolName: request.toolName,
+        argumentSummary: request.argumentSummary,
+        allowPermanent: request.allowPermanent
       })
     })
-
-    if (!approved) {
-      throw new Error('用户拒绝了 Agent 工具执行')
-    }
   }
 
-  respond(approvalId: string, approved: boolean): void {
+  respond(approvalId: string, decision: ApprovalDecision): void {
     const approval = this.pending.get(approvalId)
     if (!approval) {
       return
@@ -78,20 +87,22 @@ export class ToolApprovalBroker {
     clearTimeout(approval.timeout)
     this.pending.delete(approvalId)
 
-    if (approved && approval.policy === 'session') {
-      this.sessionGranted = true
+    if (decision === 'session' || decision === 'permanent') {
+      this.sessionGrants.add(
+        this.getGrantKey(approval.conversationId, approval.scopeKey)
+      )
     }
-    if (approved && approval.policy === 'workspace') {
-      this.workspaceGrants.add(approval.workspace)
-    }
-    approval.resolve(approved)
+    approval.resolve(decision)
+  }
+
+  private getGrantKey(conversationId: string, scopeKey: string): string {
+    return `${conversationId}\u0000${scopeKey}`
   }
 
   clear(): void {
     for (const approvalId of this.pending.keys()) {
-      this.respond(approvalId, false)
+      this.respond(approvalId, 'deny')
     }
-    this.sessionGranted = false
-    this.workspaceGrants.clear()
+    this.sessionGrants.clear()
   }
 }

@@ -18,6 +18,17 @@ export default tseslint.config(
     }
   },
   {
+    files: ['build/**/*.cjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node
+      }
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off'
+    }
+  },
+  {
     files: ['src/renderer/src/**/*.{ts,tsx}'],
     languageOptions: {
       globals: {

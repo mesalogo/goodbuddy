@@ -1,19 +1,26 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   globalShortcut,
   Menu,
   nativeImage,
   safeStorage,
   session,
-  Tray
+  Tray,
+  utilityProcess
 } from 'electron'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { ipcChannels } from '../shared/ipc-channels'
 import { createAgentRuntime } from './agent/create-runtime'
 import { AgentRuntimeController } from './agent/runtime-controller'
+import { CapabilityService } from './capabilities/capability-service'
 import { ContextManager } from './context-manager'
 import { registerIpcHandlers } from './ipc'
+import { KnowledgeService } from './knowledge/knowledge-service'
+import { AssistantDatabase } from './assistant/assistant-database'
+import { createModelGraphExtractor } from './knowledge/model-extractor'
 import { RuntimeSettingsStore } from './runtime-settings-store'
 import { ToolApprovalBroker } from './tool-approval-broker'
 import {
@@ -22,6 +29,11 @@ import {
   showWindow,
   toggleWindow
 } from './window'
+import { resolveBundledRuntimePaths } from './agent/bundled-runtimes'
+import type {
+  ContinueHostChild,
+  ContinueHostLauncher
+} from './agent/continue-host-adapter'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -33,8 +45,60 @@ if (!hasSingleInstanceLock) {
 let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let isQuitting = false
-let removeIpcHandlers: (() => void) | undefined
+let removeIpcHandlers: (() => Promise<void>) | undefined
 let runtime: AgentRuntimeController | undefined
+let knowledgeService: KnowledgeService | undefined
+let assistantDatabase: AssistantDatabase | undefined
+
+const launchContinueHost: ContinueHostLauncher = (
+  entryPath,
+  args,
+  options
+) => {
+  const utilityChild = utilityProcess.fork(
+    join(dirname(entryPath), 'utility-bootstrap.mjs'),
+    [entryPath, ...args],
+    {
+      cwd: options.cwd,
+      env: options.env,
+      serviceName: 'GoodBuddy Continue Host',
+      stdio: 'pipe'
+    }
+  )
+  let exitCode: number | null = null
+  let killed = false
+  utilityChild.on('exit', (code) => {
+    exitCode = code
+  })
+
+  const child: ContinueHostChild = {
+    get exitCode() {
+      return exitCode
+    },
+    get killed() {
+      return killed
+    },
+    get pid() {
+      return utilityChild.pid
+    },
+    stderr: utilityChild.stderr,
+    once: (_event, listener) => {
+      utilityChild.once('error', (_type, location, report) => {
+        listener(
+          new Error(
+            `Continue 宿主进程异常（${location}）：${report.slice(0, 500)}`
+          )
+        )
+      })
+      return child
+    },
+    kill: () => {
+      killed = true
+      return utilityChild.kill()
+    }
+  }
+  return child
+}
 
 function createTrayIcon(): Electron.NativeImage {
   const svg = [
@@ -64,7 +128,16 @@ function buildTray(): Tray {
         click: () => {
           if (mainWindow) {
             showWindow(mainWindow)
-            mainWindow.webContents.send('conversation:new')
+            mainWindow.webContents.send(ipcChannels.conversationNew)
+          }
+        }
+      },
+      {
+        label: '设置',
+        click: () => {
+          if (mainWindow) {
+            showWindow(mainWindow)
+            mainWindow.webContents.send(ipcChannels.settingsOpen)
           }
         }
       },
@@ -97,34 +170,105 @@ if (hasSingleInstanceLock) {
     app.setAppUserModelId('live.digiman.goodbuddy')
 
     session.defaultSession.setPermissionRequestHandler(
-      (_webContents, _permission, callback) => callback(false)
+      (webContents, permission, callback, details) => {
+        const mediaTypes =
+          'mediaTypes' in details && Array.isArray(details.mediaTypes)
+            ? details.mediaTypes
+            : []
+        callback(
+          permission === 'media' &&
+            webContents === mainWindow?.webContents &&
+            mediaTypes.includes('audio') &&
+            !mediaTypes.includes('video')
+        )
+      }
     )
-    session.defaultSession.setPermissionCheckHandler(() => false)
+    session.defaultSession.setPermissionCheckHandler(
+      (webContents, permission, _origin, details) =>
+        permission === 'media' &&
+        webContents === mainWindow?.webContents &&
+        details.mediaType === 'audio'
+    )
 
     mainWindow = createMainWindow(() => isQuitting)
     tray = buildTray()
     const defaultWorkspace = process.env.GOODBUDDY_WORKSPACE ?? homedir()
+    const secureCipher = {
+      isAvailable: () =>
+        safeStorage.isEncryptionAvailable() &&
+        (process.platform !== 'linux' ||
+          [
+            'gnome_libsecret',
+            'kwallet',
+            'kwallet5',
+            'kwallet6'
+          ].includes(safeStorage.getSelectedStorageBackend())),
+      encrypt: (value: string) => safeStorage.encryptString(value),
+      decrypt: (value: Buffer) => safeStorage.decryptString(value)
+    }
     const settingsStore = new RuntimeSettingsStore(
       join(app.getPath('userData'), 'runtime-settings.json'),
-      {
-        isAvailable: () =>
-          safeStorage.isEncryptionAvailable() &&
-          (process.platform !== 'linux' ||
-            [
-              'gnome_libsecret',
-              'kwallet',
-              'kwallet5',
-              'kwallet6'
-            ].includes(safeStorage.getSelectedStorageBackend())),
-        encrypt: (value) => safeStorage.encryptString(value),
-        decrypt: (value) => safeStorage.decryptString(value)
-      }
+      secureCipher
     )
+    const capabilityService = new CapabilityService(
+      join(app.getPath('userData'), 'capabilities.json'),
+      app.isPackaged
+        ? join(process.resourcesPath, 'skills')
+        : join(app.getAppPath(), 'resources', 'skills'),
+      join(app.getPath('userData'), 'skills', 'imported'),
+      secureCipher
+    )
+    const bundledRuntimePaths = resolveBundledRuntimePaths({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged
+    })
+    knowledgeService = new KnowledgeService({
+      databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
+      managedRoot: join(app.getPath('userData'), 'knowledge'),
+      extractStructured: createModelGraphExtractor(settingsStore)
+    })
+    await knowledgeService.initialize()
+    assistantDatabase = new AssistantDatabase(
+      join(app.getPath('userData'), 'assistant.sqlite')
+    )
+    assistantDatabase.initialize(defaultWorkspace)
+    const createConfiguredRuntime = async () => {
+      const settings = await settingsStore.getResolvedSettings()
+      const useOpenCode =
+        settings.provider === 'opencode' ||
+        (settings.provider === 'auto' &&
+          Boolean(
+            settings.opencodeBaseUrl || settings.opencodeEmbedded
+          ))
+      const target =
+        settings.provider === 'continue'
+          ? ('continue' as const)
+          : useOpenCode
+            ? ('opencode' as const)
+            : ('model' as const)
+      const [skillInstructions, mcpServers] = await Promise.all([
+        capabilityService.getSkillInstructions(
+          target,
+          target === 'continue' ? 12_000 : 48_000
+        ),
+        target === 'opencode'
+          ? capabilityService.getResolvedMcpServers('opencode')
+          : Promise.resolve([])
+      ])
+      return createAgentRuntime(defaultWorkspace, settings, {
+        skillInstructions,
+        mcpServers,
+        continueHostCacheRoot: join(
+          app.getPath('userData'),
+          'continue-host'
+        ),
+        bundledRuntimePaths,
+        continueHostLauncher: launchContinueHost
+      })
+    }
     runtime = new AgentRuntimeController(
-      createAgentRuntime(
-        defaultWorkspace,
-        await settingsStore.getResolvedSettings()
-      )
+      await createConfiguredRuntime()
     )
     const contextManager = new ContextManager()
     const approvalBroker = new ToolApprovalBroker()
@@ -140,16 +284,16 @@ if (hasSingleInstanceLock) {
       runtime,
       shortcutRegistered ? shortcut : '未注册',
       settingsStore,
+      capabilityService,
       contextManager,
+      knowledgeService,
+      assistantDatabase,
       approvalBroker,
-      defaultWorkspace,
+      bundledRuntimePaths,
       async () => {
         if (runtime) {
           await runtime.replace(
-            createAgentRuntime(
-              defaultWorkspace,
-              await settingsStore.getResolvedSettings()
-            )
+            await createConfiguredRuntime()
           )
         }
       }
@@ -161,16 +305,45 @@ if (hasSingleInstanceLock) {
         showWindow(mainWindow)
       }
     })
+  }).catch(() => {
+    dialog.showErrorBox(
+      'GoodBuddy 启动失败',
+      '本地数据或 Runtime 服务初始化失败。请重启应用；若问题持续，请备份后清理应用数据。'
+    )
+    app.quit()
   })
 }
 
-app.on('before-quit', () => {
+let cleanupStarted = false
+let cleanupComplete = false
+
+app.on('before-quit', (event) => {
   isQuitting = true
+  if (cleanupComplete) {
+    return
+  }
+  event.preventDefault()
+  if (cleanupStarted) {
+    return
+  }
+  cleanupStarted = true
+  void (async () => {
+    try {
+      await Promise.allSettled([removeIpcHandlers?.()])
+      globalShortcut.unregisterAll()
+      tray?.destroy()
+      await Promise.allSettled([
+        runtime?.dispose(),
+        knowledgeService?.dispose()
+      ])
+    } finally {
+      assistantDatabase?.close()
+      cleanupComplete = true
+      app.quit()
+    }
+  })()
 })
 
 app.on('will-quit', () => {
-  removeIpcHandlers?.()
-  globalShortcut.unregisterAll()
-  tray?.destroy()
-  void runtime?.dispose()
+  cleanupComplete = true
 })

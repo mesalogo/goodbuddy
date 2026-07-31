@@ -7,9 +7,14 @@ describe('ToolApprovalBroker', () => {
     const broker = new ToolApprovalBroker()
     const send = vi.fn<(event: AgentEvent) => void>()
     const firstApproval = broker.request(
-      'session',
-      'cf725fa7-709f-4417-81f7-40d0aa84da78',
-      'workspace',
+      {
+        requestId: 'cf725fa7-709f-4417-81f7-40d0aa84da78',
+        conversationId: 'conversation-1',
+        scopeKey: 'continue:Bash(git status)',
+        title: 'Continue 请求调用 Bash',
+        description: 'git status',
+        allowPermanent: true
+      },
       new AbortController().signal,
       send
     )
@@ -19,18 +24,22 @@ describe('ToolApprovalBroker', () => {
       throw new Error('Approval event was not emitted')
     }
 
-    broker.respond(event.approvalId, true)
-    await expect(firstApproval).resolves.toBeUndefined()
+    broker.respond(event.approvalId, 'session')
+    await expect(firstApproval).resolves.toBe('session')
 
     await expect(
       broker.request(
-        'session',
-        '90536266-3db8-4d64-969d-552635c3172e',
-        'workspace',
+        {
+          requestId: '90536266-3db8-4d64-969d-552635c3172e',
+          conversationId: 'conversation-1',
+          scopeKey: 'continue:Bash(git status)',
+          title: 'Continue 请求调用 Bash',
+          description: 'git status'
+        },
         new AbortController().signal,
         send
       )
-    ).resolves.toBeUndefined()
+    ).resolves.toBe('session')
     expect(send).toHaveBeenCalledOnce()
   })
 
@@ -38,12 +47,17 @@ describe('ToolApprovalBroker', () => {
     const broker = new ToolApprovalBroker()
     await expect(
       broker.request(
-        'policy',
-        '90536266-3db8-4d64-969d-552635c3172e',
-        'workspace',
+        {
+          policy: 'policy',
+          requestId: '90536266-3db8-4d64-969d-552635c3172e',
+          conversationId: 'conversation-1',
+          scopeKey: 'runtime:whole-run',
+          title: 'Agent',
+          description: '工具执行'
+        },
         new AbortController().signal,
         vi.fn()
       )
-    ).rejects.toThrow('企业策略尚未授权')
+    ).rejects.toThrow('当前策略已禁止')
   })
 })
