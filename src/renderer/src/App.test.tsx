@@ -441,6 +441,7 @@ describe('App', () => {
     })
 
     expect(await screen.findByText('这是回答内容')).toBeInTheDocument()
+    expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
   it('keeps a draft in chat when Enter is pressed while the runtime loads', async () => {
@@ -573,6 +574,13 @@ describe('App', () => {
 
     fireEvent.click(screen.getByText('任务与活动'))
     const stats = await screen.findByLabelText('Token 用量统计')
+    expect(
+      screen.getByRole('heading', { level: 1, name: '任务与活动' })
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText('专家角色')).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('切换助手工作栏')
+    ).not.toBeInTheDocument()
     await waitFor(() =>
       expect(api.usage.getTokenSummary).toHaveBeenCalledOnce()
     )

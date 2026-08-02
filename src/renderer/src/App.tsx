@@ -69,6 +69,7 @@ import {
 import { KnowledgeWorkspace } from './KnowledgeWorkspace'
 import { HeartbeatCenter } from './HeartbeatCenter'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { PageShell, ScopeBadge } from './WorkspacePrimitives'
 import {
   ProjectSwitcher,
   workModeLabels
@@ -579,6 +580,10 @@ function App(): React.JSX.Element {
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeId),
     [activeId, conversations]
+  )
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId),
+    [activeProjectId, projects]
   )
   const filteredConversations = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase()
@@ -2078,7 +2083,7 @@ function App(): React.JSX.Element {
             type="button"
           >
             <History size={17} />
-            <span>最近对话</span>
+            <span>对话</span>
           </button>
           <button
             className={
@@ -2127,7 +2132,7 @@ function App(): React.JSX.Element {
         </nav>
 
         <div className="conversation-list">
-          <p className="section-label">对话</p>
+          <p className="section-label">最近会话</p>
           {filteredConversations.map((conversation) => (
             <div className="conversation-row" key={conversation.id}>
               <button
@@ -2224,7 +2229,7 @@ function App(): React.JSX.Element {
             >
               <span>
                 {view === 'knowledge'
-                  ? '本地知识库'
+                  ? '知识库'
                   : view === 'heartbeat'
                     ? '智能心跳'
                   : view === 'activity'
@@ -2235,6 +2240,21 @@ function App(): React.JSX.Element {
               </span>
               {view === 'chat' && <Edit3 size={14} />}
             </button>
+          )}
+          {view === 'chat' && (
+            <ScopeBadge
+              scope={
+                activeProject
+                  ? {
+                      kind: 'project',
+                      projectName: activeProject.name
+                    }
+                  : {
+                      kind: 'unavailable',
+                      explanation: '当前项目尚未加载。'
+                    }
+              }
+            />
           )}
           <div className="topbar__actions">
             {view === 'chat' && (
@@ -2257,9 +2277,7 @@ function App(): React.JSX.Element {
                 </button>
               </>
             )}
-            {view !== 'settings' &&
-              view !== 'heartbeat' &&
-              view !== 'knowledge' && (
+            {view === 'chat' && (
               <select
                 aria-label="专家角色"
                 className="topbar__expert"
@@ -2294,9 +2312,7 @@ function App(): React.JSX.Element {
                 <span className="runtime-capability-badge">生图</span>
               )}
             </span>
-            {view !== 'settings' &&
-              view !== 'heartbeat' &&
-              view !== 'knowledge' && (
+            {view === 'chat' && (
               <button
                 aria-label="切换助手工作栏"
                 aria-pressed={assistantSidebarOpen}
@@ -2341,7 +2357,7 @@ function App(): React.JSX.Element {
         </header>
 
         {view === 'chat' ? (
-          <>
+          <PageShell variant="reading">
             <section className="chat" ref={scrollRef}>
           {activeConversation?.messages.length === 1 && (
             <div className="welcome">
@@ -2924,9 +2940,9 @@ function App(): React.JSX.Element {
             {appInfo?.shortcut && ` 快捷唤起：${appInfo.shortcut}`}
           </p>
             </footer>
-          </>
+          </PageShell>
         ) : view === 'knowledge' ? (
-          <div className="workspace-panel-scroll workspace-panel-scroll--knowledge">
+          <PageShell variant="master-detail">
             <KnowledgeWorkspace
               documents={knowledgeSnapshot.documents}
               evidence={knowledgeSnapshot.evidence}
@@ -3072,11 +3088,12 @@ function App(): React.JSX.Element {
               selectedLibraryId={knowledgeSnapshot.selectedLibraryId}
               sources={knowledgeSnapshot.sources}
             />
-          </div>
+          </PageShell>
         ) : view === 'heartbeat' ? (
-          <div className="workspace-panel-scroll workspace-panel-scroll--heartbeat">
+          <PageShell variant="dashboard">
             <HeartbeatCenter
               configs={assistantHeartbeats}
+              currentProjectName={activeProject?.name}
               entries={heartbeatEntries}
               memories={assistantMemories}
               onCreate={createHeartbeat}
@@ -3090,7 +3107,7 @@ function App(): React.JSX.Element {
               runs={heartbeatRuns}
               tasks={assistantTasks}
             />
-          </div>
+          </PageShell>
         ) : view === 'settings' ? (
           <SettingsPanel
             appearanceTheme={appearanceTheme}
@@ -3110,14 +3127,14 @@ function App(): React.JSX.Element {
             presentation="page"
           />
         ) : (
-          <div className="workspace-panel-scroll">
+          <PageShell variant="dashboard">
             <ActivityPanel
               onClear={() => setActivityRecords([])}
               onOpenConversation={openActivityConversation}
               records={activityRecords}
               tokenUsage={tokenUsage}
             />
-          </div>
+          </PageShell>
         )}
       </main>
       <RightAssistantSidebar
@@ -3204,10 +3221,7 @@ function App(): React.JSX.Element {
         }}
         onTabChange={setAssistantSidebarTab}
         open={
-          assistantSidebarOpen &&
-          view !== 'settings' &&
-          view !== 'heartbeat' &&
-          view !== 'knowledge'
+          assistantSidebarOpen && view === 'chat'
         }
         schedules={assistantSchedules}
         tab={assistantSidebarTab}

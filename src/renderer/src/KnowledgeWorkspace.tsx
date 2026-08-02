@@ -30,6 +30,12 @@ import {
   useRef,
   useState
 } from 'react'
+import {
+  EmptyState,
+  PageHeader,
+  PageTabs,
+  type PageTab
+} from './WorkspacePrimitives'
 
 export type KnowledgeStorageMode = 'reference' | 'managed'
 export type KnowledgeGraphStrategy =
@@ -242,64 +248,51 @@ const styles = {
   workspace: {
     display: 'grid',
     overflow: 'hidden',
-    border: '1px solid #d9d9d9',
-    borderRadius: 8,
-    background: '#f5f5f5',
-    color: '#1f1f1f',
-    boxShadow: '0 2px 8px rgba(0, 0, 0, .06)'
+    border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-card)',
+    background: 'var(--surface-canvas)',
+    color: 'var(--text-primary)',
+    boxShadow: 'var(--shadow-card)'
   },
   sidebar: {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: 16,
-    background: '#fafafa'
+    background: 'var(--surface-subtle)'
   },
   surface: {
-    border: '1px solid #d9d9d9',
-    borderRadius: 8,
-    background: '#ffffff'
+    border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-control)',
+    background: 'var(--surface-raised)'
   },
   button: {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    minHeight: 36,
-    padding: '8px 12px',
-    border: '1px solid #d9d9d9',
-    borderRadius: 6,
-    background: '#ffffff',
-    color: '#1f1f1f',
-    cursor: 'pointer',
     font: 'inherit'
-  },
-  primaryButton: {
-    background: '#1677ff',
-    borderColor: '#1677ff',
-    color: '#ffffff',
-    fontWeight: 700
   },
   input: {
     width: '100%',
     boxSizing: 'border-box' as const,
     minHeight: 40,
     padding: '9px 11px',
-    border: '1px solid #d9d9d9',
-    borderRadius: 6,
+    border: '1px solid var(--border-control)',
+    borderRadius: 'var(--radius-control)',
     outline: 'none',
-    background: '#ffffff',
-    color: '#1f1f1f',
+    background: 'var(--surface-raised)',
+    color: 'var(--text-primary)',
     font: 'inherit'
   },
   label: {
     display: 'grid',
     gap: 7,
-    color: '#595959',
+    color: 'var(--text-secondary)',
     fontSize: 13,
     fontWeight: 650
   },
   muted: {
-    color: '#8c8c8c',
+    color: 'var(--text-muted)',
     fontSize: 13,
     lineHeight: 1.55
   }
@@ -380,7 +373,7 @@ function ProgressBar({
         height: 5,
         overflow: 'hidden',
         borderRadius: 999,
-        background: '#f0f0f0'
+        background: 'var(--surface-muted)'
       }}
     >
       <span
@@ -388,7 +381,8 @@ function ProgressBar({
           display: 'block',
           width: `${value}%`,
           height: '100%',
-          background: value === 100 ? '#52c41a' : '#1677ff',
+          background:
+            value === 100 ? 'var(--success)' : 'var(--accent)',
           transition: 'width .2s ease'
         }}
       />
@@ -452,7 +446,7 @@ function CreateLibraryWizard({
       }}
     >
       <div>
-        <span style={{ color: '#1677ff', fontSize: 12, fontWeight: 800 }}>
+        <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800 }}>
           NEW KNOWLEDGE BASE
         </span>
         <h2 style={{ margin: '5px 0 0', fontSize: 22 }}>创建知识库</h2>
@@ -565,17 +559,27 @@ function CreateLibraryWizard({
         </label>
       )}
       {error && (
-        <p aria-live="polite" role="alert" style={{ color: '#ff4d4f', margin: 0 }}>
+        <p
+          aria-live="polite"
+          role="alert"
+          style={{ color: 'var(--danger)', margin: 0 }}
+        >
           {error}
         </p>
       )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <button onClick={onCancel} style={styles.button} type="button">
+        <button
+          className="secondary-button"
+          onClick={onCancel}
+          style={styles.button}
+          type="button"
+        >
           取消
         </button>
         <button
+          className="primary-button"
           disabled={saving}
-          style={{ ...styles.button, ...styles.primaryButton }}
+          style={styles.button}
           type="submit"
         >
           {saving ? (
@@ -627,7 +631,7 @@ function DeleteLibraryDialog({
         display: 'grid',
         placeItems: 'center',
         padding: 20,
-        background: 'rgba(0, 0, 0, .45)'
+        background: 'var(--overlay-backdrop)'
       }}
     >
       <div
@@ -635,10 +639,10 @@ function DeleteLibraryDialog({
           ...styles.surface,
           width: 'min(440px, 100%)',
           padding: 20,
-          boxShadow: '0 6px 16px rgba(0, 0, 0, .08)'
+          boxShadow: 'var(--shadow-dialog)'
         }}
       >
-        <AlertCircle color="#ff4d4f" aria-hidden="true" size={26} />
+        <AlertCircle color="var(--danger)" aria-hidden="true" size={26} />
         <h2 style={{ margin: '12px 0 8px' }}>删除“{library.name}”？</h2>
         <p style={{ ...styles.muted, margin: 0 }}>
           {library.storageMode === 'managed'
@@ -646,7 +650,11 @@ function DeleteLibraryDialog({
             : '此知识库引用原文件。删除后只会移除索引和图谱，不会删除磁盘上的原文件。'}
         </p>
         {error && (
-          <p aria-live="polite" role="alert" style={{ color: '#ff4d4f' }}>
+          <p
+            aria-live="polite"
+            role="alert"
+            style={{ color: 'var(--danger)' }}
+          >
             {error}
           </p>
         )}
@@ -658,18 +666,19 @@ function DeleteLibraryDialog({
             marginTop: 18
           }}
         >
-          <button disabled={deleting} onClick={onCancel} style={styles.button}>
+          <button
+            className="secondary-button"
+            disabled={deleting}
+            onClick={onCancel}
+            style={styles.button}
+          >
             取消
           </button>
           <button
+            className="danger-button"
             disabled={deleting}
             onClick={() => void confirm()}
-            style={{
-              ...styles.button,
-              background: '#ff4d4f',
-              borderColor: '#ff4d4f',
-              color: '#ffffff'
-            }}
+            style={styles.button}
           >
             <Trash2 aria-hidden="true" size={15} />
             {deleting ? '删除中…' : '确认删除'}
@@ -771,6 +780,7 @@ function DocumentsView({
           </div>
           <div className="knowledge-documents__import-actions">
             <button
+              className="secondary-button"
               onClick={() => fileInputRef.current?.click()}
               style={styles.button}
               type="button"
@@ -779,6 +789,7 @@ function DocumentsView({
               导入文件
             </button>
             <button
+              className="secondary-button"
               onClick={() =>
                 void run('directory', () =>
                   onImportDirectory(
@@ -795,6 +806,7 @@ function DocumentsView({
               导入目录
             </button>
             <button
+              className="secondary-button"
               onClick={() => setUrlOpen((current) => !current)}
               style={styles.button}
               type="button"
@@ -895,14 +907,16 @@ function DocumentsView({
               value={url}
             />
             <button
+              className="primary-button"
               disabled={pending === 'url'}
-              style={{ ...styles.button, ...styles.primaryButton }}
+              style={styles.button}
               type="submit"
             >
               导入
             </button>
             <button
               aria-label="关闭 URL 导入"
+              className="secondary-button"
               onClick={() => setUrlOpen(false)}
               style={styles.button}
               type="button"
@@ -931,11 +945,15 @@ function DocumentsView({
           style={{
             marginTop: 12,
             padding: 18,
-            border: `1px dashed ${dragging ? '#1677ff' : '#d9d9d9'}`,
+            border: `1px dashed ${
+              dragging ? 'var(--accent)' : 'var(--border-default)'
+            }`,
             borderRadius: 8,
             textAlign: 'center',
-            background: dragging ? '#e6f4ff' : '#fafafa',
-            color: dragging ? '#1677ff' : '#8c8c8c'
+            background: dragging
+              ? 'var(--accent-subtle)'
+              : 'var(--surface-subtle)',
+            color: dragging ? 'var(--accent)' : 'var(--text-muted)'
           }}
         >
           <UploadCloud aria-hidden="true" size={22} />
@@ -945,7 +963,11 @@ function DocumentsView({
         </div>
 
         {error && (
-          <p aria-live="polite" role="alert" style={{ color: '#ff4d4f' }}>
+          <p
+            aria-live="polite"
+            role="alert"
+            style={{ color: 'var(--danger)' }}
+          >
             {error}
           </p>
         )}
@@ -1011,16 +1033,16 @@ function DocumentsView({
                         borderRadius: 999,
                         background:
                           source.status === 'failed'
-                            ? '#fff2f0'
+                            ? 'var(--danger-subtle)'
                             : source.status === 'ready'
-                              ? '#f6ffed'
-                              : '#e6f4ff',
+                              ? 'var(--success-subtle)'
+                              : 'var(--accent-subtle)',
                         color:
                           source.status === 'failed'
-                            ? '#ff4d4f'
+                            ? 'var(--danger)'
                             : source.status === 'ready'
-                              ? '#52c41a'
-                              : '#1677ff',
+                              ? 'var(--success)'
+                              : 'var(--accent)',
                         fontSize: 12
                       }}
                     >
@@ -1040,7 +1062,13 @@ function DocumentsView({
                     </div>
                   )}
                   {source.error && (
-                    <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 5 }}>
+                    <div
+                      style={{
+                        color: 'var(--danger)',
+                        fontSize: 12,
+                        marginTop: 5
+                      }}
+                    >
                       {source.error}
                     </div>
                   )}
@@ -1049,6 +1077,7 @@ function DocumentsView({
                   {source.status === 'syncing' ? (
                     <button
                       aria-label={`暂停 ${source.name}`}
+                      className="secondary-button"
                       disabled={pending === source.id}
                       onClick={() =>
                         void run(source.id, () => onPauseSource(source.id))
@@ -1062,6 +1091,7 @@ function DocumentsView({
                   ) : source.status === 'failed' ? (
                     <button
                       aria-label={`重试 ${source.name}`}
+                      className="secondary-button"
                       disabled={pending === source.id}
                       onClick={() =>
                         void run(source.id, () => onRetrySource(source.id))
@@ -1075,6 +1105,7 @@ function DocumentsView({
                   ) : (
                     <button
                       aria-label={`同步 ${source.name}`}
+                      className="secondary-button"
                       disabled={pending === source.id}
                       onClick={() =>
                         void run(source.id, () => onSyncSource(source.id))
@@ -1088,6 +1119,7 @@ function DocumentsView({
                   )}
                   <button
                     aria-label={`移除来源 ${source.name}`}
+                    className="danger-button danger-button--quiet"
                     disabled={pending === source.id}
                     onClick={() =>
                       void run(source.id, () => onRemoveSource(source.id))
@@ -1122,7 +1154,11 @@ function DocumentsView({
             <Search
               aria-hidden="true"
               size={15}
-              style={{ position: 'absolute', left: 11, color: '#8c8c8c' }}
+              style={{
+                position: 'absolute',
+                left: 11,
+                color: 'var(--text-muted)'
+              }}
             />
             <span style={{ position: 'absolute', clip: 'rect(0 0 0 0)' }}>
               搜索文档
@@ -1154,9 +1190,9 @@ function DocumentsView({
             >
               <thead
                 style={{
-                  color: '#595959',
+                  color: 'var(--text-secondary)',
                   textAlign: 'left',
-                  background: '#fafafa'
+                  background: 'var(--surface-subtle)'
                 }}
               >
                 <tr>
@@ -1172,7 +1208,7 @@ function DocumentsView({
                   <tr
                     key={document.id}
                     style={{
-                      borderTop: '1px solid #f0f0f0'
+                      borderTop: '1px solid var(--border-subtle)'
                     }}
                   >
                     <td style={{ padding: 10 }}>
@@ -1196,18 +1232,20 @@ function DocumentsView({
                         style={{
                           color:
                             document.status === 'failed'
-                              ? '#ff4d4f'
+                              ? 'var(--danger)'
                               : document.status === 'ready'
-                                ? '#52c41a'
+                                ? 'var(--success)'
                                 : document.status === 'indexing'
-                                  ? '#1677ff'
-                                  : '#faad14'
+                                  ? 'var(--accent)'
+                                  : 'var(--warning)'
                         }}
                       >
                         {documentStatusLabels[document.status]}
                       </span>
                       {document.error && (
-                        <div style={{ color: '#ff4d4f', marginTop: 4 }}>
+                        <div
+                          style={{ color: 'var(--danger)', marginTop: 4 }}
+                        >
                           {document.error}
                         </div>
                       )}
@@ -1304,10 +1342,15 @@ function EntityEditor({
         />
       </label>
       <div style={{ display: 'flex', gap: 8 }}>
-        <button style={{ ...styles.button, ...styles.primaryButton }}>
+        <button className="primary-button" style={styles.button}>
           {node ? '保存实体' : '新增实体'}
         </button>
-        <button onClick={onCancel} style={styles.button} type="button">
+        <button
+          className="secondary-button"
+          onClick={onCancel}
+          style={styles.button}
+          type="button"
+        >
           取消
         </button>
       </div>
@@ -1414,10 +1457,15 @@ function RelationForm({
         />
       </label>
       <div style={{ display: 'flex', gap: 7 }}>
-        <button style={{ ...styles.button, ...styles.primaryButton }}>
+        <button className="primary-button" style={styles.button}>
           {relation ? '保存关系' : '新增关系'}
         </button>
-        <button onClick={onCancel} style={styles.button} type="button">
+        <button
+          className="secondary-button"
+          onClick={onCancel}
+          style={styles.button}
+          type="button"
+        >
           取消
         </button>
       </div>
@@ -1586,6 +1634,7 @@ function GraphView({
             ))}
           </select>
           <button
+            className="secondary-button"
             onClick={() => {
               setSelectedNodeId(undefined)
               setCreatingEntity(true)
@@ -1598,6 +1647,7 @@ function GraphView({
           </button>
           <button
             aria-label="缩小图谱"
+            className="secondary-button"
             disabled={zoom <= 0.5}
             onClick={() =>
               setZoom((current) => Math.max(0.5, current - 0.15))
@@ -1609,12 +1659,17 @@ function GraphView({
           </button>
           <span
             aria-live="polite"
-            style={{ minWidth: 42, color: '#8c8c8c', fontSize: 12 }}
+            style={{
+              minWidth: 42,
+              color: 'var(--text-muted)',
+              fontSize: 12
+            }}
           >
             {Math.round(zoom * 100)}%
           </span>
           <button
             aria-label="放大图谱"
+            className="secondary-button"
             disabled={zoom >= 2}
             onClick={() =>
               setZoom((current) => Math.min(2, current + 0.15))
@@ -1631,7 +1686,7 @@ function GraphView({
               display: 'grid',
               placeItems: 'center',
               padding: 30,
-              color: '#8c8c8c',
+              color: 'var(--text-muted)',
               textAlign: 'center'
             }}
           >
@@ -1667,7 +1722,7 @@ function GraphView({
             className="knowledge-graph__svg"
             style={{
               width: '100%',
-              background: '#fafafa',
+              background: 'var(--surface-subtle)',
               touchAction: 'none'
             }}
             viewBox={`0 0 ${900 / zoom} ${560 / zoom}`}
@@ -1681,7 +1736,10 @@ function GraphView({
                 refX="17"
                 refY="3.5"
               >
-                <polygon fill="#8c8c8c" points="0 0, 7 3.5, 0 7" />
+                <polygon
+                  fill="var(--text-muted)"
+                  points="0 0, 7 3.5, 0 7"
+                />
               </marker>
             </defs>
             {visibleRelations.map((relation) => {
@@ -1694,7 +1752,7 @@ function GraphView({
                 <g key={relation.id}>
                   <line
                     markerEnd="url(#knowledge-arrow)"
-                    stroke="#8c8c8c"
+                    stroke="var(--text-muted)"
                     strokeWidth="1.5"
                     x1={source.x}
                     x2={target.x}
@@ -1702,7 +1760,7 @@ function GraphView({
                     y2={target.y}
                   />
                   <text
-                    fill="#595959"
+                    fill="var(--text-secondary)"
                     fontSize="11"
                     textAnchor="middle"
                     x={(source.x + target.x) / 2}
@@ -1751,13 +1809,19 @@ function GraphView({
                   }}
                 >
                   <circle
-                    fill={selected ? '#bae0ff' : '#e6f4ff'}
+                    fill={
+                      selected
+                        ? 'var(--accent-selected)'
+                        : 'var(--accent-subtle)'
+                    }
                     r={selected ? 30 : 26}
-                    stroke={selected ? '#1677ff' : '#4096ff'}
+                    stroke={
+                      selected ? 'var(--accent)' : 'var(--accent-hover)'
+                    }
                     strokeWidth={selected ? 3 : 2}
                   />
                   <text
-                    fill="#1f1f1f"
+                    fill="var(--text-primary)"
                     fontSize="12"
                     fontWeight="700"
                     textAnchor="middle"
@@ -1768,7 +1832,7 @@ function GraphView({
                       : node.label}
                   </text>
                   <text
-                    fill="#595959"
+                    fill="var(--text-secondary)"
                     fontSize="10"
                     textAnchor="middle"
                     y="44"
@@ -1822,13 +1886,14 @@ function GraphView({
             }}
           >
             <div>
-              <span style={{ color: '#1677ff', fontSize: 12 }}>
+              <span style={{ color: 'var(--accent)', fontSize: 12 }}>
                 {selectedNode.type}
               </span>
               <h3 style={{ margin: '4px 0 0' }}>{selectedNode.label}</h3>
             </div>
             <button
               aria-label="关闭实体详情"
+              className="secondary-button"
               onClick={() => setSelectedNodeId(undefined)}
               style={{ ...styles.button, padding: 7 }}
               type="button"
@@ -1860,6 +1925,7 @@ function GraphView({
               )}
               <div style={{ display: 'flex', gap: 7 }}>
                 <button
+                  className="secondary-button"
                   onClick={() => setEditingEntity(true)}
                   style={styles.button}
                   type="button"
@@ -1868,6 +1934,7 @@ function GraphView({
                   编辑
                 </button>
                 <button
+                  className="danger-button danger-button--quiet"
                   onClick={() => void onDeleteEntity(selectedNode.id)}
                   style={styles.button}
                   type="button"
@@ -1883,7 +1950,7 @@ function GraphView({
             style={{
               margin: '16px 0',
               border: 0,
-              borderTop: '1px solid #f0f0f0'
+              borderTop: '1px solid var(--border-subtle)'
             }}
           />
           <div
@@ -1895,6 +1962,7 @@ function GraphView({
           >
             <strong>关系</strong>
             <button
+              className="secondary-button"
               onClick={() => setRelationForm('new')}
               style={{ ...styles.button, padding: '6px 9px' }}
               type="button"
@@ -1964,6 +2032,7 @@ function GraphView({
                   <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
                     <button
                       aria-label={`编辑关系 ${relation.type}`}
+                      className="secondary-button"
                       onClick={() => setRelationForm(relation)}
                       style={{ ...styles.button, padding: 6 }}
                       type="button"
@@ -1972,6 +2041,7 @@ function GraphView({
                     </button>
                     <button
                       aria-label={`删除关系 ${relation.type}`}
+                      className="danger-button danger-button--quiet"
                       onClick={() => void onDeleteRelation(relation.id)}
                       style={{ ...styles.button, padding: 6 }}
                       type="button"
@@ -1980,6 +2050,7 @@ function GraphView({
                     </button>
                     {other && (
                       <button
+                        className="secondary-button"
                         onClick={() => setSelectedNodeId(other.id)}
                         style={{
                           ...styles.button,
@@ -2018,6 +2089,7 @@ function GraphView({
             </select>
             <button
               aria-label="合并到目标实体"
+              className="secondary-button"
               disabled={!mergeTargetId}
               onClick={() => {
                 void onMergeEntities(selectedNode.id, mergeTargetId)
@@ -2034,7 +2106,7 @@ function GraphView({
             style={{
               margin: '16px 0',
               border: 0,
-              borderTop: '1px solid #f0f0f0'
+              borderTop: '1px solid var(--border-subtle)'
             }}
           />
           <strong>证据 ({selectedEvidence.length})</strong>
@@ -2046,7 +2118,7 @@ function GraphView({
                 display: 'grid',
                 gap: 8,
                 paddingLeft: 20,
-                color: '#595959'
+                color: 'var(--text-secondary)'
               }}
             >
               {selectedEvidence.map((item) => (
@@ -2170,6 +2242,22 @@ export function KnowledgeWorkspace({
   }, [onSelectLibrary, selectedLibrary, selectedLibraryId])
   const visibleTab =
     selectedLibrary?.graphEnabled === false ? 'documents' : tab
+  const workspaceTabs: ReadonlyArray<PageTab<WorkspaceTab>> = [
+    {
+      id: 'documents',
+      label: '文档与来源',
+      icon: <FileText aria-hidden="true" size={15} />
+    },
+    ...(selectedLibrary?.graphEnabled
+      ? [
+          {
+            id: 'graph' as const,
+            label: '知识图谱',
+            icon: <Network aria-hidden="true" size={15} />
+          }
+        ]
+      : [])
+  ]
 
   return (
     <section
@@ -2179,34 +2267,20 @@ export function KnowledgeWorkspace({
       style={styles.workspace}
     >
       <aside className="knowledge-workspace__sidebar" style={styles.sidebar}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10
-          }}
-        >
-          <span
-            style={{
-              display: 'grid',
-              width: 34,
-              height: 34,
-              placeItems: 'center',
-              borderRadius: 10,
-              background: '#1677ff',
-              color: '#ffffff'
-            }}
-          >
-            <Database aria-hidden="true" size={18} />
-          </span>
-          <div>
-            <strong style={{ display: 'block' }}>知识工作区</strong>
-            <span style={styles.muted}>{libraries.length} 个知识库</span>
-          </div>
-        </div>
+        <PageHeader
+          compact
+          description={`${libraries.length} 个知识库 · 跨项目共享`}
+          eyebrow="KNOWLEDGE"
+          headingId="knowledge-workspace-title"
+          icon={<Database size={18} />}
+          scope={{ kind: 'global' }}
+          title="知识工作区"
+        />
         <button
+          className="primary-button"
+          disabled={loading}
           onClick={() => setCreating(true)}
-          style={{ ...styles.button, ...styles.primaryButton, width: '100%' }}
+          style={{ ...styles.button, width: '100%' }}
           type="button"
         >
           <Plus aria-hidden="true" size={16} />
@@ -2222,12 +2296,12 @@ export function KnowledgeWorkspace({
               style={{
                 ...styles.surface,
                 padding: 13,
-                color: '#8c8c8c',
+                color: 'var(--text-muted)',
                 fontSize: 13,
                 lineHeight: 1.55
               }}
             >
-              创建知识库，为不同项目独立管理来源、索引和实体关系。
+              创建知识库，集中管理可跨项目使用的来源、索引和实体关系。
             </div>
           ) : (
             <ul
@@ -2254,14 +2328,16 @@ export function KnowledgeWorkspace({
                         padding: 11,
                         border: `1px solid ${
                           selected
-                            ? '#1677ff'
+                            ? 'var(--accent)'
                             : 'transparent'
                         }`,
-                        borderRadius: 6,
+                        borderRadius: 'var(--radius-control)',
                         background: selected
-                          ? '#e6f4ff'
+                          ? 'var(--accent-subtle)'
                           : 'transparent',
-                        color: selected ? '#1677ff' : '#1f1f1f',
+                        color: selected
+                          ? 'var(--accent)'
+                          : 'var(--text-primary)',
                         textAlign: 'left',
                         cursor: 'pointer'
                       }}
@@ -2306,47 +2382,38 @@ export function KnowledgeWorkspace({
 
       <main
         className="knowledge-workspace__main"
-        style={{ minWidth: 0, background: '#ffffff' }}
+        style={{ minWidth: 0, background: 'var(--surface-raised)' }}
       >
-        {creating ? (
+        {loading ? (
+          <EmptyState
+            description="正在读取知识库、来源和索引状态。"
+            icon={<LoaderCircle size={28} />}
+            level="page"
+            title="正在加载知识库"
+          />
+        ) : creating ? (
           <CreateLibraryWizard
             onCancel={() => setCreating(false)}
             onCreate={onCreateLibrary}
           />
         ) : !selectedLibrary ? (
-          <div
-            style={{
-              display: 'grid',
-              minHeight: 620,
-              placeItems: 'center',
-              padding: 30,
-              textAlign: 'center'
-            }}
-          >
-            <div>
-              <BookOpen
-                aria-hidden="true"
-                color="#1677ff"
-                size={42}
-              />
-              <h2>建立第一个知识库</h2>
-              <p style={styles.muted}>
-                按项目组织文件、目录和网页来源，并生成可追溯的索引与图谱。
-              </p>
+          <EmptyState
+            action={
               <button
+                className="primary-button"
                 onClick={() => setCreating(true)}
-                style={{
-                  ...styles.button,
-                  ...styles.primaryButton,
-                  marginTop: 8
-                }}
+                style={styles.button}
                 type="button"
               >
                 <Plus aria-hidden="true" size={16} />
                 创建知识库
               </button>
-            </div>
-          </div>
+            }
+            description="集中组织文件、目录和网页来源，并生成可追溯、可跨项目使用的索引与图谱。"
+            icon={<BookOpen size={34} />}
+            level="page"
+            title="建立第一个知识库"
+          />
         ) : (
           <>
             <header
@@ -2358,7 +2425,7 @@ export function KnowledgeWorkspace({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 7,
-                    color: '#1677ff',
+                    color: 'var(--accent)',
                     fontSize: 12,
                     fontWeight: 750
                   }}
@@ -2383,7 +2450,7 @@ export function KnowledgeWorkspace({
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    color: '#595959',
+                    color: 'var(--text-secondary)',
                     fontSize: 12,
                     gap: 6
                   }}
@@ -2424,6 +2491,7 @@ export function KnowledgeWorkspace({
                 )}
                 <button
                   aria-label={`删除知识库 ${selectedLibrary.name}`}
+                  className="danger-button danger-button--quiet"
                   onClick={() => setDeletingLibrary(selectedLibrary)}
                   style={styles.button}
                   type="button"
@@ -2433,55 +2501,21 @@ export function KnowledgeWorkspace({
                 </button>
               </div>
             </header>
-            <div
-              aria-label="知识库视图"
-              className="knowledge-workspace__tabs"
-              role="tablist"
-            >
-              <button
-                aria-selected={visibleTab === 'documents'}
-                onClick={() => setTab('documents')}
-                role="tab"
-                style={{
-                  ...styles.button,
-                  background:
-                    visibleTab === 'documents'
-                      ? '#e6f4ff'
-                      : 'transparent',
-                  borderColor:
-                    visibleTab === 'documents' ? '#1677ff' : 'transparent',
-                  color:
-                    visibleTab === 'documents' ? '#1677ff' : '#595959'
-                }}
-                type="button"
-              >
-                <FileText aria-hidden="true" size={15} />
-                文档与来源
-              </button>
-              {selectedLibrary.graphEnabled && (
-                <button
-                  aria-selected={visibleTab === 'graph'}
-                  onClick={() => setTab('graph')}
-                  role="tab"
-                  style={{
-                    ...styles.button,
-                    background:
-                      visibleTab === 'graph'
-                        ? '#e6f4ff'
-                        : 'transparent',
-                    borderColor:
-                      visibleTab === 'graph' ? '#1677ff' : 'transparent',
-                    color:
-                      visibleTab === 'graph' ? '#1677ff' : '#595959'
-                  }}
-                  type="button"
-                >
-                  <Network aria-hidden="true" size={15} />
-                  知识图谱
-                </button>
-              )}
+            <div className="knowledge-workspace__tabs">
+              <PageTabs
+                ariaLabel="知识库视图"
+                idPrefix="knowledge"
+                onChange={setTab}
+                tabs={workspaceTabs}
+                value={visibleTab}
+              />
             </div>
-            <div className="knowledge-workspace__body">
+            <div
+              aria-labelledby={`knowledge-tab-${visibleTab}`}
+              className="knowledge-workspace__body"
+              id={`knowledge-panel-${visibleTab}`}
+              role="tabpanel"
+            >
               {visibleTab === 'documents' ? (
                 <DocumentsView
                   documents={libraryDocuments}

@@ -21,6 +21,11 @@ import type {
   HeartbeatCreateInput
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import {
+  EmptyState,
+  PageHeader,
+  PageTabs
+} from './WorkspacePrimitives'
 
 type HeartbeatCenterTab =
   | 'overview'
@@ -48,6 +53,7 @@ export type HeartbeatCenterProps = {
     status: 'completed' | 'cancelled'
   ) => Promise<void>
   onUseFollowUpTask: (task: AssistantTask) => void
+  currentProjectName?: string
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -136,7 +142,8 @@ export function HeartbeatCenter({
   onRefresh,
   onSetMemoryStatus,
   onSetTaskStatus,
-  onUseFollowUpTask
+  onUseFollowUpTask,
+  currentProjectName = '当前项目'
 }: HeartbeatCenterProps): React.JSX.Element {
   const [tab, setTab] = useState<HeartbeatCenterTab>('overview')
   const [pendingAction, setPendingAction] = useState<string>()
@@ -260,55 +267,53 @@ export function HeartbeatCenter({
       aria-labelledby="heartbeat-center-title"
       className="heartbeat-center"
     >
-      <header className="heartbeat-center__hero">
-        <div>
-          <p className="eyebrow">SMART HEARTBEAT</p>
-          <h2 id="heartbeat-center-title">
-            <HeartPulse aria-hidden="true" size={22} />
-            智能心跳
-          </h2>
-          <p>
-            GoodBuddy 定期回顾经历、沉淀记忆、发现问题，并把每次变化转化为可处理的成长建议。
-          </p>
-        </div>
-        <div className="heartbeat-center__hero-actions">
-          <button
-            aria-label="刷新智能心跳"
-            className="secondary-button"
-            disabled={pendingAction !== undefined}
-            onClick={() => void runAction('refresh', onRefresh)}
-            type="button"
-          >
-            <RefreshCw aria-hidden="true" size={14} />
-            刷新
-          </button>
-          {primaryConfig ? (
+      <PageHeader
+        actions={
+          <>
             <button
-              className="primary-button"
+              aria-label="刷新智能心跳"
+              className="secondary-button"
               disabled={pendingAction !== undefined}
-              onClick={() =>
-                void runAction(`run:${primaryConfig.id}`, () =>
-                  onRunNow(primaryConfig.id)
-                )
-              }
+              onClick={() => void runAction('refresh', onRefresh)}
               type="button"
             >
-              <Play aria-hidden="true" size={14} />
-              {pendingAction === `run:${primaryConfig.id}`
-                ? '心跳中…'
-                : '运行一次心跳'}
+              <RefreshCw aria-hidden="true" size={14} />
+              刷新
             </button>
-          ) : (
-            <button
-              className="primary-button"
-              onClick={() => setTab('plans')}
-              type="button"
-            >
-              配置智能心跳
-            </button>
-          )}
-        </div>
-      </header>
+            {primaryConfig ? (
+              <button
+                className="primary-button"
+                disabled={pendingAction !== undefined}
+                onClick={() =>
+                  void runAction(`run:${primaryConfig.id}`, () =>
+                    onRunNow(primaryConfig.id)
+                  )
+                }
+                type="button"
+              >
+                <Play aria-hidden="true" size={14} />
+                {pendingAction === `run:${primaryConfig.id}`
+                  ? '心跳中…'
+                  : '运行一次心跳'}
+              </button>
+            ) : (
+              <button
+                className="primary-button"
+                onClick={() => setTab('plans')}
+                type="button"
+              >
+                配置智能心跳
+              </button>
+            )}
+          </>
+        }
+        description="定期回顾经历、沉淀记忆、发现问题，并把每次变化转化为可处理的成长建议。"
+        eyebrow="SMART HEARTBEAT"
+        headingId="heartbeat-center-title"
+        icon={<HeartPulse size={22} />}
+        scope={{ kind: 'mixed', projectName: currentProjectName }}
+        title="智能心跳"
+      />
 
       {error && (
         <p className="heartbeat-center__error" role="alert">
@@ -316,31 +321,13 @@ export function HeartbeatCenter({
         </p>
       )}
 
-      <nav
-        aria-label="智能心跳视图"
-        className="heartbeat-center__tabs"
-        role="tablist"
-      >
-        {tabs.map((item) => (
-          <button
-            aria-controls={`heartbeat-panel-${item.id}`}
-            aria-selected={tab === item.id}
-            className={
-              tab === item.id
-                ? 'heartbeat-center__tab heartbeat-center__tab--active'
-                : 'heartbeat-center__tab'
-            }
-            id={`heartbeat-tab-${item.id}`}
-            key={item.id}
-            onClick={() => setTab(item.id)}
-            role="tab"
-            type="button"
-          >
-            {item.label}
-            {item.count ? <span>{item.count}</span> : null}
-          </button>
-        ))}
-      </nav>
+      <PageTabs
+        ariaLabel="智能心跳视图"
+        idPrefix="heartbeat"
+        onChange={setTab}
+        tabs={tabs}
+        value={tab}
+      />
 
       {tab === 'overview' && (
         <div
@@ -372,18 +359,21 @@ export function HeartbeatCenter({
               </span>
             </div>
             {configs.length === 0 ? (
-              <div className="heartbeat-center__empty">
-                <HeartPulse aria-hidden="true" size={24} />
-                <strong>尚未建立成长节奏</strong>
-                <p>配置每日或每周心跳，让 GoodBuddy 持续回顾和学习。</p>
-                <button
-                  className="primary-button"
-                  onClick={() => setTab('plans')}
-                  type="button"
-                >
-                  创建心跳计划
-                </button>
-              </div>
+              <EmptyState
+                action={
+                  <button
+                    className="primary-button"
+                    onClick={() => setTab('plans')}
+                    type="button"
+                  >
+                    创建心跳计划
+                  </button>
+                }
+                description="配置每日或每周心跳，让 GoodBuddy 持续回顾和学习。"
+                icon={<HeartPulse size={24} />}
+                level="section"
+                title="尚未建立成长节奏"
+              />
             ) : (
               <div className="heartbeat-center__config-grid">
                 {configs.map((config) => (
@@ -403,7 +393,9 @@ export function HeartbeatCenter({
                         <strong>{config.name}</strong>
                         <small>
                           {recurrenceLabel(config)} ·{' '}
-                          {config.projectId ? '当前项目' : '全局'}
+                          {config.projectId
+                            ? currentProjectName
+                            : '全局'}
                         </small>
                       </div>
                     </header>

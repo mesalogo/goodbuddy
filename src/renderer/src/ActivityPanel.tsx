@@ -10,6 +10,12 @@ import {
   groupTokenUsage,
   type TokenUsageGroup
 } from './token-usage'
+import {
+  DestructiveConfirmActions,
+  EmptyState,
+  PageHeader,
+  SegmentedControl
+} from './WorkspacePrimitives'
 
 type ActivityFilter = 'all' | 'active' | 'failed'
 
@@ -122,7 +128,7 @@ function emptyMessage(filter: ActivityFilter): string {
   if (filter === 'failed') {
     return '当前没有失败、取消或中断的活动。'
   }
-  return '尚无活动记录。任务请求、工具调用和审批决定会显示在这里。'
+  return '任务请求、工具调用和审批决定会显示在这里。'
 }
 
 export function ActivityPanel({
@@ -134,6 +140,7 @@ export function ActivityPanel({
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const [tokenGroup, setTokenGroup] =
     useState<TokenUsageGroup>('project')
+  const [confirmingClear, setConfirmingClear] = useState(false)
 
   const visibleRecords = useMemo(
     () => records.slice(0, MAX_ACTIVITY_RECORDS),
@@ -162,24 +169,31 @@ export function ActivityPanel({
       aria-labelledby="activity-panel-title"
       className="activity-panel"
     >
-      <header className="activity-panel__header">
-        <div>
-          <p className="eyebrow">ACTIVITY AUDIT</p>
-          <h2 id="activity-panel-title">
-            <Activity aria-hidden="true" size={20} />
-            活动中心
-          </h2>
-        </div>
-        <button
-          className="secondary-button activity-panel__clear"
-          disabled={visibleRecords.length === 0}
-          onClick={onClear}
-          type="button"
-        >
-          <Trash2 aria-hidden="true" size={15} />
-          清空记录
-        </button>
-      </header>
+      <PageHeader
+        actions={
+          <DestructiveConfirmActions
+            confirmAriaLabel={`确认清空 ${visibleRecords.length} 条活动记录`}
+            confirmLabel={`清空 ${visibleRecords.length} 条记录`}
+            confirming={confirmingClear}
+            disabled={!confirmingClear && visibleRecords.length === 0}
+            icon={<Trash2 aria-hidden="true" size={15} />}
+            message={`永久清空 ${visibleRecords.length} 条活动记录？此操作不可撤销。`}
+            onCancel={() => setConfirmingClear(false)}
+            onConfirm={() => {
+              onClear()
+              setConfirmingClear(false)
+            }}
+            onRequestConfirm={() => setConfirmingClear(true)}
+            triggerLabel="清空记录"
+          />
+        }
+        description="查看全部项目中的任务请求、工具调用、审批结果和 Token 用量。"
+        eyebrow="ACTIVITY AUDIT"
+        headingId="activity-panel-title"
+        icon={<Activity size={20} />}
+        scope={{ kind: 'all-projects' }}
+        title="任务与活动"
+      />
 
       <section
         aria-labelledby="token-usage-title"
@@ -187,27 +201,12 @@ export function ActivityPanel({
       >
         <header className="token-usage__header">
           <h3 id="token-usage-title">Token 用量</h3>
-          <div
-            aria-label="Token 用量分组"
-            className="token-usage__groups"
-            role="group"
-          >
-            {tokenGroups.map((item) => (
-              <button
-                aria-pressed={tokenGroup === item.value}
-                className={
-                  tokenGroup === item.value
-                    ? 'token-usage__group token-usage__group--active'
-                    : 'token-usage__group'
-                }
-                key={item.value}
-                onClick={() => setTokenGroup(item.value)}
-                type="button"
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel="Token 用量分组"
+            onChange={setTokenGroup}
+            options={tokenGroups}
+            value={tokenGroup}
+          />
         </header>
 
         <dl aria-label="Token 用量统计" className="token-usage__stats">
@@ -301,33 +300,22 @@ export function ActivityPanel({
         </div>
       </dl>
 
-      <div
-        aria-label="筛选活动"
-        className="activity-panel__filters"
-        role="group"
-      >
-        {filters.map((item) => (
-          <button
-            aria-pressed={filter === item.value}
-            className={
-              filter === item.value
-                ? 'activity-filter activity-filter--active'
-                : 'activity-filter'
-            }
-            key={item.value}
-            onClick={() => setFilter(item.value)}
-            type="button"
-          >
-            {item.label}
-          </button>
-        ))}
+      <div className="activity-panel__filters">
+        <SegmentedControl
+          ariaLabel="筛选活动"
+          onChange={setFilter}
+          options={filters}
+          value={filter}
+        />
       </div>
 
       {filteredRecords.length === 0 ? (
-        <div className="activity-panel__empty">
-          <Activity aria-hidden="true" size={24} />
-          <p>{emptyMessage(filter)}</p>
-        </div>
+        <EmptyState
+          description={emptyMessage(filter)}
+          icon={<Activity size={24} />}
+          level="section"
+          title={filter === 'all' ? '尚无活动记录' : '没有匹配的活动'}
+        />
       ) : (
         <ol className="activity-list">
           {filteredRecords.map((record, index) => {
@@ -344,7 +332,7 @@ export function ActivityPanel({
                         {kindLabels[record.kind]}
                       </span>
                       <span
-                        className={`activity-item__status activity-item__status--${record.status}`}
+                        className={`status-badge activity-item__status activity-item__status--${record.status}`}
                       >
                         {statusLabels[record.status]}
                       </span>

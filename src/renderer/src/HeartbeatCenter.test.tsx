@@ -19,6 +19,7 @@ import { HeartbeatCenter, type HeartbeatCenterProps } from './HeartbeatCenter'
 
 const config: AssistantHeartbeatConfig = {
   id: 'heartbeat-1',
+  projectId: 'project-1',
   name: '智能成长回顾',
   timezone: 'Asia/Shanghai',
   recurrence: {
@@ -103,6 +104,7 @@ function createProps(
     entries: [entry],
     memories: [memory],
     tasks: [task],
+    currentProjectName: '默认项目',
     onCreate: vi.fn(async () => {}),
     onSetPaused: vi.fn(async () => {}),
     onRemove: vi.fn(async () => {}),
@@ -124,8 +126,12 @@ describe('HeartbeatCenter', () => {
     render(<HeartbeatCenter {...createProps()} />)
 
     expect(
-      screen.getByRole('heading', { name: '智能心跳' })
+      screen.getByRole('heading', { level: 1, name: '智能心跳' })
     ).toBeInTheDocument()
+    expect(screen.getByText('项目：默认项目 + 全局')).toHaveClass(
+      'scope-badge'
+    )
+    expect(screen.getByText(/每天 09:00 · 默认项目/u)).toBeInTheDocument()
     expect(screen.getByText('1 个计划运行中')).toBeInTheDocument()
     expect(screen.getByText('50%')).toBeInTheDocument()
     expect(
@@ -215,6 +221,24 @@ describe('HeartbeatCenter', () => {
       screen.getByRole('button', { name: '展开完整报告' })
     )
     expect(screen.getByText(entry.highlights[0]!)).toBeInTheDocument()
+  })
+
+  it('explains the irreversible impact before deleting a plan', () => {
+    render(<HeartbeatCenter {...createProps()} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: '心跳计划' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `删除 ${config.name}`
+      })
+    )
+
+    const confirmation = screen.getByRole('alertdialog', {
+      name: `确认删除 ${config.name}`
+    })
+    expect(confirmation).toHaveTextContent(
+      '将永久删除此计划、运行历史和关联结果，且无法恢复。'
+    )
   })
 
   it('guides first-time users to create a heartbeat plan', () => {

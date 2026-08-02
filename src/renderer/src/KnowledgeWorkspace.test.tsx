@@ -223,11 +223,21 @@ describe('KnowledgeWorkspace', () => {
 
     const workspace = screen.getByLabelText('知识工作区')
     expect(workspace).toHaveClass('knowledge-workspace')
+    expect(workspace).toHaveStyle({
+      background: 'var(--surface-canvas)'
+    })
     expect(workspace.querySelector('aside')).toHaveClass(
       'knowledge-workspace__sidebar'
     )
     expect(workspace.querySelector('main')).toHaveClass(
       'knowledge-workspace__main'
+    )
+    expect(workspace.querySelector('main')).toHaveStyle({
+      background: 'var(--surface-raised)'
+    })
+    expect(screen.getByText('全局')).toHaveClass('scope-badge')
+    expect(screen.getByRole('tablist', { name: '知识库视图' })).toHaveClass(
+      'page-tabs'
     )
     expect(screen.getByLabelText('搜索文档').closest('label')).toHaveClass(
       'knowledge-documents__search'
@@ -329,6 +339,26 @@ describe('KnowledgeWorkspace', () => {
     expect(
       screen.getByText('当前知识库尚未生成实体关系。')
     ).toBeInTheDocument()
+  })
+
+  it('keeps loading distinct from the first-library empty state', () => {
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          libraries: [],
+          loading: true,
+          selectedLibraryId: undefined
+        })}
+      />
+    )
+
+    expect(screen.getByText('正在加载知识库')).toBeInTheDocument()
+    expect(
+      screen.queryByText('建立第一个知识库')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '新建知识库' })
+    ).toBeDisabled()
   })
 
   it('confirms that deleting a managed library removes managed copies', async () => {

@@ -121,6 +121,13 @@ describe('ActivityPanel', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '清空记录' }))
+    expect(onClear).not.toHaveBeenCalled()
+    expect(
+      screen.getByText('永久清空 1 条活动记录？此操作不可撤销。')
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: '确认清空 1 条活动记录' })
+    )
     expect(onClear).toHaveBeenCalledOnce()
 
     rerender(
@@ -133,12 +140,34 @@ describe('ActivityPanel', () => {
     )
     expect(
       screen.getByText(
-        '尚无活动记录。任务请求、工具调用和审批决定会显示在这里。'
+        '任务请求、工具调用和审批决定会显示在这里。'
       )
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: '清空记录' })
     ).toBeDisabled()
+  })
+
+  it('uses the shared page hierarchy and explicit global scope', () => {
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    expect(
+      screen.getByRole('heading', { level: 1, name: '任务与活动' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('全部项目')).toHaveClass('scope-badge')
+    expect(screen.getByLabelText('Token 用量分组')).toHaveClass(
+      'segmented-control'
+    )
+    expect(screen.getByLabelText('筛选活动')).toHaveClass(
+      'segmented-control'
+    )
   })
 
   it('never renders more than 500 records', () => {

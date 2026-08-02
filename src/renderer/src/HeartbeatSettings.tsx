@@ -4,6 +4,7 @@ import type {
   AssistantHeartbeatConfig,
   HeartbeatCreateInput
 } from '../../shared/assistant-contracts'
+import { DestructiveConfirmActions } from './WorkspacePrimitives'
 
 type HeartbeatSettingsProps = {
   heartbeats: AssistantHeartbeatConfig[]
@@ -203,45 +204,29 @@ export function HeartbeatSettings({
                 >
                   立即心跳
                 </button>
-                {confirmingRemoveId === heartbeat.id ? (
-                  <>
-                    <button
-                      aria-label={`确认删除 ${heartbeat.name}`}
-                      disabled={pendingAction !== undefined}
-                      onClick={() =>
-                        void runAction(
-                          `remove:${heartbeat.id}`,
-                          async () => {
-                            await onRemove(heartbeat.id)
-                            setConfirmingRemoveId(undefined)
-                          }
-                        )
+                <DestructiveConfirmActions
+                  cancelAriaLabel={`取消删除 ${heartbeat.name}`}
+                  confirmAriaLabel={`确认删除 ${heartbeat.name}`}
+                  confirmLabel="确认删除计划"
+                  confirming={confirmingRemoveId === heartbeat.id}
+                  disabled={pendingAction !== undefined}
+                  message="将永久删除此计划、运行历史和关联结果，且无法恢复。"
+                  onCancel={() => setConfirmingRemoveId(undefined)}
+                  onConfirm={() =>
+                    void runAction(
+                      `remove:${heartbeat.id}`,
+                      async () => {
+                        await onRemove(heartbeat.id)
+                        setConfirmingRemoveId(undefined)
                       }
-                      type="button"
-                    >
-                      确认删除历史
-                    </button>
-                    <button
-                      aria-label={`取消删除 ${heartbeat.name}`}
-                      disabled={pendingAction !== undefined}
-                      onClick={() => setConfirmingRemoveId(undefined)}
-                      type="button"
-                    >
-                      取消
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    aria-label={`删除 ${heartbeat.name}`}
-                    disabled={pendingAction !== undefined}
-                    onClick={() =>
-                      setConfirmingRemoveId(heartbeat.id)
-                    }
-                    type="button"
-                  >
-                    删除
-                  </button>
-                )}
+                    )
+                  }
+                  onRequestConfirm={() =>
+                    setConfirmingRemoveId(heartbeat.id)
+                  }
+                  triggerAriaLabel={`删除 ${heartbeat.name}`}
+                  triggerLabel="删除"
+                />
               </div>
             </article>
           ))}
