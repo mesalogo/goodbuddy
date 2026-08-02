@@ -18,6 +18,8 @@ const runtimeSettings: RuntimeSettings = {
   provider: 'auto',
   modelBaseUrl: 'https://bigtoken.ai',
   modelName: 'sonnet-5',
+  modelProtocol: 'anthropic-messages',
+  modelAuthentication: 'api-key',
   opencodeBaseUrl: '',
   opencodeEmbedded: false,
   opencodeBinaryPath: '',
@@ -25,6 +27,10 @@ const runtimeSettings: RuntimeSettings = {
   continueBinaryPath: '',
   continueConfigPath: '',
   continueMode: 'chat',
+  runtimeSandboxMode: 'auto',
+  knowledgeEmbeddingEnabled: false,
+  knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+  knowledgeEmbeddingModel: 'nomic-embed-text',
   workspacePath: 'C:\\Workspace',
   apiKeyConfigured: false,
   credentialSource: 'none',
@@ -34,6 +40,8 @@ const runtimeSettings: RuntimeSettings = {
       name: '默认模型',
       baseUrl: 'https://bigtoken.ai',
       modelName: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
       apiKeyConfigured: false,
       credentialSource: 'none'
     }
@@ -118,6 +126,13 @@ const setSkillEnabled = vi.fn(async (_skillId: string, enabled: boolean) => ({
     enabled
   }))
 }))
+const heartbeatSettingsProps = {
+  heartbeats: [],
+  onCreateHeartbeat: vi.fn(async () => {}),
+  onSetHeartbeatPaused: vi.fn(async () => {}),
+  onRemoveHeartbeat: vi.fn(async () => {}),
+  onRunHeartbeat: vi.fn(async () => {})
+}
 
 describe('SettingsPanel runtime files', () => {
   beforeEach(() => {
@@ -135,6 +150,7 @@ describe('SettingsPanel runtime files', () => {
             id: 'continue',
             label: 'Continue',
             available: true,
+            supportsToolExecution: true,
             detail: 'Ready'
           }))
         },
@@ -162,6 +178,7 @@ describe('SettingsPanel runtime files', () => {
   it('automatically detects runtimes and displays path, version, and detail', async () => {
     render(
       <SettingsPanel
+        {...heartbeatSettingsProps}
         open
         onClearLocalData={vi.fn(async () => {})}
         onClose={vi.fn()}
@@ -188,6 +205,7 @@ describe('SettingsPanel runtime files', () => {
   it('selects, warns about, clears, and saves a custom binary', async () => {
     render(
       <SettingsPanel
+        {...heartbeatSettingsProps}
         open
         onClearLocalData={vi.fn(async () => {})}
         onClose={vi.fn()}
@@ -234,6 +252,7 @@ describe('SettingsPanel runtime files', () => {
   it('adds model connections and assigns one to OpenCode', async () => {
     render(
       <SettingsPanel
+        {...heartbeatSettingsProps}
         open
         onClearLocalData={vi.fn(async () => {})}
         onClose={vi.fn()}
@@ -243,7 +262,9 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: '添加自定义' })
+    )
     const nameInputs = screen.getAllByLabelText('名称')
     fireEvent.change(nameInputs[1]!, {
       target: { value: 'OpenCode 独立模型' }
@@ -277,9 +298,248 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
+  it('adds the Ollama preset with OpenAI protocol and no authentication', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    const preset = await screen.findByLabelText('模型预设')
+    fireEvent.change(preset, { target: { value: 'ollama' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: '从预设添加' })
+    )
+    expect(
+      screen
+        .getAllByLabelText('名称')
+        .some((input) => (input as HTMLInputElement).value === 'Ollama（本机）')
+    ).toBe(true)
+    expect(
+      screen.getByDisplayValue('http://127.0.0.1:11434/v1')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('接口协议 Ollama（本机）')
+    ).toHaveValue('openai-chat-completions')
+    expect(
+      screen.getByLabelText('认证方式 Ollama（本机）')
+    ).toHaveValue('none')
+    expect(
+      screen.getByText('无需认证，不会发送 API Key')
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: expect.arrayContaining([
+            expect.objectContaining({
+              name: 'Ollama（本机）',
+              protocol: 'openai-chat-completions',
+              authentication: 'none',
+              apiKey: { action: 'keep' }
+            })
+          ])
+        })
+      )
+    )
+  })
+
+  it('marks the BigToken gpt-image-2 preset as image generation', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    const preset = await screen.findByLabelText('模型预设')
+    fireEvent.change(preset, {
+      target: { value: 'bigtoken-gpt-image-2' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '从预设添加' })
+    )
+
+    expect(
+      screen.getByLabelText('接口协议 BigToken GPT Image 2')
+    ).toHaveValue('openai-images-generations')
+    expect(screen.getByText('图像生成', { selector: 'span' }))
+      .toBeInTheDocument()
+
+    const defaultConnections = screen.getAllByRole('radio')
+    fireEvent.click(defaultConnections.at(-1)!)
+    vi.mocked(window.goodbuddy.settings.testRuntime).mockResolvedValueOnce({
+      id: 'model',
+      label: 'gpt-image-2',
+      available: true,
+      supportsToolExecution: false,
+      detail: '图像接口将在发送提示词时实际验证',
+      capability: 'image-generation'
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存并测试' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: expect.arrayContaining([
+            expect.objectContaining({
+              name: 'BigToken GPT Image 2',
+              modelName: 'gpt-image-2',
+              protocol: 'openai-images-generations'
+            })
+          ])
+        })
+      )
+    )
+    expect(
+      await screen.findByText('图像接口将在发送提示词时实际验证')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('连接成功：gpt-image-2'))
+      .not.toBeInTheDocument()
+  })
+
+  it('manages heartbeat automation from Settings', async () => {
+    const onCreateHeartbeat = vi.fn(async () => {})
+    const onSetHeartbeatPaused = vi.fn(async () => {})
+    const onRemoveHeartbeat = vi.fn(async () => {})
+    const onRunHeartbeat = vi.fn(async () => {})
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        heartbeats={[
+          {
+            id: 'heartbeat-1',
+            name: '长期记忆回顾',
+            timezone: 'Asia/Shanghai',
+            recurrence: {
+              type: 'daily',
+              localTime: '09:00'
+            },
+            enabled: true,
+            lookbackHours: 48,
+            retentionDays: 90,
+            nextRunAt: '2026-08-02T01:00:00.000Z',
+            createdAt: '2026-08-01T01:00:00.000Z',
+            updatedAt: '2026-08-01T01:00:00.000Z'
+          }
+        ]}
+        onCreateHeartbeat={onCreateHeartbeat}
+        onRemoveHeartbeat={onRemoveHeartbeat}
+        onRunHeartbeat={onRunHeartbeat}
+        onSetHeartbeatPaused={onSetHeartbeatPaused}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '自动化' }))
+    expect(
+      await screen.findByRole('heading', { name: '智能心跳' })
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('心跳时间'), {
+      target: { value: '08:30' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '启用智能心跳' })
+    )
+    await waitFor(() =>
+      expect(onCreateHeartbeat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recurrence: {
+            type: 'daily',
+            localTime: '08:30'
+          },
+          enabled: true
+        })
+      )
+    )
+
+    const pauseButton = screen.getByRole('button', {
+      name: '暂停 长期记忆回顾'
+    })
+    fireEvent.click(pauseButton)
+    await waitFor(() =>
+      expect(onSetHeartbeatPaused).toHaveBeenCalledWith(
+        'heartbeat-1',
+        true
+      )
+    )
+    await waitFor(() => expect(pauseButton).toBeEnabled())
+
+    const runButton = screen.getByRole('button', {
+      name: '立即心跳 长期记忆回顾'
+    })
+    fireEvent.click(runButton)
+    await waitFor(() =>
+      expect(onRunHeartbeat).toHaveBeenCalledWith('heartbeat-1')
+    )
+    await waitFor(() => expect(runButton).toBeEnabled())
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '删除 长期记忆回顾'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '确认删除 长期记忆回顾'
+      })
+    )
+    await waitFor(() =>
+      expect(onRemoveHeartbeat).toHaveBeenCalledWith('heartbeat-1')
+    )
+  })
+
+  it('prevents duplicate heartbeat actions and reports failures', async () => {
+    let rejectCreate: (reason: Error) => void = () => {}
+    const onCreateHeartbeat = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCreate = reject
+        })
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onCreateHeartbeat={onCreateHeartbeat}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '自动化' }))
+    const createButton = screen.getByRole('button', {
+      name: '启用智能心跳'
+    })
+    fireEvent.click(createButton)
+    fireEvent.click(createButton)
+    expect(onCreateHeartbeat).toHaveBeenCalledOnce()
+    expect(createButton).toBeDisabled()
+
+    rejectCreate(new Error('创建心跳失败'))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '创建心跳失败'
+    )
+    expect(createButton).toBeEnabled()
+  })
+
   it('shows Skills and MCP as first-class settings tabs', async () => {
     render(
       <SettingsPanel
+        {...heartbeatSettingsProps}
         open
         onClearLocalData={vi.fn(async () => {})}
         onClose={vi.fn()}

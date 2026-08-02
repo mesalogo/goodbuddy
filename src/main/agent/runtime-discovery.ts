@@ -20,6 +20,7 @@ const VERSION_OUTPUT_LIMIT = 8 * 1024
 export type RuntimeBinaryDiscoveryInput = {
   binaryPath: string
   bundledPath?: string
+  bundledValidation?: 'execute' | 'canonical-file'
   binaryNames: readonly string[]
   label: string
 }
@@ -288,6 +289,14 @@ export async function detectRuntimeBinary(
   if (bundledPath) {
     const canonicalPath = await canonicalFile(bundledPath)
     if (canonicalPath) {
+      if (input.bundledValidation === 'canonical-file') {
+        return availableDetection(
+          input.label,
+          canonicalPath,
+          undefined,
+          true
+        )
+      }
       const validation = await validateVersion(canonicalPath)
       if (validation.valid) {
         return availableDetection(
@@ -352,6 +361,7 @@ export async function detectAgentRuntimes(input: {
     detectRuntimeBinary({
       binaryPath: input.continueBinaryPath,
       bundledPath: input.bundledPaths?.continue,
+      bundledValidation: 'canonical-file',
       binaryNames: ['cn'],
       label: 'Continue CLI'
     })

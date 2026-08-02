@@ -2,11 +2,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { AgentEvent } from '../../shared/contracts'
 import { ContinueAgentRuntime } from './continue-runtime'
 import { ModelAgentRuntime } from './model-runtime'
 import { OpenCodeRuntime } from './opencode-runtime'
 import { AgentRuntimeController } from './runtime-controller'
+import type { RuntimeEvent } from './runtime'
 
 const enabled = process.env.GOODBUDDY_RUN_RUNTIME_E2E === '1'
 const apiKey = process.env.ANTHROPIC_API_KEY ?? ''
@@ -22,7 +22,7 @@ const portableRoot = join(
 )
 
 async function collectText(
-  events: AsyncGenerator<AgentEvent, void, void>
+  events: AsyncGenerator<RuntimeEvent, void, void>
 ): Promise<string> {
   let output = ''
   for await (const event of events) {
@@ -56,7 +56,9 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       const runtime = new ModelAgentRuntime({
         apiKey,
         baseUrl,
-        model: modelName
+        model: modelName,
+        protocol: 'anthropic-messages',
+        authentication: 'api-key'
       })
 
       try {
@@ -86,7 +88,9 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       const runtime = new ModelAgentRuntime({
         apiKey,
         baseUrl,
-        model: modelName
+        model: modelName,
+        protocol: 'anthropic-messages',
+        authentication: 'api-key'
       })
       const abortController = new AbortController()
 
@@ -135,7 +139,9 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             name: 'E2E model',
             baseUrl,
             modelName,
-            apiKey
+            apiKey,
+            protocol: 'anthropic-messages',
+            authentication: 'api-key'
           }
         })
       )
@@ -158,7 +164,12 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             }
           )
         )
-        expect(approvals).toContain('runtime:whole-run')
+        expect(approvals).not.toContain('runtime:whole-run')
+        expect(approvals).toEqual(
+          expect.arrayContaining([
+            expect.stringMatching(/^opencode:/u)
+          ])
+        )
         await expect(
           readFile(join(workspace, 'opencode-output.txt'), 'utf8')
         ).resolves.toBe('OPENCODE_E2E_OK')
@@ -192,7 +203,9 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             name: 'E2E model',
             baseUrl,
             modelName,
-            apiKey
+            apiKey,
+            protocol: 'anthropic-messages',
+            authentication: 'api-key'
           }
         })
       )

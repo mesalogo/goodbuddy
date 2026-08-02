@@ -21,7 +21,9 @@ import { registerIpcHandlers } from './ipc'
 import { KnowledgeService } from './knowledge/knowledge-service'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { createModelGraphExtractor } from './knowledge/model-extractor'
+import { OllamaEmbeddingClient } from './knowledge/ollama-embedding-client'
 import { RuntimeSettingsStore } from './runtime-settings-store'
+import type { ResolvedRuntimeSettings } from './runtime-settings-store'
 import { ToolApprovalBroker } from './tool-approval-broker'
 import {
   createMainWindow,
@@ -36,6 +38,9 @@ import type {
 } from './agent/continue-host-adapter'
 
 const shortcut = 'CommandOrControl+Shift+Space'
+if (process.platform === 'win32') {
+  app.setAppUserModelId('live.digiman.goodbuddy')
+}
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) {
@@ -49,6 +54,17 @@ let removeIpcHandlers: (() => Promise<void>) | undefined
 let runtime: AgentRuntimeController | undefined
 let knowledgeService: KnowledgeService | undefined
 let assistantDatabase: AssistantDatabase | undefined
+
+function createEmbeddingProvider(
+  settings: ResolvedRuntimeSettings
+): OllamaEmbeddingClient | undefined {
+  return settings.knowledgeEmbeddingEnabled
+    ? new OllamaEmbeddingClient({
+        url: settings.knowledgeEmbeddingBaseUrl,
+        model: settings.knowledgeEmbeddingModel
+      })
+    : undefined
+}
 
 const launchContinueHost: ContinueHostLauncher = (
   entryPath,
@@ -167,8 +183,6 @@ if (hasSingleInstanceLock) {
   })
 
   void app.whenReady().then(async () => {
-    app.setAppUserModelId('live.digiman.goodbuddy')
-
     session.defaultSession.setPermissionRequestHandler(
       (webContents, permission, callback, details) => {
         const mediaTypes =
@@ -229,6 +243,11 @@ if (hasSingleInstanceLock) {
       extractStructured: createModelGraphExtractor(settingsStore)
     })
     await knowledgeService.initialize()
+    void knowledgeService
+      .setEmbeddingProvider(
+        createEmbeddingProvider(await settingsStore.getResolvedSettings())
+      )
+      .catch(() => undefined)
     assistantDatabase = new AssistantDatabase(
       join(app.getPath('userData'), 'assistant.sqlite')
     )
@@ -291,6 +310,12 @@ if (hasSingleInstanceLock) {
       approvalBroker,
       bundledRuntimePaths,
       async () => {
+        const settings = await settingsStore.getResolvedSettings()
+        if (knowledgeService) {
+          void knowledgeService
+            .setEmbeddingProvider(createEmbeddingProvider(settings))
+            .catch(() => undefined)
+        }
         if (runtime) {
           await runtime.replace(
             await createConfiguredRuntime()

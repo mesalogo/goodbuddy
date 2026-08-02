@@ -11,13 +11,19 @@ import {
   type AssistantArtifact,
   type AssistantMemory,
   type AssistantSchedule,
+  type AssistantHeartbeatConfig,
+  type AssistantHeartbeatEntry,
+  type AssistantHeartbeatRun,
   type AssistantExpert,
   type AssistantTask,
+  type TokenUsageSummary,
   type ConversationSnapshot,
   type WorkspaceChanges,
   type ProjectCreateInput,
   type MemoryCreateInput,
   type ScheduleCreateInput,
+  type HeartbeatCreateInput,
+  type HeartbeatUpdateInput,
   type ExpertCreateInput
 } from './assistant-contracts'
 
@@ -76,6 +82,17 @@ export const toolApprovalPolicySchema = z.enum([
 ])
 
 export const continueModeSchema = z.enum(['chat', 'agent'])
+export const runtimeSandboxModeSchema = z.enum(['off', 'auto', 'strict'])
+export const modelProtocolSchema = z.enum([
+  'anthropic-messages',
+  'openai-chat-completions',
+  'openai-images-generations'
+])
+export const modelAuthenticationSchema = z.enum(['api-key', 'none'])
+export type ModelProtocol = z.infer<typeof modelProtocolSchema>
+export type ModelAuthentication = z.infer<
+  typeof modelAuthenticationSchema
+>
 export const defaultModelProfileId =
   '00000000-0000-4000-8000-000000000001'
 
@@ -83,6 +100,8 @@ export const defaultRuntimeSettings = {
   provider: 'auto',
   modelBaseUrl: 'https://bigtoken.ai',
   modelName: 'sonnet-5',
+  modelProtocol: 'anthropic-messages',
+  modelAuthentication: 'api-key',
   opencodeBaseUrl: '',
   opencodeEmbedded: false,
   opencodeBinaryPath: '',
@@ -90,6 +109,10 @@ export const defaultRuntimeSettings = {
   continueBinaryPath: '',
   continueConfigPath: '',
   continueMode: 'chat',
+  runtimeSandboxMode: 'auto',
+  knowledgeEmbeddingEnabled: false,
+  knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+  knowledgeEmbeddingModel: 'nomic-embed-text',
   workspacePath: '',
   toolApproval: 'always'
 } as const
@@ -153,6 +176,8 @@ const modelProfileInputSchema = z
       .min(1)
       .max(128)
       .regex(/^[\w./:-]+$/, '模型名称包含不支持的字符'),
+    protocol: modelProtocolSchema,
+    authentication: modelAuthenticationSchema,
     apiKey: modelApiKeyUpdateSchema
   })
   .strict()
@@ -177,6 +202,8 @@ export const runtimeSettingsInputSchema = z
       .min(1)
       .max(128)
       .regex(/^[\w./:-]+$/, '模型名称包含不支持的字符'),
+    modelProtocol: modelProtocolSchema,
+    modelAuthentication: modelAuthenticationSchema,
     opencodeBaseUrl: z.union([
       z.literal(''),
       z.string().url().max(2_048)
@@ -187,6 +214,15 @@ export const runtimeSettingsInputSchema = z
     continueBinaryPath: runtimePathSchema,
     continueConfigPath: runtimePathSchema,
     continueMode: continueModeSchema,
+    runtimeSandboxMode: runtimeSandboxModeSchema,
+    knowledgeEmbeddingEnabled: z.boolean(),
+    knowledgeEmbeddingBaseUrl: z.string().url().max(2_048),
+    knowledgeEmbeddingModel: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .regex(/^[\w./:-]+$/, '向量模型名称包含不支持的字符'),
     workspacePath: z.string().trim().min(1).max(4_096),
     apiKey: modelApiKeyUpdateSchema,
     modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
@@ -196,28 +232,58 @@ export const runtimeSettingsInputSchema = z
     toolApproval: toolApprovalPolicySchema
   }).strict()
   .superRefine((settings, context) => {
+    if (
+      !settings.modelProfiles &&
+      settings.modelAuthentication === 'none' &&
+      settings.apiKey.action === 'replace'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['apiKey'],
+        message: '无认证模型连接不得配置 API Key'
+      })
+    }
     const endpoints = settings.modelProfiles?.map((profile, index) => ({
       path: ['modelProfiles', index, 'baseUrl'] as (string | number)[],
       value: profile.baseUrl
     })) ?? [{ path: ['modelBaseUrl'], value: settings.modelBaseUrl }]
     for (const endpoint of endpoints) {
       const url = new URL(endpoint.value)
+      const hostname = url.hostname.toLowerCase()
+      const loopback =
+        hostname === 'localhost' ||
+        hostname === '::1' ||
+        hostname === '[::1]' ||
+        /^127(?:\.\d{1,3}){3}$/u.test(hostname)
       if (
-        url.protocol !== 'https:' ||
+        (url.protocol !== 'https:' &&
+          !(url.protocol === 'http:' && loopback)) ||
         url.username ||
         url.password ||
         url.search ||
-        url.hash ||
-        (url.pathname !== '/' && url.pathname !== '')
+        url.hash
       ) {
         context.addIssue({
           code: 'custom',
           path: endpoint.path,
-          message: '模型服务地址必须是无凭据和路径的 HTTPS origin'
+          message:
+            '模型服务地址必须使用 HTTPS；仅本机回环地址可使用 HTTP，且不得包含凭据、查询参数或片段'
         })
       }
     }
     if (settings.modelProfiles) {
+      for (const [index, profile] of settings.modelProfiles.entries()) {
+        if (
+          profile.authentication === 'none' &&
+          profile.apiKey.action === 'replace'
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['modelProfiles', index, 'apiKey'],
+            message: '无认证模型连接不得配置 API Key'
+          })
+        }
+      }
       const ids = new Set(settings.modelProfiles.map((profile) => profile.id))
       const names = new Set(
         settings.modelProfiles.map((profile) => profile.name.toLowerCase())
@@ -253,6 +319,39 @@ export const runtimeSettingsInputSchema = z
           })
         }
       }
+      const opencodeSource = settings.opencodeModelSource
+      const opencodeProfile =
+        opencodeSource?.kind === 'profile'
+          ? settings.modelProfiles.find(
+              (profile) => profile.id === opencodeSource.profileId
+            )
+          : undefined
+      if (
+        opencodeProfile &&
+        (opencodeProfile.protocol !== 'anthropic-messages' ||
+          opencodeProfile.authentication !== 'api-key')
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['opencodeModelSource'],
+          message:
+            'OpenCode 独立模型连接仅支持需要 API Key 的 Anthropic Messages 协议'
+        })
+      }
+      const continueSource = settings.continueModelSource
+      const continueProfile =
+        continueSource?.kind === 'profile'
+          ? settings.modelProfiles.find(
+              (profile) => profile.id === continueSource.profileId
+            )
+          : undefined
+      if (continueProfile?.protocol === 'openai-images-generations') {
+        context.addIssue({
+          code: 'custom',
+          path: ['continueModelSource'],
+          message: 'Continue 不支持图像生成模型连接'
+        })
+      }
     }
     if (settings.opencodeBaseUrl) {
       const opencodeUrl = new URL(settings.opencodeBaseUrl)
@@ -271,6 +370,38 @@ export const runtimeSettingsInputSchema = z
         })
       }
     }
+    const embeddingUrl = new URL(settings.knowledgeEmbeddingBaseUrl)
+    const embeddingHost = embeddingUrl.hostname.toLowerCase()
+    const privateIpv4 =
+      /^10(?:\.\d{1,3}){3}$/u.test(embeddingHost) ||
+      /^192\.168(?:\.\d{1,3}){2}$/u.test(embeddingHost) ||
+      /^172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/u.test(
+        embeddingHost
+      )
+    const loopback =
+      embeddingHost === 'localhost' ||
+      embeddingHost === '::1' ||
+      embeddingHost === '[::1]' ||
+      /^127(?:\.\d{1,3}){3}$/u.test(embeddingHost)
+    if (
+      (embeddingUrl.protocol !== 'https:' &&
+        !(
+          embeddingUrl.protocol === 'http:' &&
+          (loopback || privateIpv4)
+        )) ||
+      embeddingUrl.username ||
+      embeddingUrl.password ||
+      embeddingUrl.search ||
+      embeddingUrl.hash ||
+      (embeddingUrl.pathname !== '/' && embeddingUrl.pathname !== '')
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['knowledgeEmbeddingBaseUrl'],
+        message:
+          'Ollama 向量地址必须使用 HTTPS，或使用本机/私有网络 HTTP origin，且不得包含凭据、路径、查询参数或片段'
+      })
+    }
   })
 
 export type RuntimeSettingsInput = z.infer<typeof runtimeSettingsInputSchema>
@@ -282,6 +413,8 @@ export type ModelConnectionSettings = {
   name: string
   baseUrl: string
   modelName: string
+  protocol: ModelProtocol
+  authentication: ModelAuthentication
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment'
 }
@@ -290,6 +423,8 @@ export type RuntimeSettings = {
   provider: RuntimeSettingsInput['provider']
   modelBaseUrl: string
   modelName: string
+  modelProtocol: ModelProtocol
+  modelAuthentication: ModelAuthentication
   opencodeBaseUrl: string
   opencodeEmbedded: boolean
   opencodeBinaryPath: string
@@ -297,6 +432,10 @@ export type RuntimeSettings = {
   continueBinaryPath: string
   continueConfigPath: string
   continueMode: RuntimeSettingsInput['continueMode']
+  runtimeSandboxMode: RuntimeSettingsInput['runtimeSandboxMode']
+  knowledgeEmbeddingEnabled: boolean
+  knowledgeEmbeddingBaseUrl: string
+  knowledgeEmbeddingModel: string
   workspacePath: string
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment'
@@ -323,6 +462,8 @@ export type AgentRuntimeStatus = {
   label: string
   available: boolean
   detail: string
+  capability?: 'chat' | 'image-generation'
+  supportsToolExecution: boolean
 }
 
 export type RuntimeBinaryDetection =
@@ -367,6 +508,7 @@ export type AgentEvent =
   | {
       requestId: string
       type: 'tool'
+      callId: string
       name: string
       state: 'pending' | 'running' | 'completed' | 'failed'
       summary: string
@@ -383,12 +525,20 @@ export type AgentEvent =
     }
   | {
       requestId: string
+      type: 'artifact'
+      artifactId: string
+      kind: 'image'
+      title: string
+    }
+  | {
+      requestId: string
       type: 'done'
       sessionId?: string
     }
   | {
       requestId: string
       type: 'error'
+      status: 'failed' | 'cancelled'
       message: string
     }
 
@@ -531,6 +681,8 @@ export type KnowledgeSearchReference = {
   locator?: string
   snippet: string
   rank: number
+  retrievalChannels?: Array<'fts' | 'vector' | 'graph'>
+  evidenceIds?: string[]
 }
 
 export type DesktopApi = {
@@ -538,6 +690,7 @@ export type DesktopApi = {
     getInfo: () => Promise<AppInfo>
     show: () => Promise<void>
     hide: () => Promise<void>
+    clearLocalData: () => Promise<void>
     onNewConversation: (listener: () => void) => () => void
     onOpenSettings: (listener: () => void) => () => void
   }
@@ -579,9 +732,17 @@ export type DesktopApi = {
   }
   tasks: {
     list: () => Promise<AssistantTask[]>
+    setStatus: (
+      taskId: string,
+      status: Extract<AssistantTask['status'], 'completed' | 'cancelled'>
+    ) => Promise<void>
+  }
+  usage: {
+    getTokenSummary: () => Promise<TokenUsageSummary>
   }
   artifacts: {
     list: (projectId?: string) => Promise<AssistantArtifact[]>
+    get: (artifactId: string) => Promise<AssistantArtifact>
     importFiles: (projectId?: string) => Promise<AssistantArtifact[]>
   }
   memory: {
@@ -599,6 +760,25 @@ export type DesktopApi = {
     setEnabled: (scheduleId: string, enabled: boolean) => Promise<void>
     remove: (scheduleId: string) => Promise<void>
     runNow: (scheduleId: string) => Promise<void>
+  }
+  heartbeats: {
+    list: (projectId?: string) => Promise<AssistantHeartbeatConfig[]>
+    create: (
+      input: HeartbeatCreateInput
+    ) => Promise<AssistantHeartbeatConfig>
+    update: (
+      heartbeatId: string,
+      input: HeartbeatUpdateInput
+    ) => Promise<AssistantHeartbeatConfig>
+    setPaused: (heartbeatId: string, paused: boolean) => Promise<void>
+    remove: (heartbeatId: string) => Promise<void>
+    runNow: (heartbeatId: string) => Promise<AssistantHeartbeatRun>
+    history: (
+      heartbeatId?: string
+    ) => Promise<{
+      runs: AssistantHeartbeatRun[]
+      entries: AssistantHeartbeatEntry[]
+    }>
   }
   experts: {
     list: () => Promise<AssistantExpert[]>

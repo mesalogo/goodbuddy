@@ -50,9 +50,13 @@ import {
 import type {
   AgentExecutionRequest,
   AgentRuntime,
-  RuntimeAuthorizer
+  RuntimeAuthorizer,
+  RuntimeEvent,
+  RuntimeGeneratedImageEvent,
+  RuntimeModelUsageEvent
 } from './agent/runtime'
 import { detectAgentRuntimes } from './agent/runtime-discovery'
+import { redactSensitiveText } from './agent/approval-summary'
 import type { BundledRuntimePaths } from './agent/bundled-runtimes'
 import type { CapabilityService } from './capabilities/capability-service'
 import { testMcpServer } from './capabilities/mcp-tester'
@@ -68,8 +72,16 @@ import { showWindow } from './window'
 import type { AssistantDatabase } from './assistant/assistant-database'
 import { RemoteDelegationService } from './assistant/remote-delegation-service'
 import { getWorkspaceChanges } from './assistant/workspace-changes-service'
+import { HeartbeatService } from './assistant/heartbeat-service'
 
 const requestIdSchema = z.string().uuid()
+
+function safeRuntimeError(error: unknown, fallback: string): string {
+  return redactSensitiveText(
+    error instanceof Error ? error.message : fallback
+  ).slice(0, 2_000)
+}
+
 const approvalResponseSchema = z
   .object({
     approvalId: z.string().uuid(),
@@ -100,8 +112,17 @@ const scheduleEnabledRequestSchema = z
     enabled: z.boolean()
   })
   .strict()
+const taskStatusRequestSchema = z
+  .object({
+    taskId: assistantIdSchema,
+    status: z.enum(['completed', 'cancelled'])
+  })
+  .strict()
 
-const imageMimeTypes: Record<string, string> = {
+const imageMimeTypes: Record<
+  string,
+  'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp'
+> = {
   '.gif': 'image/gif',
   '.jpeg': 'image/jpeg',
   '.jpg': 'image/jpeg',
@@ -315,6 +336,9 @@ export function registerIpcHandlers(
   onRuntimeSettingsChanged: () => Promise<void>
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
+  const heartbeatControllers = new Set<AbortController>()
+  let shuttingDown = false
+  let executionPaused = false
   const activeExecutions = new Set<Promise<unknown>>()
   const trackExecution = <T>(execution: Promise<T>): Promise<T> => {
     activeExecutions.add(execution)
@@ -351,6 +375,143 @@ export function registerIpcHandlers(
     return snapshot
   }
 
+  const persistGeneratedImage = (
+    event: RuntimeGeneratedImageEvent,
+    input: {
+      projectId?: string
+      taskId: string
+      title: string
+    }
+  ): AgentEvent => {
+    const artifact = assistantDatabase.createImageArtifact({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      title: input.title,
+      mimeType: event.mimeType,
+      base64: event.data
+    })
+    return {
+      requestId: event.requestId,
+      type: 'artifact',
+      artifactId: artifact.id,
+      kind: 'image',
+      title: artifact.title
+    }
+  }
+
+  const persistModelUsage = (event: RuntimeModelUsageEvent): void => {
+    assistantDatabase.upsertModelUsageCall({
+      requestId: event.requestId,
+      callId: event.callId,
+      runtime: event.runtime,
+      provider: event.provider,
+      model: event.model,
+      input: event.inputTokens,
+      output: event.outputTokens,
+      cacheRead: event.cacheReadTokens,
+      cacheWrite: event.cacheWriteTokens
+    })
+  }
+
+  const heartbeatService = new HeartbeatService(
+    assistantDatabase,
+    {
+      summarize: async (request) => {
+        if (runtime.capability === 'image-generation') {
+          throw new Error('智能心跳需要文本模型，当前默认连接仅支持图像生成')
+        }
+        const controller = new AbortController()
+        heartbeatControllers.add(controller)
+        const timeout = setTimeout(
+          () =>
+            controller.abort(
+              new Error('Heartbeat summarization exceeded 4 minutes')
+            ),
+          4 * 60_000
+        )
+        const requestId = randomUUID()
+        const conversationId = `heartbeat:${requestId}`
+        assistantDatabase.createTask({
+          id: requestId,
+          projectId: request.projectId,
+          conversationId,
+          title: '智能心跳回顾',
+          instructions: '根据有界本地输入生成智能心跳报告',
+          workMode: 'ask',
+          origin: 'assistant'
+        })
+        let output = ''
+        let completed = false
+        try {
+          for await (const event of runtime.run(
+            {
+              requestId,
+              conversationId,
+              workMode: 'ask',
+              prompt: [
+                request.systemInstruction,
+                'OUTPUT CONTRACT:',
+                JSON.stringify(request.outputContract),
+                'BOUNDED PRIVATE INPUT:',
+                JSON.stringify(request.input),
+                'Return only one JSON object. Do not wrap it in Markdown.'
+              ].join('\n\n')
+            },
+            controller.signal,
+            async (approval) => {
+              await request.authorizeTool({
+                name: approval.toolName ?? approval.scopeKey,
+                input: approval.argumentSummary
+              })
+              return 'deny'
+            }
+          )) {
+            if (event.type === 'text') {
+              output += event.delta
+              if (Buffer.byteLength(output) > 100_000) {
+                controller.abort()
+                throw new Error('Heartbeat output exceeds 100KB')
+              }
+            } else if (event.type === 'model-usage') {
+              persistModelUsage(event)
+            } else if (event.type === 'generated-image') {
+              throw new Error('智能心跳不支持图像生成模型')
+            } else if (event.type === 'tool') {
+              throw new Error('智能心跳只允许只读模型摘要，不允许工具调用')
+            } else if (event.type === 'error') {
+              throw new Error(event.message)
+            } else if (event.type === 'done') {
+              completed = true
+            }
+          }
+          if (!completed) {
+            throw new Error('Heartbeat summarizer did not report completion')
+          }
+          if (!output.trim()) {
+            throw new Error('Heartbeat summarizer returned no output')
+          }
+          assistantDatabase.updateTaskStatus(requestId, 'completed')
+          return output
+        } catch (error) {
+          const message = safeRuntimeError(error, '心跳摘要失败')
+          assistantDatabase.updateTaskStatus(
+            requestId,
+            controller.signal.aborted ? 'cancelled' : 'failed',
+            message
+          )
+          throw new Error(message, { cause: error })
+        } finally {
+          clearTimeout(timeout)
+          heartbeatControllers.delete(controller)
+          await runtime.releaseConversation?.(conversationId)
+        }
+      }
+    },
+    () => {
+      throw new Error('Heartbeat tool use is always denied')
+    }
+  )
+
   const executeSchedule = async (
     schedule: AssistantSchedule,
     origin: 'schedule' | 'delegation' = 'schedule'
@@ -359,6 +520,9 @@ export function registerIpcHandlers(
     output?: string
     error?: string
   }> => {
+    if (shuttingDown || executionPaused) {
+      return { status: 'failed', error: '应用正在退出' }
+    }
     const requestId = randomUUID()
     const controller = new AbortController()
     activeRequests.set(requestId, controller)
@@ -378,6 +542,11 @@ export function registerIpcHandlers(
           ? 'Work mode: Plan. Do not call tools or make changes. Produce a reviewable plan.'
           : 'Work mode: Execute. Tool actions remain subject to GoodBuddy permission controls.'
     let output = ''
+    let completed = false
+    const toolStates = new Map<
+      string,
+      Extract<AgentEvent, { type: 'tool' }>
+    >()
     try {
       for await (const agentEvent of runtime.run(
         {
@@ -422,14 +591,44 @@ export function registerIpcHandlers(
           }
         }
       )) {
+        if (agentEvent.type === 'model-usage') {
+          persistModelUsage(agentEvent)
+          continue
+        }
+        const taskEvent =
+          agentEvent.type === 'generated-image'
+            ? persistGeneratedImage(agentEvent, {
+                projectId: schedule.projectId,
+                taskId: requestId,
+                title: schedule.title
+              })
+            : agentEvent
         assistantDatabase.appendTaskEvent(
           requestId,
-          agentEvent.type,
-          agentEvent
+          taskEvent.type,
+          taskEvent
         )
-        if (agentEvent.type === 'text') {
-          output = `${output}${agentEvent.delta}`.slice(0, 1_000_000)
+        if (taskEvent.type === 'text') {
+          output = `${output}${taskEvent.delta}`.slice(0, 1_000_000)
+        } else if (taskEvent.type === 'tool') {
+          toolStates.set(taskEvent.callId, taskEvent)
+        } else if (taskEvent.type === 'error') {
+          throw new Error(taskEvent.message)
+        } else if (taskEvent.type === 'done') {
+          const unsuccessfulTool = [...toolStates.values()].find(
+            (tool) => tool.state !== 'completed'
+          )
+          if (unsuccessfulTool) {
+            throw new Error(
+              `${unsuccessfulTool.name} 工具未成功完成，定时任务已失败`
+            )
+          }
+          completed = true
+          break
         }
+      }
+      if (!completed) {
+        throw new Error('Agent Runtime 未报告任务完成，定时任务已失败')
       }
       if (output.trim()) {
         assistantDatabase.createTextArtifact({
@@ -448,8 +647,7 @@ export function registerIpcHandlers(
       }
       return { status: 'completed', output }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : '定时任务执行失败'
+      const message = safeRuntimeError(error, '定时任务执行失败')
       assistantDatabase.updateTaskStatus(
         requestId,
         controller.signal.aborted ? 'cancelled' : 'failed',
@@ -470,7 +668,10 @@ export function registerIpcHandlers(
   const runExpertTeam = async function* (
     request: AgentExecutionRequest,
     signal: AbortSignal
-  ): AsyncGenerator<AgentEvent, void, void> {
+  ): AsyncGenerator<RuntimeEvent, void, void> {
+    if (runtime.capability === 'image-generation') {
+      throw new Error('专家团队需要文本模型，当前默认连接仅支持图像生成')
+    }
     const experts = assistantDatabase.listExperts().slice(0, 3)
     if (experts.length < 2) {
       throw new Error('专家团队至少需要两个已启用专家')
@@ -483,6 +684,8 @@ export function registerIpcHandlers(
     const results = await Promise.allSettled(
       experts.map(async (expert) => {
         const childRequestId = randomUUID()
+        const childConversationId =
+          `subagent:${request.requestId}:${childRequestId}`
         assistantDatabase.createTask({
           id: childRequestId,
           projectId: request.projectId,
@@ -493,12 +696,13 @@ export function registerIpcHandlers(
           origin: 'subagent'
         })
         let output = ''
+        let completed = false
         try {
           for await (const event of runtime.run(
             {
               ...request,
               requestId: childRequestId,
-              conversationId: `subagent:${request.requestId}:${childRequestId}`,
+              conversationId: childConversationId,
               expertId: undefined,
               teamMode: false,
               workMode: 'ask',
@@ -513,9 +717,27 @@ export function registerIpcHandlers(
             signal,
             async () => 'deny'
           )) {
+            if (event.type === 'generated-image') {
+              throw new Error('专家团队不支持图像生成模型')
+            }
+            if (event.type === 'model-usage') {
+              persistModelUsage(event)
+              continue
+            }
+            if (event.type === 'tool') {
+              throw new Error('专家只读子任务不允许工具调用')
+            }
+            if (event.type === 'error') {
+              throw new Error(event.message)
+            }
             if (event.type === 'text' && output.length < 60_000) {
               output = `${output}${event.delta}`.slice(0, 60_000)
+            } else if (event.type === 'done') {
+              completed = true
             }
+          }
+          if (!completed) {
+            throw new Error('专家子任务未报告完成')
           }
           assistantDatabase.updateTaskStatus(
             childRequestId,
@@ -526,12 +748,15 @@ export function registerIpcHandlers(
             output
           }
         } catch (error) {
+          const message = safeRuntimeError(error, '专家子任务失败')
           assistantDatabase.updateTaskStatus(
             childRequestId,
             signal.aborted ? 'cancelled' : 'failed',
-            error instanceof Error ? error.message : '专家子任务失败'
+            message
           )
-          throw error
+          throw new Error(message, { cause: error })
+        } finally {
+          await runtime.releaseConversation?.(childConversationId)
         }
       })
     )
@@ -575,6 +800,9 @@ export function registerIpcHandlers(
       signal,
       async () => 'deny'
     )) {
+      if (event.type === 'generated-image') {
+        throw new Error('专家团队不支持图像生成模型')
+      }
       yield {
         ...event,
         requestId: request.requestId
@@ -584,13 +812,16 @@ export function registerIpcHandlers(
 
   let scheduleTickRunning = false
   const runDueSchedules = async (): Promise<void> => {
-    if (scheduleTickRunning) {
+    if (scheduleTickRunning || shuttingDown || executionPaused) {
       return
     }
     scheduleTickRunning = true
     try {
       for (const schedule of assistantDatabase.claimDueSchedules()) {
         await trackExecution(executeSchedule(schedule))
+      }
+      if (!shuttingDown && !executionPaused) {
+        await trackExecution(heartbeatService.processDue())
       }
     } finally {
       scheduleTickRunning = false
@@ -657,6 +888,23 @@ export function registerIpcHandlers(
     window.hide()
   })
 
+  ipcMain.handle(ipcChannels.appClearLocalData, async (event) => {
+    assertTrustedSender(event, window)
+    executionPaused = true
+    try {
+      abortActiveRequests('用户正在清除本地数据')
+      for (const controller of heartbeatControllers) {
+        controller.abort(new Error('用户正在清除本地数据'))
+      }
+      heartbeatControllers.clear()
+      approvalBroker.clear()
+      await Promise.allSettled([...activeExecutions])
+      assistantDatabase.clearAssistantData()
+    } finally {
+      executionPaused = false
+    }
+  })
+
   ipcMain.handle(ipcChannels.agentStatus, (event) => {
     assertTrustedSender(event, window)
     return runtime.getStatus()
@@ -664,28 +912,43 @@ export function registerIpcHandlers(
 
   ipcMain.handle(ipcChannels.agentRun, (event, input: unknown) => {
     assertTrustedSender(event, window)
+    if (executionPaused || shuttingDown) {
+      throw new Error('本地数据维护期间暂不接受新任务')
+    }
     const parsedInput = agentRequestSchema.parse(input)
     const parsedRequest = {
       ...parsedInput,
       workMode: parsedInput.workMode ?? ('ask' as const)
     }
+    if (
+      parsedRequest.workMode === 'execute' &&
+      !runtime.supportsToolExecution
+    ) {
+      throw new Error(
+        '当前 Runtime 不支持工具执行，请切换到 OpenCode 或 Continue'
+      )
+    }
+    const imageGeneration = runtime.capability === 'image-generation'
     const enrichedRequest = contextManager.enrichRequest(
       parsedRequest
     )
     const modeInstruction =
-      enrichedRequest.workMode === 'ask'
-        ? 'Work mode: Ask. Do not call tools or make changes. Answer using only the explicitly supplied context.'
-        : enrichedRequest.workMode === 'plan'
-          ? 'Work mode: Plan. Do not call tools or make changes. Produce a concrete reviewable plan and wait for user confirmation.'
-          : enrichedRequest.workMode === 'execute'
-            ? 'Work mode: Execute. Follow the approved request; all tool actions remain subject to GoodBuddy permission controls.'
-            : ''
-    const expertInstruction = enrichedRequest.expertId
-      ? `Selected expert role:\n${
-          assistantDatabase.getExpert(enrichedRequest.expertId)
-            .systemInstructions
-        }`
-      : ''
+      imageGeneration
+        ? ''
+        : enrichedRequest.workMode === 'ask'
+          ? 'Work mode: Ask. Do not call tools or make changes. Answer using only the explicitly supplied context.'
+          : enrichedRequest.workMode === 'plan'
+            ? 'Work mode: Plan. Do not call tools or make changes. Produce a concrete reviewable plan and wait for user confirmation.'
+            : enrichedRequest.workMode === 'execute'
+              ? 'Work mode: Execute. Follow the approved request; all tool actions remain subject to GoodBuddy permission controls.'
+              : ''
+    const expertInstruction =
+      enrichedRequest.expertId && !imageGeneration
+        ? `Selected expert role:\n${
+            assistantDatabase.getExpert(enrichedRequest.expertId)
+              .systemInstructions
+          }`
+        : ''
     const trustedInstructions = [modeInstruction, expertInstruction]
       .filter(Boolean)
       .join('\n\n')
@@ -712,6 +975,12 @@ export function registerIpcHandlers(
 
     const execution = (async () => {
       let outputText = ''
+      let completed = false
+      let persistedRuntimeError = false
+      const toolStates = new Map<
+        string,
+        Extract<AgentEvent, { type: 'tool' }>
+      >()
       try {
         const authorize: RuntimeAuthorizer = async (approvalRequest) => {
           assistantDatabase.updateTaskStatus(
@@ -753,21 +1022,60 @@ export function registerIpcHandlers(
           ? runExpertTeam(request, controller.signal)
           : runtime.run(request, controller.signal, authorize)
         for await (const agentEvent of eventStream) {
+          if (agentEvent.type === 'model-usage') {
+            persistModelUsage(agentEvent)
+            continue
+          }
+          const publicEvent: AgentEvent =
+            agentEvent.type === 'generated-image'
+              ? persistGeneratedImage(agentEvent, {
+                  projectId: request.projectId,
+                  taskId: request.requestId,
+                  title: parsedRequest.prompt
+                    .split(/\r?\n/u, 1)[0]!
+                    .slice(0, 120)
+                })
+              : agentEvent
           if (
-            agentEvent.type === 'text' &&
+            publicEvent.type === 'text' &&
             outputText.length < 1_000_000
           ) {
-            outputText = `${outputText}${agentEvent.delta}`.slice(
+            outputText = `${outputText}${publicEvent.delta}`.slice(
               0,
               1_000_000
             )
           }
+          if (publicEvent.type === 'tool') {
+            toolStates.set(publicEvent.callId, publicEvent)
+          }
+          if (publicEvent.type === 'error') {
+            assistantDatabase.appendTaskEvent(
+              request.requestId,
+              publicEvent.type,
+              publicEvent
+            )
+            persistedRuntimeError = true
+            throw new Error(publicEvent.message)
+          }
+          if (publicEvent.type === 'done') {
+            const unsuccessfulTool = [...toolStates.values()].find(
+              (tool) => tool.state !== 'completed'
+            )
+            if (unsuccessfulTool) {
+              throw new Error(
+                unsuccessfulTool.state === 'failed'
+                  ? `${unsuccessfulTool.name} 工具执行失败`
+                  : `${unsuccessfulTool.name} 工具未完成，任务不能标记为成功`
+              )
+            }
+          }
           assistantDatabase.appendTaskEvent(
             request.requestId,
-            agentEvent.type,
-            agentEvent
+            publicEvent.type,
+            publicEvent
           )
-          if (agentEvent.type === 'done') {
+          if (publicEvent.type === 'done') {
+            completed = true
             if (outputText.trim()) {
               assistantDatabase.createTextArtifact({
                 projectId: request.projectId,
@@ -790,15 +1098,37 @@ export function registerIpcHandlers(
             }
           }
           if (!window.isDestroyed()) {
-            window.webContents.send(ipcChannels.agentEvent, agentEvent)
+            window.webContents.send(ipcChannels.agentEvent, publicEvent)
+          }
+          if (completed) {
+            break
           }
         }
+        if (!completed) {
+          throw new Error('Agent Runtime 未报告任务完成，任务已标记为失败')
+        }
       } catch (error) {
+        const errorMessage = controller.signal.aborted
+          ? '请求已取消'
+          : safeRuntimeError(error, 'Agent Runtime 执行失败')
         assistantDatabase.updateTaskStatus(
           request.requestId,
           controller.signal.aborted ? 'cancelled' : 'failed',
-          error instanceof Error ? error.message : 'Agent Runtime 执行失败'
+          errorMessage
         )
+        const agentEvent: AgentEvent = {
+          requestId: request.requestId,
+          type: 'error',
+          status: controller.signal.aborted ? 'cancelled' : 'failed',
+          message: errorMessage
+        }
+        if (!persistedRuntimeError) {
+          assistantDatabase.appendTaskEvent(
+            request.requestId,
+            agentEvent.type,
+            agentEvent
+          )
+        }
         if (!window.isFocused() && Notification.isSupported()) {
           new Notification({
             title: controller.signal.aborted
@@ -808,15 +1138,6 @@ export function registerIpcHandlers(
           }).show()
         }
         if (!window.isDestroyed()) {
-          const agentEvent: AgentEvent = {
-            requestId: request.requestId,
-            type: 'error',
-            message: controller.signal.aborted
-              ? '请求已取消'
-              : error instanceof Error
-                ? error.message
-                : 'Agent Runtime 执行失败'
-          }
           window.webContents.send(ipcChannels.agentEvent, agentEvent)
         }
       } finally {
@@ -865,6 +1186,7 @@ export function registerIpcHandlers(
         workspacePath
       })
       abortActiveRequests('运行时设置已更改')
+      approvalBroker.clear()
       await onRuntimeSettingsChanged()
       return savedSettings
     }
@@ -1004,11 +1326,29 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     return assistantDatabase.listTasks()
   })
+  ipcMain.handle(ipcChannels.tasksSetStatus, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const parsed = taskStatusRequestSchema.parse(input)
+    assistantDatabase.resolveAssistantSuggestionTask(
+      parsed.taskId,
+      parsed.status
+    )
+  })
+
+  ipcMain.handle(ipcChannels.tokenUsageSummary, (event) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getTokenUsageSummary()
+  })
 
   ipcMain.handle(ipcChannels.artifactsList, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const projectId = assistantIdSchema.optional().parse(input)
     return assistantDatabase.listArtifacts(projectId)
+  })
+
+  ipcMain.handle(ipcChannels.artifactsGet, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getArtifact(assistantIdSchema.parse(input))
   })
 
   ipcMain.handle(
@@ -1053,12 +1393,11 @@ export function registerIpcHandlers(
             throw new Error(`图片“${name}”超过 3MB 预览限制`)
           }
           artifacts.push(
-            assistantDatabase.createInlineArtifact({
+            assistantDatabase.createImageArtifact({
               projectId,
-              kind: 'image',
               title: name,
               mimeType: imageMimeType,
-              content: `data:${imageMimeType};base64,${file.toString('base64')}`
+              base64: file.toString('base64')
             })
           )
           continue
@@ -1157,10 +1496,57 @@ export function registerIpcHandlers(
 
   ipcMain.handle(ipcChannels.schedulesRunNow, (event, input: unknown) => {
     assertTrustedSender(event, window)
+    if (executionPaused || shuttingDown) {
+      throw new Error('本地数据维护期间暂不接受新任务')
+    }
     const schedule = assistantDatabase.claimScheduleNow(
       assistantIdSchema.parse(input)
     )
-    void executeSchedule(schedule)
+    void trackExecution(executeSchedule(schedule)).catch(() => undefined)
+  })
+
+  ipcMain.handle(ipcChannels.heartbeatsList, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return heartbeatService.list(input)
+  })
+
+  ipcMain.handle(ipcChannels.heartbeatsCreate, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return heartbeatService.create(input)
+  })
+
+  ipcMain.handle(ipcChannels.heartbeatsUpdate, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return heartbeatService.update(input)
+  })
+
+  ipcMain.handle(
+    ipcChannels.heartbeatsSetPaused,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      heartbeatService.pause(input)
+    }
+  )
+
+  ipcMain.handle(ipcChannels.heartbeatsRemove, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    heartbeatService.remove(input)
+  })
+
+  ipcMain.handle(
+    ipcChannels.heartbeatsRunNow,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (executionPaused || shuttingDown) {
+        throw new Error('本地数据维护期间暂不接受新任务')
+      }
+      return trackExecution(heartbeatService.runNow(input))
+    }
+  )
+
+  ipcMain.handle(ipcChannels.heartbeatsHistory, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return heartbeatService.history(input)
   })
 
   ipcMain.handle(ipcChannels.expertsList, (event) => {
@@ -1436,34 +1822,38 @@ export function registerIpcHandlers(
     })
   }
 
-  ipcMain.handle(ipcChannels.knowledgeSearch, (event, input: unknown) => {
+  ipcMain.handle(ipcChannels.knowledgeSearch, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const value = knowledgeSearchSchema.parse(input)
+    const availableLibraries =
+      knowledgeService.database.listKnowledgeBases(100)
     const libraries =
       value.libraryIds.length > 0
         ? value.libraryIds
-        : knowledgeService
-            .snapshot()
-            .libraries.map((library) => library.id)
+        : availableLibraries.map((library) => library.id)
     const names = new Map(
-      knowledgeService
-        .snapshot()
-        .libraries.map((library) => [library.id, library.name])
+      availableLibraries.map((library) => [library.id, library.name])
     )
-    return libraries
-      .flatMap((libraryId) =>
-        knowledgeService.search(libraryId, value.query, 6).map((result) => ({
-          libraryId,
-          libraryName: names.get(libraryId) ?? '知识库',
-          documentId: result.document.id,
-          documentName: result.document.title,
-          sourceName: result.source.displayName,
-          sourceLocation: result.source.location,
-          locator: result.chunk.location,
-          snippet: result.snippet.replace(/<\/?mark>/g, ''),
-          rank: result.rank
-        }))
+    const results = (
+      await knowledgeService.searchHybridMany(
+        libraries,
+        value.query,
+        6
       )
+    ).map(({ knowledgeBaseId, result }) => ({
+      libraryId: knowledgeBaseId,
+      libraryName: names.get(knowledgeBaseId) ?? '知识库',
+      documentId: result.document.id,
+      documentName: result.document.title,
+      sourceName: result.source.displayName,
+      sourceLocation: result.source.location,
+      locator: result.chunk.location,
+      snippet: result.snippet.replace(/<\/?mark>/g, ''),
+      rank: result.rank,
+      retrievalChannels: result.retrieval.channels,
+      evidenceIds: result.retrieval.evidenceIds
+    }))
+    return results
       .sort((left, right) => left.rank - right.rank)
       .slice(0, 8)
   })
@@ -1578,9 +1968,14 @@ export function registerIpcHandlers(
   )
 
   return async () => {
+    shuttingDown = true
     clearInterval(scheduleInterval)
     remoteDelegation?.stop()
     abortActiveRequests('应用正在退出')
+    for (const controller of heartbeatControllers) {
+      controller.abort(new Error('应用正在退出'))
+    }
+    heartbeatControllers.clear()
     approvalBroker.clear()
     contextManager.clear()
     await Promise.allSettled([...activeExecutions])

@@ -1,11 +1,11 @@
 import type {
-  AgentEvent,
   AgentRequest,
   AgentRuntimeStatus
 } from '../../shared/contracts'
 import type {
   AgentRuntime,
-  RuntimeAuthorizer
+  RuntimeAuthorizer,
+  RuntimeEvent
 } from './runtime'
 
 type RuntimeSlot = {
@@ -31,6 +31,14 @@ export class AgentRuntimeController implements AgentRuntime {
 
   get requiresToolApproval(): boolean {
     return this.current.runtime.requiresToolApproval
+  }
+
+  get supportsToolExecution(): boolean {
+    return this.current.runtime.supportsToolExecution
+  }
+
+  get capability(): AgentRuntime['capability'] {
+    return this.current.runtime.capability
   }
 
   replace(next: AgentRuntime): Promise<void> {
@@ -60,19 +68,31 @@ export class AgentRuntimeController implements AgentRuntime {
     ])
   }
 
-  getStatus(): Promise<AgentRuntimeStatus> {
-    return this.current.runtime.getStatus()
+  async getStatus(): Promise<AgentRuntimeStatus> {
+    const slot = this.current
+    const status = await slot.runtime.getStatus()
+    return {
+      ...status,
+      supportsToolExecution: slot.runtime.supportsToolExecution
+    }
   }
 
-  testConnection(): Promise<AgentRuntimeStatus> {
-    return this.current.runtime.testConnection?.() ?? this.getStatus()
+  async testConnection(): Promise<AgentRuntimeStatus> {
+    const slot = this.current
+    const status = await (
+      slot.runtime.testConnection?.() ?? slot.runtime.getStatus()
+    )
+    return {
+      ...status,
+      supportsToolExecution: slot.runtime.supportsToolExecution
+    }
   }
 
   async *run(
     request: AgentRequest,
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
-  ): AsyncGenerator<AgentEvent, void, void> {
+  ): AsyncGenerator<RuntimeEvent, void, void> {
     const slot = this.current
     const toolsAllowed = request.workMode === 'execute'
     const effectiveAuthorize: RuntimeAuthorizer | undefined = toolsAllowed
@@ -80,6 +100,9 @@ export class AgentRuntimeController implements AgentRuntime {
       : async () => 'deny'
     slot.activeRequests += 1
     try {
+      if (toolsAllowed && !slot.runtime.supportsToolExecution) {
+        throw new Error('当前 Runtime 不支持工具执行，请切换到 OpenCode 或 Continue')
+      }
       if (
         toolsAllowed &&
         slot.runtime.requiresToolApproval &&
@@ -102,9 +125,12 @@ export class AgentRuntimeController implements AgentRuntime {
         effectiveAuthorize
       )) {
         if (slot !== this.current) {
-          return
+          throw new Error('Runtime 已切换，当前请求已中断')
         }
         yield event
+      }
+      if (slot !== this.current) {
+        throw new Error('Runtime 已切换，当前请求已中断')
       }
     } finally {
       slot.activeRequests -= 1
@@ -112,6 +138,10 @@ export class AgentRuntimeController implements AgentRuntime {
         await this.disposeSlot(slot)
       }
     }
+  }
+
+  async releaseConversation(conversationId: string): Promise<void> {
+    await this.current.runtime.releaseConversation?.(conversationId)
   }
 
   private retire(slot: RuntimeSlot): Promise<void> {

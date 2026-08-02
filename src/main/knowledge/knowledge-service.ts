@@ -31,6 +31,8 @@ import type {
   GraphStrategy,
   GraphEntity,
   GraphRelation,
+  EmbeddingProvider,
+  HybridSearchResult,
   KnowledgeBase,
   KnowledgeSource,
   SearchResult
@@ -76,12 +78,15 @@ export type KnowledgeServiceOptions = {
   managedRoot: string
   extractStructured?: ExtractStructured
   urlImporter?: UrlImporter
+  embeddingProvider?: EmbeddingProvider
+  embeddingBatchSize?: number
 }
 
 const supportedExtensions = new Set<string>(supportedDocumentExtensions)
 const maximumFileBytes = 20 * 1024 * 1024
 const maximumSourceBytes = 500 * 1024 * 1024
 const maximumFilesPerSource = 2_000
+const maximumEmbeddingChunksPerBatch = 32
 
 function isInside(root: string, candidate: string): boolean {
   const path = relative(resolve(root), resolve(candidate))
@@ -114,15 +119,30 @@ export class KnowledgeService {
   private readonly managedRoot: string
   private readonly extractStructured?: ExtractStructured
   private readonly urlImporter: UrlImporter
+  private embeddingProvider?: EmbeddingProvider
+  private readonly embeddingBatchSize: number
   private readonly watchers = new Map<string, FSWatcher>()
   private readonly syncTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly activeSyncs = new Map<string, Promise<void>>()
+  private readonly lifecycleController = new AbortController()
 
   constructor(options: KnowledgeServiceOptions) {
     this.database = new KnowledgeDatabase(options.databasePath)
     this.managedRoot = resolve(options.managedRoot)
     this.extractStructured = options.extractStructured
     this.urlImporter = options.urlImporter ?? new UrlImporter()
+    this.embeddingProvider = options.embeddingProvider
+    const embeddingBatchSize = options.embeddingBatchSize ?? 16
+    if (
+      !Number.isSafeInteger(embeddingBatchSize) ||
+      embeddingBatchSize < 1 ||
+      embeddingBatchSize > maximumEmbeddingChunksPerBatch
+    ) {
+      throw new RangeError(
+        `embeddingBatchSize must be between 1 and ${maximumEmbeddingChunksPerBatch}`
+      )
+    }
+    this.embeddingBatchSize = embeddingBatchSize
   }
 
   async initialize(): Promise<void> {
@@ -142,6 +162,9 @@ export class KnowledgeService {
   }
 
   async dispose(): Promise<void> {
+    this.lifecycleController.abort(
+      new Error('Knowledge service is shutting down')
+    )
     for (const timer of this.syncTimers.values()) {
       clearTimeout(timer)
     }
@@ -152,6 +175,57 @@ export class KnowledgeService {
     this.watchers.clear()
     await Promise.allSettled(this.activeSyncs.values())
     this.database.close()
+  }
+
+  setEmbeddingProvider(provider?: EmbeddingProvider): Promise<void> {
+    if (
+      this.embeddingProvider === provider ||
+      (this.embeddingProvider?.fingerprint !== undefined &&
+        this.embeddingProvider.fingerprint === provider?.fingerprint)
+    ) {
+      this.embeddingProvider = provider
+      return Promise.resolve()
+    }
+    this.embeddingProvider = provider
+    if (!provider) {
+      return Promise.resolve()
+    }
+    const reindex = this.reindexEmbeddings(provider)
+    this.activeSyncs.set('embedding-reindex', reindex)
+    void reindex.then(
+      () => {
+        if (this.activeSyncs.get('embedding-reindex') === reindex) {
+          this.activeSyncs.delete('embedding-reindex')
+        }
+      },
+      () => {
+        if (this.activeSyncs.get('embedding-reindex') === reindex) {
+          this.activeSyncs.delete('embedding-reindex')
+        }
+      }
+    )
+    return reindex
+  }
+
+  private async reindexEmbeddings(
+    provider: EmbeddingProvider
+  ): Promise<void> {
+    for (const library of this.database.listKnowledgeBases(100)) {
+      if (this.embeddingProvider !== provider) {
+        return
+      }
+      for (const document of this.database.listDocuments(
+        library.id,
+        500
+      )) {
+        if (this.embeddingProvider !== provider) {
+          return
+        }
+        if (document.metadata.status === 'ready') {
+          await this.indexDocumentEmbeddings(document, provider)
+        }
+      }
+    }
   }
 
   createLibrary(input: CreateKnowledgeBaseInput): KnowledgeBase {
@@ -256,6 +330,76 @@ export class KnowledgeService {
     })
   }
 
+  async searchHybrid(
+    knowledgeBaseId: string,
+    query: string,
+    limit = 6,
+    signal?: AbortSignal
+  ): Promise<HybridSearchResult[]> {
+    const library = this.requireLibrary(knowledgeBaseId)
+    const vector = await this.embedQuery(query, signal)
+    return this.database.hybridSearch({
+      knowledgeBaseId,
+      query,
+      limit,
+      provider: vector ? this.embeddingProvider?.provider : undefined,
+      model: vector ? this.embeddingProvider?.model : undefined,
+      vector,
+      graphEnabled: library.graphEnabled
+    })
+  }
+
+  async searchHybridMany(
+    knowledgeBaseIds: readonly string[],
+    query: string,
+    limitPerLibrary = 6,
+    signal?: AbortSignal
+  ): Promise<
+    Array<{ knowledgeBaseId: string; result: HybridSearchResult }>
+  > {
+    const vector = await this.embedQuery(query, signal)
+    return knowledgeBaseIds.flatMap((knowledgeBaseId) => {
+      const library = this.requireLibrary(knowledgeBaseId)
+      return this.database
+        .hybridSearch({
+          knowledgeBaseId,
+          query,
+          limit: limitPerLibrary,
+          provider: vector
+            ? this.embeddingProvider?.provider
+            : undefined,
+          model: vector ? this.embeddingProvider?.model : undefined,
+          vector,
+          graphEnabled: library.graphEnabled
+        })
+        .map((result) => ({ knowledgeBaseId, result }))
+    })
+  }
+
+  private async embedQuery(
+    query: string,
+    signal?: AbortSignal
+  ): Promise<readonly number[] | undefined> {
+    if (!this.embeddingProvider) {
+      return undefined
+    }
+    const effectiveSignal = signal
+      ? AbortSignal.any([signal, this.lifecycleController.signal])
+      : this.lifecycleController.signal
+    try {
+      const result = await this.embeddingProvider.embed(
+        [query],
+        effectiveSignal
+      )
+      return result.length === 1 ? result[0] : undefined
+    } catch {
+      if (effectiveSignal.aborted) {
+        throw effectiveSignal.reason
+      }
+      return undefined
+    }
+  }
+
   async importPaths(
     knowledgeBaseId: string,
     selectedPaths: string[],
@@ -343,7 +487,12 @@ export class KnowledgeService {
     const effectiveLibrary = graphStrategy
       ? { ...library, graphStrategy }
       : library
-    const result = await this.urlImporter.import(input, signal)
+    const effectiveSignal = AbortSignal.any([
+      signal,
+      this.lifecycleController.signal,
+      AbortSignal.timeout(60_000)
+    ])
+    const result = await this.urlImporter.import(input, effectiveSignal)
     let source = this.database.upsertSource({
       id: sourceId,
       knowledgeBaseId,
@@ -381,6 +530,7 @@ export class KnowledgeService {
           location: chunk.locator
         }))
       )
+      await this.indexDocumentEmbeddings(document)
       await this.extractGraph(effectiveLibrary, document)
       source = this.database.upsertSource({
         ...source,
@@ -452,7 +602,7 @@ export class KnowledgeService {
       await this.importUrl(
         library.id,
         source.location,
-        new AbortController().signal,
+        this.lifecycleController.signal,
         source.id
       )
       return
@@ -543,6 +693,7 @@ export class KnowledgeService {
           }))
         )
         this.database.removeEvidenceForDocument(document.id)
+        await this.indexDocumentEmbeddings(document)
         await this.extractGraph(library, document)
       } catch (error) {
         failures.push(
@@ -564,6 +715,83 @@ export class KnowledgeService {
       throw new Error(
         `${failures.length} 个文件处理失败：${failures.slice(0, 5).join('；')}`
       )
+    }
+  }
+
+  private async indexDocumentEmbeddings(
+    document: Document,
+    requestedProvider?: EmbeddingProvider
+  ): Promise<void> {
+    const provider = requestedProvider ?? this.embeddingProvider
+    if (!provider) {
+      return
+    }
+    try {
+      const chunks = this.database.listChunks(document.id, 10_000)
+      const embeddings: Array<{
+        chunkId: string
+        contentChecksum: string
+        vector: readonly number[]
+      }> = []
+      let expectedDimensions: number | undefined
+      for (
+        let offset = 0;
+        offset < chunks.length;
+        offset += this.embeddingBatchSize
+      ) {
+        const batch = chunks.slice(offset, offset + this.embeddingBatchSize)
+        const vectors = await provider.embed(
+          batch.map((chunk) => chunk.content),
+          this.lifecycleController.signal
+        )
+        if (vectors.length !== batch.length) {
+          throw new Error('Embedding provider returned an invalid result count')
+        }
+        for (let index = 0; index < batch.length; index += 1) {
+          const chunk = batch[index]
+          const vector = vectors[index]
+          if (!chunk || !vector) {
+            throw new Error('Embedding provider returned an incomplete batch')
+          }
+          if (expectedDimensions === undefined) {
+            expectedDimensions = vector.length
+          } else if (vector.length !== expectedDimensions) {
+            throw new Error('Embedding provider returned inconsistent dimensions')
+          }
+          embeddings.push({
+            chunkId: chunk.id,
+            contentChecksum: createHash('sha256')
+              .update(chunk.content)
+              .digest('hex'),
+            vector
+          })
+        }
+      }
+      if (this.embeddingProvider !== provider) {
+        return
+      }
+      this.database.replaceDocumentEmbeddings(
+        document.id,
+        provider.provider,
+        provider.model,
+        embeddings
+      )
+    } catch (error) {
+      if (this.lifecycleController.signal.aborted) {
+        return
+      }
+      const message =
+        error instanceof Error ? error.message : 'Embedding indexing failed'
+      try {
+        this.database.recordEmbeddingIndexError(
+          document.id,
+          provider.provider,
+          provider.model,
+          message.slice(0, 2_000)
+        )
+      } catch {
+        // FTS indexing is authoritative; embedding diagnostics are best effort.
+      }
     }
   }
 

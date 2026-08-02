@@ -37,12 +37,15 @@ export const conversationSnapshotSchema = z
               .array(
                 z
                   .object({
+                    callId: z.string().max(256).optional(),
                     name: z.string().max(200),
                     state: z.enum([
                       'pending',
                       'running',
                       'completed',
-                      'failed'
+                      'failed',
+                      'cancelled',
+                      'interrupted'
                     ]),
                     summary: z.string().max(2_000)
                   })
@@ -50,7 +53,34 @@ export const conversationSnapshotSchema = z
               )
               .max(100)
               .optional(),
-            sources: z.array(z.string().max(8_192)).max(100).optional()
+            sources: z.array(z.string().max(8_192)).max(100).optional(),
+            sourceReferences: z
+              .array(
+                z
+                  .object({
+                    libraryId: assistantIdSchema,
+                    libraryName: z.string().max(200),
+                    documentId: assistantIdSchema,
+                    documentName: z.string().max(500),
+                    sourceName: z.string().max(500),
+                    sourceLocation: z.string().max(4_096).optional(),
+                    locator: z.string().max(1_000).optional(),
+                    snippet: z.string().max(16_000),
+                    rank: z.number().finite(),
+                    retrievalChannels: z
+                      .array(z.enum(['fts', 'vector', 'graph']))
+                      .max(3)
+                      .optional(),
+                    evidenceIds: z
+                      .array(assistantIdSchema)
+                      .max(100)
+                      .optional()
+                  })
+                  .strict()
+              )
+              .max(20)
+              .optional(),
+            artifactIds: z.array(assistantIdSchema).max(8).optional()
           })
           .strict()
       )
@@ -106,6 +136,47 @@ export type AssistantTask = {
   error?: string
 }
 
+export type ModelUsageCallInput = {
+  requestId: string
+  callId: string
+  runtime: string
+  provider: string
+  model: string
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+}
+
+export type TokenUsageRecord = {
+  requestId: string
+  projectId?: string
+  projectName?: string
+  conversationId?: string
+  conversationTitle?: string
+  runtime: string
+  provider: string
+  model: string
+  callCount: number
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  totalTokens: number
+}
+
+export type TokenUsageSummary = {
+  totals: {
+    callCount: number
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    totalTokens: number
+  }
+  records: TokenUsageRecord[]
+}
+
 export type AssistantArtifact = {
   id: string
   projectId?: string
@@ -158,6 +229,172 @@ export type AssistantSchedule = ScheduleCreateInput & {
   lastRunAt?: string
   createdAt: string
   updatedAt: string
+}
+
+export const heartbeatRecurrenceSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('daily'),
+      localTime: z
+        .string()
+        .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('weekly'),
+      localTime: z
+        .string()
+        .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+      weekday: z.number().int().min(0).max(6)
+    })
+    .strict()
+])
+
+export const heartbeatCreateSchema = z
+  .object({
+    projectId: assistantIdSchema.optional(),
+    name: z.string().trim().min(1).max(120),
+    timezone: z.string().trim().min(1).max(100),
+    recurrence: heartbeatRecurrenceSchema,
+    enabled: z.boolean(),
+    lookbackHours: z.number().int().min(1).max(24 * 30),
+    retentionDays: z.number().int().min(1).max(365)
+  })
+  .strict()
+
+export const heartbeatUpdateSchema = heartbeatCreateSchema
+
+export const heartbeatListSchema = z
+  .object({
+    projectId: assistantIdSchema.optional()
+  })
+  .strict()
+
+export const heartbeatHistorySchema = z
+  .object({
+    configId: assistantIdSchema.optional(),
+    limit: z.number().int().min(1).max(200).default(50)
+  })
+  .strict()
+
+export const heartbeatIdSchema = z
+  .object({
+    id: assistantIdSchema
+  })
+  .strict()
+
+export const heartbeatUpdateRequestSchema = z
+  .object({
+    id: assistantIdSchema,
+    config: heartbeatUpdateSchema
+  })
+  .strict()
+
+export const heartbeatPauseSchema = z
+  .object({
+    id: assistantIdSchema,
+    paused: z.boolean()
+  })
+  .strict()
+
+export const heartbeatRunNowSchema = z
+  .object({
+    id: assistantIdSchema,
+    idempotencyKey: z.string().trim().min(1).max(200)
+  })
+  .strict()
+
+export const heartbeatSummaryOutputSchema = z
+  .object({
+    summary: z.string().trim().min(1).max(12_000),
+    highlights: z.array(z.string().trim().min(1).max(1_000)).max(20),
+    proposedMemories: z
+      .array(
+        z
+          .object({
+            scope: z.enum(['global', 'project']),
+            type: z.enum([
+              'preference',
+              'fact',
+              'summary',
+              'procedure'
+            ]),
+            content: z.string().trim().min(1).max(8_000),
+            confidence: z.number().min(0).max(1),
+            salience: z.number().min(0).max(1)
+          })
+          .strict()
+      )
+      .max(10),
+    followUpTasks: z
+      .array(
+        z
+          .object({
+            title: z.string().trim().min(1).max(200),
+            instructions: z.string().trim().min(1).max(8_000)
+          })
+          .strict()
+      )
+      .max(10)
+  })
+  .strict()
+
+export type HeartbeatRecurrence = z.infer<
+  typeof heartbeatRecurrenceSchema
+>
+export type HeartbeatCreateInput = z.infer<
+  typeof heartbeatCreateSchema
+>
+export type HeartbeatUpdateInput = z.infer<
+  typeof heartbeatUpdateSchema
+>
+export type HeartbeatSummaryOutput = z.infer<
+  typeof heartbeatSummaryOutputSchema
+>
+
+export type HeartbeatRunStatus =
+  | 'claimed'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+
+export type AssistantHeartbeatConfig = HeartbeatCreateInput & {
+  id: string
+  nextRunAt: string
+  lastRunAt?: string
+  lastStatus?: HeartbeatRunStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export type AssistantHeartbeatRun = {
+  id: string
+  configId: string
+  trigger: 'scheduled' | 'manual'
+  scheduledFor: string
+  status: HeartbeatRunStatus
+  attemptCount: number
+  nextAttemptAt?: string
+  startedAt?: string
+  completedAt?: string
+  error?: string
+  entryId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type AssistantHeartbeatEntry = {
+  id: string
+  configId: string
+  runId: string
+  scheduledFor: string
+  summary: string
+  highlights: string[]
+  artifactId?: string
+  proposedMemoryIds: string[]
+  followUpTaskIds: string[]
+  createdAt: string
 }
 
 export const expertCreateSchema = z

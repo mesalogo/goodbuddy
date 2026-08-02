@@ -35,15 +35,15 @@ export class ToolApprovalBroker {
     if (signal.aborted) {
       throw signal.reason
     }
+    if (request.policy === 'policy') {
+      throw new Error('当前策略已禁止 Agent 工具执行')
+    }
     const grantKey = this.getGrantKey(
       request.conversationId,
       request.scopeKey
     )
     if (this.sessionGrants.has(grantKey)) {
       return 'session'
-    }
-    if (request.policy === 'policy') {
-      throw new Error('当前策略已禁止 Agent 工具执行')
     }
 
     const approvalId = crypto.randomUUID()
@@ -87,7 +87,7 @@ export class ToolApprovalBroker {
     clearTimeout(approval.timeout)
     this.pending.delete(approvalId)
 
-    if (decision === 'session' || decision === 'permanent') {
+    if (decision === 'session') {
       this.sessionGrants.add(
         this.getGrantKey(approval.conversationId, approval.scopeKey)
       )

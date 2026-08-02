@@ -7,22 +7,25 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KnowledgeService } from './knowledge-service'
+import type { EmbeddingProvider } from './types'
 import { UrlImporter } from './url-importer'
 
 const temporaryDirectories: string[] = []
 const services: KnowledgeService[] = []
 
 async function createService(
-  urlImporter?: UrlImporter
+  urlImporter?: UrlImporter,
+  embeddingProvider?: EmbeddingProvider
 ): Promise<{ directory: string; service: KnowledgeService }> {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-knowledge-service-'))
   temporaryDirectories.push(directory)
   const service = new KnowledgeService({
     databasePath: join(directory, 'knowledge.sqlite'),
     managedRoot: join(directory, 'managed'),
-    urlImporter
+    urlImporter,
+    embeddingProvider
   })
   await service.initialize()
   services.push(service)
@@ -143,5 +146,144 @@ describe('KnowledgeService', () => {
     expect(snapshot.entities.length).toBeGreaterThan(0)
     expect(snapshot.evidence.length).toBeGreaterThan(0)
     await service.dispose()
+  })
+
+  it('indexes optional embeddings and performs vector-backed hybrid search', async () => {
+    const provider: EmbeddingProvider = {
+      provider: 'test-provider',
+      model: 'test-model',
+      embed: async (input) =>
+        input.map((text) =>
+          text.includes('orbital') || text === 'related meaning'
+            ? [1, 0]
+            : [0, 1]
+        )
+    }
+    const { directory, service } = await createService(undefined, provider)
+    const sourcePath = join(directory, 'vectors.txt')
+    await writeFile(sourcePath, 'orbital telescope notes', 'utf8')
+    const library = service.createLibrary({
+      name: 'Vector knowledge',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+
+    await service.importPaths(library.id, [sourcePath])
+    const document = service.snapshot(library.id).documents[0]
+    if (!document) {
+      throw new Error('Indexed document missing')
+    }
+    expect(
+      service.database.getEmbeddingIndexState(
+        document.id,
+        provider.provider,
+        provider.model
+      )
+    ).toMatchObject({ status: 'ready', dimensions: 2 })
+
+    const results = await service.searchHybrid(
+      library.id,
+      'related meaning'
+    )
+    expect(results[0]?.document.id).toBe(document.id)
+    expect(results[0]?.retrieval.channels).toContain('vector')
+  })
+
+  it('keeps FTS available and records diagnostics when embeddings fail', async () => {
+    const provider: EmbeddingProvider = {
+      provider: 'failing-provider',
+      model: 'failing-model',
+      embed: async () => {
+        throw new Error('synthetic provider outage')
+      }
+    }
+    const { directory, service } = await createService(undefined, provider)
+    const sourcePath = join(directory, 'fallback.txt')
+    await writeFile(sourcePath, 'lexical fallback remains searchable', 'utf8')
+    const library = service.createLibrary({
+      name: 'Fallback knowledge',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+
+    await service.importPaths(library.id, [sourcePath])
+    const document = service.snapshot(library.id).documents[0]
+    if (!document) {
+      throw new Error('Indexed document missing')
+    }
+    expect(service.search(library.id, 'fallback')).toHaveLength(1)
+    expect(
+      service.database.getEmbeddingIndexState(
+        document.id,
+        provider.provider,
+        provider.model
+      )
+    ).toMatchObject({
+      status: 'error',
+      lastError: 'synthetic provider outage'
+    })
+    const results = await service.searchHybrid(library.id, 'fallback')
+    expect(results[0]?.retrieval.channels).toContain('fts')
+  })
+
+  it('reindexes existing documents when an embedding provider is enabled', async () => {
+    const { directory, service } = await createService()
+    const sourcePath = join(directory, 'existing.txt')
+    await writeFile(sourcePath, 'existing semantic content', 'utf8')
+    const library = service.createLibrary({
+      name: 'Existing knowledge',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    await service.importPaths(library.id, [sourcePath])
+    const document = service.snapshot(library.id).documents[0]!
+    const provider: EmbeddingProvider = {
+      provider: 'late-provider',
+      model: 'late-model',
+      embed: async (input) => input.map(() => [0.5, 0.5])
+    }
+
+    await service.setEmbeddingProvider(provider)
+
+    expect(
+      service.database.getEmbeddingIndexState(
+        document.id,
+        provider.provider,
+        provider.model
+      )
+    ).toMatchObject({ status: 'ready', dimensions: 2 })
+  })
+
+  it('embeds a hybrid query once across multiple libraries', async () => {
+    const embed = vi.fn<EmbeddingProvider['embed']>(
+      async (input) => input.map(() => [1, 0])
+    )
+    const provider: EmbeddingProvider = {
+      provider: 'shared-query-provider',
+      model: 'shared-query-model',
+      embed
+    }
+    const { directory, service } = await createService(undefined, provider)
+    const libraryIds: string[] = []
+    for (const index of [1, 2]) {
+      const sourcePath = join(directory, `library-${index}.txt`)
+      await writeFile(sourcePath, `shared topic ${index}`, 'utf8')
+      const library = service.createLibrary({
+        name: `Library ${index}`,
+        storageMode: 'reference',
+        graphEnabled: false
+      })
+      libraryIds.push(library.id)
+      await service.importPaths(library.id, [sourcePath])
+    }
+    embed.mockClear()
+
+    const results = await service.searchHybridMany(
+      libraryIds,
+      'shared topic'
+    )
+
+    expect(embed).toHaveBeenCalledOnce()
+    expect(results).toHaveLength(2)
   })
 })

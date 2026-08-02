@@ -14,21 +14,24 @@ import {
   XCircle
 } from 'lucide-react'
 import { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type {
   AssistantMemory,
   AssistantSchedule,
+  AssistantHeartbeatConfig,
+  AssistantHeartbeatEntry,
+  HeartbeatCreateInput,
   ScheduleCreateInput,
   AssistantTask,
   WorkspaceChanges
 } from '../../shared/assistant-contracts'
+import { MarkdownRenderer } from './MarkdownRenderer'
 import type {
   ApprovalDecision,
   ContextAttachment,
   KnowledgeLibrary
 } from '../../shared/contracts'
 import type { ActivityRecord } from './activity-store'
+import { HeartbeatSettings } from './HeartbeatSettings'
 
 export type AssistantSidebarTab =
   | 'tasks'
@@ -65,17 +68,32 @@ type RightAssistantSidebarProps = {
   approvals: PendingSidebarApproval[]
   memories: AssistantMemory[]
   schedules: AssistantSchedule[]
+  heartbeats: AssistantHeartbeatConfig[]
+  heartbeatEntries: AssistantHeartbeatEntry[]
   workspaceChanges?: WorkspaceChanges
   onClose: () => void
+  onOpenHeartbeat: () => void
   onOpenConversation: (conversationId: string) => void
   onImportArtifacts: () => Promise<void>
+  onLoadArtifact: (artifactId: string) => Promise<void>
   onRemoveAttachment: (attachmentId: string) => void
   onCreateMemory: (content: string) => Promise<void>
   onCreateSchedule: (input: ScheduleCreateInput) => Promise<void>
+  onCreateHeartbeat: (input: HeartbeatCreateInput) => Promise<void>
+  onSetHeartbeatPaused: (
+    heartbeatId: string,
+    paused: boolean
+  ) => Promise<void>
+  onRemoveHeartbeat: (heartbeatId: string) => Promise<void>
+  onRunHeartbeat: (heartbeatId: string) => Promise<void>
   onRemoveSchedule: (scheduleId: string) => Promise<void>
   onRunSchedule: (scheduleId: string) => Promise<void>
   onRefreshChanges: () => Promise<void>
   onRemoveMemory: (memoryId: string) => Promise<void>
+  onSetMemoryStatus: (
+    memoryId: string,
+    status: AssistantMemory['status']
+  ) => Promise<void>
   onRespondApproval: (
     approval: PendingSidebarApproval,
     decision: ApprovalDecision
@@ -112,17 +130,26 @@ export function RightAssistantSidebar({
   approvals,
   memories,
   schedules,
+  heartbeats,
+  heartbeatEntries,
   workspaceChanges,
   onClose,
+  onOpenHeartbeat,
   onOpenConversation,
   onImportArtifacts,
+  onLoadArtifact,
   onRemoveAttachment,
   onCreateMemory,
   onCreateSchedule,
+  onCreateHeartbeat,
+  onSetHeartbeatPaused,
+  onRemoveHeartbeat,
+  onRunHeartbeat,
   onRemoveSchedule,
   onRunSchedule,
   onRefreshChanges,
   onRemoveMemory,
+  onSetMemoryStatus,
   onRespondApproval,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
@@ -364,6 +391,14 @@ export function RightAssistantSidebar({
                 </div>
               </article>
             ))}
+            <HeartbeatSettings
+              heartbeats={heartbeats}
+              onCreate={onCreateHeartbeat}
+              onRemove={onRemoveHeartbeat}
+              onRunNow={onRunHeartbeat}
+              onSetPaused={onSetHeartbeatPaused}
+              variant="sidebar"
+            />
           </section>
         )}
 
@@ -451,15 +486,83 @@ export function RightAssistantSidebar({
                   className="assistant-sidebar__memory"
                   key={memory.id}
                 >
-                  <span>{memory.content}</span>
-                  <button
-                    aria-label={`删除记忆 ${memory.content.slice(0, 24)}`}
-                    className="icon-button"
-                    onClick={() => void onRemoveMemory(memory.id)}
-                    type="button"
-                  >
-                    <X size={13} />
-                  </button>
+                  <span>
+                    {memory.content}
+                    {memory.status === 'proposed' && (
+                      <small>智能心跳建议，等待确认</small>
+                    )}
+                  </span>
+                  <div>
+                    {memory.status === 'proposed' && (
+                      <>
+                        <button
+                          onClick={() =>
+                            void onSetMemoryStatus(
+                              memory.id,
+                              'confirmed'
+                            )
+                          }
+                          type="button"
+                        >
+                          确认
+                        </button>
+                        <button
+                          onClick={() =>
+                            void onSetMemoryStatus(
+                              memory.id,
+                              'rejected'
+                            )
+                          }
+                          type="button"
+                        >
+                          忽略
+                        </button>
+                      </>
+                    )}
+                    <button
+                      aria-label={`删除记忆 ${memory.content.slice(0, 24)}`}
+                      className="icon-button"
+                      onClick={() => void onRemoveMemory(memory.id)}
+                      type="button"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+            <h3>
+              <RefreshCw size={15} />
+              智能心跳
+              <button
+                aria-label="打开智能心跳中心"
+                className="icon-button"
+                onClick={onOpenHeartbeat}
+                type="button"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </h3>
+            {heartbeatEntries.length === 0 ? (
+              <p className="assistant-sidebar__empty">
+                完成智能心跳后，最近的成长摘要会显示在这里。
+              </p>
+            ) : (
+              heartbeatEntries.slice(0, 10).map((entry) => (
+                <article
+                  className="assistant-sidebar__schedule"
+                  key={entry.id}
+                >
+                  <span>
+                    <strong>
+                      {new Date(entry.createdAt).toLocaleString('zh-CN')}
+                    </strong>
+                    <small>
+                      {entry.proposedMemoryIds.length} 条记忆建议 ·{' '}
+                      {entry.followUpTaskIds.length} 个后续任务
+                    </small>
+                  </span>
+                  <p>{entry.summary}</p>
                 </article>
               ))
             )}
@@ -492,6 +595,7 @@ export function RightAssistantSidebar({
                   onClick={() => {
                     setSelectedArtifactId(artifact.id)
                     onTabChange('preview')
+                    void onLoadArtifact(artifact.id)
                   }}
                   type="button"
                 >
@@ -579,13 +683,19 @@ export function RightAssistantSidebar({
                   <strong>{preview.title}</strong>
                   <small>{formatTime(preview.createdAt)}</small>
                 </header>
-                <div className="markdown-body">
+                <div className="markdown-body markdown-content">
                   {preview.mimeType.startsWith('image/') ? (
-                    <img
-                      alt={preview.title}
-                      className="assistant-sidebar__image-preview"
-                      src={preview.content}
-                    />
+                    preview.content ? (
+                      <img
+                        alt={preview.title}
+                        className="assistant-sidebar__image-preview"
+                        src={preview.content}
+                      />
+                    ) : (
+                      <p className="assistant-sidebar__empty">
+                        正在加载图片…
+                      </p>
+                    )
                   ) : preview.mimeType === 'text/html' ? (
                     <iframe
                       className="assistant-sidebar__web-preview"
@@ -596,9 +706,9 @@ export function RightAssistantSidebar({
                   ) : preview.mimeType === 'application/json' ? (
                     <pre>{preview.content}</pre>
                   ) : (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    <MarkdownRenderer>
                       {preview.content}
-                    </ReactMarkdown>
+                    </MarkdownRenderer>
                   )}
                 </div>
               </>

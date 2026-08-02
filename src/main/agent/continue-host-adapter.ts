@@ -31,6 +31,8 @@ import {
 import { getAvailableLoopbackPort } from './loopback-port'
 import { buildRuntimeEnvironment } from './process-environment'
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
+import { createOpenAIApiBaseUrl } from './openai-endpoint'
+import { safeToolArgumentSummary } from './approval-summary'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -47,9 +49,27 @@ const utilityBootstrap = [
   ''
 ].join('\n')
 
+const tokenCountSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER)
+
+const sessionUsageSchema = z.object({
+  promptTokens: tokenCountSchema,
+  completionTokens: tokenCountSchema,
+  promptTokensDetails: z
+    .object({
+      cachedTokens: tokenCountSchema.optional(),
+      cacheWriteTokens: tokenCountSchema.optional()
+    })
+    .optional()
+})
+
 const stateSchema = z.object({
   session: z.object({
-    history: z.array(z.unknown()).max(5_000)
+    history: z.array(z.unknown()).max(5_000),
+    usage: sessionUsageSchema.optional()
   }),
   isProcessing: z.boolean(),
   messageQueueLength: z.number().int().min(0),
@@ -68,6 +88,20 @@ type ContinueHostState = z.infer<typeof stateSchema>
 type PreparedHost = {
   entryPath: string
   version: string
+}
+
+export type ContinueHostUsage = {
+  provider: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export type ContinueHostRunResult = {
+  text: string
+  usage?: ContinueHostUsage
 }
 
 export type ContinueHostAdapterOptions = {
@@ -171,41 +205,10 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-function safeArgumentSummary(
-  toolArguments: Record<string, unknown>,
-  preview?: unknown[]
+function extractAssistantText(
+  history: unknown[],
+  startIndex: number
 ): string {
-  const previewText = preview
-    ?.flatMap((item) => {
-      if (!item || typeof item !== 'object') {
-        return []
-      }
-      const value = item as Record<string, unknown>
-      return typeof value.content === 'string' ? [value.content] : []
-    })
-    .join(' ')
-    .trim()
-  if (previewText) {
-    return previewText
-      .replace(/\bBearer\s+\S+/giu, 'Bearer [REDACTED]')
-      .replace(
-        /\b(api[-_ ]?key|token|secret|password|authorization)\b(\s*[:=]\s*|\s+)(["']?)[^\s"',}]+/giu,
-        '$1$2[REDACTED]'
-      )
-      .slice(0, 1_000)
-  }
-  const redacted = Object.fromEntries(
-    Object.entries(toolArguments).map(([key, value]) => [
-      key,
-      /token|secret|password|api.?key|authorization/iu.test(key)
-        ? '[REDACTED]'
-        : value
-    ])
-  )
-  return JSON.stringify(redacted).slice(0, 1_000)
-}
-
-function extractAssistantText(history: unknown[], startIndex: number): string {
   for (const item of history.slice(startIndex).reverse()) {
     if (!item || typeof item !== 'object') {
       continue
@@ -224,6 +227,41 @@ function extractAssistantText(history: unknown[], startIndex: number): string {
     }
   }
   return ''
+}
+
+function subtractTokenCount(completed: number, initial: number): number {
+  return Math.max(0, completed - initial)
+}
+
+function extractUsageDelta(
+  initial: ContinueHostState['session']['usage'],
+  completed: ContinueHostState['session']['usage'],
+  fallbackProvider: string,
+  fallbackModel?: string
+): ContinueHostUsage | undefined {
+  if (!initial || !completed) {
+    return undefined
+  }
+  return {
+    provider: fallbackProvider,
+    model: fallbackModel ?? 'unknown',
+    inputTokens: subtractTokenCount(
+      completed.promptTokens,
+      initial.promptTokens
+    ),
+    outputTokens: subtractTokenCount(
+      completed.completionTokens,
+      initial.completionTokens
+    ),
+    cacheReadTokens: subtractTokenCount(
+      completed.promptTokensDetails?.cachedTokens ?? 0,
+      initial.promptTokensDetails?.cachedTokens ?? 0
+    ),
+    cacheWriteTokens: subtractTokenCount(
+      completed.promptTokensDetails?.cacheWriteTokens ?? 0,
+      initial.promptTokensDetails?.cacheWriteTokens ?? 0
+    )
+  }
 }
 
 export class ContinueHostAdapter {
@@ -440,12 +478,31 @@ export class ContinueHostAdapter {
     prompt: string,
     signal: AbortSignal,
     authorize: RuntimeAuthorizer
-  ): Promise<string> {
+  ): Promise<ContinueHostRunResult> {
     signal.throwIfAborted()
     let generatedConfigPath: string | undefined
     if (this.options.modelProfile) {
-      if (!this.options.modelProfile.apiKey) {
+      if (
+        this.options.modelProfile.authentication === 'api-key' &&
+        !this.options.modelProfile.apiKey
+      ) {
         throw new Error('Continue 独立模型连接尚未配置 API Key')
+      }
+      const anthropic =
+        this.options.modelProfile.protocol === 'anthropic-messages'
+      const modelConfig: Record<string, unknown> = {
+        name: this.options.modelProfile.name,
+        provider: anthropic ? 'anthropic' : 'openai',
+        model: this.options.modelProfile.modelName,
+        apiBase: anthropic
+          ? createAnthropicApiBaseUrl(this.options.modelProfile.baseUrl)
+          : createOpenAIApiBaseUrl(this.options.modelProfile.baseUrl),
+        roles: ['chat']
+      }
+      if (this.options.modelProfile.authentication === 'api-key') {
+        modelConfig.apiKey = anthropic
+          ? '${{ secrets.ANTHROPIC_API_KEY }}'
+          : '${{ secrets.OPENAI_API_KEY }}'
       }
       await mkdir(this.options.cacheRoot, { recursive: true })
       generatedConfigPath = join(
@@ -458,18 +515,7 @@ export class ContinueHostAdapter {
           name: 'GoodBuddy Runtime',
           version: '1.0.0',
           schema: 'v1',
-          models: [
-            {
-              name: this.options.modelProfile.name,
-              provider: 'anthropic',
-              model: this.options.modelProfile.modelName,
-              apiKey: '${{ secrets.ANTHROPIC_API_KEY }}',
-              apiBase: createAnthropicApiBaseUrl(
-                this.options.modelProfile.baseUrl
-              ),
-              roles: ['chat']
-            }
-          ]
+          models: [modelConfig]
         }),
         { encoding: 'utf8', mode: 0o600, flag: 'wx' }
       )
@@ -515,8 +561,19 @@ export class ContinueHostAdapter {
       OTEL_METRICS_EXPORTER: '',
       OTEL_LOG_USER_PROMPTS: '0'
     })
-    if (this.options.modelProfile?.apiKey) {
-      environment.ANTHROPIC_API_KEY = this.options.modelProfile.apiKey
+    if (this.options.modelProfile) {
+      delete environment.ANTHROPIC_API_KEY
+      delete environment.OPENAI_API_KEY
+    }
+    if (
+      this.options.modelProfile?.authentication === 'api-key' &&
+      this.options.modelProfile.apiKey
+    ) {
+      environment[
+        this.options.modelProfile.protocol === 'anthropic-messages'
+          ? 'ANTHROPIC_API_KEY'
+          : 'OPENAI_API_KEY'
+      ] = this.options.modelProfile.apiKey
     }
     let child: ContinueHostChild
     try {
@@ -615,7 +672,7 @@ export class ContinueHostAdapter {
             title: `Continue 请求调用 ${pending.toolName}`,
             description: '仅在你选择允许后，Continue 才会执行此工具调用。',
             toolName: pending.toolName,
-            argumentSummary: safeArgumentSummary(
+            argumentSummary: safeToolArgumentSummary(
               pending.toolArgs,
               pending.toolCallPreview
             ),
@@ -649,7 +706,18 @@ export class ContinueHostAdapter {
           if (!text) {
             throw new Error('Continue 宿主未返回最终回复')
           }
-          return text
+          const usage = extractUsageDelta(
+            initialState.session.usage,
+            state.session.usage,
+            this.options.modelProfile
+              ? this.options.modelProfile.protocol ===
+                'anthropic-messages'
+                ? 'anthropic'
+                : 'openai'
+              : 'continue',
+            this.options.modelProfile?.modelName
+          )
+          return { text, ...(usage ? { usage } : {}) }
         }
         await delay(150, signal)
       }

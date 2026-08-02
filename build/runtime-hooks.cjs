@@ -1,9 +1,11 @@
 const { createHash } = require('node:crypto')
 const {
+  chmod,
   mkdir,
   readFile,
   rename,
   rm,
+  stat,
   writeFile
 } = require('node:fs/promises')
 const { createReadStream, existsSync } = require('node:fs')
@@ -162,6 +164,8 @@ module.exports = async function prepareBundledRuntimes(context) {
       ready.version === identity.version &&
       ready.integrity === identity.integrity &&
       typeof ready.executableSha256 === 'string' &&
+      (platform === 'win32' ||
+        ((await stat(preparedPath)).mode & 0o111) !== 0) &&
       (await sha256File(preparedPath)) === ready.executableSha256
     ) {
       return
@@ -187,6 +191,9 @@ module.exports = async function prepareBundledRuntimes(context) {
     const sourcePath = join(stagingDirectory, 'bin', executable)
     const stagingExecutable = join(stagingDirectory, executable)
     await rename(sourcePath, stagingExecutable)
+    if (platform !== 'win32') {
+      await chmod(stagingExecutable, 0o755)
+    }
     const executableSha256 = await sha256File(stagingExecutable)
     await writeFile(
       join(stagingDirectory, '.ready.json'),

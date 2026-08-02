@@ -3,16 +3,26 @@ import { DatabaseSync } from 'node:sqlite'
 import type {
   AssistantArtifact,
   AssistantExpert,
+  AssistantHeartbeatConfig,
+  AssistantHeartbeatEntry,
+  AssistantHeartbeatRun,
   AssistantMemory,
   AssistantProject,
   AssistantSchedule,
   AssistantTask,
   ConversationSnapshot,
   ExpertCreateInput,
+  HeartbeatCreateInput,
+  HeartbeatSummaryOutput,
+  HeartbeatUpdateInput,
   MemoryCreateInput,
+  ModelUsageCallInput,
   ProjectCreateInput,
-  ScheduleCreateInput
+  ScheduleCreateInput,
+  TokenUsageRecord,
+  TokenUsageSummary
 } from '../../shared/assistant-contracts'
+import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
 type ProjectRow = {
   id: string
@@ -55,6 +65,15 @@ type MessageRow = {
   state: ConversationSnapshot['messages'][number]['state']
   metadata_json: string
   created_at: string
+}
+
+type MessageMetadata = {
+  createdAt?: number
+  status?: string
+  tools?: ConversationSnapshot['messages'][number]['tools']
+  sources?: string[]
+  sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
+  artifactIds?: string[]
 }
 
 type ArtifactRow = {
@@ -103,6 +122,103 @@ type ExpertRow = {
   enabled: number
   created_at: string
   updated_at: string
+}
+
+type HeartbeatConfigRow = {
+  id: string
+  project_id: string | null
+  name: string
+  timezone: string
+  recurrence_json: string
+  lookback_hours: number
+  retention_days: number
+  enabled: number
+  next_run_at: string
+  last_run_at: string | null
+  last_status: AssistantHeartbeatRun['status'] | null
+  created_at: string
+  updated_at: string
+}
+
+type HeartbeatRunRow = {
+  id: string
+  config_id: string
+  trigger: AssistantHeartbeatRun['trigger']
+  scheduled_for: string
+  idempotency_key: string
+  status: AssistantHeartbeatRun['status']
+  attempt_count: number
+  next_attempt_at: string | null
+  lease_owner: string | null
+  lease_expires_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  error: string | null
+  entry_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+type HeartbeatEntryRow = {
+  id: string
+  config_id: string
+  run_id: string
+  scheduled_for: string
+  summary: string
+  highlights_json: string
+  artifact_id: string | null
+  proposed_memory_ids_json: string
+  follow_up_task_ids_json: string
+  created_at: string
+}
+
+type TokenUsageRecordRow = {
+  request_id: string
+  project_id: string | null
+  project_name: string | null
+  conversation_id: string | null
+  conversation_title: string | null
+  runtime: string
+  provider: string
+  model: string
+  call_count: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+}
+
+export type ClaimedHeartbeatRun = {
+  config: AssistantHeartbeatConfig
+  run: AssistantHeartbeatRun
+  leaseOwner: string
+  acquired: boolean
+}
+
+export type HeartbeatInputSnapshot = {
+  conversations: Array<{
+    id: string
+    title: string
+    updatedAt: string
+    messages: Array<{
+      role: 'user' | 'assistant'
+      content: string
+      createdAt: string
+    }>
+  }>
+  tasks: Array<{
+    id: string
+    title: string
+    status: AssistantTask['status']
+    createdAt: string
+    completedAt?: string
+  }>
+  confirmedMemories: Array<{
+    id: string
+    type: AssistantMemory['type']
+    content: string
+    scope: AssistantMemory['scope']
+  }>
 }
 
 function toProject(row: ProjectRow): AssistantProject {
@@ -201,6 +317,109 @@ function toExpert(row: ExpertRow): AssistantExpert {
   }
 }
 
+function toHeartbeatConfig(
+  row: HeartbeatConfigRow
+): AssistantHeartbeatConfig {
+  return {
+    id: row.id,
+    projectId: row.project_id ?? undefined,
+    name: row.name,
+    timezone: row.timezone,
+    recurrence: JSON.parse(
+      row.recurrence_json
+    ) as AssistantHeartbeatConfig['recurrence'],
+    enabled: row.enabled === 1,
+    lookbackHours: row.lookback_hours,
+    retentionDays: row.retention_days,
+    nextRunAt: row.next_run_at,
+    lastRunAt: row.last_run_at ?? undefined,
+    lastStatus: row.last_status ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function toHeartbeatRun(row: HeartbeatRunRow): AssistantHeartbeatRun {
+  return {
+    id: row.id,
+    configId: row.config_id,
+    trigger: row.trigger,
+    scheduledFor: row.scheduled_for,
+    status: row.status,
+    attemptCount: row.attempt_count,
+    nextAttemptAt: row.next_attempt_at ?? undefined,
+    startedAt: row.started_at ?? undefined,
+    completedAt: row.completed_at ?? undefined,
+    error: row.error ?? undefined,
+    entryId: row.entry_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function toHeartbeatEntry(
+  row: HeartbeatEntryRow
+): AssistantHeartbeatEntry {
+  return {
+    id: row.id,
+    configId: row.config_id,
+    runId: row.run_id,
+    scheduledFor: row.scheduled_for,
+    summary: row.summary,
+    highlights: JSON.parse(row.highlights_json) as string[],
+    artifactId: row.artifact_id ?? undefined,
+    proposedMemoryIds: JSON.parse(
+      row.proposed_memory_ids_json
+    ) as string[],
+    followUpTaskIds: JSON.parse(
+      row.follow_up_task_ids_json
+    ) as string[],
+    createdAt: row.created_at
+  }
+}
+
+function validateUsageText(
+  value: string,
+  label: string,
+  maximumLength: number
+): string {
+  if (typeof value !== 'string') {
+    throw new TypeError(`${label} must be a string`)
+  }
+  const normalized = value.trim()
+  if (
+    normalized.length === 0 ||
+    normalized.length > maximumLength
+  ) {
+    throw new RangeError(
+      `${label} must contain between 1 and ${maximumLength} characters`
+    )
+  }
+  return normalized
+}
+
+function validateTokenCount(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(
+      `${label} must be a nonnegative safe integer`
+    )
+  }
+  return value
+}
+
+const interruptedTaskError = '应用退出时任务仍在运行'
+const interruptedMessageStatus = '上次运行意外中断，可以重新发送问题'
+
+function interruptActiveTools(
+  tools: MessageMetadata['tools']
+): MessageMetadata['tools'] {
+  return tools?.map((tool) =>
+    tool.state === 'pending' || tool.state === 'running'
+      ? { ...tool, state: 'interrupted' as const }
+      : tool
+  )
+}
+
 export class AssistantDatabase {
   private database?: DatabaseSync
 
@@ -256,14 +475,82 @@ export class AssistantDatabase {
             'Act as a project planning specialist. Decompose goals into verifiable steps, dependencies, risks, owners, and acceptance criteria.'
         })
       }
-      database
-        .prepare(
+      const recoveredAt = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const interruptedTasks = database
+          .prepare(
+            `SELECT id, error
+             FROM tasks
+             WHERE status IN ('running', 'waiting_approval')`
+          )
+          .all() as Array<{ id: string; error: string | null }>
+        const updateTask = database.prepare(
           `UPDATE tasks
-           SET status = 'interrupted',
-               error = COALESCE(error, '应用退出时任务仍在运行')
-           WHERE status IN ('running', 'waiting_approval')`
+           SET status = 'interrupted', completed_at = ?, error = ?
+           WHERE id = ?`
         )
-        .run()
+        const insertTaskEvent = database.prepare(
+          `INSERT INTO task_events
+            (task_id, run_id, kind, payload_json, created_at)
+           VALUES (?, NULL, 'status', ?, ?)`
+        )
+        for (const task of interruptedTasks) {
+          const error = task.error ?? interruptedTaskError
+          updateTask.run(recoveredAt, error, task.id)
+          insertTaskEvent.run(
+            task.id,
+            JSON.stringify({ status: 'interrupted', error }),
+            recoveredAt
+          )
+        }
+
+        const recoverableMessages = database
+          .prepare(
+            `SELECT id, state, metadata_json
+             FROM messages`
+          )
+          .all() as Array<{
+          id: string
+          state: MessageRow['state']
+          metadata_json: string
+        }>
+        const updateMessage = database.prepare(
+          `UPDATE messages
+           SET state = ?, metadata_json = ?
+           WHERE id = ?`
+        )
+        for (const message of recoverableMessages) {
+          const metadata = JSON.parse(
+            message.metadata_json
+          ) as MessageMetadata
+          const hasActiveTool = Boolean(
+            metadata.tools?.some(
+              (tool) =>
+                tool.state === 'pending' || tool.state === 'running'
+            )
+          )
+          if (message.state !== 'streaming' && !hasActiveTool) {
+            continue
+          }
+          updateMessage.run(
+            message.state === 'streaming' ? 'error' : message.state,
+            JSON.stringify({
+              ...metadata,
+              status:
+                message.state === 'streaming'
+                  ? interruptedMessageStatus
+                  : metadata.status,
+              tools: interruptActiveTools(metadata.tools)
+            }),
+            message.id
+          )
+        }
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
     } catch (error) {
       database.close()
       throw error
@@ -273,6 +560,35 @@ export class AssistantDatabase {
   close(): void {
     this.database?.close()
     this.database = undefined
+  }
+
+  clearAssistantData(): void {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const table of [
+        'heartbeat_configs',
+        'delegation_outbox',
+        'delegations',
+        'notifications',
+        'schedule_runs',
+        'schedules',
+        'memory_items',
+        'artifacts',
+        'task_events',
+        'runs',
+        'model_usage_calls',
+        'tasks',
+        'messages',
+        'conversations'
+      ]) {
+        database.exec(`DELETE FROM ${table}`)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   listProjects(includeArchived = false): AssistantProject[] {
@@ -383,12 +699,9 @@ export class AssistantDatabase {
       messages: (
         messageStatement.all(conversation.id) as MessageRow[]
       ).map((message) => {
-        const metadata = JSON.parse(message.metadata_json) as {
-          createdAt?: number
-          status?: string
-          tools?: ConversationSnapshot['messages'][number]['tools']
-          sources?: string[]
-        }
+        const metadata = JSON.parse(
+          message.metadata_json
+        ) as MessageMetadata
         const interrupted = message.state === 'streaming'
         return {
           id: message.id,
@@ -398,10 +711,14 @@ export class AssistantDatabase {
             metadata.createdAt ?? Date.parse(message.created_at),
           state: interrupted ? ('error' as const) : message.state,
           status: interrupted
-            ? '上次运行意外中断，可以重新发送问题'
+            ? interruptedMessageStatus
             : metadata.status,
-          tools: metadata.tools,
-          sources: metadata.sources
+          tools: interrupted
+            ? interruptActiveTools(metadata.tools)
+            : metadata.tools,
+          sources: metadata.sources,
+          sourceReferences: metadata.sourceReferences,
+          artifactIds: metadata.artifactIds
         }
       })
     }))
@@ -448,7 +765,9 @@ export class AssistantDatabase {
               createdAt: message.createdAt,
               status: message.status,
               tools: message.tools,
-              sources: message.sources
+              sources: message.sources,
+              sourceReferences: message.sourceReferences,
+              artifactIds: message.artifactIds
             }),
             new Date(message.createdAt).toISOString()
           )
@@ -589,6 +908,142 @@ export class AssistantDatabase {
     return this.getTask(input.id)
   }
 
+  upsertModelUsageCall(input: ModelUsageCallInput): void {
+    const requestId = validateUsageText(
+      input.requestId,
+      'requestId',
+      256
+    )
+    const callId = validateUsageText(input.callId, 'callId', 256)
+    const runtime = validateUsageText(input.runtime, 'runtime', 100)
+    const provider = validateUsageText(
+      input.provider,
+      'provider',
+      100
+    )
+    const model = validateUsageText(input.model, 'model', 500)
+    const inputTokens = validateTokenCount(input.input, 'input')
+    const outputTokens = validateTokenCount(input.output, 'output')
+    const cacheReadTokens = validateTokenCount(
+      input.cacheRead,
+      'cacheRead'
+    )
+    const cacheWriteTokens = validateTokenCount(
+      input.cacheWrite,
+      'cacheWrite'
+    )
+    const now = new Date().toISOString()
+    this.requireDatabase()
+      .prepare(
+        `INSERT INTO model_usage_calls
+          (request_id, call_id, runtime, provider, model, input_tokens,
+           output_tokens, cache_read_tokens, cache_write_tokens,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(request_id, call_id) DO UPDATE SET
+           runtime = excluded.runtime,
+           provider = excluded.provider,
+           model = excluded.model,
+           input_tokens = excluded.input_tokens,
+           output_tokens = excluded.output_tokens,
+           cache_read_tokens = excluded.cache_read_tokens,
+           cache_write_tokens = excluded.cache_write_tokens,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        requestId,
+        callId,
+        runtime,
+        provider,
+        model,
+        inputTokens,
+        outputTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
+        now,
+        now
+      )
+  }
+
+  getTokenUsageSummary(): TokenUsageSummary {
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT
+           usage.request_id,
+           tasks.project_id,
+           projects.name AS project_name,
+           tasks.conversation_id,
+           conversations.title AS conversation_title,
+           usage.runtime,
+           usage.provider,
+           usage.model,
+           COUNT(*) AS call_count,
+           SUM(usage.input_tokens) AS input_tokens,
+           SUM(usage.output_tokens) AS output_tokens,
+           SUM(usage.cache_read_tokens) AS cache_read_tokens,
+           SUM(usage.cache_write_tokens) AS cache_write_tokens
+         FROM model_usage_calls usage
+         JOIN tasks ON tasks.id = usage.request_id
+         LEFT JOIN projects ON projects.id = tasks.project_id
+         LEFT JOIN conversations
+           ON conversations.id = tasks.conversation_id
+         GROUP BY
+           usage.request_id,
+           tasks.project_id,
+           projects.name,
+           tasks.conversation_id,
+           conversations.title,
+           usage.runtime,
+           usage.provider,
+           usage.model
+         ORDER BY MAX(usage.updated_at) DESC
+         LIMIT 500`
+      )
+      .all() as TokenUsageRecordRow[]
+    const records: TokenUsageRecord[] = rows.map((row) => ({
+      requestId: row.request_id,
+      projectId: row.project_id ?? undefined,
+      projectName: row.project_name ?? undefined,
+      conversationId: row.conversation_id ?? undefined,
+      conversationTitle: row.conversation_title ?? undefined,
+      runtime: row.runtime,
+      provider: row.provider,
+      model: row.model,
+      callCount: row.call_count,
+      input: row.input_tokens,
+      output: row.output_tokens,
+      cacheRead: row.cache_read_tokens,
+      cacheWrite: row.cache_write_tokens,
+      totalTokens: row.input_tokens + row.output_tokens
+    }))
+    const totalRow = this.requireDatabase()
+      .prepare(
+        `SELECT
+           COUNT(*) AS call_count,
+           COALESCE(SUM(input_tokens), 0) AS input_tokens,
+           COALESCE(SUM(output_tokens), 0) AS output_tokens,
+           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+           COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
+         FROM model_usage_calls`
+      )
+      .get() as {
+      call_count: number
+      input_tokens: number
+      output_tokens: number
+      cache_read_tokens: number
+      cache_write_tokens: number
+    }
+    const totals = {
+      callCount: totalRow.call_count,
+      input: totalRow.input_tokens,
+      output: totalRow.output_tokens,
+      cacheRead: totalRow.cache_read_tokens,
+      cacheWrite: totalRow.cache_write_tokens,
+      totalTokens: totalRow.input_tokens + totalRow.output_tokens
+    }
+    return { totals, records }
+  }
+
   updateTaskStatus(
     taskId: string,
     status: AssistantTask['status'],
@@ -620,6 +1075,24 @@ export class AssistantDatabase {
     this.appendTaskEvent(taskId, 'status', { status, error })
   }
 
+  resolveAssistantSuggestionTask(
+    taskId: string,
+    status: 'completed' | 'cancelled'
+  ): void {
+    const completedAt = new Date().toISOString()
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE tasks
+         SET status = ?, error = NULL, completed_at = ?
+         WHERE id = ? AND origin = 'assistant' AND status = 'paused'`
+      )
+      .run(status, completedAt, taskId)
+    if (result.changes !== 1) {
+      throw new Error('待处理的智能心跳建议不存在或状态已变化')
+    }
+    this.appendTaskEvent(taskId, 'status', { status })
+  }
+
   appendTaskEvent(
     taskId: string,
     kind: string,
@@ -641,10 +1114,14 @@ export class AssistantDatabase {
 
   listArtifacts(projectId?: string, limit = 100): AssistantArtifact[] {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)))
+    const columns = `id, project_id, task_id, kind, title, mime_type,
+                     CASE WHEN kind = 'image' THEN NULL
+                          ELSE inline_content END AS inline_content,
+                     byte_size, created_at, updated_at`
     const rows = projectId
       ? this.requireDatabase()
           .prepare(
-            `SELECT * FROM artifacts
+            `SELECT ${columns} FROM artifacts
              WHERE project_id = ?
              ORDER BY created_at DESC
              LIMIT ?`
@@ -652,12 +1129,27 @@ export class AssistantDatabase {
           .all(projectId, safeLimit)
       : this.requireDatabase()
           .prepare(
-            `SELECT * FROM artifacts
+            `SELECT ${columns} FROM artifacts
              ORDER BY created_at DESC
              LIMIT ?`
           )
           .all(safeLimit)
     return (rows as ArtifactRow[]).map(toArtifact)
+  }
+
+  getArtifact(artifactId: string): AssistantArtifact {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT id, project_id, task_id, kind, title, mime_type,
+                inline_content, byte_size, created_at, updated_at
+         FROM artifacts
+         WHERE id = ?`
+      )
+      .get(artifactId) as ArtifactRow | undefined
+    if (!row) {
+      throw new Error('成果不存在')
+    }
+    return toArtifact(row)
   }
 
   createTextArtifact(input: {
@@ -670,6 +1162,23 @@ export class AssistantDatabase {
       ...input,
       kind: 'markdown',
       mimeType: 'text/markdown'
+    })
+  }
+
+  createImageArtifact(input: {
+    projectId?: string
+    taskId?: string
+    title: string
+    mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+    base64: string
+  }): AssistantArtifact {
+    return this.createInlineArtifact({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      kind: 'image',
+      title: input.title,
+      mimeType: input.mimeType,
+      content: `data:${input.mimeType};base64,${input.base64}`
     })
   }
 
@@ -857,7 +1366,7 @@ export class AssistantDatabase {
           `SELECT * FROM schedules
            WHERE enabled = 1 AND next_run_at <= ?
            ORDER BY next_run_at
-           LIMIT 20`
+           LIMIT 1`
         )
         .all(now.toISOString()) as ScheduleRow[]
     ).map(toSchedule)
@@ -908,6 +1417,857 @@ export class AssistantDatabase {
       )
       .run(now.toISOString(), now.toISOString(), scheduleId)
     return schedule
+  }
+
+  listHeartbeatConfigs(projectId?: string): AssistantHeartbeatConfig[] {
+    const rows = projectId
+      ? this.requireDatabase()
+          .prepare(
+            `SELECT * FROM heartbeat_configs
+             WHERE project_id = ?
+             ORDER BY created_at DESC
+             LIMIT 100`
+          )
+          .all(projectId)
+      : this.requireDatabase()
+          .prepare(
+            `SELECT * FROM heartbeat_configs
+             ORDER BY created_at DESC
+             LIMIT 100`
+          )
+          .all()
+    return (rows as HeartbeatConfigRow[]).map(toHeartbeatConfig)
+  }
+
+  getHeartbeatConfig(configId: string): AssistantHeartbeatConfig {
+    const row = this.requireDatabase()
+      .prepare('SELECT * FROM heartbeat_configs WHERE id = ?')
+      .get(configId) as HeartbeatConfigRow | undefined
+    if (!row) {
+      throw new Error('Heartbeat configuration not found')
+    }
+    return toHeartbeatConfig(row)
+  }
+
+  createHeartbeatConfig(
+    input: HeartbeatCreateInput,
+    now = new Date()
+  ): AssistantHeartbeatConfig {
+    const id = randomUUID()
+    const timestamp = now.toISOString()
+    const nextRunAt = computeNextHeartbeatRun(
+      input.recurrence,
+      input.timezone,
+      now
+    ).toISOString()
+    this.requireDatabase()
+      .prepare(
+        `INSERT INTO heartbeat_configs
+          (id, project_id, name, timezone, recurrence_json,
+           lookback_hours, retention_days, enabled, next_run_at,
+           last_run_at, last_status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`
+      )
+      .run(
+        id,
+        input.projectId ?? null,
+        input.name,
+        input.timezone,
+        JSON.stringify(input.recurrence),
+        input.lookbackHours,
+        input.retentionDays,
+        input.enabled ? 1 : 0,
+        nextRunAt,
+        timestamp,
+        timestamp
+      )
+    return this.getHeartbeatConfig(id)
+  }
+
+  updateHeartbeatConfig(
+    configId: string,
+    input: HeartbeatUpdateInput,
+    now = new Date()
+  ): AssistantHeartbeatConfig {
+    const timestamp = now.toISOString()
+    const nextRunAt = computeNextHeartbeatRun(
+      input.recurrence,
+      input.timezone,
+      now
+    ).toISOString()
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE heartbeat_configs
+         SET project_id = ?, name = ?, timezone = ?,
+             recurrence_json = ?, lookback_hours = ?,
+             retention_days = ?, enabled = ?, next_run_at = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.projectId ?? null,
+        input.name,
+        input.timezone,
+        JSON.stringify(input.recurrence),
+        input.lookbackHours,
+        input.retentionDays,
+        input.enabled ? 1 : 0,
+        nextRunAt,
+        timestamp,
+        configId
+      )
+    if (result.changes !== 1) {
+      throw new Error('Heartbeat configuration not found')
+    }
+    return this.getHeartbeatConfig(configId)
+  }
+
+  setHeartbeatPaused(configId: string, paused: boolean): void {
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE heartbeat_configs
+         SET enabled = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(paused ? 0 : 1, new Date().toISOString(), configId)
+    if (result.changes !== 1) {
+      throw new Error('Heartbeat configuration not found')
+    }
+  }
+
+  removeHeartbeatConfig(configId: string): void {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const artifactRows = database
+        .prepare(
+          `SELECT artifact_id FROM heartbeat_entries
+           WHERE config_id = ? AND artifact_id IS NOT NULL`
+        )
+        .all(configId) as Array<{ artifact_id: string }>
+      const result = database
+        .prepare('DELETE FROM heartbeat_configs WHERE id = ?')
+        .run(configId)
+      if (result.changes !== 1) {
+        throw new Error('Heartbeat configuration not found')
+      }
+      const deleteArtifact = database.prepare(
+        'DELETE FROM artifacts WHERE id = ?'
+      )
+      for (const row of artifactRows) {
+        deleteArtifact.run(row.artifact_id)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  listHeartbeatRuns(
+    configId?: string,
+    limit = 50
+  ): AssistantHeartbeatRun[] {
+    const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit)))
+    const rows = configId
+      ? this.requireDatabase()
+          .prepare(
+            `SELECT * FROM heartbeat_runs
+             WHERE config_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?`
+          )
+          .all(configId, safeLimit)
+      : this.requireDatabase()
+          .prepare(
+            `SELECT * FROM heartbeat_runs
+             ORDER BY created_at DESC
+             LIMIT ?`
+          )
+          .all(safeLimit)
+    return (rows as HeartbeatRunRow[]).map(toHeartbeatRun)
+  }
+
+  getHeartbeatRun(runId: string): AssistantHeartbeatRun {
+    const row = this.requireDatabase()
+      .prepare('SELECT * FROM heartbeat_runs WHERE id = ?')
+      .get(runId) as HeartbeatRunRow | undefined
+    if (!row) {
+      throw new Error('Heartbeat run not found')
+    }
+    return toHeartbeatRun(row)
+  }
+
+  listHeartbeatEntries(
+    configId?: string,
+    limit = 50
+  ): AssistantHeartbeatEntry[] {
+    const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit)))
+    const rows = configId
+      ? this.requireDatabase()
+          .prepare(
+            `SELECT * FROM heartbeat_entries
+             WHERE config_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?`
+          )
+          .all(configId, safeLimit)
+      : this.requireDatabase()
+          .prepare(
+            `SELECT * FROM heartbeat_entries
+             ORDER BY created_at DESC
+             LIMIT ?`
+          )
+          .all(safeLimit)
+    return (rows as HeartbeatEntryRow[]).map(toHeartbeatEntry)
+  }
+
+  claimDueHeartbeats(
+    leaseOwner: string,
+    now = new Date(),
+    leaseMilliseconds = 5 * 60_000
+  ): ClaimedHeartbeatRun[] {
+    const database = this.requireDatabase()
+    const nowIso = now.toISOString()
+    const leaseExpiresAt = new Date(
+      now.getTime() + leaseMilliseconds
+    ).toISOString()
+    const claimed: ClaimedHeartbeatRun[] = []
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const retryRows = database
+        .prepare(
+          `SELECT r.id AS run_id, r.config_id, r.attempt_count
+           FROM heartbeat_runs r
+           JOIN heartbeat_configs c ON c.id = r.config_id
+           WHERE c.enabled = 1
+             AND r.attempt_count < 3
+             AND (
+               (r.status = 'failed' AND r.next_attempt_at <= ?)
+               OR
+               (r.status = 'claimed' AND r.lease_expires_at <= ?)
+             )
+           ORDER BY COALESCE(r.next_attempt_at, r.lease_expires_at)
+           LIMIT 1`
+        )
+        .all(nowIso, nowIso) as Array<{
+        run_id: string
+        config_id: string
+        attempt_count: number
+      }>
+      for (const joined of retryRows) {
+        const result = database
+          .prepare(
+            `UPDATE heartbeat_runs
+             SET status = 'claimed', attempt_count = attempt_count + 1,
+                 next_attempt_at = NULL, lease_owner = ?,
+                 lease_expires_at = ?, started_at = ?,
+                 completed_at = NULL, error = NULL, updated_at = ?
+             WHERE id = ? AND attempt_count = ?`
+          )
+          .run(
+            leaseOwner,
+            leaseExpiresAt,
+            nowIso,
+            nowIso,
+            joined.run_id,
+            joined.attempt_count
+          )
+        if (result.changes === 1) {
+          const run = database
+            .prepare('SELECT * FROM heartbeat_runs WHERE id = ?')
+            .get(joined.run_id) as HeartbeatRunRow
+          const config = database
+            .prepare('SELECT * FROM heartbeat_configs WHERE id = ?')
+            .get(joined.config_id) as HeartbeatConfigRow
+          claimed.push({
+            run: toHeartbeatRun(run),
+            config: toHeartbeatConfig(config),
+            leaseOwner,
+            acquired: true
+          })
+        }
+      }
+
+      const remaining = Math.max(0, 1 - claimed.length)
+      const configRows = database
+        .prepare(
+          `SELECT * FROM heartbeat_configs
+           WHERE enabled = 1 AND next_run_at <= ?
+           ORDER BY next_run_at
+           LIMIT ?`
+        )
+        .all(nowIso, remaining) as HeartbeatConfigRow[]
+      for (const row of configRows) {
+        const scheduledFor = row.next_run_at
+        const lag = now.getTime() - Date.parse(scheduledFor)
+        const nextRunAt = computeNextHeartbeatRun(
+          JSON.parse(
+            row.recurrence_json
+          ) as AssistantHeartbeatConfig['recurrence'],
+          row.timezone,
+          now
+        ).toISOString()
+        if (lag > 2 * 60 * 60_000) {
+          database
+            .prepare(
+              `INSERT OR IGNORE INTO heartbeat_runs
+                (id, config_id, trigger, scheduled_for,
+                 idempotency_key, status, attempt_count,
+                 next_attempt_at, lease_owner, lease_expires_at,
+                 started_at, completed_at, error, entry_id,
+                 created_at, updated_at)
+               VALUES (?, ?, 'scheduled', ?, ?, 'skipped', 0,
+                 NULL, NULL, NULL, NULL, ?, ?, NULL, ?, ?)`
+            )
+            .run(
+              randomUUID(),
+              row.id,
+              scheduledFor,
+              `scheduled:${row.id}:${scheduledFor}`,
+              nowIso,
+              'Missed by more than 2 hours',
+              nowIso,
+              nowIso
+            )
+          database
+            .prepare(
+              `UPDATE heartbeat_configs
+               SET next_run_at = ?, last_run_at = ?,
+                   last_status = 'skipped', updated_at = ?
+               WHERE id = ? AND next_run_at = ?`
+            )
+            .run(nextRunAt, nowIso, nowIso, row.id, scheduledFor)
+          continue
+        }
+        const runId = randomUUID()
+        const insert = database
+          .prepare(
+            `INSERT OR IGNORE INTO heartbeat_runs
+              (id, config_id, trigger, scheduled_for,
+               idempotency_key, status, attempt_count,
+               next_attempt_at, lease_owner, lease_expires_at,
+               started_at, completed_at, error, entry_id,
+               created_at, updated_at)
+             VALUES (?, ?, 'scheduled', ?, ?, 'claimed', 1,
+               NULL, ?, ?, ?, NULL, NULL, NULL, ?, ?)`
+          )
+          .run(
+            runId,
+            row.id,
+            scheduledFor,
+            `scheduled:${row.id}:${scheduledFor}`,
+            leaseOwner,
+            leaseExpiresAt,
+            nowIso,
+            nowIso,
+            nowIso
+          )
+        database
+          .prepare(
+            `UPDATE heartbeat_configs
+             SET next_run_at = ?, last_run_at = ?,
+                 last_status = 'claimed', updated_at = ?
+             WHERE id = ? AND next_run_at = ?`
+          )
+          .run(nextRunAt, nowIso, nowIso, row.id, scheduledFor)
+        if (insert.changes === 1) {
+          const run = database
+            .prepare('SELECT * FROM heartbeat_runs WHERE id = ?')
+            .get(runId) as HeartbeatRunRow
+          claimed.push({
+            run: toHeartbeatRun(run),
+            config: toHeartbeatConfig({
+              ...row,
+              next_run_at: nextRunAt,
+              last_run_at: nowIso,
+              last_status: 'claimed',
+              updated_at: nowIso
+            }),
+            leaseOwner,
+            acquired: true
+          })
+        }
+      }
+      database.exec('COMMIT')
+      return claimed
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  claimHeartbeatNow(
+    configId: string,
+    idempotencyKey: string,
+    leaseOwner: string,
+    now = new Date(),
+    leaseMilliseconds = 5 * 60_000
+  ): ClaimedHeartbeatRun {
+    const database = this.requireDatabase()
+    const config = this.getHeartbeatConfig(configId)
+    const nowIso = now.toISOString()
+    const runId = randomUUID()
+    const scopedIdempotencyKey = `manual:${configId}:${idempotencyKey}`
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const duplicate = database
+        .prepare(
+          `SELECT * FROM heartbeat_runs
+           WHERE config_id = ? AND idempotency_key = ?`
+        )
+        .get(configId, scopedIdempotencyKey) as
+        | HeartbeatRunRow
+        | undefined
+      if (duplicate) {
+        database.exec('COMMIT')
+        return {
+          config,
+          run: toHeartbeatRun(duplicate),
+          leaseOwner,
+          acquired: false
+        }
+      }
+      database
+        .prepare(
+          `UPDATE heartbeat_runs
+           SET status = 'failed', next_attempt_at = NULL,
+               lease_owner = NULL, lease_expires_at = NULL,
+               completed_at = ?, error = ?, updated_at = ?
+           WHERE config_id = ? AND status = 'claimed'
+             AND lease_expires_at <= ?`
+        )
+        .run(
+          nowIso,
+          'Expired run superseded by a new manual heartbeat',
+          nowIso,
+          configId,
+          nowIso
+        )
+      const active = database
+        .prepare(
+          `SELECT * FROM heartbeat_runs
+           WHERE config_id = ? AND status = 'claimed'
+             AND lease_expires_at > ?
+           ORDER BY created_at DESC LIMIT 1`
+        )
+        .get(configId, nowIso) as HeartbeatRunRow | undefined
+      if (active) {
+        database.exec('COMMIT')
+        return {
+          config,
+          run: toHeartbeatRun(active),
+          leaseOwner,
+          acquired: false
+        }
+      }
+      database
+        .prepare(
+          `INSERT INTO heartbeat_runs
+            (id, config_id, trigger, scheduled_for, idempotency_key,
+             status, attempt_count, next_attempt_at, lease_owner,
+             lease_expires_at, started_at, completed_at, error,
+             entry_id, created_at, updated_at)
+           VALUES (?, ?, 'manual', ?, ?, 'claimed', 1, NULL, ?, ?,
+             ?, NULL, NULL, NULL, ?, ?)`
+        )
+        .run(
+          runId,
+          configId,
+          nowIso,
+          scopedIdempotencyKey,
+          leaseOwner,
+          new Date(
+            now.getTime() + leaseMilliseconds
+          ).toISOString(),
+          nowIso,
+          nowIso,
+          nowIso
+        )
+      database
+        .prepare(
+          `UPDATE heartbeat_configs
+           SET last_run_at = ?, last_status = 'claimed', updated_at = ?
+           WHERE id = ?`
+        )
+        .run(nowIso, nowIso, configId)
+      const run = database
+        .prepare('SELECT * FROM heartbeat_runs WHERE id = ?')
+        .get(runId) as HeartbeatRunRow
+      database.exec('COMMIT')
+      return {
+        config,
+        run: toHeartbeatRun(run),
+        leaseOwner,
+        acquired: true
+      }
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  buildHeartbeatInput(
+    config: AssistantHeartbeatConfig,
+    now = new Date()
+  ): HeartbeatInputSnapshot {
+    const database = this.requireDatabase()
+    const since = new Date(
+      now.getTime() - config.lookbackHours * 60 * 60_000
+    ).toISOString()
+    const conversations = (
+      config.projectId
+        ? database
+            .prepare(
+              `SELECT id, title, updated_at FROM conversations
+               WHERE status = 'active' AND project_id = ?
+                 AND updated_at >= ?
+               ORDER BY updated_at DESC LIMIT 20`
+            )
+            .all(config.projectId, since)
+        : database
+            .prepare(
+              `SELECT id, title, updated_at FROM conversations
+               WHERE status = 'active' AND updated_at >= ?
+               ORDER BY updated_at DESC LIMIT 20`
+            )
+            .all(since)
+    ) as Array<{ id: string; title: string; updated_at: string }>
+    const messageStatement = database.prepare(
+      `SELECT role, content, created_at FROM (
+         SELECT role, content, created_at, sequence
+         FROM messages
+         WHERE conversation_id = ? AND created_at >= ?
+           AND role IN ('user', 'assistant')
+         ORDER BY sequence DESC LIMIT 20
+       ) ORDER BY sequence`
+    )
+    const tasks = (
+      config.projectId
+        ? database
+            .prepare(
+              `SELECT id, title, status, created_at, completed_at
+               FROM tasks
+               WHERE project_id = ? AND created_at >= ?
+               ORDER BY created_at DESC LIMIT 100`
+            )
+            .all(config.projectId, since)
+        : database
+            .prepare(
+              `SELECT id, title, status, created_at, completed_at
+               FROM tasks
+               WHERE created_at >= ?
+               ORDER BY created_at DESC LIMIT 100`
+            )
+            .all(since)
+    ) as Array<{
+      id: string
+      title: string
+      status: AssistantTask['status']
+      created_at: string
+      completed_at: string | null
+    }>
+    const memories = (
+      config.projectId
+        ? database
+            .prepare(
+              `SELECT id, type, content, scope FROM memory_items
+               WHERE status = 'confirmed'
+                 AND (scope = 'global' OR
+                   (scope = 'project' AND scope_id = ?))
+               ORDER BY updated_at DESC LIMIT 100`
+            )
+            .all(config.projectId)
+        : database
+            .prepare(
+              `SELECT id, type, content, scope FROM memory_items
+               WHERE status = 'confirmed' AND scope = 'global'
+               ORDER BY updated_at DESC LIMIT 100`
+            )
+            .all()
+    ) as Array<{
+      id: string
+      type: AssistantMemory['type']
+      content: string
+      scope: AssistantMemory['scope']
+    }>
+    return {
+      conversations: conversations.map((conversation) => ({
+        id: conversation.id,
+        title: conversation.title,
+        updatedAt: conversation.updated_at,
+        messages: (
+          messageStatement.all(conversation.id, since) as Array<{
+            role: 'user' | 'assistant'
+            content: string
+            created_at: string
+          }>
+        ).map((message) => ({
+          role: message.role,
+          content: message.content,
+          createdAt: message.created_at
+        }))
+      })),
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        createdAt: task.created_at,
+        completedAt: task.completed_at ?? undefined
+      })),
+      confirmedMemories: memories
+    }
+  }
+
+  completeHeartbeatRun(
+    claim: ClaimedHeartbeatRun,
+    output: HeartbeatSummaryOutput,
+    now = new Date()
+  ): AssistantHeartbeatRun {
+    const database = this.requireDatabase()
+    const timestamp = now.toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const active = database
+        .prepare(
+          `SELECT id FROM heartbeat_runs
+           WHERE id = ? AND status = 'claimed' AND lease_owner = ?
+             AND lease_expires_at > ?`
+        )
+        .get(
+          claim.run.id,
+          claim.leaseOwner,
+          timestamp
+        ) as { id: string } | undefined
+      if (!active) {
+        throw new Error('Heartbeat lease is no longer active')
+      }
+      const artifactId = randomUUID()
+      const entryId = randomUUID()
+      const summaryContent = [
+        `# ${claim.config.name}`,
+        '',
+        output.summary,
+        ...(output.highlights.length
+          ? ['', '## Highlights', ...output.highlights.map((item) => `- ${item}`)]
+          : [])
+      ].join('\n')
+      database
+        .prepare(
+          `INSERT INTO artifacts
+            (id, project_id, task_id, run_id, kind, title, mime_type,
+             storage_kind, storage_path, inline_content, checksum,
+             byte_size, preview_json, created_at, updated_at)
+           VALUES (?, ?, NULL, NULL, 'markdown', ?, 'text/markdown',
+             'inline', NULL, ?, NULL, ?, '{}', ?, ?)`
+        )
+        .run(
+          artifactId,
+          claim.config.projectId ?? null,
+          `Heartbeat: ${claim.config.name}`.slice(0, 240),
+          summaryContent,
+          Buffer.byteLength(summaryContent),
+          timestamp,
+          timestamp
+        )
+      const proposedMemoryIds: string[] = []
+      const insertMemory = database.prepare(
+        `INSERT INTO memory_items
+          (id, scope, scope_id, type, content, source_conversation_id,
+           source_message_id, confidence, salience, status, expires_at,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 'proposed',
+           NULL, ?, ?)`
+      )
+      const findExistingMemory = database.prepare(
+        `SELECT id FROM memory_items
+         WHERE scope = ?
+           AND ((? IS NULL AND scope_id IS NULL) OR scope_id = ?)
+           AND content = ? COLLATE NOCASE
+           AND status IN ('proposed', 'confirmed')
+         LIMIT 1`
+      )
+      for (const memory of output.proposedMemories) {
+        const scopeId =
+          memory.scope === 'project'
+            ? (claim.config.projectId ?? null)
+            : null
+        const existing = findExistingMemory.get(
+          memory.scope,
+          scopeId,
+          scopeId,
+          memory.content
+        ) as { id: string } | undefined
+        if (existing) {
+          continue
+        }
+        const memoryId = randomUUID()
+        insertMemory.run(
+          memoryId,
+          memory.scope,
+          scopeId,
+          memory.type,
+          memory.content,
+          memory.confidence,
+          memory.salience,
+          timestamp,
+          timestamp
+        )
+        proposedMemoryIds.push(memoryId)
+      }
+      const followUpTaskIds: string[] = []
+      const insertTask = database.prepare(
+        `INSERT INTO tasks
+          (id, project_id, conversation_id, schedule_id, title,
+           instructions, origin, status, priority, work_mode,
+           progress, created_at, started_at, completed_at, error)
+         VALUES (?, ?, NULL, NULL, ?, ?, 'assistant', 'paused', 0,
+           'plan', NULL, ?, NULL, NULL, NULL)`
+      )
+      for (const task of output.followUpTasks) {
+        const taskId = randomUUID()
+        insertTask.run(
+          taskId,
+          claim.config.projectId ?? null,
+          task.title,
+          task.instructions,
+          timestamp
+        )
+        followUpTaskIds.push(taskId)
+      }
+      database
+        .prepare(
+          `INSERT INTO heartbeat_entries
+            (id, config_id, run_id, scheduled_for, summary,
+             highlights_json, artifact_id, proposed_memory_ids_json,
+             follow_up_task_ids_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          entryId,
+          claim.config.id,
+          claim.run.id,
+          claim.run.scheduledFor,
+          output.summary,
+          JSON.stringify(output.highlights),
+          artifactId,
+          JSON.stringify(proposedMemoryIds),
+          JSON.stringify(followUpTaskIds),
+          timestamp
+        )
+      database
+        .prepare(
+          `UPDATE heartbeat_runs
+           SET status = 'completed', completed_at = ?, error = NULL,
+               entry_id = ?, lease_owner = NULL,
+               lease_expires_at = NULL, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(timestamp, entryId, timestamp, claim.run.id)
+      database
+        .prepare(
+          `UPDATE heartbeat_configs
+           SET last_status = 'completed', updated_at = ?
+           WHERE id = ?`
+        )
+        .run(timestamp, claim.config.id)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    this.pruneHeartbeatHistory(claim.config.id, now)
+    return this.getHeartbeatRun(claim.run.id)
+  }
+
+  failHeartbeatRun(
+    claim: ClaimedHeartbeatRun,
+    error: string,
+    now = new Date()
+  ): AssistantHeartbeatRun {
+    const database = this.requireDatabase()
+    const timestamp = now.toISOString()
+    const retryDelays = [60_000, 5 * 60_000]
+    const nextAttemptAt =
+      claim.run.attemptCount < 3
+        ? new Date(
+            now.getTime() +
+              retryDelays[
+                Math.min(
+                  claim.run.attemptCount - 1,
+                  retryDelays.length - 1
+                )
+              ]!
+          ).toISOString()
+        : null
+    const result = database
+      .prepare(
+        `UPDATE heartbeat_runs
+         SET status = 'failed', next_attempt_at = ?,
+             completed_at = ?, error = ?, lease_owner = NULL,
+             lease_expires_at = NULL, updated_at = ?
+         WHERE id = ? AND status = 'claimed' AND lease_owner = ?`
+      )
+      .run(
+        nextAttemptAt,
+        timestamp,
+        error.slice(0, 2_000),
+        timestamp,
+        claim.run.id,
+        claim.leaseOwner
+      )
+    if (result.changes !== 1) {
+      throw new Error('Heartbeat lease is no longer active')
+    }
+    database
+      .prepare(
+        `UPDATE heartbeat_configs
+         SET last_status = 'failed', updated_at = ?
+         WHERE id = ?`
+      )
+      .run(timestamp, claim.config.id)
+    return this.getHeartbeatRun(claim.run.id)
+  }
+
+  pruneHeartbeatHistory(configId: string, now = new Date()): void {
+    const database = this.requireDatabase()
+    const config = this.getHeartbeatConfig(configId)
+    const cutoff = new Date(
+      now.getTime() - config.retentionDays * 24 * 60 * 60_000
+    ).toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const artifacts = database
+        .prepare(
+          `SELECT artifact_id FROM heartbeat_entries
+           WHERE config_id = ? AND created_at < ?
+             AND artifact_id IS NOT NULL`
+        )
+        .all(configId, cutoff) as Array<{ artifact_id: string }>
+      database
+        .prepare(
+          `DELETE FROM heartbeat_entries
+           WHERE config_id = ? AND created_at < ?`
+        )
+        .run(configId, cutoff)
+      database
+        .prepare(
+          `DELETE FROM heartbeat_runs
+           WHERE config_id = ? AND created_at < ?
+             AND status IN ('completed', 'failed', 'skipped')`
+        )
+        .run(configId, cutoff)
+      const deleteArtifact = database.prepare(
+        'DELETE FROM artifacts WHERE id = ?'
+      )
+      for (const artifact of artifacts) {
+        deleteArtifact.run(artifact.artifact_id)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   listExperts(): AssistantExpert[] {
@@ -998,7 +2358,7 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version >= 2) {
+    if (version.user_version >= 5) {
       return
     }
     if (version.user_version < 1) {
@@ -1175,7 +2535,8 @@ export class AssistantDatabase {
       COMMIT;
     `)
     }
-    database.exec(`
+    if (version.user_version < 2) {
+      database.exec(`
       BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS delegation_outbox (
         task_id TEXT PRIMARY KEY,
@@ -1187,6 +2548,109 @@ export class AssistantDatabase {
       CREATE INDEX IF NOT EXISTS delegation_outbox_status_idx
         ON delegation_outbox(status, updated_at);
       PRAGMA user_version = 2;
+      COMMIT;
+    `)
+    }
+    if (version.user_version < 3) {
+      database.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE IF NOT EXISTS heartbeat_configs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        recurrence_json TEXT NOT NULL,
+        lookback_hours INTEGER NOT NULL
+          CHECK(lookback_hours BETWEEN 1 AND 720),
+        retention_days INTEGER NOT NULL
+          CHECK(retention_days BETWEEN 1 AND 365),
+        enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+        next_run_at TEXT NOT NULL,
+        last_run_at TEXT,
+        last_status TEXT
+          CHECK(last_status IN ('claimed', 'completed', 'failed', 'skipped')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS heartbeat_configs_due_idx
+        ON heartbeat_configs(enabled, next_run_at);
+      CREATE TABLE IF NOT EXISTS heartbeat_runs (
+        id TEXT PRIMARY KEY,
+        config_id TEXT NOT NULL
+          REFERENCES heartbeat_configs(id) ON DELETE CASCADE,
+        trigger TEXT NOT NULL CHECK(trigger IN ('scheduled', 'manual')),
+        scheduled_for TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        status TEXT NOT NULL
+          CHECK(status IN ('claimed', 'completed', 'failed', 'skipped')),
+        attempt_count INTEGER NOT NULL
+          CHECK(attempt_count BETWEEN 0 AND 3),
+        next_attempt_at TEXT,
+        lease_owner TEXT,
+        lease_expires_at TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        error TEXT,
+        entry_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(config_id, idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS heartbeat_runs_claim_idx
+        ON heartbeat_runs(status, next_attempt_at, lease_expires_at);
+      CREATE INDEX IF NOT EXISTS heartbeat_runs_history_idx
+        ON heartbeat_runs(config_id, created_at DESC);
+      CREATE TABLE IF NOT EXISTS heartbeat_entries (
+        id TEXT PRIMARY KEY,
+        config_id TEXT NOT NULL
+          REFERENCES heartbeat_configs(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL UNIQUE
+          REFERENCES heartbeat_runs(id) ON DELETE CASCADE,
+        scheduled_for TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        highlights_json TEXT NOT NULL,
+        artifact_id TEXT REFERENCES artifacts(id) ON DELETE SET NULL,
+        proposed_memory_ids_json TEXT NOT NULL,
+        follow_up_task_ids_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS heartbeat_entries_history_idx
+        ON heartbeat_entries(config_id, created_at DESC);
+      PRAGMA user_version = 3;
+      COMMIT;
+    `)
+    }
+    database.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE IF NOT EXISTS model_usage_calls (
+        request_id TEXT NOT NULL
+          REFERENCES tasks(id) ON DELETE CASCADE,
+        call_id TEXT NOT NULL,
+        runtime TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL CHECK(input_tokens >= 0),
+        output_tokens INTEGER NOT NULL CHECK(output_tokens >= 0),
+        cache_read_tokens INTEGER NOT NULL CHECK(cache_read_tokens >= 0),
+        cache_write_tokens INTEGER NOT NULL CHECK(cache_write_tokens >= 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(request_id, call_id)
+      );
+      CREATE INDEX IF NOT EXISTS model_usage_calls_request_idx
+        ON model_usage_calls(request_id);
+      CREATE INDEX IF NOT EXISTS model_usage_calls_dimensions_idx
+        ON model_usage_calls(runtime, provider, model);
+      PRAGMA user_version = 4;
+      COMMIT;
+    `)
+    database.exec(`
+      BEGIN IMMEDIATE;
+      CREATE INDEX IF NOT EXISTS tasks_status_idx
+        ON tasks(status);
+      CREATE INDEX IF NOT EXISTS messages_state_idx
+        ON messages(state);
+      PRAGMA user_version = 5;
       COMMIT;
     `)
   }

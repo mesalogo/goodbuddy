@@ -2,7 +2,12 @@
   "name": "goodbuddy",
   "version": "0.1.0",
   "private": true,
-  "description": "Secure cross-platform AI desktop workspace",
+  "description": "Secure desktop AI workspace with controlled Agent Runtimes",
+  "desktopName": "GoodBuddy",
+  "homepage": "https://github.com/mesalogo/goodbuddy",
+  "author": {
+    "name": "MesaLogo"
+  },
   "license": "UNLICENSED",
   "main": "./out/main/index.js",
   "type": "module",
@@ -17,7 +22,9 @@
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
     "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64",
-    "dist:linux": "npm run build && electron-builder --linux AppImage deb --x64 --arm64",
+    "dist:linux": "npm run dist:linux:x64 && npm run dist:linux:arm64",
+    "dist:linux:x64": "npm run build && electron-builder --linux AppImage deb --x64",
+    "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb --arm64",
     "portable": "npm run build && node build/build-portable.cjs"
   },
   "build": {
@@ -42,6 +49,14 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
       },
       {
         "from": ".runtime-resources/${arch}",
@@ -92,6 +107,10 @@
     },
     "linux": {
       "icon": "build/icon.png",
+      "maintainer": "MesaLogo",
+      "vendor": "MesaLogo",
+      "synopsis": "安全可控的桌面智能助手与 Agent 工作空间",
+      "syncDesktopName": true,
       "target": [
         "AppImage",
         "deb"

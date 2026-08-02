@@ -1,16 +1,20 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type {
   Chunk,
+  ChunkEmbeddingInput,
   CreateEvidenceInput,
   CreateGraphEntityInput,
   CreateGraphRelationInput,
   CreateKnowledgeBaseInput,
   Document,
   Evidence,
+  EmbeddingIndexState,
   GraphEntity,
   GraphRelation,
   GraphStrategy,
+  HybridSearchOptions,
+  HybridSearchResult,
   JsonObject,
   KnowledgeBase,
   KnowledgeSource,
@@ -25,10 +29,11 @@ import type {
   UpdateGraphRelationInput,
   UpdateKnowledgeBaseInput,
   UpsertDocumentInput,
-  UpsertKnowledgeSourceInput
+  UpsertKnowledgeSourceInput,
+  VectorSearchOptions
 } from './types'
 
-const DATABASE_VERSION = 1
+const DATABASE_VERSION = 2
 const MAX_ID_LENGTH = 128
 const MAX_NAME_LENGTH = 512
 const MAX_LOCATION_LENGTH = 8192
@@ -42,6 +47,19 @@ const MAX_JSON_ARRAY_ITEMS = 1_000
 const MAX_JSON_DEPTH = 20
 const MAX_JSON_NODES = 10_000
 const MAX_JSON_STRING_LENGTH = 32_768
+const MAX_EMBEDDING_DIMENSIONS = 8_192
+const MAX_EMBEDDING_PROVIDER_LENGTH = 128
+const MAX_EMBEDDING_MODEL_LENGTH = 512
+const MAX_EMBEDDING_ERROR_LENGTH = 2_000
+const MAX_GRAPH_DEPTH = 3
+const MAX_VECTOR_CANDIDATES = 5_000
+const RRF_CONSTANT = 60
+
+type ScoredSearchResult = {
+  result: SearchResult
+  similarity?: number
+  evidenceIds?: string[]
+}
 
 type Row = Record<string, null | number | bigint | string | Uint8Array>
 
@@ -221,6 +239,102 @@ function asNumber(row: Row, key: string): number {
   return row[key] as number
 }
 
+function asBytes(row: Row, key: string): Uint8Array {
+  return row[key] as Uint8Array
+}
+
+function contentChecksum(content: string): string {
+  return createHash('sha256').update(content).digest('hex')
+}
+
+function normalizedChecksum(value: string, field: string): string {
+  const checksum = requiredString(value, field, 64).toLowerCase()
+  if (!/^[a-f0-9]{64}$/u.test(checksum)) {
+    throw new RangeError(`${field} must be a SHA-256 checksum`)
+  }
+  return checksum
+}
+
+function normalizeVector(
+  value: readonly number[],
+  field: string
+): {
+  bytes: Buffer
+  dimensions: number
+  magnitude: number
+  values: number[]
+} {
+  if (
+    !Array.isArray(value) ||
+    value.length < 1 ||
+    value.length > MAX_EMBEDDING_DIMENSIONS
+  ) {
+    throw new RangeError(
+      `${field} must contain between 1 and ${MAX_EMBEDDING_DIMENSIONS} dimensions`
+    )
+  }
+  const bytes = Buffer.allocUnsafe(value.length * Float32Array.BYTES_PER_ELEMENT)
+  const values: number[] = []
+  let magnitudeSquared = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const component = value[index]
+    if (typeof component !== 'number' || !Number.isFinite(component)) {
+      throw new TypeError(`${field} must contain only finite numbers`)
+    }
+    const storedComponent = Math.fround(component)
+    if (!Number.isFinite(storedComponent)) {
+      throw new RangeError(`${field} components must fit in Float32`)
+    }
+    bytes.writeFloatLE(
+      storedComponent,
+      index * Float32Array.BYTES_PER_ELEMENT
+    )
+    values.push(storedComponent)
+    magnitudeSquared += storedComponent * storedComponent
+  }
+  const magnitude = Math.sqrt(magnitudeSquared)
+  if (!Number.isFinite(magnitude) || magnitude <= 0) {
+    throw new RangeError(`${field} must have a finite non-zero norm`)
+  }
+  return { bytes, dimensions: value.length, magnitude, values }
+}
+
+function cosineSimilarity(
+  left: readonly number[],
+  leftMagnitude: number,
+  rightBytes: Uint8Array,
+  dimensions: number,
+  rightMagnitude: number
+): number | undefined {
+  if (
+    left.length !== dimensions ||
+    rightBytes.byteLength !== dimensions * Float32Array.BYTES_PER_ELEMENT ||
+    !Number.isFinite(rightMagnitude) ||
+    rightMagnitude <= 0
+  ) {
+    return undefined
+  }
+  const buffer = Buffer.from(
+    rightBytes.buffer,
+    rightBytes.byteOffset,
+    rightBytes.byteLength
+  )
+  let dot = 0
+  for (let index = 0; index < dimensions; index += 1) {
+    const component = buffer.readFloatLE(
+      index * Float32Array.BYTES_PER_ELEMENT
+    )
+    if (!Number.isFinite(component)) {
+      return undefined
+    }
+    dot += (left[index] ?? 0) * component
+  }
+  const similarity = dot / (leftMagnitude * rightMagnitude)
+  return Number.isFinite(similarity)
+    ? Math.max(-1, Math.min(1, similarity))
+    : undefined
+}
+
 function mapKnowledgeBase(row: Row): KnowledgeBase {
   return {
     id: asString(row, 'id'),
@@ -322,6 +436,21 @@ function mapEvidence(row: Row): Evidence {
     quote: asOptionalString(row, 'quote'),
     location: asOptionalString(row, 'location'),
     createdAt: asString(row, 'created_at')
+  }
+}
+
+function mapEmbeddingIndexState(row: Row): EmbeddingIndexState {
+  return {
+    documentId: asString(row, 'document_id'),
+    knowledgeBaseId: asString(row, 'knowledge_base_id'),
+    provider: asString(row, 'provider'),
+    model: asString(row, 'model'),
+    dimensions:
+      row.dimensions === null ? undefined : asNumber(row, 'dimensions'),
+    contentChecksum: asString(row, 'content_checksum'),
+    status: asString(row, 'status') as EmbeddingIndexState['status'],
+    lastError: asOptionalString(row, 'last_error'),
+    updatedAt: asString(row, 'updated_at')
   }
 }
 
@@ -688,6 +817,9 @@ export class KnowledgeDatabase {
           now,
           now
         )
+      database
+        .prepare('DELETE FROM embedding_index_state WHERE document_id = ?')
+        .run(id)
       database.prepare('DELETE FROM chunks WHERE document_id = ?').run(id)
       const insertChunk = database.prepare(
         `INSERT INTO chunks
@@ -768,7 +900,7 @@ export class KnowledgeDatabase {
       'documentId',
       MAX_ID_LENGTH
     )
-    boundedInteger(limit, 'limit', 1, MAX_LIST_LIMIT)
+    boundedInteger(limit, 'limit', 1, MAX_CHUNKS)
     return this.requireDatabase()
       .prepare(
         `SELECT * FROM chunks WHERE document_id = ?
@@ -776,6 +908,365 @@ export class KnowledgeDatabase {
       )
       .all(normalizedId, limit)
       .map(mapChunk)
+  }
+
+  replaceDocumentEmbeddings(
+    documentId: string,
+    provider: string,
+    model: string,
+    embeddings: readonly ChunkEmbeddingInput[]
+  ): EmbeddingIndexState {
+    const normalizedDocumentId = requiredString(
+      documentId,
+      'documentId',
+      MAX_ID_LENGTH
+    )
+    const normalizedProvider = requiredString(
+      provider,
+      'provider',
+      MAX_EMBEDDING_PROVIDER_LENGTH
+    )
+    const normalizedModel = requiredString(
+      model,
+      'model',
+      MAX_EMBEDDING_MODEL_LENGTH
+    )
+    if (!Array.isArray(embeddings) || embeddings.length > MAX_CHUNKS) {
+      throw new RangeError(`embeddings must contain at most ${MAX_CHUNKS} items`)
+    }
+    const database = this.requireDatabase()
+    const document = database
+      .prepare('SELECT id, knowledge_base_id FROM documents WHERE id = ?')
+      .get(normalizedDocumentId)
+    if (!document) {
+      throw new Error(`Document not found: ${normalizedDocumentId}`)
+    }
+    const chunks = database
+      .prepare(
+        `SELECT id, content FROM chunks
+         WHERE document_id = ? ORDER BY ordinal ASC, id ASC`
+      )
+      .all(normalizedDocumentId)
+    if (embeddings.length !== chunks.length) {
+      throw new Error('Embeddings must cover every current document chunk')
+    }
+    const chunksById = new Map(
+      chunks.map((row) => [asString(row, 'id'), asString(row, 'content')])
+    )
+    const seen = new Set<string>()
+    let dimensions: number | undefined
+    const normalized = embeddings.map((embedding, index) => {
+      const chunkId = requiredString(
+        embedding.chunkId,
+        `embeddings[${index}].chunkId`,
+        MAX_ID_LENGTH
+      )
+      const content = chunksById.get(chunkId)
+      if (content === undefined || seen.has(chunkId)) {
+        throw new Error('Embeddings must reference unique chunks in the document')
+      }
+      seen.add(chunkId)
+      const checksum = normalizedChecksum(
+        embedding.contentChecksum,
+        `embeddings[${index}].contentChecksum`
+      )
+      if (checksum !== contentChecksum(content)) {
+        throw new Error('Embedding content checksum does not match the chunk')
+      }
+      const vector = normalizeVector(
+        embedding.vector,
+        `embeddings[${index}].vector`
+      )
+      if (dimensions === undefined) {
+        dimensions = vector.dimensions
+      } else if (dimensions !== vector.dimensions) {
+        throw new Error('Document embeddings must have consistent dimensions')
+      }
+      return { chunkId, checksum, ...vector }
+    })
+    const indexChecksum = createHash('sha256')
+      .update(
+        normalized
+          .map((item) => `${item.chunkId}\0${item.checksum}`)
+          .sort()
+          .join('\n')
+      )
+      .digest('hex')
+    const now = new Date().toISOString()
+    this.transaction(database, () => {
+      database
+        .prepare(
+          `DELETE FROM chunk_embeddings
+           WHERE provider = ? AND model = ? AND chunk_id IN
+             (SELECT id FROM chunks WHERE document_id = ?)`
+        )
+        .run(normalizedProvider, normalizedModel, normalizedDocumentId)
+      const insert = database.prepare(
+        `INSERT INTO chunk_embeddings
+          (chunk_id, knowledge_base_id, provider, model, dimensions,
+           content_checksum, vector, magnitude, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      for (const item of normalized) {
+        insert.run(
+          item.chunkId,
+          asString(document, 'knowledge_base_id'),
+          normalizedProvider,
+          normalizedModel,
+          item.dimensions,
+          item.checksum,
+          item.bytes,
+          item.magnitude,
+          now,
+          now
+        )
+      }
+      database
+        .prepare(
+          `INSERT INTO embedding_index_state
+            (document_id, knowledge_base_id, provider, model, dimensions,
+             content_checksum, status, last_error, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'ready', NULL, ?)
+           ON CONFLICT(document_id, provider, model) DO UPDATE SET
+             knowledge_base_id = excluded.knowledge_base_id,
+             dimensions = excluded.dimensions,
+             content_checksum = excluded.content_checksum,
+             status = 'ready',
+             last_error = NULL,
+             updated_at = excluded.updated_at`
+        )
+        .run(
+          normalizedDocumentId,
+          asString(document, 'knowledge_base_id'),
+          normalizedProvider,
+          normalizedModel,
+          dimensions ?? null,
+          indexChecksum,
+          now
+        )
+    })
+    return this.requiredEmbeddingIndexState(
+      normalizedDocumentId,
+      normalizedProvider,
+      normalizedModel
+    )
+  }
+
+  recordEmbeddingIndexError(
+    documentId: string,
+    provider: string,
+    model: string,
+    error: string
+  ): EmbeddingIndexState {
+    const normalizedDocumentId = requiredString(
+      documentId,
+      'documentId',
+      MAX_ID_LENGTH
+    )
+    const normalizedProvider = requiredString(
+      provider,
+      'provider',
+      MAX_EMBEDDING_PROVIDER_LENGTH
+    )
+    const normalizedModel = requiredString(
+      model,
+      'model',
+      MAX_EMBEDDING_MODEL_LENGTH
+    )
+    const normalizedError = requiredString(
+      error,
+      'error',
+      MAX_EMBEDDING_ERROR_LENGTH,
+      false
+    )
+    const database = this.requireDatabase()
+    const document = database
+      .prepare('SELECT knowledge_base_id FROM documents WHERE id = ?')
+      .get(normalizedDocumentId)
+    if (!document) {
+      throw new Error(`Document not found: ${normalizedDocumentId}`)
+    }
+    database
+      .prepare(
+        `INSERT INTO embedding_index_state
+          (document_id, knowledge_base_id, provider, model, dimensions,
+           content_checksum, status, last_error, updated_at)
+         VALUES (?, ?, ?, ?, NULL, '', 'error', ?, ?)
+         ON CONFLICT(document_id, provider, model) DO UPDATE SET
+           status = 'error',
+           last_error = excluded.last_error,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        normalizedDocumentId,
+        asString(document, 'knowledge_base_id'),
+        normalizedProvider,
+        normalizedModel,
+        normalizedError,
+        new Date().toISOString()
+      )
+    return this.requiredEmbeddingIndexState(
+      normalizedDocumentId,
+      normalizedProvider,
+      normalizedModel
+    )
+  }
+
+  getEmbeddingIndexState(
+    documentId: string,
+    provider: string,
+    model: string
+  ): EmbeddingIndexState | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT * FROM embedding_index_state
+         WHERE document_id = ? AND provider = ? AND model = ?`
+      )
+      .get(
+        requiredString(documentId, 'documentId', MAX_ID_LENGTH),
+        requiredString(
+          provider,
+          'provider',
+          MAX_EMBEDDING_PROVIDER_LENGTH
+        ),
+        requiredString(model, 'model', MAX_EMBEDDING_MODEL_LENGTH)
+      )
+    return row ? mapEmbeddingIndexState(row) : undefined
+  }
+
+  vectorSearch(options: VectorSearchOptions): SearchResult[] {
+    return this.vectorSearchScored(options).map((item) => item.result)
+  }
+
+  graphSearch(
+    knowledgeBaseId: string,
+    query: string,
+    limit = 20,
+    maximumDepth = 1
+  ): HybridSearchResult[] {
+    boundedInteger(limit, 'limit', 1, 100)
+    boundedInteger(maximumDepth, 'maximumDepth', 0, MAX_GRAPH_DEPTH)
+    return this.graphSearchScored(
+      requiredString(knowledgeBaseId, 'knowledgeBaseId', MAX_ID_LENGTH),
+      requiredString(query, 'query', 512),
+      limit,
+      maximumDepth
+    ).map((item, index) => ({
+      ...item.result,
+      retrieval: {
+        score: 1 / (RRF_CONSTANT + index + 1),
+        channels: ['graph'],
+        graphRank: index + 1,
+        evidenceIds: item.evidenceIds ?? []
+      }
+    }))
+  }
+
+  hybridSearch(options: HybridSearchOptions): HybridSearchResult[] {
+    const knowledgeBaseId = requiredString(
+      options.knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    const query = requiredString(options.query, 'query', 512)
+    const limit = options.limit ?? 20
+    boundedInteger(limit, 'limit', 1, 100)
+    const lexical = this.search({
+      knowledgeBaseId,
+      query,
+      limit: Math.min(100, Math.max(limit * 4, limit))
+    })
+    const vector =
+      options.vector && options.provider && options.model
+        ? this.vectorSearchScored({
+            knowledgeBaseId,
+            provider: options.provider,
+            model: options.model,
+            vector: options.vector,
+            limit: options.vectorLimit ?? Math.min(100, limit * 4)
+          })
+        : []
+    const graph = options.graphEnabled === false
+      ? []
+      : this.graphSearchScored(
+          knowledgeBaseId,
+          query,
+          Math.min(100, Math.max(limit * 4, limit)),
+          boundedInteger(
+            options.graphDepth ?? 1,
+            'graphDepth',
+            0,
+            MAX_GRAPH_DEPTH
+          )
+        )
+    const fused = new Map<
+      string,
+      {
+        result: SearchResult
+        score: number
+        channels: Set<'fts' | 'vector' | 'graph'>
+        lexicalRank?: number
+        vectorRank?: number
+        graphRank?: number
+        similarity?: number
+        evidenceIds: Set<string>
+      }
+    >()
+    const add = (
+      channel: 'fts' | 'vector' | 'graph',
+      candidates: readonly ScoredSearchResult[],
+      weight: number
+    ): void => {
+      candidates.forEach((candidate, index) => {
+        const current = fused.get(candidate.result.chunk.id) ?? {
+          result: candidate.result,
+          score: 0,
+          channels: new Set<'fts' | 'vector' | 'graph'>(),
+          evidenceIds: new Set<string>()
+        }
+        current.score += weight / (RRF_CONSTANT + index + 1)
+        current.channels.add(channel)
+        if (channel === 'fts') {
+          current.lexicalRank = index + 1
+        } else if (channel === 'vector') {
+          current.vectorRank = index + 1
+          current.similarity = candidate.similarity
+        } else {
+          current.graphRank = index + 1
+          for (const evidenceId of candidate.evidenceIds ?? []) {
+            current.evidenceIds.add(evidenceId)
+          }
+        }
+        fused.set(candidate.result.chunk.id, current)
+      })
+    }
+    add(
+      'fts',
+      lexical.map((result) => ({ result })),
+      1
+    )
+    add('vector', vector, 1)
+    add('graph', graph, 0.8)
+    return [...fused.values()]
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          left.result.chunk.id.localeCompare(right.result.chunk.id)
+      )
+      .slice(0, limit)
+      .map((item) => ({
+        ...item.result,
+        rank: -item.score,
+        retrieval: {
+          score: item.score,
+          channels: [...item.channels],
+          lexicalRank: item.lexicalRank,
+          vectorRank: item.vectorRank,
+          graphRank: item.graphRank,
+          similarity: item.similarity,
+          evidenceIds: [...item.evidenceIds]
+        }
+      }))
   }
 
   search(options: SearchOptions): SearchResult[] {
@@ -1318,6 +1809,301 @@ export class KnowledgeDatabase {
     return this.requiredEntity(target.id)
   }
 
+  private vectorSearchScored(
+    options: VectorSearchOptions
+  ): ScoredSearchResult[] {
+    const knowledgeBaseId = requiredString(
+      options.knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    const provider = requiredString(
+      options.provider,
+      'provider',
+      MAX_EMBEDDING_PROVIDER_LENGTH
+    )
+    const model = requiredString(
+      options.model,
+      'model',
+      MAX_EMBEDDING_MODEL_LENGTH
+    )
+    const queryVector = normalizeVector(options.vector, 'vector')
+    const limit = options.limit ?? 20
+    boundedInteger(limit, 'limit', 1, 100)
+    const minimumSimilarity = options.minimumSimilarity ?? -1
+    if (
+      typeof minimumSimilarity !== 'number' ||
+      !Number.isFinite(minimumSimilarity) ||
+      minimumSimilarity < -1 ||
+      minimumSimilarity > 1
+    ) {
+      throw new RangeError('minimumSimilarity must be between -1 and 1')
+    }
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT
+           ce.chunk_id, ce.vector AS embedding_vector,
+           ce.dimensions AS embedding_dimensions,
+           ce.magnitude AS embedding_magnitude
+         FROM chunk_embeddings ce
+         JOIN embedding_index_state eis
+           ON eis.knowledge_base_id = ce.knowledge_base_id
+          AND eis.provider = ce.provider
+          AND eis.model = ce.model
+          AND eis.dimensions = ce.dimensions
+          AND eis.status = 'ready'
+         JOIN chunks c
+           ON c.id = ce.chunk_id
+          AND c.document_id = eis.document_id
+          AND c.knowledge_base_id = ce.knowledge_base_id
+         WHERE ce.knowledge_base_id = ?
+           AND ce.provider = ? AND ce.model = ? AND ce.dimensions = ?
+           AND length(ce.vector) = ce.dimensions * 4
+           AND ce.content_checksum <> ''
+         ORDER BY ce.chunk_id ASC LIMIT ?`
+      )
+      .all(
+        knowledgeBaseId,
+        provider,
+        model,
+        queryVector.dimensions,
+        MAX_VECTOR_CANDIDATES + 1
+      )
+    if (rows.length > MAX_VECTOR_CANDIDATES) {
+      return []
+    }
+    const winners = rows
+      .map((row): { chunkId: string; similarity: number } | undefined => {
+        const similarity = cosineSimilarity(
+          queryVector.values,
+          queryVector.magnitude,
+          asBytes(row, 'embedding_vector'),
+          asNumber(row, 'embedding_dimensions'),
+          asNumber(row, 'embedding_magnitude')
+        )
+        if (similarity === undefined || similarity < minimumSimilarity) {
+          return undefined
+        }
+        return { chunkId: asString(row, 'chunk_id'), similarity }
+      })
+      .filter(
+        (item): item is { chunkId: string; similarity: number } =>
+          item !== undefined
+      )
+      .sort(
+        (left, right) =>
+          right.similarity - left.similarity ||
+          left.chunkId.localeCompare(right.chunkId)
+      )
+      .slice(0, limit)
+    if (winners.length === 0) {
+      return []
+    }
+    const placeholders = winners.map(() => '?').join(', ')
+    const hydratedRows = this.requireDatabase()
+      .prepare(
+        `SELECT
+           c.*, substr(c.content, 1, 600) AS snippet,
+           d.id AS d_id, d.knowledge_base_id AS d_knowledge_base_id,
+           d.source_id AS d_source_id, d.external_id AS d_external_id,
+           d.title AS d_title, d.mime_type AS d_mime_type,
+           d.source_location AS d_source_location, d.checksum AS d_checksum,
+           d.metadata AS d_metadata, d.created_at AS d_created_at,
+           d.updated_at AS d_updated_at,
+           s.id AS s_id, s.knowledge_base_id AS s_knowledge_base_id,
+           s.type AS s_type, s.location AS s_location,
+           s.display_name AS s_display_name, s.status AS s_status,
+           s.last_error AS s_last_error, s.metadata AS s_metadata,
+           s.created_at AS s_created_at, s.updated_at AS s_updated_at
+         FROM chunks c
+         JOIN documents d ON d.id = c.document_id
+         JOIN knowledge_sources s ON s.id = d.source_id
+         WHERE c.id IN (${placeholders})
+           AND c.knowledge_base_id = ?
+           AND d.knowledge_base_id = ?
+           AND s.knowledge_base_id = ?`
+      )
+      .all(
+        ...winners.map((winner) => winner.chunkId),
+        knowledgeBaseId,
+        knowledgeBaseId,
+        knowledgeBaseId
+      ) as Row[]
+    const rowsByChunkId = new Map(
+      hydratedRows.map((row) => [asString(row, 'id'), row])
+    )
+    return winners.flatMap((winner) => {
+      const row = rowsByChunkId.get(winner.chunkId)
+      return row
+        ? [
+            {
+              similarity: winner.similarity,
+              result: {
+                chunk: mapChunk(row),
+                document: mapDocument(this.prefixedRow(row, 'd_')),
+                source: mapSource(this.prefixedRow(row, 's_')),
+                snippet: asString(row, 'snippet'),
+                rank: -winner.similarity
+              }
+            }
+          ]
+        : []
+    })
+  }
+
+  private graphSearchScored(
+    knowledgeBaseId: string,
+    query: string,
+    limit: number,
+    maximumDepth: number
+  ): ScoredSearchResult[] {
+    const terms = [
+      ...new Set(
+        [query, ...query.split(/[^\p{L}\p{N}_.$/@-]+/u)]
+          .map((term) => term.normalize('NFKC').trim().toLowerCase())
+          .filter((term) => term.length > 1)
+      )
+    ]
+      .sort((left, right) => right.length - left.length)
+      .slice(0, 8)
+    if (terms.length === 0) {
+      return []
+    }
+    const conditions = terms
+      .map(
+        () =>
+          `(lower(ge.name) LIKE ? ESCAPE '\\' OR lower(ge.aliases) LIKE ? ESCAPE '\\' OR lower(ge.type) LIKE ? ESCAPE '\\')`
+      )
+      .join(' OR ')
+    const patterns = terms.flatMap((term) => {
+      const escaped = term.replaceAll('\\', '\\\\').replaceAll('%', '\\%')
+        .replaceAll('_', '\\_')
+      return [`%${escaped}%`, `%${escaped}%`, `%${escaped}%`]
+    })
+    const rows = this.requireDatabase()
+      .prepare(
+        `WITH RECURSIVE
+         seed(id, depth) AS (
+           SELECT ge.id, 0
+           FROM graph_entities ge
+           WHERE ge.knowledge_base_id = ? AND (${conditions})
+             AND EXISTS (
+               SELECT 1 FROM graph_evidence ev
+               JOIN chunks ec ON ec.id = ev.chunk_id
+               WHERE ev.entity_id = ge.id
+                 AND ev.knowledge_base_id = ge.knowledge_base_id
+                 AND ec.knowledge_base_id = ge.knowledge_base_id
+                 AND ec.document_id = ev.document_id
+             )
+           ORDER BY ge.name COLLATE NOCASE ASC, ge.id ASC
+           LIMIT 24
+         ),
+         reachable(id, depth) AS (
+           SELECT id, depth FROM seed
+           UNION
+           SELECT
+             CASE
+               WHEN gr.source_entity_id = reachable.id
+                 THEN gr.target_entity_id
+               ELSE gr.source_entity_id
+             END,
+             reachable.depth + 1
+           FROM reachable
+           JOIN graph_relations gr
+             ON gr.knowledge_base_id = ?
+            AND (gr.source_entity_id = reachable.id
+                 OR gr.target_entity_id = reachable.id)
+           WHERE reachable.depth < ?
+             AND EXISTS (
+               SELECT 1 FROM graph_evidence rev
+               JOIN chunks rc ON rc.id = rev.chunk_id
+               WHERE rev.relation_id = gr.id
+                 AND rev.knowledge_base_id = gr.knowledge_base_id
+                 AND rc.knowledge_base_id = gr.knowledge_base_id
+                 AND rc.document_id = rev.document_id
+             )
+             AND EXISTS (
+               SELECT 1 FROM graph_evidence nev
+               JOIN chunks nc ON nc.id = nev.chunk_id
+               WHERE nev.entity_id = CASE
+                 WHEN gr.source_entity_id = reachable.id
+                   THEN gr.target_entity_id
+                 ELSE gr.source_entity_id
+               END
+                 AND nev.knowledge_base_id = gr.knowledge_base_id
+                 AND nc.knowledge_base_id = gr.knowledge_base_id
+                 AND nc.document_id = nev.document_id
+             )
+         ),
+         reached(id, depth) AS (
+           SELECT id, MIN(depth) FROM reachable GROUP BY id
+         ),
+         backed_evidence AS (
+           SELECT ev.*, reached.depth AS graph_depth
+           FROM graph_evidence ev
+           JOIN reached ON reached.id = ev.entity_id
+           WHERE ev.knowledge_base_id = ? AND ev.chunk_id IS NOT NULL
+           UNION ALL
+           SELECT ev.*, MAX(source.depth, target.depth) AS graph_depth
+           FROM graph_evidence ev
+           JOIN graph_relations gr ON gr.id = ev.relation_id
+           JOIN reached source ON source.id = gr.source_entity_id
+           JOIN reached target ON target.id = gr.target_entity_id
+           WHERE ev.knowledge_base_id = ? AND gr.knowledge_base_id = ?
+             AND ev.chunk_id IS NOT NULL
+         )
+         SELECT
+           c.*, substr(c.content, 1, 600) AS snippet,
+           200 + MIN(backed_evidence.graph_depth) AS rank,
+           group_concat(DISTINCT backed_evidence.id) AS evidence_ids,
+           d.id AS d_id, d.knowledge_base_id AS d_knowledge_base_id,
+           d.source_id AS d_source_id, d.external_id AS d_external_id,
+           d.title AS d_title, d.mime_type AS d_mime_type,
+           d.source_location AS d_source_location, d.checksum AS d_checksum,
+           d.metadata AS d_metadata, d.created_at AS d_created_at,
+           d.updated_at AS d_updated_at,
+           s.id AS s_id, s.knowledge_base_id AS s_knowledge_base_id,
+           s.type AS s_type, s.location AS s_location,
+           s.display_name AS s_display_name, s.status AS s_status,
+           s.last_error AS s_last_error, s.metadata AS s_metadata,
+           s.created_at AS s_created_at, s.updated_at AS s_updated_at
+         FROM backed_evidence
+         JOIN chunks c
+           ON c.id = backed_evidence.chunk_id
+          AND c.document_id = backed_evidence.document_id
+         JOIN documents d ON d.id = c.document_id
+         JOIN knowledge_sources s ON s.id = d.source_id
+         WHERE c.knowledge_base_id = ? AND d.knowledge_base_id = ?
+           AND s.knowledge_base_id = ?
+         GROUP BY c.id
+         ORDER BY MIN(backed_evidence.graph_depth) ASC, c.id ASC
+         LIMIT ?`
+      )
+      .all(
+        knowledgeBaseId,
+        ...patterns,
+        knowledgeBaseId,
+        maximumDepth,
+        knowledgeBaseId,
+        knowledgeBaseId,
+        knowledgeBaseId,
+        knowledgeBaseId,
+        knowledgeBaseId,
+        knowledgeBaseId,
+        limit
+      )
+    return rows.map((row) => ({
+      evidenceIds: asString(row, 'evidence_ids').split(','),
+      result: {
+        chunk: mapChunk(row),
+        document: mapDocument(this.prefixedRow(row, 'd_')),
+        source: mapSource(this.prefixedRow(row, 's_')),
+        snippet: asString(row, 'snippet'),
+        rank: asNumber(row, 'rank')
+      }
+    }))
+  }
+
   private assertFts5(database: DatabaseSync): void {
     try {
       database.exec(`
@@ -1357,6 +2143,14 @@ export class KnowledgeDatabase {
             'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
           )
           .run(1, new Date().toISOString())
+      }
+      if (currentVersion < 2) {
+        this.migrateToVersion2(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(2, new Date().toISOString())
       }
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}`)
       database.exec('COMMIT')
@@ -1492,6 +2286,52 @@ export class KnowledgeDatabase {
     `)
   }
 
+  private migrateToVersion2(database: DatabaseSync): void {
+    database.exec(`
+      CREATE TABLE chunk_embeddings (
+        chunk_id TEXT NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+        knowledge_base_id TEXT NOT NULL
+          REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dimensions INTEGER NOT NULL
+          CHECK (dimensions >= 1 AND dimensions <= 8192),
+        content_checksum TEXT NOT NULL
+          CHECK (length(content_checksum) = 64),
+        vector BLOB NOT NULL
+          CHECK (length(vector) = dimensions * 4),
+        magnitude REAL NOT NULL CHECK (magnitude > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (chunk_id, provider, model)
+      );
+      CREATE INDEX chunk_embeddings_lookup_idx
+        ON chunk_embeddings(
+          knowledge_base_id, provider, model, dimensions, chunk_id
+        );
+
+      CREATE TABLE embedding_index_state (
+        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        knowledge_base_id TEXT NOT NULL
+          REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dimensions INTEGER
+          CHECK (dimensions IS NULL OR
+                 (dimensions >= 1 AND dimensions <= 8192)),
+        content_checksum TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('ready', 'error')),
+        last_error TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (document_id, provider, model)
+      );
+      CREATE INDEX embedding_index_state_lookup_idx
+        ON embedding_index_state(
+          knowledge_base_id, provider, model, status, document_id
+        );
+    `)
+  }
+
   private normalizeChunks(chunks: ReplaceChunkInput[]): Array<{
     id: string
     ordinal: number
@@ -1603,6 +2443,17 @@ export class KnowledgeDatabase {
         statement.get(id, value.knowledgeBaseId) as Row,
         'count'
       ) === 1
+    const chunkMatches =
+      value.chunkId === undefined ||
+      asNumber(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM chunks
+             WHERE id = ? AND knowledge_base_id = ? AND document_id = ?`
+          )
+          .get(value.chunkId, value.knowledgeBaseId, value.documentId) as Row,
+        'count'
+      ) === 1
     if (
       !matches(
         database.prepare(
@@ -1622,12 +2473,7 @@ export class KnowledgeDatabase {
         ),
         value.documentId
       ) ||
-      !matches(
-        database.prepare(
-          'SELECT COUNT(*) AS count FROM chunks WHERE id = ? AND knowledge_base_id = ?'
-        ),
-        value.chunkId
-      )
+      !chunkMatches
     ) {
       throw new Error('Evidence targets must belong to the evidence knowledge base')
     }
@@ -1713,5 +2559,17 @@ export class KnowledgeDatabase {
       throw new Error(`Graph evidence not found: ${normalizedId}`)
     }
     return mapEvidence(row)
+  }
+
+  private requiredEmbeddingIndexState(
+    documentId: string,
+    provider: string,
+    model: string
+  ): EmbeddingIndexState {
+    const value = this.getEmbeddingIndexState(documentId, provider, model)
+    if (!value) {
+      throw new Error(`Embedding index state not found: ${documentId}`)
+    }
+    return value
   }
 }

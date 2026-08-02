@@ -1,8 +1,35 @@
-import { BrowserWindow, shell } from 'electron'
-import { dirname, join } from 'node:path'
+import { app, BrowserWindow, nativeImage, shell } from 'electron'
+import { dirname, join, posix, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
+
+type WindowIconEnvironment = {
+  platform: NodeJS.Platform
+  isPackaged: boolean
+  appPath: string
+  resourcesPath: string
+}
+
+export function resolveWindowIcon(
+  environment: WindowIconEnvironment = {
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath
+  }
+): string | undefined {
+  if (environment.platform === 'darwin') {
+    return undefined
+  }
+  const fileName =
+    environment.platform === 'win32' ? 'icon.ico' : 'icon.png'
+  const joinPath =
+    environment.platform === 'win32' ? win32.join : posix.join
+  return environment.isPackaged
+    ? joinPath(environment.resourcesPath, fileName)
+    : joinPath(environment.appPath, 'build', fileName)
+}
 
 function isAllowedExternalUrl(url: string): boolean {
   try {
@@ -21,12 +48,18 @@ function hasSameOrigin(url: string, allowedUrl: string): boolean {
 }
 
 export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
+  const iconPath = resolveWindowIcon()
+  const icon = iconPath
+    ? nativeImage.createFromPath(iconPath)
+    : undefined
+  const usableIcon = icon && !icon.isEmpty() ? icon : undefined
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
     minWidth: 920,
     minHeight: 620,
     show: false,
+    ...(usableIcon ? { icon: usableIcon } : {}),
     backgroundColor: '#f4f1ea',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -36,6 +69,9 @@ export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
       sandbox: true
     }
   })
+  if (usableIcon) {
+    window.setIcon(usableIcon)
+  }
 
   window.once('ready-to-show', () => {
     window.show()

@@ -132,6 +132,63 @@ export interface SearchResult {
   rank: number
 }
 
+export interface EmbeddingProvider {
+  readonly provider: string
+  readonly model: string
+  readonly fingerprint?: string
+  embed(input: readonly string[], signal?: AbortSignal): Promise<number[][]>
+}
+
+export interface ChunkEmbeddingInput {
+  chunkId: string
+  contentChecksum: string
+  vector: readonly number[]
+}
+
+export interface EmbeddingIndexState {
+  documentId: string
+  knowledgeBaseId: string
+  provider: string
+  model: string
+  dimensions?: number
+  contentChecksum: string
+  status: 'ready' | 'error'
+  lastError?: string
+  updatedAt: string
+}
+
+export interface VectorSearchOptions {
+  knowledgeBaseId: string
+  provider: string
+  model: string
+  vector: readonly number[]
+  limit?: number
+  minimumSimilarity?: number
+}
+
+export interface HybridSearchOptions extends SearchOptions {
+  provider?: string
+  model?: string
+  vector?: readonly number[]
+  graphEnabled?: boolean
+  vectorLimit?: number
+  graphDepth?: number
+}
+
+export interface RetrievalMetadata {
+  score: number
+  channels: Array<'fts' | 'vector' | 'graph'>
+  lexicalRank?: number
+  vectorRank?: number
+  graphRank?: number
+  similarity?: number
+  evidenceIds: string[]
+}
+
+export interface HybridSearchResult extends SearchResult {
+  retrieval: RetrievalMetadata
+}
+
 export interface GraphEntity {
   id: string
   knowledgeBaseId: string

@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -85,12 +86,12 @@ describe('KnowledgeDatabase', () => {
     const inspection = new DatabaseSync(path)
     expect(
       inspection.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 1 })
+    ).toEqual({ user_version: 2 })
     expect(
       inspection
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
-    ).toEqual([{ version: 1 }])
+    ).toEqual([{ version: 1 }, { version: 2 }])
     inspection.close()
 
     const reopened = new KnowledgeDatabase(path)
@@ -105,6 +106,53 @@ describe('KnowledgeDatabase', () => {
     expect(reopened.listDocuments(knowledgeBase.id)).toHaveLength(1)
     expect(reopened.search({ knowledgeBaseId: knowledgeBase.id, query: 'lighthouse' }))
       .toHaveLength(1)
+  })
+
+  it('upgrades an existing v1 database to vector schema v2', async () => {
+    const { database, path } = await createDatabase()
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Version one data',
+      storageMode: 'reference'
+    })
+    seedDocument(database, knowledgeBase.id, 'version-one')
+    database.close()
+
+    const downgrade = new DatabaseSync(path)
+    downgrade.exec(`
+      DROP TABLE embedding_index_state;
+      DROP TABLE chunk_embeddings;
+      DELETE FROM schema_migrations WHERE version = 2;
+      PRAGMA user_version = 1;
+    `)
+    downgrade.close()
+
+    const upgraded = new KnowledgeDatabase(path)
+    openDatabases.push(upgraded)
+    upgraded.initialize()
+    const inspection = new DatabaseSync(path)
+    expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
+      user_version: 2
+    })
+    expect(
+      inspection
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table' AND name IN
+             ('chunk_embeddings', 'embedding_index_state')
+           ORDER BY name`
+        )
+        .all()
+    ).toEqual([
+      { name: 'chunk_embeddings' },
+      { name: 'embedding_index_state' }
+    ])
+    inspection.close()
+    expect(
+      upgraded.search({
+        knowledgeBaseId: knowledgeBase.id,
+        query: 'lighthouse'
+      })
+    ).toHaveLength(1)
   })
 
   it('isolates FTS results by knowledge base and replaces indexed chunks', async () => {
@@ -296,6 +344,266 @@ describe('KnowledgeDatabase', () => {
     expect(database.deleteEvidence(entityEvidence.id)).toBe(true)
     expect(database.deleteRelation(relation.id)).toBe(true)
     expect(database.deleteEntity(other.id)).toBe(true)
+  })
+
+  it('persists isolated Float32 embeddings and clears stale index state transactionally', async () => {
+    const created = await createDatabase()
+    let database = created.database
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Vectors',
+      storageMode: 'reference'
+    })
+    const alpha = seedDocument(database, knowledgeBase.id, 'alpha-vector')
+    const beta = seedDocument(database, knowledgeBase.id, 'beta-vector')
+    const checksum = (value: string): string =>
+      createHash('sha256').update(value).digest('hex')
+    const alphaContent =
+      'alpha-vector contains the searchable lighthouse phrase'
+    const betaContent =
+      'beta-vector contains the searchable lighthouse phrase'
+
+    expect(
+      database.replaceDocumentEmbeddings(
+        alpha.documentId,
+        'ollama',
+        'test-model',
+        [
+          {
+            chunkId: alpha.chunkId,
+            contentChecksum: checksum(alphaContent),
+            vector: [1, 0]
+          }
+        ]
+      )
+    ).toMatchObject({ status: 'ready', dimensions: 2 })
+    database.replaceDocumentEmbeddings(
+      beta.documentId,
+      'ollama',
+      'test-model',
+      [
+        {
+          chunkId: beta.chunkId,
+          contentChecksum: checksum(betaContent),
+          vector: [0, 1]
+        }
+      ]
+    )
+    database.close()
+    database = new KnowledgeDatabase(created.path)
+    openDatabases.push(database)
+    database.initialize()
+
+    expect(
+      database.vectorSearch({
+        knowledgeBaseId: knowledgeBase.id,
+        provider: 'ollama',
+        model: 'test-model',
+        vector: [0.9, 0.1]
+      }).map((result) => result.chunk.id)
+    ).toEqual([alpha.chunkId, beta.chunkId])
+    expect(
+      database.vectorSearch({
+        knowledgeBaseId: knowledgeBase.id,
+        provider: 'ollama',
+        model: 'other-model',
+        vector: [0.9, 0.1]
+      })
+    ).toEqual([])
+    expect(() =>
+      database.replaceDocumentEmbeddings(
+        alpha.documentId,
+        'ollama',
+        'test-model',
+        [
+          {
+            chunkId: alpha.chunkId,
+            contentChecksum: '0'.repeat(64),
+            vector: [1, 0]
+          }
+        ]
+      )
+    ).toThrow('checksum')
+    expect(
+      database.vectorSearch({
+        knowledgeBaseId: knowledgeBase.id,
+        provider: 'ollama',
+        model: 'test-model',
+        vector: [1, 0],
+        limit: 1
+      })[0]?.chunk.id
+    ).toBe(alpha.chunkId)
+
+    database.upsertDocument(
+      {
+        id: alpha.documentId,
+        knowledgeBaseId: knowledgeBase.id,
+        sourceId: alpha.sourceId,
+        externalId: 'alpha-vector',
+        title: 'alpha-vector'
+      },
+      [{ id: alpha.chunkId, ordinal: 0, content: 'fresh lexical fallback' }]
+    )
+    expect(
+      database.getEmbeddingIndexState(
+        alpha.documentId,
+        'ollama',
+        'test-model'
+      )
+    ).toBeUndefined()
+    expect(
+      database.vectorSearch({
+        knowledgeBaseId: knowledgeBase.id,
+        provider: 'ollama',
+        model: 'test-model',
+        vector: [1, 0]
+      }).map((result) => result.chunk.id)
+    ).not.toContain(alpha.chunkId)
+    expect(
+      database.search({
+        knowledgeBaseId: knowledgeBase.id,
+        query: 'fallback'
+      })
+    ).toHaveLength(1)
+  })
+
+  it('fuses FTS and vector ranks while isolating providers and libraries', async () => {
+    const { database } = await createDatabase()
+    const first = database.createKnowledgeBase({
+      name: 'Hybrid one',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    const second = database.createKnowledgeBase({
+      name: 'Hybrid two',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    const firstSeed = seedDocument(database, first.id, 'hybrid-first')
+    const secondSeed = seedDocument(database, second.id, 'hybrid-second')
+    for (const [databaseId, seed, marker] of [
+      [first.id, firstSeed, 'hybrid-first'],
+      [second.id, secondSeed, 'hybrid-second']
+    ] as const) {
+      const content = `${marker} contains the searchable lighthouse phrase`
+      database.replaceDocumentEmbeddings(
+        seed.documentId,
+        'ollama',
+        'hybrid-model',
+        [
+          {
+            chunkId: seed.chunkId,
+            contentChecksum: createHash('sha256').update(content).digest('hex'),
+            vector: [1, 0, 0]
+          }
+        ]
+      )
+      expect(databaseId).toBeTruthy()
+    }
+
+    const results = database.hybridSearch({
+      knowledgeBaseId: first.id,
+      query: 'lighthouse',
+      provider: 'ollama',
+      model: 'hybrid-model',
+      vector: [1, 0, 0],
+      graphEnabled: false
+    })
+    expect(results).toHaveLength(1)
+    expect(results[0]?.chunk.id).toBe(firstSeed.chunkId)
+    expect(results[0]?.retrieval.channels).toEqual(['fts', 'vector'])
+    expect(results[0]?.retrieval.similarity).toBeCloseTo(1)
+    expect(results.map((result) => result.chunk.id)).not.toContain(
+      secondSeed.chunkId
+    )
+  })
+
+  it('expands persisted graph seeds only through evidence-backed same-library paths', async () => {
+    const { database } = await createDatabase()
+    const first = database.createKnowledgeBase({
+      name: 'GraphRAG one',
+      storageMode: 'reference'
+    })
+    const second = database.createKnowledgeBase({
+      name: 'GraphRAG two',
+      storageMode: 'reference'
+    })
+    const goodBuddy = seedDocument(database, first.id, 'GoodBuddy')
+    const electron = seedDocument(database, first.id, 'Electron')
+    const foreign = seedDocument(database, second.id, 'GoodBuddy-foreign')
+    const source = database.createEntity({
+      knowledgeBaseId: first.id,
+      name: 'GoodBuddy',
+      type: 'product'
+    })
+    const target = database.createEntity({
+      knowledgeBaseId: first.id,
+      name: 'Electron',
+      type: 'framework'
+    })
+    const relation = database.createRelation({
+      knowledgeBaseId: first.id,
+      sourceEntityId: source.id,
+      targetEntityId: target.id,
+      type: 'uses'
+    })
+    expect(() =>
+      database.createEvidence({
+        knowledgeBaseId: first.id,
+        entityId: source.id,
+        documentId: goodBuddy.documentId,
+        chunkId: electron.chunkId
+      })
+    ).toThrow('must belong')
+    database.createEvidence({
+      knowledgeBaseId: first.id,
+      entityId: source.id,
+      documentId: goodBuddy.documentId,
+      chunkId: goodBuddy.chunkId
+    })
+    database.createEvidence({
+      knowledgeBaseId: first.id,
+      entityId: target.id,
+      documentId: electron.documentId,
+      chunkId: electron.chunkId
+    })
+    database.createEvidence({
+      knowledgeBaseId: first.id,
+      relationId: relation.id,
+      documentId: goodBuddy.documentId,
+      chunkId: goodBuddy.chunkId
+    })
+    const unbacked = database.createEntity({
+      knowledgeBaseId: first.id,
+      name: 'Unbacked',
+      type: 'concept'
+    })
+    const foreignEntity = database.createEntity({
+      knowledgeBaseId: second.id,
+      name: 'GoodBuddy',
+      type: 'foreign'
+    })
+    database.createEvidence({
+      knowledgeBaseId: second.id,
+      entityId: foreignEntity.id,
+      documentId: foreign.documentId,
+      chunkId: foreign.chunkId
+    })
+
+    const graphResults = database.graphSearch(first.id, 'GoodBuddy', 10, 1)
+    expect(graphResults.map((result) => result.chunk.id)).toEqual(
+      expect.arrayContaining([goodBuddy.chunkId, electron.chunkId])
+    )
+    expect(
+      graphResults.every(
+        (result) =>
+          result.retrieval.channels[0] === 'graph' &&
+          result.retrieval.evidenceIds.length > 0
+      )
+    ).toBe(true)
+    expect(graphResults.map((result) => result.chunk.id)).not.toContain(
+      foreign.chunkId
+    )
+    expect(database.graphSearch(first.id, unbacked.name)).toEqual([])
   })
 
   it('bounds inputs and rejects API keys in extensible metadata', async () => {

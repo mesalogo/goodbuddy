@@ -10,6 +10,10 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type {
+  AssistantHeartbeatConfig,
+  HeartbeatCreateInput
+} from '../../shared/assistant-contracts'
+import type {
   AgentRuntimeDetection,
   RuntimeFileSelectionKind,
   RuntimeSettings,
@@ -17,10 +21,21 @@ import type {
   RuntimeModelSource
 } from '../../shared/contracts'
 import { defaultRuntimeSettings } from '../../shared/contracts'
+import {
+  modelProfilePresets,
+  type ModelProfilePreset
+} from '../../shared/model-presets'
 import { McpSettingsSection } from './McpSettingsSection'
 import { SkillsSettingsSection } from './SkillsSettingsSection'
+import { HeartbeatSettings } from './HeartbeatSettings'
 
-type SettingsTab = 'model' | 'runtime' | 'security' | 'skills' | 'mcp'
+type SettingsTab =
+  | 'model'
+  | 'runtime'
+  | 'security'
+  | 'automation'
+  | 'skills'
+  | 'mcp'
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   apiKey: string
   clearApiKey: boolean
@@ -32,6 +47,14 @@ type SettingsPanelProps = {
   onClose: () => void
   onSaved: (settings: RuntimeSettings) => void
   onClearLocalData: () => Promise<void>
+  heartbeats: AssistantHeartbeatConfig[]
+  onCreateHeartbeat: (input: HeartbeatCreateInput) => Promise<void>
+  onSetHeartbeatPaused: (
+    heartbeatId: string,
+    paused: boolean
+  ) => Promise<void>
+  onRemoveHeartbeat: (heartbeatId: string) => Promise<void>
+  onRunHeartbeat: (heartbeatId: string) => Promise<void>
 }
 
 const credentialLabels: Record<
@@ -58,7 +81,12 @@ export function SettingsPanel({
   presentation = 'modal',
   onClose,
   onSaved,
-  onClearLocalData
+  onClearLocalData,
+  heartbeats,
+  onCreateHeartbeat,
+  onSetHeartbeatPaused,
+  onRemoveHeartbeat,
+  onRunHeartbeat
 }: SettingsPanelProps): React.JSX.Element | null {
   const [settings, setSettings] = useState<RuntimeSettings>()
   const [provider, setProvider] =
@@ -66,6 +94,9 @@ export function SettingsPanel({
       defaultRuntimeSettings.provider
     )
   const [modelProfiles, setModelProfiles] = useState<ModelProfileDraft[]>([])
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(
+    modelProfilePresets[0].id
+  )
   const [defaultModelProfileId, setDefaultModelProfileId] = useState('')
   const [opencodeModelSource, setOpencodeModelSource] =
     useState<RuntimeModelSource>({ kind: 'platform' })
@@ -93,6 +124,16 @@ export function SettingsPanel({
     useState<RuntimeSettingsInput['continueMode']>(
       defaultRuntimeSettings.continueMode
     )
+  const [runtimeSandboxMode, setRuntimeSandboxMode] =
+    useState<RuntimeSettingsInput['runtimeSandboxMode']>(
+      defaultRuntimeSettings.runtimeSandboxMode
+    )
+  const [knowledgeEmbeddingEnabled, setKnowledgeEmbeddingEnabled] =
+    useState<boolean>(defaultRuntimeSettings.knowledgeEmbeddingEnabled)
+  const [knowledgeEmbeddingBaseUrl, setKnowledgeEmbeddingBaseUrl] =
+    useState<string>(defaultRuntimeSettings.knowledgeEmbeddingBaseUrl)
+  const [knowledgeEmbeddingModel, setKnowledgeEmbeddingModel] =
+    useState<string>(defaultRuntimeSettings.knowledgeEmbeddingModel)
   const [workspacePath, setWorkspacePath] = useState<string>(
     defaultRuntimeSettings.workspacePath
   )
@@ -138,6 +179,10 @@ export function SettingsPanel({
         setContinueBinaryPath(value.continueBinaryPath)
         setContinueConfigPath(value.continueConfigPath)
         setContinueMode(value.continueMode)
+        setRuntimeSandboxMode(value.runtimeSandboxMode)
+        setKnowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
+        setKnowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
+        setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
         setWorkspacePath(value.workspacePath)
         setToolApproval(
           value.toolApproval === 'policy' ? 'policy' : 'always'
@@ -189,6 +234,8 @@ export function SettingsPanel({
         name: profile.name,
         baseUrl: profile.baseUrl,
         modelName: profile.modelName,
+        protocol: profile.protocol,
+        authentication: profile.authentication,
         apiKey: profile.clearApiKey
           ? ({ action: 'clear' } as const)
           : profile.apiKey.trim()
@@ -202,6 +249,8 @@ export function SettingsPanel({
         provider,
         modelBaseUrl: defaultProfile.baseUrl,
         modelName: defaultProfile.modelName,
+        modelProtocol: defaultProfile.protocol,
+        modelAuthentication: defaultProfile.authentication,
         opencodeBaseUrl,
         opencodeEmbedded,
         opencodeBinaryPath,
@@ -209,6 +258,10 @@ export function SettingsPanel({
         continueBinaryPath,
         continueConfigPath,
         continueMode,
+        runtimeSandboxMode,
+        knowledgeEmbeddingEnabled,
+        knowledgeEmbeddingBaseUrl,
+        knowledgeEmbeddingModel,
         workspacePath,
         apiKey: profileInputs.find(
           (profile) => profile.id === defaultProfile.id
@@ -229,6 +282,10 @@ export function SettingsPanel({
       setContinueBinaryPath(value.continueBinaryPath)
       setContinueConfigPath(value.continueConfigPath)
       setContinueMode(value.continueMode)
+      setRuntimeSandboxMode(value.runtimeSandboxMode)
+      setKnowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
+      setKnowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
+      setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
       setToolApproval(
         value.toolApproval === 'policy' ? 'policy' : 'always'
       )
@@ -256,7 +313,11 @@ export function SettingsPanel({
       if (!status.available) {
         throw new Error(status.detail)
       }
-      setConnectionResult(`连接成功：${status.label}`)
+      setConnectionResult(
+        status.capability === 'image-generation'
+          ? status.detail
+          : `连接成功：${status.label}`
+      )
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : 'Runtime 连接测试失败'
@@ -317,12 +378,45 @@ export function SettingsPanel({
         name: `模型连接 ${profiles.length + 1}`,
         baseUrl: defaultRuntimeSettings.modelBaseUrl,
         modelName: defaultRuntimeSettings.modelName,
+        protocol: defaultRuntimeSettings.modelProtocol,
+        authentication: defaultRuntimeSettings.modelAuthentication,
         apiKeyConfigured: false,
         credentialSource: 'none',
         apiKey: '',
         clearApiKey: false
       }
     ])
+    if (!defaultModelProfileId) {
+      setDefaultModelProfileId(id)
+    }
+  }
+
+  const addPresetProfile = (preset: ModelProfilePreset): void => {
+    const id = crypto.randomUUID()
+    setModelProfiles((profiles) => {
+      const usedNames = new Set(profiles.map((profile) => profile.name))
+      let name = preset.name
+      let suffix = 2
+      while (usedNames.has(name)) {
+        name = `${preset.name} ${suffix}`
+        suffix += 1
+      }
+      return [
+        ...profiles,
+        {
+          id,
+          name,
+          baseUrl: preset.baseUrl,
+          modelName: preset.modelName,
+          protocol: preset.protocol,
+          authentication: preset.authentication,
+          apiKeyConfigured: false,
+          credentialSource: 'none',
+          apiKey: '',
+          clearApiKey: false
+        }
+      ]
+    })
     if (!defaultModelProfileId) {
       setDefaultModelProfileId(id)
     }
@@ -356,6 +450,16 @@ export function SettingsPanel({
     value === 'platform'
       ? { kind: 'platform' }
       : { kind: 'profile', profileId: value }
+
+  const isOpenCodeCompatible = (
+    profile: ModelProfileDraft
+  ): boolean =>
+    profile.protocol === 'anthropic-messages' &&
+    profile.authentication === 'api-key'
+
+  const isContinueCompatible = (
+    profile: ModelProfileDraft
+  ): boolean => profile.protocol !== 'openai-images-generations'
 
   const detectionSummary = (
     value: AgentRuntimeDetection['opencode'] | undefined
@@ -398,7 +502,7 @@ export function SettingsPanel({
             <p className="eyebrow">SETTINGS</p>
             <h2 id="settings-title">设置中心</h2>
             <p className="settings-panel__description">
-              管理模型连接、Agent Runtime、扩展能力和本地数据。
+              管理模型连接、Agent Runtime、自动化、扩展能力和本地数据。
             </p>
           </div>
           <button
@@ -442,6 +546,16 @@ export function SettingsPanel({
             >
               <strong>安全与数据</strong>
               <small>工具审批与本地隐私</small>
+            </button>
+            <button
+              aria-label="自动化"
+              aria-selected={activeTab === 'automation'}
+              onClick={() => setActiveTab('automation')}
+              role="tab"
+              type="button"
+            >
+              <strong>自动化</strong>
+              <small>智能心跳与周期回顾</small>
             </button>
             <button
               aria-label="Skills"
@@ -569,15 +683,25 @@ export function SettingsPanel({
                 >
                   <option value="platform">使用 OpenCode 平台默认</option>
                   {modelProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
+                    <option
+                      disabled={!isOpenCodeCompatible(profile)}
+                      key={profile.id}
+                      value={profile.id}
+                    >
                       独立配置：{profile.name}
+                      {isOpenCodeCompatible(profile)
+                        ? '（兼容）'
+                        : '（不兼容）'}
                     </option>
                   ))}
                 </select>
-                {opencodeModelSource.kind === 'profile' &&
-                  opencodeBaseUrl && (
+                {opencodeModelSource.kind === 'profile' && (
                     <small>
-                      独立模型连接仅支持由 GoodBuddy 启动的本机 OpenCode。
+                      OpenCode 独立配置仅支持需要 API Key 的 Anthropic
+                      Messages 连接
+                      {opencodeBaseUrl
+                        ? '，且仅支持由 GoodBuddy 启动的本机 OpenCode。'
+                        : '。'}
                     </small>
                   )}
               </label>
@@ -705,11 +829,22 @@ export function SettingsPanel({
                 >
                   <option value="platform">使用 Continue 平台默认</option>
                   {modelProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
+                    <option
+                      disabled={!isContinueCompatible(profile)}
+                      key={profile.id}
+                      value={profile.id}
+                    >
                       独立配置：{profile.name}
+                      {isContinueCompatible(profile)
+                        ? '（兼容）'
+                        : '（不兼容）'}
                     </option>
                   ))}
                 </select>
+                <small>
+                  Continue 支持 Anthropic Messages、OpenAI Chat
+                  Completions 和无认证本机模型。
+                </small>
               </label>
               <label className="field">
                 <span>Continue 可执行文件路径</span>
@@ -795,7 +930,10 @@ export function SettingsPanel({
               <KeyRound size={17} />
               <div>
                 <strong>模型连接</strong>
-                <small>可配置多个 Anthropic Messages 兼容接口</small>
+                <small>
+                  可配置文本对话或 OpenAI Images Generations
+                  图像生成接口
+                </small>
               </div>
               <button
                 className="secondary-button"
@@ -803,7 +941,47 @@ export function SettingsPanel({
                 type="button"
               >
                 <Plus size={14} />
-                添加
+                添加自定义
+              </button>
+            </div>
+            <div className="runtime-note">
+              <label className="field">
+                <span>模型预设</span>
+                <select
+                  aria-label="模型预设"
+                  onChange={(event) =>
+                    setSelectedPresetId(event.target.value)
+                  }
+                  value={selectedPresetId}
+                >
+                  {modelProfilePresets.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  {
+                    modelProfilePresets.find(
+                      (preset) => preset.id === selectedPresetId
+                    )?.description
+                  }
+                </small>
+              </label>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  const preset = modelProfilePresets.find(
+                    (candidate) => candidate.id === selectedPresetId
+                  )
+                  if (preset) {
+                    addPresetProfile(preset)
+                  }
+                }}
+                type="button"
+              >
+                <Plus size={14} />
+                从预设添加
               </button>
             </div>
             {modelProfiles.map((profile) => {
@@ -823,6 +1001,11 @@ export function SettingsPanel({
                       />
                       <span>默认连接</span>
                     </label>
+                    {profile.protocol === 'openai-images-generations' && (
+                      <span className="model-capability-badge">
+                        图像生成
+                      </span>
+                    )}
                     <button
                       aria-label={`删除模型连接 ${profile.name}`}
                       className="icon-button"
@@ -870,49 +1053,136 @@ export function SettingsPanel({
                     />
                   </label>
                   <label className="field">
-                    <span>API Key</span>
-                    <input
-                      autoComplete="off"
-                      disabled={
-                        environmentManaged ||
-                        !settings?.secureStorageAvailable
-                      }
+                    <span>接口协议</span>
+                    <select
+                      aria-label={`接口协议 ${profile.name}`}
                       onChange={(event) =>
-                        updateModelProfile(profile.id, {
-                          apiKey: event.target.value,
-                          clearApiKey: false
-                        })
-                      }
-                      placeholder={
-                        profile.apiKeyConfigured
-                          ? '已配置，留空保持不变'
-                          : '输入 API Key'
-                      }
-                      type="password"
-                      value={profile.apiKey}
-                    />
-                  </label>
-                  <div className="credential-state">
-                    <LockKeyhole size={15} />
-                    <span>
-                      {credentialLabels[profile.credentialSource]}
-                    </span>
-                    {profile.credentialSource === 'encrypted' && (
-                      <button
-                        onClick={() =>
-                          updateModelProfile(profile.id, {
-                            apiKey: '',
-                            clearApiKey: true
-                          })
+                        {
+                          const protocol = event.target
+                            .value as ModelProfileDraft['protocol']
+                          updateModelProfile(profile.id, { protocol })
+                          if (
+                            protocol !== 'anthropic-messages' &&
+                            opencodeModelSource.kind === 'profile' &&
+                            opencodeModelSource.profileId === profile.id
+                          ) {
+                            setOpencodeModelSource({ kind: 'platform' })
+                          }
+                          if (
+                            protocol === 'openai-images-generations' &&
+                            continueModelSource.kind === 'profile' &&
+                            continueModelSource.profileId === profile.id
+                          ) {
+                            setContinueModelSource({ kind: 'platform' })
+                          }
                         }
-                        type="button"
-                      >
-                        {profile.clearApiKey
-                          ? '保存后清除'
-                          : '清除凭据'}
-                      </button>
-                    )}
-                  </div>
+                      }
+                      value={profile.protocol}
+                    >
+                      <option value="anthropic-messages">
+                        Anthropic Messages
+                      </option>
+                      <option value="openai-chat-completions">
+                        OpenAI Chat Completions
+                      </option>
+                      <option value="openai-images-generations">
+                        OpenAI Images Generations（图像生成）
+                      </option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>认证方式</span>
+                    <select
+                      aria-label={`认证方式 ${profile.name}`}
+                      onChange={(event) => {
+                        const authentication = event.target
+                          .value as ModelProfileDraft['authentication']
+                        updateModelProfile(profile.id, {
+                          authentication,
+                          apiKey: '',
+                          clearApiKey:
+                            authentication === 'none' &&
+                            profile.apiKeyConfigured
+                        })
+                        if (
+                          authentication !== 'api-key' &&
+                          opencodeModelSource.kind === 'profile' &&
+                          opencodeModelSource.profileId === profile.id
+                        ) {
+                          setOpencodeModelSource({ kind: 'platform' })
+                        }
+                      }}
+                      value={profile.authentication}
+                    >
+                      <option value="api-key">API Key</option>
+                      <option value="none">无需认证</option>
+                    </select>
+                  </label>
+                  {profile.authentication === 'api-key' ? (
+                    <>
+                      <label className="field">
+                        <span>API Key</span>
+                        <input
+                          autoComplete="off"
+                          disabled={
+                            environmentManaged ||
+                            !settings?.secureStorageAvailable
+                          }
+                          onChange={(event) =>
+                            updateModelProfile(profile.id, {
+                              apiKey: event.target.value,
+                              clearApiKey: false
+                            })
+                          }
+                          placeholder={
+                            profile.apiKeyConfigured
+                              ? '已配置，留空保持不变'
+                              : '输入 API Key'
+                          }
+                          type="password"
+                          value={profile.apiKey}
+                        />
+                      </label>
+                      <div className="credential-state">
+                        <LockKeyhole size={15} />
+                        <span>
+                          {credentialLabels[profile.credentialSource]}
+                        </span>
+                        {profile.credentialSource === 'encrypted' && (
+                          <button
+                            onClick={() =>
+                              updateModelProfile(profile.id, {
+                                apiKey: '',
+                                clearApiKey: true
+                              })
+                            }
+                            type="button"
+                          >
+                            {profile.clearApiKey
+                              ? '保存后清除'
+                              : '清除凭据'}
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="credential-state">
+                      <LockKeyhole size={15} />
+                      <span>无需认证，不会发送 API Key</span>
+                    </div>
+                  )}
+                  <small>
+                    直连模型：
+                    {profile.protocol === 'openai-images-generations'
+                      ? '图像生成'
+                      : '文本对话'}{' '}
+                    · Continue：
+                    {isContinueCompatible(profile) ? '兼容' : '不兼容'} ·
+                    OpenCode：
+                    {isOpenCodeCompatible(profile)
+                      ? '兼容'
+                      : '不兼容（仅支持 Anthropic Messages + API Key）'}
+                  </small>
                 </div>
               )
             })}
@@ -928,6 +1198,27 @@ export function SettingsPanel({
 
           {activeTab === 'security' && (
             <>
+          <label className="field">
+            <span>Runtime OS 沙箱</span>
+            <select
+              aria-label="Runtime OS 沙箱"
+              value={runtimeSandboxMode}
+              onChange={(event) =>
+                setRuntimeSandboxMode(
+                  event.target
+                    .value as RuntimeSettingsInput['runtimeSandboxMode']
+                )
+              }
+            >
+              <option value="auto">自动（Linux 优先启用）</option>
+              <option value="strict">严格（不可用时拒绝运行）</option>
+              <option value="off">关闭</option>
+            </select>
+            <small>
+              首期严格隔离适用于安装 bubblewrap 的 Linux 嵌入式
+              OpenCode。外部 Runtime 与 Continue 不会被误标为已沙箱。
+            </small>
+          </label>
           <label className="field">
             <span>Agent 工具安全策略</span>
             <select
@@ -945,6 +1236,44 @@ export function SettingsPanel({
               Continue 会在具体高风险工具调用时提供仅此次、此会话和永久允许。
             </small>
           </label>
+
+          <div className="runtime-note">
+            <label className="check-field">
+              <input
+                checked={knowledgeEmbeddingEnabled}
+                onChange={(event) =>
+                  setKnowledgeEmbeddingEnabled(event.target.checked)
+                }
+                type="checkbox"
+              />
+              <span>启用 Ollama 本地向量检索与 GraphRAG</span>
+            </label>
+            <label className="field">
+              <span>Ollama 地址</span>
+              <input
+                disabled={!knowledgeEmbeddingEnabled}
+                inputMode="url"
+                onChange={(event) =>
+                  setKnowledgeEmbeddingBaseUrl(event.target.value)
+                }
+                value={knowledgeEmbeddingBaseUrl}
+              />
+            </label>
+            <label className="field">
+              <span>Embedding 模型</span>
+              <input
+                disabled={!knowledgeEmbeddingEnabled}
+                onChange={(event) =>
+                  setKnowledgeEmbeddingModel(event.target.value)
+                }
+                value={knowledgeEmbeddingModel}
+              />
+            </label>
+            <small>
+              仅向所填 Ollama 服务发送已启用知识库的分块文本。向量服务失败时自动回退到
+              FTS5 与证据图谱。
+            </small>
+          </div>
 
           <div className="settings-section settings-section--danger">
             <div>
@@ -996,6 +1325,17 @@ export function SettingsPanel({
             )}
           </div>
             </>
+          )}
+          {activeTab === 'automation' && (
+            <div className="settings-section">
+              <HeartbeatSettings
+                heartbeats={heartbeats}
+                onCreate={onCreateHeartbeat}
+                onRemove={onRemoveHeartbeat}
+                onRunNow={onRunHeartbeat}
+                onSetPaused={onSetHeartbeatPaused}
+              />
+            </div>
           )}
           {activeTab === 'skills' && <SkillsSettingsSection />}
           {activeTab === 'mcp' && <McpSettingsSection />}

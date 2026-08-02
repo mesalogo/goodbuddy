@@ -18,15 +18,45 @@ export type RuntimeAuthorizer = (
   request: RuntimeApprovalRequest
 ) => Promise<ApprovalDecision>
 
+export type RuntimeGeneratedImageEvent = {
+  requestId: string
+  type: 'generated-image'
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
+  data: string
+  title: string
+}
+
+export type RuntimeModelUsageEvent = {
+  requestId: string
+  type: 'model-usage'
+  callId: string
+  runtime: 'model' | 'continue' | 'opencode'
+  provider: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reportedTotalTokens?: number
+}
+
+export type RuntimeEvent =
+  | AgentEvent
+  | RuntimeGeneratedImageEvent
+  | RuntimeModelUsageEvent
+
 export interface AgentRuntime {
   readonly requiresToolApproval: boolean
+  readonly supportsToolExecution: boolean
+  readonly capability?: 'chat' | 'image-generation'
   getStatus(): Promise<AgentRuntimeStatus>
   testConnection?(): Promise<AgentRuntimeStatus>
   run(
     request: AgentExecutionRequest,
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
-  ): AsyncGenerator<AgentEvent, void, void>
+  ): AsyncGenerator<RuntimeEvent, void, void>
+  releaseConversation?(conversationId: string): Promise<void>
   dispose(): Promise<void>
 }
 

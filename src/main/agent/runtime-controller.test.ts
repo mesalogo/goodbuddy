@@ -16,7 +16,8 @@ class TestRuntime implements AgentRuntime {
   constructor(
     private readonly delayed = false,
     readonly requiresToolApproval = false,
-    private readonly invokeToolAuthorization = false
+    private readonly invokeToolAuthorization = false,
+    readonly supportsToolExecution = true
   ) {
     this.started = new Promise((resolve) => {
       this.markStarted = resolve
@@ -28,6 +29,7 @@ class TestRuntime implements AgentRuntime {
       id: 'model',
       label: 'Test',
       available: true,
+      supportsToolExecution: this.supportsToolExecution,
       detail: 'Test runtime'
     })
   }
@@ -66,7 +68,7 @@ class TestRuntime implements AgentRuntime {
 }
 
 describe('AgentRuntimeController', () => {
-  it('suppresses retired runtime events and disposes it after requests exit', async () => {
+  it('fails retired runtime requests and disposes them after exit', async () => {
     const previous = new TestRuntime(true, true)
     const next = new TestRuntime()
     const controller = new AgentRuntimeController(previous)
@@ -92,7 +94,9 @@ describe('AgentRuntimeController', () => {
     const replacement = controller.replace(next)
     previous.finish()
 
-    await expect(pendingEvent).resolves.toMatchObject({ done: true })
+    await expect(pendingEvent).rejects.toThrow(
+      'Runtime 已切换，当前请求已中断'
+    )
     await replacement
     expect(previous.dispose).toHaveBeenCalledOnce()
     await expect(controller.getStatus()).resolves.toMatchObject({
@@ -121,4 +125,46 @@ describe('AgentRuntimeController', () => {
       expect(authorize).not.toHaveBeenCalled()
     }
   )
+
+  it('forwards per-tool authorization without adding a whole-run gate', async () => {
+    const runtime = new TestRuntime(false, false, true)
+    const controller = new AgentRuntimeController(runtime)
+    const authorize = vi.fn(async () => 'session' as const)
+    const stream = controller.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b10',
+        conversationId: 'conversation-4',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      authorize
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'text' }
+    })
+    expect(authorize).toHaveBeenCalledOnce()
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ scopeKey: 'test:tool' })
+    )
+  })
+
+  it('rejects Execute mode when the runtime cannot execute tools', async () => {
+    const runtime = new TestRuntime(false, false, false, false)
+    const controller = new AgentRuntimeController(runtime)
+    const stream = controller.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b11',
+        conversationId: 'conversation-5',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).rejects.toThrow(
+      '当前 Runtime 不支持工具执行'
+    )
+  })
 })

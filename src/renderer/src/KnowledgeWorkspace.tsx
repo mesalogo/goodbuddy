@@ -241,8 +241,6 @@ const documentStatusLabels: Record<KnowledgeDocumentStatus, string> = {
 const styles = {
   workspace: {
     display: 'grid',
-    gridTemplateColumns: '260px minmax(0, 1fr)',
-    minHeight: 620,
     overflow: 'hidden',
     border: '1px solid #d9d9d9',
     borderRadius: 8,
@@ -254,9 +252,7 @@ const styles = {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: 16,
-    padding: 18,
-    background: '#fafafa',
-    borderRight: '1px solid #f0f0f0'
+    background: '#fafafa'
   },
   surface: {
     border: '1px solid #d9d9d9',
@@ -344,6 +340,19 @@ function formatSize(size: number | undefined): string {
     return `${(value / 1024).toFixed(1)} KB`
   }
   return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatDocumentLocation(value: string): string {
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return `${url.origin}${url.pathname}`
+    }
+  } catch {
+    // Local paths are intentionally reduced below.
+  }
+  const filename = value.split(/[\\/]/u).filter(Boolean).at(-1)
+  return filename ? `本地文件 · ${filename}` : '本地文件'
 }
 
 function toErrorMessage(reason: unknown): string {
@@ -747,16 +756,10 @@ function DocumentsView({
   }, [documents, query])
 
   return (
-    <div style={{ display: 'grid', gap: 18 }}>
+    <div className="knowledge-documents" style={{ display: 'grid', gap: 18 }}>
       <section aria-labelledby="sources-title">
         <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap'
-          }}
+          className="knowledge-documents__section-heading"
         >
           <div>
             <h3 id="sources-title" style={{ margin: 0 }}>
@@ -766,7 +769,7 @@ function DocumentsView({
               导入内容后会自动解析、建立索引并更新图谱。
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className="knowledge-documents__import-actions">
             <button
               onClick={() => fileInputRef.current?.click()}
               style={styles.button}
@@ -843,6 +846,7 @@ function DocumentsView({
         {urlOpen && (
           <form
             aria-label="导入 URL"
+            className="knowledge-documents__url-form"
             onSubmit={(event) => {
               event.preventDefault()
               const value = url.trim()
@@ -878,8 +882,6 @@ function DocumentsView({
             }}
             style={{
               ...styles.surface,
-              display: 'flex',
-              gap: 8,
               marginTop: 12,
               padding: 12
             }}
@@ -968,11 +970,11 @@ function DocumentsView({
           >
             {sources.map((source) => (
               <li
+                className="knowledge-source-row"
                 key={source.id}
                 style={{
                   ...styles.surface,
                   display: 'grid',
-                  gridTemplateColumns: 'minmax(0, 1fr) auto',
                   gap: 12,
                   padding: 12
                 }}
@@ -999,7 +1001,7 @@ function DocumentsView({
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap'
                       }}
-                      title={source.location ?? source.name}
+                      title={source.name}
                     >
                       {source.name}
                     </strong>
@@ -1043,7 +1045,7 @@ function DocumentsView({
                     </div>
                   )}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <div className="knowledge-source-row__actions">
                   {source.status === 'syncing' ? (
                     <button
                       aria-label={`暂停 ${source.name}`}
@@ -1104,22 +1106,17 @@ function DocumentsView({
 
       <section aria-labelledby="documents-title">
         <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12
-          }}
+          className="knowledge-documents__section-heading"
         >
           <h3 id="documents-title" style={{ margin: 0 }}>
             文档与索引
           </h3>
           <label
+            className="knowledge-documents__search"
             style={{
               position: 'relative',
               display: 'flex',
-              alignItems: 'center',
-              width: 'min(300px, 50%)'
+              alignItems: 'center'
             }}
           >
             <Search
@@ -1147,7 +1144,7 @@ function DocumentsView({
               : '没有与搜索条件匹配的文档。'}
           </div>
         ) : (
-          <div style={{ overflowX: 'auto', marginTop: 12 }}>
+          <div className="knowledge-documents__table-scroll">
             <table
               style={{
                 width: '100%',
@@ -1189,9 +1186,8 @@ function DocumentsView({
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap'
                           }}
-                          title={document.path}
                         >
-                          {document.path}
+                          {formatDocumentLocation(document.path)}
                         </div>
                       )}
                     </td>
@@ -1538,18 +1534,15 @@ function GraphView({
 
   return (
     <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns:
-          selectedNode || creatingEntity
-            ? 'minmax(0, 1fr) 340px'
-            : '1fr',
-        gap: 14,
-        minHeight: 560
-      }}
+      className={
+        selectedNode || creatingEntity
+          ? 'knowledge-graph knowledge-graph--with-details'
+          : 'knowledge-graph'
+      }
     >
       <section
         aria-label="知识图谱画布"
+        className="knowledge-graph__canvas"
         style={{
           ...styles.surface,
           display: 'grid',
@@ -1558,16 +1551,12 @@ function GraphView({
         }}
       >
         <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: 10,
-            borderBottom: '1px solid #f0f0f0',
-            background: '#fafafa'
-          }}
+          className="knowledge-graph__toolbar"
         >
-          <label style={{ position: 'relative', flex: 1 }}>
+          <label
+            className="knowledge-graph__search"
+            style={{ position: 'relative' }}
+          >
             <Search
               aria-hidden="true"
               size={15}
@@ -1584,8 +1573,9 @@ function GraphView({
           </label>
           <select
             aria-label="筛选实体类型"
+            className="knowledge-graph__filter"
             onChange={(event) => setTypeFilter(event.currentTarget.value)}
-            style={{ ...styles.input, width: 150 }}
+            style={styles.input}
             value={typeFilter}
           >
             <option value="all">全部类型</option>
@@ -1674,9 +1664,9 @@ function GraphView({
             }}
             ref={svgRef}
             role="img"
+            className="knowledge-graph__svg"
             style={{
               width: '100%',
-              minHeight: 500,
               background: '#fafafa',
               touchAction: 'none'
             }}
@@ -1795,11 +1785,11 @@ function GraphView({
       {creatingEntity && (
         <aside
           aria-label="新增实体面板"
+          className="knowledge-graph__detail"
           style={{
             ...styles.surface,
             padding: 15,
-            overflowY: 'auto',
-            maxHeight: 620
+            overflowY: 'auto'
           }}
         >
           <h3 style={{ marginTop: 0 }}>新增实体</h3>
@@ -1816,11 +1806,11 @@ function GraphView({
       {selectedNode && (
         <aside
           aria-label="实体详情"
+          className="knowledge-graph__detail"
           style={{
             ...styles.surface,
             padding: 15,
-            overflowY: 'auto',
-            maxHeight: 620
+            overflowY: 'auto'
           }}
         >
           <div
@@ -2185,9 +2175,10 @@ export function KnowledgeWorkspace({
     <section
       aria-busy={loading}
       aria-label="知识工作区"
+      className="knowledge-workspace"
       style={styles.workspace}
     >
-      <aside style={styles.sidebar}>
+      <aside className="knowledge-workspace__sidebar" style={styles.sidebar}>
         <div
           style={{
             display: 'flex',
@@ -2221,7 +2212,11 @@ export function KnowledgeWorkspace({
           <Plus aria-hidden="true" size={16} />
           新建知识库
         </button>
-        <nav aria-label="知识库列表" style={{ flex: 1 }}>
+        <nav
+          aria-label="知识库列表"
+          className="knowledge-workspace__library-nav"
+          style={{ flex: 1 }}
+        >
           {libraries.length === 0 ? (
             <div
               style={{
@@ -2309,7 +2304,10 @@ export function KnowledgeWorkspace({
         </nav>
       </aside>
 
-      <main style={{ minWidth: 0, background: '#ffffff' }}>
+      <main
+        className="knowledge-workspace__main"
+        style={{ minWidth: 0, background: '#ffffff' }}
+      >
         {creating ? (
           <CreateLibraryWizard
             onCancel={() => setCreating(false)}
@@ -2352,14 +2350,7 @@ export function KnowledgeWorkspace({
         ) : (
           <>
             <header
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                justifyContent: 'space-between',
-                gap: 16,
-                padding: '20px 22px 15px',
-                borderBottom: '1px solid #f0f0f0'
-              }}
+              className="knowledge-workspace__header"
             >
               <div>
                 <span
@@ -2386,13 +2377,7 @@ export function KnowledgeWorkspace({
                 </p>
               </div>
               <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  flexWrap: 'wrap',
-                  justifyContent: 'flex-end'
-                }}
+                className="knowledge-workspace__header-actions"
               >
                 <label
                   style={{
@@ -2418,6 +2403,7 @@ export function KnowledgeWorkspace({
                 {selectedLibrary.graphEnabled && (
                   <select
                     aria-label="知识图谱抽取策略"
+                    className="knowledge-workspace__strategy"
                     onChange={(event) =>
                       void onUpdateLibrary(selectedLibrary.id, {
                         graphEnabled: true,
@@ -2426,7 +2412,7 @@ export function KnowledgeWorkspace({
                             .value as KnowledgeGraphStrategy
                       })
                     }
-                    style={{ ...styles.input, width: 170 }}
+                    style={styles.input}
                     value={selectedLibrary.graphStrategy}
                   >
                     {Object.entries(strategyLabels).map(([value, label]) => (
@@ -2449,12 +2435,8 @@ export function KnowledgeWorkspace({
             </header>
             <div
               aria-label="知识库视图"
+              className="knowledge-workspace__tabs"
               role="tablist"
-              style={{
-                display: 'flex',
-                gap: 6,
-                padding: '12px 22px 0'
-              }}
             >
               <button
                 aria-selected={visibleTab === 'documents'}
@@ -2499,7 +2481,7 @@ export function KnowledgeWorkspace({
                 </button>
               )}
             </div>
-            <div style={{ padding: 22 }}>
+            <div className="knowledge-workspace__body">
               {visibleTab === 'documents' ? (
                 <DocumentsView
                   documents={libraryDocuments}

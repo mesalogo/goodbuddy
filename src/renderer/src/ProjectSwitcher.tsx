@@ -1,5 +1,5 @@
 import { Archive, FolderOpen, Plus, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   AssistantProject,
   ProjectCreateInput,
@@ -9,15 +9,13 @@ import type {
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
   activeProjectId: string
-  workMode: WorkMode
   onArchive: (projectId: string) => Promise<void>
   onCreate: (input: ProjectCreateInput) => Promise<AssistantProject>
   onSelect: (projectId: string) => void
   onSelectRoot: () => Promise<string | undefined>
-  onWorkModeChange: (mode: WorkMode) => void
 }
 
-const workModeLabels: Record<WorkMode, string> = {
+export const workModeLabels: Record<WorkMode, string> = {
   ask: 'Ask · 只读问答',
   plan: 'Plan · 先审计划',
   execute: 'Execute · 受控执行'
@@ -26,22 +24,63 @@ const workModeLabels: Record<WorkMode, string> = {
 export function ProjectSwitcher({
   projects,
   activeProjectId,
-  workMode,
   onArchive,
   onCreate,
   onSelect,
-  onSelectRoot,
-  onWorkModeChange
+  onSelectRoot
 }: ProjectSwitcherProps): React.JSX.Element {
   const [creating, setCreating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
+  const createButtonRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const restoreCreateButtonFocus = useRef(false)
   const [draft, setDraft] = useState<ProjectCreateInput>({
     name: '',
     description: '',
     rootPath: '',
     defaultWorkMode: 'ask'
   })
+
+  useEffect(() => {
+    if (!creating) {
+      if (restoreCreateButtonFocus.current) {
+        createButtonRef.current?.focus()
+        restoreCreateButtonFocus.current = false
+      }
+      return
+    }
+    restoreCreateButtonFocus.current = true
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !saving) {
+        setCreating(false)
+        return
+      }
+      if (event.key !== 'Tab') {
+        return
+      }
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])'
+      )
+      if (!focusable?.length) {
+        return
+      }
+      const first = focusable[0]!
+      const last = focusable[focusable.length - 1]!
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (
+        !event.shiftKey &&
+        document.activeElement === last
+      ) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [creating, saving])
 
   const create = async (): Promise<void> => {
     setSaving(true)
@@ -81,129 +120,131 @@ export function ProjectSwitcher({
           aria-label="新建项目"
           className="icon-button"
           onClick={() => setCreating(true)}
+          ref={createButtonRef}
           type="button"
         >
           <Plus size={15} />
         </button>
       </div>
-      <select
-        aria-label="工作模式"
-        className="project-switcher__mode"
-        onChange={(event) =>
-          onWorkModeChange(event.target.value as WorkMode)
-        }
-        value={workMode}
-      >
-        {Object.entries(workModeLabels).map(([value, label]) => (
-          <option key={value} value={value}>
-            {label}
-          </option>
-        ))}
-      </select>
-
       {creating && (
-        <div className="project-create-card">
-          <header>
-            <strong>新建项目</strong>
-            <button
-              aria-label="关闭新建项目"
-              className="icon-button"
-              onClick={() => setCreating(false)}
-              type="button"
-            >
-              <X size={14} />
-            </button>
-          </header>
-          <label>
-            <span>名称</span>
-            <input
-              maxLength={120}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  name: event.target.value
-                }))
-              }
-              value={draft.name}
-            />
-          </label>
-          <label>
-            <span>说明</span>
-            <textarea
-              maxLength={2_000}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  description: event.target.value
-                }))
-              }
-              rows={3}
-              value={draft.description}
-            />
-          </label>
-          <label>
-            <span>根目录</span>
-            <div className="project-create-card__path">
-              <input readOnly value={draft.rootPath} />
+        <div
+          className="project-create-backdrop"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target && !saving) {
+              setCreating(false)
+            }
+          }}
+        >
+          <div
+            aria-labelledby="project-create-title"
+            aria-modal="true"
+            className="project-create-card"
+            ref={dialogRef}
+            role="dialog"
+          >
+            <header>
+              <strong id="project-create-title">新建项目</strong>
               <button
-                aria-label="选择项目根目录"
-                className="secondary-button"
-                onClick={() => {
-                  void onSelectRoot().then((rootPath) => {
-                    if (rootPath) {
-                      setDraft((current) => ({
-                        ...current,
-                        rootPath
-                      }))
-                    }
-                  })
-                }}
+                aria-label="关闭新建项目"
+                className="icon-button"
+                onClick={() => setCreating(false)}
                 type="button"
               >
-                <FolderOpen size={14} />
+                <X size={14} />
+              </button>
+            </header>
+            <label>
+              <span>名称</span>
+              <input
+                autoFocus
+                maxLength={120}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    name: event.target.value
+                  }))
+                }
+                value={draft.name}
+              />
+            </label>
+            <label>
+              <span>说明</span>
+              <textarea
+                maxLength={2_000}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    description: event.target.value
+                  }))
+                }
+                rows={3}
+                value={draft.description}
+              />
+            </label>
+            <label>
+              <span>根目录</span>
+              <div className="project-create-card__path">
+                <input readOnly value={draft.rootPath} />
+                <button
+                  aria-label="选择项目根目录"
+                  className="secondary-button"
+                  onClick={() => {
+                    void onSelectRoot().then((rootPath) => {
+                      if (rootPath) {
+                        setDraft((current) => ({
+                          ...current,
+                          rootPath
+                        }))
+                      }
+                    })
+                  }}
+                  type="button"
+                >
+                  <FolderOpen size={14} />
+                </button>
+              </div>
+            </label>
+            <label>
+              <span>默认模式</span>
+              <select
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    defaultWorkMode: event.target.value as WorkMode
+                  }))
+                }
+                value={draft.defaultWorkMode}
+              >
+                {Object.entries(workModeLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {error && <p className="project-create-card__error">{error}</p>}
+            <div className="project-create-card__actions">
+              {projects.length > 1 && activeProjectId && (
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    void onArchive(activeProjectId)
+                  }}
+                  type="button"
+                >
+                  <Archive size={13} />
+                  归档当前
+                </button>
+              )}
+              <button
+                className="primary-button"
+                disabled={saving || !draft.name.trim()}
+                onClick={() => void create()}
+                type="button"
+              >
+                {saving ? '创建中' : '创建'}
               </button>
             </div>
-          </label>
-          <label>
-            <span>默认模式</span>
-            <select
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  defaultWorkMode: event.target.value as WorkMode
-                }))
-              }
-              value={draft.defaultWorkMode}
-            >
-              {Object.entries(workModeLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {error && <p className="project-create-card__error">{error}</p>}
-          <div className="project-create-card__actions">
-            {projects.length > 1 && activeProjectId && (
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  void onArchive(activeProjectId)
-                }}
-                type="button"
-              >
-                <Archive size={13} />
-                归档当前
-              </button>
-            )}
-            <button
-              className="primary-button"
-              disabled={saving || !draft.name.trim()}
-              onClick={() => void create()}
-              type="button"
-            >
-              {saving ? '创建中' : '创建'}
-            </button>
           </div>
         </div>
       )}

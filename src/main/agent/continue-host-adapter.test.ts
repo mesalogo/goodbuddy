@@ -186,7 +186,25 @@ describe('ContinueHostAdapter', () => {
                             content: 'HOST_LAUNCH_OK'
                           }
                         }
-                      ]
+                      ],
+                usage:
+                  stateRequests === 1
+                    ? {
+                        promptTokens: 20,
+                        completionTokens: 10,
+                        promptTokensDetails: {
+                          cachedTokens: 5,
+                          cacheWriteTokens: 2
+                        }
+                      }
+                    : {
+                        promptTokens: 19,
+                        completionTokens: 9,
+                        promptTokensDetails: {
+                          cachedTokens: 4,
+                          cacheWriteTokens: 1
+                        }
+                      }
               },
               isProcessing: false,
               messageQueueLength: 0,
@@ -210,13 +228,25 @@ describe('ContinueHostAdapter', () => {
         name: '独立模型',
         baseUrl: 'https://model.example',
         modelName: 'private-model',
+        protocol: 'anthropic-messages',
+        authentication: 'api-key',
         apiKey: 'private-key'
       }
     })
 
     await expect(
       adapter.run('hello', new AbortController().signal, async () => 'deny')
-    ).resolves.toBe('HOST_LAUNCH_OK')
+    ).resolves.toEqual({
+      text: 'HOST_LAUNCH_OK',
+      usage: {
+        provider: 'anthropic',
+        model: 'private-model',
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0
+      }
+    })
     expect(launch?.entryPath).toContain('host-v2')
     expect(launch?.args).toEqual([
       '--config',
@@ -254,5 +284,111 @@ describe('ContinueHostAdapter', () => {
     expect(generatedConfig).not.toContain('private-key')
     expect(launch?.env.ANTHROPIC_API_KEY).toBe('private-key')
     expect(existsSync(generatedConfigPath)).toBe(false)
+  })
+
+  it('generates an OpenAI config without a fake key for Ollama', async () => {
+    const distribution = await createDistribution()
+    let generatedConfig = ''
+    let launchedEnvironment: NodeJS.ProcessEnv | undefined
+    const launchHost: ContinueHostLauncher = (_entryPath, args, options) => {
+      const configIndex = args.indexOf('--config')
+      generatedConfig = readFileSync(args[configIndex + 1] ?? '', 'utf8')
+      launchedEnvironment = options.env
+      return {
+        exitCode: null,
+        killed: false,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true
+      }
+    }
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/state')) {
+          stateRequests += 1
+          return Response.json({
+            session: {
+              history:
+                stateRequests === 1
+                  ? []
+                  : [
+                      {
+                        message: {
+                          role: 'assistant',
+                          content: 'OLLAMA_OK'
+                        }
+                      }
+                    ],
+              usage:
+                stateRequests === 1
+                  ? {
+                      promptTokens: 100,
+                      completionTokens: 20,
+                      promptTokensDetails: {
+                        cachedTokens: 10,
+                        cacheWriteTokens: 3
+                      }
+                    }
+                  : {
+                      promptTokens: 131,
+                      completionTokens: 29,
+                      promptTokensDetails: {
+                        cachedTokens: 23,
+                        cacheWriteTokens: 7
+                      }
+                    }
+            },
+            isProcessing: false,
+            messageQueueLength: 0,
+            pendingPermission: null
+          })
+        }
+        return Response.json({})
+      })
+    )
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost,
+      modelProfile: {
+        id: '00000000-0000-4000-8000-000000000012',
+        name: 'Ollama',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
+      }
+    })
+
+    await expect(
+      adapter.run('hello', new AbortController().signal, async () => 'deny')
+    ).resolves.toEqual({
+      text: 'OLLAMA_OK',
+      usage: {
+        provider: 'openai',
+        model: 'qwen3',
+        inputTokens: 31,
+        outputTokens: 9,
+        cacheReadTokens: 13,
+        cacheWriteTokens: 4
+      }
+    })
+    expect(JSON.parse(generatedConfig)).toMatchObject({
+      models: [
+        {
+          provider: 'openai',
+          apiBase: 'http://127.0.0.1:11434/v1',
+          model: 'qwen3'
+        }
+      ]
+    })
+    expect(generatedConfig).not.toContain('apiKey')
+    expect(launchedEnvironment).not.toHaveProperty('OPENAI_API_KEY')
+    expect(launchedEnvironment).not.toHaveProperty('ANTHROPIC_API_KEY')
   })
 })

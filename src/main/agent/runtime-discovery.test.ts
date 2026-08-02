@@ -1,5 +1,6 @@
 import { realpath } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   detectAgentRuntimes,
@@ -103,6 +104,26 @@ describe('runtime discovery', () => {
       path: await realpath(process.execPath)
     })
     expect(detection.detail).toContain('内置')
+  })
+
+  it('allows a bundled script to defer execution validation to its host adapter', async () => {
+    process.env.PATH = ''
+    process.env.Path = ''
+    const bundledScript = fileURLToPath(import.meta.url)
+
+    const detection = await detectRuntimeBinary({
+      binaryPath: '',
+      bundledPath: bundledScript,
+      bundledValidation: 'canonical-file',
+      binaryNames: ['goodbuddy-runtime-that-does-not-exist'],
+      label: 'Script Runtime'
+    })
+
+    expect(detection).toMatchObject({
+      available: true,
+      path: await realpath(bundledScript)
+    })
+    expect(detection.detail).toBe('内置 Script Runtime 已就绪')
   })
 
   it('returns both runtime detections without exposing PATH contents', async () => {

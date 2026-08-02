@@ -32,6 +32,8 @@ function settings(
     provider: 'model',
     modelBaseUrl: 'https://bigtoken.ai',
     modelName: 'sonnet-5',
+    modelProtocol: 'anthropic-messages',
+    modelAuthentication: 'api-key',
     opencodeBaseUrl: '',
     opencodeEmbedded: false,
     opencodeBinaryPath: '',
@@ -39,6 +41,10 @@ function settings(
     continueBinaryPath: '',
     continueConfigPath: '',
     continueMode: 'chat',
+    runtimeSandboxMode: 'auto',
+    knowledgeEmbeddingEnabled: false,
+    knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+    knowledgeEmbeddingModel: 'nomic-embed-text',
     workspacePath: 'test-workspace',
     apiKey: { action: 'keep' },
     toolApproval: 'always',
@@ -67,6 +73,26 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('allows private Ollama embedding origins but rejects public HTTP', () => {
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          knowledgeEmbeddingEnabled: true,
+          knowledgeEmbeddingBaseUrl: 'http://10.7.0.23:11434',
+          knowledgeEmbeddingModel: 'bge-m3'
+        })
+      ).success
+    ).toBe(true)
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          knowledgeEmbeddingEnabled: true,
+          knowledgeEmbeddingBaseUrl: 'http://example.com:11434'
+        })
+      ).success
+    ).toBe(false)
+  })
+
   it('encrypts the API key and binds it to the configured origin', async () => {
     const { filePath, store } = await createStore()
     await store.update(
@@ -92,6 +118,89 @@ describe('RuntimeSettingsStore', () => {
     ).rejects.toThrow('请重新输入或清除')
   })
 
+  it('repairs a gpt-image profile saved with chat protocol and origin-only URL', async () => {
+    const { store } = await createStore()
+    await store.update(
+      settings({
+        modelBaseUrl: 'https://bigtoken.ai',
+        modelName: 'gpt-image-2',
+        modelProtocol: 'anthropic-messages',
+        apiKey: { action: 'replace', value: 'image-secret' }
+      })
+    )
+
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'https://bigtoken.ai/v1',
+      modelName: 'gpt-image-2',
+      modelProtocol: 'openai-images-generations',
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted',
+      modelProfiles: [
+        expect.objectContaining({
+          baseUrl: 'https://bigtoken.ai/v1',
+          modelName: 'gpt-image-2',
+          protocol: 'openai-images-generations'
+        })
+      ]
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'https://bigtoken.ai/v1',
+      modelName: 'gpt-image-2',
+      modelProtocol: 'openai-images-generations',
+      apiKey: 'image-secret'
+    })
+  })
+
+  it('repairs nondefault image protocols without rewriting custom root endpoints', async () => {
+    const { store } = await createStore()
+    const chatId = crypto.randomUUID()
+    const imageId = crypto.randomUUID()
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: chatId,
+            name: 'Chat',
+            baseUrl: 'https://chat.example/v1',
+            modelName: 'chat-model',
+            protocol: 'openai-chat-completions',
+            authentication: 'api-key',
+            apiKey: { action: 'replace', value: 'chat-secret' }
+          },
+          {
+            id: imageId,
+            name: 'Custom Image',
+            baseUrl: 'https://images.example',
+            modelName: 'gpt-image-custom',
+            protocol: 'anthropic-messages',
+            authentication: 'api-key',
+            apiKey: { action: 'replace', value: 'image-secret' }
+          }
+        ],
+        defaultModelProfileId: chatId,
+        continueModelSource: { kind: 'profile', profileId: imageId }
+      })
+    )
+
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      modelProfiles: [
+        expect.objectContaining({ id: chatId }),
+        expect.objectContaining({
+          id: imageId,
+          baseUrl: 'https://images.example',
+          protocol: 'openai-images-generations'
+        })
+      ]
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      continueModelProfile: {
+        id: imageId,
+        baseUrl: 'https://images.example',
+        protocol: 'openai-images-generations'
+      }
+    })
+  })
+
   it('stores multiple encrypted model profiles and resolves runtime sources', async () => {
     const { filePath, store } = await createStore()
     const firstId = '00000000-0000-4000-8000-000000000011'
@@ -104,6 +213,8 @@ describe('RuntimeSettingsStore', () => {
             name: '工作模型',
             baseUrl: 'https://work.example',
             modelName: 'work-model',
+            protocol: 'anthropic-messages',
+            authentication: 'api-key',
             apiKey: { action: 'replace', value: 'work-secret' }
           },
           {
@@ -111,6 +222,8 @@ describe('RuntimeSettingsStore', () => {
             name: '默认模型',
             baseUrl: 'https://default.example',
             modelName: 'default-model',
+            protocol: 'anthropic-messages',
+            authentication: 'api-key',
             apiKey: { action: 'replace', value: 'default-secret' }
           }
         ],
@@ -250,7 +363,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 5,
+      version: 6,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -381,6 +494,127 @@ describe('RuntimeSettingsStore', () => {
         settings({ opencodeConfigPath: '' })
       ).success
     ).toBe(true)
+  })
+
+  it('accepts pathful HTTPS roots and loopback HTTP but rejects remote HTTP', () => {
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          modelBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+        })
+      ).success
+    ).toBe(true)
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          modelBaseUrl: 'http://127.0.0.1:11434/v1',
+          modelProtocol: 'openai-chat-completions',
+          modelAuthentication: 'none'
+        })
+      ).success
+    ).toBe(true)
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({ modelBaseUrl: 'http://models.example/v1' })
+      ).success
+    ).toBe(false)
+  })
+
+  it('migrates version 5 profiles to Anthropic API-key profiles', async () => {
+    const { filePath, store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000021'
+    const encryptedCredential = cipher
+      .encrypt(
+        JSON.stringify({
+          version: 1,
+          apiKey: 'version-five-secret',
+          origin: 'https://legacy-v5.example'
+        })
+      )
+      .toString('base64')
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 5,
+        provider: 'model',
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'V5 模型',
+            baseUrl: 'https://legacy-v5.example',
+            modelName: 'legacy-v5-model',
+            credential: {
+              formatVersion: 1,
+              scheme: 'electron-safe-storage',
+              ciphertextBase64: encryptedCredential
+            }
+          }
+        ],
+        defaultModelProfileId: profileId,
+        opencodeModelSource: { kind: 'profile', profileId },
+        continueModelSource: { kind: 'profile', profileId },
+        opencodeBaseUrl: '',
+        opencodeEmbedded: false,
+        opencodeBinaryPath: '',
+        opencodeConfigPath: '',
+        continueBinaryPath: '',
+        continueConfigPath: '',
+        continueMode: 'chat',
+        workspacePath: 'legacy-workspace',
+        toolApproval: 'always'
+      }),
+      'utf8'
+    )
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelProtocol: 'anthropic-messages',
+      modelAuthentication: 'api-key',
+      apiKey: 'version-five-secret',
+      opencodeModelProfile: {
+        id: profileId,
+        protocol: 'anthropic-messages',
+        authentication: 'api-key'
+      },
+      continueModelProfile: { id: profileId }
+    })
+  })
+
+  it('persists an unauthenticated Ollama profile without a credential', async () => {
+    const { filePath, store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000022'
+    await store.update(
+      settings({
+        modelBaseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        modelProtocol: 'openai-chat-completions',
+        modelAuthentication: 'none',
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'Ollama',
+            baseUrl: 'http://127.0.0.1:11434/v1',
+            modelName: 'qwen3',
+            protocol: 'openai-chat-completions',
+            authentication: 'none',
+            apiKey: { action: 'clear' }
+          }
+        ],
+        defaultModelProfileId: profileId
+      })
+    )
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'http://127.0.0.1:11434/v1',
+      modelProtocol: 'openai-chat-completions',
+      modelAuthentication: 'none',
+      apiKey: undefined
+    })
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    expect(persisted.version).toBe(6)
+    expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 
   it('resolves new runtime environment variables with legacy fallback', async () => {

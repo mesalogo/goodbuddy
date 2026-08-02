@@ -1,5 +1,4 @@
 import type {
-  AgentEvent,
   AgentRuntimeStatus,
   RuntimeSettings,
   RuntimeBinaryDetection
@@ -7,7 +6,8 @@ import type {
 import type {
   AgentExecutionRequest,
   AgentRuntime,
-  RuntimeAuthorizer
+  RuntimeAuthorizer,
+  RuntimeEvent
 } from './runtime'
 import { detectRuntimeBinary } from './runtime-discovery'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
@@ -22,6 +22,7 @@ export type ContinueRuntimeOptions = {
   bundledBinaryPath?: string
   configPath: string
   mode: RuntimeSettings['continueMode']
+  runtimeSandboxMode?: RuntimeSettings['runtimeSandboxMode']
   defaultWorkspace: string
   hostCacheRoot: string
   skillInstructions?: string
@@ -89,6 +90,7 @@ function buildContinuePrompt(request: AgentExecutionRequest): string {
 
 export class ContinueAgentRuntime implements AgentRuntime {
   readonly requiresToolApproval = false
+  readonly supportsToolExecution = true
   private detection?: Promise<RuntimeBinaryDetection>
   private hostAdapter?: ReturnType<
     NonNullable<ContinueRuntimeOptions['createHostAdapter']>
@@ -100,6 +102,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
     this.detection ??= detectRuntimeBinary({
       binaryPath: this.options.binaryPath,
       bundledPath: this.options.bundledBinaryPath,
+      bundledValidation: 'canonical-file',
       binaryNames: ['cn'],
       label: 'Continue CLI'
     })
@@ -124,6 +127,16 @@ export class ContinueAgentRuntime implements AgentRuntime {
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
+    if (this.options.runtimeSandboxMode === 'strict') {
+      return {
+        id: 'continue',
+        label: 'Continue CLI',
+        available: false,
+        supportsToolExecution: this.supportsToolExecution,
+        detail:
+          'Continue 宿主暂不支持严格 OS 沙箱，请改用自动模式或嵌入式 OpenCode'
+      }
+    }
     const detection = await this.getDetection()
     if (detection.available && detection.path) {
       try {
@@ -133,6 +146,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
           id: 'continue',
           label: 'Continue CLI',
           available: false,
+          supportsToolExecution: this.supportsToolExecution,
           detail:
             error instanceof Error
               ? error.message
@@ -144,8 +158,9 @@ export class ContinueAgentRuntime implements AgentRuntime {
       id: 'continue',
       label: 'Continue CLI',
       available: detection.available,
+      supportsToolExecution: this.supportsToolExecution,
       detail: detection.available
-        ? `${detection.detail}；宿主逐工具审批`
+        ? `${detection.detail}；宿主逐工具审批；未启用 OS 进程沙箱`
         : detection.detail
     }
   }
@@ -154,8 +169,13 @@ export class ContinueAgentRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
-  ): AsyncGenerator<AgentEvent, void, void> {
+  ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
+    if (this.options.runtimeSandboxMode === 'strict') {
+      throw new Error(
+        'Continue 宿主暂不支持严格 OS 沙箱，请改用自动模式或嵌入式 OpenCode'
+      )
+    }
     if (request.images?.length) {
       throw new Error('Continue Runtime 暂不支持图片上下文，请切换到视觉模型')
     }
@@ -189,19 +209,34 @@ export class ContinueAgentRuntime implements AgentRuntime {
     if (!authorize) {
       throw new Error('Continue 工具审批服务不可用')
     }
-    const text = await this.getHostAdapter(binaryPath).run(
+    const result = await this.getHostAdapter(binaryPath).run(
       conversationContext,
       signal,
       authorize
     )
-    if (!text) {
+    if (!result.text) {
       throw new Error('Continue CLI 未返回内容')
     }
 
     yield {
       requestId: request.requestId,
       type: 'text',
-      delta: text
+      delta: result.text
+    }
+    if (result.usage) {
+      const usage = result.usage
+      yield {
+        requestId: request.requestId,
+        type: 'model-usage',
+        callId: request.requestId,
+        runtime: 'continue',
+        provider: usage.provider.slice(0, 100),
+        model: usage.model.slice(0, 500),
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheWriteTokens: usage.cacheWriteTokens
+      }
     }
     yield {
       requestId: request.requestId,

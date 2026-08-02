@@ -8,6 +8,7 @@ import { defaultRuntimeSettings } from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { ContinueHostLauncher } from './continue-host-adapter'
+import { resolveRuntimeSandbox } from './runtime-sandbox'
 
 export type AgentCapabilityContext = {
   skillInstructions?: string
@@ -29,8 +30,17 @@ export function createAgentRuntime(
     process.env.GOODBUDDY_OPENCODE_EMBEDDED === 'true'
   const workspace = settings?.workspacePath || defaultWorkspace
   const provider = settings?.provider ?? 'auto'
+  const sandboxMode =
+    settings?.runtimeSandboxMode ??
+    defaultRuntimeSettings.runtimeSandboxMode
 
   if (provider === 'continue') {
+    if (
+      settings?.continueModelProfile?.protocol ===
+      'openai-images-generations'
+    ) {
+      throw new Error('Continue 不支持图像生成模型连接')
+    }
     return new ContinueAgentRuntime({
       binaryPath:
         settings?.continueBinaryPath ??
@@ -43,6 +53,7 @@ export function createAgentRuntime(
         process.env.GOODBUDDY_CONTINUE_CONFIG?.trim() ??
         '',
       mode: settings?.continueMode ?? defaultRuntimeSettings.continueMode,
+      runtimeSandboxMode: sandboxMode,
       modelProfile: settings?.continueModelProfile,
       skillInstructions: capabilities.skillInstructions,
       defaultWorkspace: workspace,
@@ -55,6 +66,15 @@ export function createAgentRuntime(
   }
 
   if (provider === 'opencode' || (provider === 'auto' && (baseUrl || embedded))) {
+    if (
+      settings?.opencodeModelProfile &&
+      (settings.opencodeModelProfile.protocol !== 'anthropic-messages' ||
+        settings.opencodeModelProfile.authentication !== 'api-key')
+    ) {
+      throw new Error(
+        'OpenCode 独立模型连接仅支持需要 API Key 的 Anthropic Messages 协议'
+      )
+    }
     return new OpenCodeRuntime({
       baseUrl,
       embedded,
@@ -70,6 +90,7 @@ export function createAgentRuntime(
       modelProfile: settings?.opencodeModelProfile,
       skillInstructions: capabilities.skillInstructions,
       mcpServers: capabilities.mcpServers,
+      sandbox: resolveRuntimeSandbox(sandboxMode),
       defaultWorkspace: workspace
     })
   }
@@ -78,7 +99,14 @@ export function createAgentRuntime(
     settings?.apiKey ||
     process.env.GOODBUDDY_MODEL_API_KEY?.trim() ||
     process.env.GOODBUDDY_BIGTOKEN_API_KEY?.trim()
-  if (provider === 'model' || (provider === 'auto' && modelApiKey)) {
+  const modelAuthentication =
+    settings?.modelAuthentication ??
+    defaultRuntimeSettings.modelAuthentication
+  if (
+    provider === 'model' ||
+    (provider === 'auto' &&
+      (modelAuthentication === 'none' || modelApiKey))
+  ) {
     return new ModelAgentRuntime({
       apiKey: modelApiKey ?? '',
       baseUrl:
@@ -91,6 +119,10 @@ export function createAgentRuntime(
         process.env.GOODBUDDY_MODEL_NAME?.trim() ||
         process.env.GOODBUDDY_BIGTOKEN_MODEL?.trim() ||
         defaultRuntimeSettings.modelName,
+      protocol:
+        settings?.modelProtocol ??
+        defaultRuntimeSettings.modelProtocol,
+      authentication: modelAuthentication,
       skillInstructions: capabilities.skillInstructions
     })
   }

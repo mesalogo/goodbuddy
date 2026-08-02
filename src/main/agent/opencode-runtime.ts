@@ -1,32 +1,203 @@
 import {
   createOpencodeClient,
-  type OpencodeClient
-} from '@opencode-ai/sdk'
+  type AssistantMessage,
+  type OpencodeClient,
+  type PermissionRequest,
+  type PermissionRuleset
+} from '@opencode-ai/sdk/v2'
 import spawn from 'cross-spawn'
+import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
-import type {
-  AgentEvent,
-  AgentRuntimeStatus
-} from '../../shared/contracts'
+import type { AgentRuntimeStatus } from '../../shared/contracts'
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import type {
   AgentExecutionRequest,
-  AgentRuntime
+  AgentRuntime,
+  RuntimeAuthorizer,
+  RuntimeEvent,
+  RuntimeModelUsageEvent
 } from './runtime'
 import { detectRuntimeBinary } from './runtime-discovery'
 import { getAvailableLoopbackPort } from './loopback-port'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import { buildRuntimeEnvironment } from './process-environment'
+import {
+  buildBubblewrapLaunch,
+  type RuntimeSandboxResolution
+} from './runtime-sandbox'
+import {
+  redactSensitiveText,
+  safeToolArgumentSummary
+} from './approval-summary'
 
 const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
 const STARTUP_TIMEOUT_MS = 10_000
+const MAX_PERMISSION_NAME_LENGTH = 128
+const MAX_PERMISSION_PATTERNS = 32
+const MAX_PERMISSION_PATTERN_LENGTH = 1_024
+const MAX_PERMISSION_PATTERNS_BYTES = 8 * 1_024
+const MAX_PERMISSION_METADATA_BYTES = 8 * 1_024
+const MAX_PERMISSION_SUMMARY_LENGTH = 2_000
+const EMBEDDED_SERVER_USERNAME = 'goodbuddy'
 
 type SpawnedProcess = ReturnType<typeof spawn>
 
 type OpenCodeServer = {
   url: string
+  authorization: string
   close: () => Promise<void>
+}
+
+const executePermissionRules: PermissionRuleset = [
+  { permission: '*', pattern: '*', action: 'ask' },
+  { permission: 'task', pattern: '*', action: 'deny' }
+]
+
+const readOnlyPermissionRules: PermissionRuleset = [
+  { permission: '*', pattern: '*', action: 'deny' }
+]
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value)
+  )
+}
+
+function opencodeErrorMessage(value: unknown, fallback: string): string {
+  if (!isRecord(value)) {
+    return fallback
+  }
+  if (typeof value.message === 'string' && value.message.trim()) {
+    return redactSensitiveText(value.message).slice(0, 1_000)
+  }
+  if (
+    isRecord(value.data) &&
+    typeof value.data.message === 'string' &&
+    value.data.message.trim()
+  ) {
+    return redactSensitiveText(value.data.message).slice(0, 1_000)
+  }
+  return fallback
+}
+
+function byteLengthWithin(value: string, maximum: number): boolean {
+  return Buffer.byteLength(value) <= maximum
+}
+
+function areBoundedPatterns(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_PERMISSION_PATTERNS &&
+    value.every(
+      (pattern) =>
+        typeof pattern === 'string' &&
+        pattern.length <= MAX_PERMISSION_PATTERN_LENGTH
+    ) &&
+    byteLengthWithin(
+      value.join('\0'),
+      MAX_PERMISSION_PATTERNS_BYTES
+    )
+  )
+}
+
+function parsePermissionRequest(
+  properties: unknown,
+  sessionId: string
+): PermissionRequest | undefined {
+  if (!isRecord(properties) || properties.sessionID !== sessionId) {
+    return undefined
+  }
+  const { id, permission, patterns, metadata, always, tool } =
+    properties
+  if (
+    typeof id !== 'string' ||
+    id.length === 0 ||
+    id.length > MAX_PERMISSION_NAME_LENGTH ||
+    typeof permission !== 'string' ||
+    permission.length === 0 ||
+    permission.length > MAX_PERMISSION_NAME_LENGTH ||
+    !areBoundedPatterns(patterns) ||
+    !isRecord(metadata) ||
+    !areBoundedPatterns(always) ||
+    (tool !== undefined &&
+      (!isRecord(tool) ||
+        typeof tool.messageID !== 'string' ||
+        typeof tool.callID !== 'string'))
+  ) {
+    throw new Error('OpenCode 权限请求格式无效')
+  }
+  let serializedMetadata: string
+  try {
+    serializedMetadata = JSON.stringify(metadata)
+  } catch {
+    throw new Error('OpenCode 权限请求元数据无效')
+  }
+  if (
+    !byteLengthWithin(
+      serializedMetadata,
+      MAX_PERMISSION_METADATA_BYTES
+    )
+  ) {
+    throw new Error('OpenCode 权限请求元数据超过安全限制')
+  }
+  return properties as PermissionRequest
+}
+
+function permissionArgumentSummary(
+  request: PermissionRequest
+): string {
+  return safeToolArgumentSummary(
+    {
+      patterns: request.patterns,
+      metadata: request.metadata
+    },
+    undefined,
+    MAX_PERMISSION_SUMMARY_LENGTH
+  )
+}
+
+function permissionScopeKey(request: PermissionRequest): string {
+  return `opencode:${request.permission}`
+}
+
+function isSafeTokenCount(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function createUsageEvent(
+  requestId: string,
+  message: AssistantMessage
+): RuntimeModelUsageEvent | undefined {
+  const { tokens } = message
+  if (
+    message.time.completed === undefined ||
+    !isSafeTokenCount(tokens.input) ||
+    !isSafeTokenCount(tokens.output) ||
+    !isSafeTokenCount(tokens.cache.read) ||
+    !isSafeTokenCount(tokens.cache.write) ||
+    (tokens.total !== undefined && !isSafeTokenCount(tokens.total))
+  ) {
+    return undefined
+  }
+
+  return {
+    requestId,
+    type: 'model-usage',
+    callId: message.id.slice(0, 256),
+    runtime: 'opencode',
+    provider: message.providerID.slice(0, 100),
+    model: message.modelID.slice(0, 500),
+    inputTokens: tokens.input,
+    outputTokens: tokens.output,
+    cacheReadTokens: tokens.cache.read,
+    cacheWriteTokens: tokens.cache.write,
+    ...(tokens.total === undefined
+      ? {}
+      : { reportedTotalTokens: tokens.total })
+  }
 }
 
 export type OpenCodeRuntimeDependencies = {
@@ -51,6 +222,7 @@ export type OpenCodeRuntimeOptions = {
   modelProfile?: ResolvedModelProfile
   skillInstructions?: string
   mcpServers?: ResolvedMcpServer[]
+  sandbox?: RuntimeSandboxResolution
 }
 
 async function defaultDetectBinary(
@@ -104,7 +276,10 @@ function parseListeningUrl(output: string): string | undefined {
 }
 
 export class OpenCodeRuntime implements AgentRuntime {
-  readonly requiresToolApproval = true
+  get requiresToolApproval(): boolean {
+    return !this.usesEmbeddedPermissionMediation()
+  }
+  readonly supportsToolExecution = true
   private client?: OpencodeClient
   private clientInitialization?: Promise<OpencodeClient>
   private server?: OpenCodeServer
@@ -131,6 +306,10 @@ export class OpenCodeRuntime implements AgentRuntime {
       startupTimeoutMs: STARTUP_TIMEOUT_MS,
       ...dependencies
     }
+  }
+
+  private usesEmbeddedPermissionMediation(): boolean {
+    return this.options.embedded && !this.options.baseUrl
   }
 
   private terminate(child: SpawnedProcess): void {
@@ -195,6 +374,12 @@ export class OpenCodeRuntime implements AgentRuntime {
     delete env.OPENCODE_CONFIG_CONTENT
     delete env.OPENCODE_SERVER_PASSWORD
     delete env.OPENCODE_SERVER_USERNAME
+    const serverPassword = randomBytes(32).toString('base64url')
+    const authorization = `Basic ${Buffer.from(
+      `${EMBEDDED_SERVER_USERNAME}:${serverPassword}`
+    ).toString('base64')}`
+    env.OPENCODE_SERVER_USERNAME = EMBEDDED_SERVER_USERNAME
+    env.OPENCODE_SERVER_PASSWORD = serverPassword
     env.DO_NOT_TRACK = '1'
     env.OPENCODE_DISABLE_AUTOUPDATE = '1'
     env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = '1'
@@ -224,15 +409,36 @@ export class OpenCodeRuntime implements AgentRuntime {
     } else if (this.options.configPath.trim()) {
       env.OPENCODE_CONFIG = resolve(this.options.configPath)
     }
+    const serverArgs = [
+      'serve',
+      '--hostname=127.0.0.1',
+      `--port=${port}`
+    ]
+    const sandbox = this.options.sandbox
+    if (
+      sandbox?.status.mode === 'strict' &&
+      !sandbox.status.available
+    ) {
+      throw new Error(sandbox.status.detail)
+    }
+    const launch =
+      sandbox?.status.available && sandbox.binaryPath
+        ? buildBubblewrapLaunch({
+            binaryPath: sandbox.binaryPath,
+            command: binaryPath,
+            args: serverArgs,
+            workspace: this.options.defaultWorkspace,
+            readOnlyPaths: this.options.configPath.trim()
+              ? [resolve(this.options.configPath)]
+              : [],
+            platform: this.dependencies.platform
+          })
+        : { command: binaryPath, args: serverArgs }
 
     return new Promise<OpenCodeServer>((resolveServer, reject) => {
       const child = this.dependencies.spawn(
-        binaryPath,
-        [
-          'serve',
-          '--hostname=127.0.0.1',
-          `--port=${port}`
-        ],
+        launch.command,
+        launch.args,
         {
           cwd: this.options.defaultWorkspace,
           env,
@@ -281,6 +487,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         stderr?.resume()
         resolveServer({
           url,
+          authorization,
           close: async () => {
             const exited = this.waitForExit(child)
             this.terminate(child)
@@ -368,7 +575,14 @@ export class OpenCodeRuntime implements AgentRuntime {
 
     this.client = this.dependencies.createClient({
       baseUrl,
-      directory: this.options.defaultWorkspace
+      directory: this.options.defaultWorkspace,
+      ...(this.server
+        ? {
+            headers: {
+              Authorization: this.server.authorization
+            }
+          }
+        : {})
     })
     return this.client
   }
@@ -377,7 +591,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     try {
       const client = await this.getClient()
       const response = await client.session.list({
-        query: { directory: this.options.defaultWorkspace }
+        directory: this.options.defaultWorkspace
       })
 
       if (response.error) {
@@ -388,8 +602,11 @@ export class OpenCodeRuntime implements AgentRuntime {
         id: 'opencode',
         label: 'OpenCode',
         available: true,
+        supportsToolExecution: this.supportsToolExecution,
         detail: this.server
-          ? '由 GoodBuddy 管理本机 OpenCode 进程'
+          ? this.options.sandbox
+            ? `由 GoodBuddy 管理本机 OpenCode 进程；${this.options.sandbox.status.detail}`
+            : '由 GoodBuddy 管理本机 OpenCode 进程'
           : `已连接 ${this.options.baseUrl}`
       }
     } catch (error) {
@@ -397,6 +614,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         id: 'opencode',
         label: 'OpenCode',
         available: false,
+        supportsToolExecution: this.supportsToolExecution,
         detail: error instanceof Error ? error.message : 'OpenCode 不可用'
       }
     }
@@ -405,7 +623,8 @@ export class OpenCodeRuntime implements AgentRuntime {
   private async getSessionId(
     client: OpencodeClient,
     request: AgentExecutionRequest,
-    directory: string
+    directory: string,
+    permission?: PermissionRuleset
   ): Promise<{ id: string; created: boolean }> {
     const current = this.sessions.get(request.conversationId)
     if (current) {
@@ -419,8 +638,9 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
     const creation = client.session
       .create({
-        body: { title: 'GoodBuddy 对话' },
-        query: { directory }
+        title: 'GoodBuddy 对话',
+        directory,
+        ...(permission ? { permission } : {})
       })
       .then((response) => {
         if (!response.data) {
@@ -477,8 +697,9 @@ export class OpenCodeRuntime implements AgentRuntime {
               timeout: 10_000
             }
       const response = await client.mcp.add({
-        body: { name, config },
-        query: { directory: this.options.defaultWorkspace }
+        name,
+        config,
+        directory: this.options.defaultWorkspace
       })
       if (response.error) {
         throw new Error(`OpenCode 无法加载 MCP Server：${server.name}`)
@@ -490,8 +711,9 @@ export class OpenCodeRuntime implements AgentRuntime {
 
   async *run(
     request: AgentExecutionRequest,
-    signal: AbortSignal
-  ): AsyncGenerator<AgentEvent, void, void> {
+    signal: AbortSignal,
+    authorize?: RuntimeAuthorizer
+  ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
     if (request.images?.length) {
       throw new Error('OpenCode Runtime 暂不支持图片上下文，请切换到视觉模型')
@@ -499,10 +721,15 @@ export class OpenCodeRuntime implements AgentRuntime {
     const client = await this.getClient(signal)
     await this.configureCapabilities(client)
     const directory = this.options.defaultWorkspace
+    const permission = this.usesEmbeddedPermissionMediation()
+      ? request.workMode === 'execute'
+        ? executePermissionRules
+        : readOnlyPermissionRules
+      : undefined
     let disabledTools: Record<string, boolean> | undefined
     if (request.workMode !== 'execute') {
       const tools = await client.tool.ids({
-        query: { directory }
+        directory
       })
       if (tools.error || !tools.data) {
         throw new Error('OpenCode 无法确认工具已禁用，已阻止只读请求')
@@ -511,8 +738,23 @@ export class OpenCodeRuntime implements AgentRuntime {
         tools.data.map((toolId) => [toolId, false])
       )
     }
-    const session = await this.getSessionId(client, request, directory)
+    const session = await this.getSessionId(
+      client,
+      request,
+      directory,
+      permission
+    )
     const sessionId = session.id
+    if (!session.created && permission) {
+      const update = await client.session.update({
+        sessionID: sessionId,
+        directory,
+        permission
+      })
+      if (update.error || !update.data) {
+        throw new Error('OpenCode 会话权限配置失败')
+      }
+    }
 
     yield {
       requestId: request.requestId,
@@ -521,14 +763,13 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
 
     const subscription = await client.event.subscribe({
-      query: { directory },
-      signal
-    })
+      directory
+    }, { signal })
 
     const abortSession = (): void => {
       void client.session.abort({
-        path: { id: sessionId },
-        query: { directory }
+        sessionID: sessionId,
+        directory
       }).catch(() => undefined)
     }
     signal.addEventListener('abort', abortSession, { once: true })
@@ -544,45 +785,167 @@ export class OpenCodeRuntime implements AgentRuntime {
             ].join('\n')
           : request.prompt
       const prompt = client.session.promptAsync({
-        body: {
-          model: this.options.modelProfile
-            ? {
-                providerID: 'anthropic',
-                modelID: this.options.modelProfile.modelName
-              }
-            : undefined,
-          system: this.options.skillInstructions || undefined,
-          ...(disabledTools ? { tools: disabledTools } : {}),
-          parts: [{ type: 'text', text: promptText }]
-        },
-        path: { id: sessionId },
-        query: { directory },
-        signal
-      })
+        sessionID: sessionId,
+        directory,
+        model: this.options.modelProfile
+          ? {
+              providerID: 'anthropic',
+              modelID: this.options.modelProfile.modelName
+            }
+          : undefined,
+        system: this.options.skillInstructions || undefined,
+        ...(disabledTools ? { tools: disabledTools } : {}),
+        parts: [{ type: 'text', text: promptText }]
+      }, { signal })
       prompt.catch(() => undefined)
 
+      const repliedPermissionIds = new Set<string>()
+      const reportedMessageIds = new Set<string>()
+      const toolStates = new Map<
+        string,
+        'pending' | 'running' | 'completed' | 'failed'
+      >()
       for await (const event of subscription.stream) {
         if (
-          event.type === 'message.part.updated' &&
-          event.properties.part.sessionID === sessionId
+          event.type === 'message.updated' &&
+          event.properties.sessionID === sessionId &&
+          event.properties.info.sessionID === sessionId &&
+          event.properties.info.role === 'assistant' &&
+          !reportedMessageIds.has(event.properties.info.id)
         ) {
-          const { part, delta } = event.properties
-          if (part.type === 'text' && delta) {
-            yield {
-              requestId: request.requestId,
-              type: 'text',
-              delta
-            }
-          } else if (part.type === 'tool') {
+          const usage = createUsageEvent(
+            request.requestId,
+            event.properties.info
+          )
+          if (usage) {
+            reportedMessageIds.add(event.properties.info.id)
+            yield usage
+          }
+        }
+
+        if (
+          event.type === 'message.part.delta' &&
+          event.properties.sessionID === sessionId &&
+          event.properties.field === 'text' &&
+          event.properties.delta
+        ) {
+          yield {
+            requestId: request.requestId,
+            type: 'text',
+            delta: event.properties.delta
+          }
+        }
+
+        if (
+          event.type === 'message.part.updated' &&
+          event.properties.sessionID === sessionId
+        ) {
+          const { part } = event.properties
+          if (part.type === 'tool') {
+            const callId = (part.callID || part.id).slice(0, 256)
+            const toolName = part.tool.slice(0, 200)
             const state =
               part.state.status === 'error' ? 'failed' : part.state.status
+            toolStates.set(callId, state)
             yield {
               requestId: request.requestId,
               type: 'tool',
-              name: part.tool,
+              callId,
+              name: toolName,
               state,
-              summary: `OpenCode 工具：${part.tool}`
+              summary: `OpenCode 工具：${toolName}`
             }
+          }
+        }
+
+        if (
+          this.usesEmbeddedPermissionMediation() &&
+          event.type === 'permission.asked'
+        ) {
+          const properties = event.properties as unknown
+          if (
+            isRecord(properties) &&
+            typeof properties.sessionID === 'string' &&
+            properties.sessionID !== sessionId
+          ) {
+            continue
+          }
+
+          let permissionRequest: PermissionRequest
+          try {
+            const parsed = parsePermissionRequest(properties, sessionId)
+            if (!parsed) {
+              throw new Error('OpenCode 权限请求格式无效')
+            }
+            permissionRequest = parsed
+          } catch (error) {
+            if (
+              isRecord(properties) &&
+              typeof properties.id === 'string' &&
+              properties.id.length > 0 &&
+              properties.id.length <= MAX_PERMISSION_NAME_LENGTH &&
+              !repliedPermissionIds.has(properties.id)
+            ) {
+              repliedPermissionIds.add(properties.id)
+              const rejection = await client.permission.reply({
+                requestID: properties.id,
+                directory,
+                reply: 'reject'
+              })
+              if (rejection.error || rejection.data !== true) {
+                throw new Error('OpenCode 权限拒绝回复失败', {
+                  cause: error
+                })
+              }
+              continue
+            }
+            throw error
+          }
+
+          if (repliedPermissionIds.has(permissionRequest.id)) {
+            continue
+          }
+          repliedPermissionIds.add(permissionRequest.id)
+
+          let decision: Awaited<ReturnType<NonNullable<typeof authorize>>>
+          try {
+            decision = authorize
+              ? await authorize({
+                  scopeKey: permissionScopeKey(permissionRequest),
+                  title: `OpenCode 请求调用 ${permissionRequest.permission}`,
+                  description:
+                    '仅在你选择允许后，OpenCode 才会执行此工具调用。',
+                  toolName: permissionRequest.permission,
+                  argumentSummary:
+                    permissionArgumentSummary(permissionRequest),
+                  allowPermanent: false
+                })
+              : 'deny'
+          } catch (error) {
+            const rejection = await client.permission.reply({
+              requestID: permissionRequest.id,
+              directory,
+              reply: 'reject'
+            })
+            if (rejection.error || rejection.data !== true) {
+              throw new Error('OpenCode 权限拒绝回复失败', {
+                cause: error
+              })
+            }
+            throw error
+          }
+
+          const reply =
+            decision === 'once' || decision === 'session'
+              ? 'once'
+              : 'reject'
+          const response = await client.permission.reply({
+            requestID: permissionRequest.id,
+            directory,
+            reply
+          })
+          if (response.error || response.data !== true) {
+            throw new Error('OpenCode 权限回复失败')
           }
         }
 
@@ -591,22 +954,35 @@ export class OpenCodeRuntime implements AgentRuntime {
           event.properties.sessionID === sessionId
         ) {
           const error = event.properties.error
-          const message =
-            error &&
-            typeof error.data === 'object' &&
-            error.data &&
-            'message' in error.data &&
-            typeof error.data.message === 'string'
-              ? error.data.message
-              : 'OpenCode 执行失败'
-          throw new Error(message)
+          throw new Error(
+            opencodeErrorMessage(error, 'OpenCode 执行失败')
+          )
         }
 
         if (
           event.type === 'session.idle' &&
           event.properties.sessionID === sessionId
         ) {
-          await prompt
+          const promptResult = await prompt
+          if (promptResult.error) {
+            throw new Error(
+              opencodeErrorMessage(
+                promptResult.error,
+                'OpenCode 提交请求失败'
+              )
+            )
+          }
+          const unsuccessfulTool = [...toolStates.entries()].find(
+            ([, state]) => state !== 'completed'
+          )
+          if (unsuccessfulTool) {
+            const [callId, state] = unsuccessfulTool
+            throw new Error(
+              state === 'failed'
+                ? `OpenCode 工具执行失败（${callId.slice(0, 128)}）`
+                : `OpenCode 工具未完成（${callId.slice(0, 128)}）`
+            )
+          }
           yield {
             requestId: request.requestId,
             type: 'done',
@@ -616,8 +992,19 @@ export class OpenCodeRuntime implements AgentRuntime {
         }
       }
 
-      await prompt
+      const promptResult = await prompt
+      if (promptResult.error) {
+        throw new Error(
+          opencodeErrorMessage(
+            promptResult.error,
+            'OpenCode 提交请求失败'
+          )
+        )
+      }
       throw new Error('OpenCode 事件流意外结束')
+    } catch (error) {
+      abortSession()
+      throw error
     } finally {
       signal.removeEventListener('abort', abortSession)
     }
@@ -636,18 +1023,33 @@ export class OpenCodeRuntime implements AgentRuntime {
     this.client = undefined
     this.clientInitialization = undefined
     this.capabilityInitialization = undefined
+    this.sessions.clear()
     this.sessionInitializations.clear()
     await Promise.all(
       [...this.configuredMcpNames].map((name) =>
         client?.mcp
           .disconnect({
-            path: { name },
-            query: { directory: this.options.defaultWorkspace }
+            name,
+            directory: this.options.defaultWorkspace
           })
           .catch(() => undefined)
       )
     )
     this.configuredMcpNames.clear()
     await server?.close()
+  }
+
+  async releaseConversation(conversationId: string): Promise<void> {
+    const sessionId = this.sessions.get(conversationId)
+    this.sessions.delete(conversationId)
+    if (!sessionId || !this.client) {
+      return
+    }
+    await this.client.session
+      .delete({
+        sessionID: sessionId,
+        directory: this.options.defaultWorkspace
+      })
+      .catch(() => undefined)
   }
 }

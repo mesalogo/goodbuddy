@@ -8,6 +8,7 @@ import {
   Download,
   Edit3,
   FileText,
+  HeartPulse,
   History,
   Library,
   MessageSquarePlus,
@@ -29,8 +30,6 @@ import {
   UserRound
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type {
   ApprovalDecision,
   AgentEvent,
@@ -38,15 +37,22 @@ import type {
   AppInfo,
   ContextAttachment,
   KnowledgeSearchReference,
-  KnowledgeSnapshot
+  KnowledgeSnapshot,
+  RuntimeSettings,
+  RuntimeSettingsInput
 } from '../../shared/contracts'
 import type {
   AssistantProject,
   AssistantArtifact,
   AssistantMemory,
   AssistantSchedule,
+  AssistantHeartbeatConfig,
+  AssistantHeartbeatEntry,
+  AssistantHeartbeatRun,
+  HeartbeatCreateInput,
   AssistantExpert,
   AssistantTask,
+  TokenUsageSummary,
   ConversationSnapshot,
   ProjectCreateInput,
   WorkMode,
@@ -55,11 +61,18 @@ import type {
 import { ActivityPanel } from './ActivityPanel'
 import {
   loadActivityRecords,
+  reconcileActivityRecords,
   saveActivityRecords,
+  upsertActivityRecord,
   type ActivityRecord
 } from './activity-store'
 import { KnowledgeWorkspace } from './KnowledgeWorkspace'
-import { ProjectSwitcher } from './ProjectSwitcher'
+import { HeartbeatCenter } from './HeartbeatCenter'
+import { MarkdownRenderer } from './MarkdownRenderer'
+import {
+  ProjectSwitcher,
+  workModeLabels
+} from './ProjectSwitcher'
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
@@ -69,8 +82,15 @@ import {
 import { SettingsPanel } from './SettingsPanel'
 
 type ToolActivity = {
+  callId?: string
   name: string
-  state: 'pending' | 'running' | 'completed' | 'failed'
+  state:
+    | 'pending'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'interrupted'
   summary: string
 }
 
@@ -91,6 +111,8 @@ type Message = {
     allowPermanent?: boolean
   }
   sources?: string[]
+  sourceReferences?: KnowledgeSearchReference[]
+  artifactIds?: string[]
 }
 
 type Conversation = {
@@ -106,7 +128,24 @@ type ActiveRun = {
   messageId: string
 }
 
-type WorkspaceView = 'chat' | 'knowledge' | 'activity' | 'settings'
+type WorkspaceView =
+  | 'chat'
+  | 'knowledge'
+  | 'heartbeat'
+  | 'activity'
+  | 'settings'
+
+const emptyTokenUsage: TokenUsageSummary = {
+  totals: {
+    callCount: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0
+  },
+  records: []
+}
 
 const storageKey = 'goodbuddy.conversations.v1'
 
@@ -127,6 +166,15 @@ const quickActions = [
     prompt: '请帮我起草一份清晰、专业的工作内容：\n'
   }
 ]
+
+const toolStateLabels: Record<ToolActivity['state'], string> = {
+  pending: '等待中',
+  running: '进行中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  interrupted: '已中断'
+}
 
 function createConversation(projectId?: string): Conversation {
   const now = Date.now()
@@ -206,7 +254,13 @@ function isConversation(value: unknown): value is Conversation {
         typeof entry.createdAt === 'number' &&
         (entry.state === 'streaming' ||
           entry.state === 'complete' ||
-          entry.state === 'error')
+          entry.state === 'error') &&
+        (entry.artifactIds === undefined ||
+          (Array.isArray(entry.artifactIds) &&
+            entry.artifactIds.length <= 8 &&
+            entry.artifactIds.every(
+              (artifactId) => typeof artifactId === 'string'
+            )))
       )
     })
   )
@@ -228,9 +282,75 @@ function toConversationSnapshots(
       state: message.state,
       status: message.status,
       tools: message.tools,
-      sources: message.sources
+      sources: message.sources,
+      sourceReferences: message.sourceReferences,
+      artifactIds: message.artifactIds
     }))
   }))
+}
+
+function mergeArtifacts(
+  current: AssistantArtifact[],
+  incoming: AssistantArtifact[]
+): AssistantArtifact[] {
+  const merged = new Map(current.map((artifact) => [artifact.id, artifact]))
+  for (const artifact of incoming) {
+    const existing = merged.get(artifact.id)
+    merged.set(artifact.id, {
+      ...existing,
+      ...artifact,
+      content: artifact.content ?? existing?.content
+    })
+  }
+  return [...merged.values()].sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt)
+  )
+}
+
+function createRuntimeSwitchInput(
+  settings: RuntimeSettings,
+  provider: RuntimeSettingsInput['provider'],
+  profileId = settings.defaultModelProfileId
+): RuntimeSettingsInput {
+  const selectedProfile =
+    settings.modelProfiles.find((profile) => profile.id === profileId) ??
+    settings.modelProfiles[0]
+  if (!selectedProfile) {
+    throw new Error('没有可切换的模型连接')
+  }
+  return {
+    provider,
+    modelBaseUrl: selectedProfile.baseUrl,
+    modelName: selectedProfile.modelName,
+    modelProtocol: selectedProfile.protocol,
+    modelAuthentication: selectedProfile.authentication,
+    opencodeBaseUrl: settings.opencodeBaseUrl,
+    opencodeEmbedded: settings.opencodeEmbedded,
+    opencodeBinaryPath: settings.opencodeBinaryPath,
+    opencodeConfigPath: settings.opencodeConfigPath,
+    continueBinaryPath: settings.continueBinaryPath,
+    continueConfigPath: settings.continueConfigPath,
+    continueMode: settings.continueMode,
+    runtimeSandboxMode: settings.runtimeSandboxMode,
+    knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
+    knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
+    knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
+    workspacePath: settings.workspacePath,
+    apiKey: { action: 'keep' },
+    modelProfiles: settings.modelProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      baseUrl: profile.baseUrl,
+      modelName: profile.modelName,
+      protocol: profile.protocol,
+      authentication: profile.authentication,
+      apiKey: { action: 'keep' }
+    })),
+    defaultModelProfileId: selectedProfile.id,
+    opencodeModelSource: settings.opencodeModelSource,
+    continueModelSource: settings.continueModelSource,
+    toolApproval: settings.toolApproval
+  }
 }
 
 function formatTime(timestamp: number): string {
@@ -290,26 +410,54 @@ function App(): React.JSX.Element {
   const migrationConversations = useRef(conversations)
   const [projects, setProjects] = useState<AssistantProject[]>([])
   const [assistantTasks, setAssistantTasks] = useState<AssistantTask[]>([])
+  const [tokenUsage, setTokenUsage] =
+    useState<TokenUsageSummary>(emptyTokenUsage)
   const [workspaceChanges, setWorkspaceChanges] =
     useState<WorkspaceChanges>()
   const [assistantArtifacts, setAssistantArtifacts] = useState<
     AssistantArtifact[]
   >([])
+  const assistantArtifactById = useMemo(
+    () =>
+      new Map(
+        assistantArtifacts.map((artifact) => [artifact.id, artifact])
+      ),
+    [assistantArtifacts]
+  )
   const [assistantMemories, setAssistantMemories] = useState<
     AssistantMemory[]
   >([])
   const [assistantSchedules, setAssistantSchedules] = useState<
     AssistantSchedule[]
   >([])
+  const [assistantHeartbeats, setAssistantHeartbeats] = useState<
+    AssistantHeartbeatConfig[]
+  >([])
+  const [heartbeatEntries, setHeartbeatEntries] = useState<
+    AssistantHeartbeatEntry[]
+  >([])
+  const [heartbeatRuns, setHeartbeatRuns] = useState<
+    AssistantHeartbeatRun[]
+  >([])
   const [assistantExperts, setAssistantExperts] = useState<
     AssistantExpert[]
   >([])
   const [selectedExpertId, setSelectedExpertId] = useState('')
   const [activeProjectId, setActiveProjectId] = useState('')
+  const activeProjectIdRef = useRef(activeProjectId)
+  const viewRef = useRef<WorkspaceView>('chat')
+  const heartbeatLoadRequestRef = useRef(0)
   const [workMode, setWorkMode] = useState<WorkMode>('ask')
   const [input, setInput] = useState('')
   const [voiceListening, setVoiceListening] = useState(false)
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
+  const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
+  const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false)
+  const [runtimeSwitching, setRuntimeSwitching] = useState(false)
+  const effectiveWorkMode =
+    workMode === 'execute' && runtime?.supportsToolExecution === false
+      ? 'ask'
+      : workMode
   const [appInfo, setAppInfo] = useState<AppInfo>()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [assistantSidebarOpen, setAssistantSidebarOpen] = useState(
@@ -342,9 +490,30 @@ function App(): React.JSX.Element {
   )
   const activeRuns = useRef(new Map<string, ActiveRun>())
   const preparingConversations = useRef(new Set<string>())
+  const hydratingArtifactIds = useRef(new Set<string>())
   const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return
+    }
+    const compactLayout = window.matchMedia('(max-width: 1279px)')
+    const closeCompactAssistantSidebar = (): void => {
+      if (compactLayout.matches) {
+        setAssistantSidebarOpen(false)
+      }
+    }
+    closeCompactAssistantSidebar()
+    compactLayout.addEventListener('change', closeCompactAssistantSidebar)
+    return () => {
+      compactLayout.removeEventListener(
+        'change',
+        closeCompactAssistantSidebar
+      )
+    }
+  }, [])
 
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeId),
@@ -430,6 +599,24 @@ function App(): React.JSX.Element {
       ),
     [enabledKnowledgeLibraryIds, knowledgeSnapshot.libraries]
   )
+  const pendingHeartbeatSuggestionCount = useMemo(() => {
+    const memoryIds = new Set(
+      heartbeatEntries.flatMap((entry) => entry.proposedMemoryIds)
+    )
+    const taskIds = new Set(
+      heartbeatEntries.flatMap((entry) => entry.followUpTaskIds)
+    )
+    return (
+      assistantMemories.filter(
+        (memory) =>
+          memoryIds.has(memory.id) && memory.status === 'proposed'
+      ).length +
+      assistantTasks.filter(
+        (task) =>
+          taskIds.has(task.id) && task.status !== 'completed'
+      ).length
+    )
+  }, [assistantMemories, assistantTasks, heartbeatEntries])
 
   const updateMessage = useCallback(
     (
@@ -457,14 +644,11 @@ function App(): React.JSX.Element {
   const recordActivity = useCallback(
     (record: Omit<ActivityRecord, 'id' | 'createdAt'>): void => {
       setActivityRecords((current) =>
-        [
-          {
-            ...record,
-            id: crypto.randomUUID(),
-            createdAt: Date.now()
-          },
-          ...current
-        ].slice(0, 500)
+        upsertActivityRecord(current, {
+          ...record,
+          id: crypto.randomUUID(),
+          createdAt: Date.now()
+        })
       )
     },
     []
@@ -512,6 +696,55 @@ function App(): React.JSX.Element {
     []
   )
 
+  const switchRuntime = useCallback(
+    async (
+      provider: RuntimeSettingsInput['provider'],
+      profileId?: string
+    ): Promise<void> => {
+      if (!runtimeSettings || runtimeSwitching) {
+        return
+      }
+      setRuntimeSwitching(true)
+      setRuntimeMenuOpen(false)
+      try {
+        const saved = await window.goodbuddy.settings.updateRuntime(
+          createRuntimeSwitchInput(
+            runtimeSettings,
+            provider,
+            profileId
+          )
+        )
+        setRuntimeSettings(saved)
+        setRuntime(await window.goodbuddy.agent.getStatus())
+        setNotice(
+          provider === 'model'
+            ? `已切换到 ${
+                saved.modelProfiles.find(
+                  (profile) =>
+                    profile.id === saved.defaultModelProfileId
+                )?.name ?? saved.modelName
+              }`
+            : provider === 'auto'
+              ? '已切换到自动选择 Runtime'
+              : `已切换到 ${
+                  provider === 'opencode' ? 'OpenCode' : 'Continue'
+                }`
+        )
+      } catch (reason) {
+        setNotice(
+          reason instanceof Error ? reason.message : 'Runtime 切换失败'
+        )
+      } finally {
+        setRuntimeSwitching(false)
+      }
+    },
+    [runtimeSettings, runtimeSwitching]
+  )
+
+  const refreshTokenUsage = useCallback(async (): Promise<void> => {
+    setTokenUsage(await window.goodbuddy.usage.getTokenSummary())
+  }, [])
+
   const handleAgentEvent = useCallback(
     (event: AgentEvent): void => {
       const run = activeRuns.current.get(event.requestId)
@@ -530,9 +763,7 @@ function App(): React.JSX.Element {
                     : event.type === 'done'
                       ? 'completed'
                       : event.type === 'error'
-                        ? /取消/u.test(event.message)
-                          ? 'cancelled'
-                          : 'failed'
+                        ? event.status
                         : 'running',
                 completedAt:
                   event.type === 'done' || event.type === 'error'
@@ -545,9 +776,31 @@ function App(): React.JSX.Element {
         )
       )
       if (event.type === 'done') {
+        if (viewRef.current === 'activity') {
+          void refreshTokenUsage().catch(() =>
+            setNotice('Token 用量读取失败')
+          )
+        }
         void window.goodbuddy.artifacts
           .list()
-          .then(setAssistantArtifacts)
+          .then((artifacts) =>
+            setAssistantArtifacts((current) =>
+              mergeArtifacts(current, artifacts)
+            )
+          )
+      } else if (event.type === 'artifact') {
+        hydratingArtifactIds.current.add(event.artifactId)
+        void window.goodbuddy.artifacts
+          .get(event.artifactId)
+          .then((artifact) =>
+            setAssistantArtifacts((current) =>
+              mergeArtifacts(current, [artifact])
+            )
+          )
+          .catch(() => setNotice('生成图片读取失败'))
+          .finally(() => {
+            hydratingArtifactIds.current.delete(event.artifactId)
+          })
       }
 
       if (event.type === 'text') {
@@ -568,6 +821,7 @@ function App(): React.JSX.Element {
         recordActivity({
           conversationId: run.conversationId,
           requestId: event.requestId,
+          callId: event.callId.slice(0, 256),
           kind: 'tool',
           title: event.name,
           detail: event.summary.slice(0, 4_000),
@@ -582,8 +836,11 @@ function App(): React.JSX.Element {
         })
         updateMessage(run.conversationId, run.messageId, (message) => {
           const tools = [...(message.tools ?? [])]
-          const index = tools.findIndex((tool) => tool.name === event.name)
+          const index = tools.findIndex(
+            (tool) => tool.callId === event.callId.slice(0, 256)
+          )
           const tool = {
+            callId: event.callId.slice(0, 256),
             name: event.name,
             state: event.state,
             summary: event.summary
@@ -616,12 +873,45 @@ function App(): React.JSX.Element {
             allowPermanent: event.allowPermanent
           }
         }))
+      } else if (event.type === 'artifact') {
+        updateMessage(run.conversationId, run.messageId, (message) => ({
+          ...message,
+          artifactIds: [
+            ...new Set([...(message.artifactIds ?? []), event.artifactId])
+          ].slice(-8),
+          status: '图片已生成，正在保存结果'
+        }))
       } else {
+        const terminalStatus =
+          event.type === 'error'
+            ? event.status === 'cancelled'
+              ? 'cancelled'
+              : 'failed'
+            : 'completed'
         updateRequestActivity(
           event.requestId,
-          event.type === 'error' ? 'failed' : 'completed',
+          terminalStatus,
           event.type === 'error' ? event.message : '任务执行完成'
         )
+        if (event.type === 'error') {
+          setActivityRecords((current) =>
+            current.map((record) =>
+              record.requestId === event.requestId &&
+              record.kind !== 'request' &&
+              (record.status === 'pending' ||
+                record.status === 'running')
+                ? {
+                    ...record,
+                    status: terminalStatus,
+                    detail: `${record.detail}\n${event.message}`.slice(
+                      0,
+                      4_000
+                    )
+                  }
+                : record
+            )
+          )
+        }
         recordActivity({
           conversationId: run.conversationId,
           requestId: event.requestId,
@@ -631,13 +921,27 @@ function App(): React.JSX.Element {
             event.type === 'error'
               ? event.message.slice(0, 4_000)
               : 'Agent Runtime 已完成响应',
-          status: event.type === 'error' ? 'failed' : 'completed'
+          status: terminalStatus
         })
         updateMessage(run.conversationId, run.messageId, (message) => ({
           ...message,
           state: event.type === 'error' ? 'error' : 'complete',
           status: event.type === 'error' ? event.message : undefined,
           approval: undefined,
+          tools:
+            event.type === 'error'
+              ? message.tools?.map((tool) =>
+                  tool.state === 'pending' || tool.state === 'running'
+                    ? {
+                        ...tool,
+                        state:
+                          event.status === 'cancelled'
+                            ? ('cancelled' as const)
+                            : ('failed' as const)
+                      }
+                    : tool
+                )
+              : message.tools,
           content:
             event.type === 'error' && !message.content
               ? event.message
@@ -646,8 +950,21 @@ function App(): React.JSX.Element {
         activeRuns.current.delete(event.requestId)
       }
     },
-    [recordActivity, updateMessage, updateRequestActivity]
+    [
+      recordActivity,
+      refreshTokenUsage,
+      updateMessage,
+      updateRequestActivity
+    ]
   )
+
+  useEffect(() => {
+    activeProjectIdRef.current = activeProjectId
+  }, [activeProjectId])
+
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
 
   useEffect(() => {
     if (!conversationStoreReady) {
@@ -768,19 +1085,231 @@ function App(): React.JSX.Element {
       .catch(() => setNotice('定时任务读取失败'))
   }, [activeProjectId])
 
+  const loadHeartbeats = useCallback(async () => {
+    const allConfigs = await window.goodbuddy.heartbeats.list()
+    const configs = allConfigs.filter(
+      (config) =>
+        !config.projectId || config.projectId === activeProjectId
+    )
+    const histories = await Promise.all(
+      configs.map((config) =>
+        window.goodbuddy.heartbeats.history(config.id)
+      )
+    )
+    const runs = new Map(
+      histories
+        .flatMap((history) => history.runs)
+        .map((run) => [run.id, run])
+    )
+    const entries = new Map(
+      histories
+        .flatMap((history) => history.entries)
+        .map((entry) => [entry.id, entry])
+    )
+    return {
+      configs,
+      runs: [...runs.values()],
+      entries: [...entries.values()]
+    }
+  }, [activeProjectId])
+
+  const refreshHeartbeats = useCallback(async (): Promise<void> => {
+    const requestId = ++heartbeatLoadRequestRef.current
+    const result = await loadHeartbeats()
+    if (requestId !== heartbeatLoadRequestRef.current) {
+      return
+    }
+    setAssistantHeartbeats(result.configs)
+    setHeartbeatRuns(result.runs)
+    setHeartbeatEntries(result.entries)
+  }, [loadHeartbeats])
+
+  useEffect(() => {
+    const requestId = ++heartbeatLoadRequestRef.current
+    void loadHeartbeats()
+      .then((result) => {
+        if (requestId !== heartbeatLoadRequestRef.current) {
+          return
+        }
+        setAssistantHeartbeats(result.configs)
+        setHeartbeatRuns(result.runs)
+        setHeartbeatEntries(result.entries)
+      })
+      .catch(() => setNotice('智能心跳读取失败'))
+    return () => {
+      if (requestId === heartbeatLoadRequestRef.current) {
+        heartbeatLoadRequestRef.current += 1
+      }
+    }
+  }, [loadHeartbeats])
+
+  const refreshHeartbeatCenter = useCallback(async (): Promise<void> => {
+    const projectId = activeProjectId
+    const [memories, tasks, artifacts] = await Promise.all([
+      window.goodbuddy.memory.list(projectId || undefined),
+      window.goodbuddy.tasks.list(),
+      window.goodbuddy.artifacts.list(projectId || undefined),
+      refreshHeartbeats()
+    ])
+    if (activeProjectIdRef.current !== projectId) {
+      return
+    }
+    setAssistantMemories(memories)
+    setAssistantTasks(tasks)
+    setAssistantArtifacts((current) =>
+      mergeArtifacts(current, artifacts)
+    )
+  }, [activeProjectId, refreshHeartbeats])
+
+  const createHeartbeat = useCallback(
+    async (input: HeartbeatCreateInput): Promise<void> => {
+      const projectId = activeProjectId
+      await window.goodbuddy.heartbeats.create({
+        ...input,
+        projectId: projectId || undefined
+      })
+      if (activeProjectIdRef.current === projectId) {
+        await refreshHeartbeats()
+      }
+    },
+    [activeProjectId, refreshHeartbeats]
+  )
+
+  const removeHeartbeat = useCallback(
+    async (heartbeatId: string): Promise<void> => {
+      const projectId = activeProjectId
+      await window.goodbuddy.heartbeats.remove(heartbeatId)
+      if (activeProjectIdRef.current === projectId) {
+        await refreshHeartbeats()
+      }
+    },
+    [activeProjectId, refreshHeartbeats]
+  )
+
+  const runHeartbeat = useCallback(
+    async (heartbeatId: string): Promise<void> => {
+      const projectId = activeProjectId
+      await window.goodbuddy.heartbeats.runNow(heartbeatId)
+      if (activeProjectIdRef.current !== projectId) {
+        return
+      }
+      await refreshHeartbeatCenter()
+    },
+    [activeProjectId, refreshHeartbeatCenter]
+  )
+
+  const setHeartbeatPaused = useCallback(
+    async (heartbeatId: string, paused: boolean): Promise<void> => {
+      const projectId = activeProjectId
+      await window.goodbuddy.heartbeats.setPaused(heartbeatId, paused)
+      if (activeProjectIdRef.current === projectId) {
+        await refreshHeartbeats()
+      }
+    },
+    [activeProjectId, refreshHeartbeats]
+  )
+
+  useEffect(() => {
+    if (view !== 'heartbeat') {
+      return
+    }
+    let refreshing = false
+    const refresh = (): void => {
+      if (refreshing) {
+        return
+      }
+      refreshing = true
+      void refreshHeartbeatCenter()
+        .catch(() => setNotice('智能心跳刷新失败'))
+        .finally(() => {
+          refreshing = false
+        })
+    }
+    const timeout = setTimeout(refresh, 0)
+    const interval = setInterval(refresh, 30_000)
+    return () => {
+      clearTimeout(timeout)
+      clearInterval(interval)
+    }
+  }, [refreshHeartbeatCenter, view])
+
   useEffect(() => {
     void window.goodbuddy.tasks
       .list()
-      .then(setAssistantTasks)
+      .then((tasks) => {
+        setAssistantTasks(tasks)
+        setActivityRecords((current) =>
+          reconcileActivityRecords(
+            current,
+            tasks,
+            new Set(activeRuns.current.keys())
+          )
+        )
+      })
       .catch(() => setNotice('历史任务读取失败'))
   }, [])
 
   useEffect(() => {
+    if (view !== 'activity') {
+      return
+    }
+    const timeout = setTimeout(() => {
+      void refreshTokenUsage().catch(() =>
+        setNotice('Token 用量读取失败')
+      )
+    }, 0)
+    return () => clearTimeout(timeout)
+  }, [refreshTokenUsage, view])
+
+  useEffect(() => {
     void window.goodbuddy.artifacts
       .list()
-      .then(setAssistantArtifacts)
+      .then((artifacts) =>
+        setAssistantArtifacts((current) =>
+          mergeArtifacts(current, artifacts)
+        )
+      )
       .catch(() => setNotice('历史成果读取失败'))
   }, [])
+
+  useEffect(() => {
+    const missingIds = [
+      ...new Set(
+        (activeConversation?.messages ?? []).flatMap(
+          (message) => message.artifactIds ?? []
+        )
+      )
+    ]
+      .filter(
+        (artifactId) =>
+          !assistantArtifactById.get(artifactId)?.content &&
+          !hydratingArtifactIds.current.has(artifactId)
+      )
+      .slice(-32)
+    if (missingIds.length === 0) {
+      return
+    }
+    for (const artifactId of missingIds) {
+      hydratingArtifactIds.current.add(artifactId)
+    }
+    void Promise.allSettled(
+      missingIds.map((artifactId) =>
+        window.goodbuddy.artifacts.get(artifactId)
+      )
+    ).then((results) => {
+      const artifacts = results.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value] : []
+      )
+      if (artifacts.length > 0) {
+        setAssistantArtifacts((current) =>
+          mergeArtifacts(current, artifacts)
+        )
+      }
+      for (const artifactId of missingIds) {
+        hydratingArtifactIds.current.delete(artifactId)
+      }
+    })
+  }, [activeConversation, assistantArtifactById])
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -811,6 +1340,10 @@ function App(): React.JSX.Element {
             : 'Agent Runtime 状态读取失败'
         )
       })
+    void window.goodbuddy.settings
+      .getRuntime()
+      .then(setRuntimeSettings)
+      .catch(() => setNotice('Runtime 设置读取失败'))
     void window.goodbuddy.app
       .getInfo()
       .then(setAppInfo)
@@ -820,7 +1353,7 @@ function App(): React.JSX.Element {
     const removeNewConversationListener =
       window.goodbuddy.app.onNewConversation(() => {
         const conversation = createConversation(
-          activeProjectId || undefined
+          activeProjectIdRef.current || undefined
         )
         setConversations((current) => [conversation, ...current])
         setActiveId(conversation.id)
@@ -839,7 +1372,7 @@ function App(): React.JSX.Element {
       removeNewConversationListener()
       removeOpenSettingsListener()
     }
-  }, [activeProjectId, handleAgentEvent])
+  }, [handleAgentEvent])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -906,6 +1439,52 @@ function App(): React.JSX.Element {
     }
     setAttachments([])
     inputRef.current?.focus()
+  }
+
+  const setMemoryStatus = async (
+    memoryId: string,
+    status: AssistantMemory['status']
+  ): Promise<void> => {
+    await window.goodbuddy.memory.setStatus(memoryId, status)
+    setAssistantMemories((current) =>
+      status === 'rejected'
+        ? current.filter((memory) => memory.id !== memoryId)
+        : current.map((memory) =>
+            memory.id === memoryId ? { ...memory, status } : memory
+          )
+    )
+  }
+
+  const useHeartbeatTask = (task: AssistantTask): void => {
+    newConversation()
+    setWorkMode('plan')
+    setInput(
+      [
+        '请根据以下智能心跳建议制定可执行方案：',
+        task.title,
+        task.instructions
+      ].join('\n\n')
+    )
+    setNotice(`已将“${task.title}”带入对话，请确认后发送`)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  const setHeartbeatTaskStatus = async (
+    taskId: string,
+    status: 'completed' | 'cancelled'
+  ): Promise<void> => {
+    await window.goodbuddy.tasks.setStatus(taskId, status)
+    setAssistantTasks((current) =>
+      current.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              status,
+              completedAt: new Date().toISOString()
+            }
+          : task
+      )
+    )
   }
 
   const deleteConversation = (conversationId: string): void => {
@@ -1017,13 +1596,17 @@ function App(): React.JSX.Element {
     const attachmentSnapshot = attachments
     const historySnapshot = activeConversation.messages
     const projectIdSnapshot = activeProjectId || undefined
-    const selectedExpertSnapshot = selectedExpertId
-    const workModeSnapshot = workMode
+    const selectedExpertSnapshot =
+      runtime.capability === 'image-generation' ? '' : selectedExpertId
+    const workModeSnapshot = effectiveWorkMode
     preparingConversations.current.add(conversationId)
     setInput('')
     setAttachments([])
     let knowledgeResults: KnowledgeSearchReference[] = []
-    if (enabledKnowledgeLibraryIds.length > 0) {
+    if (
+      runtime.capability !== 'image-generation' &&
+      enabledKnowledgeLibraryIds.length > 0
+    ) {
       try {
         knowledgeResults = await window.goodbuddy.knowledge.search(
           enabledKnowledgeLibraryIds,
@@ -1036,7 +1619,10 @@ function App(): React.JSX.Element {
       }
     }
     const knowledgeContext = buildKnowledgeContext(knowledgeResults)
-    const memoryContext = buildMemoryContext(assistantMemories)
+    const memoryContext =
+      runtime.capability === 'image-generation'
+        ? ''
+        : buildMemoryContext(assistantMemories)
     const supplementalContext = [memoryContext, knowledgeContext]
       .filter(Boolean)
       .join('\n\n')
@@ -1064,7 +1650,8 @@ function App(): React.JSX.Element {
           `${result.libraryName} / ${result.documentName}${
             result.locator ? ` (${result.locator})` : ''
           }`
-      )
+      ),
+      sourceReferences: knowledgeResults
     }
 
     activeRuns.current.set(requestId, {
@@ -1155,6 +1742,7 @@ function App(): React.JSX.Element {
       handleAgentEvent({
         requestId,
         type: 'error',
+        status: 'failed',
         message: error instanceof Error ? error.message : '发送失败'
       })
     }
@@ -1354,10 +1942,19 @@ function App(): React.JSX.Element {
     for (const library of knowledgeSnapshot.libraries) {
       await window.goodbuddy.knowledge.deleteLibrary(library.id)
     }
+    await window.goodbuddy.app.clearLocalData()
     const conversation = createConversation(activeProjectId || undefined)
     setConversations([conversation])
     setActiveId(conversation.id)
     setActivityRecords([])
+    setAssistantTasks([])
+    setTokenUsage(emptyTokenUsage)
+    setAssistantArtifacts([])
+    setAssistantMemories([])
+    setAssistantSchedules([])
+    setAssistantHeartbeats([])
+    setHeartbeatEntries([])
+    setHeartbeatRuns([])
     setKnowledgeSnapshot({
       libraries: [],
       sources: [],
@@ -1370,7 +1967,7 @@ function App(): React.JSX.Element {
     setAttachments([])
     setInput('')
     setView('chat')
-    setNotice('本地对话、活动记录和知识库索引已清除')
+    setNotice('本地对话、任务、记忆、心跳、自动化和知识库索引已清除')
   }
 
   const isRunning =
@@ -1399,9 +1996,7 @@ function App(): React.JSX.Element {
           onSelectRoot={() =>
             window.goodbuddy.settings.selectWorkspace()
           }
-          onWorkModeChange={setWorkMode}
           projects={projects}
-          workMode={workMode}
         />
 
         <button className="new-chat" type="button" onClick={newConversation}>
@@ -1442,6 +2037,26 @@ function App(): React.JSX.Element {
           >
             <Library size={17} />
             <span>知识库</span>
+          </button>
+          <button
+            className={
+              view === 'heartbeat'
+                ? 'nav-item nav-item--active'
+                : 'nav-item'
+            }
+            onClick={() => setView('heartbeat')}
+            type="button"
+          >
+            <HeartPulse size={17} />
+            <span>智能心跳</span>
+            {pendingHeartbeatSuggestionCount > 0 && (
+              <span
+                aria-label={`${pendingHeartbeatSuggestionCount} 条待处理建议`}
+                className="nav-item__badge"
+              >
+                {pendingHeartbeatSuggestionCount}
+              </span>
+            )}
           </button>
           <button
             className={
@@ -1556,6 +2171,8 @@ function App(): React.JSX.Element {
               <span>
                 {view === 'knowledge'
                   ? '本地知识库'
+                  : view === 'heartbeat'
+                    ? '智能心跳'
                   : view === 'activity'
                     ? '任务与活动'
                     : view === 'settings'
@@ -1586,10 +2203,13 @@ function App(): React.JSX.Element {
                 </button>
               </>
             )}
-            {view !== 'settings' && (
+            {view !== 'settings' &&
+              view !== 'heartbeat' &&
+              view !== 'knowledge' && (
               <select
                 aria-label="专家角色"
                 className="topbar__expert"
+                disabled={runtime?.capability === 'image-generation'}
                 onChange={(event) =>
                   setSelectedExpertId(event.target.value)
                 }
@@ -1614,8 +2234,13 @@ function App(): React.JSX.Element {
             >
               <span className="runtime-status__dot" />
               {runtime?.label ?? '正在检测运行时'}
+              {runtime?.capability === 'image-generation' && (
+                <span className="runtime-capability-badge">生图</span>
+              )}
             </span>
-            {view !== 'settings' && (
+            {view !== 'settings' &&
+              view !== 'heartbeat' &&
+              view !== 'knowledge' && (
               <button
                 aria-label="切换助手工作栏"
                 aria-pressed={assistantSidebarOpen}
@@ -1714,25 +2339,37 @@ function App(): React.JSX.Element {
                     <span>{formatTime(message.createdAt)}</span>
                   </div>
                   {message.content && (
-                    <div className="message__content">
-                      <ReactMarkdown
-                        components={{
-                          a: ({ children, ...properties }) => (
-                            <a
-                              {...properties}
-                              rel="noreferrer"
-                              target="_blank"
-                            >
-                              {children}
-                            </a>
-                          )
-                        }}
-                        remarkPlugins={[remarkGfm]}
-                      >
+                    <div className="markdown-content message__content">
+                      <MarkdownRenderer>
                         {message.content}
-                      </ReactMarkdown>
+                      </MarkdownRenderer>
                     </div>
                   )}
+                  {message.artifactIds?.map((artifactId) => {
+                    const candidate =
+                      assistantArtifactById.get(artifactId)
+                    const artifact =
+                      candidate?.kind === 'image' &&
+                      candidate.content &&
+                      /^data:image\/(?:png|jpeg|webp);base64,/u.test(
+                        candidate.content
+                      )
+                        ? candidate
+                        : undefined
+                    return artifact?.content ? (
+                      <figure
+                        className="message-generated-image"
+                        key={artifact.id}
+                      >
+                        <img
+                          alt={artifact.title}
+                          loading="lazy"
+                          src={artifact.content}
+                        />
+                        <figcaption>{artifact.title}</figcaption>
+                      </figure>
+                    ) : null
+                  })}
                   {message.sources && message.sources.length > 0 && (
                     <div className="message-sources">
                       <Library size={14} />
@@ -1741,11 +2378,54 @@ function App(): React.JSX.Element {
                       </span>
                     </div>
                   )}
+                  {message.sourceReferences &&
+                    message.sourceReferences.length > 0 && (
+                      <details className="message-citations">
+                        <summary>
+                          查看 {message.sourceReferences.length} 条证据引用
+                        </summary>
+                        <ol>
+                          {message.sourceReferences.map(
+                            (reference, referenceIndex) => (
+                              <li
+                                key={`${reference.documentId}:${reference.locator ?? referenceIndex}`}
+                              >
+                                <strong>
+                                  [{referenceIndex + 1}]{' '}
+                                  {reference.documentName}
+                                </strong>
+                                {reference.locator && (
+                                  <small>{reference.locator}</small>
+                                )}
+                                <p>{reference.snippet}</p>
+                                {reference.retrievalChannels && (
+                                  <small>
+                                    检索：
+                                    {reference.retrievalChannels
+                                      .map((channel) =>
+                                        channel === 'fts'
+                                          ? '全文'
+                                          : channel === 'vector'
+                                            ? '向量'
+                                            : '图谱'
+                                      )
+                                      .join(' + ')}
+                                  </small>
+                                )}
+                              </li>
+                            )
+                          )}
+                        </ol>
+                      </details>
+                    )}
                   {message.tools?.map((tool) => (
-                    <div className="tool-activity" key={tool.name}>
+                    <div
+                      className="tool-activity"
+                      key={tool.callId ?? tool.name}
+                    >
                       <TerminalSquare size={15} />
                       <span>{tool.summary}</span>
-                      <small>{tool.state}</small>
+                      <small>{toolStateLabels[tool.state]}</small>
                     </div>
                   ))}
                   {message.approval && (
@@ -1898,7 +2578,11 @@ function App(): React.JSX.Element {
             )}
             <textarea
               aria-label="向 GoodBuddy 提问"
-              placeholder="给 GoodBuddy 发消息…"
+              placeholder={
+                runtime?.capability === 'image-generation'
+                  ? '描述你想生成的图片…'
+                  : '给 GoodBuddy 发消息…'
+              }
               ref={inputRef}
               rows={1}
               value={input}
@@ -2013,15 +2697,139 @@ function App(): React.JSX.Element {
                   </div>
                 )}
                 <span className="divider" />
-                <button
-                  className="model-button"
-                  onClick={() => setView('settings')}
-                  type="button"
+                <label
+                  className={`composer__mode composer__mode--${effectiveWorkMode}`}
                 >
-                  <Sparkles size={15} />
-                  {runtime?.label ?? 'Runtime'}
-                  <ChevronDown size={14} />
-                </button>
+                  <span>模式</span>
+                  <select
+                    aria-label="工作模式"
+                    onChange={(event) =>
+                      setWorkMode(event.target.value as WorkMode)
+                    }
+                    value={effectiveWorkMode}
+                  >
+                    {Object.entries(workModeLabels).map(
+                      ([value, label]) => (
+                        <option
+                          disabled={
+                            value === 'execute' &&
+                            !runtime?.supportsToolExecution
+                          }
+                          key={value}
+                          value={value}
+                        >
+                          {label}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+                <div className="runtime-picker">
+                  <button
+                    aria-expanded={runtimeMenuOpen}
+                    aria-haspopup="menu"
+                    className="model-button"
+                    disabled={isRunning || runtimeSwitching}
+                    onClick={() =>
+                      setRuntimeMenuOpen((current) => !current)
+                    }
+                    type="button"
+                  >
+                    <Sparkles size={15} />
+                    {runtimeSwitching
+                      ? '切换中…'
+                      : runtime?.label ?? 'Runtime'}
+                    {runtime?.capability === 'image-generation' && (
+                      <span className="runtime-capability-badge">
+                        生图
+                      </span>
+                    )}
+                    <ChevronDown size={14} />
+                  </button>
+                  {runtimeMenuOpen && (
+                    <div
+                      aria-label="Runtime 和模型"
+                      className="runtime-picker__menu"
+                      role="menu"
+                    >
+                      <strong>切换 Runtime</strong>
+                      <button
+                        aria-checked={
+                          runtimeSettings?.provider === 'auto'
+                        }
+                        onClick={() => void switchRuntime('auto')}
+                        role="menuitemradio"
+                        type="button"
+                      >
+                        <span>自动选择</span>
+                        <small>按当前配置选择可用 Runtime</small>
+                      </button>
+                      <div className="runtime-picker__divider" />
+                      <strong>直连模型</strong>
+                      {runtimeSettings?.modelProfiles.map((profile) => (
+                        <button
+                          aria-checked={
+                            runtimeSettings.provider === 'model' &&
+                            runtimeSettings.defaultModelProfileId ===
+                              profile.id
+                          }
+                          key={profile.id}
+                          onClick={() =>
+                            void switchRuntime('model', profile.id)
+                          }
+                          role="menuitemradio"
+                          type="button"
+                        >
+                          <span>
+                            {profile.name}
+                            {profile.protocol ===
+                              'openai-images-generations' && (
+                              <span className="runtime-capability-badge">
+                                生图
+                              </span>
+                            )}
+                          </span>
+                          <small>{profile.modelName}</small>
+                        </button>
+                      ))}
+                      <div className="runtime-picker__divider" />
+                      <strong>Agent Runtime</strong>
+                      {(['opencode', 'continue'] as const).map(
+                        (provider) => (
+                          <button
+                            aria-checked={
+                              runtimeSettings?.provider === provider
+                            }
+                            key={provider}
+                            onClick={() =>
+                              void switchRuntime(provider)
+                            }
+                            role="menuitemradio"
+                            type="button"
+                          >
+                            <span>
+                              {provider === 'opencode'
+                                ? 'OpenCode'
+                                : 'Continue'}
+                            </span>
+                            <small>本机 Agent Runtime</small>
+                          </button>
+                        )
+                      )}
+                      <div className="runtime-picker__divider" />
+                      <button
+                        onClick={() => {
+                          setRuntimeMenuOpen(false)
+                          setView('settings')
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <span>管理 Runtime 和模型连接</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
               {isRunning ? (
                 <button
@@ -2050,13 +2858,19 @@ function App(): React.JSX.Element {
               contextError ??
               (!runtime?.available
                 ? '请先配置可用的模型或 Agent Runtime。'
-                : 'AI 可能会犯错。工具执行前请检查参数和权限。')}
+                : runtime.capability === 'image-generation'
+                  ? '图像生成模型：输入画面描述后，生成结果会直接显示并保存到成果。'
+                  : effectiveWorkMode === 'ask'
+                  ? 'Ask 模式：只读问答，不会调用工具或修改文件。'
+                  : effectiveWorkMode === 'plan'
+                    ? 'Plan 模式：只读制定计划，不会调用工具或修改文件。'
+                    : 'Execute 模式：可执行工具，调用前请检查参数和权限。')}
             {appInfo?.shortcut && ` 快捷唤起：${appInfo.shortcut}`}
           </p>
             </footer>
           </>
         ) : view === 'knowledge' ? (
-          <div className="workspace-panel-scroll">
+          <div className="workspace-panel-scroll workspace-panel-scroll--knowledge">
             <KnowledgeWorkspace
               documents={knowledgeSnapshot.documents}
               evidence={knowledgeSnapshot.evidence}
@@ -2203,13 +3017,37 @@ function App(): React.JSX.Element {
               sources={knowledgeSnapshot.sources}
             />
           </div>
+        ) : view === 'heartbeat' ? (
+          <div className="workspace-panel-scroll">
+            <HeartbeatCenter
+              configs={assistantHeartbeats}
+              entries={heartbeatEntries}
+              memories={assistantMemories}
+              onCreate={createHeartbeat}
+              onRefresh={refreshHeartbeatCenter}
+              onRemove={removeHeartbeat}
+              onRunNow={runHeartbeat}
+              onSetMemoryStatus={setMemoryStatus}
+              onSetPaused={setHeartbeatPaused}
+              onSetTaskStatus={setHeartbeatTaskStatus}
+              onUseFollowUpTask={useHeartbeatTask}
+              runs={heartbeatRuns}
+              tasks={assistantTasks}
+            />
+          </div>
         ) : view === 'settings' ? (
           <SettingsPanel
+            heartbeats={assistantHeartbeats}
             onClearLocalData={clearLocalData}
             onClose={() => setView('chat')}
-            onSaved={() => {
+            onCreateHeartbeat={createHeartbeat}
+            onRemoveHeartbeat={removeHeartbeat}
+            onRunHeartbeat={runHeartbeat}
+            onSaved={(settings) => {
+              setRuntimeSettings(settings)
               void window.goodbuddy.agent.getStatus().then(setRuntime)
             }}
+            onSetHeartbeatPaused={setHeartbeatPaused}
             open
             presentation="page"
           />
@@ -2219,6 +3057,7 @@ function App(): React.JSX.Element {
               onClear={() => setActivityRecords([])}
               onOpenConversation={openActivityConversation}
               records={activityRecords}
+              tokenUsage={tokenUsage}
             />
           </div>
         )}
@@ -2229,8 +3068,11 @@ function App(): React.JSX.Element {
         artifacts={sidebarArtifacts}
         attachments={attachments}
         enabledLibraries={enabledSidebarLibraries}
+        heartbeatEntries={heartbeatEntries}
+        heartbeats={assistantHeartbeats}
         memories={assistantMemories}
         onClose={() => setAssistantSidebarOpen(false)}
+        onOpenHeartbeat={() => setView('heartbeat')}
         onCreateMemory={async (content) => {
           const memory = await window.goodbuddy.memory.create({
             scope: activeProjectId ? 'project' : 'global',
@@ -2240,6 +3082,7 @@ function App(): React.JSX.Element {
           })
           setAssistantMemories((current) => [memory, ...current])
         }}
+        onCreateHeartbeat={createHeartbeat}
         onCreateSchedule={async (input) => {
           const schedule = await window.goodbuddy.schedules.create({
             ...input,
@@ -2260,6 +3103,17 @@ function App(): React.JSX.Element {
             setAssistantSidebarTab('artifacts')
           }
         }}
+        onLoadArtifact={async (artifactId) => {
+          if (assistantArtifactById.get(artifactId)?.content) {
+            return
+          }
+          const artifact = await window.goodbuddy.artifacts.get(
+            artifactId
+          )
+          setAssistantArtifacts((current) =>
+            mergeArtifacts(current, [artifact])
+          )
+        }}
         onRemoveAttachment={removeAttachment}
         onRemoveMemory={async (memoryId) => {
           await window.goodbuddy.memory.remove(memoryId)
@@ -2267,6 +3121,8 @@ function App(): React.JSX.Element {
             current.filter((memory) => memory.id !== memoryId)
           )
         }}
+        onSetMemoryStatus={setMemoryStatus}
+        onRemoveHeartbeat={removeHeartbeat}
         onRemoveSchedule={async (scheduleId) => {
           await window.goodbuddy.schedules.remove(scheduleId)
           setAssistantSchedules((current) =>
@@ -2277,6 +3133,8 @@ function App(): React.JSX.Element {
           await window.goodbuddy.schedules.runNow(scheduleId)
           setNotice('定时任务已开始执行')
         }}
+        onRunHeartbeat={runHeartbeat}
+        onSetHeartbeatPaused={setHeartbeatPaused}
         onRefreshChanges={refreshWorkspaceChanges}
         onRespondApproval={(approval, decision) => {
           void respondToApproval(
@@ -2287,7 +3145,12 @@ function App(): React.JSX.Element {
           )
         }}
         onTabChange={setAssistantSidebarTab}
-        open={assistantSidebarOpen && view !== 'settings'}
+        open={
+          assistantSidebarOpen &&
+          view !== 'settings' &&
+          view !== 'heartbeat' &&
+          view !== 'knowledge'
+        }
         schedules={assistantSchedules}
         tab={assistantSidebarTab}
         tasks={assistantTasks}

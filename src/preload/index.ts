@@ -25,13 +25,19 @@ import type {
   AssistantArtifact,
   AssistantMemory,
   AssistantSchedule,
+  AssistantHeartbeatConfig,
+  AssistantHeartbeatEntry,
+  AssistantHeartbeatRun,
   AssistantExpert,
   AssistantTask,
+  TokenUsageSummary,
   ConversationSnapshot,
   WorkspaceChanges,
   ProjectCreateInput,
   MemoryCreateInput,
   ScheduleCreateInput,
+  HeartbeatCreateInput,
+  HeartbeatUpdateInput,
   ExpertCreateInput
 } from '../shared/assistant-contracts'
 
@@ -43,6 +49,9 @@ const desktopApi: DesktopApi = {
     },
     hide: async () => {
       await ipcRenderer.invoke(ipcChannels.appHide)
+    },
+    clearLocalData: async () => {
+      await ipcRenderer.invoke(ipcChannels.appClearLocalData)
     },
     onNewConversation: (listener) => {
       const handler = (): void => listener()
@@ -154,7 +163,22 @@ const desktopApi: DesktopApi = {
   },
   tasks: {
     list: () =>
-      ipcRenderer.invoke(ipcChannels.tasksList) as Promise<AssistantTask[]>
+      ipcRenderer.invoke(ipcChannels.tasksList) as Promise<AssistantTask[]>,
+    setStatus: async (
+      taskId: string,
+      status: 'completed' | 'cancelled'
+    ) => {
+      await ipcRenderer.invoke(ipcChannels.tasksSetStatus, {
+        taskId,
+        status
+      })
+    }
+  },
+  usage: {
+    getTokenSummary: () =>
+      ipcRenderer.invoke(
+        ipcChannels.tokenUsageSummary
+      ) as Promise<TokenUsageSummary>
   },
   artifacts: {
     list: (projectId?: string) =>
@@ -162,6 +186,11 @@ const desktopApi: DesktopApi = {
         ipcChannels.artifactsList,
         projectId
       ) as Promise<AssistantArtifact[]>,
+    get: (artifactId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.artifactsGet,
+        artifactId
+      ) as Promise<AssistantArtifact>,
     importFiles: (projectId?: string) =>
       ipcRenderer.invoke(
         ipcChannels.artifactsImportFiles,
@@ -215,6 +244,46 @@ const desktopApi: DesktopApi = {
     runNow: async (scheduleId: string) => {
       await ipcRenderer.invoke(ipcChannels.schedulesRunNow, scheduleId)
     }
+  },
+  heartbeats: {
+    list: (projectId?: string) =>
+      ipcRenderer.invoke(ipcChannels.heartbeatsList, {
+        projectId
+      }) as Promise<AssistantHeartbeatConfig[]>,
+    create: (input: HeartbeatCreateInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.heartbeatsCreate,
+        input
+      ) as Promise<AssistantHeartbeatConfig>,
+    update: (heartbeatId: string, input: HeartbeatUpdateInput) =>
+      ipcRenderer.invoke(ipcChannels.heartbeatsUpdate, {
+        id: heartbeatId,
+        config: input
+      }) as Promise<AssistantHeartbeatConfig>,
+    setPaused: async (heartbeatId: string, paused: boolean) => {
+      await ipcRenderer.invoke(ipcChannels.heartbeatsSetPaused, {
+        id: heartbeatId,
+        paused
+      })
+    },
+    remove: async (heartbeatId: string) => {
+      await ipcRenderer.invoke(ipcChannels.heartbeatsRemove, {
+        id: heartbeatId
+      })
+    },
+    runNow: (heartbeatId: string) =>
+      ipcRenderer.invoke(ipcChannels.heartbeatsRunNow, {
+        id: heartbeatId,
+        idempotencyKey: crypto.randomUUID()
+      }) as Promise<AssistantHeartbeatRun>,
+    history: (heartbeatId?: string) =>
+      ipcRenderer.invoke(ipcChannels.heartbeatsHistory, {
+        configId: heartbeatId,
+        limit: 200
+      }) as Promise<{
+        runs: AssistantHeartbeatRun[]
+        entries: AssistantHeartbeatEntry[]
+      }>
   },
   experts: {
     list: () =>

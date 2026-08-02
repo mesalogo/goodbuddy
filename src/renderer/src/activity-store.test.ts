@@ -4,7 +4,9 @@ import {
   MAX_ACTIVITY_DETAIL_LENGTH,
   MAX_ACTIVITY_RECORDS,
   loadActivityRecords,
+  reconcileActivityRecords,
   saveActivityRecords,
+  upsertActivityRecord,
   type ActivityRecord
 } from './activity-store'
 
@@ -76,5 +78,57 @@ describe('activity-store', () => {
     expect(saveActivityRecords([makeRecord(1)], rejectingStorage)).toBe(
       false
     )
+  })
+
+  it('upserts transitions for one call while preserving distinct calls', () => {
+    const first = {
+      ...makeRecord(1),
+      callId: 'call-1',
+      status: 'running' as const
+    }
+    const updated = upsertActivityRecord([first], {
+      ...makeRecord(2),
+      callId: 'call-1',
+      status: 'failed'
+    })
+    const withSecondCall = upsertActivityRecord(updated, {
+      ...makeRecord(3),
+      callId: 'call-2',
+      status: 'completed'
+    })
+
+    expect(withSecondCall).toHaveLength(2)
+    expect(withSecondCall.find((record) => record.callId === 'call-1'))
+      .toMatchObject({
+        id: first.id,
+        createdAt: first.createdAt,
+        status: 'failed'
+      })
+  })
+
+  it('reconciles stale active records with durable task outcomes', () => {
+    const records: ActivityRecord[] = [
+      { ...makeRecord(1), status: 'running' },
+      {
+        ...makeRecord(2),
+        requestId: 'missing-task',
+        status: 'pending'
+      }
+    ]
+    const reconciled = reconcileActivityRecords(records, [
+      {
+        id: 'request-1',
+        title: 'task',
+        instructions: 'task',
+        origin: 'user',
+        status: 'cancelled',
+        createdAt: new Date(0).toISOString()
+      }
+    ])
+
+    expect(reconciled.map((record) => record.status)).toEqual([
+      'cancelled',
+      'interrupted'
+    ])
   })
 })

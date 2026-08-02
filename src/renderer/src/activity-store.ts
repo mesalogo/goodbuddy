@@ -1,3 +1,5 @@
+import type { AssistantTask } from '../../shared/assistant-contracts'
+
 export const ACTIVITY_STORAGE_KEY = 'goodbuddy.activity-records.v1'
 export const MAX_ACTIVITY_RECORDS = 500
 export const MAX_ACTIVITY_DETAIL_LENGTH = 4_000
@@ -17,13 +19,16 @@ const activityStatuses = [
   'running',
   'completed',
   'failed',
-  'denied'
+  'denied',
+  'cancelled',
+  'interrupted'
 ] as const
 
 export type ActivityRecord = {
   id: string
   conversationId: string
   requestId: string
+  callId?: string
   kind: (typeof activityKinds)[number]
   title: string
   detail: string
@@ -61,6 +66,8 @@ function isActivityRecord(value: unknown): value is ActivityRecord {
     isBoundedString(candidate.id, MAX_ID_LENGTH) &&
     isBoundedString(candidate.conversationId, MAX_ID_LENGTH) &&
     isBoundedString(candidate.requestId, MAX_ID_LENGTH) &&
+    (candidate.callId === undefined ||
+      isBoundedString(candidate.callId, MAX_ID_LENGTH)) &&
     activityKinds.some((kind) => kind === candidate.kind) &&
     isBoundedString(candidate.title, MAX_TITLE_LENGTH) &&
     isBoundedString(
@@ -73,6 +80,91 @@ function isActivityRecord(value: unknown): value is ActivityRecord {
     Number.isFinite(candidate.createdAt) &&
     candidate.createdAt >= 0
   )
+}
+
+export function upsertActivityRecord(
+  records: readonly ActivityRecord[],
+  incoming: ActivityRecord
+): ActivityRecord[] {
+  if (incoming.kind !== 'tool' || !incoming.callId) {
+    return [incoming, ...records].slice(0, MAX_ACTIVITY_RECORDS)
+  }
+
+  const existingIndex = records.findIndex(
+    (record) =>
+      record.kind === 'tool' &&
+      record.requestId === incoming.requestId &&
+      record.callId === incoming.callId
+  )
+  if (existingIndex < 0) {
+    return [incoming, ...records].slice(0, MAX_ACTIVITY_RECORDS)
+  }
+
+  const existing = records[existingIndex]!
+  return [
+    {
+      ...incoming,
+      id: existing.id,
+      createdAt: existing.createdAt
+    },
+    ...records.filter((_, index) => index !== existingIndex)
+  ].slice(0, MAX_ACTIVITY_RECORDS)
+}
+
+function taskTerminalStatus(
+  task: AssistantTask
+): ActivityRecord['status'] | undefined {
+  if (task.status === 'completed') {
+    return 'completed'
+  }
+  if (task.status === 'failed') {
+    return 'failed'
+  }
+  if (task.status === 'cancelled') {
+    return 'cancelled'
+  }
+  if (task.status === 'interrupted') {
+    return 'interrupted'
+  }
+  return undefined
+}
+
+export function reconcileActivityRecords(
+  records: readonly ActivityRecord[],
+  tasks: readonly AssistantTask[],
+  activeRequestIds: ReadonlySet<string> = new Set()
+): ActivityRecord[] {
+  const tasksById = new Map(tasks.map((task) => [task.id, task]))
+  return records.map((record) => {
+    if (
+      activeRequestIds.has(record.requestId) ||
+      (record.status !== 'pending' && record.status !== 'running')
+    ) {
+      return record
+    }
+    const task = tasksById.get(record.requestId)
+    const terminalStatus = task
+      ? taskTerminalStatus(task)
+      : 'interrupted'
+    if (!terminalStatus) {
+      return record
+    }
+    return {
+      ...record,
+      status:
+        terminalStatus === 'completed' &&
+        (record.kind === 'tool' || record.kind === 'approval')
+          ? 'interrupted'
+          : terminalStatus,
+      detail:
+        terminalStatus === 'interrupted'
+          ? `${record.detail}\n应用重启时此活动尚未结束。`.slice(
+              0,
+              MAX_ACTIVITY_DETAIL_LENGTH
+            )
+          : record.detail
+    }
+  })
 }
 
 /**

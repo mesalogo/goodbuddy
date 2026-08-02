@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentEvent } from '../../shared/contracts'
+import type { RuntimeEvent } from './runtime'
 
 const mocks = vi.hoisted(() => ({
   detectRuntimeBinary: vi.fn(),
@@ -31,8 +31,8 @@ function createRuntime(): ContinueAgentRuntime {
 
 async function collectEvents(
   runtime: ContinueAgentRuntime
-): Promise<AgentEvent[]> {
-  const events: AgentEvent[] = []
+): Promise<RuntimeEvent[]> {
+  const events: RuntimeEvent[] = []
   for await (const event of runtime.run(
     {
       requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
@@ -60,7 +60,9 @@ describe('ContinueAgentRuntime', () => {
       entryPath: 'C:\\safe\\continue-host\\dist\\cn.js',
       version: '1.5.47'
     })
-    mocks.runHost.mockResolvedValue('Continue response')
+    mocks.runHost.mockResolvedValue({
+      text: 'Continue response'
+    })
   })
 
   it('does not launch the CLI for an already-cancelled request', async () => {
@@ -88,6 +90,8 @@ describe('ContinueAgentRuntime', () => {
 
     expect(mocks.detectRuntimeBinary).toHaveBeenCalledWith({
       binaryPath: '',
+      bundledPath: undefined,
+      bundledValidation: 'canonical-file',
       binaryNames: ['cn'],
       label: 'Continue CLI'
     })
@@ -101,6 +105,42 @@ describe('ContinueAgentRuntime', () => {
       type: 'text',
       delta: 'Continue response'
     })
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'model-usage' })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('emits one request-scoped host usage event at the end', async () => {
+    mocks.runHost.mockResolvedValue({
+      text: 'Continue response',
+      usage: {
+        provider: 'openai',
+        model: 'qwen3',
+        inputTokens: 31,
+        outputTokens: 9,
+        cacheReadTokens: 13,
+        cacheWriteTokens: 4
+      }
+    })
+
+    const events = await collectEvents(createRuntime())
+
+    expect(events.filter((event) => event.type === 'model-usage')).toEqual([
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        type: 'model-usage',
+        callId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        runtime: 'continue',
+        provider: 'openai',
+        model: 'qwen3',
+        inputTokens: 31,
+        outputTokens: 9,
+        cacheReadTokens: 13,
+        cacheWriteTokens: 4
+      }
+    ])
+    expect(events.at(-2)).toMatchObject({ type: 'model-usage' })
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
@@ -187,6 +227,7 @@ describe('ContinueAgentRuntime', () => {
       id: 'continue',
       label: 'Continue CLI',
       available: false,
+      supportsToolExecution: true,
       detail: '未自动检测到 Continue CLI，请配置绝对二进制路径'
     })
     const stream = runtime.run(

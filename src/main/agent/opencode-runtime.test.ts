@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
-import type { createOpencodeClient } from '@opencode-ai/sdk'
+import type { createOpencodeClient } from '@opencode-ai/sdk/v2'
 import type spawn from 'cross-spawn'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -101,6 +101,126 @@ function dependencies(
   }
 }
 
+function permissionEvent(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 'event-1',
+    type: 'permission.asked',
+    properties: {
+      id: 'permission-1',
+      sessionID: 'session-1',
+      permission: 'bash',
+      patterns: ['npm test'],
+      metadata: { command: 'npm test' },
+      always: ['npm test'],
+      ...overrides
+    }
+  }
+}
+
+function runClient(events: Record<string, unknown>[]) {
+  const callOrder: string[] = []
+  const permissionReply = vi.fn().mockResolvedValue({
+    data: true,
+    error: undefined
+  })
+  const client = {
+    session: {
+      list: vi.fn().mockResolvedValue({ data: [], error: undefined }),
+      create: vi.fn().mockResolvedValue({
+        data: { id: 'session-1' },
+        error: undefined
+      }),
+      update: vi.fn().mockResolvedValue({
+        data: { id: 'session-1' },
+        error: undefined
+      }),
+      promptAsync: vi.fn().mockImplementation(async () => {
+        callOrder.push('prompt')
+        return { data: true, error: undefined }
+      }),
+      abort: vi.fn().mockResolvedValue({
+        data: true,
+        error: undefined
+      }),
+      delete: vi.fn().mockResolvedValue({
+        data: true,
+        error: undefined
+      })
+    },
+    event: {
+      subscribe: vi.fn().mockImplementation(async () => {
+        callOrder.push('subscribe')
+        return {
+          stream: (async function* () {
+            for (const event of events) {
+              yield event
+            }
+          })()
+        }
+      })
+    },
+    permission: {
+      reply: permissionReply
+    },
+    mcp: {
+      add: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+      disconnect: vi
+        .fn()
+        .mockResolvedValue({ data: true, error: undefined })
+    },
+    tool: {
+      ids: vi.fn().mockResolvedValue({
+        data: ['read', 'write', 'bash', 'task'],
+        error: undefined
+      })
+    }
+  } as unknown as ReturnType<typeof createOpencodeClient>
+  return {
+    client,
+    callOrder,
+    permissionReply,
+    session: client.session,
+    event: client.event,
+    tool: client.tool
+  }
+}
+
+function embeddedRuntime(
+  client: ReturnType<typeof createOpencodeClient>
+): OpenCodeRuntime {
+  const child = fakeChild()
+  const { deps } = dependencies(child, {
+    createClient: vi.fn(
+      () => client
+    ) as unknown as typeof createOpencodeClient
+  })
+  setTimeout(() => {
+    stdoutOf(child).write(
+      'opencode server listening on http://127.0.0.1:4010\n'
+    )
+  }, 0)
+  return new OpenCodeRuntime(options(), deps)
+}
+
+async function collectRun(runtime: OpenCodeRuntime, workMode: 'ask' | 'plan' | 'execute' = 'execute', authorize?: Parameters<OpenCodeRuntime['run']>[2]) {
+  const events = []
+  for await (const event of runtime.run(
+    {
+      requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+      conversationId: 'conversation-1',
+      prompt: 'test',
+      workMode
+    },
+    new AbortController().signal,
+    authorize
+  )) {
+    events.push(event)
+  }
+  return events
+}
+
 describe('OpenCodeRuntime embedded launcher', () => {
   it('uses the detected binary and passes an absolute config path only through env', async () => {
     const serverChild = fakeChild(314)
@@ -165,10 +285,50 @@ describe('OpenCodeRuntime embedded launcher', () => {
         })
       })
     )
-    expect(createClient).toHaveBeenCalledWith({
+    const clientOptions = (
+      createClient.mock.calls as unknown as Array<
+        [
+          {
+            baseUrl?: string
+            directory?: string
+            headers?: Record<string, string>
+          }
+        ]
+      >
+    )[0]?.[0] as
+      | {
+          baseUrl?: string
+          directory?: string
+          headers?: Record<string, string>
+        }
+      | undefined
+    expect(clientOptions).toMatchObject({
       baseUrl: 'http://127.0.0.1:43210',
-      directory: process.cwd()
+      directory: process.cwd(),
+      headers: {
+        Authorization: expect.stringMatching(/^Basic /u)
+      }
     })
+    const spawnOptions = (
+      spawnMock.mock.calls as unknown as Array<
+        [string, string[], { env?: NodeJS.ProcessEnv }]
+      >
+    )[0]?.[2] as
+      | { env?: NodeJS.ProcessEnv }
+      | undefined
+    expect(spawnOptions?.env?.OPENCODE_SERVER_USERNAME).toBe(
+      'goodbuddy'
+    )
+    expect(spawnOptions?.env?.OPENCODE_SERVER_PASSWORD).toBeTruthy()
+    expect(
+      Buffer.from(
+        clientOptions?.headers?.Authorization?.slice(6) ?? '',
+        'base64'
+      ).toString()
+    ).toBe(
+      `goodbuddy:${spawnOptions?.env?.OPENCODE_SERVER_PASSWORD}`
+    )
+    expect(runtime.requiresToolApproval).toBe(false)
 
     await runtime.dispose()
 
@@ -200,7 +360,9 @@ describe('OpenCodeRuntime embedded launcher', () => {
           name: '独立模型',
           baseUrl: 'https://model.example',
           modelName: 'private-model',
-          apiKey: 'private-key'
+          apiKey: 'private-key',
+          protocol: 'anthropic-messages',
+          authentication: 'api-key'
         }
       }),
       deps
@@ -261,9 +423,14 @@ describe('OpenCodeRuntime embedded launcher', () => {
       const spawnOptions = spawnMock.mock.calls[0]?.[2] as
         | { env?: NodeJS.ProcessEnv }
         | undefined
-      for (const name of isolatedNames) {
-        expect(spawnOptions?.env).not.toHaveProperty(name)
-      }
+      expect(spawnOptions?.env?.OPENCODE_CONFIG).toBeUndefined()
+      expect(spawnOptions?.env?.OPENCODE_CONFIG_CONTENT).toBeUndefined()
+      expect(spawnOptions?.env?.OPENCODE_SERVER_USERNAME).toBe(
+        'goodbuddy'
+      )
+      expect(
+        spawnOptions?.env?.OPENCODE_SERVER_PASSWORD
+      ).not.toBe('must-not-be-inherited')
       expect(spawnOptions?.env).toMatchObject({
         DO_NOT_TRACK: '1',
         OPENCODE_DISABLE_AUTOUPDATE: '1',
@@ -390,6 +557,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       baseUrl: 'http://127.0.0.1:4096',
       directory: process.cwd()
     })
+    expect(runtime.requiresToolApproval).toBe(true)
   })
 
   it('loads assigned Skills and MCP servers before prompting', async () => {
@@ -465,32 +633,585 @@ describe('OpenCodeRuntime embedded launcher', () => {
     }
 
     expect(mcpAdd).toHaveBeenCalledWith({
-      body: {
-        name: 'goodbuddy-d2ef774b-146c-4467-a909-6feb112a9c2c',
-        config: {
-          type: 'local',
-          command: ['node', 'server.js'],
-          enabled: true,
-          timeout: 10_000
-        }
+      name: 'goodbuddy-d2ef774b-146c-4467-a909-6feb112a9c2c',
+      config: {
+        type: 'local',
+        command: ['node', 'server.js'],
+        enabled: true,
+        timeout: 10_000
       },
-      query: { directory: process.cwd() }
+      directory: process.cwd()
     })
     expect(promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: {
-          system: '# 文档写作',
-          tools: {
-            read: false,
-            write: false,
-            'goodbuddy-mcp': false
-          },
-          parts: [{ type: 'text', text: 'test' }]
-        }
+        system: '# 文档写作',
+        tools: {
+          read: false,
+          write: false,
+          'goodbuddy-mcp': false
+        },
+        parts: [{ type: 'text', text: 'test' }]
+      }),
+      expect.objectContaining({
+        signal: expect.any(AbortSignal)
       })
     )
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
     expect(mcpDisconnect).toHaveBeenCalledOnce()
+  })
+})
+
+describe('OpenCodeRuntime embedded permission mediation', () => {
+  it('subscribes before prompting and replies once for a session approval', async () => {
+    const {
+      client,
+      callOrder,
+      permissionReply,
+      session
+    } = runClient([
+      permissionEvent({ sessionID: 'unrelated-session' }),
+      permissionEvent(),
+      permissionEvent(),
+      {
+        id: 'event-text',
+        type: 'message.part.delta',
+        properties: {
+          sessionID: 'session-1',
+          messageID: 'message-1',
+          partID: 'part-1',
+          field: 'text',
+          delta: 'approved output'
+        }
+      },
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+    const authorize = vi.fn().mockResolvedValue('session')
+
+    const events = await collectRun(runtime, 'execute', authorize)
+
+    expect(callOrder).toEqual(['subscribe', 'prompt'])
+    expect(session.create).toHaveBeenCalledWith({
+      title: 'GoodBuddy 对话',
+      directory: process.cwd(),
+      permission: [
+        { permission: '*', pattern: '*', action: 'ask' },
+        { permission: 'task', pattern: '*', action: 'deny' }
+      ]
+    })
+    expect(authorize).toHaveBeenCalledOnce()
+    expect(authorize).toHaveBeenCalledWith({
+      scopeKey: 'opencode:bash',
+      title: 'OpenCode 请求调用 bash',
+      description: '仅在你选择允许后，OpenCode 才会执行此工具调用。',
+      toolName: 'bash',
+      argumentSummary: JSON.stringify({
+        patterns: ['npm test'],
+        metadata: { command: 'npm test' }
+      }),
+      allowPermanent: false
+    })
+    expect(permissionReply).toHaveBeenCalledOnce()
+    expect(permissionReply).toHaveBeenCalledWith({
+      requestID: 'permission-1',
+      directory: process.cwd(),
+      reply: 'once'
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: 'approved output'
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+    await runtime.dispose()
+  })
+
+  it('uses one tool scope for different requests while preserving their summaries', async () => {
+    const { client } = runClient([
+      permissionEvent(),
+      permissionEvent({
+        id: 'permission-2',
+        patterns: ['npm run lint'],
+        metadata: { command: 'npm run lint' },
+        always: ['npm run lint']
+      }),
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+    const authorize = vi.fn().mockResolvedValue('session')
+
+    await collectRun(runtime, 'execute', authorize)
+
+    expect(authorize).toHaveBeenCalledTimes(2)
+    expect(authorize.mock.calls.map(([request]) => request)).toEqual([
+      expect.objectContaining({
+        scopeKey: 'opencode:bash',
+        argumentSummary: JSON.stringify({
+          patterns: ['npm test'],
+          metadata: { command: 'npm test' }
+        })
+      }),
+      expect.objectContaining({
+        scopeKey: 'opencode:bash',
+        argumentSummary: JSON.stringify({
+          patterns: ['npm run lint'],
+          metadata: { command: 'npm run lint' }
+        })
+      })
+    ])
+    await runtime.dispose()
+  })
+
+  it('fails the run when a tool reports an error before session idle', async () => {
+    const { client, session } = runClient([
+      {
+        id: 'event-tool-error',
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'session-1',
+          part: {
+            id: 'part-1',
+            callID: 'call-1',
+            type: 'tool',
+            tool: 'write',
+            state: { status: 'error' }
+          }
+        }
+      },
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+
+    await expect(collectRun(runtime)).rejects.toThrow(
+      'OpenCode 工具执行失败'
+    )
+    expect(session.abort).toHaveBeenCalledOnce()
+    await runtime.dispose()
+  })
+
+  it('surfaces a rejected async prompt instead of reporting success', async () => {
+    const { client, session } = runClient([
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    vi.mocked(session.promptAsync).mockResolvedValueOnce({
+      data: undefined,
+      error: {
+        data: {
+          message:
+            'prompt rejected Authorization: Bearer secret-token'
+        }
+      }
+    } as never)
+    const runtime = embeddedRuntime(client)
+
+    await expect(collectRun(runtime)).rejects.toThrow(
+      'prompt rejected Authorization: [REDACTED]'
+    )
+    await runtime.dispose()
+  })
+
+  it('deletes an ephemeral OpenCode session when released', async () => {
+    const { client, session } = runClient([
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+
+    await collectRun(runtime)
+    await runtime.releaseConversation('conversation-1')
+
+    expect(session.delete).toHaveBeenCalledWith({
+      sessionID: 'session-1',
+      directory: process.cwd()
+    })
+    await runtime.dispose()
+  })
+
+  it.each(['deny', 'permanent'] as const)(
+    'rejects an OpenCode permission after a %s decision',
+    async (decision) => {
+      const { client, permissionReply } = runClient([
+        permissionEvent(),
+        {
+          id: 'event-idle',
+          type: 'session.idle',
+          properties: { sessionID: 'session-1' }
+        }
+      ])
+      const runtime = embeddedRuntime(client)
+
+      await collectRun(
+        runtime,
+        'execute',
+        vi.fn().mockResolvedValue(decision)
+      )
+
+      expect(permissionReply).toHaveBeenCalledWith({
+        requestID: 'permission-1',
+        directory: process.cwd(),
+        reply: 'reject'
+      })
+      await runtime.dispose()
+    }
+  )
+
+  it('ignores unrelated requests and rejects bounded malformed requests without prompting', async () => {
+    const { client, permissionReply } = runClient([
+      permissionEvent({ sessionID: 'unrelated-session' }),
+      permissionEvent({
+        patterns: Array.from({ length: 33 }, () => '*')
+      }),
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+    const authorize = vi.fn().mockResolvedValue('once')
+
+    await collectRun(runtime, 'execute', authorize)
+
+    expect(authorize).not.toHaveBeenCalled()
+    expect(permissionReply).toHaveBeenCalledOnce()
+    expect(permissionReply).toHaveBeenCalledWith({
+      requestID: 'permission-1',
+      directory: process.cwd(),
+      reply: 'reject'
+    })
+    await runtime.dispose()
+  })
+
+  it('fails closed when the OpenCode permission reply fails', async () => {
+    const { client, permissionReply, session } = runClient([
+      permissionEvent()
+    ])
+    permissionReply.mockResolvedValue({
+      data: false,
+      error: { message: 'secret server error' }
+    })
+    const runtime = embeddedRuntime(client)
+
+    await expect(
+      collectRun(
+        runtime,
+        'execute',
+        vi.fn().mockResolvedValue('once')
+      )
+    ).rejects.toThrow('OpenCode 权限回复失败')
+    expect(session.abort).toHaveBeenCalledWith({
+      sessionID: 'session-1',
+      directory: process.cwd()
+    })
+    await runtime.dispose()
+  })
+
+  it('rejects a pending permission and aborts the session on cancellation', async () => {
+    const { client, permissionReply, session } = runClient([
+      permissionEvent()
+    ])
+    const runtime = embeddedRuntime(client)
+    const controller = new AbortController()
+    const authorize = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          controller.signal.addEventListener(
+            'abort',
+            () => reject(new Error('cancelled')),
+            { once: true }
+          )
+        })
+    )
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      controller.signal,
+      authorize
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    const pending = stream.next()
+    await vi.waitFor(() => expect(authorize).toHaveBeenCalledOnce())
+    controller.abort()
+
+    await expect(pending).rejects.toThrow('cancelled')
+    expect(permissionReply).toHaveBeenCalledWith({
+      requestID: 'permission-1',
+      directory: process.cwd(),
+      reply: 'reject'
+    })
+    expect(session.abort).toHaveBeenCalledWith({
+      sessionID: 'session-1',
+      directory: process.cwd()
+    })
+    await runtime.dispose()
+  })
+
+  it.each(['ask', 'plan'] as const)(
+    'uses deny-all session rules and hard tool disable in %s mode',
+    async (workMode) => {
+      const { client, session, tool } = runClient([
+        {
+          id: 'event-idle',
+          type: 'session.idle',
+          properties: { sessionID: 'session-1' }
+        }
+      ])
+      const runtime = embeddedRuntime(client)
+
+      await collectRun(runtime, workMode)
+
+      expect(session.create).toHaveBeenCalledWith({
+        title: 'GoodBuddy 对话',
+        directory: process.cwd(),
+        permission: [
+          { permission: '*', pattern: '*', action: 'deny' }
+        ]
+      })
+      expect(tool.ids).toHaveBeenCalledWith({
+        directory: process.cwd()
+      })
+      expect(session.promptAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tools: {
+            read: false,
+            write: false,
+            bash: false,
+            task: false
+          }
+        }),
+        expect.anything()
+      )
+      await runtime.dispose()
+    }
+  )
+
+  it('updates reused sessions when the work mode changes', async () => {
+    const { client, session } = runClient([
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+
+    await collectRun(runtime, 'execute')
+    await collectRun(runtime, 'ask')
+
+    expect(session.update).toHaveBeenCalledWith({
+      sessionID: 'session-1',
+      directory: process.cwd(),
+      permission: [
+        { permission: '*', pattern: '*', action: 'deny' }
+      ]
+    })
+    await runtime.dispose()
+  })
+
+  it('leaves external sessions unmodified for the controller whole-run gate', async () => {
+    const { client, session, permissionReply } = runClient([
+      permissionEvent(),
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = new OpenCodeRuntime(
+      options({
+        baseUrl: 'http://127.0.0.1:4096',
+        embedded: false
+      }),
+      {
+        createClient: vi.fn(
+          () => client
+        ) as unknown as typeof createOpencodeClient
+      }
+    )
+    const authorize = vi.fn().mockResolvedValue('once')
+
+    await collectRun(runtime, 'execute', authorize)
+
+    expect(runtime.requiresToolApproval).toBe(true)
+    expect(session.create).toHaveBeenCalledWith({
+      title: 'GoodBuddy 对话',
+      directory: process.cwd()
+    })
+    expect(authorize).not.toHaveBeenCalled()
+    expect(permissionReply).not.toHaveBeenCalled()
+    await runtime.dispose()
+  })
+})
+
+describe('OpenCodeRuntime model usage', () => {
+  it('emits one provider-reported usage event for each terminal assistant message', async () => {
+    const assistantMessage = {
+      id: 'message-assistant-1',
+      sessionID: 'session-1',
+      role: 'assistant',
+      time: {
+        created: 1,
+        completed: 2
+      },
+      parentID: 'message-user-1',
+      modelID: 'claude-sonnet-provider',
+      providerID: 'anthropic',
+      mode: 'build',
+      agent: 'build',
+      path: {
+        cwd: process.cwd(),
+        root: process.cwd()
+      },
+      cost: 0.01,
+      tokens: {
+        total: 42,
+        input: 23,
+        output: 11,
+        reasoning: 3,
+        cache: {
+          read: 7,
+          write: 5
+        }
+      }
+    }
+    const { client } = runClient([
+      {
+        id: 'event-incomplete',
+        type: 'message.updated',
+        properties: {
+          sessionID: 'session-1',
+          info: {
+            ...assistantMessage,
+            time: { created: 1 }
+          }
+        }
+      },
+      {
+        id: 'event-terminal',
+        type: 'message.updated',
+        properties: {
+          sessionID: 'session-1',
+          info: assistantMessage
+        }
+      },
+      {
+        id: 'event-terminal-duplicate',
+        type: 'message.updated',
+        properties: {
+          sessionID: 'session-1',
+          info: assistantMessage
+        }
+      },
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+
+    const events = await collectRun(runtime)
+
+    expect(
+      events.filter((event) => event.type === 'model-usage')
+    ).toEqual([
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        type: 'model-usage',
+        callId: 'message-assistant-1',
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'claude-sonnet-provider',
+        inputTokens: 23,
+        outputTokens: 11,
+        cacheReadTokens: 7,
+        cacheWriteTokens: 5,
+        reportedTotalTokens: 42
+      }
+    ])
+    expect(events.at(-2)).toMatchObject({ type: 'model-usage' })
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+    await runtime.dispose()
+  })
+
+  it('ignores assistant usage from another session', async () => {
+    const { client } = runClient([
+      {
+        id: 'event-unrelated-usage',
+        type: 'message.updated',
+        properties: {
+          sessionID: 'session-2',
+          info: {
+            id: 'message-assistant-2',
+            sessionID: 'session-2',
+            role: 'assistant',
+            time: {
+              created: 1,
+              completed: 2
+            },
+            parentID: 'message-user-2',
+            modelID: 'unrelated-model',
+            providerID: 'unrelated-provider',
+            mode: 'build',
+            agent: 'build',
+            path: {
+              cwd: process.cwd(),
+              root: process.cwd()
+            },
+            cost: 0,
+            tokens: {
+              input: 100,
+              output: 50,
+              reasoning: 0,
+              cache: {
+                read: 0,
+                write: 0
+              }
+            }
+          }
+        }
+      },
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+
+    const events = await collectRun(runtime)
+
+    expect(
+      events.filter((event) => event.type === 'model-usage')
+    ).toEqual([])
+    await runtime.dispose()
   })
 })
