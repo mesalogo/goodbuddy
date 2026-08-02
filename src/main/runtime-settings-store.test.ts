@@ -118,7 +118,7 @@ describe('RuntimeSettingsStore', () => {
     ).rejects.toThrow('请重新输入或清除')
   })
 
-  it('repairs a gpt-image profile saved with chat protocol and origin-only URL', async () => {
+  it('does not infer image capability from the model name', async () => {
     const { store } = await createStore()
     await store.update(
       settings({
@@ -130,28 +130,28 @@ describe('RuntimeSettingsStore', () => {
     )
 
     await expect(store.getPublicSettings()).resolves.toMatchObject({
-      modelBaseUrl: 'https://bigtoken.ai/v1',
+      modelBaseUrl: 'https://bigtoken.ai',
       modelName: 'gpt-image-2',
-      modelProtocol: 'openai-images-generations',
+      modelProtocol: 'anthropic-messages',
       apiKeyConfigured: true,
       credentialSource: 'encrypted',
       modelProfiles: [
         expect.objectContaining({
-          baseUrl: 'https://bigtoken.ai/v1',
+          baseUrl: 'https://bigtoken.ai',
           modelName: 'gpt-image-2',
-          protocol: 'openai-images-generations'
+          protocol: 'anthropic-messages'
         })
       ]
     })
     await expect(store.getResolvedSettings()).resolves.toMatchObject({
-      modelBaseUrl: 'https://bigtoken.ai/v1',
+      modelBaseUrl: 'https://bigtoken.ai',
       modelName: 'gpt-image-2',
-      modelProtocol: 'openai-images-generations',
+      modelProtocol: 'anthropic-messages',
       apiKey: 'image-secret'
     })
   })
 
-  it('repairs nondefault image protocols without rewriting custom root endpoints', async () => {
+  it('uses the explicit protocol as the image-generation capability marker', async () => {
     const { store } = await createStore()
     const chatId = crypto.randomUUID()
     const imageId = crypto.randomUUID()
@@ -170,34 +170,36 @@ describe('RuntimeSettingsStore', () => {
           {
             id: imageId,
             name: 'Custom Image',
-            baseUrl: 'https://images.example',
-            modelName: 'gpt-image-custom',
-            protocol: 'anthropic-messages',
+            baseUrl: 'https://images.example/custom/v2',
+            modelName: 'vendor/custom-renderer',
+            protocol: 'openai-images-generations',
             authentication: 'api-key',
             apiKey: { action: 'replace', value: 'image-secret' }
           }
         ],
-        defaultModelProfileId: chatId,
-        continueModelSource: { kind: 'profile', profileId: imageId }
+        defaultModelProfileId: imageId
       })
     )
 
     await expect(store.getPublicSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'https://images.example/custom/v2',
+      modelName: 'vendor/custom-renderer',
+      modelProtocol: 'openai-images-generations',
       modelProfiles: [
         expect.objectContaining({ id: chatId }),
         expect.objectContaining({
           id: imageId,
-          baseUrl: 'https://images.example',
+          baseUrl: 'https://images.example/custom/v2',
+          modelName: 'vendor/custom-renderer',
           protocol: 'openai-images-generations'
         })
       ]
     })
     await expect(store.getResolvedSettings()).resolves.toMatchObject({
-      continueModelProfile: {
-        id: imageId,
-        baseUrl: 'https://images.example',
-        protocol: 'openai-images-generations'
-      }
+      modelBaseUrl: 'https://images.example/custom/v2',
+      modelName: 'vendor/custom-renderer',
+      modelProtocol: 'openai-images-generations',
+      apiKey: 'image-secret'
     })
   })
 

@@ -25,6 +25,7 @@
     "dist:linux": "npm run dist:linux:x64 && npm run dist:linux:arm64",
     "dist:linux:x64": "npm run build && electron-builder --linux AppImage deb --x64",
     "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb --arm64",
+    "icons": "node build/generate-icons.mjs",
     "portable": "npm run build && node build/build-portable.cjs"
   },
   "build": {
@@ -153,6 +154,7 @@
     "jsdom": "^30.0.1",
     "opencode-ai": "1.18.9",
     "png-to-ico": "^3.0.2",
+    "pngjs": "^7.0.0",
     "tar": "7.5.22",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",

@@ -88,6 +88,13 @@ textarea:focus-visible {
   color: #1677ff;
 }
 
+.brand__mark img {
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  object-fit: cover;
+}
+
 .brand__copy {
   display: flex;
   flex-direction: column;
@@ -439,10 +446,12 @@ textarea:focus-visible {
 
 .topbar {
   display: flex;
+  min-width: 0;
   align-items: center;
   padding: 0 21px;
   border-bottom: 1px solid #f0f0f0;
   background: #fff;
+  gap: 3px;
 }
 
 .icon-button {
@@ -467,6 +476,8 @@ textarea:focus-visible {
 }
 
 .topbar__expert {
+  width: clamp(86px, 11vw, 130px);
+  min-width: 0;
   max-width: 130px;
   padding: 6px 8px;
   border: 1px solid #d9d9d9;
@@ -821,6 +832,7 @@ textarea:focus-visible {
   min-width: 0;
   flex-direction: column;
   gap: 13px;
+  container: heartbeat-settings / inline-size;
 }
 
 .heartbeat-settings__intro h3 {
@@ -1045,6 +1057,7 @@ textarea:focus-visible {
 
 .conversation-title {
   display: flex;
+  min-width: 0;
   align-items: center;
   padding: 7px 9px;
   border-radius: 8px;
@@ -1057,6 +1070,16 @@ textarea:focus-visible {
   font-weight: 650;
 }
 
+.conversation-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-title svg {
+  flex: 0 0 auto;
+}
+
 .conversation-title:hover {
   background: #e6f4ff;
   color: #1677ff;
@@ -1064,13 +1087,17 @@ textarea:focus-visible {
 
 .topbar__actions {
   display: flex;
+  min-width: 0;
   align-items: center;
+  flex: 0 1 auto;
   margin-left: auto;
   gap: 3px;
 }
 
 .runtime-status {
   display: flex;
+  min-width: 0;
+  max-width: clamp(108px, 18vw, 220px);
   align-items: center;
   padding: 6px 10px;
   border: 1px solid #d9d9d9;
@@ -1080,6 +1107,16 @@ textarea:focus-visible {
   font-size: 10px;
   font-weight: 650;
   gap: 6px;
+}
+
+.runtime-status__dot {
+  flex: 0 0 auto;
+}
+
+.runtime-status__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .runtime-status__dot {
@@ -1149,7 +1186,10 @@ textarea:focus-visible {
   max-width: 720px;
   margin: 0 auto;
   gap: 10px;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(180px, 100%), 1fr)
+  );
 }
 
 .quick-actions button {
@@ -1349,10 +1389,24 @@ textarea:focus-visible {
   font-size: 0.9em;
 }
 
+.markdown-table-scroll {
+  max-width: 100%;
+  margin: 0.8em 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.markdown-table-scroll:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid #1677ff;
+  outline-offset: 2px;
+}
+
 .markdown-content table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
-  margin: 0.8em 0;
+  margin: 0;
   font-size: 11px;
 }
 
@@ -1870,7 +1924,7 @@ textarea:focus-visible {
   padding: 3px;
   border-radius: 9px;
   background: #f5f5f5;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
 }
 
 .settings-tabs button {
@@ -2561,6 +2615,10 @@ textarea:focus-visible {
   container-type: inline-size;
 }
 
+.workspace-panel-scroll--heartbeat {
+  container-type: inline-size;
+}
+
 .knowledge-workspace {
   width: 100%;
   min-height: max(520px, calc(100dvh - 114px));
@@ -3074,6 +3132,7 @@ textarea:focus-visible {
 
 .activity-panel__filters {
   display: flex;
+  flex-wrap: wrap;
   margin-bottom: 12px;
   gap: 6px;
 }
@@ -3109,6 +3168,8 @@ textarea:focus-visible {
 .activity-item__header,
 .activity-item__labels {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
 }
@@ -3159,6 +3220,7 @@ textarea:focus-visible {
   min-height: 100%;
   flex-direction: column;
   margin: 0 auto;
+  container: heartbeat-center / inline-size;
 }
 
 .heartbeat-center__hero {
@@ -3857,6 +3919,485 @@ textarea:focus-visible {
   background: #fff;
 }
 
+.appearance-settings {
+  gap: 14px;
+}
+
+.appearance-options {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.appearance-options label {
+  display: flex;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.appearance-options label:has(input:checked) {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgb(22 119 255 / 12%);
+}
+
+.appearance-options label:has(input:focus-visible) {
+  outline: 2px solid #1677ff;
+  outline-offset: 2px;
+}
+
+.appearance-options input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.appearance-options__preview {
+  display: grid;
+  height: 76px;
+  padding: 9px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #f5f5f5;
+  gap: 5px;
+  grid-template-columns: 30% 1fr;
+  grid-template-rows: 12px 1fr;
+}
+
+.appearance-options__preview i {
+  display: block;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.appearance-options__preview i:first-child {
+  grid-column: 1 / -1;
+}
+
+.appearance-options__preview i:nth-child(2) {
+  grid-row: 2;
+}
+
+.appearance-options__preview i:nth-child(3) {
+  background: #e6f4ff;
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.appearance-options__preview--dark {
+  border-color: #344258;
+  background: #0b111b;
+}
+
+.appearance-options__preview--dark i {
+  background: #1c2738;
+}
+
+.appearance-options__preview--dark i:nth-child(3) {
+  background: #15345f;
+}
+
+.appearance-options__preview--system {
+  background: linear-gradient(90deg, #f5f5f5 0 50%, #0b111b 50% 100%);
+}
+
+.appearance-options__preview--system i {
+  background: linear-gradient(90deg, #fff 0 50%, #1c2738 50% 100%);
+}
+
+.appearance-options__preview--system i:nth-child(3) {
+  background: linear-gradient(90deg, #e6f4ff 0 50%, #15345f 50% 100%);
+}
+
+:root[data-theme='dark'] {
+  color: #edf4ff;
+  background: #0b111b;
+}
+
+:root[data-theme='dark'] .app-shell {
+  background: #0b111b;
+  color: #edf4ff;
+}
+
+:root[data-theme='dark'] :where(
+  .settings-page,
+  .composer-wrap
+) {
+  background: #0b111b;
+}
+
+:root[data-theme='dark'] :where(
+  .sidebar,
+  .topbar,
+  .assistant-sidebar,
+  .project-create-card,
+  .settings-panel,
+  .composer,
+  .runtime-picker__menu,
+  .knowledge-scope__popover,
+  .knowledge-panel__document,
+  .token-usage,
+  .activity-item,
+  .heartbeat-center__section,
+  .heartbeat-center__metrics > div,
+  .heartbeat-center__plans .heartbeat-settings,
+  .heartbeat-settings__item,
+  .capability-card,
+  .quick-actions button,
+  .secondary-button
+) {
+  border-color: #293548;
+  background: #111827;
+}
+
+:root[data-theme='dark'] :where(
+  .app-shell,
+  .sidebar,
+  .topbar,
+  .assistant-sidebar,
+  .settings-panel,
+  .project-create-card,
+  .composer,
+  .workspace-panel-scroll
+) :where(input, textarea, select) {
+  border-color: #344258;
+  background: #172033;
+  color: #edf4ff;
+}
+
+:root[data-theme='dark'] :where(
+  .app-shell,
+  .sidebar,
+  .topbar,
+  .assistant-sidebar,
+  .settings-panel,
+  .project-create-card,
+  .composer
+) :where(input, textarea)::placeholder {
+  color: #718096;
+}
+
+:root[data-theme='dark'] :where(
+  .sidebar-search,
+  .settings-section,
+  .settings-tabs,
+  .settings-panel__footer,
+  .assistant-sidebar__row,
+  .assistant-sidebar__library,
+  .assistant-sidebar__schedule,
+  .assistant-sidebar__diff,
+  .assistant-sidebar__preview pre,
+  .tool-activity,
+  .approval-card,
+  .context-chip,
+  .token-usage__group,
+  .token-usage__stats div,
+  .activity-panel__stats div,
+  .activity-filter,
+  .heartbeat-center__tab,
+  .heartbeat-center__config-card,
+  .heartbeat-center__suggestion,
+  .heartbeat-center__run,
+  .heartbeat-settings--sidebar .heartbeat-settings__item,
+  .knowledge-graph__toolbar,
+  .markdown-content pre,
+  .markdown-content :not(pre) > code
+) {
+  border-color: #293548;
+  background: #172033;
+}
+
+:root[data-theme='dark'] :where(
+  .primary-nav,
+  .sidebar-footer,
+  .topbar,
+  .assistant-sidebar,
+  .assistant-sidebar__header,
+  .assistant-sidebar__tabs,
+  .assistant-sidebar__context,
+  .assistant-sidebar__preview > header,
+  .message + .message,
+  .divider,
+  .runtime-picker__divider,
+  .settings-panel__header,
+  .settings-panel__footer,
+  .knowledge-workspace__sidebar,
+  .knowledge-workspace__header,
+  .knowledge-panel__header,
+  .activity-panel__header,
+  .heartbeat-center__hero,
+  .heartbeat-center__config-card,
+  .heartbeat-center__suggestion,
+  .heartbeat-center__run
+) {
+  border-color: #293548;
+}
+
+:root[data-theme='dark'] :where(
+  h1,
+  h2,
+  h3,
+  h4,
+  .conversation-title,
+  .welcome h1,
+  .message__meta strong,
+  .markdown-content,
+  .settings-section__title strong,
+  .field,
+  .capability-card strong,
+  .knowledge-panel__document-info strong,
+  .token-usage__header h3,
+  .activity-item h3,
+  .heartbeat-center__latest > p,
+  .heartbeat-center__run strong
+) {
+  color: #edf4ff;
+}
+
+:root[data-theme='dark'] .app-shell strong {
+  color: #edf4ff;
+}
+
+:root[data-theme='dark'] :where(
+  .nav-item,
+  .conversation-item,
+  .user-card,
+  .icon-button,
+  .assistant-sidebar__row,
+  .runtime-status,
+  .welcome__description,
+  .tool-activity,
+  .context-chip,
+  .settings-tabs button,
+  .credential-state,
+  .capability-card p,
+  .secondary-button,
+  .check-field,
+  .knowledge-panel__limits,
+  .knowledge-panel__summary,
+  .token-usage th,
+  .token-usage td,
+  .activity-filter,
+  .activity-item p,
+  .heartbeat-center__hero p:not(.eyebrow),
+  .heartbeat-center__tab,
+  .heartbeat-center__config-card,
+  .heartbeat-center__suggestion > p,
+  .heartbeat-center__run small
+) {
+  color: #aebbd0;
+}
+
+:root[data-theme='dark'] :where(
+  .brand__copy span,
+  .nav-item__hint,
+  .section-label,
+  .conversation-item small,
+  .user-card__copy small,
+  .assistant-sidebar__tab,
+  .assistant-sidebar__empty,
+  .runtime-picker__menu > strong,
+  .runtime-picker__menu > button > small,
+  .message__meta span,
+  .message__status,
+  .composer-hint,
+  .settings-panel__description,
+  .settings-tabs button small,
+  .settings-section__title small,
+  .field small,
+  .settings-notice,
+  .settings-empty,
+  .knowledge-panel__empty,
+  .knowledge-panel__loading,
+  .activity-panel__empty,
+  .heartbeat-center__live,
+  .heartbeat-center__empty,
+  .heartbeat-center__legend
+) {
+  color: #8290a6;
+}
+
+:root[data-theme='dark'] :where(
+  .icon-button:hover,
+  .icon-button--active,
+  .nav-item:hover,
+  .conversation-item:hover,
+  .conversation-item--active,
+  .user-card:hover,
+  .secondary-button:hover,
+  .activity-filter--active,
+  .settings-tabs button[aria-selected='true'],
+  .heartbeat-center__tab--active
+) {
+  background: #1f2a3d;
+}
+
+:root[data-theme='dark'] .settings-page
+  .settings-tabs
+  button[aria-selected='true'] {
+  background: #1f2a3d;
+  color: #69adff;
+}
+
+:root[data-theme='dark'] :where(
+  .nav-item--active,
+  .brand__mark,
+  .composer__mode--ask,
+  .composer__mode--plan,
+  .runtime-capability-badge,
+  .model-capability-badge,
+  .heartbeat-center__tab > span
+) {
+  border-color: #245fa8;
+  background: #15345f;
+  color: #69adff;
+}
+
+:root[data-theme='dark'] :where(
+  .settings-warning,
+  .approval-card,
+  .heartbeat-center__error
+) {
+  border-color: #70511d;
+  background: #302511;
+  color: #f3c969;
+}
+
+:root[data-theme='dark'] .markdown-content blockquote {
+  border-left-color: #4c9aff;
+  color: #aebbd0;
+}
+
+:root[data-theme='dark'] .message--user .message__content {
+  border-color: #245fa8;
+  background: #15345f;
+  color: #edf4ff;
+}
+
+:root[data-theme='dark'] .heartbeat-center__hero p:not(.eyebrow),
+:root[data-theme='dark'] .heartbeat-center__metrics small {
+  color: #aebbd0;
+}
+
+:root[data-theme='dark'] .assistant-sidebar__tab--active {
+  background: #15345f;
+  color: #69adff;
+}
+
+:root[data-theme='dark'] :where(
+  .runtime-picker__menu > button,
+  .quick-actions strong,
+  .user-card__copy strong
+) {
+  color: #edf4ff;
+}
+
+:root[data-theme='dark'] .markdown-content :where(th, td) {
+  border-color: #344258;
+}
+
+:root[data-theme='dark'] .appearance-options label {
+  border-color: #344258;
+  background: #172033;
+}
+
+:root[data-theme='dark'] .appearance-options label:has(input:checked) {
+  border-color: #4c9aff;
+  box-shadow: 0 0 0 2px rgb(76 154 255 / 20%);
+}
+
+@container heartbeat-settings (max-width: 680px) {
+  .heartbeat-settings__form,
+  .heartbeat-settings__form--weekly {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .heartbeat-settings__form .primary-button {
+    grid-column: 1 / -1;
+  }
+
+  .heartbeat-settings__item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .heartbeat-settings__actions {
+    flex-wrap: wrap;
+  }
+}
+
+@container heartbeat-settings (max-width: 420px) {
+  .heartbeat-settings__form,
+  .heartbeat-settings__form--weekly {
+    grid-template-columns: 1fr;
+  }
+
+  .heartbeat-settings__form .primary-button {
+    grid-column: auto;
+  }
+
+  .heartbeat-settings__actions button {
+    padding-inline: 8px;
+    flex: 1 1 auto;
+  }
+}
+
+@container heartbeat-center (max-width: 820px) {
+  .heartbeat-center__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .heartbeat-center__overview-grid,
+  .heartbeat-center__suggestions,
+  .heartbeat-center__history {
+    grid-template-columns: 1fr;
+  }
+}
+
+@container heartbeat-center (max-width: 620px) {
+  .heartbeat-center__hero {
+    flex-direction: column;
+  }
+
+  .heartbeat-center__hero-actions {
+    width: 100%;
+  }
+
+  .heartbeat-center__hero-actions button {
+    flex: 1;
+  }
+
+  .heartbeat-center__config-card > div:last-child {
+    flex-wrap: wrap;
+  }
+}
+
+@container heartbeat-center (max-width: 460px) {
+  .heartbeat-center__metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .heartbeat-center__tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .heartbeat-center__tab {
+    justify-content: center;
+  }
+
+  .heartbeat-center__trend-row {
+    grid-template-columns: 70px minmax(0, 1fr) 18px;
+  }
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -3896,14 +4437,6 @@ textarea:focus-visible {
     min-width: 206px;
   }
 
-  .quick-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .quick-actions button {
-    min-height: 88px;
-  }
-
   .assistant-sidebar--open {
     width: min(390px, calc(100vw - 36px));
     flex-basis: min(390px, calc(100vw - 36px));
@@ -3912,11 +4445,15 @@ textarea:focus-visible {
   .settings-page .settings-panel__body {
     display: flex;
     padding: 20px;
+    align-items: stretch;
+    justify-content: flex-start;
   }
 
   .settings-page .settings-tabs {
     position: static;
     display: grid;
+    width: 100%;
+    flex: 0 0 auto;
     grid-template-columns: repeat(3, 1fr);
   }
 
@@ -3955,6 +4492,10 @@ textarea:focus-visible {
   .heartbeat-center__overview-grid,
   .heartbeat-center__suggestions,
   .heartbeat-center__history {
+    grid-template-columns: 1fr;
+  }
+
+  .appearance-options {
     grid-template-columns: 1fr;
   }
 }

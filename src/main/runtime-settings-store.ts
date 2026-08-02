@@ -277,31 +277,6 @@ function normalizeModelBaseUrl(value: string): string {
   return url.toString().replace(/\/$/u, '')
 }
 
-function normalizeEffectiveModelConnection(
-  baseUrl: string,
-  model: string,
-  protocol: RuntimeSettings['modelProtocol']
-): {
-  baseUrl: string
-  protocol: RuntimeSettings['modelProtocol']
-} {
-  if (!/^gpt-image-/iu.test(model)) {
-    return { baseUrl, protocol }
-  }
-  const url = new URL(baseUrl)
-  if (
-    protocol !== 'openai-images-generations' &&
-    url.hostname.toLowerCase() === 'bigtoken.ai' &&
-    (url.pathname === '/' || url.pathname === '')
-  ) {
-    url.pathname = '/v1'
-  }
-  return {
-    baseUrl: url.toString().replace(/\/$/u, ''),
-    protocol: 'openai-images-generations'
-  }
-}
-
 export class RuntimeSettingsStore {
   private settings?: StoredSettings
   private loadWarning?: string
@@ -475,16 +450,11 @@ export class RuntimeSettingsStore {
     const model = environmentApiKey
       ? environmentModel || defaultRuntimeSettings.modelName
       : profile.modelName
-    const effectiveConnection = normalizeEffectiveModelConnection(
-      baseUrl,
-      model,
-      profile.protocol
-    )
     return {
       apiKey: environmentApiKey ?? storedApiKey,
-      baseUrl: effectiveConnection.baseUrl,
+      baseUrl,
       model,
-      protocol: effectiveConnection.protocol,
+      protocol: profile.protocol,
       authentication: profile.authentication,
       credentialSource: environmentApiKey
         ? 'environment'
@@ -516,17 +486,12 @@ export class RuntimeSettingsStore {
         apiKey: effective.apiKey
       }
     }
-    const connection = normalizeEffectiveModelConnection(
-      profile.baseUrl,
-      profile.modelName,
-      profile.protocol
-    )
     return {
       id: profile.id,
       name: profile.name,
-      baseUrl: connection.baseUrl,
+      baseUrl: profile.baseUrl,
       modelName: profile.modelName,
-      protocol: connection.protocol,
+      protocol: profile.protocol,
       authentication: profile.authentication,
       apiKey:
         profile.authentication === 'api-key'
@@ -589,13 +554,6 @@ export class RuntimeSettingsStore {
     const agent = this.resolveAgentSettings(settings)
     const modelProfiles = settings.modelProfiles.map((profile) => {
       const isDefault = profile.id === settings.defaultModelProfileId
-      const connection = isDefault
-        ? undefined
-        : normalizeEffectiveModelConnection(
-            profile.baseUrl,
-            profile.modelName,
-            profile.protocol
-          )
       const apiKey =
         profile.authentication === 'api-key'
           ? this.getStoredApiKey(profile)
@@ -605,11 +563,11 @@ export class RuntimeSettingsStore {
         name: profile.name,
         baseUrl: isDefault
           ? effective.baseUrl
-          : (connection?.baseUrl ?? profile.baseUrl),
+          : profile.baseUrl,
         modelName: isDefault ? effective.model : profile.modelName,
         protocol: isDefault
           ? effective.protocol
-          : (connection?.protocol ?? profile.protocol),
+          : profile.protocol,
         authentication: isDefault
           ? effective.authentication
           : profile.authentication,

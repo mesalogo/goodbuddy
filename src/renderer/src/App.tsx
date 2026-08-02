@@ -80,6 +80,15 @@ import {
   type SidebarArtifact
 } from './RightAssistantSidebar'
 import { SettingsPanel } from './SettingsPanel'
+import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
+import goodbuddyLightIcon from './assets/goodbuddy-light.png'
+import {
+  applyAppearanceTheme,
+  loadAppearanceTheme,
+  resolveAppearanceTheme,
+  saveAppearanceTheme,
+  type AppearanceTheme
+} from './theme'
 
 type ToolActivity = {
   callId?: string
@@ -454,6 +463,17 @@ function App(): React.JSX.Element {
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false)
   const [runtimeSwitching, setRuntimeSwitching] = useState(false)
+  const [appearanceTheme, setAppearanceTheme] =
+    useState<AppearanceTheme>(loadAppearanceTheme)
+  const [systemPrefersDark, setSystemPrefersDark] = useState(
+    () =>
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+  )
+  const resolvedAppearanceTheme = resolveAppearanceTheme(
+    appearanceTheme,
+    systemPrefersDark
+  )
   const effectiveWorkMode =
     workMode === 'execute' && runtime?.supportsToolExecution === false
       ? 'ask'
@@ -494,6 +514,47 @@ function App(): React.JSX.Element {
   const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const startNewConversation = useCallback((projectId?: string): void => {
+    const conversation = createConversation(projectId)
+    setConversations((current) => [conversation, ...current])
+    setActiveId(conversation.id)
+    setView('chat')
+    setInput('')
+    setAttachments((current) => {
+      for (const attachment of current) {
+        void window.goodbuddy.context.remove(attachment.id)
+      }
+      return []
+    })
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }, [])
+
+  useEffect(() => {
+    saveAppearanceTheme(appearanceTheme)
+  }, [appearanceTheme])
+
+  useEffect(() => {
+    applyAppearanceTheme(resolvedAppearanceTheme)
+  }, [resolvedAppearanceTheme])
+
+  useEffect(() => {
+    if (appearanceTheme !== 'system') {
+      return
+    }
+    if (typeof window.matchMedia !== 'function') {
+      return
+    }
+    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
+    const updateSystemTheme = (): void => {
+      setSystemPrefersDark(systemTheme.matches)
+    }
+    updateSystemTheme()
+    systemTheme.addEventListener('change', updateSystemTheme)
+    return () => {
+      systemTheme.removeEventListener('change', updateSystemTheme)
+    }
+  }, [appearanceTheme])
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') {
@@ -1352,18 +1413,9 @@ function App(): React.JSX.Element {
       window.goodbuddy.agent.onEvent(handleAgentEvent)
     const removeNewConversationListener =
       window.goodbuddy.app.onNewConversation(() => {
-        const conversation = createConversation(
+        startNewConversation(
           activeProjectIdRef.current || undefined
         )
-        setConversations((current) => [conversation, ...current])
-        setActiveId(conversation.id)
-        setAttachments((current) => {
-          for (const attachment of current) {
-            void window.goodbuddy.context.remove(attachment.id)
-          }
-          return []
-        })
-        inputRef.current?.focus()
       })
     const removeOpenSettingsListener =
       window.goodbuddy.app.onOpenSettings(() => setView('settings'))
@@ -1372,7 +1424,7 @@ function App(): React.JSX.Element {
       removeNewConversationListener()
       removeOpenSettingsListener()
     }
-  }, [handleAgentEvent])
+  }, [handleAgentEvent, startNewConversation])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -1429,16 +1481,7 @@ function App(): React.JSX.Element {
   }
 
   const newConversation = (): void => {
-    const conversation = createConversation(activeProjectId || undefined)
-    setConversations((current) => [conversation, ...current])
-    setActiveId(conversation.id)
-    setView('chat')
-    setInput('')
-    for (const attachment of attachments) {
-      void window.goodbuddy.context.remove(attachment.id)
-    }
-    setAttachments([])
-    inputRef.current?.focus()
+    startNewConversation(activeProjectId || undefined)
   }
 
   const setMemoryStatus = async (
@@ -1576,8 +1619,11 @@ function App(): React.JSX.Element {
     if (!prompt || !activeConversation) {
       return
     }
-    if (!runtime?.available) {
-      setView('settings')
+    if (!runtime) {
+      setNotice('Agent Runtime 正在加载，请稍后重试')
+      return
+    }
+    if (!runtime.available) {
       setNotice('请先配置可用的模型或 Agent Runtime')
       return
     }
@@ -1980,7 +2026,15 @@ function App(): React.JSX.Element {
       <aside className={sidebarOpen ? 'sidebar' : 'sidebar sidebar--closed'}>
         <div className="brand">
           <div className="brand__mark">
-            <Bot size={20} strokeWidth={2.4} />
+            <img
+              alt=""
+              aria-hidden="true"
+              src={
+                resolvedAppearanceTheme === 'dark'
+                  ? goodbuddyDarkIcon
+                  : goodbuddyLightIcon
+              }
+            />
           </div>
           <div className="brand__copy">
             <strong>GoodBuddy</strong>
@@ -2233,7 +2287,9 @@ function App(): React.JSX.Element {
               title={runtime?.detail}
             >
               <span className="runtime-status__dot" />
-              {runtime?.label ?? '正在检测运行时'}
+              <span className="runtime-status__label">
+                {runtime?.label ?? '正在检测运行时'}
+              </span>
               {runtime?.capability === 'image-generation' && (
                 <span className="runtime-capability-badge">生图</span>
               )}
@@ -3018,7 +3074,7 @@ function App(): React.JSX.Element {
             />
           </div>
         ) : view === 'heartbeat' ? (
-          <div className="workspace-panel-scroll">
+          <div className="workspace-panel-scroll workspace-panel-scroll--heartbeat">
             <HeartbeatCenter
               configs={assistantHeartbeats}
               entries={heartbeatEntries}
@@ -3037,7 +3093,9 @@ function App(): React.JSX.Element {
           </div>
         ) : view === 'settings' ? (
           <SettingsPanel
+            appearanceTheme={appearanceTheme}
             heartbeats={assistantHeartbeats}
+            onAppearanceThemeChange={setAppearanceTheme}
             onClearLocalData={clearLocalData}
             onClose={() => setView('chat')}
             onCreateHeartbeat={createHeartbeat}

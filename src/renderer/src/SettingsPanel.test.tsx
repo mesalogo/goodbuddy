@@ -175,6 +175,28 @@ describe('SettingsPanel runtime files', () => {
     cleanup()
   })
 
+  it('offers system, light, and dark appearance modes', async () => {
+    const onAppearanceThemeChange = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        appearanceTheme="system"
+        onAppearanceThemeChange={onAppearanceThemeChange}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+    expect(
+      screen.getByRole('radio', { name: /跟随系统/u })
+    ).toBeChecked()
+    fireEvent.click(screen.getByRole('radio', { name: /暗色/u }))
+    expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
+  })
+
   it('automatically detects runtimes and displays path, version, and detail', async () => {
     render(
       <SettingsPanel
@@ -229,6 +251,9 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText(/仅在实际请求高风险工具时暂停/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/不会匿名加载远程默认模型/)
     ).toBeInTheDocument()
 
     fireEvent.click(within(field).getByRole('button', { name: '清除' }))

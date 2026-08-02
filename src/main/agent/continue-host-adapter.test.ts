@@ -130,6 +130,22 @@ describe('ContinueHostAdapter', () => {
     )
   })
 
+  it('blocks runs without an explicit model profile or config file', async () => {
+    const launchHost = vi.fn()
+    const adapter = new ContinueHostAdapter({
+      binaryPath: 'C:\\unused\\cn.js',
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: 'C:\\unused\\cache',
+      launchHost: launchHost as unknown as ContinueHostLauncher
+    })
+
+    await expect(
+      adapter.run('hello', new AbortController().signal, async () => 'deny')
+    ).rejects.toThrow('尚未配置模型连接')
+    expect(launchHost).not.toHaveBeenCalled()
+  })
+
   it('launches the prepared host through the injected launcher', async () => {
     const distribution = await createDistribution()
     let launch:
@@ -266,10 +282,18 @@ describe('ContinueHostAdapter', () => {
       CONTINUE_CLI_ENABLE_TELEMETRY: '0',
       CONTINUE_METRICS_ENABLED: '0',
       CONTINUE_GLOBAL_DIR: expect.stringContaining('isolated-global'),
+      DO_NOT_TRACK: '1',
       GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1',
       OTEL_EXPORTER_OTLP_ENDPOINT: '',
+      OTEL_EXPORTER_OTLP_HEADERS: '',
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: '',
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: '',
-      OTEL_LOG_USER_PROMPTS: '0'
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: '',
+      OTEL_LOGS_EXPORTER: 'none',
+      OTEL_LOG_USER_PROMPTS: '0',
+      OTEL_METRICS_EXPORTER: 'none',
+      OTEL_SDK_DISABLED: 'true',
+      OTEL_TRACES_EXPORTER: 'none'
     })
     expect(killed).toBe(true)
     expect(JSON.parse(generatedConfig)).toMatchObject({
@@ -390,5 +414,80 @@ describe('ContinueHostAdapter', () => {
     expect(generatedConfig).not.toContain('apiKey')
     expect(launchedEnvironment).not.toHaveProperty('OPENAI_API_KEY')
     expect(launchedEnvironment).not.toHaveProperty('ANTHROPIC_API_KEY')
+  })
+
+  it('turns a strict upstream error envelope into a failed run', async () => {
+    const distribution = await createDistribution()
+    let killed = false
+    const launchHost: ContinueHostLauncher = () => ({
+      exitCode: null,
+      get killed() {
+        return killed
+      },
+      stderr: null,
+      once: () => undefined,
+      kill: () => {
+        killed = true
+        return true
+      }
+    })
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/state')) {
+          stateRequests += 1
+          return Response.json({
+            session: {
+              history:
+                stateRequests === 1
+                  ? []
+                  : [
+                      {
+                        message: {
+                          role: 'assistant',
+                          content: 'Partial response'
+                        }
+                      },
+                      {
+                        message: {
+                          role: 'system',
+                          content:
+                            'Error: {"error":{"message":"Request not allowed"}}'
+                        }
+                      }
+                    ]
+            },
+            isProcessing: false,
+            messageQueueLength: 0,
+            pendingPermission: null
+          })
+        }
+        return Response.json({})
+      })
+    )
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost,
+      modelProfile: {
+        id: '00000000-0000-4000-8000-000000000013',
+        name: 'Local model',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'local-model',
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
+      }
+    })
+
+    await expect(
+      adapter.run('hello', new AbortController().signal, async () => 'deny')
+    ).rejects.toThrow(
+      'Continue 模型请求失败：Request not allowed'
+    )
+    expect(killed).toBe(true)
   })
 })

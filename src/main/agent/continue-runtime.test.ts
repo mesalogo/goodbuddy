@@ -152,7 +152,7 @@ describe('ContinueAgentRuntime', () => {
   it('adds assigned Skill instructions to the Continue prompt', async () => {
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',
-      configPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
       mode: 'chat',
       defaultWorkspace: process.cwd(),
       hostCacheRoot: 'C:\\safe\\continue-host',
@@ -170,6 +170,39 @@ describe('ContinueAgentRuntime', () => {
     expect(prompt).toContain('SYSTEM CAPABILITY INSTRUCTIONS')
     expect(prompt).toContain('# 周报助手')
     expect(prompt).toContain('test')
+  })
+
+  it('blocks anonymous platform fallback without an explicit model configuration', async () => {
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: '',
+      mode: 'chat',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+
+    await expect(runtime.getStatus()).resolves.toMatchObject({
+      available: false,
+      detail: expect.stringContaining('尚未配置模型连接')
+    })
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test'
+      },
+      new AbortController().signal,
+      vi.fn(async () => 'once' as const)
+    )
+    await expect(stream.next()).rejects.toThrow('尚未配置模型连接')
+    expect(mocks.detectRuntimeBinary).not.toHaveBeenCalled()
+    expect(mocks.prepareHost).not.toHaveBeenCalled()
+    expect(mocks.runHost).not.toHaveBeenCalled()
   })
 
   it('places the current request before untrusted conversation history', async () => {

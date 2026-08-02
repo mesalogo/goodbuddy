@@ -21,7 +21,10 @@ import { detectRuntimeBinary } from './runtime-discovery'
 import { getAvailableLoopbackPort } from './loopback-port'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
-import { buildRuntimeEnvironment } from './process-environment'
+import {
+  buildRuntimeEnvironment,
+  runtimePrivacyEnvironment
+} from './process-environment'
 import {
   buildBubblewrapLaunch,
   type RuntimeSandboxResolution
@@ -366,7 +369,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw new Error('OpenCode Server 启动已取消')
     }
 
-    const env = buildRuntimeEnvironment({})
+    const env = buildRuntimeEnvironment(runtimePrivacyEnvironment)
     if (this.options.modelProfile && !this.options.modelProfile.apiKey) {
       throw new Error('OpenCode 独立模型连接尚未配置 API Key')
     }
@@ -380,18 +383,11 @@ export class OpenCodeRuntime implements AgentRuntime {
     ).toString('base64')}`
     env.OPENCODE_SERVER_USERNAME = EMBEDDED_SERVER_USERNAME
     env.OPENCODE_SERVER_PASSWORD = serverPassword
-    env.DO_NOT_TRACK = '1'
     env.OPENCODE_DISABLE_AUTOUPDATE = '1'
     env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = '1'
     env.OPENCODE_DISABLE_LSP_DOWNLOAD = '1'
     env.OPENCODE_DISABLE_MODELS_FETCH = '1'
     env.OPENCODE_DISABLE_SHARE = '1'
-    env.OTEL_EXPORTER_OTLP_ENDPOINT = ''
-    env.OTEL_EXPORTER_OTLP_HEADERS = ''
-    env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = ''
-    env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = ''
-    env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = ''
-    env.OTEL_SDK_DISABLED = 'true'
     if (this.options.modelProfile) {
       env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
         model: `anthropic/${this.options.modelProfile.modelName}`,

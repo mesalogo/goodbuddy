@@ -25,6 +25,9 @@ const ready = true
     ).toBeInTheDocument()
     expect(screen.getByRole('checkbox')).toBeChecked()
     expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(
+      screen.getByRole('region', { name: '表格，可横向滚动' })
+    ).toContainElement(screen.getByRole('table'))
     expect(screen.getByText('const ready = true')).toBeInTheDocument()
   })
 

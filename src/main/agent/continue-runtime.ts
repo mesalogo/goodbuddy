@@ -13,6 +13,8 @@ import { detectRuntimeBinary } from './runtime-discovery'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import {
   ContinueHostAdapter,
+  continueConfigurationRequiredMessage,
+  hasContinueModelConfiguration,
   type ContinueHostAdapterOptions,
   type ContinueHostLauncher
 } from './continue-host-adapter'
@@ -137,6 +139,20 @@ export class ContinueAgentRuntime implements AgentRuntime {
           'Continue 宿主暂不支持严格 OS 沙箱，请改用自动模式或嵌入式 OpenCode'
       }
     }
+    if (
+      !hasContinueModelConfiguration(
+        this.options.configPath,
+        this.options.modelProfile
+      )
+    ) {
+      return {
+        id: 'continue',
+        label: 'Continue CLI',
+        available: false,
+        supportsToolExecution: this.supportsToolExecution,
+        detail: continueConfigurationRequiredMessage
+      }
+    }
     const detection = await this.getDetection()
     if (detection.available && detection.path) {
       try {
@@ -178,6 +194,14 @@ export class ContinueAgentRuntime implements AgentRuntime {
     }
     if (request.images?.length) {
       throw new Error('Continue Runtime 暂不支持图片上下文，请切换到视觉模型')
+    }
+    if (
+      !hasContinueModelConfiguration(
+        this.options.configPath,
+        this.options.modelProfile
+      )
+    ) {
+      throw new Error(continueConfigurationRequiredMessage)
     }
     const prompt = buildContinuePrompt(request)
     const skillPrefix = this.options.skillInstructions

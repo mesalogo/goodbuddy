@@ -4,6 +4,7 @@ import {
   KeyRound,
   LockKeyhole,
   Plus,
+  SunMoon,
   TerminalSquare,
   Trash2,
   X
@@ -28,8 +29,10 @@ import {
 import { McpSettingsSection } from './McpSettingsSection'
 import { SkillsSettingsSection } from './SkillsSettingsSection'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import type { AppearanceTheme } from './theme'
 
 type SettingsTab =
+  | 'appearance'
   | 'model'
   | 'runtime'
   | 'security'
@@ -55,6 +58,8 @@ type SettingsPanelProps = {
   ) => Promise<void>
   onRemoveHeartbeat: (heartbeatId: string) => Promise<void>
   onRunHeartbeat: (heartbeatId: string) => Promise<void>
+  appearanceTheme?: AppearanceTheme
+  onAppearanceThemeChange?: (theme: AppearanceTheme) => void
 }
 
 const credentialLabels: Record<
@@ -86,7 +91,9 @@ export function SettingsPanel({
   onCreateHeartbeat,
   onSetHeartbeatPaused,
   onRemoveHeartbeat,
-  onRunHeartbeat
+  onRunHeartbeat,
+  appearanceTheme = 'system',
+  onAppearanceThemeChange = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
   const [settings, setSettings] = useState<RuntimeSettings>()
   const [provider, setProvider] =
@@ -518,6 +525,16 @@ export function SettingsPanel({
         <div className="settings-panel__body">
           <nav aria-label="设置分类" className="settings-tabs">
             <button
+              aria-label="外观"
+              aria-selected={activeTab === 'appearance'}
+              onClick={() => setActiveTab('appearance')}
+              role="tab"
+              type="button"
+            >
+              <strong>外观</strong>
+              <small>亮色、暗色与系统主题</small>
+            </button>
+            <button
               aria-label="模型连接"
               aria-selected={activeTab === 'model'}
               onClick={() => setActiveTab('model')}
@@ -580,6 +597,50 @@ export function SettingsPanel({
           </nav>
 
           <div className="settings-panel__content">
+          {activeTab === 'appearance' && (
+            <div className="settings-section appearance-settings">
+              <div className="settings-section__title">
+                <SunMoon size={17} />
+                <div>
+                  <strong>界面主题</strong>
+                  <small>选择后立即应用，并保存在此设备</small>
+                </div>
+              </div>
+              <div
+                aria-label="界面主题"
+                className="appearance-options"
+                role="radiogroup"
+              >
+                {(
+                  [
+                    ['system', '跟随系统', '随操作系统自动切换'],
+                    ['light', '亮色', '明亮、清晰的工作界面'],
+                    ['dark', '暗色', '降低暗光环境下的亮度']
+                  ] as const
+                ).map(([value, label, description]) => (
+                  <label key={value}>
+                    <input
+                      checked={appearanceTheme === value}
+                      name="appearance-theme"
+                      onChange={() => onAppearanceThemeChange(value)}
+                      type="radio"
+                      value={value}
+                    />
+                    <span
+                      aria-hidden="true"
+                      className={`appearance-options__preview appearance-options__preview--${value}`}
+                    >
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    <strong>{label}</strong>
+                    <small>{description}</small>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           {activeTab === 'runtime' && (
             <>
               {settings?.warning && (
@@ -827,7 +888,7 @@ export function SettingsPanel({
                     )
                   }
                 >
-                  <option value="platform">使用 Continue 平台默认</option>
+                  <option value="platform">使用指定的 Continue 配置文件</option>
                   {modelProfiles.map((profile) => (
                     <option
                       disabled={!isContinueCompatible(profile)}
@@ -843,7 +904,7 @@ export function SettingsPanel({
                 </select>
                 <small>
                   Continue 支持 Anthropic Messages、OpenAI Chat
-                  Completions 和无认证本机模型。
+                  Completions 和无认证本机模型。未选择独立连接时，必须在下方指定配置文件。
                 </small>
               </label>
               <label className="field">
@@ -887,7 +948,7 @@ export function SettingsPanel({
                     onChange={(event) =>
                       setContinueConfigPath(event.target.value)
                     }
-                    placeholder="留空使用工具默认配置"
+                    placeholder="选择可信的本地 Continue 配置文件"
                     value={continueConfigPath}
                   />
                   <button
@@ -912,6 +973,12 @@ export function SettingsPanel({
                   </button>
                 </div>
               </label>
+              {continueModelSource.kind === 'platform' &&
+                !continueConfigPath && (
+                  <p className="settings-warning">
+                    未指定配置文件时 Continue 将保持不可用，不会匿名加载远程默认模型。
+                  </p>
+                )}
               {continueBinaryPath && (
                 <p className="settings-warning">
                   自定义 Continue 可执行文件将以当前用户权限运行，请仅选择可信文件。

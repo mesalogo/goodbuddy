@@ -10,6 +10,19 @@ const components: Components = {
         {children}
       </a>
     )
+  },
+  table: ({ children, node, ...properties }) => {
+    void node
+    return (
+      <div
+        aria-label="表格，可横向滚动"
+        className="markdown-table-scroll"
+        role="region"
+        tabIndex={0}
+      >
+        <table {...properties}>{children}</table>
+      </div>
+    )
   }
 }
 

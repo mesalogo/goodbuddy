@@ -12,6 +12,7 @@ import type { AgentEvent, DesktopApi } from '../../shared/contracts'
 import App from './App'
 
 let agentListener: ((event: AgentEvent) => void) | undefined
+let newConversationListener: (() => void) | undefined
 const run = vi.fn<DesktopApi['agent']['run']>()
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const projectId = '00000000-0000-4000-8000-000000000101'
@@ -38,7 +39,12 @@ const api: DesktopApi = {
     show: vi.fn(async () => {}),
     hide: vi.fn(async () => {}),
     clearLocalData: vi.fn(async () => {}),
-    onNewConversation: vi.fn(() => () => {}),
+    onNewConversation: vi.fn((listener) => {
+      newConversationListener = listener
+      return () => {
+        newConversationListener = undefined
+      }
+    }),
     onOpenSettings: vi.fn(() => () => {})
   },
   agent: {
@@ -380,7 +386,10 @@ const api: DesktopApi = {
 describe('App', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete document.documentElement.dataset.theme
+    document.documentElement.style.colorScheme = ''
     vi.clearAllMocks()
+    newConversationListener = undefined
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: 'model',
       label: 'sonnet-5',
@@ -432,6 +441,93 @@ describe('App', () => {
     })
 
     expect(await screen.findByText('这是回答内容')).toBeInTheDocument()
+  })
+
+  it('keeps a draft in chat when Enter is pressed while the runtime loads', async () => {
+    vi.mocked(api.agent.getStatus).mockReturnValue(
+      new Promise(() => {})
+    )
+    render(<App />)
+
+    const composer = screen.getByLabelText('向 GoodBuddy 提问')
+    fireEvent.change(composer, {
+      target: { value: '等待 Runtime' }
+    })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(composer).toHaveValue('等待 Runtime')
+    expect(
+      screen.queryByRole('heading', { name: '设置中心' })
+    ).not.toBeInTheDocument()
+    expect(
+      await screen.findByText('Agent Runtime 正在加载，请稍后重试')
+    ).toBeInTheDocument()
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('keeps a new-conversation draft in chat when the runtime is unavailable', async () => {
+    vi.mocked(api.agent.getStatus).mockResolvedValue({
+      id: 'setup',
+      label: '需要配置模型',
+      available: false,
+      supportsToolExecution: false,
+      detail: '请配置模型'
+    })
+    render(<App />)
+
+    expect(
+      await screen.findByRole('heading', { name: '设置中心' })
+    ).toBeInTheDocument()
+    const newConversation = screen.getByRole('button', {
+      name: /新建对话/u
+    })
+    fireEvent.click(newConversation)
+
+    const composer = screen.getByLabelText('向 GoodBuddy 提问')
+    await waitFor(() => expect(composer).toHaveFocus())
+    fireEvent.change(composer, {
+      target: { value: '保留这条草稿' }
+    })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(composer).toHaveValue('保留这条草稿')
+    expect(
+      screen.queryByRole('heading', { name: '设置中心' })
+    ).not.toBeInTheDocument()
+    expect(
+      await screen.findByText(/请先配置可用的模型或 Agent Runtime/u)
+    ).toBeInTheDocument()
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('opens chat and focuses the composer for tray conversations', async () => {
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('本地工作区'))
+    expect(
+      await screen.findByRole('heading', { name: '设置中心' })
+    ).toBeInTheDocument()
+
+    act(() => newConversationListener?.())
+
+    const composer = await screen.findByLabelText('向 GoodBuddy 提问')
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  it('applies and persists a dark appearance from Settings', async () => {
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('本地工作区'))
+    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+    fireEvent.click(screen.getByRole('radio', { name: /暗色/u }))
+
+    await waitFor(() =>
+      expect(document.documentElement.dataset.theme).toBe('dark')
+    )
+    expect(document.documentElement.style.colorScheme).toBe('dark')
+    expect(localStorage.getItem('goodbuddy.appearance-theme')).toBe(
+      'dark'
+    )
   })
 
   it('loads token usage in activity and refreshes it when a run finishes', async () => {

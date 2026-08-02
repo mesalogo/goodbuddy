@@ -29,10 +29,16 @@ import {
   createContinuePermissionRule
 } from './continue-permissions'
 import { getAvailableLoopbackPort } from './loopback-port'
-import { buildRuntimeEnvironment } from './process-environment'
+import {
+  buildRuntimeEnvironment,
+  runtimePrivacyEnvironment
+} from './process-environment'
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import { createOpenAIApiBaseUrl } from './openai-endpoint'
-import { safeToolArgumentSummary } from './approval-summary'
+import {
+  redactSensitiveText,
+  safeToolArgumentSummary
+} from './approval-summary'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -40,6 +46,8 @@ const supportedBundleHashes = new Set([
 ])
 const maximumBundleBytes = 32 * 1024 * 1024
 const maximumStateBytes = 8 * 1024 * 1024
+export const continueConfigurationRequiredMessage =
+  'Continue 尚未配置模型连接，请在设置中选择 GoodBuddy 模型连接或指定 Continue 配置文件'
 const utilityBootstrap = [
   "import { pathToFileURL } from 'node:url'",
   'const entryPath = process.argv[2]',
@@ -113,6 +121,13 @@ export type ContinueHostAdapterOptions = {
   trustedBundleHashes?: string[]
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
+}
+
+export function hasContinueModelConfiguration(
+  configPath: string,
+  modelProfile?: ResolvedModelProfile
+): boolean {
+  return Boolean(modelProfile || configPath.trim())
 }
 
 export type ContinueHostChild = {
@@ -227,6 +242,58 @@ function extractAssistantText(
     }
   }
   return ''
+}
+
+function parseContinueFailure(text: string): string | undefined {
+  const match = /^Error:\s*(\{[\s\S]{1,16384}\})$/u.exec(text.trim())
+  if (!match?.[1]) {
+    return undefined
+  }
+  try {
+    const payload = JSON.parse(match[1]) as unknown
+    if (!payload || typeof payload !== 'object') {
+      return undefined
+    }
+    const record = payload as Record<string, unknown>
+    const error = record.error
+    const message =
+      typeof error === 'string'
+        ? error
+        : error && typeof error === 'object'
+          ? (error as Record<string, unknown>).message
+          : record.message
+    const detail =
+      typeof message === 'string' && message.trim()
+        ? `：${redactSensitiveText(message.trim()).slice(0, 500)}`
+        : ''
+    return `Continue 模型请求失败${detail}`
+  } catch {
+    return undefined
+  }
+}
+
+function extractContinueFailure(
+  history: unknown[],
+  startIndex: number
+): string | undefined {
+  for (const item of history.slice(startIndex).reverse()) {
+    if (!item || typeof item !== 'object') {
+      continue
+    }
+    const message = (item as Record<string, unknown>).message
+    if (!message || typeof message !== 'object') {
+      continue
+    }
+    const content = (message as Record<string, unknown>).content
+    if (typeof content !== 'string') {
+      continue
+    }
+    const failure = parseContinueFailure(content)
+    if (failure) {
+      return failure
+    }
+  }
+  return undefined
 }
 
 function subtractTokenCount(completed: number, initial: number): number {
@@ -480,6 +547,14 @@ export class ContinueHostAdapter {
     authorize: RuntimeAuthorizer
   ): Promise<ContinueHostRunResult> {
     signal.throwIfAborted()
+    if (
+      !hasContinueModelConfiguration(
+        this.options.configPath,
+        this.options.modelProfile
+      )
+    ) {
+      throw new Error(continueConfigurationRequiredMessage)
+    }
     let generatedConfigPath: string | undefined
     if (this.options.modelProfile) {
       if (
@@ -547,6 +622,7 @@ export class ContinueHostAdapter {
     }
     args.push('serve', '--port', String(port), '--timeout', '300')
     const environment = buildRuntimeEnvironment({
+      ...runtimePrivacyEnvironment,
       CONTINUE_CLI_DISABLE_COMMIT_SIGNATURE: '1',
       CONTINUE_CLI_AUTO_UPDATED: '1',
       CONTINUE_CLI_ENABLE_TELEMETRY: '0',
@@ -554,12 +630,7 @@ export class ContinueHostAdapter {
       CONTINUE_GLOBAL_DIR: isolatedGlobalDirectory,
       FORCE_NO_TTY: '1',
       GOODBUDDY_CONTINUE_HOST_TOKEN: token,
-      GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1',
-      OTEL_EXPORTER_OTLP_ENDPOINT: '',
-      OTEL_EXPORTER_OTLP_HEADERS: '',
-      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: '',
-      OTEL_METRICS_EXPORTER: '',
-      OTEL_LOG_USER_PROMPTS: '0'
+      GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1'
     })
     if (this.options.modelProfile) {
       delete environment.ANTHROPIC_API_KEY
@@ -699,6 +770,13 @@ export class ContinueHostAdapter {
           !state.pendingPermission &&
           state.session.history.length > startIndex
         ) {
+          const failure = extractContinueFailure(
+            state.session.history,
+            startIndex
+          )
+          if (failure) {
+            throw new Error(failure)
+          }
           const text = extractAssistantText(
             state.session.history,
             startIndex

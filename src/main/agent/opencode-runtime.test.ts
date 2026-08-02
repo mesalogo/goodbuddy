@@ -439,6 +439,10 @@ describe('OpenCodeRuntime embedded launcher', () => {
         OPENCODE_DISABLE_MODELS_FETCH: '1',
         OPENCODE_DISABLE_SHARE: '1',
         OTEL_EXPORTER_OTLP_ENDPOINT: '',
+        OTEL_EXPORTER_OTLP_HEADERS: '',
+        OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: '',
+        OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: '',
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: '',
         OTEL_SDK_DISABLED: 'true'
       })
       await runtime.dispose()
