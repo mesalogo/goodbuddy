@@ -119,10 +119,10 @@ export const modelProfilePresets = [
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'OpenAI Chat Completions 接口',
+    description: 'OpenAI Responses API',
     baseUrl: 'https://api.openai.com/v1',
     modelName: 'gpt-4.1',
-    protocol: 'openai-chat-completions',
+    protocol: 'openai-responses',
     authentication: 'api-key'
   },
   {

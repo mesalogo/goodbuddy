@@ -118,6 +118,8 @@ textarea:focus-visible {
   min-width: 248px;
   padding: 0 8px 20px;
   gap: 11px;
+  -webkit-app-region: drag;
+  user-select: none;
 }
 
 .brand__mark {
@@ -492,10 +494,55 @@ textarea:focus-visible {
   display: flex;
   min-width: 0;
   align-items: center;
-  padding: 0 21px;
+  padding: 0 0 0 21px;
   border-bottom: 1px solid #f0f0f0;
   background: #fff;
   gap: 3px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.topbar :is(button, input, select),
+.topbar__actions,
+.window-controls {
+  -webkit-app-region: no-drag;
+}
+
+.window-controls {
+  display: flex;
+  height: 100%;
+  flex: 0 0 auto;
+  align-self: stretch;
+  margin-left: 8px;
+}
+
+.window-control {
+  display: grid;
+  width: 46px;
+  min-width: 46px;
+  height: 100%;
+  place-items: center;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast, 120ms) ease-out,
+    color var(--motion-fast, 120ms) ease-out;
+}
+
+.window-control:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+.window-control--close:hover {
+  background: var(--danger-solid);
+  color: var(--text-on-accent);
+}
+
+.window-control:focus-visible {
+  outline-offset: -2px;
 }
 
 .icon-button {
@@ -517,18 +564,6 @@ textarea:focus-visible {
 .icon-button--active {
   background: #e6f4ff;
   color: #1677ff;
-}
-
-.topbar__expert {
-  width: clamp(86px, 11vw, 130px);
-  min-width: 0;
-  max-width: 130px;
-  padding: 6px 8px;
-  border: 1px solid #d9d9d9;
-  border-radius: 8px;
-  background: #fafafa;
-  color: #595959;
-  font-size: 9px;
 }
 
 .assistant-sidebar {
@@ -649,6 +684,113 @@ textarea:focus-visible {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.assistant-sidebar__diff-details {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+
+.assistant-sidebar__diff-details summary {
+  padding: var(--space-2) 0;
+  cursor: pointer;
+}
+
+.workspace-files {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.workspace-files__heading,
+.workspace-files__changed > strong {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+
+.workspace-files__changed {
+  display: flex;
+  min-width: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.workspace-files__changed-row,
+.workspace-files__row {
+  display: grid;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-caption);
+  gap: var(--space-2);
+  text-align: left;
+}
+
+.workspace-files__changed-row {
+  padding: var(--space-2);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.workspace-files__row {
+  padding: var(--space-2);
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+}
+
+.workspace-files__changed-row:hover:not(:disabled),
+.workspace-files__row:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.workspace-files__changed-row:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.workspace-files__changed-row span,
+.workspace-files__row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files__changed-row small,
+.workspace-files__change {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.workspace-files__tree {
+  min-width: 0;
+}
+
+.workspace-files__children {
+  margin-left: var(--space-4);
+}
+
+.workspace-files__indent {
+  width: 13px;
+}
+
+.workspace-files__status,
+.workspace-files__error {
+  padding: var(--space-1) var(--space-2);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+
+.workspace-files__error {
+  color: var(--danger);
 }
 
 .assistant-sidebar__row {
@@ -1101,6 +1243,7 @@ textarea:focus-visible {
 
 .conversation-title {
   display: flex;
+  max-width: min(360px, 36vw);
   min-width: 0;
   align-items: center;
   padding: 7px 9px;
@@ -1108,7 +1251,7 @@ textarea:focus-visible {
   margin-left: 4px;
   background: transparent;
   color: #1f1f1f;
-  cursor: pointer;
+  flex: 0 1 auto;
   gap: 6px;
   font-size: 12px;
   font-weight: 650;
@@ -1120,15 +1263,6 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.conversation-title svg {
-  flex: 0 0 auto;
-}
-
-.conversation-title:hover {
-  background: #e6f4ff;
-  color: #1677ff;
-}
-
 .topbar__actions {
   display: flex;
   min-width: 0;
@@ -1136,6 +1270,44 @@ textarea:focus-visible {
   flex: 0 1 auto;
   margin-left: auto;
   gap: 3px;
+}
+
+.topbar-menu {
+  position: relative;
+}
+
+.topbar-menu__popover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 7px);
+  right: 0;
+  display: grid;
+  width: 210px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-dialog);
+  gap: 2px;
+}
+
+.topbar-menu__popover button {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  gap: var(--space-2);
+  text-align: left;
+}
+
+.topbar-menu__popover button:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 .runtime-status {
@@ -1736,13 +1908,54 @@ textarea:focus-visible {
   background: #f0f0f0;
 }
 
+.composer__expert,
 .composer__mode {
   display: flex;
   height: 29px;
   align-items: center;
-  padding: 0 4px 0 8px;
-  border: 1px solid #91caff;
+  border: 1px solid;
   border-radius: 7px;
+}
+
+.composer__expert {
+  max-width: 150px;
+  padding: 0 5px 0 8px;
+  border-color: var(--border-default);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  gap: 3px;
+}
+
+.composer__expert svg {
+  flex: 0 0 auto;
+}
+
+.composer__expert select,
+.composer__mode select {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.composer__expert select {
+  min-width: 0;
+  max-width: 120px;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.composer__expert:focus-within,
+.composer__mode:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.composer__mode {
+  padding: 0 4px 0 8px;
+  border-color: #91caff;
   background: #e6f4ff;
   color: #0958d9;
   font-size: 10px;
@@ -1752,11 +1965,6 @@ textarea:focus-visible {
 
 .composer__mode select {
   max-width: 138px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
   font: inherit;
 }
 
@@ -2407,12 +2615,12 @@ textarea:focus-visible {
 }
 
 .conversation-row .conversation-item {
-  padding-right: 32px;
+  padding-right: 58px;
 }
 
+.conversation-more,
 .conversation-delete {
   position: absolute;
-  right: 5px;
   display: grid;
   width: 25px;
   height: 25px;
@@ -2424,14 +2632,134 @@ textarea:focus-visible {
   opacity: 0;
 }
 
+.conversation-more {
+  right: 31px;
+}
+
+.conversation-delete {
+  right: 5px;
+}
+
+.conversation-row:hover .conversation-more,
 .conversation-row:hover .conversation-delete,
+.conversation-row--active .conversation-more,
+.conversation-more:focus-visible,
 .conversation-delete:focus-visible {
   opacity: 1;
 }
 
+.conversation-more[aria-expanded='true'] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  opacity: 1;
+}
+
+.conversation-more:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
 .conversation-delete:hover {
-  background: #fafafa;
-  color: #ff4d4f;
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.conversation-actions {
+  display: grid;
+  padding: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  margin: 2px 5px var(--space-2);
+  background: var(--surface-subtle);
+  gap: 2px;
+}
+
+.conversation-actions button {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-caption);
+  gap: var(--space-2);
+  text-align: left;
+}
+
+.conversation-actions button:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.conversation-rename {
+  display: grid;
+  padding: var(--space-1);
+  margin: 2px 5px var(--space-2);
+  gap: var(--space-1);
+  grid-template-columns: minmax(0, 1fr) 28px 28px;
+}
+
+.conversation-rename input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  font-size: var(--font-caption);
+}
+
+.conversation-rename button {
+  display: grid;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.app-notice {
+  position: fixed;
+  z-index: 60;
+  bottom: var(--space-6);
+  left: 50%;
+  display: flex;
+  max-width: min(520px, calc(100vw - 32px));
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-dialog);
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  gap: var(--space-3);
+  transform: translateX(-50%);
+}
+
+.app-notice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-notice button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.app-notice button:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
 }
 
 .conversation-empty {
@@ -2439,23 +2767,6 @@ textarea:focus-visible {
   margin: 0;
   color: #8c8c8c;
   font-size: 10px;
-}
-
-.title-editor {
-  display: flex;
-  align-items: center;
-  margin-left: 4px;
-  gap: 3px;
-}
-
-.title-editor input {
-  width: min(360px, 36vw);
-  height: 32px;
-  padding: 0 9px;
-  border: 1px solid #1677ff;
-  border-radius: 8px;
-  background: #fff;
-  font-size: 12px;
 }
 
 .message-sources {
@@ -4652,7 +4963,7 @@ textarea:focus-visible {
   .assistant-sidebar {
     position: absolute;
     z-index: 30;
-    top: 0;
+    top: 58px;
     right: 0;
     bottom: 0;
     box-shadow: -12px 0 30px rgb(0 0 0 / 10%);

@@ -33,6 +33,10 @@ export class AgentRuntimeController implements AgentRuntime {
     return this.current.runtime.requiresToolApproval
   }
 
+  get runtimeId(): AgentRuntimeStatus['id'] | undefined {
+    return this.current.runtime.runtimeId
+  }
+
   get supportsToolExecution(): boolean {
     return this.current.runtime.supportsToolExecution
   }

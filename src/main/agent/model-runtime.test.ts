@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import type {
+  ModelToolDefinition,
+  ModelToolProviderLike
+} from './model-tool-provider'
 import { ModelAgentRuntime } from './model-runtime'
 
 function createEventStream(text: string): string {
@@ -34,6 +38,62 @@ function createEventStream(text: string): string {
     '',
     ''
   ].join('\n')
+}
+
+function createResponsesEventStream(text: string): string {
+  return [
+    'event: response.output_text.delta',
+    `data: ${JSON.stringify({
+      type: 'response.output_text.delta',
+      delta: text
+    })}`,
+    '',
+    'event: response.completed',
+    `data: ${JSON.stringify({
+      type: 'response.completed',
+      response: {
+        id: 'resp-provider-1',
+        model: 'gpt-5-provider',
+        usage: {
+          input_tokens: 29,
+          output_tokens: 8,
+          total_tokens: 37,
+          input_tokens_details: { cached_tokens: 11 }
+        }
+      }
+    })}`,
+    '',
+    ''
+  ].join('\n')
+}
+
+function createToolProvider(
+  overrides: Partial<ModelToolProviderLike> = {}
+): ModelToolProviderLike {
+  const tool: ModelToolDefinition = {
+    name: 'workspace_read_text',
+    displayName: '读取工作区文本',
+    description: 'Read text',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path']
+    },
+    source: 'builtin'
+  }
+  return {
+    listTools: vi.fn(async () => [tool]),
+    getApproval: vi.fn((_definition, _arguments, summary) => ({
+      scopeKey: 'model:builtin:workspace_read_text',
+      title: '允许读取工作区文本？',
+      description: '读取文件',
+      toolName: '读取工作区文本',
+      argumentSummary: summary
+    })),
+    callTool: vi.fn(async () => 'tool result'),
+    dispose: vi.fn(async () => {}),
+    ...overrides
+  }
 }
 
 describe('ModelAgentRuntime', () => {
@@ -78,7 +138,7 @@ describe('ModelAgentRuntime', () => {
       skillInstructions: '# 文档写作',
       fetcher
     })
-    const events = []
+    const events: Array<{ type: string; state?: string }> = []
 
     for await (const event of runtime.run(
       {
@@ -231,12 +291,14 @@ describe('ModelAgentRuntime', () => {
         headers: { 'content-type': 'text/event-stream' }
       })
     )
+    const toolProvider = createToolProvider()
     const runtime = new ModelAgentRuntime({
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'qwen3',
       protocol: 'openai-chat-completions',
       authentication: 'none',
-      fetcher
+      fetcher,
+      toolProvider
     })
     const events = []
 
@@ -292,6 +354,451 @@ describe('ModelAgentRuntime', () => {
     ])
     expect(events.at(-2)).toMatchObject({ type: 'model-usage' })
     expect(events.at(-1)).toMatchObject({ type: 'done' })
+    expect(toolProvider.listTools).not.toHaveBeenCalled()
+  })
+
+  it('uses the OpenAI Responses endpoint and streams output text', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(createResponsesEventStream('Responses 回答'), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      fetcher
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed133',
+        conversationId: 'conversation-responses',
+        prompt: '你好'
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    const [input, init] = fetcher.mock.calls[0] ?? []
+    expect(input?.toString()).toBe('https://api.openai.com/v1/responses')
+    expect(init?.headers).toEqual({
+      authorization: 'Bearer test-key',
+      'content-type': 'application/json'
+    })
+    expect(JSON.parse(init?.body as string)).toMatchObject({
+      model: 'gpt-5',
+      max_output_tokens: 4096,
+      stream: true,
+      instructions: expect.stringContaining('GoodBuddy'),
+      input: [
+        expect.objectContaining({ role: 'user', content: '你好' })
+      ]
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: 'Responses 回答'
+      })
+    )
+    expect(events.filter((event) => event.type === 'model-usage')).toEqual([
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed133',
+        type: 'model-usage',
+        callId: 'resp-provider-1',
+        runtime: 'model',
+        provider: 'openai',
+        model: 'gpt-5-provider',
+        inputTokens: 29,
+        outputTokens: 8,
+        cacheReadTokens: 11,
+        cacheWriteTokens: 0,
+        reportedTotalTokens: 37
+      }
+    ])
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('tests an OpenAI Responses connection with Responses request fields', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({ id: 'resp-test', output: [] })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1/',
+      model: 'gpt-5',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      fetcher
+    })
+
+    await expect(runtime.testConnection()).resolves.toMatchObject({
+      available: true,
+      detail: expect.stringContaining('已验证')
+    })
+    expect(fetcher.mock.calls[0]?.[0]?.toString()).toBe(
+      'https://api.openai.com/v1/responses'
+    )
+    expect(
+      JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)
+    ).toEqual({
+      model: 'gpt-5',
+      max_output_tokens: 16,
+      stream: false,
+      input: 'Reply OK.'
+    })
+  })
+
+  it('runs approved direct-model tools and returns their results to OpenAI', async () => {
+    const responses = [
+      {
+        id: 'chatcmpl-tool-1',
+        model: 'qwen3',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-1',
+                  type: 'function',
+                  function: {
+                    name: 'workspace_read_text',
+                    arguments: '{"path":"README.md"}'
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 4 }
+      },
+      {
+        id: 'chatcmpl-tool-2',
+        model: 'qwen3',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '文件内容已读取。'
+            }
+          }
+        ],
+        usage: { prompt_tokens: 18, completion_tokens: 7 }
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+    const authorize = vi.fn(async () => 'once' as const)
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed130',
+        conversationId: 'conversation-tools',
+        prompt: '读取 README',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      authorize
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(
+      fetcher.mock.calls[0]?.[1]?.body as string
+    ) as Record<string, unknown>
+    expect(firstBody).toMatchObject({
+      stream: false,
+      tools: [
+        {
+          type: 'function',
+          function: { name: 'workspace_read_text' }
+        }
+      ]
+    })
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { messages: Array<Record<string, unknown>> }
+    expect(secondBody.messages).toContainEqual({
+      role: 'tool',
+      tool_call_id: 'call-1',
+      content: 'tool result'
+    })
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopeKey: 'model:builtin:workspace_read_text'
+      })
+    )
+    expect(toolProvider.callTool).toHaveBeenCalledWith(
+      'workspace_read_text',
+      { path: 'README.md' },
+      expect.any(AbortSignal)
+    )
+    expect(
+      events
+        .filter((event) => event.type === 'tool')
+        .map((event) => event.state)
+    ).toEqual(['pending', 'running', 'completed'])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: '文件内容已读取。'
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+    await runtime.dispose()
+    expect(toolProvider.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('continues OpenAI Responses with function_call_output', async () => {
+    const responses = [
+      {
+        id: 'resp-tool-1',
+        model: 'gpt-5',
+        output: [
+          {
+            type: 'function_call',
+            call_id: 'call-responses-1',
+            name: 'workspace_read_text',
+            arguments: '{"path":"README.md"}'
+          }
+        ],
+        usage: { input_tokens: 14, output_tokens: 3 }
+      },
+      {
+        id: 'resp-tool-2',
+        model: 'gpt-5',
+        output: [
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              {
+                type: 'output_text',
+                text: 'Responses 工具调用完成。'
+              }
+            ]
+          }
+        ],
+        usage: { input_tokens: 21, output_tokens: 6 }
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider: createToolProvider()
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed134',
+        conversationId: 'conversation-responses-tools',
+        prompt: '读取 README',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    const firstBody = JSON.parse(
+      fetcher.mock.calls[0]?.[1]?.body as string
+    ) as Record<string, unknown>
+    expect(firstBody).toMatchObject({
+      model: 'gpt-5',
+      stream: false,
+      tools: [
+        {
+          type: 'function',
+          name: 'workspace_read_text',
+          strict: false
+        }
+      ]
+    })
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as Record<string, unknown>
+    expect(secondBody).toMatchObject({
+      previous_response_id: 'resp-tool-1',
+      input: [
+        {
+          type: 'function_call_output',
+          call_id: 'call-responses-1',
+          output: 'tool result'
+        }
+      ]
+    })
+    expect(
+      events
+        .filter((event) => event.type === 'tool')
+        .map((event) => event.state)
+    ).toEqual(['pending', 'running', 'completed'])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: 'Responses 工具调用完成。'
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('fails closed when a direct-model tool is denied', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-denied',
+                  type: 'function',
+                  function: {
+                    name: 'workspace_read_text',
+                    arguments: '{"path":"secret.txt"}'
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+    const events: Array<{ type: string; state?: string }> = []
+    const consume = async (): Promise<void> => {
+      for await (const event of runtime.run(
+        {
+          requestId: 'a431666e-5ec8-45e6-beb4-654132eed131',
+          conversationId: 'conversation-denied',
+          prompt: '读取 secret',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'deny'
+      )) {
+        events.push(event)
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('用户拒绝')
+    expect(
+      events
+        .filter((event) => event.type === 'tool')
+        .map((event) => event.state)
+    ).toEqual(['pending', 'failed'])
+    expect(toolProvider.callTool).not.toHaveBeenCalled()
+  })
+
+  it('uses Anthropic tool_use and tool_result messages in Execute mode', async () => {
+    const responses = [
+      {
+        id: 'message-tool-1',
+        model: 'claude',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu-1',
+            name: 'workspace_read_text',
+            input: { path: 'notes.md' }
+          }
+        ],
+        usage: { input_tokens: 12, output_tokens: 3 }
+      },
+      {
+        id: 'message-tool-2',
+        model: 'claude',
+        content: [{ type: 'text', text: '读取完成。' }],
+        usage: { input_tokens: 20, output_tokens: 5 }
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider: createToolProvider()
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed132',
+        conversationId: 'conversation-anthropic-tools',
+        prompt: '读取 notes',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      void _event
+    }
+
+    const firstBody = JSON.parse(
+      fetcher.mock.calls[0]?.[1]?.body as string
+    ) as Record<string, unknown>
+    expect(firstBody).toMatchObject({
+      stream: false,
+      tools: [
+        {
+          name: 'workspace_read_text',
+          input_schema: expect.objectContaining({ type: 'object' })
+        }
+      ]
+    })
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { messages: Array<Record<string, unknown>> }
+    expect(secondBody.messages.at(-1)).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu-1',
+          content: 'tool result'
+        }
+      ]
+    })
   })
 
   it('generates a bounded image through the BigToken-compatible endpoint', async () => {

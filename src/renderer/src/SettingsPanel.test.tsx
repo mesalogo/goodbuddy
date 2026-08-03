@@ -250,7 +250,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 Continue 可执行文件将以当前用户权限运行/)
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/仅在实际请求高风险工具时暂停/)
+      screen.getByText(/Continue 固定以 Execute 运行/)
     ).toBeInTheDocument()
     expect(
       screen.getByText(/不会匿名加载远程默认模型/)
@@ -373,6 +373,32 @@ describe('SettingsPanel runtime files', () => {
         })
       )
     )
+  })
+
+  it('uses Responses for the official OpenAI preset', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    fireEvent.change(await screen.findByLabelText('模型预设'), {
+      target: { value: 'openai' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '从预设添加' })
+    )
+
+    const protocol = screen.getByLabelText('接口协议 OpenAI')
+    expect(protocol).toHaveValue('openai-responses')
+    expect(
+      within(protocol).getByRole('option', { name: 'OpenAI Responses' })
+    ).toBeInTheDocument()
   })
 
   it('marks the BigToken gpt-image-2 preset as image generation', async () => {
@@ -589,5 +615,10 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByRole('button', { name: /添加 Server/ })
     ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /添加 Server/ }))
+    expect(screen.getByLabelText('模型')).toBeChecked()
+    expect(
+      screen.queryByLabelText('OpenCode')
+    ).not.toBeInTheDocument()
   })
 })

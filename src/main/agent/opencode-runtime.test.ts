@@ -114,7 +114,31 @@ function permissionEvent(
       patterns: ['npm test'],
       metadata: { command: 'npm test' },
       always: ['npm test'],
+      tool: {
+        messageID: 'message-1',
+        callID: 'call-1'
+      },
       ...overrides
+    }
+  }
+}
+
+function completedToolEvent(
+  callId = 'call-1',
+  tool = 'bash'
+): Record<string, unknown> {
+  return {
+    id: `event-tool-${callId}`,
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'session-1',
+      part: {
+        id: `part-${callId}`,
+        callID: callId,
+        type: 'tool',
+        tool,
+        state: { status: 'completed' }
+      }
     }
   }
 }
@@ -204,7 +228,10 @@ function embeddedRuntime(
   return new OpenCodeRuntime(options(), deps)
 }
 
-async function collectRun(runtime: OpenCodeRuntime, workMode: 'ask' | 'plan' | 'execute' = 'execute', authorize?: Parameters<OpenCodeRuntime['run']>[2]) {
+async function collectRun(
+  runtime: OpenCodeRuntime,
+  workMode: 'ask' | 'plan' | 'execute' = 'execute'
+) {
   const events = []
   for await (const event of runtime.run(
     {
@@ -213,8 +240,7 @@ async function collectRun(runtime: OpenCodeRuntime, workMode: 'ask' | 'plan' | '
       prompt: 'test',
       workMode
     },
-    new AbortController().signal,
-    authorize
+    new AbortController().signal
   )) {
     events.push(event)
   }
@@ -561,13 +587,11 @@ describe('OpenCodeRuntime embedded launcher', () => {
       baseUrl: 'http://127.0.0.1:4096',
       directory: process.cwd()
     })
-    expect(runtime.requiresToolApproval).toBe(true)
+    expect(runtime.requiresToolApproval).toBe(false)
   })
 
-  it('loads assigned Skills and MCP servers before prompting', async () => {
+  it('loads assigned Skills before prompting', async () => {
     const child = fakeChild()
-    const mcpAdd = vi.fn().mockResolvedValue({ error: undefined })
-    const mcpDisconnect = vi.fn().mockResolvedValue({ error: undefined })
     const promptAsync = vi.fn().mockResolvedValue({ error: undefined })
     const client = {
       session: {
@@ -585,10 +609,6 @@ describe('OpenCodeRuntime embedded launcher', () => {
           })()
         })
       },
-      mcp: {
-        add: mcpAdd,
-        disconnect: mcpDisconnect
-      },
       tool: {
         ids: vi.fn().mockResolvedValue({
           data: ['read', 'write', 'goodbuddy-mcp'],
@@ -605,20 +625,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       options({
         baseUrl: 'http://127.0.0.1:4096',
         embedded: false,
-        skillInstructions: '# 文档写作',
-        mcpServers: [
-          {
-            id: 'd2ef774b-146c-4467-a909-6feb112a9c2c',
-            name: 'Local MCP',
-            description: '',
-            enabled: true,
-            assignments: ['opencode'],
-            secretConfigured: false,
-            transport: 'stdio',
-            command: 'node',
-            args: ['server.js']
-          }
-        ]
+        skillInstructions: '# 文档写作'
       }),
       deps
     )
@@ -629,31 +636,16 @@ describe('OpenCodeRuntime embedded launcher', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'ask'
+        workMode: 'execute'
       },
       new AbortController().signal
     )) {
       events.push(event)
     }
 
-    expect(mcpAdd).toHaveBeenCalledWith({
-      name: 'goodbuddy-d2ef774b-146c-4467-a909-6feb112a9c2c',
-      config: {
-        type: 'local',
-        command: ['node', 'server.js'],
-        enabled: true,
-        timeout: 10_000
-      },
-      directory: process.cwd()
-    })
     expect(promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         system: '# 文档写作',
-        tools: {
-          read: false,
-          write: false,
-          'goodbuddy-mcp': false
-        },
         parts: [{ type: 'text', text: 'test' }]
       }),
       expect.objectContaining({
@@ -662,12 +654,11 @@ describe('OpenCodeRuntime embedded launcher', () => {
     )
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
-    expect(mcpDisconnect).toHaveBeenCalledOnce()
   })
 })
 
 describe('OpenCodeRuntime embedded permission mediation', () => {
-  it('subscribes before prompting and replies once for a session approval', async () => {
+  it('subscribes before prompting and auto-allows a tool request', async () => {
     const {
       client,
       callOrder,
@@ -677,6 +668,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       permissionEvent({ sessionID: 'unrelated-session' }),
       permissionEvent(),
       permissionEvent(),
+      completedToolEvent(),
       {
         id: 'event-text',
         type: 'message.part.delta',
@@ -695,9 +687,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       }
     ])
     const runtime = embeddedRuntime(client)
-    const authorize = vi.fn().mockResolvedValue('session')
-
-    const events = await collectRun(runtime, 'execute', authorize)
+    const events = await collectRun(runtime, 'execute')
 
     expect(callOrder).toEqual(['subscribe', 'prompt'])
     expect(session.create).toHaveBeenCalledWith({
@@ -708,24 +698,26 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         { permission: 'task', pattern: '*', action: 'deny' }
       ]
     })
-    expect(authorize).toHaveBeenCalledOnce()
-    expect(authorize).toHaveBeenCalledWith({
-      scopeKey: 'opencode:bash',
-      title: 'OpenCode 请求调用 bash',
-      description: '仅在你选择允许后，OpenCode 才会执行此工具调用。',
-      toolName: 'bash',
-      argumentSummary: JSON.stringify({
-        patterns: ['npm test'],
-        metadata: { command: 'npm test' }
-      }),
-      allowPermanent: false
-    })
     expect(permissionReply).toHaveBeenCalledOnce()
     expect(permissionReply).toHaveBeenCalledWith({
       requestID: 'permission-1',
       directory: process.cwd(),
       reply: 'once'
     })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-1',
+        state: 'pending'
+      })
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-1',
+        state: 'completed'
+      })
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'text',
@@ -736,15 +728,21 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it('uses one tool scope for different requests while preserving their summaries', async () => {
-    const { client } = runClient([
+  it('auto-allows each bounded tool request without GoodBuddy approval', async () => {
+    const { client, permissionReply } = runClient([
       permissionEvent(),
       permissionEvent({
         id: 'permission-2',
         patterns: ['npm run lint'],
         metadata: { command: 'npm run lint' },
-        always: ['npm run lint']
+        always: ['npm run lint'],
+        tool: {
+          messageID: 'message-2',
+          callID: 'call-2'
+        }
       }),
+      completedToolEvent('call-1'),
+      completedToolEvent('call-2'),
       {
         id: 'event-idle',
         type: 'session.idle',
@@ -752,26 +750,23 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       }
     ])
     const runtime = embeddedRuntime(client)
-    const authorize = vi.fn().mockResolvedValue('session')
+    await collectRun(runtime, 'execute')
 
-    await collectRun(runtime, 'execute', authorize)
-
-    expect(authorize).toHaveBeenCalledTimes(2)
-    expect(authorize.mock.calls.map(([request]) => request)).toEqual([
-      expect.objectContaining({
-        scopeKey: 'opencode:bash',
-        argumentSummary: JSON.stringify({
-          patterns: ['npm test'],
-          metadata: { command: 'npm test' }
-        })
-      }),
-      expect.objectContaining({
-        scopeKey: 'opencode:bash',
-        argumentSummary: JSON.stringify({
-          patterns: ['npm run lint'],
-          metadata: { command: 'npm run lint' }
-        })
-      })
+    expect(permissionReply.mock.calls).toEqual([
+      [
+        {
+          requestID: 'permission-1',
+          directory: process.cwd(),
+          reply: 'once'
+        }
+      ],
+      [
+        {
+          requestID: 'permission-2',
+          directory: process.cwd(),
+          reply: 'once'
+        }
+      ]
     ])
     await runtime.dispose()
   })
@@ -852,34 +847,6 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it.each(['deny', 'permanent'] as const)(
-    'rejects an OpenCode permission after a %s decision',
-    async (decision) => {
-      const { client, permissionReply } = runClient([
-        permissionEvent(),
-        {
-          id: 'event-idle',
-          type: 'session.idle',
-          properties: { sessionID: 'session-1' }
-        }
-      ])
-      const runtime = embeddedRuntime(client)
-
-      await collectRun(
-        runtime,
-        'execute',
-        vi.fn().mockResolvedValue(decision)
-      )
-
-      expect(permissionReply).toHaveBeenCalledWith({
-        requestID: 'permission-1',
-        directory: process.cwd(),
-        reply: 'reject'
-      })
-      await runtime.dispose()
-    }
-  )
-
   it('ignores unrelated requests and rejects bounded malformed requests without prompting', async () => {
     const { client, permissionReply } = runClient([
       permissionEvent({ sessionID: 'unrelated-session' }),
@@ -893,11 +860,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       }
     ])
     const runtime = embeddedRuntime(client)
-    const authorize = vi.fn().mockResolvedValue('once')
+    await collectRun(runtime, 'execute')
 
-    await collectRun(runtime, 'execute', authorize)
-
-    expect(authorize).not.toHaveBeenCalled()
     expect(permissionReply).toHaveBeenCalledOnce()
     expect(permissionReply).toHaveBeenCalledWith({
       requestID: 'permission-1',
@@ -918,59 +882,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     const runtime = embeddedRuntime(client)
 
     await expect(
-      collectRun(
-        runtime,
-        'execute',
-        vi.fn().mockResolvedValue('once')
-      )
+      collectRun(runtime, 'execute')
     ).rejects.toThrow('OpenCode 权限回复失败')
-    expect(session.abort).toHaveBeenCalledWith({
-      sessionID: 'session-1',
-      directory: process.cwd()
-    })
-    await runtime.dispose()
-  })
-
-  it('rejects a pending permission and aborts the session on cancellation', async () => {
-    const { client, permissionReply, session } = runClient([
-      permissionEvent()
-    ])
-    const runtime = embeddedRuntime(client)
-    const controller = new AbortController()
-    const authorize = vi.fn(
-      () =>
-        new Promise<never>((_resolve, reject) => {
-          controller.signal.addEventListener(
-            'abort',
-            () => reject(new Error('cancelled')),
-            { once: true }
-          )
-        })
-    )
-    const stream = runtime.run(
-      {
-        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
-        conversationId: 'conversation-1',
-        prompt: 'test',
-        workMode: 'execute'
-      },
-      controller.signal,
-      authorize
-    )
-
-    await expect(stream.next()).resolves.toMatchObject({
-      value: { type: 'status' }
-    })
-    const pending = stream.next()
-    await vi.waitFor(() => expect(authorize).toHaveBeenCalledOnce())
-    controller.abort()
-
-    await expect(pending).rejects.toThrow('cancelled')
-    expect(permissionReply).toHaveBeenCalledWith({
-      requestID: 'permission-1',
-      directory: process.cwd(),
-      reply: 'reject'
-    })
     expect(session.abort).toHaveBeenCalledWith({
       sessionID: 'session-1',
       directory: process.cwd()
@@ -1040,7 +953,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it('leaves external sessions unmodified for the controller whole-run gate', async () => {
+  it('leaves trusted external sessions unmodified and skips whole-run approval', async () => {
     const { client, session, permissionReply } = runClient([
       permissionEvent(),
       {
@@ -1060,16 +973,13 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         ) as unknown as typeof createOpencodeClient
       }
     )
-    const authorize = vi.fn().mockResolvedValue('once')
+    await collectRun(runtime, 'execute')
 
-    await collectRun(runtime, 'execute', authorize)
-
-    expect(runtime.requiresToolApproval).toBe(true)
+    expect(runtime.requiresToolApproval).toBe(false)
     expect(session.create).toHaveBeenCalledWith({
       title: 'GoodBuddy 对话',
       directory: process.cwd()
     })
-    expect(authorize).not.toHaveBeenCalled()
     expect(permissionReply).not.toHaveBeenCalled()
     await runtime.dispose()
   })

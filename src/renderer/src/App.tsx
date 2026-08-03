@@ -11,11 +11,15 @@ import {
   HeartPulse,
   History,
   Library,
+  Maximize2,
   MessageSquarePlus,
   Mic,
   MicOff,
+  Minimize2,
+  Minus,
   MoreHorizontal,
   Paperclip,
+  PanelLeft,
   Search,
   Send,
   Settings,
@@ -27,7 +31,8 @@ import {
   Square,
   TerminalSquare,
   Trash2,
-  UserRound
+  UserRound,
+  X
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -91,6 +96,12 @@ import {
   type AppearanceTheme
 } from './theme'
 
+function isAgentRuntime(
+  runtime: AgentRuntimeStatus | undefined
+): boolean {
+  return runtime?.id === 'opencode' || runtime?.id === 'continue'
+}
+
 type ToolActivity = {
   callId?: string
   name: string
@@ -136,6 +147,7 @@ type Conversation = {
 type ActiveRun = {
   conversationId: string
   messageId: string
+  projectId?: string
 }
 
 type WorkspaceView =
@@ -204,6 +216,14 @@ function createConversation(projectId?: string): Conversation {
       }
     ]
   }
+}
+
+function isUnusedConversation(conversation: Conversation): boolean {
+  return (
+    conversation.title === '新对话' &&
+    conversation.messages.length === 1 &&
+    conversation.messages[0]?.role === 'assistant'
+  )
 }
 
 function loadConversations(): Conversation[] {
@@ -412,6 +432,80 @@ function buildMemoryContext(memories: AssistantMemory[]): string {
   ].join('\n\n')
 }
 
+function WindowControls({
+  onError
+}: {
+  onError: (message: string) => void
+}): React.JSX.Element {
+  const [maximized, setMaximized] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    void window.goodbuddy.app
+      .isMaximized()
+      .then((value) => {
+        if (active) {
+          setMaximized(value)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          onError('窗口状态读取失败')
+        }
+      })
+    const removeListener =
+      window.goodbuddy.app.onMaximizedChanged(setMaximized)
+    return () => {
+      active = false
+      removeListener()
+    }
+  }, [onError])
+
+  return (
+    <div className="window-controls">
+      <button
+        aria-label="最小化窗口"
+        className="window-control"
+        onClick={() =>
+          void window.goodbuddy.app
+            .minimize()
+            .catch(() => onError('窗口最小化失败'))
+        }
+        title="最小化"
+        type="button"
+      >
+        <Minus size={17} />
+      </button>
+      <button
+        aria-label={maximized ? '还原窗口' : '最大化窗口'}
+        className="window-control"
+        onClick={() =>
+          void window.goodbuddy.app
+            .toggleMaximize()
+            .catch(() => onError('窗口大小切换失败'))
+        }
+        title={maximized ? '还原' : '最大化'}
+        type="button"
+      >
+        {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+      </button>
+      <button
+        aria-label="关闭窗口"
+        className="window-control window-control--close"
+        onClick={() =>
+          void window.goodbuddy.app
+            .close()
+            .catch(() => onError('窗口关闭失败'))
+        }
+        title="关闭"
+        type="button"
+      >
+        <X size={17} />
+      </button>
+    </div>
+  )
+}
+
 function App(): React.JSX.Element {
   const [conversations, setConversations] = useState(loadConversations)
   const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? '')
@@ -455,6 +549,7 @@ function App(): React.JSX.Element {
   const [selectedExpertId, setSelectedExpertId] = useState('')
   const [activeProjectId, setActiveProjectId] = useState('')
   const activeProjectIdRef = useRef(activeProjectId)
+  const workspaceChangesRequestRef = useRef(0)
   const viewRef = useRef<WorkspaceView>('chat')
   const heartbeatLoadRequestRef = useRef(0)
   const [workMode, setWorkMode] = useState<WorkMode>('ask')
@@ -463,6 +558,7 @@ function App(): React.JSX.Element {
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false)
+  const [topbarMenuOpen, setTopbarMenuOpen] = useState(false)
   const [runtimeSwitching, setRuntimeSwitching] = useState(false)
   const [appearanceTheme, setAppearanceTheme] =
     useState<AppearanceTheme>(loadAppearanceTheme)
@@ -475,8 +571,11 @@ function App(): React.JSX.Element {
     appearanceTheme,
     systemPrefersDark
   )
-  const effectiveWorkMode =
-    workMode === 'execute' && runtime?.supportsToolExecution === false
+  const agentRuntimeSelected = isAgentRuntime(runtime)
+  const effectiveWorkMode = agentRuntimeSelected
+    ? 'execute'
+    : workMode === 'execute' &&
+        runtime?.supportsToolExecution === false
       ? 'ask'
       : workMode
   const [appInfo, setAppInfo] = useState<AppInfo>()
@@ -488,8 +587,8 @@ function App(): React.JSX.Element {
     useState<AssistantSidebarTab>('tasks')
   const [view, setView] = useState<WorkspaceView>('chat')
   const [searchQuery, setSearchQuery] = useState('')
-  const [renaming, setRenaming] = useState(false)
-  const [titleDraft, setTitleDraft] = useState('')
+  const [conversationActionsId, setConversationActionsId] = useState('')
+  const [renamingConversationId, setRenamingConversationId] = useState('')
   const [notice, setNotice] = useState<string>()
   const [attachments, setAttachments] = useState<ContextAttachment[]>([])
   const [contextError, setContextError] = useState<string>()
@@ -515,21 +614,71 @@ function App(): React.JSX.Element {
   const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const topbarMenuRef = useRef<HTMLDivElement>(null)
+  const topbarMenuTriggerRef = useRef<HTMLButtonElement>(null)
+  const conversationActionTriggerRefs = useRef(
+    new Map<string, HTMLButtonElement>()
+  )
 
-  const startNewConversation = useCallback((projectId?: string): void => {
-    const conversation = createConversation(projectId)
-    setConversations((current) => [conversation, ...current])
-    setActiveId(conversation.id)
-    setView('chat')
-    setInput('')
-    setAttachments((current) => {
-      for (const attachment of current) {
-        void window.goodbuddy.context.remove(attachment.id)
-      }
-      return []
+  useEffect(() => {
+    if (!topbarMenuOpen) {
+      return
+    }
+    const focusFrame = requestAnimationFrame(() => {
+      topbarMenuRef.current
+        ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+        ?.focus()
     })
-    requestAnimationFrame(() => inputRef.current?.focus())
-  }, [])
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        !topbarMenuRef.current?.contains(event.target)
+      ) {
+        setTopbarMenuOpen(false)
+      }
+    }
+    const handleMenuKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setTopbarMenuOpen(false)
+        topbarMenuTriggerRef.current?.focus()
+        return
+      }
+      const menuItems = Array.from(
+        topbarMenuRef.current?.querySelectorAll<HTMLButtonElement>(
+          '[role="menuitem"]'
+        ) ?? []
+      )
+      if (menuItems.length === 0) {
+        return
+      }
+      const currentIndex = menuItems.indexOf(
+        document.activeElement as HTMLButtonElement
+      )
+      const targetIndex =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? menuItems.length - 1
+            : event.key === 'ArrowDown'
+              ? (currentIndex + 1) % menuItems.length
+              : event.key === 'ArrowUp'
+                ? (currentIndex - 1 + menuItems.length) %
+                  menuItems.length
+                : -1
+      if (targetIndex >= 0) {
+        event.preventDefault()
+        menuItems[targetIndex]?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', handleMenuKeyDown)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', handleMenuKeyDown)
+    }
+  }, [topbarMenuOpen])
 
   useEffect(() => {
     saveAppearanceTheme(appearanceTheme)
@@ -580,6 +729,56 @@ function App(): React.JSX.Element {
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeId),
     [activeId, conversations]
+  )
+  const conversationNavigationRef = useRef({
+    activeId,
+    conversations
+  })
+
+  useEffect(() => {
+    conversationNavigationRef.current = {
+      activeId,
+      conversations
+    }
+  }, [activeId, conversations])
+
+  const startNewConversation = useCallback(
+    (projectId?: string): void => {
+      const navigation = conversationNavigationRef.current
+      const currentConversation = navigation.conversations.find(
+        (conversation) => conversation.id === navigation.activeId
+      )
+      if (
+        currentConversation &&
+        currentConversation.projectId === projectId &&
+        isUnusedConversation(currentConversation)
+      ) {
+        setView('chat')
+        requestAnimationFrame(() => inputRef.current?.focus())
+        return
+      }
+      const conversation = createConversation(projectId)
+      const nextConversations = [
+        conversation,
+        ...navigation.conversations
+      ]
+      conversationNavigationRef.current = {
+        activeId: conversation.id,
+        conversations: nextConversations
+      }
+      setConversations(nextConversations)
+      setActiveId(conversation.id)
+      setView('chat')
+      setInput('')
+      setAttachments((current) => {
+        for (const attachment of current) {
+          void window.goodbuddy.context.remove(attachment.id)
+        }
+        return []
+      })
+      requestAnimationFrame(() => inputRef.current?.focus())
+    },
+    []
   )
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -811,6 +1010,21 @@ function App(): React.JSX.Element {
     setTokenUsage(await window.goodbuddy.usage.getTokenSummary())
   }, [])
 
+  const loadWorkspaceChanges = useCallback(
+    async (projectId: string): Promise<void> => {
+      const requestId = workspaceChangesRequestRef.current + 1
+      workspaceChangesRequestRef.current = requestId
+      const changes = await window.goodbuddy.workspace.getChanges(projectId)
+      if (
+        workspaceChangesRequestRef.current === requestId &&
+        activeProjectIdRef.current === projectId
+      ) {
+        setWorkspaceChanges(changes)
+      }
+    },
+    []
+  )
+
   const handleAgentEvent = useCallback(
     (event: AgentEvent): void => {
       const run = activeRuns.current.get(event.requestId)
@@ -842,6 +1056,14 @@ function App(): React.JSX.Element {
         )
       )
       if (event.type === 'done') {
+        if (
+          run.projectId &&
+          activeProjectIdRef.current === run.projectId
+        ) {
+          void loadWorkspaceChanges(run.projectId).catch(() =>
+            setNotice('工作区文件更改读取失败')
+          )
+        }
         if (viewRef.current === 'activity') {
           void refreshTokenUsage().catch(() =>
             setNotice('Token 用量读取失败')
@@ -1018,6 +1240,7 @@ function App(): React.JSX.Element {
     },
     [
       recordActivity,
+      loadWorkspaceChanges,
       refreshTokenUsage,
       updateMessage,
       updateRequestActivity
@@ -1116,14 +1339,32 @@ function App(): React.JSX.Element {
 
   const refreshWorkspaceChanges = useCallback(async (): Promise<void> => {
     if (!activeProjectId) {
+      workspaceChangesRequestRef.current += 1
       setWorkspaceChanges(undefined)
       return
     }
-    const changes = await window.goodbuddy.workspace.getChanges(
-      activeProjectId
-    )
-    setWorkspaceChanges(changes)
-  }, [activeProjectId])
+    await loadWorkspaceChanges(activeProjectId)
+  }, [activeProjectId, loadWorkspaceChanges])
+
+  const listWorkspaceDirectory = useCallback(
+    async (path: string) => {
+      if (!activeProjectId) {
+        throw new Error('请先选择项目')
+      }
+      return window.goodbuddy.workspace.listDirectory(activeProjectId, path)
+    },
+    [activeProjectId]
+  )
+
+  const loadWorkspaceFile = useCallback(
+    async (path: string) => {
+      if (!activeProjectId) {
+        throw new Error('请先选择项目')
+      }
+      return window.goodbuddy.workspace.readFile(activeProjectId, path)
+    },
+    [activeProjectId]
+  )
 
   useEffect(() => {
     if (assistantSidebarTab !== 'changes') {
@@ -1416,20 +1657,21 @@ function App(): React.JSX.Element {
       .catch(() => setNotice('应用信息读取失败'))
     const removeAgentListener =
       window.goodbuddy.agent.onEvent(handleAgentEvent)
-    const removeNewConversationListener =
-      window.goodbuddy.app.onNewConversation(() => {
-        startNewConversation(
-          activeProjectIdRef.current || undefined
-        )
-      })
     const removeOpenSettingsListener =
       window.goodbuddy.app.onOpenSettings(() => setView('settings'))
     return () => {
       removeAgentListener()
-      removeNewConversationListener()
       removeOpenSettingsListener()
     }
-  }, [handleAgentEvent, startNewConversation])
+  }, [handleAgentEvent])
+
+  useEffect(
+    () =>
+      window.goodbuddy.app.onNewConversation(() => {
+        startNewConversation(activeProjectIdRef.current || undefined)
+      }),
+    [startNewConversation]
+  )
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -1536,6 +1778,12 @@ function App(): React.JSX.Element {
   }
 
   const deleteConversation = (conversationId: string): void => {
+    if (conversationActionsId === conversationId) {
+      setConversationActionsId('')
+    }
+    if (renamingConversationId === conversationId) {
+      setRenamingConversationId('')
+    }
     const activeRequest = [...activeRuns.current.entries()].find(
       ([, run]) => run.conversationId === conversationId
     )?.[0]
@@ -1560,26 +1808,35 @@ function App(): React.JSX.Element {
     setActiveId(replacement.id)
   }
 
-  const saveTitle = (): void => {
-    const title = titleDraft.trim().slice(0, 80)
-    if (!activeConversation || !title) {
+  const focusConversationActions = (conversationId: string): void => {
+    requestAnimationFrame(() =>
+      conversationActionTriggerRefs.current.get(conversationId)?.focus()
+    )
+  }
+
+  const saveTitle = (
+    conversationId: string,
+    titleInput: string
+  ): void => {
+    const title = titleInput.trim().slice(0, 80)
+    if (!title) {
       return
     }
     setConversations((current) =>
       current.map((conversation) =>
-        conversation.id === activeConversation.id
+        conversation.id === conversationId
           ? { ...conversation, title, updatedAt: Date.now() }
           : conversation
       )
     )
-    setRenaming(false)
+    setRenamingConversationId('')
+    focusConversationActions(conversationId)
   }
 
-  const copyConversation = async (): Promise<void> => {
-    if (!activeConversation) {
-      return
-    }
-    const transcript = activeConversation.messages
+  const copyConversation = async (
+    conversation: ConversationSnapshot
+  ): Promise<void> => {
+    const transcript = conversation.messages
       .map(
         (message) =>
           `${message.role === 'user' ? '你' : 'GoodBuddy'}：\n${message.content}`
@@ -1593,14 +1850,13 @@ function App(): React.JSX.Element {
     }
   }
 
-  const exportConversation = (): void => {
-    if (!activeConversation) {
-      return
-    }
+  const exportConversation = (
+    conversation: ConversationSnapshot
+  ): void => {
     const markdown = [
-      `# ${activeConversation.title}`,
+      `# ${conversation.title}`,
       '',
-      ...activeConversation.messages.flatMap((message) => [
+      ...conversation.messages.flatMap((message) => [
         `## ${message.role === 'user' ? '你' : 'GoodBuddy'}`,
         '',
         message.content,
@@ -1613,7 +1869,7 @@ function App(): React.JSX.Element {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `${activeConversation.title.replace(/[\\/:*?"<>|]/g, '_') || 'GoodBuddy 对话'}.md`
+    anchor.download = `${conversation.title.replace(/[\\/:*?"<>|]/g, '_') || 'GoodBuddy 对话'}.md`
     anchor.click()
     URL.revokeObjectURL(url)
     setNotice('对话已导出')
@@ -1707,7 +1963,8 @@ function App(): React.JSX.Element {
 
     activeRuns.current.set(requestId, {
       conversationId,
-      messageId: assistantMessage.id
+      messageId: assistantMessage.id,
+      projectId: projectIdSnapshot
     })
     preparingConversations.current.delete(conversationId)
     const startedAt = new Date().toISOString()
@@ -2134,30 +2391,154 @@ function App(): React.JSX.Element {
         <div className="conversation-list">
           <p className="section-label">最近会话</p>
           {filteredConversations.map((conversation) => (
-            <div className="conversation-row" key={conversation.id}>
-              <button
+            <div className="conversation-entry" key={conversation.id}>
+              <div
                 className={
                   conversation.id === activeId
-                    ? 'conversation-item conversation-item--active'
-                    : 'conversation-item'
+                    ? 'conversation-row conversation-row--active'
+                    : 'conversation-row'
                 }
-                type="button"
-                onClick={() => {
-                  setActiveId(conversation.id)
-                  setView('chat')
-                }}
               >
-                <span>{conversation.title}</span>
-                <small>{formatTime(conversation.updatedAt)}</small>
-              </button>
-              <button
-                aria-label={`删除对话 ${conversation.title}`}
-                className="conversation-delete"
-                onClick={() => deleteConversation(conversation.id)}
-                type="button"
-              >
-                <Trash2 size={14} />
-              </button>
+                <button
+                  className={
+                    conversation.id === activeId
+                      ? 'conversation-item conversation-item--active'
+                      : 'conversation-item'
+                  }
+                  type="button"
+                  onClick={() => {
+                    setConversationActionsId('')
+                    setActiveId(conversation.id)
+                    setView('chat')
+                  }}
+                >
+                  <span>{conversation.title}</span>
+                  <small>{formatTime(conversation.updatedAt)}</small>
+                </button>
+                <button
+                  aria-controls={`conversation-actions-${conversation.id}`}
+                  aria-expanded={
+                    conversationActionsId === conversation.id
+                  }
+                  aria-label={`更多会话操作 ${conversation.title}`}
+                  className="conversation-more"
+                  onClick={() => {
+                    setRenamingConversationId('')
+                    setConversationActionsId((current) =>
+                      current === conversation.id ? '' : conversation.id
+                    )
+                  }}
+                  ref={(element) => {
+                    if (element) {
+                      conversationActionTriggerRefs.current.set(
+                        conversation.id,
+                        element
+                      )
+                    } else {
+                      conversationActionTriggerRefs.current.delete(
+                        conversation.id
+                      )
+                    }
+                  }}
+                  type="button"
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+                <button
+                  aria-label={`删除对话 ${conversation.title}`}
+                  className="conversation-delete"
+                  onClick={() => deleteConversation(conversation.id)}
+                  type="button"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              {conversationActionsId === conversation.id && (
+                <div
+                  aria-label={`${conversation.title} 的会话操作`}
+                  className="conversation-actions"
+                  id={`conversation-actions-${conversation.id}`}
+                >
+                  <button
+                    onClick={() => {
+                      setConversationActionsId('')
+                      setRenamingConversationId(conversation.id)
+                    }}
+                    type="button"
+                  >
+                    <Edit3 size={14} />
+                    重命名会话
+                  </button>
+                  <button
+                    onClick={() => {
+                      setConversationActionsId('')
+                      void copyConversation(conversation).finally(() =>
+                        focusConversationActions(conversation.id)
+                      )
+                    }}
+                    type="button"
+                  >
+                    <Copy size={14} />
+                    复制完整会话
+                  </button>
+                  <button
+                    onClick={() => {
+                      setConversationActionsId('')
+                      exportConversation(conversation)
+                      focusConversationActions(conversation.id)
+                    }}
+                    type="button"
+                  >
+                    <Download size={14} />
+                    导出 Markdown
+                  </button>
+                </div>
+              )}
+              {renamingConversationId === conversation.id && (
+                <form
+                  className="conversation-rename"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    const input =
+                      event.currentTarget.elements.namedItem('title')
+                    if (input instanceof HTMLInputElement) {
+                      saveTitle(conversation.id, input.value)
+                    }
+                  }}
+                >
+                  <input
+                    aria-label={`重命名会话 ${conversation.title}`}
+                    autoFocus
+                    defaultValue={conversation.title}
+                    maxLength={80}
+                    name="title"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        setRenamingConversationId('')
+                        focusConversationActions(conversation.id)
+                      }
+                    }}
+                    pattern=".*\S.*"
+                    required
+                  />
+                  <button
+                    aria-label="保存会话名称"
+                    type="submit"
+                  >
+                    <Check size={14} />
+                  </button>
+                  <button
+                    aria-label="取消重命名"
+                    onClick={() => {
+                      setRenamingConversationId('')
+                      focusConversationActions(conversation.id)
+                    }}
+                    type="button"
+                  >
+                    <X size={14} />
+                  </button>
+                </form>
+              )}
             </div>
           ))}
           {filteredConversations.length === 0 && (
@@ -2189,58 +2570,24 @@ function App(): React.JSX.Element {
             aria-label="切换侧栏"
             onClick={() => setSidebarOpen((open) => !open)}
           >
-            <MoreHorizontal size={19} />
+            <PanelLeft size={18} />
           </button>
-          {view === 'chat' && renaming ? (
-            <div className="title-editor">
-              <input
-                aria-label="对话标题"
-                autoFocus
-                maxLength={80}
-                onChange={(event) => setTitleDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    saveTitle()
-                  } else if (event.key === 'Escape') {
-                    setRenaming(false)
-                  }
-                }}
-                value={titleDraft}
-              />
-              <button
-                aria-label="保存标题"
-                className="icon-button"
-                onClick={saveTitle}
-                type="button"
-              >
-                <Check size={16} />
-              </button>
-            </div>
-          ) : (
-            <button
-              className="conversation-title"
-              onClick={() => {
-                if (view === 'chat' && activeConversation) {
-                  setTitleDraft(activeConversation.title)
-                  setRenaming(true)
-                }
-              }}
-              type="button"
-            >
-              <span>
-                {view === 'knowledge'
-                  ? '知识库'
-                  : view === 'heartbeat'
-                    ? '智能心跳'
+          <div
+            className="conversation-title"
+            title={activeConversation?.title}
+          >
+            <span>
+              {view === 'knowledge'
+                ? '知识库'
+                : view === 'heartbeat'
+                  ? '智能心跳'
                   : view === 'activity'
                     ? '任务与活动'
                     : view === 'settings'
                       ? '设置中心'
-                    : activeConversation?.title ?? '新对话'}
-              </span>
-              {view === 'chat' && <Edit3 size={14} />}
-            </button>
-          )}
+                      : activeConversation?.title ?? '新对话'}
+            </span>
+          </div>
           {view === 'chat' && (
             <ScopeBadge
               scope={
@@ -2257,45 +2604,6 @@ function App(): React.JSX.Element {
             />
           )}
           <div className="topbar__actions">
-            {view === 'chat' && (
-              <>
-                <button
-                  className="icon-button"
-                  onClick={() => void copyConversation()}
-                  title="复制对话"
-                  type="button"
-                >
-                  <Copy size={17} />
-                </button>
-                <button
-                  className="icon-button"
-                  onClick={exportConversation}
-                  title="导出 Markdown"
-                  type="button"
-                >
-                  <Download size={17} />
-                </button>
-              </>
-            )}
-            {view === 'chat' && (
-              <select
-                aria-label="专家角色"
-                className="topbar__expert"
-                disabled={runtime?.capability === 'image-generation'}
-                onChange={(event) =>
-                  setSelectedExpertId(event.target.value)
-                }
-                value={selectedExpertId}
-              >
-                <option value="">通用助手</option>
-                <option value="team">专家团队（并行）</option>
-                {assistantExperts.map((expert) => (
-                  <option key={expert.id} value={expert.id}>
-                    {expert.name}
-                  </option>
-                ))}
-              </select>
-            )}
             <span
               className={
                 runtime?.available
@@ -2329,37 +2637,61 @@ function App(): React.JSX.Element {
                 <PanelRightOpen size={18} />
               </button>
             )}
-            <button
-              className={
-                view === 'settings'
-                  ? 'icon-button icon-button--active'
-                  : 'icon-button'
-              }
-              type="button"
-              aria-label="安全与 Runtime 设置"
-              onClick={() => setView('settings')}
-            >
-              <ShieldCheck size={18} />
-            </button>
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="帮助"
-              onClick={() =>
-                setNotice(
-                  '输入问题后按 Enter 发送，Shift+Enter 换行。附件只会在你明确选择后发送。'
-                )
-              }
-            >
-              <CircleHelp size={18} />
-            </button>
+            <div className="topbar-menu" ref={topbarMenuRef}>
+              <button
+                aria-expanded={topbarMenuOpen}
+                aria-haspopup="menu"
+                aria-label="应用菜单"
+                className="icon-button"
+                onClick={() =>
+                  setTopbarMenuOpen((current) => !current)
+                }
+                ref={topbarMenuTriggerRef}
+                type="button"
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {topbarMenuOpen && (
+                <div
+                  aria-label="应用操作"
+                  className="topbar-menu__popover"
+                  role="menu"
+                >
+                  <button
+                    onClick={() => {
+                      setTopbarMenuOpen(false)
+                      setView('settings')
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <ShieldCheck size={16} />
+                    安全与 Runtime 设置
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTopbarMenuOpen(false)
+                      setNotice(
+                        '输入问题后按 Enter 发送，Shift+Enter 换行。附件只会在你明确选择后发送。'
+                      )
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <CircleHelp size={16} />
+                    使用帮助
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
+          <WindowControls onError={setNotice} />
         </header>
 
         {view === 'chat' ? (
           <PageShell variant="reading">
             <section className="chat" ref={scrollRef}>
-          {activeConversation?.messages.length === 1 && (
+          {activeConversation && isUnusedConversation(activeConversation) && (
             <div className="welcome">
               <div className="welcome__badge">
                 <Sparkles size={18} />
@@ -2769,12 +3101,33 @@ function App(): React.JSX.Element {
                   </div>
                 )}
                 <span className="divider" />
+                <label className="composer__expert">
+                  <Bot size={15} />
+                  <select
+                    aria-label="专家角色"
+                    disabled={runtime?.capability === 'image-generation'}
+                    onChange={(event) =>
+                      setSelectedExpertId(event.target.value)
+                    }
+                    value={selectedExpertId}
+                  >
+                    <option value="">通用助手</option>
+                    <option value="team">专家团队（并行）</option>
+                    {assistantExperts.map((expert) => (
+                      <option key={expert.id} value={expert.id}>
+                        {expert.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label
                   className={`composer__mode composer__mode--${effectiveWorkMode}`}
                 >
                   <span>模式</span>
                   <select
+                    aria-describedby="work-mode-hint"
                     aria-label="工作模式"
+                    disabled={agentRuntimeSelected}
                     onChange={(event) =>
                       setWorkMode(event.target.value as WorkMode)
                     }
@@ -2925,13 +3278,15 @@ function App(): React.JSX.Element {
               )}
             </div>
           </div>
-          <p className="composer-hint">
+          <p className="composer-hint" id="work-mode-hint">
             {notice ??
               contextError ??
               (!runtime?.available
                 ? '请先配置可用的模型或 Agent Runtime。'
                 : runtime.capability === 'image-generation'
                   ? '图像生成模型：输入画面描述后，生成结果会直接显示并保存到成果。'
+                  : agentRuntimeSelected
+                    ? `${runtime.label} 固定为 Execute，工具调用不会弹出 GoodBuddy 审批，并会记录到活动。`
                   : effectiveWorkMode === 'ask'
                   ? 'Ask 模式：只读问答，不会调用工具或修改文件。'
                   : effectiveWorkMode === 'plan'
@@ -3137,6 +3492,20 @@ function App(): React.JSX.Element {
           </PageShell>
         )}
       </main>
+      {view !== 'chat' && notice && (
+        <div className="app-notice">
+          <span aria-live="polite" role="status">
+            {notice}
+          </span>
+          <button
+            aria-label="关闭通知"
+            onClick={() => setNotice(undefined)}
+            type="button"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <RightAssistantSidebar
         activities={activityRecords}
         approvals={pendingSidebarApprovals}
@@ -3210,6 +3579,8 @@ function App(): React.JSX.Element {
         }}
         onRunHeartbeat={runHeartbeat}
         onSetHeartbeatPaused={setHeartbeatPaused}
+        onListWorkspaceDirectory={listWorkspaceDirectory}
+        onLoadWorkspaceFile={loadWorkspaceFile}
         onRefreshChanges={refreshWorkspaceChanges}
         onRespondApproval={(approval, decision) => {
           void respondToApproval(
@@ -3227,6 +3598,7 @@ function App(): React.JSX.Element {
         tab={assistantSidebarTab}
         tasks={assistantTasks}
         workspaceChanges={workspaceChanges}
+        workspaceProjectId={activeProjectId || undefined}
       />
     </div>
   )

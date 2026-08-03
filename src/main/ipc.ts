@@ -21,6 +21,8 @@ import {
   knowledgeUrlImportSchema,
   runtimeFileSelectionKindSchema,
   runtimeSettingsInputSchema,
+  workspaceDirectoryRequestSchema,
+  workspaceFileRequestSchema,
   type AgentRuntimeDetection,
   type AgentEvent,
   type AppInfo,
@@ -71,10 +73,21 @@ import type { ToolApprovalBroker } from './tool-approval-broker'
 import { showWindow } from './window'
 import type { AssistantDatabase } from './assistant/assistant-database'
 import { RemoteDelegationService } from './assistant/remote-delegation-service'
-import { getWorkspaceChanges } from './assistant/workspace-changes-service'
+import {
+  getWorkspaceChanges,
+  listWorkspaceDirectory,
+  readWorkspaceFile
+} from './assistant/workspace-changes-service'
 import { HeartbeatService } from './assistant/heartbeat-service'
 
 const requestIdSchema = z.string().uuid()
+
+function isAgentRuntime(runtime: AgentRuntime): boolean {
+  return (
+    runtime.runtimeId === 'opencode' ||
+    runtime.runtimeId === 'continue'
+  )
+}
 
 function safeRuntimeError(error: unknown, fallback: string): string {
   return redactSensitiveText(
@@ -352,12 +365,24 @@ export function registerIpcHandlers(
     (channel) =>
       channel !== ipcChannels.agentEvent &&
       channel !== ipcChannels.conversationNew &&
-      channel !== ipcChannels.settingsOpen
+      channel !== ipcChannels.settingsOpen &&
+      channel !== ipcChannels.windowMaximizedChanged
   )
 
   for (const channel of channels) {
     ipcMain.removeHandler(channel)
   }
+
+  const notifyMaximizedChanged = (): void => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(
+        ipcChannels.windowMaximizedChanged,
+        window.isMaximized()
+      )
+    }
+  }
+  window.on('maximize', notifyMaximizedChanged)
+  window.on('unmaximize', notifyMaximizedChanged)
 
   const abortActiveRequests = (reason: string): void => {
     for (const controller of activeRequests.values()) {
@@ -543,10 +568,6 @@ export function registerIpcHandlers(
           : 'Work mode: Execute. Tool actions remain subject to GoodBuddy permission controls.'
     let output = ''
     let completed = false
-    const toolStates = new Map<
-      string,
-      Extract<AgentEvent, { type: 'tool' }>
-    >()
     try {
       for await (const agentEvent of runtime.run(
         {
@@ -611,18 +632,10 @@ export function registerIpcHandlers(
         if (taskEvent.type === 'text') {
           output = `${output}${taskEvent.delta}`.slice(0, 1_000_000)
         } else if (taskEvent.type === 'tool') {
-          toolStates.set(taskEvent.callId, taskEvent)
+          throw new Error('只读定时任务不允许调用工具')
         } else if (taskEvent.type === 'error') {
           throw new Error(taskEvent.message)
         } else if (taskEvent.type === 'done') {
-          const unsuccessfulTool = [...toolStates.values()].find(
-            (tool) => tool.state !== 'completed'
-          )
-          if (unsuccessfulTool) {
-            throw new Error(
-              `${unsuccessfulTool.name} 工具未成功完成，定时任务已失败`
-            )
-          }
           completed = true
           break
         }
@@ -888,6 +901,30 @@ export function registerIpcHandlers(
     window.hide()
   })
 
+  ipcMain.handle(ipcChannels.windowMinimize, (event) => {
+    assertTrustedSender(event, window)
+    window.minimize()
+  })
+
+  ipcMain.handle(ipcChannels.windowToggleMaximize, (event) => {
+    assertTrustedSender(event, window)
+    if (window.isMaximized()) {
+      window.unmaximize()
+    } else {
+      window.maximize()
+    }
+  })
+
+  ipcMain.handle(ipcChannels.windowClose, (event) => {
+    assertTrustedSender(event, window)
+    window.close()
+  })
+
+  ipcMain.handle(ipcChannels.windowIsMaximized, (event): boolean => {
+    assertTrustedSender(event, window)
+    return window.isMaximized()
+  })
+
   ipcMain.handle(ipcChannels.appClearLocalData, async (event) => {
     assertTrustedSender(event, window)
     executionPaused = true
@@ -916,9 +953,12 @@ export function registerIpcHandlers(
       throw new Error('本地数据维护期间暂不接受新任务')
     }
     const parsedInput = agentRequestSchema.parse(input)
+    const agentRuntimeSelected = isAgentRuntime(runtime)
     const parsedRequest = {
       ...parsedInput,
-      workMode: parsedInput.workMode ?? ('ask' as const)
+      workMode: agentRuntimeSelected
+        ? ('execute' as const)
+        : (parsedInput.workMode ?? ('ask' as const))
     }
     if (
       parsedRequest.workMode === 'execute' &&
@@ -940,7 +980,9 @@ export function registerIpcHandlers(
           : enrichedRequest.workMode === 'plan'
             ? 'Work mode: Plan. Do not call tools or make changes. Produce a concrete reviewable plan and wait for user confirmation.'
             : enrichedRequest.workMode === 'execute'
-              ? 'Work mode: Execute. Follow the approved request; all tool actions remain subject to GoodBuddy permission controls.'
+              ? agentRuntimeSelected
+                ? 'Work mode: Execute. Follow the user request. Agent Runtime tool calls execute without GoodBuddy approval and must remain visible in runtime activity.'
+                : 'Work mode: Execute. Follow the approved request; all tool actions remain subject to GoodBuddy permission controls.'
               : ''
     const expertInstruction =
       enrichedRequest.expertId && !imageGeneration
@@ -1020,7 +1062,11 @@ export function registerIpcHandlers(
         }
         const eventStream = request.teamMode
           ? runExpertTeam(request, controller.signal)
-          : runtime.run(request, controller.signal, authorize)
+          : runtime.run(
+              request,
+              controller.signal,
+              agentRuntimeSelected ? undefined : authorize
+            )
         for await (const agentEvent of eventStream) {
           if (agentEvent.type === 'model-usage') {
             persistModelUsage(agentEvent)
@@ -1319,6 +1365,24 @@ export function registerIpcHandlers(
         assistantIdSchema.parse(input)
       )
       return getWorkspaceChanges(project.rootPath)
+    }
+  )
+  ipcMain.handle(
+    ipcChannels.workspaceDirectoryList,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const value = workspaceDirectoryRequestSchema.parse(input)
+      const project = assistantDatabase.getProject(value.projectId)
+      return listWorkspaceDirectory(project.rootPath, value.path)
+    }
+  )
+  ipcMain.handle(
+    ipcChannels.workspaceFileRead,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const value = workspaceFileRequestSchema.parse(input)
+      const project = assistantDatabase.getProject(value.projectId)
+      return readWorkspaceFile(project.rootPath, value.path)
     }
   )
 
@@ -1979,6 +2043,8 @@ export function registerIpcHandlers(
     approvalBroker.clear()
     contextManager.clear()
     await Promise.allSettled([...activeExecutions])
+    window.removeListener('maximize', notifyMaximizedChanged)
+    window.removeListener('unmaximize', notifyMaximizedChanged)
     for (const channel of channels) {
       ipcMain.removeHandler(channel)
     }

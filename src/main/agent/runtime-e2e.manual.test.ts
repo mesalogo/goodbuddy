@@ -195,7 +195,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             'cn.js'
           ),
           configPath: '',
-          mode: 'agent',
           defaultWorkspace: workspace,
           hostCacheRoot: join(workspace, '.continue-host'),
           modelProfile: {

@@ -33,6 +33,8 @@ import type {
   TokenUsageSummary,
   ConversationSnapshot,
   WorkspaceChanges,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview,
   ProjectCreateInput,
   MemoryCreateInput,
   ScheduleCreateInput,
@@ -49,6 +51,29 @@ const desktopApi: DesktopApi = {
     },
     hide: async () => {
       await ipcRenderer.invoke(ipcChannels.appHide)
+    },
+    minimize: async () => {
+      await ipcRenderer.invoke(ipcChannels.windowMinimize)
+    },
+    toggleMaximize: async () => {
+      await ipcRenderer.invoke(ipcChannels.windowToggleMaximize)
+    },
+    close: async () => {
+      await ipcRenderer.invoke(ipcChannels.windowClose)
+    },
+    isMaximized: () =>
+      ipcRenderer.invoke(ipcChannels.windowIsMaximized) as Promise<boolean>,
+    onMaximizedChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        maximized: boolean
+      ): void => listener(maximized)
+      ipcRenderer.on(ipcChannels.windowMaximizedChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.windowMaximizedChanged,
+          handler
+        )
     },
     clearLocalData: async () => {
       await ipcRenderer.invoke(ipcChannels.appClearLocalData)
@@ -159,7 +184,17 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.workspaceChangesGet,
         projectId
-      ) as Promise<WorkspaceChanges>
+      ) as Promise<WorkspaceChanges>,
+    listDirectory: (projectId: string, path: string) =>
+      ipcRenderer.invoke(ipcChannels.workspaceDirectoryList, {
+        projectId,
+        path
+      }) as Promise<WorkspaceDirectoryListing>,
+    readFile: (projectId: string, path: string) =>
+      ipcRenderer.invoke(ipcChannels.workspaceFileRead, {
+        projectId,
+        path
+      }) as Promise<WorkspaceFilePreview>
   },
   tasks: {
     list: () =>

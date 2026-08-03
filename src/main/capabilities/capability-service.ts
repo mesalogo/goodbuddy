@@ -248,8 +248,9 @@ export class CapabilityService {
     if (this.state) {
       return this.state
     }
+    let loaded: StoredCapabilities
     try {
-      this.state = storedCapabilitiesSchema.parse(
+      loaded = storedCapabilitiesSchema.parse(
         JSON.parse(await readFile(this.filePath, 'utf8'))
       )
     } catch (error) {
@@ -259,14 +260,32 @@ export class CapabilityService {
         'code' in error &&
         error.code === 'ENOENT'
       ) {
-        this.state = { version: 1, skills: {}, mcpServers: [] }
+        loaded = { version: 1, skills: {}, mcpServers: [] }
       } else {
         await rename(
           this.filePath,
           `${this.filePath}.corrupt-${Date.now()}`
         ).catch(() => undefined)
-        this.state = { version: 1, skills: {}, mcpServers: [] }
+        loaded = { version: 1, skills: {}, mcpServers: [] }
       }
+    }
+    const migrateMcpAssignments = loaded.mcpServers.some((server) =>
+      server.assignments.includes('opencode')
+    )
+    const migrated = migrateMcpAssignments
+      ? {
+          ...loaded,
+          mcpServers: loaded.mcpServers.map((server) => ({
+            ...server,
+            assignments: server.assignments.includes('opencode')
+              ? (['model'] as CapabilityAssignments)
+              : server.assignments
+          }))
+        }
+      : loaded
+    this.state = storedCapabilitiesSchema.parse(migrated)
+    if (migrateMcpAssignments) {
+      await this.persist(this.state)
     }
     return this.state
   }
@@ -455,10 +474,10 @@ export class CapabilityService {
       const value = mcpServerInputSchema.parse(input)
       if (
         value.assignments.some(
-          (assignment) => assignment !== 'opencode'
+          (assignment) => assignment !== 'model'
         )
       ) {
-        throw new Error('当前版本的 MCP Server 只能分配给 OpenCode')
+        throw new Error('当前版本的 MCP Server 只能分配给直连模型')
       }
       const state = await this.load()
       const id = serverId ? mcpServerIdSchema.parse(serverId) : randomUUID()
@@ -634,6 +653,9 @@ export class CapabilityService {
   async getResolvedMcpServers(
     target: RuntimeTarget
   ): Promise<ResolvedMcpServer[]> {
+    if (target !== 'model') {
+      return []
+    }
     const state = await this.load()
     const assigned = state.mcpServers.filter(
       (server) => server.enabled && server.assignments.includes(target)

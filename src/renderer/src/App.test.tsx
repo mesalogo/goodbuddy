@@ -13,6 +13,8 @@ import App from './App'
 
 let agentListener: ((event: AgentEvent) => void) | undefined
 let newConversationListener: (() => void) | undefined
+let maximizedChangedListener: ((maximized: boolean) => void) | undefined
+const removeMaximizedChangedListener = vi.fn()
 const run = vi.fn<DesktopApi['agent']['run']>()
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const projectId = '00000000-0000-4000-8000-000000000101'
@@ -38,6 +40,14 @@ const api: DesktopApi = {
     })),
     show: vi.fn(async () => {}),
     hide: vi.fn(async () => {}),
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    isMaximized: vi.fn(async () => false),
+    onMaximizedChanged: vi.fn((listener) => {
+      maximizedChangedListener = listener
+      return removeMaximizedChangedListener
+    }),
     clearLocalData: vi.fn(async () => {}),
     onNewConversation: vi.fn((listener) => {
       newConversationListener = listener
@@ -52,7 +62,7 @@ const api: DesktopApi = {
       id: 'model' as const,
       label: 'sonnet-5',
       available: true,
-      supportsToolExecution: false,
+      supportsToolExecution: true,
       detail: 'Ready'
     })),
     run,
@@ -175,7 +185,7 @@ const api: DesktopApi = {
         id: 'model',
         label: 'sonnet-5',
         available: true,
-        supportsToolExecution: false,
+        supportsToolExecution: true,
         detail: 'Ready'
       })
     )
@@ -204,7 +214,20 @@ const api: DesktopApi = {
       available: true,
       status: '',
       patch: '',
+      files: [],
       truncated: false
+    })),
+    listDirectory: vi.fn(async (path: string) => ({
+      path,
+      entries: [],
+      truncated: false
+    })),
+    readFile: vi.fn(async (path: string) => ({
+      path,
+      name: path.split('/').at(-1) ?? path,
+      content: '',
+      mimeType: 'text/plain' as const,
+      size: 0
     }))
   },
   tasks: {
@@ -390,11 +413,12 @@ describe('App', () => {
     document.documentElement.style.colorScheme = ''
     vi.clearAllMocks()
     newConversationListener = undefined
+    maximizedChangedListener = undefined
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: 'model',
       label: 'sonnet-5',
       available: true,
-      supportsToolExecution: false,
+      supportsToolExecution: true,
       detail: 'Ready'
     })
     Object.defineProperty(window, 'goodbuddy', {
@@ -405,6 +429,106 @@ describe('App', () => {
 
   afterEach(() => {
     cleanup()
+  })
+
+  it('provides custom minimize, maximize, and close controls', async () => {
+    const { unmount } = render(<App />)
+
+    fireEvent.click(screen.getByLabelText('最小化窗口'))
+    fireEvent.click(screen.getByLabelText('最大化窗口'))
+    fireEvent.click(screen.getByLabelText('关闭窗口'))
+
+    await waitFor(() => {
+      expect(api.app.minimize).toHaveBeenCalledOnce()
+      expect(api.app.toggleMaximize).toHaveBeenCalledOnce()
+      expect(api.app.close).toHaveBeenCalledOnce()
+    })
+    act(() => maximizedChangedListener?.(true))
+    expect(await screen.findByLabelText('还原窗口')).toBeInTheDocument()
+    act(() => maximizedChangedListener?.(false))
+    expect(screen.getByLabelText('最大化窗口')).toBeInTheDocument()
+
+    unmount()
+    expect(removeMaximizedChangedListener).toHaveBeenCalledOnce()
+  })
+
+  it('keeps conversation actions in the conversation list', async () => {
+    const { container } = render(<App />)
+    const topbar = container.querySelector<HTMLElement>('.topbar')
+    const conversationList =
+      container.querySelector<HTMLElement>('.conversation-list')
+    expect(topbar).not.toBeNull()
+    expect(conversationList).not.toBeNull()
+    if (!topbar || !conversationList) {
+      return
+    }
+
+    expect(within(topbar).queryByLabelText('专家角色')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('专家角色').closest('.composer')).not.toBeNull()
+
+    const appMenuTrigger = within(topbar).getByLabelText('应用菜单')
+    fireEvent.click(appMenuTrigger)
+    expect(
+      screen.queryByRole('menuitem', { name: '重命名会话' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: '安全与 Runtime 设置' })
+    ).toBeVisible()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('menuitem', { name: '安全与 Runtime 设置' })
+      ).toHaveFocus()
+    )
+    fireEvent.keyDown(document, { key: 'ArrowDown' })
+    expect(screen.getByRole('menuitem', { name: '使用帮助' })).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(appMenuTrigger).toHaveFocus()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+    const conversationMenuTrigger = within(
+      conversationList
+    ).getByLabelText('更多会话操作 新对话')
+    fireEvent.click(conversationMenuTrigger)
+    const renameButton = within(conversationList).getByRole('button', {
+      name: '重命名会话'
+    })
+    expect(renameButton).toBeVisible()
+    expect(
+      within(conversationList).getByRole('button', {
+        name: '复制完整会话'
+      })
+    ).toBeVisible()
+    expect(
+      within(conversationList).getByRole('button', {
+        name: '导出 Markdown'
+      })
+    ).toBeVisible()
+
+    fireEvent.click(renameButton)
+    const renameInput = within(conversationList).getByLabelText(
+      '重命名会话 新对话'
+    )
+    fireEvent.change(renameInput, {
+      target: { value: '重命名后的会话' }
+    })
+    fireEvent.submit(renameInput.closest('form')!)
+    expect(
+      within(conversationList).getByText('重命名后的会话')
+    ).toBeInTheDocument()
+    await waitFor(() => expect(conversationMenuTrigger).toHaveFocus())
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    fireEvent.click(
+      within(conversationList).getByLabelText(
+        '更多会话操作 重命名后的会话'
+      )
+    )
+    fireEvent.click(
+      within(conversationList).getByRole('button', {
+        name: '复制完整会话'
+      })
+    )
+    expect(await screen.findByRole('status')).toBeVisible()
   })
 
   it('sends a prompt and renders streamed agent content', async () => {
@@ -513,6 +637,193 @@ describe('App', () => {
 
     const composer = await screen.findByLabelText('向 GoodBuddy 提问')
     await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  it('reuses the active empty conversation and preserves its draft', async () => {
+    render(<App />)
+
+    const composer = await screen.findByLabelText('向 GoodBuddy 提问')
+    fireEvent.change(composer, {
+      target: { value: '尚未发送的草稿' }
+    })
+    const newConversation = screen.getByRole('button', {
+      name: /新建对话/u
+    })
+    fireEvent.click(newConversation)
+    fireEvent.click(newConversation)
+
+    expect(composer).toHaveValue('尚未发送的草稿')
+    expect(
+      screen.getAllByRole('button', { name: '删除对话 新对话' })
+    ).toHaveLength(1)
+  })
+
+  it('coalesces batched new-conversation requests after a used conversation', async () => {
+    render(<App />)
+
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '已有内容' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const requestId = run.mock.calls[0]?.[0].requestId
+    act(() => {
+      if (requestId) {
+        agentListener?.({ requestId, type: 'done' })
+      }
+      newConversationListener?.()
+      newConversationListener?.()
+    })
+
+    expect(
+      screen.getAllByRole('button', { name: /^删除对话/u })
+    ).toHaveLength(2)
+  })
+
+  it('opens a workspace Markdown file in the right-side preview', async () => {
+    vi.mocked(api.workspace.listDirectory).mockResolvedValue({
+      path: '',
+      entries: [
+        {
+          name: 'README.md',
+          path: 'README.md',
+          type: 'file'
+        }
+      ],
+      truncated: false
+    })
+    vi.mocked(api.workspace.readFile).mockResolvedValue({
+      path: 'README.md',
+      name: 'README.md',
+      content: '# 工作区说明',
+      mimeType: 'text/markdown',
+      size: 19
+    })
+    render(<App />)
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(await screen.findByRole('tab', { name: '更改' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: /README\.md/u })
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: '工作区说明' })
+    ).toBeInTheDocument()
+    expect(api.workspace.readFile).toHaveBeenCalledWith(
+      projectId,
+      'README.md'
+    )
+  })
+
+  it('refreshes generated workspace files when a run completes', async () => {
+    vi.mocked(api.workspace.getChanges)
+      .mockResolvedValueOnce({
+        rootPath: project.rootPath,
+        available: true,
+        status: '',
+        patch: '',
+        files: [],
+        truncated: false
+      })
+      .mockResolvedValueOnce({
+        rootPath: project.rootPath,
+        available: true,
+        status: '?? generated.md',
+        patch: '',
+        files: [{ path: 'generated.md', status: '??' }],
+        truncated: false
+      })
+    render(<App />)
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(await screen.findByRole('tab', { name: '更改' }))
+    await waitFor(() =>
+      expect(api.workspace.getChanges).toHaveBeenCalledOnce()
+    )
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '生成文件' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const requestId = run.mock.calls[0]?.[0].requestId
+    act(() => {
+      if (requestId) {
+        agentListener?.({ requestId, type: 'done' })
+      }
+    })
+
+    expect(await screen.findByText('generated.md')).toBeInTheDocument()
+  })
+
+  it('ignores stale Git changes after switching projects', async () => {
+    const secondProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000102',
+      name: '第二项目',
+      rootPath: 'C:\\Second'
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      secondProject
+    ])
+    let resolveFirst:
+      | ((value: Awaited<ReturnType<DesktopApi['workspace']['getChanges']>>) => void)
+      | undefined
+    let resolveSecond:
+      | ((value: Awaited<ReturnType<DesktopApi['workspace']['getChanges']>>) => void)
+      | undefined
+    vi.mocked(api.workspace.getChanges)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          })
+      )
+    render(<App />)
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(await screen.findByRole('tab', { name: '更改' }))
+    await waitFor(() =>
+      expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId)
+    )
+    fireEvent.change(screen.getByLabelText('当前项目'), {
+      target: { value: secondProject.id }
+    })
+    await waitFor(() =>
+      expect(api.workspace.getChanges).toHaveBeenCalledWith(
+        secondProject.id
+      )
+    )
+
+    resolveSecond?.({
+      rootPath: secondProject.rootPath,
+      available: true,
+      status: '?? second.md',
+      patch: '',
+      files: [{ path: 'second.md', status: '??' }],
+      truncated: false
+    })
+    expect(await screen.findByText('second.md')).toBeInTheDocument()
+    resolveFirst?.({
+      rootPath: project.rootPath,
+      available: true,
+      status: '?? stale.md',
+      patch: '',
+      files: [{ path: 'stale.md', status: '??' }],
+      truncated: false
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByText('stale.md')).not.toBeInTheDocument()
+    )
+    expect(screen.getByText('second.md')).toBeInTheDocument()
   })
 
   it('applies and persists a dark appearance from Settings', async () => {
@@ -627,10 +938,15 @@ describe('App', () => {
     expect(within(stats).getByText('345')).toBeInTheDocument()
   })
 
-  it('shows and changes the work mode in the composer', async () => {
+  it.each([
+    ['opencode', 'OpenCode'],
+    ['continue', 'Continue CLI']
+  ] as const)(
+    'locks %s to Execute and submits without a mode choice',
+    async (runtimeId, label) => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'opencode',
-      label: 'OpenCode',
+      id: runtimeId,
+      label,
       available: true,
       supportsToolExecution: true,
       detail: 'Ready'
@@ -638,13 +954,15 @@ describe('App', () => {
     render(<App />)
 
     const mode = await screen.findByLabelText('工作模式')
-    expect(mode).toHaveValue('ask')
+    expect(mode).toHaveValue('execute')
+    expect(mode).toBeDisabled()
     expect(mode.closest('.composer')).not.toBeNull()
     expect(
-      await screen.findByText(/Ask 模式：只读问答，不会调用工具/)
+      await screen.findByText(
+        new RegExp(`${label} 固定为 Execute.*不会弹出 GoodBuddy 审批`)
+      )
     ).toBeInTheDocument()
 
-    fireEvent.change(mode, { target: { value: 'execute' } })
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '执行任务' }
     })
@@ -658,9 +976,50 @@ describe('App', () => {
         })
       )
     )
+    }
+  )
+
+  it('restores the direct-model mode after leaving an Agent Runtime', async () => {
+    vi.mocked(api.agent.getStatus)
+      .mockResolvedValueOnce({
+        id: 'opencode',
+        label: 'OpenCode',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      })
+      .mockResolvedValueOnce({
+        id: 'model',
+        label: 'sonnet-5',
+        available: true,
+        supportsToolExecution: false,
+        detail: 'Ready'
+      })
+    render(<App />)
+
+    const mode = await screen.findByLabelText('工作模式')
+    expect(mode).toHaveValue('execute')
+    expect(mode).toBeDisabled()
+
+    fireEvent.click(await screen.findByRole('button', { name: /OpenCode/u }))
+    fireEvent.click(
+      screen.getByRole('menuitemradio', { name: /默认模型/u })
+    )
+
+    await waitFor(() => {
+      expect(mode).toHaveValue('ask')
+      expect(mode).toBeEnabled()
+    })
   })
 
   it('disables Execute for a runtime without tool support', async () => {
+    vi.mocked(api.agent.getStatus).mockResolvedValue({
+      id: 'model',
+      label: 'legacy-model',
+      available: true,
+      supportsToolExecution: false,
+      detail: 'Ready'
+    })
     render(<App />)
 
     const mode = await screen.findByLabelText('工作模式')
@@ -670,6 +1029,34 @@ describe('App', () => {
       })
     ).toBeDisabled()
     expect(mode).toHaveValue('ask')
+  })
+
+  it('allows a direct model to submit Execute with GoodBuddy approvals', async () => {
+    vi.mocked(api.agent.getStatus).mockResolvedValue({
+      id: 'model',
+      label: 'sonnet-5',
+      available: true,
+      supportsToolExecution: true,
+      detail: 'Ready'
+    })
+    render(<App />)
+
+    const mode = await screen.findByLabelText('工作模式')
+    fireEvent.change(mode, { target: { value: 'execute' } })
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '读取项目文件' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '读取项目文件',
+          workMode: 'execute'
+        })
+      )
+    )
+    expect(mode).toBeEnabled()
   })
 
   it('terminalizes tools and activity when a request is cancelled', async () => {

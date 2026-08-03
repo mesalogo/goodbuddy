@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -30,7 +31,15 @@ type MarkdownRendererProps = {
   children: string
 }
 
-export function MarkdownRenderer({
+const wholeMarkdownFence =
+  /^```(?:markdown|md)\s*\r?\n([\s\S]*?)\r?\n```$/iu
+
+function unwrapMarkdownFence(content: string): string {
+  const fencedMarkdown = wholeMarkdownFence.exec(content.trim())
+  return fencedMarkdown?.[1] ?? content
+}
+
+export const MarkdownRenderer = memo(function MarkdownRenderer({
   children
 }: MarkdownRendererProps): React.JSX.Element {
   return (
@@ -39,7 +48,7 @@ export function MarkdownRenderer({
       remarkPlugins={[remarkGfm]}
       skipHtml
     >
-      {children}
+      {unwrapMarkdownFence(children)}
     </ReactMarkdown>
   )
-}
+})

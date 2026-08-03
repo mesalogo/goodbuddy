@@ -16,6 +16,7 @@ describe('modelProfilePresets', () => {
         'hunyuan-deployment',
         'huawei-deployment',
         'ollama',
+        'openai',
         'openai-compatible',
         'anthropic-compatible'
       ])
@@ -35,6 +36,13 @@ describe('modelProfilePresets', () => {
       baseUrl: 'https://bigtoken.ai/v1',
       modelName: 'gpt-image-2',
       protocol: 'openai-images-generations',
+      authentication: 'api-key'
+    })
+    expect(
+      modelProfilePresets.find((preset) => preset.id === 'openai')
+    ).toMatchObject({
+      baseUrl: 'https://api.openai.com/v1',
+      protocol: 'openai-responses',
       authentication: 'api-key'
     })
   })

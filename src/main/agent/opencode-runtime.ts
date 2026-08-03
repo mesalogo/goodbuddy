@@ -13,13 +13,11 @@ import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import type {
   AgentExecutionRequest,
   AgentRuntime,
-  RuntimeAuthorizer,
   RuntimeEvent,
   RuntimeModelUsageEvent
 } from './runtime'
 import { detectRuntimeBinary } from './runtime-discovery'
 import { getAvailableLoopbackPort } from './loopback-port'
-import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import {
   buildRuntimeEnvironment,
@@ -29,10 +27,7 @@ import {
   buildBubblewrapLaunch,
   type RuntimeSandboxResolution
 } from './runtime-sandbox'
-import {
-  redactSensitiveText,
-  safeToolArgumentSummary
-} from './approval-summary'
+import { redactSensitiveText } from './approval-summary'
 
 const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
 const STARTUP_TIMEOUT_MS = 10_000
@@ -41,7 +36,7 @@ const MAX_PERMISSION_PATTERNS = 32
 const MAX_PERMISSION_PATTERN_LENGTH = 1_024
 const MAX_PERMISSION_PATTERNS_BYTES = 8 * 1_024
 const MAX_PERMISSION_METADATA_BYTES = 8 * 1_024
-const MAX_PERMISSION_SUMMARY_LENGTH = 2_000
+const MAX_TOOL_CALLS_PER_RUN = 100
 const EMBEDDED_SERVER_USERNAME = 'goodbuddy'
 
 type SpawnedProcess = ReturnType<typeof spawn>
@@ -128,7 +123,11 @@ function parsePermissionRequest(
     (tool !== undefined &&
       (!isRecord(tool) ||
         typeof tool.messageID !== 'string' ||
-        typeof tool.callID !== 'string'))
+        tool.messageID.length === 0 ||
+        tool.messageID.length > 256 ||
+        typeof tool.callID !== 'string' ||
+        tool.callID.length === 0 ||
+        tool.callID.length > 256))
   ) {
     throw new Error('OpenCode 权限请求格式无效')
   }
@@ -147,23 +146,6 @@ function parsePermissionRequest(
     throw new Error('OpenCode 权限请求元数据超过安全限制')
   }
   return properties as PermissionRequest
-}
-
-function permissionArgumentSummary(
-  request: PermissionRequest
-): string {
-  return safeToolArgumentSummary(
-    {
-      patterns: request.patterns,
-      metadata: request.metadata
-    },
-    undefined,
-    MAX_PERMISSION_SUMMARY_LENGTH
-  )
-}
-
-function permissionScopeKey(request: PermissionRequest): string {
-  return `opencode:${request.permission}`
 }
 
 function isSafeTokenCount(value: number): boolean {
@@ -224,7 +206,6 @@ export type OpenCodeRuntimeOptions = {
   defaultWorkspace: string
   modelProfile?: ResolvedModelProfile
   skillInstructions?: string
-  mcpServers?: ResolvedMcpServer[]
   sandbox?: RuntimeSandboxResolution
 }
 
@@ -279,9 +260,8 @@ function parseListeningUrl(output: string): string | undefined {
 }
 
 export class OpenCodeRuntime implements AgentRuntime {
-  get requiresToolApproval(): boolean {
-    return !this.usesEmbeddedPermissionMediation()
-  }
+  readonly runtimeId = 'opencode'
+  readonly requiresToolApproval = false
   readonly supportsToolExecution = true
   private client?: OpencodeClient
   private clientInitialization?: Promise<OpencodeClient>
@@ -292,9 +272,6 @@ export class OpenCodeRuntime implements AgentRuntime {
     string,
     Promise<string>
   >()
-  private readonly configuredMcpNames = new Set<string>()
-  private capabilitiesConfigured = false
-  private capabilityInitialization?: Promise<void>
   private readonly dependencies: OpenCodeRuntimeDependencies
 
   constructor(
@@ -653,69 +630,15 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
   }
 
-  private async configureCapabilities(
-    client: OpencodeClient
-  ): Promise<void> {
-    if (this.capabilitiesConfigured) {
-      return
-    }
-    this.capabilityInitialization ??=
-      this.performConfigureCapabilities(client)
-    try {
-      await this.capabilityInitialization
-    } catch (error) {
-      this.capabilityInitialization = undefined
-      throw error
-    }
-  }
-
-  private async performConfigureCapabilities(
-    client: OpencodeClient
-  ): Promise<void> {
-    for (const server of this.options.mcpServers ?? []) {
-      const name = `goodbuddy-${server.id}`
-      const config =
-        server.transport === 'stdio'
-          ? {
-              type: 'local' as const,
-              command: [server.command, ...server.args],
-              enabled: true,
-              timeout: 10_000
-            }
-          : {
-              type: 'remote' as const,
-              url: server.url,
-              enabled: true,
-              headers: server.secret
-                ? { Authorization: `Bearer ${server.secret}` }
-                : undefined,
-              oauth: false as const,
-              timeout: 10_000
-            }
-      const response = await client.mcp.add({
-        name,
-        config,
-        directory: this.options.defaultWorkspace
-      })
-      if (response.error) {
-        throw new Error(`OpenCode 无法加载 MCP Server：${server.name}`)
-      }
-      this.configuredMcpNames.add(name)
-    }
-    this.capabilitiesConfigured = true
-  }
-
   async *run(
     request: AgentExecutionRequest,
-    signal: AbortSignal,
-    authorize?: RuntimeAuthorizer
+    signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
     if (request.images?.length) {
       throw new Error('OpenCode Runtime 暂不支持图片上下文，请切换到视觉模型')
     }
     const client = await this.getClient(signal)
-    await this.configureCapabilities(client)
     const directory = this.options.defaultWorkspace
     const permission = this.usesEmbeddedPermissionMediation()
       ? request.workMode === 'execute'
@@ -770,6 +693,13 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
     signal.addEventListener('abort', abortSession, { once: true })
 
+    const toolStates = new Map<
+      string,
+      {
+        name: string
+        state: 'pending' | 'running' | 'completed' | 'failed'
+      }
+    >()
     try {
       const promptText =
         session.created && request.history?.length
@@ -797,10 +727,6 @@ export class OpenCodeRuntime implements AgentRuntime {
 
       const repliedPermissionIds = new Set<string>()
       const reportedMessageIds = new Set<string>()
-      const toolStates = new Map<
-        string,
-        'pending' | 'running' | 'completed' | 'failed'
-      >()
       for await (const event of subscription.stream) {
         if (
           event.type === 'message.updated' &&
@@ -838,11 +764,20 @@ export class OpenCodeRuntime implements AgentRuntime {
         ) {
           const { part } = event.properties
           if (part.type === 'tool') {
-            const callId = (part.callID || part.id).slice(0, 256)
+            const callId = part.callID || part.id
+            if (!callId || callId.length > 256) {
+              throw new Error('OpenCode 工具调用 ID 格式无效')
+            }
             const toolName = part.tool.slice(0, 200)
+            if (
+              !toolStates.has(callId) &&
+              toolStates.size >= MAX_TOOL_CALLS_PER_RUN
+            ) {
+              throw new Error('OpenCode 单次运行的工具调用超过 100 个')
+            }
             const state =
               part.state.status === 'error' ? 'failed' : part.state.status
-            toolStates.set(callId, state)
+            toolStates.set(callId, { name: toolName, state })
             yield {
               requestId: request.requestId,
               type: 'tool',
@@ -882,6 +817,14 @@ export class OpenCodeRuntime implements AgentRuntime {
               properties.id.length <= MAX_PERMISSION_NAME_LENGTH &&
               !repliedPermissionIds.has(properties.id)
             ) {
+              if (
+                repliedPermissionIds.size >= MAX_TOOL_CALLS_PER_RUN
+              ) {
+                throw new Error(
+                  'OpenCode 单次运行的权限请求超过 100 个',
+                  { cause: error }
+                )
+              }
               repliedPermissionIds.add(properties.id)
               const rejection = await client.permission.reply({
                 requestID: properties.id,
@@ -901,44 +844,34 @@ export class OpenCodeRuntime implements AgentRuntime {
           if (repliedPermissionIds.has(permissionRequest.id)) {
             continue
           }
+          if (repliedPermissionIds.size >= MAX_TOOL_CALLS_PER_RUN) {
+            throw new Error('OpenCode 单次运行的权限请求超过 100 个')
+          }
           repliedPermissionIds.add(permissionRequest.id)
 
-          let decision: Awaited<ReturnType<NonNullable<typeof authorize>>>
-          try {
-            decision = authorize
-              ? await authorize({
-                  scopeKey: permissionScopeKey(permissionRequest),
-                  title: `OpenCode 请求调用 ${permissionRequest.permission}`,
-                  description:
-                    '仅在你选择允许后，OpenCode 才会执行此工具调用。',
-                  toolName: permissionRequest.permission,
-                  argumentSummary:
-                    permissionArgumentSummary(permissionRequest),
-                  allowPermanent: false
-                })
-              : 'deny'
-          } catch (error) {
-            const rejection = await client.permission.reply({
-              requestID: permissionRequest.id,
-              directory,
-              reply: 'reject'
-            })
-            if (rejection.error || rejection.data !== true) {
-              throw new Error('OpenCode 权限拒绝回复失败', {
-                cause: error
-              })
-            }
-            throw error
+          const callId = (
+            permissionRequest.tool?.callID ?? permissionRequest.id
+          )
+          const toolName = permissionRequest.permission.slice(0, 200)
+          if (
+            !toolStates.has(callId) &&
+            toolStates.size >= MAX_TOOL_CALLS_PER_RUN
+          ) {
+            throw new Error('OpenCode 单次运行的工具调用超过 100 个')
           }
-
-          const reply =
-            decision === 'once' || decision === 'session'
-              ? 'once'
-              : 'reject'
+          toolStates.set(callId, { name: toolName, state: 'pending' })
+          yield {
+            requestId: request.requestId,
+            type: 'tool',
+            callId,
+            name: toolName,
+            state: 'pending',
+            summary: `OpenCode 工具：${toolName}`
+          }
           const response = await client.permission.reply({
             requestID: permissionRequest.id,
             directory,
-            reply
+            reply: 'once'
           })
           if (response.error || response.data !== true) {
             throw new Error('OpenCode 权限回复失败')
@@ -969,12 +902,12 @@ export class OpenCodeRuntime implements AgentRuntime {
             )
           }
           const unsuccessfulTool = [...toolStates.entries()].find(
-            ([, state]) => state !== 'completed'
+            ([, tool]) => tool.state !== 'completed'
           )
           if (unsuccessfulTool) {
-            const [callId, state] = unsuccessfulTool
+            const [callId, tool] = unsuccessfulTool
             throw new Error(
-              state === 'failed'
+              tool.state === 'failed'
                 ? `OpenCode 工具执行失败（${callId.slice(0, 128)}）`
                 : `OpenCode 工具未完成（${callId.slice(0, 128)}）`
             )
@@ -1000,6 +933,18 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw new Error('OpenCode 事件流意外结束')
     } catch (error) {
       abortSession()
+      for (const [callId, tool] of toolStates) {
+        if (tool.state === 'pending' || tool.state === 'running') {
+          yield {
+            requestId: request.requestId,
+            type: 'tool',
+            callId,
+            name: tool.name,
+            state: 'failed',
+            summary: `OpenCode 工具：${tool.name}`
+          }
+        }
+      }
       throw error
     } finally {
       signal.removeEventListener('abort', abortSession)
@@ -1014,24 +959,11 @@ export class OpenCodeRuntime implements AgentRuntime {
       await this.waitForExit(startingChild)
     }
     const server = this.server
-    const client = this.client
     this.server = undefined
     this.client = undefined
     this.clientInitialization = undefined
-    this.capabilityInitialization = undefined
     this.sessions.clear()
     this.sessionInitializations.clear()
-    await Promise.all(
-      [...this.configuredMcpNames].map((name) =>
-        client?.mcp
-          .disconnect({
-            name,
-            directory: this.options.defaultWorkspace
-          })
-          .catch(() => undefined)
-      )
-    )
-    this.configuredMcpNames.clear()
     await server?.close()
   }
 

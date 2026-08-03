@@ -46,6 +46,7 @@ export type RuntimeEvent =
   | RuntimeModelUsageEvent
 
 export interface AgentRuntime {
+  readonly runtimeId?: AgentRuntimeStatus['id']
   readonly requiresToolApproval: boolean
   readonly supportsToolExecution: boolean
   readonly capability?: 'chat' | 'image-generation'

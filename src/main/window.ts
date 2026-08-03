@@ -23,7 +23,11 @@ export function resolveWindowIcon(
     return undefined
   }
   const fileName =
-    environment.platform === 'win32' ? 'icon.ico' : 'icon.png'
+    environment.platform === 'win32'
+      ? environment.isPackaged
+        ? 'icon.ico'
+        : 'icon-taskbar.ico'
+      : 'icon.png'
   const joinPath =
     environment.platform === 'win32' ? win32.join : posix.join
   return environment.isPackaged
@@ -59,9 +63,9 @@ export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
     minWidth: 920,
     minHeight: 620,
     show: false,
+    frame: false,
     ...(usableIcon ? { icon: usableIcon } : {}),
     backgroundColor: '#f4f1ea',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(currentDirectory, '../preload/index.cjs'),
       contextIsolation: true,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeEvent } from './runtime'
+import { ContinueHostRunError } from './continue-host-adapter'
 
 const mocks = vi.hoisted(() => ({
   detectRuntimeBinary: vi.fn(),
@@ -18,7 +19,6 @@ function createRuntime(): ContinueAgentRuntime {
   return new ContinueAgentRuntime({
     binaryPath: '',
     configPath: 'C:\\safe config\\continue.yaml',
-    mode: 'chat',
     defaultWorkspace: process.cwd(),
     hostCacheRoot: 'C:\\safe\\continue-host',
     createHostAdapter: () => ({
@@ -30,17 +30,18 @@ function createRuntime(): ContinueAgentRuntime {
 }
 
 async function collectEvents(
-  runtime: ContinueAgentRuntime
+  runtime: ContinueAgentRuntime,
+  workMode?: 'ask' | 'plan' | 'execute'
 ): Promise<RuntimeEvent[]> {
   const events: RuntimeEvent[] = []
   for await (const event of runtime.run(
     {
       requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
       conversationId: 'conversation-1',
-      prompt: 'test'
+      prompt: 'test',
+      workMode
     },
-    new AbortController().signal,
-    vi.fn(async () => 'once' as const)
+    new AbortController().signal
   )) {
     events.push(event)
   }
@@ -73,7 +74,8 @@ describe('ContinueAgentRuntime', () => {
       {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
-        prompt: 'test'
+        prompt: 'test',
+        workMode: 'execute'
       },
       controller.signal
     )
@@ -124,7 +126,7 @@ describe('ContinueAgentRuntime', () => {
       }
     })
 
-    const events = await collectEvents(createRuntime())
+    const events = await collectEvents(createRuntime(), 'execute')
 
     expect(events.filter((event) => event.type === 'model-usage')).toEqual([
       {
@@ -153,7 +155,6 @@ describe('ContinueAgentRuntime', () => {
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',
       configPath: 'C:\\safe config\\continue.yaml',
-      mode: 'chat',
       defaultWorkspace: process.cwd(),
       hostCacheRoot: 'C:\\safe\\continue-host',
       skillInstructions: '# 周报助手',
@@ -176,7 +177,6 @@ describe('ContinueAgentRuntime', () => {
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',
       configPath: '',
-      mode: 'chat',
       defaultWorkspace: process.cwd(),
       hostCacheRoot: 'C:\\safe\\continue-host',
       createHostAdapter: () => ({
@@ -194,10 +194,10 @@ describe('ContinueAgentRuntime', () => {
       {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
-        prompt: 'test'
+        prompt: 'test',
+        workMode: 'execute'
       },
-      new AbortController().signal,
-      vi.fn(async () => 'once' as const)
+      new AbortController().signal
     )
     await expect(stream.next()).rejects.toThrow('尚未配置模型连接')
     expect(mocks.detectRuntimeBinary).not.toHaveBeenCalled()
@@ -217,8 +217,7 @@ describe('ContinueAgentRuntime', () => {
           { role: 'assistant', content: 'previous response' }
         ]
       },
-      new AbortController().signal,
-      vi.fn(async () => 'once' as const)
+      new AbortController().signal
     )) {
       expect(_event).toBeDefined()
     }
@@ -240,8 +239,7 @@ describe('ContinueAgentRuntime', () => {
         prompt: 'current request',
         history: [{ role: 'assistant', content: 'synthetic greeting' }]
       },
-      new AbortController().signal,
-      vi.fn(async () => 'once' as const)
+      new AbortController().signal
     )) {
       expect(event).toBeDefined()
     }
@@ -278,19 +276,148 @@ describe('ContinueAgentRuntime', () => {
     expect(mocks.runHost).not.toHaveBeenCalled()
   })
 
-  it('requires the host approval callback', async () => {
+  it('auto-allows host tool requests without using GoodBuddy approval', async () => {
     const runtime = createRuntime()
     const stream = runtime.run(
       {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
-        prompt: 'test'
+        prompt: 'test',
+        workMode: 'execute'
       },
       new AbortController().signal
     )
+    for await (const event of stream) {
+      expect(event).toBeDefined()
+    }
+
+    const hostAuthorize = mocks.runHost.mock.calls[0]?.[2] as
+      | (() => Promise<string>)
+      | undefined
+    await expect(hostAuthorize?.()).resolves.toBe('once')
+  })
+
+  it('keeps non-interactive Ask runs read-only', async () => {
+    const modes: Array<'chat' | 'agent' | undefined> = []
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      createHostAdapter: (options) => {
+        modes.push(options.mode)
+        return {
+          getPreparedHost: mocks.prepareHost,
+          run: mocks.runHost,
+          dispose: mocks.disposeHost
+        }
+      }
+    })
+
+    await collectEvents(runtime, 'ask')
+    await collectEvents(runtime, 'execute')
+
+    expect(modes).toEqual(['chat', 'agent'])
+    const askAuthorize = mocks.runHost.mock.calls[0]?.[2] as
+      | (() => Promise<string>)
+      | undefined
+    const executeAuthorize = mocks.runHost.mock.calls[1]?.[2] as
+      | (() => Promise<string>)
+      | undefined
+    await expect(askAuthorize?.()).resolves.toBe('deny')
+    await expect(executeAuthorize?.()).resolves.toBe('once')
+  })
+
+  it('emits completed audit events for Continue tools', async () => {
+    mocks.runHost.mockResolvedValue({
+      text: 'Continue response',
+      tools: [
+        { callId: 'call-1', name: 'Bash', state: 'completed' },
+        { callId: 'call-2', name: 'Write', state: 'completed' }
+      ]
+    })
+
+    const events = await collectEvents(createRuntime(), 'execute')
+
+    expect(events.filter((event) => event.type === 'tool')).toEqual([
+      expect.objectContaining({
+        type: 'tool',
+        name: 'Bash',
+        state: 'completed',
+        summary: 'Continue 工具：Bash'
+      }),
+      expect.objectContaining({
+        type: 'tool',
+        name: 'Write',
+        state: 'completed',
+        summary: 'Continue 工具：Write'
+      })
+    ])
+  })
+
+  it('emits terminal tool audits before a failed Continue run', async () => {
+    mocks.runHost.mockRejectedValue(
+      new ContinueHostRunError('Continue failed', {
+        cause: new Error('failed'),
+        tools: [
+          {
+            callId: 'call-1',
+            name: 'Bash',
+            state: 'failed'
+          }
+        ]
+      })
+    )
+    const stream = createRuntime().run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
     await expect(stream.next()).resolves.toMatchObject({
       value: { type: 'status' }
     })
-    await expect(stream.next()).rejects.toThrow('审批服务不可用')
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'tool',
+        callId: 'call-1',
+        state: 'failed'
+      }
+    })
+    await expect(stream.next()).rejects.toThrow('Continue failed')
+  })
+
+  it('fails a run that returns a nonterminal tool state', async () => {
+    mocks.runHost.mockResolvedValue({
+      text: 'Continue response',
+      tools: [
+        {
+          callId: 'call-1',
+          name: 'Bash',
+          state: 'running'
+        }
+      ]
+    })
+    const stream = createRuntime().run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'tool', state: 'failed' }
+    })
+    await expect(stream.next()).rejects.toThrow('工具未完成')
   })
 })

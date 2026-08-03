@@ -18,16 +18,9 @@ import {
   resolve
 } from 'node:path'
 import { z } from 'zod'
-import type {
-  ApprovalDecision,
-  RuntimeSettings
-} from '../../shared/contracts'
+import type { RuntimeSettings } from '../../shared/contracts'
 import type { RuntimeAuthorizer } from './runtime'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
-import {
-  addContinuePermanentPermission,
-  createContinuePermissionRule
-} from './continue-permissions'
 import { getAvailableLoopbackPort } from './loopback-port'
 import {
   buildRuntimeEnvironment,
@@ -36,8 +29,7 @@ import {
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import { createOpenAIApiBaseUrl } from './openai-endpoint'
 import {
-  redactSensitiveText,
-  safeToolArgumentSummary
+  redactSensitiveText
 } from './approval-summary'
 
 const supportedVersion = '1.5.47'
@@ -107,9 +99,29 @@ export type ContinueHostUsage = {
   cacheWriteTokens: number
 }
 
+export type ContinueHostTool = {
+  callId: string
+  name: string
+  state: 'pending' | 'running' | 'completed' | 'failed'
+}
+
 export type ContinueHostRunResult = {
   text: string
   usage?: ContinueHostUsage
+  tools?: ContinueHostTool[]
+}
+
+export class ContinueHostRunError extends Error {
+  constructor(
+    message: string,
+    options: { cause: unknown; tools: ContinueHostTool[] }
+  ) {
+    super(message, { cause: options.cause })
+    this.name = 'ContinueHostRunError'
+    this.tools = options.tools
+  }
+
+  readonly tools: ContinueHostTool[]
 }
 
 export type ContinueHostAdapterOptions = {
@@ -294,6 +306,62 @@ function extractContinueFailure(
     }
   }
   return undefined
+}
+
+function extractContinueTools(
+  history: unknown[],
+  startIndex: number
+): ContinueHostTool[] {
+  const tools = new Map<string, ContinueHostTool>()
+  for (const item of history.slice(startIndex)) {
+    if (!item || typeof item !== 'object') {
+      continue
+    }
+    const states = (item as Record<string, unknown>).toolCallStates
+    if (!Array.isArray(states)) {
+      continue
+    }
+    for (const value of states) {
+      if (!value || typeof value !== 'object') {
+        continue
+      }
+      const state = value as Record<string, unknown>
+      const toolCall = state.toolCall
+      const toolFunction =
+        toolCall && typeof toolCall === 'object'
+          ? (toolCall as Record<string, unknown>).function
+          : undefined
+      const callId =
+        typeof state.toolCallId === 'string'
+          ? state.toolCallId.slice(0, 256)
+          : ''
+      const name =
+        toolFunction && typeof toolFunction === 'object'
+          ? (toolFunction as Record<string, unknown>).name
+          : undefined
+      if (!callId || typeof name !== 'string' || !name.trim()) {
+        continue
+      }
+      if (!tools.has(callId) && tools.size >= 100) {
+        throw new Error('Continue 单次运行的工具调用超过 100 个')
+      }
+      const status = state.status
+      const normalizedState =
+        status === 'done' || status === 'completed'
+          ? 'completed'
+          : status === 'calling' || status === 'running'
+            ? 'running'
+            : status === 'generated' || status === 'pending'
+              ? 'pending'
+              : 'failed'
+      tools.set(callId, {
+        callId,
+        name: name.trim().slice(0, 200),
+        state: normalizedState
+      })
+    }
+  }
+  return [...tools.values()]
 }
 
 function subtractTokenCount(completed: number, initial: number): number {
@@ -646,6 +714,7 @@ export class ContinueHostAdapter {
           : 'OPENAI_API_KEY'
       ] = this.options.modelProfile.apiKey
     }
+    signal.throwIfAborted()
     let child: ContinueHostChild
     try {
       child = (
@@ -690,6 +759,7 @@ export class ContinueHostAdapter {
     }
     signal.addEventListener('abort', abort, { once: true })
 
+    let observedTools: ContinueHostTool[] = []
     try {
       const initialState = await this.waitForStartup(
         child,
@@ -706,7 +776,7 @@ export class ContinueHostAdapter {
       })
 
       const expiresAt = Date.now() + 10 * 60_000
-      let handledPermissionId: string | undefined
+      const handledPermissionIds = new Set<string>()
       while (Date.now() < expiresAt) {
         signal.throwIfAborted()
         if (childFailure) {
@@ -720,41 +790,45 @@ export class ContinueHostAdapter {
         const state = stateSchema.parse(
           await this.request(origin, token, '/state', { signal })
         )
+        observedTools = extractContinueTools(
+          state.session.history,
+          startIndex
+        )
         const pending = state.pendingPermission
-        if (pending && pending.requestId !== handledPermissionId) {
-          handledPermissionId = pending.requestId
-          let rule: string | undefined
-          try {
-            rule = createContinuePermissionRule(
-              pending.toolName,
-              pending.toolArgs
-            )
-          } catch {
-            rule = undefined
+        if (pending && !handledPermissionIds.has(pending.requestId)) {
+          if (handledPermissionIds.size >= 100) {
+            throw new Error('Continue 单次运行的工具调用超过 100 个')
           }
-          const argumentDigest = createHash('sha256')
-            .update(JSON.stringify(pending.toolArgs))
-            .digest('hex')
-            .slice(0, 16)
-          const decision: ApprovalDecision = await authorize({
-            scopeKey: `continue:${
-              rule ?? `${pending.toolName}:${argumentDigest}`
-            }`,
+          handledPermissionIds.add(pending.requestId)
+          const pendingCallId =
+            observedTools.find(
+              (tool) =>
+                tool.name === pending.toolName &&
+                tool.state !== 'completed' &&
+                tool.state !== 'failed'
+            )?.callId ?? pending.requestId.slice(0, 256)
+          if (
+            !observedTools.some((tool) => tool.callId === pendingCallId)
+          ) {
+            if (observedTools.length >= 100) {
+              throw new Error('Continue 单次运行的工具调用超过 100 个')
+            }
+            observedTools = [
+              ...observedTools,
+              {
+                callId: pendingCallId,
+                name: pending.toolName,
+                state: 'pending'
+              }
+            ]
+          }
+          const decision = await authorize({
+            scopeKey: `continue:${pending.toolName}`,
             title: `Continue 请求调用 ${pending.toolName}`,
-            description: '仅在你选择允许后，Continue 才会执行此工具调用。',
+            description: 'Continue Runtime 工具调用由 GoodBuddy 自动放行。',
             toolName: pending.toolName,
-            argumentSummary: safeToolArgumentSummary(
-              pending.toolArgs,
-              pending.toolCallPreview
-            ),
-            allowPermanent: Boolean(rule)
+            allowPermanent: false
           })
-          if (decision === 'permanent' && !rule) {
-            throw new Error('该工具调用无法生成安全的永久权限规则')
-          }
-          if (decision === 'permanent' && rule) {
-            await addContinuePermanentPermission(rule)
-          }
           await this.request(origin, token, '/permission', {
             method: 'POST',
             body: JSON.stringify({
@@ -795,11 +869,25 @@ export class ContinueHostAdapter {
               : 'continue',
             this.options.modelProfile?.modelName
           )
-          return { text, ...(usage ? { usage } : {}) }
+          return {
+            text,
+            ...(usage ? { usage } : {}),
+            ...(observedTools.length > 0
+              ? { tools: observedTools }
+              : {})
+          }
         }
         await delay(150, signal)
       }
       throw new Error('Continue 宿主执行超时')
+    } catch (error) {
+      if (error instanceof ContinueHostRunError) {
+        throw error
+      }
+      throw new ContinueHostRunError(
+        error instanceof Error ? error.message : 'Continue 宿主执行失败',
+        { cause: error, tools: observedTools }
+      )
     } finally {
       signal.removeEventListener('abort', abort)
       try {

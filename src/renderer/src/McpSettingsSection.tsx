@@ -22,7 +22,7 @@ const runtimeLabels: Record<RuntimeTarget, string> = {
   opencode: 'OpenCode',
   continue: 'Continue'
 }
-const configurableMcpTargets: RuntimeTarget[] = ['opencode']
+const configurableMcpTargets: RuntimeTarget[] = ['model']
 
 type McpEditor = {
   id?: string
@@ -42,7 +42,7 @@ const emptyEditor: McpEditor = {
   name: '',
   description: '',
   enabled: true,
-  assignments: ['opencode'],
+  assignments: ['model'],
   transport: 'stdio',
   command: '',
   args: '',
@@ -57,8 +57,8 @@ function editorFromServer(server: McpServerSummary): McpEditor {
     name: server.name,
     description: server.description,
     enabled: server.enabled,
-    assignments: server.assignments.includes('opencode')
-      ? ['opencode']
+    assignments: server.assignments.includes('model')
+      ? ['model']
       : [],
     transport: server.transport,
     command: server.transport === 'stdio' ? server.command : '',
@@ -199,7 +199,7 @@ export function McpSettingsSection(): React.JSX.Element {
 
       <p className="settings-notice">
         MCP Server 及其工具具有当前用户权限。请仅添加可信服务；远程访问令牌将由系统安全存储加密。
-        当前版本仅由 OpenCode Runtime 加载 MCP 工具。
+        当前版本仅由直连模型在 Execute 模式加载 MCP 工具，并在每次调用前请求 GoodBuddy 审批。
       </p>
       {error && <p className="settings-warning">{error}</p>}
 

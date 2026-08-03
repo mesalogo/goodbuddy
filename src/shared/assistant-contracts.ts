@@ -107,8 +107,35 @@ export type WorkspaceChanges = {
   available: boolean
   status: string
   patch: string
+  files: WorkspaceChangedFile[]
   truncated: boolean
   error?: string
+}
+
+export type WorkspaceChangedFile = {
+  path: string
+  status: string
+  previousPath?: string
+}
+
+export type WorkspaceDirectoryEntry = {
+  name: string
+  path: string
+  type: 'file' | 'directory'
+}
+
+export type WorkspaceDirectoryListing = {
+  path: string
+  entries: WorkspaceDirectoryEntry[]
+  truncated: boolean
+}
+
+export type WorkspaceFilePreview = {
+  path: string
+  name: string
+  content: string
+  mimeType: 'text/markdown' | 'text/plain' | 'application/json'
+  size: number
 }
 
 export type AssistantTaskStatus =

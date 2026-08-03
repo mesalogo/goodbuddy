@@ -36,10 +36,14 @@ export function createAgentRuntime(
 
   if (provider === 'continue') {
     if (
-      settings?.continueModelProfile?.protocol ===
-      'openai-images-generations'
+      settings?.continueModelProfile &&
+      settings.continueModelProfile.protocol !== 'anthropic-messages' &&
+      settings.continueModelProfile.protocol !==
+        'openai-chat-completions'
     ) {
-      throw new Error('Continue 不支持图像生成模型连接')
+      throw new Error(
+        'Continue 独立模型连接仅支持 Anthropic Messages 或 OpenAI 兼容 Chat Completions'
+      )
     }
     return new ContinueAgentRuntime({
       binaryPath:
@@ -52,7 +56,6 @@ export function createAgentRuntime(
         settings?.continueConfigPath ??
         process.env.GOODBUDDY_CONTINUE_CONFIG?.trim() ??
         '',
-      mode: settings?.continueMode ?? defaultRuntimeSettings.continueMode,
       runtimeSandboxMode: sandboxMode,
       modelProfile: settings?.continueModelProfile,
       skillInstructions: capabilities.skillInstructions,
@@ -89,7 +92,6 @@ export function createAgentRuntime(
         '',
       modelProfile: settings?.opencodeModelProfile,
       skillInstructions: capabilities.skillInstructions,
-      mcpServers: capabilities.mcpServers,
       sandbox: resolveRuntimeSandbox(sandboxMode),
       defaultWorkspace: workspace
     })
@@ -123,7 +125,9 @@ export function createAgentRuntime(
         settings?.modelProtocol ??
         defaultRuntimeSettings.modelProtocol,
       authentication: modelAuthentication,
-      skillInstructions: capabilities.skillInstructions
+      skillInstructions: capabilities.skillInstructions,
+      defaultWorkspace: workspace,
+      mcpServers: capabilities.mcpServers
     })
   }
 

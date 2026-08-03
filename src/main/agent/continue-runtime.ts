@@ -6,24 +6,24 @@ import type {
 import type {
   AgentExecutionRequest,
   AgentRuntime,
-  RuntimeAuthorizer,
   RuntimeEvent
 } from './runtime'
 import { detectRuntimeBinary } from './runtime-discovery'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import {
   ContinueHostAdapter,
+  ContinueHostRunError,
   continueConfigurationRequiredMessage,
   hasContinueModelConfiguration,
   type ContinueHostAdapterOptions,
-  type ContinueHostLauncher
+  type ContinueHostLauncher,
+  type ContinueHostRunResult
 } from './continue-host-adapter'
 
 export type ContinueRuntimeOptions = {
   binaryPath: string
   bundledBinaryPath?: string
   configPath: string
-  mode: RuntimeSettings['continueMode']
   runtimeSandboxMode?: RuntimeSettings['runtimeSandboxMode']
   defaultWorkspace: string
   hostCacheRoot: string
@@ -91,12 +91,14 @@ function buildContinuePrompt(request: AgentExecutionRequest): string {
 }
 
 export class ContinueAgentRuntime implements AgentRuntime {
+  readonly runtimeId = 'continue'
   readonly requiresToolApproval = false
   readonly supportsToolExecution = true
   private detection?: Promise<RuntimeBinaryDetection>
-  private hostAdapter?: ReturnType<
-    NonNullable<ContinueRuntimeOptions['createHostAdapter']>
-  >
+  private readonly hostAdapters = new Map<
+    RuntimeSettings['continueMode'],
+    ReturnType<NonNullable<ContinueRuntimeOptions['createHostAdapter']>>
+  >()
 
   constructor(private readonly options: ContinueRuntimeOptions) {}
 
@@ -111,21 +113,29 @@ export class ContinueAgentRuntime implements AgentRuntime {
     return this.detection
   }
 
-  private getHostAdapter(binaryPath: string) {
+  private getHostAdapter(
+    binaryPath: string,
+    mode: RuntimeSettings['continueMode']
+  ) {
     const createHost =
       this.options.createHostAdapter ??
       ((options: ContinueHostAdapterOptions) =>
         new ContinueHostAdapter(options))
-    this.hostAdapter ??= createHost({
+    const current = this.hostAdapters.get(mode)
+    if (current) {
+      return current
+    }
+    const host = createHost({
       binaryPath,
       configPath: this.options.configPath,
       workspace: this.options.defaultWorkspace,
       cacheRoot: this.options.hostCacheRoot,
-      mode: this.options.mode,
+      mode,
       launchHost: this.options.launchHost,
       modelProfile: this.options.modelProfile
     })
-    return this.hostAdapter
+    this.hostAdapters.set(mode, host)
+    return host
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
@@ -156,7 +166,10 @@ export class ContinueAgentRuntime implements AgentRuntime {
     const detection = await this.getDetection()
     if (detection.available && detection.path) {
       try {
-        await this.getHostAdapter(detection.path).getPreparedHost()
+        await this.getHostAdapter(
+          detection.path,
+          'agent'
+        ).getPreparedHost()
       } catch (error) {
         return {
           id: 'continue',
@@ -176,15 +189,14 @@ export class ContinueAgentRuntime implements AgentRuntime {
       available: detection.available,
       supportsToolExecution: this.supportsToolExecution,
       detail: detection.available
-        ? `${detection.detail}；宿主逐工具审批；未启用 OS 进程沙箱`
+        ? `${detection.detail}；固定为 Execute；工具调用自动放行并保留审计；未启用 OS 进程沙箱`
         : detection.detail
     }
   }
 
   async *run(
     request: AgentExecutionRequest,
-    signal: AbortSignal,
-    authorize?: RuntimeAuthorizer
+    signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
     if (this.options.runtimeSandboxMode === 'strict') {
@@ -230,18 +242,70 @@ export class ContinueAgentRuntime implements AgentRuntime {
       message: 'Continue 正在生成回复'
     }
 
-    if (!authorize) {
-      throw new Error('Continue 工具审批服务不可用')
+    const execute = request.workMode === 'execute'
+    let result: ContinueHostRunResult
+    try {
+      result = await this.getHostAdapter(
+        binaryPath,
+        execute ? 'agent' : 'chat'
+      ).run(
+        conversationContext,
+        signal,
+        async () => (execute ? 'once' : 'deny')
+      )
+    } catch (error) {
+      if (error instanceof ContinueHostRunError) {
+        for (const tool of error.tools) {
+          yield {
+            requestId: request.requestId,
+            type: 'tool',
+            callId: tool.callId,
+            name: tool.name,
+            state:
+              tool.state === 'completed' ? 'completed' : 'failed',
+            summary: `Continue 工具：${tool.name}`
+          }
+        }
+      }
+      throw error
     }
-    const result = await this.getHostAdapter(binaryPath).run(
-      conversationContext,
-      signal,
-      authorize
-    )
     if (!result.text) {
       throw new Error('Continue CLI 未返回内容')
     }
 
+    const tools = result.tools ?? []
+    const unsuccessfulTool = tools.find(
+      (tool) => tool.state !== 'completed'
+    )
+    if (unsuccessfulTool) {
+      for (const tool of tools) {
+        yield {
+          requestId: request.requestId,
+          type: 'tool',
+          callId: tool.callId,
+          name: tool.name,
+          state:
+            tool.state === 'completed' ? 'completed' : 'failed',
+          summary: `Continue 工具：${tool.name}`
+        }
+      }
+      throw new Error(
+        unsuccessfulTool.state === 'failed'
+          ? `Continue 工具执行失败（${unsuccessfulTool.callId.slice(0, 128)}）`
+          : `Continue 工具未完成（${unsuccessfulTool.callId.slice(0, 128)}）`
+      )
+    }
+
+    for (const tool of tools) {
+      yield {
+        requestId: request.requestId,
+        type: 'tool',
+        callId: tool.callId,
+        name: tool.name,
+        state: tool.state,
+        summary: `Continue 工具：${tool.name}`
+      }
+    }
     yield {
       requestId: request.requestId,
       type: 'text',
@@ -269,7 +333,9 @@ export class ContinueAgentRuntime implements AgentRuntime {
   }
 
   async dispose(): Promise<void> {
-    this.hostAdapter?.dispose()
-    this.hostAdapter = undefined
+    for (const host of this.hostAdapters.values()) {
+      host.dispose()
+    }
+    this.hostAdapters.clear()
   }
 }

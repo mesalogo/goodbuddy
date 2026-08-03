@@ -13,7 +13,7 @@ import {
   X,
   XCircle
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type {
   AssistantMemory,
   AssistantSchedule,
@@ -22,7 +22,9 @@ import type {
   HeartbeatCreateInput,
   ScheduleCreateInput,
   AssistantTask,
-  WorkspaceChanges
+  WorkspaceChanges,
+  WorkspaceDirectoryListing,
+  WorkspaceFilePreview
 } from '../../shared/assistant-contracts'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type {
@@ -32,6 +34,7 @@ import type {
 } from '../../shared/contracts'
 import type { ActivityRecord } from './activity-store'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 
 export type AssistantSidebarTab =
   | 'tasks'
@@ -71,6 +74,7 @@ type RightAssistantSidebarProps = {
   heartbeats: AssistantHeartbeatConfig[]
   heartbeatEntries: AssistantHeartbeatEntry[]
   workspaceChanges?: WorkspaceChanges
+  workspaceProjectId?: string
   onClose: () => void
   onOpenHeartbeat: () => void
   onOpenConversation: (conversationId: string) => void
@@ -89,6 +93,10 @@ type RightAssistantSidebarProps = {
   onRemoveSchedule: (scheduleId: string) => Promise<void>
   onRunSchedule: (scheduleId: string) => Promise<void>
   onRefreshChanges: () => Promise<void>
+  onListWorkspaceDirectory: (
+    path: string
+  ) => Promise<WorkspaceDirectoryListing>
+  onLoadWorkspaceFile: (path: string) => Promise<WorkspaceFilePreview>
   onRemoveMemory: (memoryId: string) => Promise<void>
   onSetMemoryStatus: (
     memoryId: string,
@@ -111,6 +119,7 @@ const tabs: Array<{
   { id: 'changes', label: '更改' },
   { id: 'preview', label: '预览' }
 ]
+const emptyChangedFiles: WorkspaceChanges['files'] = []
 
 function formatTime(timestamp: number | string): string {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -133,6 +142,7 @@ export function RightAssistantSidebar({
   heartbeats,
   heartbeatEntries,
   workspaceChanges,
+  workspaceProjectId,
   onClose,
   onOpenHeartbeat,
   onOpenConversation,
@@ -148,13 +158,40 @@ export function RightAssistantSidebar({
   onRemoveSchedule,
   onRunSchedule,
   onRefreshChanges,
+  onListWorkspaceDirectory,
+  onLoadWorkspaceFile,
   onRemoveMemory,
   onSetMemoryStatus,
   onRespondApproval,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
+  const [workspacePreview, setWorkspacePreview] = useState<
+    | {
+        projectId?: string
+        path: string
+        state: 'loading'
+        error?: undefined
+        file?: undefined
+      }
+    | {
+        projectId?: string
+        path: string
+        state: 'error'
+        error: string
+        file?: undefined
+      }
+    | {
+        projectId?: string
+        path: string
+        state: 'ready'
+        error?: undefined
+        file: WorkspaceFilePreview
+      }
+  >()
+  const workspacePreviewRequest = useRef(0)
   const [memoryDraft, setMemoryDraft] = useState('')
+  const [workspaceRefreshVersion, setWorkspaceRefreshVersion] = useState(0)
   const [scheduleTitle, setScheduleTitle] = useState('')
   const [schedulePrompt, setSchedulePrompt] = useState('')
   const [scheduleTime, setScheduleTime] = useState('')
@@ -167,9 +204,75 @@ export function RightAssistantSidebar({
   const changes = activities
     .filter((activity) => activity.kind === 'tool')
     .slice(0, 30)
-  const preview =
+  const artifactPreview =
     artifacts.find((artifact) => artifact.id === selectedArtifactId) ??
     artifacts[0]
+  const currentWorkspacePreview =
+    workspacePreview?.projectId === workspaceProjectId
+      ? workspacePreview
+      : undefined
+
+  const openWorkspaceFile = (path: string): void => {
+    const requestId = workspacePreviewRequest.current + 1
+    workspacePreviewRequest.current = requestId
+    const projectId = workspaceProjectId
+    setWorkspacePreview({ projectId, path, state: 'loading' })
+    onTabChange('preview')
+    void onLoadWorkspaceFile(path)
+      .then((file) => {
+        if (workspacePreviewRequest.current === requestId) {
+          setWorkspacePreview({
+            projectId,
+            path,
+            state: 'ready',
+            file
+          })
+          setSelectedArtifactId(undefined)
+        }
+      })
+      .catch((reason: unknown) => {
+        if (workspacePreviewRequest.current === requestId) {
+          setWorkspacePreview({
+            path,
+            projectId,
+            state: 'error',
+            error:
+              reason instanceof Error
+                ? reason.message
+                : '工作区文件预览失败'
+          })
+        }
+      })
+  }
+
+  const moveTabFocus = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    tabId: AssistantSidebarTab
+  ): void => {
+    const index = tabs.findIndex((item) => item.id === tabId)
+    const targetIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? tabs.length - 1
+          : event.key === 'ArrowLeft'
+            ? (index - 1 + tabs.length) % tabs.length
+            : event.key === 'ArrowRight'
+              ? (index + 1) % tabs.length
+              : -1
+    if (targetIndex < 0) {
+      return
+    }
+    event.preventDefault()
+    const target = tabs[targetIndex]
+    if (!target) {
+      return
+    }
+    onTabChange(target.id)
+    requestAnimationFrame(() => {
+      document.getElementById(`assistant-sidebar-tab-${target.id}`)?.focus()
+    })
+  }
 
   return (
     <aside
@@ -194,18 +297,26 @@ export function RightAssistantSidebar({
         </button>
       </header>
 
-      <nav aria-label="工作栏分类" className="assistant-sidebar__tabs">
+      <nav
+        aria-label="工作栏分类"
+        className="assistant-sidebar__tabs"
+        role="tablist"
+      >
         {tabs.map((item) => (
           <button
+            aria-controls="assistant-sidebar-panel"
             aria-selected={tab === item.id}
             className={
               tab === item.id
                 ? 'assistant-sidebar__tab assistant-sidebar__tab--active'
                 : 'assistant-sidebar__tab'
             }
+            id={`assistant-sidebar-tab-${item.id}`}
             key={item.id}
             onClick={() => onTabChange(item.id)}
+            onKeyDown={(event) => moveTabFocus(event, item.id)}
             role="tab"
+            tabIndex={tab === item.id ? 0 : -1}
             type="button"
           >
             {item.label}
@@ -218,7 +329,12 @@ export function RightAssistantSidebar({
         ))}
       </nav>
 
-      <div className="assistant-sidebar__body">
+      <div
+        aria-labelledby={`assistant-sidebar-tab-${tab}`}
+        className="assistant-sidebar__body"
+        id="assistant-sidebar-panel"
+        role="tabpanel"
+      >
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
             {approvals.length > 0 && (
@@ -593,6 +709,8 @@ export function RightAssistantSidebar({
                   className="assistant-sidebar__row"
                   key={artifact.id}
                   onClick={() => {
+                    workspacePreviewRequest.current += 1
+                    setWorkspacePreview(undefined)
                     setSelectedArtifactId(artifact.id)
                     onTabChange('preview')
                     void onLoadArtifact(artifact.id)
@@ -615,35 +733,42 @@ export function RightAssistantSidebar({
           <>
             <section className="assistant-sidebar__section">
               <h3>
-                <FileDiff size={15} />
-                Git 工作区
+                <FolderTree size={15} />
+                项目工作区
                 <button
-                  aria-label="刷新文件更改"
+                  aria-label="刷新工作区文件"
                   className="icon-button"
-                  onClick={() => void onRefreshChanges()}
+                  onClick={() => {
+                    setWorkspaceRefreshVersion((current) => current + 1)
+                    void onRefreshChanges()
+                  }}
                   type="button"
                 >
                   <RefreshCw size={14} />
                 </button>
               </h3>
-              {!workspaceChanges?.available ? (
-                <p className="assistant-sidebar__empty">
-                  {workspaceChanges?.error ?? '正在读取工作区更改…'}
+              <WorkspaceFilesPanel
+                changedFiles={workspaceChanges?.files ?? emptyChangedFiles}
+                key={`${workspaceProjectId ?? 'none'}:${workspaceRefreshVersion}`}
+                onListDirectory={onListWorkspaceDirectory}
+                onOpenFile={openWorkspaceFile}
+                projectId={workspaceProjectId}
+              />
+              {workspaceChanges?.error && (
+                <p className="workspace-files__status">
+                  Git 状态不可用：{workspaceChanges.error}
                 </p>
-              ) : workspaceChanges.status ||
-                workspaceChanges.patch ? (
-                <pre className="assistant-sidebar__diff">
-                  {[workspaceChanges.status, workspaceChanges.patch]
-                    .filter(Boolean)
-                    .join('\n')}
-                  {workspaceChanges.truncated
-                    ? '\n\n[输出超过安全限制，已截断]'
-                    : ''}
-                </pre>
-              ) : (
-                <p className="assistant-sidebar__empty">
-                  工作区没有未提交更改。
-                </p>
+              )}
+              {workspaceChanges?.patch && (
+                <details className="assistant-sidebar__diff-details">
+                  <summary>查看完整 Git diff</summary>
+                  <pre className="assistant-sidebar__diff">
+                    {workspaceChanges.patch}
+                    {workspaceChanges.truncated
+                      ? '\n\n[输出超过安全限制，已截断]'
+                      : ''}
+                  </pre>
+                </details>
               )}
             </section>
             <section className="assistant-sidebar__section">
@@ -677,37 +802,68 @@ export function RightAssistantSidebar({
 
         {tab === 'preview' && (
           <section className="assistant-sidebar__preview">
-            {preview ? (
+            {currentWorkspacePreview ? (
               <>
                 <header>
-                  <strong>{preview.title}</strong>
-                  <small>{formatTime(preview.createdAt)}</small>
+                  <strong>{currentWorkspacePreview.path}</strong>
+                  <small>
+                    {currentWorkspacePreview.state === 'ready'
+                      ? `${currentWorkspacePreview.file.size.toLocaleString('zh-CN')} 字节`
+                      : '项目工作区文件'}
+                  </small>
+                </header>
+                {currentWorkspacePreview.state === 'loading' ? (
+                  <p className="assistant-sidebar__empty">
+                    正在读取文件…
+                  </p>
+                ) : currentWorkspacePreview.state === 'error' ? (
+                  <p className="assistant-sidebar__empty" role="alert">
+                    {currentWorkspacePreview.error}
+                  </p>
+                ) : (
+                  <div className="markdown-body markdown-content">
+                    {currentWorkspacePreview.file.mimeType ===
+                    'text/markdown' ? (
+                      <MarkdownRenderer>
+                        {currentWorkspacePreview.file.content}
+                      </MarkdownRenderer>
+                    ) : (
+                      <pre>{currentWorkspacePreview.file.content}</pre>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : artifactPreview ? (
+              <>
+                <header>
+                  <strong>{artifactPreview.title}</strong>
+                  <small>{formatTime(artifactPreview.createdAt)}</small>
                 </header>
                 <div className="markdown-body markdown-content">
-                  {preview.mimeType.startsWith('image/') ? (
-                    preview.content ? (
+                  {artifactPreview.mimeType.startsWith('image/') ? (
+                    artifactPreview.content ? (
                       <img
-                        alt={preview.title}
+                        alt={artifactPreview.title}
                         className="assistant-sidebar__image-preview"
-                        src={preview.content}
+                        src={artifactPreview.content}
                       />
                     ) : (
                       <p className="assistant-sidebar__empty">
                         正在加载图片…
                       </p>
                     )
-                  ) : preview.mimeType === 'text/html' ? (
+                  ) : artifactPreview.mimeType === 'text/html' ? (
                     <iframe
                       className="assistant-sidebar__web-preview"
                       sandbox=""
-                      srcDoc={preview.content}
-                      title={preview.title}
+                      srcDoc={artifactPreview.content}
+                      title={artifactPreview.title}
                     />
-                  ) : preview.mimeType === 'application/json' ? (
-                    <pre>{preview.content}</pre>
+                  ) : artifactPreview.mimeType === 'application/json' ? (
+                    <pre>{artifactPreview.content}</pre>
                   ) : (
                     <MarkdownRenderer>
-                      {preview.content}
+                      {artifactPreview.content}
                     </MarkdownRenderer>
                   )}
                 </div>

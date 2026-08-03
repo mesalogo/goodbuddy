@@ -466,7 +466,9 @@ export function SettingsPanel({
 
   const isContinueCompatible = (
     profile: ModelProfileDraft
-  ): boolean => profile.protocol !== 'openai-images-generations'
+  ): boolean =>
+    profile.protocol === 'anthropic-messages' ||
+    profile.protocol === 'openai-chat-completions'
 
   const detectionSummary = (
     value: AgentRuntimeDetection['opencode'] | undefined
@@ -766,6 +768,9 @@ export function SettingsPanel({
                     </small>
                   )}
               </label>
+              <div className="runtime-note">
+                OpenCode 固定以 Execute 运行，不弹出 GoodBuddy 工具审批；工具调用仍记录到活动。
+              </div>
               <label className="field">
                 <span>Server 地址</span>
                 <input
@@ -872,7 +877,7 @@ export function SettingsPanel({
                 </div>
               </div>
               <div className="runtime-note">
-                Continue 仅在实际请求高风险工具时暂停，并提供仅此次、此会话或永久允许。
+                Continue 固定以 Execute 运行，不弹出 GoodBuddy 工具审批；工具调用仍记录到活动。
               </div>
               <label className="field">
                 <span>模型连接</span>
@@ -903,8 +908,8 @@ export function SettingsPanel({
                   ))}
                 </select>
                 <small>
-                  Continue 支持 Anthropic Messages、OpenAI Chat
-                  Completions 和无认证本机模型。未选择独立连接时，必须在下方指定配置文件。
+                  Continue 独立连接支持 Anthropic Messages、OpenAI
+                  兼容 Chat Completions 和无认证本机模型。未选择独立连接时，必须在下方指定配置文件。
                 </small>
               </label>
               <label className="field">
@@ -998,8 +1003,9 @@ export function SettingsPanel({
               <div>
                 <strong>模型连接</strong>
                 <small>
-                  可配置文本对话或 OpenAI Images Generations
-                  图像生成接口
+                  直连文本支持 OpenAI Responses、Anthropic Messages 和
+                  OpenAI 兼容 Chat Completions；另可配置 OpenAI Images
+                  Generations 图像生成接口
                 </small>
               </div>
               <button
@@ -1136,7 +1142,8 @@ export function SettingsPanel({
                             setOpencodeModelSource({ kind: 'platform' })
                           }
                           if (
-                            protocol === 'openai-images-generations' &&
+                            protocol !== 'anthropic-messages' &&
+                            protocol !== 'openai-chat-completions' &&
                             continueModelSource.kind === 'profile' &&
                             continueModelSource.profileId === profile.id
                           ) {
@@ -1149,8 +1156,11 @@ export function SettingsPanel({
                       <option value="anthropic-messages">
                         Anthropic Messages
                       </option>
+                      <option value="openai-responses">
+                        OpenAI Responses
+                      </option>
                       <option value="openai-chat-completions">
-                        OpenAI Chat Completions
+                        OpenAI 兼容 Chat Completions
                       </option>
                       <option value="openai-images-generations">
                         OpenAI Images Generations（图像生成）
@@ -1287,7 +1297,7 @@ export function SettingsPanel({
             </small>
           </label>
           <label className="field">
-            <span>Agent 工具安全策略</span>
+            <span>直连模型工具安全策略</span>
             <select
               value={toolApproval}
               onChange={(event) =>
@@ -1300,7 +1310,9 @@ export function SettingsPanel({
               <option value="policy">禁止所有工具执行</option>
             </select>
             <small>
-              Continue 会在具体高风险工具调用时提供仅此次、此会话和永久允许。
+              直连模型的 Execute 模式可使用内置工作区工具及已分配的
+              MCP 工具，每次调用均受此策略控制。OpenCode 与 Continue
+              继续使用各自的工具系统。
             </small>
           </label>
 

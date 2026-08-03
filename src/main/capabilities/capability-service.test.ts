@@ -150,7 +150,7 @@ describe('CapabilityService', () => {
       name: 'Remote MCP',
       description: 'Remote test server',
       enabled: true,
-      assignments: ['opencode'],
+      assignments: ['model'],
       secret: { action: 'replace', value: 'secret-token-value' },
       transport: 'http',
       url: 'https://mcp.example.com/mcp'
@@ -181,7 +181,7 @@ describe('CapabilityService', () => {
       name: 'Local MCP',
       description: '',
       enabled: true,
-      assignments: ['opencode'],
+      assignments: ['model'],
       secret: { action: 'keep' },
       transport: 'stdio',
       command: 'node',
@@ -202,11 +202,69 @@ describe('CapabilityService', () => {
         name: 'Unsafe remote',
         description: '',
         enabled: true,
-        assignments: ['opencode'],
+        assignments: ['model'],
         secret: { action: 'replace', value: 'secret-token-value' },
         transport: 'http',
         url: 'http://mcp.example.com/mcp'
       })
     ).rejects.toThrow('只能通过 HTTPS')
+  })
+
+  it('rejects MCP assignments to Agent Runtimes', async () => {
+    const { service } = await createService()
+
+    await expect(
+      service.saveMcpServer(undefined, {
+        name: 'Agent MCP',
+        description: '',
+        enabled: true,
+        assignments: ['opencode'],
+        secret: { action: 'keep' },
+        transport: 'stdio',
+        command: 'node',
+        args: ['server.js']
+      })
+    ).rejects.toThrow('只能分配给直连模型')
+  })
+
+  it('migrates legacy OpenCode MCP assignments to the direct model', async () => {
+    const { filePath, builtinRoot, importedRoot } = await createService()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        skills: {},
+        mcpServers: [
+          {
+            id: 'd2ef774b-146c-4467-a909-6feb112a9c2c',
+            name: 'Legacy MCP',
+            description: '',
+            enabled: true,
+            assignments: ['opencode'],
+            transport: 'stdio',
+            command: 'node',
+            args: ['server.js']
+          }
+        ]
+      }),
+      'utf8'
+    )
+    const service = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      mcpServers: [
+        expect.objectContaining({ assignments: ['model'] })
+      ]
+    })
+    expect(await readFile(filePath, 'utf8')).toContain(
+      '"assignments": [\n        "model"'
+    )
+    await expect(service.getResolvedMcpServers('opencode')).resolves.toEqual([])
+    await expect(service.getResolvedMcpServers('model')).resolves.toHaveLength(1)
   })
 })

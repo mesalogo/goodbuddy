@@ -6,6 +6,7 @@ import type {
   McpServerTestResult
 } from './capability-contracts'
 import {
+  assistantIdSchema,
   workModeSchema,
   type AssistantProject,
   type AssistantArtifact,
@@ -19,6 +20,8 @@ import {
   type TokenUsageSummary,
   type ConversationSnapshot,
   type WorkspaceChanges,
+  type WorkspaceDirectoryListing,
+  type WorkspaceFilePreview,
   type ProjectCreateInput,
   type MemoryCreateInput,
   type ScheduleCreateInput,
@@ -26,6 +29,37 @@ import {
   type HeartbeatUpdateInput,
   type ExpertCreateInput
 } from './assistant-contracts'
+
+export const workspaceRelativePathSchema = z
+  .string()
+  .min(1)
+  .max(1_024)
+  .refine((value) => {
+    if (
+      value.includes('\0') ||
+      /^[\\/]/u.test(value) ||
+      /^[a-zA-Z]:[\\/]/u.test(value)
+    ) {
+      return false
+    }
+    return value
+      .split(/[\\/]/u)
+      .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+  }, '路径必须是工作区内的相对路径')
+
+export const workspaceDirectoryRequestSchema = z
+  .object({
+    projectId: assistantIdSchema,
+    path: z.union([workspaceRelativePathSchema, z.literal('')])
+  })
+  .strict()
+
+export const workspaceFileRequestSchema = z
+  .object({
+    projectId: assistantIdSchema,
+    path: workspaceRelativePathSchema
+  })
+  .strict()
 
 export const agentRequestSchema = z
   .object({
@@ -85,6 +119,7 @@ export const continueModeSchema = z.enum(['chat', 'agent'])
 export const runtimeSandboxModeSchema = z.enum(['off', 'auto', 'strict'])
 export const modelProtocolSchema = z.enum([
   'anthropic-messages',
+  'openai-responses',
   'openai-chat-completions',
   'openai-images-generations'
 ])
@@ -345,11 +380,16 @@ export const runtimeSettingsInputSchema = z
               (profile) => profile.id === continueSource.profileId
             )
           : undefined
-      if (continueProfile?.protocol === 'openai-images-generations') {
+      if (
+        continueProfile &&
+        continueProfile.protocol !== 'anthropic-messages' &&
+        continueProfile.protocol !== 'openai-chat-completions'
+      ) {
         context.addIssue({
           code: 'custom',
           path: ['continueModelSource'],
-          message: 'Continue 不支持图像生成模型连接'
+          message:
+            'Continue 独立模型连接仅支持 Anthropic Messages 或 OpenAI 兼容 Chat Completions'
         })
       }
     }
@@ -690,6 +730,11 @@ export type DesktopApi = {
     getInfo: () => Promise<AppInfo>
     show: () => Promise<void>
     hide: () => Promise<void>
+    minimize: () => Promise<void>
+    toggleMaximize: () => Promise<void>
+    close: () => Promise<void>
+    isMaximized: () => Promise<boolean>
+    onMaximizedChanged: (listener: (maximized: boolean) => void) => () => void
     clearLocalData: () => Promise<void>
     onNewConversation: (listener: () => void) => () => void
     onOpenSettings: (listener: () => void) => () => void
@@ -729,6 +774,14 @@ export type DesktopApi = {
   }
   workspace: {
     getChanges: (projectId: string) => Promise<WorkspaceChanges>
+    listDirectory: (
+      projectId: string,
+      path: string
+    ) => Promise<WorkspaceDirectoryListing>
+    readFile: (
+      projectId: string,
+      path: string
+    ) => Promise<WorkspaceFilePreview>
   }
   tasks: {
     list: () => Promise<AssistantTask[]>

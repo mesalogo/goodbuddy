@@ -35,6 +35,7 @@ describe('createAgentRuntime model compatibility', () => {
     await expect(runtime.getStatus()).resolves.toMatchObject({
       id: 'model',
       available: true,
+      supportsToolExecution: true,
       detail: expect.stringContaining('OpenAI Chat Completions')
     })
     await runtime.dispose()
@@ -90,6 +91,23 @@ describe('createAgentRuntime model compatibility', () => {
           }
         })
       )
-    ).toThrow('Continue 不支持图像生成模型连接')
+    ).toThrow('Continue 独立模型连接仅支持')
+    expect(() =>
+      createAgentRuntime(
+        process.cwd(),
+        settings({
+          provider: 'continue',
+          continueModelProfile: {
+            id: '00000000-0000-4000-8000-000000000033',
+            name: 'Responses profile',
+            baseUrl: 'https://api.openai.com/v1',
+            modelName: 'gpt-5',
+            protocol: 'openai-responses',
+            authentication: 'api-key',
+            apiKey: 'secret'
+          }
+        })
+      )
+    ).toThrow('Continue 独立模型连接仅支持')
   })
 })

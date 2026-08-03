@@ -8,6 +8,7 @@ import type {
 } from './runtime'
 
 export class UnconfiguredAgentRuntime implements AgentRuntime {
+  readonly runtimeId = 'setup'
   readonly requiresToolApproval = false
   readonly supportsToolExecution = false
 

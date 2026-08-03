@@ -52,12 +52,16 @@
         ]
       },
       {
-        "from": "build/icon.ico",
+        "from": "build/icon-taskbar.ico",
         "to": "icon.ico"
       },
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "build/icon-tray.png",
+        "to": "tray-icon.png"
       },
       {
         "from": ".runtime-resources/${arch}",
@@ -87,7 +91,7 @@
       }
     ],
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "build/icon-taskbar.ico",
       "target": [
         "nsis"
       ]

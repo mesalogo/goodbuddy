@@ -54,4 +54,21 @@ const ready = true
     ).not.toMatch(/^javascript:/u)
     expect(container.querySelector('script')).not.toBeInTheDocument()
   })
+
+  it('renders a whole Markdown fence as formatted content', () => {
+    const { container } = render(
+      <MarkdownRenderer>{`\`\`\`markdown
+# 方案标题
+
+- 第一步
+- 第二步
+\`\`\``}</MarkdownRenderer>
+    )
+
+    expect(
+      screen.getByRole('heading', { name: '方案标题', level: 1 })
+    ).toBeInTheDocument()
+    expect(screen.getByText('第一步')).toBeInTheDocument()
+    expect(container.querySelector('pre')).not.toBeInTheDocument()
+  })
 })

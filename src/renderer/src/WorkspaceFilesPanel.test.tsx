@@ -1,0 +1,106 @@
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
+
+afterEach(cleanup)
+
+describe('WorkspaceFilesPanel', () => {
+  it('lists the project tree, expands directories, and opens files', async () => {
+    const onListDirectory = vi.fn(async (path: string) =>
+      path
+        ? {
+            path,
+            entries: [
+              {
+                name: 'guide.md',
+                path: 'docs/guide.md',
+                type: 'file' as const
+              }
+            ],
+            truncated: false
+          }
+        : {
+            path,
+            entries: [
+              {
+                name: 'docs',
+                path: 'docs',
+                type: 'directory' as const
+              },
+              {
+                name: 'notes.txt',
+                path: 'notes.txt',
+                type: 'file' as const
+              }
+            ],
+            truncated: false
+          }
+    )
+    const onOpenFile = vi.fn()
+
+    render(
+      <WorkspaceFilesPanel
+        changedFiles={[{ path: 'notes.txt', status: ' M' }]}
+        onListDirectory={onListDirectory}
+        onOpenFile={onOpenFile}
+        projectId="00000000-0000-4000-8000-000000000101"
+      />
+    )
+
+    expect(await screen.findByText('当前工作区')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /docs/u }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: /guide\.md/u })
+    )
+
+    expect(onListDirectory).toHaveBeenCalledWith('')
+    expect(onListDirectory).toHaveBeenCalledWith('docs')
+    expect(onOpenFile).toHaveBeenCalledWith('docs/guide.md')
+    expect(screen.getAllByText('修改')).not.toHaveLength(0)
+  })
+
+  it('ignores stale directory results after the active project changes', async () => {
+    let resolveFirst:
+      | ((value: {
+          path: string
+          entries: []
+          truncated: false
+        }) => void)
+      | undefined
+    const onListDirectory = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockResolvedValue({
+        path: '',
+        entries: [],
+        truncated: false
+      })
+    const { rerender } = render(
+      <WorkspaceFilesPanel
+        changedFiles={[]}
+        onListDirectory={onListDirectory}
+        onOpenFile={vi.fn()}
+        projectId="00000000-0000-4000-8000-000000000101"
+      />
+    )
+
+    await waitFor(() => expect(onListDirectory).toHaveBeenCalledOnce())
+    rerender(
+      <WorkspaceFilesPanel
+        changedFiles={[]}
+        onListDirectory={onListDirectory}
+        onOpenFile={vi.fn()}
+        projectId="00000000-0000-4000-8000-000000000102"
+      />
+    )
+    resolveFirst?.({ path: '', entries: [], truncated: false })
+
+    await waitFor(() => expect(onListDirectory).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('工作区为空。')).toBeInTheDocument()
+  })
+})

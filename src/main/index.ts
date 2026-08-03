@@ -4,7 +4,6 @@ import {
   dialog,
   globalShortcut,
   Menu,
-  nativeImage,
   safeStorage,
   session,
   Tray,
@@ -31,13 +30,23 @@ import {
   showWindow,
   toggleWindow
 } from './window'
+import { createTrayIcon } from './tray-icon'
 import { resolveBundledRuntimePaths } from './agent/bundled-runtimes'
 import type {
   ContinueHostChild,
   ContinueHostLauncher
 } from './agent/continue-host-adapter'
+import { resolvePortableUserDataPath } from './portable-user-data'
 
 const shortcut = 'CommandOrControl+Shift+Space'
+const portableUserDataPath = resolvePortableUserDataPath({
+  packaged: app.isPackaged,
+  platform: process.platform,
+  executablePath: process.execPath
+})
+if (portableUserDataPath) {
+  app.setPath('userData', portableUserDataPath)
+}
 if (process.platform === 'win32') {
   app.setAppUserModelId('live.digiman.goodbuddy')
 }
@@ -114,20 +123,6 @@ const launchContinueHost: ContinueHostLauncher = (
     }
   }
   return child
-}
-
-function createTrayIcon(): Electron.NativeImage {
-  const svg = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">',
-    '<rect width="32" height="32" rx="10" fill="#18392b"/>',
-    '<path d="M9 10.5h14v9a5 5 0 0 1-5 5h-4a5 5 0 0 1-5-5z" fill="#f3bb60"/>',
-    '<circle cx="13" cy="16" r="1.5" fill="#18392b"/>',
-    '<circle cx="19" cy="16" r="1.5" fill="#18392b"/>',
-    '<path d="M13 20h6" stroke="#18392b" stroke-width="1.8" stroke-linecap="round"/>',
-    '</svg>'
-  ].join('')
-  const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`
-  return nativeImage.createFromDataURL(dataUrl)
 }
 
 function buildTray(): Tray {
@@ -271,8 +266,8 @@ if (hasSingleInstanceLock) {
           target,
           target === 'continue' ? 12_000 : 48_000
         ),
-        target === 'opencode'
-          ? capabilityService.getResolvedMcpServers('opencode')
+        target === 'model'
+          ? capabilityService.getResolvedMcpServers('model')
           : Promise.resolve([])
       ])
       return createAgentRuntime(defaultWorkspace, settings, {

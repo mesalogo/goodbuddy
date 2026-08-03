@@ -22,11 +22,12 @@ const stagingRoot = join(
   `.portable-stage-x64-${process.pid}`
 )
 const unpackedPath = join(stagingRoot, 'win-unpacked')
-const portableName = `GoodBuddy-${packageJson.version}-win-x64-portable`
+const portableName = 'GoodBuddy-windows-x64'
 const portablePath = process.env.GOODBUDDY_OUT_DIR
   ? resolve(process.env.GOODBUDDY_OUT_DIR)
   : join(outputRoot, portableName)
 const markerName = '.goodbuddy-portable.json'
+const portableLocales = new Set(['zh-CN.pak', 'en-US.pak'])
 
 if (process.platform !== 'win32' || process.arch !== 'x64') {
   throw new Error('Portable 目录当前必须在 Windows x64 上构建')
@@ -118,10 +119,31 @@ function copyDirectoryContents(source, destination) {
   }
 }
 
+function pruneLocales(directory) {
+  const localesPath = join(directory, 'locales')
+  if (!statSync(localesPath, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error('Portable 目录缺少 Electron locales')
+  }
+  for (const name of readdirSync(localesPath)) {
+    if (!portableLocales.has(name)) {
+      rmSync(join(localesPath, name), { force: true })
+    }
+  }
+  for (const required of portableLocales) {
+    if (!statSync(join(localesPath, required), {
+      throwIfNoEntry: false
+    })?.isFile()) {
+      throw new Error(`Portable 目录缺少必要语言包：${required}`)
+    }
+  }
+}
+
 function portableRequiredPaths(directory) {
   return [
     join(directory, 'GoodBuddy.exe'),
     join(directory, 'resources', 'app.asar'),
+    join(directory, 'resources', 'icon.ico'),
+    join(directory, 'resources', 'tray-icon.png'),
     join(
       directory,
       'resources',
@@ -294,6 +316,7 @@ if (!statSync(unpackedPath, { throwIfNoEntry: false })?.isDirectory()) {
   throw new Error('Electron Builder 未生成 portable 目录')
 }
 try {
+  pruneLocales(unpackedPath)
   assertPortableOutput(unpackedPath)
   replacePortableOutput(unpackedPath, portablePath)
 } finally {

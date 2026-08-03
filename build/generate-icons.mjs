@@ -52,6 +52,73 @@ function isBrandColor(red, green, blue) {
   )
 }
 
+function createTaskbarIcon(source) {
+  const output = new PNG({ width: 640, height: 640 })
+  const bounds = {
+    left: 80,
+    top: 90,
+    right: 660,
+    bottom: 535
+  }
+  const offsetX = 30
+  const offsetY = 90
+  for (let y = bounds.top; y < bounds.bottom; y += 1) {
+    for (let x = bounds.left; x < bounds.right; x += 1) {
+      const sourceOffset = pixelOffset(source, x, y)
+      const red = source.data[sourceOffset]
+      const green = source.data[sourceOffset + 1]
+      const blue = source.data[sourceOffset + 2]
+      const maximum = Math.max(red, green, blue)
+      const minimum = Math.min(red, green, blue)
+      const insideFace =
+        Math.hypot(x - 244, y - 380) <= 96 ||
+        Math.hypot(x - 490, y - 380) <= 96
+      const keep =
+        isBrandColor(red, green, blue) ||
+        maximum < 110 ||
+        (insideFace && minimum > 210)
+      if (!keep) {
+        continue
+      }
+      const targetX = x - bounds.left + offsetX
+      const targetY = y - bounds.top + offsetY
+      const targetOffset = pixelOffset(output, targetX, targetY)
+      for (let channel = 0; channel < 4; channel += 1) {
+        output.data[targetOffset + channel] =
+          source.data[sourceOffset + channel]
+      }
+    }
+  }
+  return resize(output, 512, 512, 'bicubicInterpolation')
+}
+
+function assertTaskbarIcon(image) {
+  let visiblePixels = 0
+  let colorfulPixels = 0
+  for (let index = 0; index < image.data.length; index += 4) {
+    if (image.data[index + 3] < 16) {
+      continue
+    }
+    visiblePixels += 1
+    if (
+      isBrandColor(
+        image.data[index],
+        image.data[index + 1],
+        image.data[index + 2]
+      )
+    ) {
+      colorfulPixels += 1
+    }
+  }
+  if (
+    image.data[pixelOffset(image, 0, 0) + 3] !== 0 ||
+    visiblePixels < 40_000 ||
+    colorfulPixels < 20_000
+  ) {
+    throw new Error('Windows 任务栏图标生成失败')
+  }
+}
+
 function repairDarkCursor(dark, light) {
   for (let y = 570; y <= 606; y += 1) {
     const backgroundOffset = pixelOffset(dark, 640, y)
@@ -132,8 +199,13 @@ async function main() {
 
   const light = resize(lightSquare, 512, 512, 'bicubicInterpolation')
   const dark = resize(darkSquare, 512, 512, 'bicubicInterpolation')
+  const taskbar = createTaskbarIcon(lightSquare)
+  assertTaskbarIcon(taskbar)
+  const tray = resize(taskbar, 32, 32, 'bicubicInterpolation')
   const lightPng = PNG.sync.write(light)
   const darkPng = PNG.sync.write(dark)
+  const taskbarPng = PNG.sync.write(taskbar)
+  const trayPng = PNG.sync.write(tray)
   const rendererLightPng = PNG.sync.write(
     resize(light, 128, 128, 'bicubicInterpolation')
   )
@@ -146,6 +218,8 @@ async function main() {
     [join(root, 'build', 'icon-light.png'), lightPng],
     [join(root, 'build', 'icon-dark.png'), darkPng],
     [join(root, 'build', 'icon.png'), lightPng],
+    [join(root, 'build', 'icon-taskbar.png'), taskbarPng],
+    [join(root, 'build', 'icon-tray.png'), trayPng],
     [join(rendererAssetRoot, 'goodbuddy-light.png'), rendererLightPng],
     [join(rendererAssetRoot, 'goodbuddy-dark.png'), rendererDarkPng]
   ]
@@ -153,10 +227,12 @@ async function main() {
 
   const lightIco = await pngToIco(lightPng)
   const darkIco = await pngToIco(darkPng)
+  const taskbarIco = await pngToIco(taskbarPng)
   await Promise.all([
     writeFile(join(root, 'build', 'icon-light.ico'), lightIco),
     writeFile(join(root, 'build', 'icon-dark.ico'), darkIco),
-    writeFile(join(root, 'build', 'icon.ico'), lightIco)
+    writeFile(join(root, 'build', 'icon.ico'), lightIco),
+    writeFile(join(root, 'build', 'icon-taskbar.ico'), taskbarIco)
   ])
 }
 

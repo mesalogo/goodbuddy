@@ -447,7 +447,16 @@ describe('ContinueHostAdapter', () => {
                         message: {
                           role: 'assistant',
                           content: 'Partial response'
-                        }
+                        },
+                        toolCallStates: [
+                          {
+                            toolCallId: 'call-1',
+                            toolCall: {
+                              function: { name: 'Bash' }
+                            },
+                            status: 'errored'
+                          }
+                        ]
                       },
                       {
                         message: {
@@ -483,11 +492,136 @@ describe('ContinueHostAdapter', () => {
       }
     })
 
-    await expect(
-      adapter.run('hello', new AbortController().signal, async () => 'deny')
-    ).rejects.toThrow(
-      'Continue 模型请求失败：Request not allowed'
+    const run = adapter.run(
+      'hello',
+      new AbortController().signal,
+      async () => 'deny'
     )
+    await expect(
+      run
+    ).rejects.toMatchObject({
+      message: 'Continue 模型请求失败：Request not allowed',
+      tools: [
+        {
+          callId: 'call-1',
+          name: 'Bash',
+          state: 'failed'
+        }
+      ]
+    })
     expect(killed).toBe(true)
+  })
+
+  it('returns audit metadata for auto-approved agent tools', async () => {
+    const distribution = await createDistribution()
+    let launchArgs: string[] = []
+    const permissionBodies: unknown[] = []
+    const launchHost: ContinueHostLauncher = (
+      _entryPath,
+      args
+    ) => {
+      launchArgs = args
+      return {
+        exitCode: null,
+        killed: false,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true
+      }
+    }
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (
+          input: string | URL | Request,
+          init?: RequestInit
+        ) => {
+          const url = String(input)
+          if (url.endsWith('/permission')) {
+            permissionBodies.push(JSON.parse(String(init?.body)))
+            return Response.json({})
+          }
+          if (url.endsWith('/state')) {
+            stateRequests += 1
+            if (stateRequests === 1) {
+              return Response.json({
+                session: { history: [] },
+                isProcessing: false,
+                messageQueueLength: 0,
+                pendingPermission: null
+              })
+            }
+            if (stateRequests === 2) {
+              return Response.json({
+                session: { history: [] },
+                isProcessing: true,
+                messageQueueLength: 0,
+                pendingPermission: {
+                  toolName: 'Bash',
+                  toolArgs: { command: 'npm test' },
+                  requestId: 'permission-1'
+                }
+              })
+            }
+            return Response.json({
+              session: {
+                history: [
+                  {
+                    message: {
+                      role: 'assistant',
+                      content: 'TOOLS_OK'
+                    },
+                    toolCallStates: [
+                      {
+                        toolCallId: 'call-1',
+                        toolCall: {
+                          function: { name: 'Bash' }
+                        },
+                        status: 'done'
+                      }
+                    ]
+                  }
+                ]
+              },
+              isProcessing: false,
+              messageQueueLength: 0,
+              pendingPermission: null
+            })
+          }
+          return Response.json({})
+        }
+      )
+    )
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath: 'C:\\safe\\continue.yaml',
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost,
+      mode: 'agent'
+    })
+    const authorize = vi.fn(async () => 'once' as const)
+
+    await expect(
+      adapter.run('hello', new AbortController().signal, authorize)
+    ).resolves.toEqual({
+      text: 'TOOLS_OK',
+      tools: [
+        {
+          callId: 'call-1',
+          name: 'Bash',
+          state: 'completed'
+        }
+      ]
+    })
+    expect(launchArgs).not.toContain('--readonly')
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: 'Bash' })
+    )
+    expect(permissionBodies).toEqual([
+      { requestId: 'permission-1', approved: true }
+    ])
   })
 })
