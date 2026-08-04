@@ -9,6 +9,11 @@ on:
       - 'v*'
     paths:
       - '.github/workflows/packages.yml'
+      - 'build/build-release.cjs'
+      - 'build/file-hash.cjs'
+      - 'build/runtime-hooks.cjs'
+      - 'package.json'
+      - 'package-lock.json'
 
 permissions:
   contents: read
