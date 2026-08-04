@@ -21,6 +21,8 @@ const packageJson = JSON.parse(
 const productName = packageJson.build?.productName ?? packageJson.name
 const releaseRoot = join(root, 'dist', 'release')
 const manifestName = 'release-manifest.json'
+const ansiEscapeCharacter = String.fromCharCode(27)
+const ansiSequenceSuffixPattern = /\[[0-9;]*[A-Za-z]/gu
 const supportedArchitectures = new Set(['x64', 'arm64'])
 const platformAliases = new Map([
   ['win', 'windows'],
@@ -204,7 +206,9 @@ function buildElectronBuilderArguments(options, outputDirectory) {
     definition.builderFlag,
     ...options.formats,
     `--${options.arch}`,
-    `--config.directories.output=${outputDirectory}`
+    `--config.directories.output=${outputDirectory}`,
+    '--publish',
+    'never'
   ]
   if (
     options.platform === 'windows' &&
@@ -635,8 +639,17 @@ if (require.main === module) {
   main().catch((error) => {
     console.error(error)
     if (process.env.GITHUB_ACTIONS === 'true') {
-      const details = `${error.message}\n${error.outputTail ?? ''}`
-        .slice(-12_000)
+      const outputLines = String(error.outputTail ?? '')
+        .replaceAll(ansiEscapeCharacter, '')
+        .replace(ansiSequenceSuffixPattern, '')
+        .replaceAll('\r', '\n')
+        .split('\n')
+        .filter(
+          (line) =>
+            line.trim() &&
+            !line.includes('duplicate dependency references')
+        )
+      const details = `${error.message}\n${outputLines.join('\n').slice(-3_000)}`
         .replace(
           /((?:authorization|_authToken|api[_-]?key|password)\s*[:=]\s*)\S+/giu,
           '$1[redacted]'

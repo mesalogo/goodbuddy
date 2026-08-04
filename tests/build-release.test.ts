@@ -175,6 +175,8 @@ describe('release build arguments', () => {
         'portable',
         '--arm64',
         '--config.directories.output=C:\\release-stage',
+        '--publish',
+        'never',
         expect.stringContaining('nsis.artifactName='),
         expect.stringContaining('portable.artifactName=')
       ])
