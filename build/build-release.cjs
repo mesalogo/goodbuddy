@@ -536,6 +536,33 @@ function safeReleasePath(filePath) {
   return resolved
 }
 
+function summarizeCommandOutput(value) {
+  const lines = String(value)
+    .replaceAll(ansiEscapeCharacter, '')
+    .replace(ansiSequenceSuffixPattern, '')
+    .replaceAll('\r', '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line &&
+        !line.includes('duplicate dependency references')
+    )
+    .map((line) => line.slice(0, 800))
+  const important = lines.filter((line) =>
+    /error|failed|fatal|cannot|unable|enoent|codesign|hdiutil|exit code/iu.test(
+      line
+    )
+  )
+  return [
+    ...new Set([
+      ...lines.slice(0, 8),
+      ...important,
+      ...lines.slice(-14)
+    ])
+  ].join('\n').slice(-3_000)
+}
+
 function printHelp() {
   console.log(`${productName} 跨平台发布构建
 
@@ -639,17 +666,7 @@ if (require.main === module) {
   main().catch((error) => {
     console.error(error)
     if (process.env.GITHUB_ACTIONS === 'true') {
-      const outputLines = String(error.outputTail ?? '')
-        .replaceAll(ansiEscapeCharacter, '')
-        .replace(ansiSequenceSuffixPattern, '')
-        .replaceAll('\r', '\n')
-        .split('\n')
-        .filter(
-          (line) =>
-            line.trim() &&
-            !line.includes('duplicate dependency references')
-        )
-      const details = `${error.message}\n${outputLines.join('\n').slice(-3_000)}`
+      const details = `${error.message}\n${summarizeCommandOutput(error.outputTail ?? '')}`
         .replace(
           /((?:authorization|_authToken|api[_-]?key|password)\s*[:=]\s*)\S+/giu,
           '$1[redacted]'

@@ -96,13 +96,19 @@ async function downloadPackage(projectDir, packageName, integrity) {
     {
       cwd: projectDir,
       encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
       shell: false,
       windowsHide: true
     }
   )
   if (result.status !== 0) {
     throw new Error(
-      `Unable to fetch ${packageName}: ${result.stderr || result.stdout}`
+      `Unable to fetch ${packageName}: ${
+        result.error?.message ||
+        result.stderr ||
+        result.stdout ||
+        `npm exited with ${result.status}`
+      }`
     )
   }
   const output = JSON.parse(result.stdout)
