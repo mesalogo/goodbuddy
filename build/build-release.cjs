@@ -1,4 +1,4 @@
-const { spawnSync } = require('node:child_process')
+const { spawn } = require('node:child_process')
 const {
   existsSync,
   closeSync,
@@ -163,21 +163,38 @@ function npmInvocation(environment = process.env) {
 }
 
 function run(command, args, environment = process.env) {
-  const result = spawnSync(command, args, {
-    cwd: root,
-    env: environment,
-    shell: false,
-    stdio: 'inherit',
-    windowsHide: true
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, {
+      cwd: root,
+      env: environment,
+      shell: false,
+      stdio: ['inherit', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    let outputTail = ''
+    const forward = (chunk, destination) => {
+      destination.write(chunk)
+      outputTail = `${outputTail}${chunk}`.slice(-12_000)
+    }
+    child.stdout.on('data', (chunk) => {
+      forward(chunk, process.stdout)
+    })
+    child.stderr.on('data', (chunk) => {
+      forward(chunk, process.stderr)
+    })
+    child.once('error', rejectRun)
+    child.once('close', (code) => {
+      if (code === 0) {
+        resolveRun()
+        return
+      }
+      const error = new Error(
+        `命令执行失败（code ${code ?? 1}）：${command} ${args.join(' ')}`
+      )
+      error.outputTail = outputTail
+      rejectRun(error)
+    })
   })
-  if (result.error) {
-    throw result.error
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `命令执行失败（code ${result.status ?? 1}）：${command} ${args.join(' ')}`
-    )
-  }
 }
 
 function buildElectronBuilderArguments(options, outputDirectory) {
@@ -568,9 +585,12 @@ async function main(argv = process.argv.slice(2)) {
   try {
     if (!options.skipBuild) {
       const npm = npmInvocation()
-      run(npm.command, [...npm.prefixArgs, 'run', 'build'])
+      await run(
+        npm.command,
+        [...npm.prefixArgs, 'run', 'build']
+      )
     }
-    run(
+    await run(
       process.execPath,
       builderArguments,
       {
@@ -614,6 +634,20 @@ module.exports = {
 if (require.main === module) {
   main().catch((error) => {
     console.error(error)
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      const details = `${error.message}\n${error.outputTail ?? ''}`
+        .slice(-12_000)
+        .replace(
+          /((?:authorization|_authToken|api[_-]?key|password)\s*[:=]\s*)\S+/giu,
+          '$1[redacted]'
+        )
+        .replaceAll('%', '%25')
+        .replaceAll('\r', '%0D')
+        .replaceAll('\n', '%0A')
+      console.error(
+        `::error title=Release packaging failed::${details}`
+      )
+    }
     process.exitCode = 1
   })
 }
