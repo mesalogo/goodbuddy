@@ -8,10 +8,11 @@ const {
   stat,
   writeFile
 } = require('node:fs/promises')
-const { createReadStream, existsSync } = require('node:fs')
+const { existsSync } = require('node:fs')
 const { join } = require('node:path')
 const { spawnSync } = require('node:child_process')
 const tar = require('tar')
+const { sha256File } = require('./file-hash.cjs')
 
 const opencodeVersion = '1.18.9'
 const architectureNames = {
@@ -26,17 +27,6 @@ const platformNames = {
 
 function sha512Integrity(contents) {
   return `sha512-${createHash('sha512').update(contents).digest('base64')}`
-}
-
-async function sha256File(filePath) {
-  const hash = createHash('sha256')
-  await new Promise((resolveHash, reject) => {
-    const stream = createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.once('error', reject)
-    stream.once('end', resolveHash)
-  })
-  return hash.digest('hex')
 }
 
 async function lockedIntegrity(projectDir, packageName) {

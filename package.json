@@ -18,7 +18,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && npm run build:bundle",
+    "build:bundle": "electron-vite build",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
     "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64",
@@ -26,6 +27,7 @@
     "dist:linux:x64": "npm run build && electron-builder --linux AppImage deb --x64",
     "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb --arm64",
     "icons": "node build/generate-icons.mjs",
+    "release:package": "node build/build-release.cjs",
     "portable": "npm run build && node build/build-portable.cjs"
   },
   "build": {

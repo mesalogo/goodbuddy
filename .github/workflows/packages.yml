@@ -1,0 +1,122 @@
+name: Cross-platform packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify release tag version
+        if: github.ref_type == 'tag'
+        run: node -e "const p=require('./package.json'); const expected='v'+p.version; if(process.env.GITHUB_REF_NAME!==expected){throw new Error('Expected tag '+expected+', received '+process.env.GITHUB_REF_NAME)}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run validators
+        run: |
+          npm test
+          npm run typecheck
+          npm run lint
+
+      - name: Build production bundle
+        run: npm run build:bundle
+
+      - name: Upload production bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: goodbuddy-production-bundle
+          path: out
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    name: ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            arch: x64
+            runner: windows-2025
+          - platform: windows
+            arch: arm64
+            runner: windows-2025
+          - platform: macos
+            arch: x64
+            runner: macos-15-intel
+          - platform: macos
+            arch: arm64
+            runner: macos-15
+          - platform: linux
+            arch: x64
+            runner: ubuntu-24.04
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache packaging toolsets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ELECTRON_CACHE }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+          key: packaging-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: packaging-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download production bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: goodbuddy-production-bundle
+          path: out
+
+      - name: Build and verify release packages
+        run: npm run release:package -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --skip-build
+
+      - name: Upload release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: goodbuddy-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/release/${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
