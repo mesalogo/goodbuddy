@@ -91,14 +91,14 @@ report(
   "site.config.js 必须集中配置 0.8.0 版本",
 );
 report(
-  /releasePublished:\s*false/.test(configJs),
-  "Release 未发布前 releasePublished 必须为 false",
+  /releasePublished:\s*true/.test(configJs),
+  "v0.8.0 Release 发布后 releasePublished 必须为 true",
 );
 report(
   /releaseUrl:\s*"https:\/\/github\.com\/mesalogo\/goodbuddy\/releases\/tag\/v0\.8\.0"/.test(
     configJs,
   ),
-  "未来 v0.8.0 Release URL 配置不正确",
+  "v0.8.0 Release URL 配置不正确",
 );
 report(
   appJs.includes("config?.releasePublished === true"),
@@ -145,7 +145,7 @@ for (const link of externalBlankLinks) {
 
 report(
   !/<a\b[^>]*href="[^"]+\.(?:exe|dmg|zip|AppImage|deb)(?:[?#][^"]*)?"/i.test(html),
-  "Release 未发布前不得提供具体安装资产链接",
+  "具体安装资产链接应由 Release 页面统一提供",
 );
 report(
   !/(?:react|vue|angular|bootstrap|tailwind)(?:\.min)?\.(?:js|css)/i.test(html),
