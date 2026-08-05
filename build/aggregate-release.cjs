@@ -127,20 +127,6 @@ function expectedFormatForFile(name, target) {
   )
 }
 
-function isAllowedAuxiliaryFile(name, target, manifestNames) {
-  if (name === 'builder-debug.yml') {
-    return true
-  }
-  if (!name.endsWith('.blockmap')) {
-    return false
-  }
-  const packageName = name.slice(0, -'.blockmap'.length)
-  return (
-    manifestNames.has(packageName) &&
-    expectedFormatForFile(packageName, target) !== undefined
-  )
-}
-
 function listTargetDirectories(inputDirectory) {
   if (lstatSync(inputDirectory).isSymbolicLink()) {
     throw new Error(`拒绝符号链接：${inputDirectory}`)
@@ -224,9 +210,6 @@ async function aggregateRelease(inputDirectory, outputDirectory) {
 
     const seenFormats = new Set()
     const files = []
-    const manifestNames = new Set(
-      item.manifest.files.map((file) => file?.name)
-    )
     for (const file of item.manifest.files) {
       assertSafeName(file?.name, '发布文件名')
       if (
@@ -237,16 +220,8 @@ async function aggregateRelease(inputDirectory, outputDirectory) {
       ) {
         throw new Error(`发布文件元数据错误：${file?.name ?? key}`)
       }
-      if (fileNames.has(file.name)) {
-        throw new Error(`发布文件名全局重复：${file.name}`)
-      }
       const format = expectedFormatForFile(file.name, expected)
-      const auxiliary = isAllowedAuxiliaryFile(
-        file.name,
-        expected,
-        manifestNames
-      )
-      if ((!format && !auxiliary) || (format && seenFormats.has(format))) {
+      if (format && seenFormats.has(format)) {
         throw new Error(`发布文件格式或数量错误：${file.name}`)
       }
       const source = join(directory, file.name)
@@ -256,8 +231,11 @@ async function aggregateRelease(inputDirectory, outputDirectory) {
       if (actualSize !== file.size || actualHash !== file.sha256) {
         throw new Error(`发布文件完整性校验失败：${file.name}`)
       }
-      if (auxiliary) {
+      if (!format) {
         continue
+      }
+      if (fileNames.has(file.name)) {
+        throw new Error(`发布文件名全局重复：${file.name}`)
       }
       assertPlainFile(source, '发布文件')
       copyFileSync(source, join(outputDirectory, file.name))
@@ -348,6 +326,15 @@ module.exports = {
 if (require.main === module) {
   main().catch((error) => {
     console.error(error)
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      const message = String(error?.message ?? error)
+        .replaceAll('%', '%25')
+        .replaceAll('\r', '%0D')
+        .replaceAll('\n', '%0A')
+      console.error(
+        `::error title=Release aggregation failed::${message}`
+      )
+    }
     process.exitCode = 1
   })
 }

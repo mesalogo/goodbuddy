@@ -91,6 +91,17 @@ function createDownloadedArtifacts(parent: string): string {
       size: Buffer.byteLength(debugContent),
       sha256: sha256(debugContent)
     })
+    const metadataName = `metadata-${key}.json`
+    const metadataContent = `${key}:metadata`
+    writeFileSync(
+      join(directory, metadataName),
+      metadataContent
+    )
+    files.push({
+      name: metadataName,
+      size: Buffer.byteLength(metadataContent),
+      sha256: sha256(metadataContent)
+    })
     if (target.platform === 'windows') {
       const setupName = artifactName(target, 'nsis')
       const blockmapName = `${setupName}.blockmap`
@@ -149,6 +160,9 @@ describe('release asset aggregation', () => {
       expect(outputNames).toContain('release-manifest.json')
       expect(outputNames).toContain('SHA256SUMS')
       expect(outputNames).not.toContain('builder-debug.yml')
+      expect(
+        outputNames.some((name) => name.startsWith('metadata-'))
+      ).toBe(false)
       expect(
         outputNames.some((name) => name.endsWith('.blockmap'))
       ).toBe(false)
