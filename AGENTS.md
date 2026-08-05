@@ -106,3 +106,8 @@ make paid or external calls, so run them only with explicit authorization.
 Before committing or pushing, inspect `git status`, `git diff`, and
 `git diff --cached`. Do not commit secrets, local databases, logs, generated
 credentials, or private user artifacts.
+
+This repository has two synchronized remotes, `origin` and `github`. Unless the
+user explicitly names a remote, every requested push must update the current
+branch on both remotes, plus any tags explicitly included in the request.
+Verify both remote refs after pushing.
