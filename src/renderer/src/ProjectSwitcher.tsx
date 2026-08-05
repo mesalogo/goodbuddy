@@ -32,6 +32,7 @@ export function ProjectSwitcher({
 }: ProjectSwitcherProps): React.JSX.Element {
   const [creating, setCreating] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState<string>()
   const createButtonRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -53,7 +54,8 @@ export function ProjectSwitcher({
     }
     restoreCreateButtonFocus.current = true
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !saving) {
+      if (event.key === 'Escape' && !saving && !archiving) {
+        setError(undefined)
         setCreating(false)
         return
       }
@@ -81,7 +83,7 @@ export function ProjectSwitcher({
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [creating, saving])
+  }, [archiving, creating, saving])
 
   const create = async (): Promise<void> => {
     setSaving(true)
@@ -103,6 +105,40 @@ export function ProjectSwitcher({
     }
   }
 
+  const selectRoot = async (): Promise<void> => {
+    setError(undefined)
+    try {
+      const rootPath = await onSelectRoot()
+      if (rootPath) {
+        setDraft((current) => ({
+          ...current,
+          rootPath
+        }))
+      }
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : '选择项目根目录失败'
+      )
+    }
+  }
+
+  const archive = async (): Promise<void> => {
+    setArchiving(true)
+    setError(undefined)
+    try {
+      await onArchive(activeProjectId)
+      setCreating(false)
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : '归档项目失败'
+      )
+    } finally {
+      setArchiving(false)
+    }
+  }
+
   return (
     <div className="project-switcher">
       <div className="project-switcher__row">
@@ -120,7 +156,10 @@ export function ProjectSwitcher({
         <button
           aria-label="新建项目"
           className="icon-button"
-          onClick={() => setCreating(true)}
+          onClick={() => {
+            setError(undefined)
+            setCreating(true)
+          }}
           ref={createButtonRef}
           type="button"
         >
@@ -131,7 +170,12 @@ export function ProjectSwitcher({
         <div
           className="project-create-backdrop"
           onMouseDown={(event) => {
-            if (event.currentTarget === event.target && !saving) {
+            if (
+              event.currentTarget === event.target &&
+              !saving &&
+              !archiving
+            ) {
+              setError(undefined)
               setCreating(false)
             }
           }}
@@ -148,7 +192,11 @@ export function ProjectSwitcher({
               <button
                 aria-label="关闭新建项目"
                 className="icon-button"
-                onClick={() => setCreating(false)}
+                disabled={saving || archiving}
+                onClick={() => {
+                  setError(undefined)
+                  setCreating(false)
+                }}
                 type="button"
               >
                 <X size={14} />
@@ -189,16 +237,8 @@ export function ProjectSwitcher({
                 <button
                   aria-label="选择项目根目录"
                   className="secondary-button"
-                  onClick={() => {
-                    void onSelectRoot().then((rootPath) => {
-                      if (rootPath) {
-                        setDraft((current) => ({
-                          ...current,
-                          rootPath
-                        }))
-                      }
-                    })
-                  }}
+                  disabled={saving || archiving}
+                  onClick={() => void selectRoot()}
                   type="button"
                 >
                   <FolderOpen size={14} />
@@ -223,23 +263,28 @@ export function ProjectSwitcher({
                 ))}
               </select>
             </label>
-            {error && <p className="project-create-card__error">{error}</p>}
+            {error && (
+              <p className="project-create-card__error" role="alert">
+                {error}
+              </p>
+            )}
             <div className="project-create-card__actions">
               {projects.length > 1 && activeProjectId && (
                 <button
                   className="secondary-button"
-                  onClick={() => {
-                    void onArchive(activeProjectId)
-                  }}
+                  disabled={saving || archiving}
+                  onClick={() => void archive()}
                   type="button"
                 >
                   <Archive size={13} />
-                  归档当前
+                  {archiving ? '归档中' : '归档当前'}
                 </button>
               )}
               <button
                 className="primary-button"
-                disabled={saving || !draft.name.trim()}
+                disabled={
+                  saving || archiving || !draft.name.trim()
+                }
                 onClick={() => void create()}
                 type="button"
               >

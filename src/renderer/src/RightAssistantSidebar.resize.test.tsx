@@ -18,11 +18,13 @@ beforeEach(() => {
 function renderSidebar({
   tasks = [],
   experts = [],
-  tab = 'context'
+  tab = 'context',
+  onCreateSchedule = vi.fn(async () => undefined)
 }: {
   tasks?: AssistantTask[]
   experts?: AssistantExpert[]
   tab?: 'tasks' | 'context'
+  onCreateSchedule?: () => Promise<void>
 } = {}): HTMLElement {
   render(
     <RightAssistantSidebar
@@ -38,7 +40,7 @@ function renderSidebar({
       onClose={vi.fn()}
       onCreateHeartbeat={vi.fn(async () => undefined)}
       onCreateMemory={vi.fn(async () => undefined)}
-      onCreateSchedule={vi.fn(async () => undefined)}
+      onCreateSchedule={onCreateSchedule}
       onImportArtifacts={vi.fn(async () => undefined)}
       onListWorkspaceDirectory={vi.fn(async (path: string) => ({
         path,
@@ -207,5 +209,35 @@ describe('RightAssistantSidebar resizing', () => {
     expect(taskButtons[0]).toHaveTextContent('分析发布计划')
     expect(taskButtons[1]).toHaveClass('assistant-sidebar__row--subtask')
     expect(taskButtons[1]).toHaveTextContent('子专家：研究专家 · 智能路由')
+  })
+
+  it('preserves schedule input and reports a failed action', async () => {
+    const onCreateSchedule = vi.fn(async () => {
+      throw new Error('定时服务不可用')
+    })
+    renderSidebar({ tab: 'tasks', onCreateSchedule })
+
+    fireEvent.change(screen.getByLabelText('定时任务标题'), {
+      target: { value: '每日摘要' }
+    })
+    fireEvent.change(screen.getByLabelText('定时任务内容'), {
+      target: { value: '总结今天的工作' }
+    })
+    fireEvent.change(screen.getByLabelText('定时任务时间'), {
+      target: { value: '2026-08-06T09:00' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '添加定时任务' })
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '定时服务不可用'
+    )
+    expect(screen.getByLabelText('定时任务标题')).toHaveValue(
+      '每日摘要'
+    )
+    expect(screen.getByLabelText('定时任务内容')).toHaveValue(
+      '总结今天的工作'
+    )
   })
 })

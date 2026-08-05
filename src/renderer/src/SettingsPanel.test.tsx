@@ -315,6 +315,46 @@ describe('SettingsPanel runtime files', () => {
     expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
   })
 
+  it('supports keyboard navigation between settings tabs', () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    const runtimeTab = screen.getByRole('tab', {
+      name: 'Agent Runtime'
+    })
+    expect(runtimeTab).toHaveAttribute('tabindex', '0')
+    runtimeTab.focus()
+    fireEvent.keyDown(runtimeTab, { key: 'ArrowRight' })
+
+    const securityTab = screen.getByRole('tab', {
+      name: '安全与数据'
+    })
+    expect(securityTab).toHaveFocus()
+    expect(securityTab).toHaveAttribute('aria-selected', 'true')
+    expect(securityTab).toHaveAttribute('tabindex', '0')
+    expect(runtimeTab).toHaveAttribute('tabindex', '-1')
+
+    fireEvent.keyDown(securityTab, { key: 'End' })
+    const mcpTab = screen.getByRole('tab', { name: 'MCP' })
+    expect(mcpTab).toHaveFocus()
+    expect(mcpTab).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByRole('tabpanel')
+    ).toHaveAttribute('aria-labelledby', 'settings-tab-mcp')
+
+    fireEvent.keyDown(mcpTab, { key: 'Home' })
+    expect(
+      screen.getByRole('tab', { name: '外观' })
+    ).toHaveFocus()
+  })
+
   it('explains automatic Execute authorization and the deny-all policy', async () => {
     render(
       <SettingsPanel

@@ -110,7 +110,10 @@
       "target": [
         "dmg"
       ],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "GoodBuddy 需要访问麦克风，将语音转换为可编辑文字。"
+      }
     },
     "linux": {
       "icon": "build/icon.png",

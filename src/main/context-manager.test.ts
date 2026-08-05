@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { createFromBuffer, getSources, showOpenDialog } = vi.hoisted(() => ({
@@ -173,6 +174,59 @@ describe('ContextManager', () => {
         ])
       })
     )
+  })
+
+  it('extracts explicitly selected Office documents into bounded text context', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-context-'))
+    temporaryDirectories.push(directory)
+    const filePath = join(directory, '需求说明.docx')
+    await writeFile(
+      filePath,
+      Buffer.from(
+        zipSync({
+          'word/document.xml': strToU8(
+            '<w:document><w:p><w:t>Word 需求正文</w:t></w:p></w:document>'
+          )
+        })
+      )
+    )
+    showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: [filePath]
+    })
+    const manager = new ContextManager()
+
+    const [attachment] = await manager.selectFiles({} as BrowserWindow)
+
+    expect(attachment).toMatchObject({
+      name: '需求说明.docx',
+      kind: 'text',
+      preview: '[正文] Word 需求正文'
+    })
+    expect(showOpenDialog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        filters: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'PDF 和 Office 文档',
+            extensions: expect.arrayContaining([
+              'docx',
+              'pdf',
+              'pptx',
+              'xlsx'
+            ])
+          })
+        ])
+      })
+    )
+    const prompt = manager.enrichRequest({
+      requestId: '1f6a37b6-e0a3-449f-8878-b10d353fbfb4',
+      conversationId: 'conversation-1',
+      prompt: '总结文档',
+      contextIds: [attachment!.id]
+    }).prompt
+    expect(prompt).toContain('Word 需求正文')
+    expect(prompt).toContain('"content":"[正文]\\nWord 需求正文"')
   })
 
   it('keeps all five explicitly selected images', async () => {

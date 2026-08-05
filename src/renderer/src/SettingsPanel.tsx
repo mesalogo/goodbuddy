@@ -45,6 +45,17 @@ type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   clearApiKey: boolean
 }
 
+const settingsTabs: readonly SettingsTab[] = [
+  'appearance',
+  'model',
+  'runtime',
+  'security',
+  'automation',
+  'roles',
+  'skills',
+  'mcp'
+]
+
 type SettingsPanelProps = {
   open: boolean
   presentation?: 'modal' | 'page'
@@ -174,6 +185,36 @@ export function SettingsPanel({
     activeTab === 'model' ||
     activeTab === 'runtime' ||
     activeTab === 'security'
+
+  const handleTabKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    tab: SettingsTab
+  ): void => {
+    const currentIndex = settingsTabs.indexOf(tab)
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      nextIndex = (currentIndex + 1) % settingsTabs.length
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+      nextIndex =
+        (currentIndex - 1 + settingsTabs.length) %
+        settingsTabs.length
+    } else if (event.key === 'Home') {
+      nextIndex = 0
+    } else if (event.key === 'End') {
+      nextIndex = settingsTabs.length - 1
+    }
+    if (nextIndex === undefined) {
+      return
+    }
+    event.preventDefault()
+    const nextTab = settingsTabs[nextIndex]!
+    setActiveTab(nextTab)
+    event.currentTarget.parentElement
+      ?.querySelector<HTMLButtonElement>(
+        `#settings-tab-${nextTab}`
+      )
+      ?.focus()
+  }
 
   useEffect(() => {
     if (!open) {
@@ -561,82 +602,135 @@ export function SettingsPanel({
         </header>
 
         <div className="settings-panel__body">
-          <nav aria-label="设置分类" className="settings-tabs">
+          <nav
+            aria-label="设置分类"
+            aria-orientation="vertical"
+            className="settings-tabs"
+            role="tablist"
+          >
             <button
+              aria-controls="settings-panel-appearance"
               aria-label="外观"
               aria-selected={activeTab === 'appearance'}
+              id="settings-tab-appearance"
               onClick={() => setActiveTab('appearance')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'appearance')
+              }
               role="tab"
+              tabIndex={activeTab === 'appearance' ? 0 : -1}
               type="button"
             >
               <strong>外观</strong>
               <small>亮色、暗色与系统主题</small>
             </button>
             <button
+              aria-controls="settings-panel-model"
               aria-label="模型连接"
               aria-selected={activeTab === 'model'}
+              id="settings-tab-model"
               onClick={() => setActiveTab('model')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'model')
+              }
               role="tab"
+              tabIndex={activeTab === 'model' ? 0 : -1}
               type="button"
             >
               <strong>模型连接</strong>
               <small>LLM、向量模型与凭据</small>
             </button>
             <button
+              aria-controls="settings-panel-runtime"
               aria-label="Agent Runtime"
               aria-selected={activeTab === 'runtime'}
+              id="settings-tab-runtime"
               onClick={() => setActiveTab('runtime')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'runtime')
+              }
               role="tab"
+              tabIndex={activeTab === 'runtime' ? 0 : -1}
               type="button"
             >
               <strong>Agent Runtime</strong>
               <small>OpenCode、Continue 与工作区</small>
             </button>
             <button
+              aria-controls="settings-panel-security"
               aria-label="安全与数据"
               aria-selected={activeTab === 'security'}
+              id="settings-tab-security"
               onClick={() => setActiveTab('security')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'security')
+              }
               role="tab"
+              tabIndex={activeTab === 'security' ? 0 : -1}
               type="button"
             >
               <strong>安全与数据</strong>
               <small>工具策略与本地隐私</small>
             </button>
             <button
+              aria-controls="settings-panel-automation"
               aria-label="自动化"
               aria-selected={activeTab === 'automation'}
+              id="settings-tab-automation"
               onClick={() => setActiveTab('automation')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'automation')
+              }
               role="tab"
+              tabIndex={activeTab === 'automation' ? 0 : -1}
               type="button"
             >
               <strong>自动化</strong>
               <small>智能心跳与周期回顾</small>
             </button>
             <button
+              aria-controls="settings-panel-roles"
               aria-label="角色与提示词"
               aria-selected={activeTab === 'roles'}
+              id="settings-tab-roles"
               onClick={() => setActiveTab('roles')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'roles')
+              }
               role="tab"
+              tabIndex={activeTab === 'roles' ? 0 : -1}
               type="button"
             >
               <strong>角色与提示词</strong>
               <small>角色、说明与系统提示词</small>
             </button>
             <button
+              aria-controls="settings-panel-skills"
               aria-label="Skills"
               aria-selected={activeTab === 'skills'}
+              id="settings-tab-skills"
               onClick={() => setActiveTab('skills')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'skills')
+              }
               role="tab"
+              tabIndex={activeTab === 'skills' ? 0 : -1}
               type="button"
             >
               <strong>Skills</strong>
               <small>内置与自定义能力</small>
             </button>
             <button
+              aria-controls="settings-panel-mcp"
               aria-label="MCP"
               aria-selected={activeTab === 'mcp'}
+              id="settings-tab-mcp"
               onClick={() => setActiveTab('mcp')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'mcp')
+              }
               role="tab"
+              tabIndex={activeTab === 'mcp' ? 0 : -1}
               type="button"
             >
               <strong>MCP</strong>
@@ -644,7 +738,12 @@ export function SettingsPanel({
             </button>
           </nav>
 
-          <div className="settings-panel__content">
+          <div
+            aria-labelledby={`settings-tab-${activeTab}`}
+            className="settings-panel__content"
+            id={`settings-panel-${activeTab}`}
+            role="tabpanel"
+          >
           {activeTab === 'appearance' && (
             <div className="settings-section appearance-settings">
               <div className="settings-section__title">
@@ -739,6 +838,13 @@ export function SettingsPanel({
                         if (selected) {
                           setWorkspacePath(selected)
                         }
+                      })
+                      .catch((reason: unknown) => {
+                        setError(
+                          reason instanceof Error
+                            ? reason.message
+                            : '选择工作区目录失败'
+                        )
                       })
                   }}
                   type="button"

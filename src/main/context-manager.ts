@@ -20,6 +20,7 @@ import type {
   AgentImage
 } from './agent/runtime'
 import { encodeBoundedJpeg } from './bounded-jpeg'
+import { parseDocument } from './knowledge/document-parser'
 
 type StoredTextContext = ContextAttachment & {
   kind: 'text'
@@ -35,6 +36,7 @@ type StoredImageContext = ContextAttachment & {
 type StoredContext = StoredTextContext | StoredImageContext
 
 const maximumFileSize = 256 * 1024
+const maximumDocumentFileSize = 20 * 1024 * 1024
 const maximumContextBytes = 12 * 1024 * 1024
 const maximumContextCount = 16
 const maximumAttachmentsPerMessage = 8
@@ -68,6 +70,36 @@ const supportedImageExtensions = new Set([
   '.png',
   '.webp'
 ])
+const supportedDocumentExtensions = new Set([
+  '.docx',
+  '.pdf',
+  '.pptx',
+  '.xlsx'
+])
+
+function truncateUtf8(value: string, maximumBytes: number): string {
+  const buffer = Buffer.from(value)
+  if (buffer.byteLength <= maximumBytes) {
+    return value
+  }
+  const marker = '\n\n[文档内容过长，已截断]'
+  const markerBytes = Buffer.byteLength(marker)
+  return `${buffer
+    .subarray(0, maximumBytes - markerBytes)
+    .toString('utf8')
+    .replace(/\uFFFD$/u, '')}${marker}`
+}
+
+function formatParsedDocument(
+  sections: Awaited<ReturnType<typeof parseDocument>>['sections']
+): string {
+  return sections
+    .map(
+      (section) =>
+        `[${section.locator}]\n${section.content}`
+    )
+    .join('\n\n')
+}
 
 export class ContextManager {
   private readonly contexts = new Map<string, StoredContext>()
@@ -161,6 +193,12 @@ export class ContextManager {
           extensions: [...supportedImageExtensions].map((extension) =>
             extension.slice(1)
           )
+        },
+        {
+          name: 'PDF 和 Office 文档',
+          extensions: [...supportedDocumentExtensions].map((extension) =>
+            extension.slice(1)
+          )
         }
       ]
     })
@@ -178,7 +216,8 @@ export class ContextManager {
         const extension = extname(canonicalPath).toLowerCase()
         if (
           !supportedExtensions.has(extension) &&
-          !supportedImageExtensions.has(extension)
+          !supportedImageExtensions.has(extension) &&
+          !supportedDocumentExtensions.has(extension)
         ) {
           throw new Error(`不支持的文件类型：${extension || '未知'}`)
         }
@@ -198,6 +237,33 @@ export class ContextManager {
             )
             attachments.push(
               this.storeImage(basename(canonicalPath), image)
+            )
+          } finally {
+            await handle.close()
+          }
+          continue
+        }
+        if (supportedDocumentExtensions.has(extension)) {
+          try {
+            const fileStat = await handle.stat()
+            if (
+              !fileStat.isFile() ||
+              fileStat.size > maximumDocumentFileSize
+            ) {
+              throw new Error('PDF 或 Office 文档必须小于 20MB 且不能是目录')
+            }
+            const parsed = await parseDocument(
+              basename(canonicalPath),
+              await handle.readFile()
+            )
+            attachments.push(
+              this.storeText(
+                basename(canonicalPath),
+                truncateUtf8(
+                  formatParsedDocument(parsed.sections),
+                  maximumFileSize
+                )
+              )
             )
           } finally {
             await handle.close()

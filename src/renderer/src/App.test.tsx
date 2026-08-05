@@ -614,7 +614,12 @@ describe('App', () => {
       agentListener?.({
         requestId: request.requestId,
         type: 'text',
-        delta: '这是回答内容'
+        delta: '这是'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: '回答内容'
       })
       agentListener?.({
         requestId: request.requestId,
@@ -624,6 +629,29 @@ describe('App', () => {
 
     expect(await screen.findByText('这是回答内容')).toBeInTheDocument()
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
+  })
+
+  it('keeps a running response visible when cancellation fails', async () => {
+    vi.mocked(api.agent.cancel).mockRejectedValueOnce(
+      new Error('cancel failed')
+    )
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '开始一个长任务' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+    fireEvent.click(await screen.findByLabelText('停止生成'))
+
+    await waitFor(() =>
+      expect(api.agent.cancel).toHaveBeenCalledOnce()
+    )
+    expect(
+      await screen.findByText(/停止生成失败，请重试/u)
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('停止生成')).toBeInTheDocument()
   })
 
   it('keeps sent documents and images in conversation history', async () => {
@@ -1453,6 +1481,31 @@ describe('App', () => {
         })
       )
     )
+  })
+
+  it('keeps project input when creation fails', async () => {
+    vi.mocked(api.projects.create).mockRejectedValueOnce(
+      new Error('项目目录不可用')
+    )
+    render(<App />)
+
+    fireEvent.click(await screen.findByLabelText('新建项目'))
+    const dialog = screen.getByRole('dialog', { name: '新建项目' })
+    const nameInput = within(dialog).getByLabelText('名称')
+    fireEvent.change(nameInput, {
+      target: { value: '保留的项目名称' }
+    })
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '创建' })
+    )
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      '项目目录不可用'
+    )
+    expect(nameInput).toHaveValue('保留的项目名称')
+    expect(
+      screen.getByRole('dialog', { name: '新建项目' })
+    ).toBeInTheDocument()
   })
 
   it('marks an image model and renders its generated artifact', async () => {

@@ -306,6 +306,7 @@ export function RightAssistantSidebar({
   const [scheduleRecurrence, setScheduleRecurrence] = useState<
     ScheduleCreateInput['recurrence']
   >('once')
+  const [actionError, setActionError] = useState('')
   const recentTasks = useMemo(
     () =>
       activities
@@ -421,6 +422,7 @@ export function RightAssistantSidebar({
     workspacePreviewRequest.current = requestId
     const projectId = workspaceProjectId
     setWorkspacePreview({ projectId, path, state: 'loading' })
+    setActionError('')
     onTabChange('preview')
     void onLoadWorkspaceFile(path)
       .then((file) => {
@@ -449,6 +451,21 @@ export function RightAssistantSidebar({
       })
   }
 
+  const runAction = (
+    action: () => Promise<void>,
+    fallback: string,
+    onSuccess?: () => void
+  ): void => {
+    setActionError('')
+    void action()
+      .then(onSuccess)
+      .catch((reason: unknown) => {
+        setActionError(
+          reason instanceof Error ? reason.message : fallback
+        )
+      })
+  }
+
   const moveTabFocus = (
     event: React.KeyboardEvent<HTMLButtonElement>,
     tabId: AssistantSidebarTab
@@ -472,6 +489,7 @@ export function RightAssistantSidebar({
     if (!target) {
       return
     }
+    setActionError('')
     onTabChange(target.id)
     requestAnimationFrame(() => {
       document.getElementById(`assistant-sidebar-tab-${target.id}`)?.focus()
@@ -567,7 +585,10 @@ export function RightAssistantSidebar({
             }
             id={`assistant-sidebar-tab-${item.id}`}
             key={item.id}
-            onClick={() => onTabChange(item.id)}
+            onClick={() => {
+              setActionError('')
+              onTabChange(item.id)
+            }}
             onKeyDown={(event) => moveTabFocus(event, item.id)}
             role="tab"
             tabIndex={tab === item.id ? 0 : -1}
@@ -590,6 +611,11 @@ export function RightAssistantSidebar({
         id="assistant-sidebar-panel"
         role="tabpanel"
       >
+        {actionError ? (
+          <p className="settings-error" role="alert">
+            {actionError}
+          </p>
+        ) : null}
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
             <p className="assistant-sidebar__section-description">
@@ -737,17 +763,24 @@ export function RightAssistantSidebar({
                   !scheduleTime
                 }
                 onClick={() => {
-                  void onCreateSchedule({
-                    title: scheduleTitle.trim(),
-                    prompt: schedulePrompt.trim(),
-                    workMode: 'ask',
-                    recurrence: scheduleRecurrence,
-                    nextRunAt: new Date(scheduleTime).toISOString()
-                  }).then(() => {
-                    setScheduleTitle('')
-                    setSchedulePrompt('')
-                    setScheduleTime('')
-                  })
+                  runAction(
+                    () =>
+                      onCreateSchedule({
+                        title: scheduleTitle.trim(),
+                        prompt: schedulePrompt.trim(),
+                        workMode: 'ask',
+                        recurrence: scheduleRecurrence,
+                        nextRunAt: new Date(
+                          scheduleTime
+                        ).toISOString()
+                      }),
+                    '添加定时任务失败',
+                    () => {
+                      setScheduleTitle('')
+                      setSchedulePrompt('')
+                      setScheduleTime('')
+                    }
+                  )
                 }}
                 type="button"
               >
@@ -768,13 +801,23 @@ export function RightAssistantSidebar({
                 </span>
                 <div>
                   <button
-                    onClick={() => void onRunSchedule(schedule.id)}
+                    onClick={() =>
+                      runAction(
+                        () => onRunSchedule(schedule.id),
+                        '运行定时任务失败'
+                      )
+                    }
                     type="button"
                   >
                     立即运行
                   </button>
                   <button
-                    onClick={() => void onRemoveSchedule(schedule.id)}
+                    onClick={() =>
+                      runAction(
+                        () => onRemoveSchedule(schedule.id),
+                        '删除定时任务失败'
+                      )
+                    }
                     type="button"
                   >
                     删除
@@ -859,8 +902,11 @@ export function RightAssistantSidebar({
                 disabled={!memoryDraft.trim()}
                 onClick={() => {
                   const content = memoryDraft.trim()
-                  setMemoryDraft('')
-                  void onCreateMemory(content)
+                  runAction(
+                    () => onCreateMemory(content),
+                    '保存长期记忆失败',
+                    () => setMemoryDraft('')
+                  )
                 }}
                 type="button"
               >
@@ -888,9 +934,13 @@ export function RightAssistantSidebar({
                       <>
                         <button
                           onClick={() =>
-                            void onSetMemoryStatus(
-                              memory.id,
-                              'confirmed'
+                            runAction(
+                              () =>
+                                onSetMemoryStatus(
+                                  memory.id,
+                                  'confirmed'
+                                ),
+                              '确认长期记忆失败'
                             )
                           }
                           type="button"
@@ -899,9 +949,13 @@ export function RightAssistantSidebar({
                         </button>
                         <button
                           onClick={() =>
-                            void onSetMemoryStatus(
-                              memory.id,
-                              'rejected'
+                            runAction(
+                              () =>
+                                onSetMemoryStatus(
+                                  memory.id,
+                                  'rejected'
+                                ),
+                              '忽略长期记忆失败'
                             )
                           }
                           type="button"
@@ -913,7 +967,12 @@ export function RightAssistantSidebar({
                     <button
                       aria-label={`删除记忆 ${memory.content.slice(0, 24)}`}
                       className="icon-button"
-                      onClick={() => void onRemoveMemory(memory.id)}
+                      onClick={() =>
+                        runAction(
+                          () => onRemoveMemory(memory.id),
+                          '删除长期记忆失败'
+                        )
+                      }
                       type="button"
                     >
                       <X size={13} />
@@ -971,7 +1030,12 @@ export function RightAssistantSidebar({
             </h3>
             <button
               className="secondary-button assistant-sidebar__import"
-              onClick={() => void onImportArtifacts()}
+              onClick={() =>
+                runAction(
+                  onImportArtifacts,
+                  '导入成果失败'
+                )
+              }
               type="button"
             >
               <Upload size={13} />
@@ -990,8 +1054,12 @@ export function RightAssistantSidebar({
                     workspacePreviewRequest.current += 1
                     setWorkspacePreview(undefined)
                     setSelectedArtifactId(artifact.id)
+                    setActionError('')
                     onTabChange('preview')
-                    void onLoadArtifact(artifact.id)
+                    runAction(
+                      () => onLoadArtifact(artifact.id),
+                      '加载成果失败'
+                    )
                   }}
                   type="button"
                 >
@@ -1022,7 +1090,10 @@ export function RightAssistantSidebar({
                   className="icon-button"
                   onClick={() => {
                     setWorkspaceRefreshVersion((current) => current + 1)
-                    void onRefreshChanges()
+                    runAction(
+                      onRefreshChanges,
+                      '刷新工作区文件失败'
+                    )
                   }}
                   type="button"
                 >
@@ -1093,7 +1164,12 @@ export function RightAssistantSidebar({
                 browserState.status !== 'stopped' && (
                   <button
                     className="secondary-button"
-                    onClick={() => void onStopBrowser()}
+                    onClick={() =>
+                      runAction(
+                        onStopBrowser,
+                        '停止浏览器失败'
+                      )
+                    }
                     type="button"
                   >
                     停止浏览器

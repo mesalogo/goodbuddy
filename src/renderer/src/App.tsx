@@ -103,6 +103,11 @@ import {
   saveAppearanceTheme,
   type AppearanceTheme
 } from './theme'
+import {
+  describeSpeechRecognitionError,
+  getSpeechRecognitionConstructor,
+  prepareSpeechRecognition
+} from './speech-recognition'
 
 function isAgentRuntime(
   runtime: AgentRuntimeStatus | undefined
@@ -1194,6 +1199,7 @@ function App(): React.JSX.Element {
               mergeArtifacts(current, artifacts)
             )
           )
+          .catch(() => setNotice('成果列表刷新失败'))
       } else if (event.type === 'artifact') {
         hydratingArtifactIds.current.add(event.artifactId)
         void window.goodbuddy.artifacts
@@ -2366,7 +2372,11 @@ function App(): React.JSX.Element {
       ([, run]) => run.conversationId === activeId
     )?.[0]
     if (requestId) {
-      await window.goodbuddy.agent.cancel(requestId)
+      try {
+        await window.goodbuddy.agent.cancel(requestId)
+      } catch {
+        setNotice('停止生成失败，请重试')
+      }
     }
   }
 
@@ -2481,54 +2491,56 @@ function App(): React.JSX.Element {
     )
   }
 
-  const startVoiceInput = (): void => {
-    type Recognition = {
-      lang: string
-      interimResults: boolean
-      continuous: boolean
-      start: () => void
-      stop: () => void
-      onresult?: (event: {
-        results: ArrayLike<{
-          0?: { transcript?: string }
-        }>
-      }) => void
-      onerror?: () => void
-      onend?: () => void
-    }
-    const SpeechRecognition = (
-      window as unknown as {
-        webkitSpeechRecognition?: new () => Recognition
-        SpeechRecognition?: new () => Recognition
-      }
-    ).SpeechRecognition ?? (
-      window as unknown as {
-        webkitSpeechRecognition?: new () => Recognition
-      }
-    ).webkitSpeechRecognition
+  const startVoiceInput = async (): Promise<void> => {
+    const SpeechRecognition =
+      getSpeechRecognitionConstructor(window)
     if (!SpeechRecognition) {
       setNotice('当前系统不支持内置语音识别，可继续使用键盘输入')
       return
     }
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'zh-CN'
-    recognition.interimResults = false
-    recognition.continuous = false
-    recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript?.trim()
-      if (transcript) {
-        setInput((current) =>
-          current ? `${current} ${transcript}` : transcript
-        )
+    setVoiceListening(true)
+    let started = false
+    try {
+      const prepared = await prepareSpeechRecognition(
+        SpeechRecognition,
+        'zh-CN',
+        () => {
+          setNotice('正在下载中文离线语音包，完成后将自动开始听写')
+        }
+      )
+      const { recognition } = prepared
+      recognition.onresult = (event) => {
+        const transcript = event.results[0]?.[0]?.transcript?.trim()
+        if (transcript) {
+          setInput((current) =>
+            current ? `${current} ${transcript}` : transcript
+          )
+          setNotice('语音已转为文字，可编辑后发送')
+        }
+      }
+      recognition.onerror = (event) => {
+        setNotice(describeSpeechRecognitionError(event))
+        setVoiceListening(false)
+      }
+      recognition.onend = () => setVoiceListening(false)
+      recognition.start()
+      started = true
+      setNotice(
+        prepared.local
+          ? '正在使用本地语音识别听写'
+          : '正在使用系统语音服务听写'
+      )
+    } catch (reason) {
+      setNotice(
+        reason instanceof Error
+          ? reason.message
+          : '无法启动语音识别，请检查系统语音设置'
+      )
+    } finally {
+      if (!started) {
+        setVoiceListening(false)
       }
     }
-    recognition.onerror = () => {
-      setNotice('语音识别失败，请检查麦克风权限')
-      setVoiceListening(false)
-    }
-    recognition.onend = () => setVoiceListening(false)
-    setVoiceListening(true)
-    recognition.start()
   }
 
   const refreshSelectedKnowledge = async (): Promise<void> => {
@@ -2913,36 +2925,28 @@ function App(): React.JSX.Element {
           >
             <PanelLeft size={18} />
           </button>
-          <div
-            className="conversation-title"
-            title={activeConversation?.title}
-          >
-            <span>
-              {view === 'knowledge'
-                ? '知识库'
-                : view === 'heartbeat'
-                  ? '智能心跳'
-                  : view === 'activity'
-                    ? '任务与活动'
-                    : view === 'settings'
-                      ? '设置中心'
-                      : activeConversation?.title ?? '新对话'}
-            </span>
-          </div>
           {view === 'chat' && (
-            <ScopeBadge
-              scope={
-                activeProject
-                  ? {
-                      kind: 'project',
-                      projectName: activeProject.name
-                    }
-                  : {
-                      kind: 'unavailable',
-                      explanation: '当前项目尚未加载。'
-                    }
-              }
-            />
+            <>
+              <div
+                className="conversation-title"
+                title={activeConversation?.title}
+              >
+                <span>{activeConversation?.title ?? '新对话'}</span>
+              </div>
+              <ScopeBadge
+                scope={
+                  activeProject
+                    ? {
+                        kind: 'project',
+                        projectName: activeProject.name
+                      }
+                    : {
+                        kind: 'unavailable',
+                        explanation: '当前项目尚未加载。'
+                      }
+                }
+              />
+            </>
           )}
           <div className="topbar__actions">
             <span
@@ -3545,7 +3549,7 @@ function App(): React.JSX.Element {
                 <button
                   aria-label={voiceListening ? '正在听写' : '语音输入'}
                   disabled={voiceListening}
-                  onClick={startVoiceInput}
+                  onClick={() => void startVoiceInput()}
                   title="语音转文字，转写后可编辑再发送"
                   type="button"
                 >
