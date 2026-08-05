@@ -127,6 +127,20 @@ function expectedFormatForFile(name, target) {
   )
 }
 
+function isAllowedAuxiliaryFile(name, target, manifestNames) {
+  if (name === 'builder-debug.yml') {
+    return true
+  }
+  if (!name.endsWith('.blockmap')) {
+    return false
+  }
+  const packageName = name.slice(0, -'.blockmap'.length)
+  return (
+    manifestNames.has(packageName) &&
+    expectedFormatForFile(packageName, target) !== undefined
+  )
+}
+
 function listTargetDirectories(inputDirectory) {
   if (lstatSync(inputDirectory).isSymbolicLink()) {
     throw new Error(`拒绝符号链接：${inputDirectory}`)
@@ -210,6 +224,9 @@ async function aggregateRelease(inputDirectory, outputDirectory) {
 
     const seenFormats = new Set()
     const files = []
+    const manifestNames = new Set(
+      item.manifest.files.map((file) => file?.name)
+    )
     for (const file of item.manifest.files) {
       assertSafeName(file?.name, '发布文件名')
       if (
@@ -224,7 +241,12 @@ async function aggregateRelease(inputDirectory, outputDirectory) {
         throw new Error(`发布文件名全局重复：${file.name}`)
       }
       const format = expectedFormatForFile(file.name, expected)
-      if (!format || seenFormats.has(format)) {
+      const auxiliary = isAllowedAuxiliaryFile(
+        file.name,
+        expected,
+        manifestNames
+      )
+      if ((!format && !auxiliary) || (format && seenFormats.has(format))) {
         throw new Error(`发布文件格式或数量错误：${file.name}`)
       }
       const source = join(directory, file.name)
@@ -233,6 +255,9 @@ async function aggregateRelease(inputDirectory, outputDirectory) {
       const actualHash = await sha256File(source)
       if (actualSize !== file.size || actualHash !== file.sha256) {
         throw new Error(`发布文件完整性校验失败：${file.name}`)
+      }
+      if (auxiliary) {
+        continue
       }
       assertPlainFile(source, '发布文件')
       copyFileSync(source, join(outputDirectory, file.name))
@@ -253,7 +278,10 @@ async function aggregateRelease(inputDirectory, outputDirectory) {
     const renamedManifest = `release-manifest-${key}.json`
     writeFileSync(
       join(outputDirectory, renamedManifest),
-      `${JSON.stringify(item.manifest, null, 2)}\n`,
+      `${JSON.stringify({
+        ...item.manifest,
+        files
+      }, null, 2)}\n`,
       'utf8'
     )
     targets.push({

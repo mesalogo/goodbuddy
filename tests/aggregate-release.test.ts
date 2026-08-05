@@ -81,6 +81,30 @@ function createDownloadedArtifacts(parent: string): string {
         sha256: sha256(content)
       }
     })
+    const debugContent = `${key}:debug`
+    writeFileSync(
+      join(directory, 'builder-debug.yml'),
+      debugContent
+    )
+    files.push({
+      name: 'builder-debug.yml',
+      size: Buffer.byteLength(debugContent),
+      sha256: sha256(debugContent)
+    })
+    if (target.platform === 'windows') {
+      const setupName = artifactName(target, 'nsis')
+      const blockmapName = `${setupName}.blockmap`
+      const blockmapContent = `${key}:blockmap`
+      writeFileSync(
+        join(directory, blockmapName),
+        blockmapContent
+      )
+      files.push({
+        name: blockmapName,
+        size: Buffer.byteLength(blockmapContent),
+        sha256: sha256(blockmapContent)
+      })
+    }
     writeFileSync(
       join(directory, 'release-manifest.json'),
       `${JSON.stringify({
@@ -124,6 +148,20 @@ describe('release asset aggregation', () => {
       expect(outputNames).toHaveLength(20)
       expect(outputNames).toContain('release-manifest.json')
       expect(outputNames).toContain('SHA256SUMS')
+      expect(outputNames).not.toContain('builder-debug.yml')
+      expect(
+        outputNames.some((name) => name.endsWith('.blockmap'))
+      ).toBe(false)
+      const windowsManifest = JSON.parse(
+        readFileSync(
+          join(output, 'release-manifest-windows-x64.json'),
+          'utf8'
+        )
+      ) as { files: Array<{ name: string }> }
+      expect(windowsManifest.files.map((file) => file.name)).toEqual([
+        artifactName(aggregate.targetDefinitions[0]!, 'nsis'),
+        artifactName(aggregate.targetDefinitions[0]!, 'portable')
+      ])
       const sums = readFileSync(
         join(output, 'SHA256SUMS'),
         'utf8'
@@ -150,6 +188,29 @@ describe('release asset aggregation', () => {
         artifactName(aggregate.targetDefinitions[0]!, 'nsis')
       )
       writeFileSync(file, 'tampered')
+
+      await expect(
+        aggregate.aggregateRelease(input, join(parent, 'upload'))
+      ).rejects.toThrow('完整性校验失败')
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('verifies auxiliary files even though they are not published', async () => {
+    const parent = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-release-auxiliary-')
+    )
+    try {
+      const input = createDownloadedArtifacts(parent)
+      writeFileSync(
+        join(
+          input,
+          'goodbuddy-windows-x64',
+          'builder-debug.yml'
+        ),
+        'tampered'
+      )
 
       await expect(
         aggregate.aggregateRelease(input, join(parent, 'upload'))
