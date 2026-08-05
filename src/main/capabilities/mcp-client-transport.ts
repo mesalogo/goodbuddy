@@ -6,6 +6,10 @@ import type {
   Transport
 } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { ResolvedMcpServer } from './capability-service'
+import {
+  isCuratedMcpLaunchDescriptor,
+  type CuratedMcpLaunchDescriptor
+} from './curated-mcp-launch'
 
 function validateRemoteUrl(value: string): URL {
   const url = new URL(value)
@@ -34,8 +38,23 @@ function createRestrictedFetch(origin: string): FetchLike {
 }
 
 export function createMcpTransport(
-  server: ResolvedMcpServer
+  server: ResolvedMcpServer | CuratedMcpLaunchDescriptor
 ): Transport {
+  if (isCuratedMcpLaunchDescriptor(server)) {
+    return new StdioClientTransport({
+      command: server.command,
+      args: [...server.args],
+      cwd: server.cwd,
+      env: { ...server.env },
+      stderr: 'ignore',
+      maxBufferSize: 2 * 1024 * 1024
+    })
+  }
+
+  if ((server as { transport?: string }).transport === 'curated-stdio') {
+    throw new Error('无效的精选 MCP 启动描述')
+  }
+
   if (server.transport === 'stdio') {
     return new StdioClientTransport({
       command: server.command,

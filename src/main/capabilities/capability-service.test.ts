@@ -1,11 +1,17 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CapabilityService,
-  type CapabilityCipher
+  type CapabilityCipher,
+  type CapabilityServiceOptions
 } from './capability-service'
+import {
+  BrowserProfileService,
+  MemoryBrowserProfileStore
+} from './browser-profile-service'
+import { CapabilityDiagnostics } from './capability-diagnostics'
 
 const temporaryDirectories: string[] = []
 
@@ -13,6 +19,33 @@ const cipher: CapabilityCipher = {
   isAvailable: () => true,
   encrypt: (value) => Buffer.from(`encrypted:${value}`),
   decrypt: (value) => value.toString().replace(/^encrypted:/u, '')
+}
+
+class FailingBrowserProfileService extends BrowserProfileService {
+  failNextAddAfterSave = false
+  failNextRemoveAfterSave = false
+
+  override async addReference(
+    ...args: Parameters<BrowserProfileService['addReference']>
+  ): ReturnType<BrowserProfileService['addReference']> {
+    const result = await super.addReference(...args)
+    if (this.failNextAddAfterSave) {
+      this.failNextAddAfterSave = false
+      throw new Error('Injected add reference failure')
+    }
+    return result
+  }
+
+  override async removeReference(
+    ...args: Parameters<BrowserProfileService['removeReference']>
+  ): ReturnType<BrowserProfileService['removeReference']> {
+    const result = await super.removeReference(...args)
+    if (this.failNextRemoveAfterSave) {
+      this.failNextRemoveAfterSave = false
+      throw new Error('Injected remove reference failure')
+    }
+    return result
+  }
 }
 
 async function writeSkill(
@@ -42,7 +75,16 @@ async function writeSkill(
   )
 }
 
-async function createService(): Promise<{
+async function createService(
+  options: CapabilityServiceOptions = {
+    platform: 'win32',
+    architecture: 'x64',
+    electronTarget: true,
+    browserProfiles: new BrowserProfileService(
+      new MemoryBrowserProfileStore()
+    )
+  }
+): Promise<{
   directory: string
   filePath: string
   builtinRoot: string
@@ -64,12 +106,14 @@ async function createService(): Promise<{
       filePath,
       builtinRoot,
       importedRoot,
-      cipher
+      cipher,
+      options
     )
   }
 }
 
 afterEach(async () => {
+  delete process.env.GOODBUDDY_CAPABILITY_SERVICE_SECRET
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true })
@@ -78,6 +122,77 @@ afterEach(async () => {
 })
 
 describe('CapabilityService', () => {
+  it('memoizes concurrent loads and retries after a failed load', async () => {
+    const initialStore = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined)
+    }
+    const created = await createService({
+      platform: 'win32',
+      architecture: 'x64',
+      electronTarget: true,
+      browserProfiles: new BrowserProfileService(initialStore)
+    })
+
+    await Promise.all([
+      created.service.getComputerCapabilityStatus('host-browser-control'),
+      created.service.getComputerCapabilityStatus('host-browser-control'),
+      created.service.getComputerCapabilityStatus('host-browser-control')
+    ])
+    expect(initialStore.load).toHaveBeenCalledOnce()
+
+    let profileLoads = 0
+    const browserProfiles = new BrowserProfileService({
+      load: vi.fn(async () => {
+        profileLoads += 1
+        if (profileLoads === 1) {
+          throw new Error('Injected profile load failure')
+        }
+        return undefined
+      }),
+      save: vi.fn(async () => undefined)
+    })
+    const retrying = new CapabilityService(
+      created.filePath,
+      created.builtinRoot,
+      created.importedRoot,
+      cipher,
+      {
+        platform: 'win32',
+        architecture: 'x64',
+        electronTarget: true,
+        browserProfiles
+      }
+    )
+
+    await expect(
+      Promise.all([
+        retrying.getComputerCapabilityStatus('host-browser-control'),
+        retrying.getComputerCapabilityStatus('host-browser-control')
+      ])
+    ).rejects.toThrow('Injected profile load failure')
+    await expect(
+      retrying.getComputerCapabilityStatus('host-browser-control')
+    ).resolves.toEqual({ enabled: false, supported: true })
+    expect(profileLoads).toBe(2)
+  })
+
+  it('reports safe enabled and supported capability status', async () => {
+    const { service } = await createService()
+
+    await expect(
+      service.getComputerCapabilityStatus('host-browser-control')
+    ).resolves.toEqual({ enabled: false, supported: true })
+
+    await service.setComputerCapabilityEnabled(
+      'host-browser-control',
+      true
+    )
+    await expect(
+      service.getComputerCapabilityStatus('host-browser-control')
+    ).resolves.toEqual({ enabled: true, supported: true })
+  })
+
   it('discovers built-in skills and persists enablement and assignments', async () => {
     const { filePath, builtinRoot, importedRoot, service } =
       await createService()
@@ -266,5 +381,376 @@ describe('CapabilityService', () => {
     )
     await expect(service.getResolvedMcpServers('opencode')).resolves.toEqual([])
     await expect(service.getResolvedMcpServers('model')).resolves.toHaveLength(1)
+  })
+
+  it('migrates v1 to v2 without losing skills, MCP configuration, or encrypted secrets', async () => {
+    const { filePath, builtinRoot, importedRoot } = await createService()
+    const credential = Buffer.from(
+      'encrypted:{"version":1,"serverId":"d2ef774b-146c-4467-a909-6feb112a9c2c","secret":"preserved-secret"}'
+    ).toString('base64')
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        skills: {
+          'document-writing': {
+            enabled: false,
+            assignments: ['model']
+          }
+        },
+        mcpServers: [
+          {
+            id: 'd2ef774b-146c-4467-a909-6feb112a9c2c',
+            name: 'Preserved MCP',
+            description: 'migration',
+            enabled: true,
+            assignments: ['model'],
+            credential: {
+              formatVersion: 1,
+              scheme: 'electron-safe-storage',
+              ciphertextBase64: credential
+            },
+            transport: 'http',
+            url: 'https://mcp.example.com/mcp'
+          }
+        ]
+      }),
+      'utf8'
+    )
+    const service = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher,
+      {
+        platform: 'win32',
+        architecture: 'x64',
+        electronTarget: true,
+        browserProfiles: new BrowserProfileService(
+          new MemoryBrowserProfileStore()
+        )
+      }
+    )
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      skills: [
+        expect.objectContaining({
+          id: 'document-writing',
+          enabled: false,
+          assignments: ['model']
+        })
+      ],
+      mcpServers: [
+        expect.objectContaining({
+          name: 'Preserved MCP',
+          secretConfigured: true
+        })
+      ],
+      computerCapabilities: [
+        expect.objectContaining({
+          id: 'host-browser-control',
+          enabled: false
+        }),
+        expect.objectContaining({
+          id: 'linux-desktop-control',
+          enabled: false
+        })
+      ]
+    })
+    const persisted = await readFile(filePath, 'utf8')
+    expect(persisted).toContain('"version": 2')
+    expect(persisted).toContain(credential)
+    expect(persisted).not.toContain('preserved-secret')
+  })
+
+  it('gates enablement on the supported platform and architecture', async () => {
+    const { service } = await createService({
+      platform: 'darwin',
+      architecture: 'arm64',
+      electronTarget: true,
+      browserProfiles: new BrowserProfileService(
+        new MemoryBrowserProfileStore()
+      )
+    })
+
+    await expect(
+      service.setComputerCapabilityEnabled(
+        'linux-desktop-control',
+        true
+      )
+    ).rejects.toThrow('不支持')
+    const snapshot = await service.setComputerCapabilityEnabled(
+      'host-browser-control',
+      true
+    )
+    expect(snapshot.computerCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'host-browser-control',
+          enabled: true
+        })
+      ])
+    )
+  })
+
+  it('maintains browser profile references and rejects unknown profiles', async () => {
+    const { service } = await createService()
+    await expect(
+      service.setComputerCapabilityBrowserProfile(
+        'host-browser-control',
+        'b7f29e4c-1c4a-4aa0-ac58-5165451dde07'
+      )
+    ).rejects.toThrow('不存在')
+
+    const created = await service.createBrowserProfile('隔离工作配置')
+    const profileId = created.browserProfiles?.profiles[0]?.id
+    if (!profileId) {
+      throw new Error('Expected browser profile')
+    }
+    await service.setComputerCapabilityBrowserProfile(
+      'host-browser-control',
+      profileId
+    )
+    await expect(service.removeBrowserProfile(profileId)).rejects.toThrow(
+      'Referenced'
+    )
+    await service.setComputerCapabilityBrowserProfile(
+      'host-browser-control',
+      null
+    )
+    await expect(service.removeBrowserProfile(profileId)).resolves.toMatchObject(
+      {
+        browserProfiles: { profiles: [], defaultProfileId: null }
+      }
+    )
+  })
+
+  it('compensates browser profile references when add or capability persistence fails', async () => {
+    const addProfiles = new FailingBrowserProfileService(
+      new MemoryBrowserProfileStore()
+    )
+    const addCase = await createService({
+      platform: 'win32',
+      architecture: 'x64',
+      electronTarget: true,
+      browserProfiles: addProfiles
+    })
+    const addCreated = await addCase.service.createBrowserProfile(
+      '添加失败配置'
+    )
+    const addProfileId = addCreated.browserProfiles?.profiles[0]?.id
+    if (!addProfileId) {
+      throw new Error('Expected add-failure browser profile')
+    }
+    addProfiles.failNextAddAfterSave = true
+
+    await expect(
+      addCase.service.setComputerCapabilityBrowserProfile(
+        'host-browser-control',
+        addProfileId
+      )
+    ).rejects.toThrow('Injected add reference failure')
+    await expect(
+      addCase.service.removeBrowserProfile(addProfileId)
+    ).resolves.toMatchObject({
+      browserProfiles: { profiles: [], defaultProfileId: null }
+    })
+
+    const persistProfiles = new BrowserProfileService(
+      new MemoryBrowserProfileStore()
+    )
+    const persistCase = await createService({
+      platform: 'win32',
+      architecture: 'x64',
+      electronTarget: true,
+      browserProfiles: persistProfiles
+    })
+    const persistCreated =
+      await persistCase.service.createBrowserProfile('保存失败配置')
+    const persistProfileId =
+      persistCreated.browserProfiles?.profiles[0]?.id
+    if (!persistProfileId) {
+      throw new Error('Expected persistence-failure browser profile')
+    }
+    await mkdir(persistCase.filePath)
+
+    await expect(
+      persistCase.service.setComputerCapabilityBrowserProfile(
+        'host-browser-control',
+        persistProfileId
+      )
+    ).rejects.toThrow()
+    await expect(
+      persistCase.service.removeBrowserProfile(persistProfileId)
+    ).resolves.toMatchObject({
+      browserProfiles: { profiles: [], defaultProfileId: null }
+    })
+  })
+
+  it('rolls back capability and profile stores when old-reference removal fails', async () => {
+    const browserProfiles = new FailingBrowserProfileService(
+      new MemoryBrowserProfileStore()
+    )
+    const { service } = await createService({
+      platform: 'win32',
+      architecture: 'x64',
+      electronTarget: true,
+      browserProfiles
+    })
+    const first = await service.createBrowserProfile('原配置')
+    const firstId = first.browserProfiles?.profiles[0]?.id
+    const second = await service.createBrowserProfile('新配置')
+    const secondId = second.browserProfiles?.profiles[1]?.id
+    if (!firstId || !secondId) {
+      throw new Error('Expected two browser profiles')
+    }
+    await service.setComputerCapabilityBrowserProfile(
+      'host-browser-control',
+      firstId
+    )
+    browserProfiles.failNextRemoveAfterSave = true
+
+    await expect(
+      service.setComputerCapabilityBrowserProfile(
+        'host-browser-control',
+        secondId
+      )
+    ).rejects.toThrow('Injected remove reference failure')
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      computerCapabilities: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'host-browser-control',
+          browserProfileId: firstId
+        })
+      ])
+    })
+    await expect(service.removeBrowserProfile(secondId)).resolves.toBeDefined()
+    await expect(service.removeBrowserProfile(firstId)).rejects.toThrow(
+      'Referenced'
+    )
+  })
+
+  it('redacts injected diagnostics and never claims browser availability outside Electron', async () => {
+    process.env.GOODBUDDY_CAPABILITY_SERVICE_SECRET =
+      'service-diagnostic-secret-value'
+    const diagnostics = new CapabilityDiagnostics([
+      {
+        id: 'browser-executable',
+        run: async () => ({
+          status: 'available',
+          summary:
+            'token=visible-token service-diagnostic-secret-value C:\\Users\\Alice\\browser'
+        })
+      },
+      {
+        id: 'managed-profile-root',
+        run: async () => ({
+          status: 'available',
+          summary: 'managed storage ready'
+        })
+      }
+    ])
+    const { service } = await createService({
+      platform: 'win32',
+      architecture: 'x64',
+      electronTarget: true,
+      browserProfiles: new BrowserProfileService(
+        new MemoryBrowserProfileStore()
+      ),
+      diagnostics
+    })
+    await service.setComputerCapabilityEnabled('host-browser-control', true)
+    const report = await service.diagnoseComputerCapability(
+      'host-browser-control'
+    )
+    expect(report.status).toBe('available')
+    expect(JSON.stringify(report)).not.toContain('visible-token')
+    expect(JSON.stringify(report)).not.toContain(
+      'service-diagnostic-secret-value'
+    )
+
+    const outsideElectron = await createService({
+      platform: 'win32',
+      architecture: 'x64',
+      electronTarget: false,
+      browserProfiles: new BrowserProfileService(
+        new MemoryBrowserProfileStore()
+      ),
+      diagnostics
+    })
+    await expect(
+      outsideElectron.service.setComputerCapabilityEnabled(
+        'host-browser-control',
+        true
+      )
+    ).rejects.toThrow('诊断不可用')
+    await expect(
+      outsideElectron.service.getComputerCapabilityStatus(
+        'host-browser-control'
+      )
+    ).resolves.toEqual({ enabled: false, supported: true })
+    delete process.env.GOODBUDDY_CAPABILITY_SERVICE_SECRET
+  })
+
+  it('keeps Linux desktop unavailable without a registered native adapter', async () => {
+    const { service } = await createService({
+      platform: 'linux',
+      architecture: 'x64',
+      electronTarget: true,
+      browserProfiles: new BrowserProfileService(
+        new MemoryBrowserProfileStore()
+      )
+    })
+
+    await expect(
+      service.setComputerCapabilityEnabled(
+        'linux-desktop-control',
+        true
+      )
+    ).rejects.toThrow('不支持')
+    await expect(
+      service.getComputerCapabilityStatus('linux-desktop-control')
+    ).resolves.toEqual({ enabled: false, supported: false })
+  })
+
+  it('allows Linux desktop enablement with available injected diagnostics', async () => {
+    const diagnostics = new CapabilityDiagnostics(
+      ['linux-session', 'desktop-driver', 'desktop-permissions'].map(
+        (id) => ({
+          id,
+          run: async () => ({
+            status: 'available' as const,
+            summary: `${id} ready`
+          })
+        })
+      )
+    )
+    const { service } = await createService({
+      platform: 'linux',
+      architecture: 'arm64',
+      electronTarget: true,
+      browserProfiles: new BrowserProfileService(
+        new MemoryBrowserProfileStore()
+      ),
+      diagnostics,
+      availableComputerCapabilityImplementations: [
+        'managed-browser-driver',
+        'managed-linux-desktop-driver'
+      ]
+    })
+
+    await expect(
+      service.setComputerCapabilityEnabled(
+        'linux-desktop-control',
+        true
+      )
+    ).resolves.toMatchObject({
+      computerCapabilities: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'linux-desktop-control',
+          enabled: true
+        })
+      ])
+    })
   })
 })

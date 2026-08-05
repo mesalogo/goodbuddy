@@ -7,13 +7,16 @@ import {
   within
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AssistantExpert } from '../../shared/assistant-contracts'
 import type {
   DesktopApi,
   RuntimeSettings
 } from '../../shared/contracts'
+import { builtinModelTools } from '../../shared/builtin-model-tools'
 import { SettingsPanel } from './SettingsPanel'
 
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
+const browserProfileId = '00000000-0000-4000-8000-000000000201'
 const runtimeSettings: RuntimeSettings = {
   provider: 'auto',
   modelBaseUrl: 'https://bigtoken.ai',
@@ -116,7 +119,37 @@ const capabilitySnapshot = {
       )[]
     }
   ],
-  mcpServers: []
+  mcpServers: [],
+  computerCapabilities: [
+    {
+      id: 'host-browser-control' as const,
+      name: '浏览器控制',
+      description: '使用隔离的托管浏览器配置执行网页操作。',
+      enabled: false,
+      supported: true,
+      browserProfileId: null,
+      riskSummary: '可读取网页内容并代表用户操作网站。'
+    },
+    {
+      id: 'linux-desktop-control' as const,
+      name: 'Linux 桌面控制',
+      description: '在受支持的 Linux 桌面会话中执行桌面操作。',
+      enabled: false,
+      supported: false,
+      browserProfileId: null,
+      riskSummary: '可观察并操作桌面应用。'
+    }
+  ],
+  browserProfiles: {
+    profiles: [
+      {
+        id: browserProfileId,
+        name: '工作网站',
+        mode: 'managed-isolated' as const
+      }
+    ],
+    defaultProfileId: browserProfileId
+  }
 }
 const getCapabilitySnapshot = vi.fn(async () => capabilitySnapshot)
 const setSkillEnabled = vi.fn(async (_skillId: string, enabled: boolean) => ({
@@ -126,6 +159,34 @@ const setSkillEnabled = vi.fn(async (_skillId: string, enabled: boolean) => ({
     enabled
   }))
 }))
+const setComputerCapabilityEnabled = vi.fn(
+  async (_capabilityId: string, enabled: boolean) => ({
+    ...capabilitySnapshot,
+    computerCapabilities: capabilitySnapshot.computerCapabilities.map(
+      (capability) =>
+        capability.id === 'host-browser-control'
+          ? { ...capability, enabled }
+          : capability
+    )
+  })
+)
+const diagnoseComputerCapability = vi.fn(async () => ({
+  capabilityId: 'host-browser-control' as const,
+  status: 'degraded' as const,
+  checkedAt: '2026-08-05T12:00:00.000Z',
+  checks: [
+    {
+      id: 'managed-profile-root',
+      status: 'degraded' as const,
+      summary: '托管配置可用，但尚未选择默认网站。',
+      remedy: '先创建并选择托管配置。'
+    }
+  ]
+}))
+const createBrowserProfile = vi.fn(async () => capabilitySnapshot)
+const renameBrowserProfile = vi.fn(async () => capabilitySnapshot)
+const setDefaultBrowserProfile = vi.fn(async () => capabilitySnapshot)
+const removeBrowserProfile = vi.fn(async () => capabilitySnapshot)
 const heartbeatSettingsProps = {
   heartbeats: [],
   onCreateHeartbeat: vi.fn(async () => {}),
@@ -133,6 +194,39 @@ const heartbeatSettingsProps = {
   onRemoveHeartbeat: vi.fn(async () => {}),
   onRunHeartbeat: vi.fn(async () => {})
 }
+const assistantExpert: AssistantExpert = {
+  id: '00000000-0000-4000-8000-000000000101',
+  name: '研究分析专家',
+  description: '负责资料分析',
+  systemInstructions: 'Separate evidence from assumptions.',
+  enabled: true,
+  createdAt: '2026-08-01T00:00:00.000Z',
+  updatedAt: '2026-08-01T00:00:00.000Z'
+}
+const listExperts = vi.fn<DesktopApi['experts']['list']>(
+  async () => [assistantExpert]
+)
+const createExpert = vi.fn<DesktopApi['experts']['create']>(
+  async (input) => ({
+    ...input,
+    id: '00000000-0000-4000-8000-000000000102',
+    enabled: true,
+    createdAt: '2026-08-04T00:00:00.000Z',
+    updatedAt: '2026-08-04T00:00:00.000Z'
+  })
+)
+const updateExpert = vi.fn<DesktopApi['experts']['update']>(
+  async (expertId, input) => ({
+    ...input,
+    id: expertId,
+    enabled: true,
+    createdAt: assistantExpert.createdAt,
+    updatedAt: '2026-08-04T00:00:00.000Z'
+  })
+)
+const removeExpert = vi.fn<DesktopApi['experts']['remove']>(
+  async () => {}
+)
 
 describe('SettingsPanel runtime files', () => {
   beforeEach(() => {
@@ -165,7 +259,22 @@ describe('SettingsPanel runtime files', () => {
           testMcpServer: vi.fn(async () => ({
             toolCount: 0,
             tools: []
-          }))
+          })),
+          setComputerCapabilityEnabled,
+          setComputerCapabilityBrowserProfile: vi.fn(
+            async () => capabilitySnapshot
+          ),
+          diagnoseComputerCapability,
+          createBrowserProfile,
+          renameBrowserProfile,
+          setDefaultBrowserProfile,
+          removeBrowserProfile
+        },
+        experts: {
+          list: listExperts,
+          create: createExpert,
+          update: updateExpert,
+          remove: removeExpert
         }
       } as unknown as DesktopApi
     })
@@ -195,6 +304,47 @@ describe('SettingsPanel runtime files', () => {
     ).toBeChecked()
     fireEvent.click(screen.getByRole('radio', { name: /暗色/u }))
     expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
+  })
+
+  it('explains automatic Execute authorization and the deny-all policy', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    const policy = await screen.findByLabelText(
+      '直连模型工具安全策略'
+    )
+    expect(
+      within(policy).getByRole('option', {
+        name: 'Execute 自动授权已启用的工具'
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(policy).getByRole('option', {
+        name: '禁止所有工具执行'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/选择 Execute 即授权当前交互运行自动调用这些工具/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/禁止策略会拒绝所有工具调用/)
+    ).toBeInTheDocument()
+
+    fireEvent.change(policy, { target: { value: 'policy' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({ toolApproval: 'policy' })
+      )
+    )
   })
 
   it('automatically detects runtimes and displays path, version, and detail', async () => {
@@ -287,17 +437,38 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
+    expect(
+      screen.getByLabelText('模型连接列表')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: '编辑模型连接 默认模型'
+      })
+    ).toHaveAttribute('aria-current', 'page')
     fireEvent.click(
       screen.getByRole('button', { name: '添加自定义' })
     )
-    const nameInputs = screen.getAllByLabelText('名称')
-    fireEvent.change(nameInputs[1]!, {
+    expect(screen.getAllByLabelText('名称')).toHaveLength(1)
+    fireEvent.change(screen.getByLabelText('名称'), {
       target: { value: 'OpenCode 独立模型' }
     })
-    const radios = screen.getAllByRole('radio', {
-      name: '默认连接'
-    })
-    fireEvent.click(radios[1]!)
+    expect(
+      screen.getByRole('button', {
+        name: '编辑模型连接 OpenCode 独立模型'
+      })
+    ).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(screen.getByRole('radio', { name: '默认连接' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑模型连接 默认模型'
+      })
+    )
+    expect(screen.getByLabelText('名称')).toHaveValue('默认模型')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑模型连接 OpenCode 独立模型'
+      })
+    )
     fireEvent.click(screen.getByRole('tab', { name: 'Agent Runtime' }))
     const sourceSelect = screen.getAllByLabelText('模型连接')[0]!
     const sourceOptions = within(sourceSelect).getAllByRole('option')
@@ -323,7 +494,7 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
-  it('adds the Ollama preset with OpenAI protocol and no authentication', async () => {
+  it('moves the detail selection after deleting a model connection', async () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -335,73 +506,38 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
-    const preset = await screen.findByLabelText('模型预设')
-    fireEvent.change(preset, { target: { value: 'ollama' } })
+    await screen.findByDisplayValue('默认模型')
     fireEvent.click(
-      screen.getByRole('button', { name: '从预设添加' })
+      screen.getByRole('button', { name: '添加自定义' })
     )
-    expect(
-      screen
-        .getAllByLabelText('名称')
-        .some((input) => (input as HTMLInputElement).value === 'Ollama（本机）')
-    ).toBe(true)
-    expect(
-      screen.getByDisplayValue('http://127.0.0.1:11434/v1')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByLabelText('接口协议 Ollama（本机）')
-    ).toHaveValue('openai-chat-completions')
-    expect(
-      screen.getByLabelText('认证方式 Ollama（本机）')
-    ).toHaveValue('none')
-    expect(
-      screen.getByText('无需认证，不会发送 API Key')
-    ).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
-    await waitFor(() =>
-      expect(updateRuntime).toHaveBeenCalledWith(
-        expect.objectContaining({
-          modelProfiles: expect.arrayContaining([
-            expect.objectContaining({
-              name: 'Ollama（本机）',
-              protocol: 'openai-chat-completions',
-              authentication: 'none',
-              apiKey: { action: 'keep' }
-            })
-          ])
-        })
-      )
-    )
-  })
-
-  it('uses Responses for the official OpenAI preset', async () => {
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
-    fireEvent.change(await screen.findByLabelText('模型预设'), {
-      target: { value: 'openai' }
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '备用模型' }
     })
     fireEvent.click(
-      screen.getByRole('button', { name: '从预设添加' })
+      screen.getByRole('button', { name: '添加自定义' })
+    )
+    expect(screen.getByLabelText('名称')).toHaveValue('模型连接 3')
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '删除模型连接 模型连接 3'
+      })
     )
 
-    const protocol = screen.getByLabelText('接口协议 OpenAI')
-    expect(protocol).toHaveValue('openai-responses')
+    expect(screen.getByLabelText('名称')).toHaveValue('备用模型')
     expect(
-      within(protocol).getByRole('option', { name: 'OpenAI Responses' })
-    ).toBeInTheDocument()
+      screen.queryByRole('button', {
+        name: '编辑模型连接 模型连接 3'
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: '编辑模型连接 备用模型'
+      })
+    ).toHaveAttribute('aria-current', 'page')
   })
 
-  it('marks the BigToken gpt-image-2 preset as image generation', async () => {
+  it('uses only custom model connections and supports image generation', async () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -413,49 +549,17 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
-    const preset = await screen.findByLabelText('模型预设')
-    fireEvent.change(preset, {
-      target: { value: 'bigtoken-gpt-image-2' }
-    })
-    fireEvent.click(
-      screen.getByRole('button', { name: '从预设添加' })
-    )
-
+    await screen.findByDisplayValue('默认模型')
+    expect(screen.queryByLabelText('模型预设')).not.toBeInTheDocument()
     expect(
-      screen.getByLabelText('接口协议 BigToken GPT Image 2')
-    ).toHaveValue('openai-images-generations')
+      screen.queryByRole('button', { name: '从预设添加' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('接口协议 默认模型'), {
+      target: { value: 'openai-images-generations' }
+    })
     expect(screen.getByText('图像生成', { selector: 'span' }))
       .toBeInTheDocument()
-
-    const defaultConnections = screen.getAllByRole('radio')
-    fireEvent.click(defaultConnections.at(-1)!)
-    vi.mocked(window.goodbuddy.settings.testRuntime).mockResolvedValueOnce({
-      id: 'model',
-      label: 'gpt-image-2',
-      available: true,
-      supportsToolExecution: false,
-      detail: '图像接口将在发送提示词时实际验证',
-      capability: 'image-generation'
-    })
-    fireEvent.click(screen.getByRole('button', { name: '保存并测试' }))
-    await waitFor(() =>
-      expect(updateRuntime).toHaveBeenCalledWith(
-        expect.objectContaining({
-          modelProfiles: expect.arrayContaining([
-            expect.objectContaining({
-              name: 'BigToken GPT Image 2',
-              modelName: 'gpt-image-2',
-              protocol: 'openai-images-generations'
-            })
-          ])
-        })
-      )
-    )
-    expect(
-      await screen.findByText('图像接口将在发送提示词时实际验证')
-    ).toBeInTheDocument()
-    expect(screen.queryByText('连接成功：gpt-image-2'))
-      .not.toBeInTheDocument()
   })
 
   it('manages heartbeat automation from Settings', async () => {
@@ -609,16 +713,146 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    expect(await screen.findByText('电脑控制能力')).toBeInTheDocument()
+    expect(screen.getAllByText('托管浏览器配置').length).toBeGreaterThan(0)
+    expect(screen.getByLabelText('启用 Linux 桌面控制')).toBeDisabled()
+    fireEvent.click(screen.getByLabelText('启用 浏览器控制'))
+    await waitFor(() =>
+      expect(setComputerCapabilityEnabled).toHaveBeenCalledWith(
+        'host-browser-control',
+        true
+      )
+    )
+    fireEvent.click(screen.getByRole('button', { name: '诊断 浏览器控制' }))
+    expect(
+      await screen.findByText('诊断结果：部分可用')
+    ).toBeInTheDocument()
+    expect(diagnoseComputerCapability).toHaveBeenCalledWith(
+      'host-browser-control'
+    )
+    fireEvent.change(screen.getByLabelText('新配置名称'), {
+      target: { value: '购物网站' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '创建托管配置' })
+    )
+    await waitFor(() =>
+      expect(createBrowserProfile).toHaveBeenCalledWith({
+        name: '购物网站'
+      })
+    )
+    fireEvent.change(screen.getByLabelText('配置名称 工作网站'), {
+      target: { value: '工作站点' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '重命名配置 工作网站' })
+    )
+    await waitFor(() =>
+      expect(renameBrowserProfile).toHaveBeenCalledWith({
+        profileId: browserProfileId,
+        name: '工作站点'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除配置 工作网站' })
+    )
+    await waitFor(() =>
+      expect(removeBrowserProfile).toHaveBeenCalledWith(browserProfileId)
+    )
+    expect(
+      await screen.findByText('读取工作区文本')
+    ).toBeInTheDocument()
+    expect(screen.getByText('列出工作区目录')).toBeInTheDocument()
+    expect(screen.getByText('写入工作区文本')).toBeInTheDocument()
+    expect(screen.getAllByText('直连模型')).toHaveLength(
+      builtinModelTools.length
+    )
     expect(
       await screen.findByText('尚未配置 MCP Server')
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /添加 Server/ })
     ).toBeInTheDocument()
+    expect(
+      screen.getByText(/自定义 stdio MCP 会以受限环境启动/)
+    ).toHaveTextContent('不会获得桌面会话变量')
     fireEvent.click(screen.getByRole('button', { name: /添加 Server/ }))
     expect(screen.getByLabelText('模型')).toBeChecked()
     expect(
       screen.queryByLabelText('OpenCode')
     ).not.toBeInTheDocument()
+  })
+
+  it('creates, updates, and removes roles with system prompts', async () => {
+    const onExpertsChanged = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onExpertsChanged={onExpertsChanged}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: '角色与提示词' })
+    )
+    await screen.findByRole('button', {
+      name: '编辑角色 研究分析专家'
+    })
+    fireEvent.change(screen.getByLabelText('系统提示词'), {
+      target: { value: 'Use evidence and state uncertainty.' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存角色' }))
+    await waitFor(() =>
+      expect(updateExpert).toHaveBeenCalledWith(
+        assistantExpert.id,
+        expect.objectContaining({
+          systemInstructions: 'Use evidence and state uncertainty.'
+        })
+      )
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '新建角色' }))
+    fireEvent.change(screen.getByLabelText('角色名称'), {
+      target: { value: '代码审查专家' }
+    })
+    fireEvent.change(screen.getByLabelText('角色说明'), {
+      target: { value: '检查代码正确性' }
+    })
+    fireEvent.change(screen.getByLabelText('系统提示词'), {
+      target: { value: 'Review code and report actionable bugs.' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '创建角色' }))
+    await waitFor(() =>
+      expect(createExpert).toHaveBeenCalledWith({
+        name: '代码审查专家',
+        description: '检查代码正确性',
+        systemInstructions: 'Review code and report actionable bugs.'
+      })
+    )
+    expect(onExpertsChanged).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ name: '代码审查专家' })
+      ])
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '删除角色 代码审查专家'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '确认删除角色 代码审查专家'
+      })
+    )
+    await waitFor(() =>
+      expect(removeExpert).toHaveBeenCalledWith(
+        '00000000-0000-4000-8000-000000000102'
+      )
+    )
   })
 })

@@ -141,4 +141,36 @@ describe('testMcpServer', () => {
     )
     expect(mocks.client.close).toHaveBeenCalledOnce()
   })
+
+  it('accepts cancellation, closes the client, and hides abort details', async () => {
+    mocks.client.connect.mockImplementation(
+      async (
+        _transport: unknown,
+        options: { signal: AbortSignal }
+      ) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => reject(new Error('sensitive abort reason')),
+            { once: true }
+          )
+        })
+    )
+    const controller = new AbortController()
+    const pending = testMcpServer(
+      {
+        ...common,
+        transport: 'stdio',
+        command: 'node',
+        args: ['server.js']
+      } satisfies ResolvedMcpServer,
+      controller.signal
+    )
+
+    controller.abort(new Error('caller private context'))
+
+    await expect(pending).rejects.toThrow('MCP 连接测试已取消')
+    expect(mocks.client.listTools).not.toHaveBeenCalled()
+    expect(mocks.client.close).toHaveBeenCalledOnce()
+  })
 })

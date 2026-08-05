@@ -137,7 +137,7 @@ npm run dist:linux:arm64
 2. 中文输入法、窗口缩放和高分屏显示。
 3. 系统密钥环和模型连接。
 4. 本地知识库导入、检索和知识图谱。
-5. Ask、Plan、Execute 的权限边界。
-6. OpenCode 与 Continue 的审批、取消和超时。
+5. Ask、Execute 的权限边界与旧版 Plan 数据兼容。
+6. OpenCode 与 Continue 的权限边界、取消和超时。
 7. 智能心跳的创建、暂停、恢复和历史记录。
 8. 应用退出后无残留 Runtime 子进程。

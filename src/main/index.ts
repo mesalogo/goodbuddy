@@ -37,6 +37,7 @@ import type {
   ContinueHostLauncher
 } from './agent/continue-host-adapter'
 import { resolvePortableUserDataPath } from './portable-user-data'
+import { BrowserService } from './browser/browser-service'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const portableUserDataPath = resolvePortableUserDataPath({
@@ -63,6 +64,7 @@ let removeIpcHandlers: (() => Promise<void>) | undefined
 let runtime: AgentRuntimeController | undefined
 let knowledgeService: KnowledgeService | undefined
 let assistantDatabase: AssistantDatabase | undefined
+let browserService: BrowserService | undefined
 
 function createEmbeddingProvider(
   settings: ResolvedRuntimeSettings
@@ -227,6 +229,7 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'skills', 'imported'),
       secureCipher
     )
+    browserService = new BrowserService()
     const bundledRuntimePaths = resolveBundledRuntimePaths({
       appPath: app.getAppPath(),
       resourcesPath: process.resourcesPath,
@@ -261,15 +264,21 @@ if (hasSingleInstanceLock) {
           : useOpenCode
             ? ('opencode' as const)
             : ('model' as const)
-      const [skillInstructions, mcpServers] = await Promise.all([
-        capabilityService.getSkillInstructions(
-          target,
-          target === 'continue' ? 12_000 : 48_000
-        ),
-        target === 'model'
-          ? capabilityService.getResolvedMcpServers('model')
-          : Promise.resolve([])
-      ])
+      const [skillInstructions, mcpServers, browserCapability] =
+        await Promise.all([
+          capabilityService.getSkillInstructions(
+            target,
+            target === 'continue' ? 12_000 : 48_000
+          ),
+          target === 'model'
+            ? capabilityService.getResolvedMcpServers('model')
+            : Promise.resolve([]),
+          target === 'model'
+            ? capabilityService.getComputerCapabilityStatus(
+                'host-browser-control'
+              )
+            : Promise.resolve(undefined)
+        ])
       return createAgentRuntime(defaultWorkspace, settings, {
         skillInstructions,
         mcpServers,
@@ -278,7 +287,11 @@ if (hasSingleInstanceLock) {
           'continue-host'
         ),
         bundledRuntimePaths,
-        continueHostLauncher: launchContinueHost
+        continueHostLauncher: launchContinueHost,
+        browserService:
+          browserCapability?.enabled && browserCapability.supported
+            ? browserService
+            : undefined
       })
     }
     runtime = new AgentRuntimeController(
@@ -316,7 +329,11 @@ if (hasSingleInstanceLock) {
             await createConfiguredRuntime()
           )
         }
-      }
+      },
+      async () => {
+        await browserService?.clearSessions()
+      },
+      browserService
     )
     loadMainWindow(mainWindow)
 
@@ -354,7 +371,8 @@ app.on('before-quit', (event) => {
       tray?.destroy()
       await Promise.allSettled([
         runtime?.dispose(),
-        knowledgeService?.dispose()
+        knowledgeService?.dispose(),
+        browserService?.dispose()
       ])
     } finally {
       assistantDatabase?.close()

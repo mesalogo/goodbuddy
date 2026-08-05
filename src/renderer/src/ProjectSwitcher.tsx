@@ -2,9 +2,11 @@ import { Archive, FolderOpen, Plus, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type {
   AssistantProject,
+  InteractiveWorkMode,
   ProjectCreateInput,
   WorkMode
 } from '../../shared/assistant-contracts'
+import { interactiveWorkModes } from '../../shared/assistant-contracts'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
@@ -15,9 +17,8 @@ type ProjectSwitcherProps = {
   onSelectRoot: () => Promise<string | undefined>
 }
 
-export const workModeLabels: Record<WorkMode, string> = {
+export const workModeLabels: Record<InteractiveWorkMode, string> = {
   ask: 'Ask · 只读问答',
-  plan: 'Plan · 先审计划',
   execute: 'Execute · 受控执行'
 }
 
@@ -215,9 +216,9 @@ export function ProjectSwitcher({
                 }
                 value={draft.defaultWorkMode}
               >
-                {Object.entries(workModeLabels).map(([value, label]) => (
+                {interactiveWorkModes.map((value) => (
                   <option key={value} value={value}>
-                    {label}
+                    {workModeLabels[value]}
                   </option>
                 ))}
               </select>

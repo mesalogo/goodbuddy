@@ -3,10 +3,12 @@ import type { McpServerTestResult } from '../../shared/capability-contracts'
 import type { ResolvedMcpServer } from './capability-service'
 import { createMcpTransport } from './mcp-client-transport'
 
-const MCP_TEST_TIMEOUT_MS = 12_000
+const MCP_TEST_TOTAL_TIMEOUT_MS = 12_000
+const MCP_TEST_INACTIVITY_TIMEOUT_MS = 8_000
 
 export async function testMcpServer(
-  server: ResolvedMcpServer
+  server: ResolvedMcpServer,
+  signal?: AbortSignal
 ): Promise<McpServerTestResult> {
   const client = new Client({
     name: 'goodbuddy',
@@ -14,19 +16,45 @@ export async function testMcpServer(
   })
   const transport = createMcpTransport(server)
   const controller = new AbortController()
+  let timedOut = false
+  const abortFromCaller = (): void => {
+    controller.abort()
+  }
+  signal?.addEventListener('abort', abortFromCaller, { once: true })
+  if (signal?.aborted) {
+    abortFromCaller()
+  }
   const timeout = setTimeout(() => {
+    timedOut = true
     controller.abort(new Error('MCP 连接测试超时'))
-  }, MCP_TEST_TIMEOUT_MS)
+  }, MCP_TEST_TOTAL_TIMEOUT_MS)
+  const runWithInactivityLimit = async <T>(
+    operation: () => Promise<T>
+  ): Promise<T> => {
+    const inactivityTimeout = setTimeout(() => {
+      timedOut = true
+      controller.abort(new Error('MCP 连接测试超时'))
+    }, MCP_TEST_INACTIVITY_TIMEOUT_MS)
+    try {
+      return await operation()
+    } finally {
+      clearTimeout(inactivityTimeout)
+    }
+  }
 
   try {
-    await client.connect(transport, {
-      timeout: MCP_TEST_TIMEOUT_MS,
-      signal: controller.signal
-    })
-    const result = await client.listTools(undefined, {
-      timeout: MCP_TEST_TIMEOUT_MS,
-      signal: controller.signal
-    })
+    await runWithInactivityLimit(() =>
+      client.connect(transport, {
+        timeout: MCP_TEST_INACTIVITY_TIMEOUT_MS,
+        signal: controller.signal
+      })
+    )
+    const result = await runWithInactivityLimit(() =>
+      client.listTools(undefined, {
+        timeout: MCP_TEST_INACTIVITY_TIMEOUT_MS,
+        signal: controller.signal
+      })
+    )
     const version = client.getServerVersion()
     return {
       serverName: version?.name.slice(0, 120),
@@ -38,7 +66,10 @@ export async function testMcpServer(
       }))
     }
   } catch (error) {
-    if (controller.signal.aborted) {
+    if (signal?.aborted && !timedOut) {
+      throw new Error('MCP 连接测试已取消', { cause: error })
+    }
+    if (timedOut) {
       throw new Error('MCP 连接测试超时', { cause: error })
     }
     throw new Error(
@@ -50,6 +81,7 @@ export async function testMcpServer(
     )
   } finally {
     clearTimeout(timeout)
+    signal?.removeEventListener('abort', abortFromCaller)
     await client.close().catch(() => undefined)
   }
 }

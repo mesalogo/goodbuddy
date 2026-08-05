@@ -24,7 +24,7 @@ async function createDatabase(): Promise<AssistantDatabase> {
 }
 
 describe('AssistantDatabase', () => {
-  it('migrates existing databases to schema version 5', async () => {
+  it('migrates existing databases to schema version 6', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -52,7 +52,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(5)
+    ).toBe(6)
     expect(
       current
         .prepare(
@@ -95,6 +95,74 @@ describe('AssistantDatabase', () => {
     current.close()
   })
 
+  it('idempotently migrates version 5 databases to computer control audit schema', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-control-audit-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.close()
+
+    const versionFive = new DatabaseSync(databasePath)
+    versionFive.exec(`
+      DROP TABLE computer_control_actions;
+      PRAGMA user_version = 5;
+    `)
+    versionFive.close()
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const migrated = new AssistantDatabase(databasePath)
+      migrated.initialize('C:\\Workspace')
+      migrated.close()
+    }
+
+    const current = new DatabaseSync(databasePath)
+    expect(
+      (
+        current.prepare('PRAGMA user_version').get() as {
+          user_version: number
+        }
+      ).user_version
+    ).toBe(6)
+    expect(
+      current
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table'
+             AND name = 'computer_control_actions'`
+        )
+        .get()
+    ).toEqual({ name: 'computer_control_actions' })
+    expect(
+      current
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'index'
+             AND name = 'computer_control_actions_recent_idx'`
+        )
+        .get()
+    ).toEqual({ name: 'computer_control_actions_recent_idx' })
+    expect(
+      current
+        .prepare(
+          'PRAGMA foreign_key_list(computer_control_actions)'
+        )
+        .all()
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table: 'tasks',
+          from: 'task_id',
+          to: 'id',
+          on_delete: 'CASCADE'
+        })
+      ])
+    )
+    current.close()
+  })
+
   it('creates a default project and persists project updates', async () => {
     const database = await createDatabase()
     const [defaultProject] = database.listProjects()
@@ -134,6 +202,38 @@ describe('AssistantDatabase', () => {
           status: 'archived'
         })
       ])
+    )
+    database.close()
+  })
+
+  it('creates, updates, and soft-deletes expert roles', async () => {
+    const database = await createDatabase()
+    const expert = database.createExpert({
+      name: '代码审查专家',
+      description: '检查代码正确性',
+      systemInstructions: 'Review code for actionable bugs.'
+    })
+
+    const updated = database.updateExpert(expert.id, {
+      name: '高级代码审查专家',
+      description: '检查正确性和安全性',
+      systemInstructions: 'Review correctness and security risks.'
+    })
+    expect(updated).toMatchObject({
+      id: expert.id,
+      name: '高级代码审查专家',
+      description: '检查正确性和安全性',
+      systemInstructions: 'Review correctness and security risks.',
+      enabled: true
+    })
+
+    database.removeExpert(expert.id)
+
+    expect(
+      database.listExperts().some((item) => item.id === expert.id)
+    ).toBe(false)
+    expect(() => database.getExpert(expert.id)).toThrow(
+      '专家不存在或已停用'
     )
     database.close()
   })

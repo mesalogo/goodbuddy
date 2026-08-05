@@ -1,0 +1,473 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BrowserUrlPolicy, canonicalizeBrowserUrl } from './browser-url-policy'
+import {
+  BrowserService,
+  type BrowserDriverLike,
+  type BrowserSessionLike
+} from './browser-service'
+import type { BrowserWebContents } from './electron-browser-session'
+
+type HarnessSlot = {
+  currentOrigin?: string
+  approvedOrigin?: string
+  session: BrowserSessionLike
+  driver: BrowserDriverLike
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function createHarness(options: {
+  maximumSessions?: number
+  idleTimeoutMs?: number
+  cleanupTimeoutMs?: number
+  dispose?: () => Promise<void>
+  sessionGate?: Promise<void>
+} = {}) {
+  const slots: HarnessSlot[] = []
+  const byContents = new Map<BrowserWebContents, HarnessSlot>()
+  const createSession = vi.fn(async (): Promise<BrowserSessionLike> => {
+    await options.sessionGate
+    const webContents = {} as BrowserWebContents
+    const slot = {} as HarnessSlot
+    const session: BrowserSessionLike = {
+      webContents,
+      approveNavigation: vi.fn((target) => {
+        slot.approvedOrigin = target.origin
+      }),
+      getCurrentOrigin: vi.fn(() => slot.currentOrigin),
+      dispose: vi.fn(options.dispose ?? (async () => undefined))
+    }
+    const driver: BrowserDriverLike = {
+      navigate: vi.fn(async (url) => {
+        slot.currentOrigin = canonicalizeBrowserUrl(url).origin
+        return { url }
+      }),
+      snapshot: vi.fn(async () => ({
+        url: `${slot.currentOrigin}/page`,
+        title: 'Page',
+        nodes: [],
+        truncated: false
+      })),
+      click: vi.fn(async () => undefined),
+      type: vi.fn(async () => undefined),
+      select: vi.fn(async () => undefined),
+      getBackTarget: vi.fn(async () => ({
+        entryId: 4,
+        url: 'https://previous.example/back'
+      })),
+      backTo: vi.fn(async (target) => {
+        slot.currentOrigin = canonicalizeBrowserUrl(target.url).origin
+        return { url: target.url }
+      }),
+      screenshot: vi.fn(async () => ({
+        type: 'image' as const,
+        mimeType: 'image/png' as const,
+        data: 'iVBORw0KGgo='
+      })),
+      dispose: vi.fn()
+    }
+    Object.assign(slot, { session, driver })
+    slots.push(slot)
+    byContents.set(webContents, slot)
+    return session
+  })
+  const service = new BrowserService({
+    policy: new BrowserUrlPolicy(async () => [
+      { address: '93.184.216.34', family: 4 }
+    ]),
+    maximumSessions: options.maximumSessions,
+    idleTimeoutMs: options.idleTimeoutMs,
+    cleanupTimeoutMs: options.cleanupTimeoutMs,
+    liveFrameDelayMs: 0,
+    createSession,
+    createDriver: (contents) => {
+      const slot = byContents.get(contents)
+      if (!slot) {
+        throw new Error('unknown contents')
+      }
+      return slot.driver
+    }
+  })
+  return { createSession, service, slots }
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('BrowserService', () => {
+  it('publishes browser status and live frames through session cleanup', async () => {
+    const harness = createHarness()
+    const states: Array<{
+      status: string
+      frameDataUrl?: string
+    }> = []
+    const removeListener = harness.service.onState((state) => {
+      states.push(state)
+    })
+    const signal = new AbortController().signal
+
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      signal
+    )
+    await harness.service.click('conversation', 'button_ref', signal)
+    await harness.service.releaseConversation('conversation')
+
+    expect(states.map((state) => state.status)).toEqual([
+      'creating',
+      'loading',
+      'ready',
+      'acting',
+      'ready',
+      'stopped'
+    ])
+    expect(states.find((state) => state.status === 'ready')?.frameDataUrl).toBe(
+      'data:image/png;base64,iVBORw0KGgo='
+    )
+    expect(states.at(-1)?.frameDataUrl).toBeUndefined()
+    const replayed: string[] = []
+    const removeReplayListener = harness.service.onState((state) => {
+      replayed.push(state.status)
+    })
+    expect(replayed).toEqual([])
+    removeReplayListener()
+    removeListener()
+    await harness.service.dispose()
+  })
+
+  it('does not publish ready after a session is stopped during frame capture', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    const states: string[] = []
+    harness.service.onState((state) => states.push(state.status))
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      signal
+    )
+    const slot = harness.slots[0]
+    if (!slot) {
+      throw new Error('slot missing')
+    }
+    vi.mocked(slot.driver.screenshot).mockImplementationOnce(
+      async (operationSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          operationSignal.addEventListener(
+            'abort',
+            () => reject(operationSignal.reason),
+            { once: true }
+          )
+        })
+    )
+
+    const click = harness.service.click(
+      'conversation',
+      'button_ref',
+      signal
+    )
+    await vi.waitFor(() =>
+      expect(slot.driver.screenshot).toHaveBeenCalledTimes(2)
+    )
+    await harness.service.releaseConversation('conversation')
+
+    await expect(click).rejects.toThrow('浏览器会话已释放')
+    expect(states.at(-1)).toBe('stopped')
+  })
+
+  it('isolates browser state and drivers by conversation', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    await harness.service.navigate('conversation-a', 'https://a.example/', signal)
+    await harness.service.navigate('conversation-b', 'https://b.example/', signal)
+    await harness.service.snapshot('conversation-a', signal)
+
+    expect(harness.service.getSessionCount()).toBe(2)
+    expect(harness.service.getOrigin('conversation-a')).toBe(
+      'https://a.example'
+    )
+    expect(harness.service.getOrigin('conversation-b')).toBe(
+      'https://b.example'
+    )
+    expect(harness.slots[0]?.driver.snapshot).toHaveBeenCalledOnce()
+    expect(harness.slots[1]?.driver.snapshot).not.toHaveBeenCalled()
+    await harness.service.dispose()
+  })
+
+  it('enforces a hard maximum of three sessions', async () => {
+    const harness = createHarness({ maximumSessions: 3 })
+    const signal = new AbortController().signal
+    for (const id of ['one', 'two', 'three']) {
+      await harness.service.navigate(id, `https://${id}.example/`, signal)
+    }
+    await expect(
+      harness.service.navigate('four', 'https://four.example/', signal)
+    ).rejects.toThrow('3 个上限')
+    expect(harness.createSession).toHaveBeenCalledTimes(3)
+    await harness.service.dispose()
+  })
+
+  it('serializes operations in one conversation and lets queued callers cancel', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    await harness.service.navigate('conversation', 'https://a.example/', signal)
+    const clickGate = deferred<void>()
+    const slot = harness.slots[0]
+    if (!slot) {
+      throw new Error('slot missing')
+    }
+    vi.mocked(slot.driver.click).mockImplementationOnce(async () =>
+      clickGate.promise
+    )
+
+    const click = harness.service.click('conversation', 'b_ref', signal)
+    await vi.waitFor(() => expect(slot.driver.click).toHaveBeenCalled())
+    const queuedController = new AbortController()
+    const queued = harness.service.snapshot(
+      'conversation',
+      queuedController.signal
+    )
+    queuedController.abort(new Error('cancel queued'))
+    await expect(queued).rejects.toThrow('cancel queued')
+    expect(slot.driver.snapshot).not.toHaveBeenCalled()
+    clickGate.resolve()
+    await click
+    await harness.service.dispose()
+  })
+
+  it('does not let a canceled queued waiter clear the active operation owner', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    await harness.service.navigate('conversation', 'https://a.example/', signal)
+    const clickGate = deferred<void>()
+    const slot = harness.slots[0]
+    if (!slot) {
+      throw new Error('slot missing')
+    }
+    let activeSignal: AbortSignal | undefined
+    vi.mocked(slot.driver.click).mockImplementationOnce(
+      async (_ref, operationSignal) => {
+        activeSignal = operationSignal
+        await clickGate.promise
+      }
+    )
+
+    const click = harness.service.click('conversation', 'b_ref', signal)
+    await vi.waitFor(() => expect(activeSignal).toBeDefined())
+    const queuedController = new AbortController()
+    const queued = harness.service.snapshot(
+      'conversation',
+      queuedController.signal
+    )
+    queuedController.abort(new Error('cancel queued'))
+    await expect(queued).rejects.toThrow('cancel queued')
+    const clickResult = expect(click).rejects.toThrow(
+      '浏览器会话已释放'
+    )
+    await harness.service.releaseConversation('conversation')
+    expect(activeSignal?.aborted).toBe(true)
+    clickGate.resolve()
+    await clickResult
+    await harness.service.dispose()
+  })
+
+  it('abandons a sole canceled creation without retaining or consuming a slot', async () => {
+    const creationGate = deferred<void>()
+    const harness = createHarness({
+      maximumSessions: 1,
+      sessionGate: creationGate.promise
+    })
+    const canceledController = new AbortController()
+    const canceled = harness.service.navigate(
+      'canceled',
+      'https://canceled.example/',
+      canceledController.signal
+    )
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
+    canceledController.abort(new Error('cancel creation'))
+    await expect(canceled).rejects.toThrow('cancel creation')
+    expect(harness.service.getSessionCount()).toBe(0)
+
+    const replacement = harness.service.navigate(
+      'replacement',
+      'https://replacement.example/',
+      new AbortController().signal
+    )
+    await vi.waitFor(() =>
+      expect(harness.createSession).toHaveBeenCalledTimes(2)
+    )
+    creationGate.resolve()
+    await expect(replacement).resolves.toMatchObject({
+      origin: 'https://replacement.example'
+    })
+    expect(harness.service.getSessionCount()).toBe(1)
+    expect(harness.slots[0]?.session.dispose).toHaveBeenCalledOnce()
+    await harness.service.dispose()
+  })
+
+  it('preserves a shared creation while another waiter cancels', async () => {
+    const creationGate = deferred<void>()
+    const harness = createHarness({ sessionGate: creationGate.promise })
+    const canceledController = new AbortController()
+    const canceled = harness.service.navigate(
+      'conversation',
+      'https://example.com/first',
+      canceledController.signal
+    )
+    const shared = harness.service.navigate(
+      'conversation',
+      'https://example.com/second',
+      new AbortController().signal
+    )
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
+    canceledController.abort(new Error('cancel one waiter'))
+    await expect(canceled).rejects.toThrow('cancel one waiter')
+
+    creationGate.resolve()
+    await expect(shared).resolves.toMatchObject({
+      origin: 'https://example.com'
+    })
+    expect(harness.service.getSessionCount()).toBe(1)
+    expect(harness.slots[0]?.session.dispose).not.toHaveBeenCalled()
+    await harness.service.dispose()
+  })
+
+  it('expires idle sessions and clears their isolated resources', async () => {
+    vi.useFakeTimers()
+    const harness = createHarness({ idleTimeoutMs: 100 })
+    await harness.service.navigate(
+      'conversation',
+      'https://a.example/',
+      new AbortController().signal
+    )
+    await vi.advanceTimersByTimeAsync(101)
+    await vi.waitFor(() => expect(harness.service.getSessionCount()).toBe(0))
+    expect(harness.slots[0]?.driver.dispose).toHaveBeenCalledOnce()
+    expect(harness.slots[0]?.session.dispose).toHaveBeenCalledOnce()
+    await harness.service.dispose()
+  })
+
+  it('tracks an approved origin across validated back navigation', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    await harness.service.navigate(
+      'conversation',
+      'https://current.example/',
+      signal
+    )
+    await expect(harness.service.back('conversation', signal)).resolves.toEqual({
+      url: 'https://previous.example/back',
+      origin: 'https://previous.example'
+    })
+    expect(harness.service.getOrigin('conversation')).toBe(
+      'https://previous.example'
+    )
+    expect(harness.slots[0]?.approvedOrigin).toBe(
+      'https://previous.example'
+    )
+    await harness.service.dispose()
+  })
+
+  it('fails closed and releases a slot when navigation origin does not match', async () => {
+    const harness = createHarness()
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      new AbortController().signal
+    )
+    const slot = harness.slots[0]
+    if (!slot) {
+      throw new Error('slot missing')
+    }
+    slot.currentOrigin = 'https://attacker.example'
+    await expect(
+      harness.service.snapshot(
+        'conversation',
+        new AbortController().signal
+      )
+    ).rejects.toThrow('来源已改变')
+    expect(harness.service.getSessionCount()).toBe(0)
+    expect(slot.session.dispose).toHaveBeenCalled()
+    await harness.service.dispose()
+  })
+
+  it('bounds cleanup and makes release and dispose idempotent', async () => {
+    const harness = createHarness({
+      cleanupTimeoutMs: 5,
+      dispose: async () => new Promise(() => undefined)
+    })
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      new AbortController().signal
+    )
+    await expect(
+      harness.service.releaseConversation('conversation')
+    ).rejects.toThrow('清理超时')
+    expect(harness.service.getSessionCount()).toBe(0)
+    await harness.service.releaseConversation('conversation')
+    await harness.service.dispose()
+    await harness.service.dispose()
+  })
+
+  it('settles a creation and release race without blocking later reuse', async () => {
+    const creationGate = deferred<void>()
+    const harness = createHarness({ sessionGate: creationGate.promise })
+    const firstNavigation = harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      new AbortController().signal
+    )
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
+
+    const release = harness.service.releaseConversation('conversation')
+    creationGate.resolve()
+    await release
+    await expect(firstNavigation).rejects.toThrow()
+    expect(harness.service.getSessionCount()).toBe(0)
+    expect(harness.slots[0]?.session.dispose).toHaveBeenCalledOnce()
+
+    await expect(
+      harness.service.navigate(
+        'conversation',
+        'https://example.com/new',
+        new AbortController().signal
+      )
+    ).resolves.toMatchObject({ origin: 'https://example.com' })
+    expect(harness.createSession).toHaveBeenCalledTimes(2)
+    await harness.service.dispose()
+  })
+
+  it('clears current sessions and remains reusable', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      signal
+    )
+
+    await harness.service.clearSessions()
+    expect(harness.service.getSessionCount()).toBe(0)
+    expect(harness.slots[0]?.session.dispose).toHaveBeenCalledOnce()
+
+    await expect(
+      harness.service.navigate(
+        'conversation',
+        'https://example.com/again',
+        signal
+      )
+    ).resolves.toMatchObject({ origin: 'https://example.com' })
+    expect(harness.createSession).toHaveBeenCalledTimes(2)
+    await harness.service.dispose()
+  })
+})

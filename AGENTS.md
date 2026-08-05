@@ -61,6 +61,34 @@ Keep Electron security boundaries intact:
 - Keep UI accessible with labels, keyboard behavior, semantic roles, and visible
   focus states.
 
+## Release Packaging
+
+- `.github/workflows/packages.yml` is the canonical cross-platform packaging
+  workflow. It validates and builds `out` once, then packages on six native
+  runners: Windows, macOS, and Linux, each for x64 and arm64.
+- Run the unified packager with
+  `npm run release:package -- --platform <platform> --arch <arch>`. It only
+  packages for the native host and writes to
+  `dist/release/<platform>-<arch>`.
+- Default deliverables are NSIS and portable EXE for Windows, DMG and ZIP for
+  macOS, and AppImage and DEB for Linux. Every target includes
+  `release-manifest.json` with SHA-256 hashes.
+- `build/build-release.cjs` verifies the unpacked application, `app.asar`,
+  bundled Continue and OpenCode runtimes, executable architecture, and package
+  signatures before atomically replacing a release directory.
+- Keep electron-builder invocations on `--publish never`. Current CI uploads
+  30-day GitHub Actions artifacts and does not create GitHub Release assets.
+  Signing and macOS notarization are not configured.
+- Keep `ELECTRON_CACHE` and `ELECTRON_BUILDER_CACHE` under
+  `${{ runner.temp }}` in step-level workflow contexts. A cache beneath the
+  repository inherits the root `"type": "module"` and breaks electron-builder's
+  CommonJS macOS icon tool.
+- Tag builds must use `v${package.version}`. The workflow also supports manual
+  dispatch and main-branch changes to release tooling.
+- Verified baseline on 2026-08-04: commit `2f54938`, GitHub Actions run
+  `30893805567` succeeded for validation and all six package targets, producing
+  six release artifacts plus the shared production bundle.
+
 ## Validation
 
 Run all validators after source changes:

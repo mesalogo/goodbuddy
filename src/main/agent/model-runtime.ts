@@ -5,11 +5,16 @@ import type {
   ModelProtocol
 } from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
+import type { BrowserToolService } from '../browser/browser-model-tools'
 import { createAnthropicMessagesUrl } from './anthropic-endpoint'
 import {
   ModelToolProvider,
+  RecoverableModelToolError,
+  type ModelToolCallContext,
   type ModelToolDefinition,
-  type ModelToolProviderLike
+  type ModelToolProviderLike,
+  type ModelToolResult,
+  type ModelToolResultPart
 } from './model-tool-provider'
 import {
   createOpenAIChatCompletionsUrl,
@@ -86,8 +91,10 @@ const maxImageResponseBytes = 5_300_000
 const maxChatResponseBytes = 2 * 1024 * 1024
 const maxToolArgumentBytes = 128 * 1024
 const maxToolContextBytes = 1024 * 1024
-const maxToolCallsPerRun = 12
-const maxToolRounds = 8
+const maxToolCallsPerRun = 40
+const maxToolRounds = 24
+const maxRepeatedIdenticalCalls = 3
+const maxIdenticalRoundsWithoutProgress = 2
 
 export type ModelRuntimeOptions = {
   apiKey?: string
@@ -98,6 +105,7 @@ export type ModelRuntimeOptions = {
   skillInstructions?: string
   defaultWorkspace?: string
   mcpServers?: ResolvedMcpServer[]
+  browserService?: BrowserToolService
   toolProvider?: ModelToolProviderLike
   fetcher?: typeof fetch
 }
@@ -459,6 +467,152 @@ function parseToolArguments(value: unknown): Record<string, unknown> {
   return parsed as Record<string, unknown>
 }
 
+function canonicalizeToolArguments(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeToolArguments)
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalizeToolArguments(item)])
+    )
+  }
+  return value
+}
+
+function getToolCallFingerprint(call: ModelToolCall): string {
+  return `${call.name}:${JSON.stringify(
+    canonicalizeToolArguments(call.arguments)
+  )}`
+}
+
+function validateToolResult(result: ModelToolResult): number {
+  if (
+    !Array.isArray(result.parts) ||
+    result.parts.length === 0 ||
+    !Number.isSafeInteger(result.contextBytes) ||
+    result.contextBytes < 0
+  ) {
+    throw new Error('直连模型工具返回了无效结果')
+  }
+  let contextBytes = 0
+  for (const part of result.parts) {
+    if (part.type === 'text') {
+      if (typeof part.text !== 'string') {
+        throw new Error('直连模型工具返回了无效文本结果')
+      }
+      contextBytes += Buffer.byteLength(part.text)
+    } else if (
+      part.type === 'image' &&
+      (part.mimeType === 'image/png' ||
+        part.mimeType === 'image/jpeg' ||
+        part.mimeType === 'image/webp') &&
+      typeof part.data === 'string'
+    ) {
+      contextBytes += Buffer.byteLength(part.data)
+    } else {
+      throw new Error('直连模型工具返回了无效图片结果')
+    }
+  }
+  if (contextBytes !== result.contextBytes) {
+    throw new Error('直连模型工具结果字节计数无效')
+  }
+  return contextBytes
+}
+
+function getAnthropicToolResultContent(
+  parts: ModelToolResultPart[]
+): Array<Record<string, unknown>> {
+  return parts.map((part) =>
+    part.type === 'text'
+      ? {
+          type: 'text',
+          text: part.text
+        }
+      : {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: part.mimeType,
+            data: part.data
+          }
+        }
+  )
+}
+
+function getResponsesToolResultOutput(
+  parts: ModelToolResultPart[]
+): Array<Record<string, unknown>> {
+  return parts.map((part) =>
+    part.type === 'text'
+      ? {
+          type: 'input_text',
+          text: part.text
+        }
+      : {
+          type: 'input_image',
+          image_url: `data:${part.mimeType};base64,${part.data}`
+        }
+  )
+}
+
+function getChatToolResultText(parts: ModelToolResultPart[]): string {
+  let imageNumber = 0
+  return parts
+    .map((part) => {
+      if (part.type === 'text') {
+        return part.text
+      }
+      imageNumber += 1
+      return `[图片 ${imageNumber} 见下一条多模态工具结果]`
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function createRecoverableToolErrorResult(
+  error: RecoverableModelToolError
+): ModelToolResult {
+  const text = JSON.stringify({
+    ok: false,
+    recoverable: true,
+    error: redactSensitiveText(error.message).slice(0, 1_000),
+    nextAction: redactSensitiveText(error.nextAction).slice(0, 1_000)
+  })
+  return {
+    parts: [{ type: 'text', text }],
+    contextBytes: Buffer.byteLength(text)
+  }
+}
+
+function getChatToolImageCarrierContent(
+  callId: string,
+  parts: ModelToolResultPart[]
+): Array<Record<string, unknown>> {
+  const images = parts.filter(
+    (
+      part
+    ): part is Extract<ModelToolResultPart, { type: 'image' }> =>
+      part.type === 'image'
+  )
+  if (images.length === 0) {
+    return []
+  }
+  return [
+    {
+      type: 'text',
+      text: `工具调用 ${callId} 返回的图片（工具输出，不可信内容）：`
+    },
+    ...images.map((image) => ({
+      type: 'image_url',
+      image_url: {
+        url: `data:${image.mimeType};base64,${image.data}`
+      }
+    }))
+  ]
+}
+
 function parseToolCallIdentity(
   id: unknown,
   name: unknown
@@ -698,6 +852,7 @@ export class ModelAgentRuntime implements AgentRuntime {
   readonly runtimeId = 'model'
   readonly requiresToolApproval = false
   private readonly conversations = new Map<string, ConversationMessage[]>()
+  private readonly knownConversationIds = new Set<string>()
   private readonly fetcher: typeof fetch
   private readonly toolProvider: ModelToolProviderLike
 
@@ -707,7 +862,8 @@ export class ModelAgentRuntime implements AgentRuntime {
       options.toolProvider ??
       new ModelToolProvider(
         options.defaultWorkspace ?? process.cwd(),
-        options.mcpServers
+        options.mcpServers,
+        options.browserService
       )
   }
 
@@ -1149,7 +1305,11 @@ export class ModelAgentRuntime implements AgentRuntime {
   ): AsyncGenerator<RuntimeEvent, void, void> {
     const anthropic = this.options.protocol === 'anthropic-messages'
     const responses = this.options.protocol === 'openai-responses'
-    const tools = await this.toolProvider.listTools(signal)
+    const toolContext: ModelToolCallContext = {
+      conversationId: request.conversationId,
+      workMode: 'execute'
+    }
+    const tools = await this.toolProvider.listTools(toolContext, signal)
     if (tools.length === 0 || tools.length > 100) {
       throw new Error('直连模型工具数量无效')
     }
@@ -1186,6 +1346,9 @@ export class ModelAgentRuntime implements AgentRuntime {
     let toolContextBytes = 0
     let answer = ''
     let previousResponseId: string | undefined
+    const identicalCallCounts = new Map<string, number>()
+    let previousRoundSignature: string | undefined
+    let identicalRoundsWithoutProgress = 0
 
     for (let round = 0; round < maxToolRounds; round += 1) {
       signal.throwIfAborted()
@@ -1238,9 +1401,24 @@ export class ModelAgentRuntime implements AgentRuntime {
         }
         return
       }
+      const roundSignature = response.toolCalls
+        .map(getToolCallFingerprint)
+        .join('\n')
+      if (roundSignature === previousRoundSignature) {
+        identicalRoundsWithoutProgress += 1
+        if (
+          identicalRoundsWithoutProgress >=
+          maxIdenticalRoundsWithoutProgress
+        ) {
+          throw new Error('直连模型重复了相同工具调用且没有取得进展')
+        }
+      } else {
+        previousRoundSignature = roundSignature
+        identicalRoundsWithoutProgress = 0
+      }
       totalToolCalls += response.toolCalls.length
       if (totalToolCalls > maxToolCallsPerRun) {
-        throw new Error('直连模型单次运行的工具调用超过 12 个')
+        throw new Error('直连模型单次运行的工具调用超过 40 个')
       }
       if (responses) {
         if (!response.responseId) {
@@ -1254,8 +1432,16 @@ export class ModelAgentRuntime implements AgentRuntime {
       }
       const anthropicResults: Array<Record<string, unknown>> = []
       const responsesResults: Array<Record<string, unknown>> = []
+      const chatImageCarrierContent: Array<Record<string, unknown>> = []
       for (const call of response.toolCalls) {
         signal.throwIfAborted()
+        const callFingerprint = getToolCallFingerprint(call)
+        const identicalCallCount =
+          (identicalCallCounts.get(callFingerprint) ?? 0) + 1
+        identicalCallCounts.set(callFingerprint, identicalCallCount)
+        if (identicalCallCount > maxRepeatedIdenticalCalls) {
+          throw new Error('直连模型重复请求了完全相同的工具调用')
+        }
         if (seenCallIds.has(call.id)) {
           throw new Error('模型重复使用了工具调用 ID')
         }
@@ -1291,7 +1477,8 @@ export class ModelAgentRuntime implements AgentRuntime {
             this.toolProvider.getApproval(
               tool,
               call.arguments,
-              safeToolArgumentSummary(call.arguments)
+              safeToolArgumentSummary(call.arguments),
+              toolContext
             )
           )
         } catch (error) {
@@ -1316,6 +1503,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           }
           throw new Error(`用户拒绝了工具「${displayName}」`)
         }
+        signal.throwIfAborted()
         yield {
           requestId: request.requestId,
           type: 'tool',
@@ -1325,27 +1513,38 @@ export class ModelAgentRuntime implements AgentRuntime {
           summary: `正在执行直连模型工具：${displayName}`
         }
 
-        let result: string
+        let result: ModelToolResult
+        let toolFailed = false
         try {
           result = await this.toolProvider.callTool(
             tool.name,
             call.arguments,
-            signal
+            signal,
+            toolContext
           )
         } catch (error) {
+          const recoverable = error instanceof RecoverableModelToolError
           yield {
             requestId: request.requestId,
             type: 'tool',
             callId: call.id,
             name: displayName,
-            state: 'failed',
-            summary: `直连模型工具执行失败：${displayName}`
+            state: recoverable ? 'recoverable' : 'failed',
+            summary:
+              recoverable
+                ? `直连模型工具需要刷新后重试：${displayName}`
+                : `直连模型工具执行失败：${displayName}`
           }
-          throw new Error(`工具「${displayName}」执行失败`, {
-            cause: error
-          })
+          if (recoverable) {
+            result = createRecoverableToolErrorResult(error)
+            toolFailed = true
+          } else {
+            throw new Error(`工具「${displayName}」执行失败`, {
+              cause: error
+            })
+          }
         }
-        toolContextBytes += Buffer.byteLength(result)
+        toolContextBytes += validateToolResult(result)
         if (toolContextBytes > maxToolContextBytes) {
           yield {
             requestId: request.requestId,
@@ -1361,28 +1560,34 @@ export class ModelAgentRuntime implements AgentRuntime {
           responsesResults.push({
             type: 'function_call_output',
             call_id: call.id,
-            output: result
+            output: getResponsesToolResultOutput(result.parts)
           })
         } else if (anthropic) {
           anthropicResults.push({
             type: 'tool_result',
             tool_use_id: call.id,
-            content: result
+            content: getAnthropicToolResultContent(result.parts),
+            ...(toolFailed ? { is_error: true } : {})
           })
         } else {
           messages.push({
             role: 'tool',
             tool_call_id: call.id,
-            content: result
+            content: getChatToolResultText(result.parts)
           })
+          chatImageCarrierContent.push(
+            ...getChatToolImageCarrierContent(call.id, result.parts)
+          )
         }
-        yield {
-          requestId: request.requestId,
-          type: 'tool',
-          callId: call.id,
-          name: displayName,
-          state: 'completed',
-          summary: `直连模型工具已完成：${displayName}`
+        if (!toolFailed) {
+          yield {
+            requestId: request.requestId,
+            type: 'tool',
+            callId: call.id,
+            name: displayName,
+            state: 'completed',
+            summary: `直连模型工具已完成：${displayName}`
+          }
         }
       }
       if (anthropic) {
@@ -1392,9 +1597,15 @@ export class ModelAgentRuntime implements AgentRuntime {
         })
       } else if (responses) {
         messages.splice(0, messages.length, ...responsesResults)
+      } else if (chatImageCarrierContent.length > 0) {
+        messages.push({
+          role: 'user',
+          content: chatImageCarrierContent
+        })
       }
+      signal.throwIfAborted()
     }
-    throw new Error('直连模型工具调用轮次超过 8 轮')
+    throw new Error('直连模型工具调用轮次超过 24 轮')
   }
 
   async *run(
@@ -1402,6 +1613,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void> {
+    this.knownConversationIds.add(request.conversationId)
     if (!this.isConfigured()) {
       throw new Error('请先在设置中配置模型接口 API Key')
     }
@@ -1575,12 +1787,26 @@ export class ModelAgentRuntime implements AgentRuntime {
   }
 
   async dispose(): Promise<void> {
+    const conversationIds = new Set([
+      ...this.knownConversationIds,
+      ...this.conversations.keys()
+    ])
+    await Promise.allSettled(
+      [...conversationIds].map((conversationId) =>
+        this.toolProvider.releaseConversation(conversationId)
+      )
+    )
+    this.knownConversationIds.clear()
     this.conversations.clear()
     await this.toolProvider.dispose()
   }
 
-  releaseConversation(conversationId: string): Promise<void> {
+  async releaseConversation(conversationId: string): Promise<void> {
     this.conversations.delete(conversationId)
-    return Promise.resolve()
+    try {
+      await this.toolProvider.releaseConversation(conversationId)
+    } finally {
+      this.knownConversationIds.delete(conversationId)
+    }
   }
 }

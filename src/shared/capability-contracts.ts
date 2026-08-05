@@ -80,6 +80,130 @@ export const skillSummarySchema = z
   .strict()
 export type SkillSummary = z.infer<typeof skillSummarySchema>
 
+export const computerCapabilityIdSchema = z.enum([
+  'host-browser-control',
+  'linux-desktop-control'
+])
+export type ComputerCapabilityId = z.infer<
+  typeof computerCapabilityIdSchema
+>
+
+export const browserProfileIdSchema = z.string().uuid()
+export const browserProfileNameSchema = controlCharacterFreeString(80)
+
+export const browserProfileCreateInputSchema = z
+  .object({
+    name: browserProfileNameSchema
+  })
+  .strict()
+export type BrowserProfileCreateInput = z.infer<
+  typeof browserProfileCreateInputSchema
+>
+
+export const browserProfileRenameInputSchema = z
+  .object({
+    profileId: browserProfileIdSchema,
+    name: browserProfileNameSchema
+  })
+  .strict()
+export type BrowserProfileRenameInput = z.infer<
+  typeof browserProfileRenameInputSchema
+>
+
+export const browserProfileSelectionInputSchema = z
+  .object({
+    profileId: browserProfileIdSchema
+  })
+  .strict()
+
+export const browserProfileSummarySchema = z
+  .object({
+    id: browserProfileIdSchema,
+    name: browserProfileNameSchema,
+    mode: z.literal('managed-isolated')
+  })
+  .strict()
+export type BrowserProfileSummary = z.infer<
+  typeof browserProfileSummarySchema
+>
+
+export const browserProfilesSummarySchema = z
+  .object({
+    profiles: z.array(browserProfileSummarySchema).max(32),
+    defaultProfileId: browserProfileIdSchema.nullable()
+  })
+  .strict()
+export type BrowserProfilesSummary = z.infer<
+  typeof browserProfilesSummarySchema
+>
+
+export const computerCapabilityToggleInputSchema = z
+  .object({
+    capabilityId: computerCapabilityIdSchema,
+    enabled: z.boolean()
+  })
+  .strict()
+
+export const computerCapabilityConfigInputSchema = z
+  .object({
+    capabilityId: computerCapabilityIdSchema,
+    browserProfileId: browserProfileIdSchema.nullable()
+  })
+  .strict()
+
+export const computerCapabilityConfigSummarySchema = z
+  .object({
+    id: computerCapabilityIdSchema,
+    name: z.string().min(1).max(80),
+    description: z.string().min(1).max(500),
+    enabled: z.boolean(),
+    supported: z.boolean(),
+    browserProfileId: browserProfileIdSchema.nullable(),
+    riskSummary: z.string().min(1).max(500)
+  })
+  .strict()
+export type ComputerCapabilityConfigSummary = z.infer<
+  typeof computerCapabilityConfigSummarySchema
+>
+
+export const capabilityDiagnosticStatusSchema = z.enum([
+  'available',
+  'degraded',
+  'unavailable',
+  'disabled'
+])
+export type CapabilityDiagnosticStatus = z.infer<
+  typeof capabilityDiagnosticStatusSchema
+>
+
+export const capabilityDiagnosticCheckStatusSchema =
+  capabilityDiagnosticStatusSchema.exclude(['disabled'])
+
+export const capabilityDiagnosticCheckSchema = z
+  .object({
+    id: z
+      .string()
+      .min(1)
+      .max(80)
+      .regex(/^[a-z][a-z0-9-]*$/u),
+    status: capabilityDiagnosticCheckStatusSchema,
+    summary: z.string().min(1).max(240),
+    remedy: z.string().min(1).max(400).optional()
+  })
+  .strict()
+
+export const capabilityDiagnosticReportSchema = z
+  .object({
+    capabilityId: computerCapabilityIdSchema,
+    status: capabilityDiagnosticStatusSchema,
+    checkedAt: z.string().datetime(),
+    checks: z.array(capabilityDiagnosticCheckSchema).max(16)
+  })
+  .strict()
+export type CapabilityDiagnosticReport = z.infer<
+  typeof capabilityDiagnosticReportSchema
+>
+
 export const mcpTransportSchema = z.enum(['stdio', 'http', 'sse'])
 export type McpTransport = z.infer<typeof mcpTransportSchema>
 
@@ -185,7 +309,12 @@ export type McpServerSummary = z.infer<typeof mcpServerSummarySchema>
 export const capabilitySnapshotSchema = z
   .object({
     skills: z.array(skillSummarySchema).max(256),
-    mcpServers: z.array(mcpServerSummarySchema).max(64)
+    mcpServers: z.array(mcpServerSummarySchema).max(64),
+    computerCapabilities: z
+      .array(computerCapabilityConfigSummarySchema)
+      .max(2)
+      .optional(),
+    browserProfiles: browserProfilesSummarySchema.optional()
   })
   .strict()
 export type CapabilitySnapshot = z.infer<typeof capabilitySnapshotSchema>

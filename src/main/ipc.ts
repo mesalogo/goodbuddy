@@ -12,6 +12,7 @@ import { z } from 'zod'
 import {
   approvalDecisionSchema,
   agentRequestSchema,
+  browserStopRequestSchema,
   knowledgeCreateSchema,
   knowledgeEntityUpdateSchema,
   knowledgeIdSchema,
@@ -26,23 +27,32 @@ import {
   type AgentRuntimeDetection,
   type AgentEvent,
   type AppInfo,
+  type BrowserLiveState,
   type KnowledgeSnapshot,
   type RuntimeSettings
 } from '../shared/contracts'
 import { ipcChannels } from '../shared/ipc-channels'
 import {
+  browserProfileCreateInputSchema,
+  browserProfileRenameInputSchema,
+  browserProfileSelectionInputSchema,
+  computerCapabilityConfigInputSchema,
+  computerCapabilityIdSchema,
+  computerCapabilityToggleInputSchema,
   mcpServerIdSchema,
   mcpServerInputSchema,
   skillAssignmentsInputSchema,
   skillIdSchema,
   skillToggleInputSchema,
   type CapabilitySnapshot,
+  type CapabilityDiagnosticReport,
   type McpServerTestResult
 } from '../shared/capability-contracts'
 import {
   assistantIdSchema,
   conversationSnapshotsSchema,
   memoryCreateSchema,
+  normalizeInteractiveWorkMode,
   projectCreateSchema,
   scheduleCreateSchema,
   expertCreateSchema,
@@ -129,6 +139,12 @@ const taskStatusRequestSchema = z
   .object({
     taskId: assistantIdSchema,
     status: z.enum(['completed', 'cancelled'])
+  })
+  .strict()
+const expertUpdateRequestSchema = z
+  .object({
+    expertId: assistantIdSchema,
+    input: expertCreateSchema
   })
   .strict()
 
@@ -346,7 +362,12 @@ export function registerIpcHandlers(
   assistantDatabase: AssistantDatabase,
   approvalBroker: ToolApprovalBroker,
   bundledRuntimePaths: BundledRuntimePaths,
-  onRuntimeSettingsChanged: () => Promise<void>
+  onRuntimeSettingsChanged: () => Promise<void>,
+  onBeforeClearLocalData?: () => Promise<void>,
+  browserControl?: {
+    releaseConversation(conversationId: string): Promise<void>
+    onState(listener: (state: BrowserLiveState) => void): () => void
+  }
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
   const heartbeatControllers = new Set<AbortController>()
@@ -364,6 +385,7 @@ export function registerIpcHandlers(
   const channels = Object.values(ipcChannels).filter(
     (channel) =>
       channel !== ipcChannels.agentEvent &&
+      channel !== ipcChannels.browserState &&
       channel !== ipcChannels.conversationNew &&
       channel !== ipcChannels.settingsOpen &&
       channel !== ipcChannels.windowMaximizedChanged
@@ -383,6 +405,11 @@ export function registerIpcHandlers(
   }
   window.on('maximize', notifyMaximizedChanged)
   window.on('unmaximize', notifyMaximizedChanged)
+  const removeBrowserStateListener = browserControl?.onState((state) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(ipcChannels.browserState, state)
+    }
+  })
 
   const abortActiveRequests = (reason: string): void => {
     for (const controller of activeRequests.values()) {
@@ -936,6 +963,7 @@ export function registerIpcHandlers(
       heartbeatControllers.clear()
       approvalBroker.clear()
       await Promise.allSettled([...activeExecutions])
+      await onBeforeClearLocalData?.()
       assistantDatabase.clearAssistantData()
     } finally {
       executionPaused = false
@@ -947,18 +975,27 @@ export function registerIpcHandlers(
     return runtime.getStatus()
   })
 
+  ipcMain.handle(ipcChannels.browserStop, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = browserStopRequestSchema.parse(input)
+    await browserControl?.releaseConversation(request.conversationId)
+  })
+
   ipcMain.handle(ipcChannels.agentRun, (event, input: unknown) => {
     assertTrustedSender(event, window)
     if (executionPaused || shuttingDown) {
       throw new Error('本地数据维护期间暂不接受新任务')
     }
     const parsedInput = agentRequestSchema.parse(input)
+    const normalizedWorkMode = normalizeInteractiveWorkMode(
+      parsedInput.workMode
+    )
     const agentRuntimeSelected = isAgentRuntime(runtime)
     const parsedRequest = {
       ...parsedInput,
-      workMode: agentRuntimeSelected
+      workMode: agentRuntimeSelected && parsedInput.workMode !== 'plan'
         ? ('execute' as const)
-        : (parsedInput.workMode ?? ('ask' as const))
+        : normalizedWorkMode
     }
     if (
       parsedRequest.workMode === 'execute' &&
@@ -977,13 +1014,11 @@ export function registerIpcHandlers(
         ? ''
         : enrichedRequest.workMode === 'ask'
           ? 'Work mode: Ask. Do not call tools or make changes. Answer using only the explicitly supplied context.'
-          : enrichedRequest.workMode === 'plan'
-            ? 'Work mode: Plan. Do not call tools or make changes. Produce a concrete reviewable plan and wait for user confirmation.'
-            : enrichedRequest.workMode === 'execute'
-              ? agentRuntimeSelected
-                ? 'Work mode: Execute. Follow the user request. Agent Runtime tool calls execute without GoodBuddy approval and must remain visible in runtime activity.'
-                : 'Work mode: Execute. Follow the approved request; all tool actions remain subject to GoodBuddy permission controls.'
-              : ''
+          : enrichedRequest.workMode === 'execute'
+            ? agentRuntimeSelected
+              ? 'Work mode: Execute. Follow the user request. Agent Runtime tool calls execute without GoodBuddy approval and must remain visible in runtime activity.'
+              : 'Work mode: Execute. Follow the approved request. Enabled direct-model tools are authorized for this interactive run and must remain visible in runtime activity.'
+            : ''
     const expertInstruction =
       enrichedRequest.expertId && !imageGeneration
         ? `Selected expert role:\n${
@@ -1024,41 +1059,17 @@ export function registerIpcHandlers(
         Extract<AgentEvent, { type: 'tool' }>
       >()
       try {
-        const authorize: RuntimeAuthorizer = async (approvalRequest) => {
-          assistantDatabase.updateTaskStatus(
-            request.requestId,
-            'waiting_approval'
-          )
-          const settings = await settingsStore.getResolvedSettings()
-          try {
-            return await approvalBroker.request(
-              {
-                ...approvalRequest,
-                policy:
-                  settings.toolApproval === 'policy'
-                    ? 'policy'
-                    : undefined,
-                requestId: request.requestId,
-                conversationId: request.conversationId
-              },
-              controller.signal,
-              (approvalEvent) => {
-                if (!window.isDestroyed()) {
-                  window.webContents.send(
-                    ipcChannels.agentEvent,
-                    approvalEvent
-                  )
-                }
-              }
-            )
-          } finally {
-            if (!controller.signal.aborted) {
-              assistantDatabase.updateTaskStatus(
-                request.requestId,
-                'running'
-              )
-            }
-          }
+        controller.signal.throwIfAborted()
+        const executeToolPolicy =
+          request.workMode === 'execute' && !agentRuntimeSelected
+            ? (await settingsStore.getResolvedSettings()).toolApproval
+            : 'policy'
+        const authorize: RuntimeAuthorizer = async () => {
+          controller.signal.throwIfAborted()
+          return request.workMode === 'execute' &&
+            executeToolPolicy !== 'policy'
+            ? 'once'
+            : 'deny'
         }
         const eventStream = request.teamMode
           ? runExpertTeam(request, controller.signal)
@@ -1105,7 +1116,9 @@ export function registerIpcHandlers(
           }
           if (publicEvent.type === 'done') {
             const unsuccessfulTool = [...toolStates.values()].find(
-              (tool) => tool.state !== 'completed'
+              (tool) =>
+                tool.state !== 'completed' &&
+                tool.state !== 'recoverable'
             )
             if (unsuccessfulTool) {
               throw new Error(
@@ -1623,6 +1636,17 @@ export function registerIpcHandlers(
     return assistantDatabase.createExpert(expertCreateSchema.parse(input))
   })
 
+  ipcMain.handle(ipcChannels.expertsUpdate, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const value = expertUpdateRequestSchema.parse(input)
+    return assistantDatabase.updateExpert(value.expertId, value.input)
+  })
+
+  ipcMain.handle(ipcChannels.expertsRemove, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    assistantDatabase.removeExpert(assistantIdSchema.parse(input))
+  })
+
   ipcMain.handle(
     ipcChannels.capabilitiesSnapshot,
     (event): Promise<CapabilitySnapshot> => {
@@ -1717,6 +1741,88 @@ export function registerIpcHandlers(
         await capabilityService.getResolvedMcpServer(
           mcpServerIdSchema.parse(input)
         )
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.capabilitiesToggleComputer,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = computerCapabilityToggleInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.setComputerCapabilityEnabled(
+          value.capabilityId,
+          value.enabled
+        )
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.capabilitiesConfigureComputer,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = computerCapabilityConfigInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.setComputerCapabilityBrowserProfile(
+          value.capabilityId,
+          value.browserProfileId
+        )
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.capabilitiesDiagnoseComputer,
+    (event, input: unknown): Promise<CapabilityDiagnosticReport> => {
+      assertTrustedSender(event, window)
+      return capabilityService.diagnoseComputerCapability(
+        computerCapabilityIdSchema.parse(input)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.capabilitiesCreateBrowserProfile,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = browserProfileCreateInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.createBrowserProfile(value.name)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.capabilitiesRenameBrowserProfile,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = browserProfileRenameInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.renameBrowserProfile(value.profileId, value.name)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.capabilitiesDefaultBrowserProfile,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = browserProfileSelectionInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.setDefaultBrowserProfile(value.profileId)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.capabilitiesRemoveBrowserProfile,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = browserProfileSelectionInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.removeBrowserProfile(value.profileId)
       )
     }
   )
@@ -2033,6 +2139,7 @@ export function registerIpcHandlers(
 
   return async () => {
     shuttingDown = true
+    removeBrowserStateListener?.()
     clearInterval(scheduleInterval)
     remoteDelegation?.stop()
     abortActiveRequests('应用正在退出')

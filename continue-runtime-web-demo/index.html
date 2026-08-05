@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GoodBuddy 控制中心 · AI 运维仪表盘</title>
+  <meta name="description" content="GoodBuddy Control Center —— AI 代理运维监控与任务管理仪表盘" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳转到主要内容</a>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">GB</span>
+        <span class="brand-name">GoodBuddy 控制中心</span>
+      </div>
+
+      <button
+        id="navToggleBtn"
+        class="nav-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="primaryNav"
+      >
+        <span class="visually-hidden">切换导航菜单</span>
+        <span class="nav-toggle-bar" aria-hidden="true"></span>
+        <span class="nav-toggle-bar" aria-hidden="true"></span>
+        <span class="nav-toggle-bar" aria-hidden="true"></span>
+      </button>
+
+      <nav id="primaryNav" class="primary-nav" aria-label="主导航">
+        <ul>
+          <li><a href="#overview">概览</a></li>
+          <li><a href="#agents">代理状态</a></li>
+          <li><a href="#tasks">任务看板</a></li>
+          <li><a href="#activity">活动日志</a></li>
+        </ul>
+      </nav>
+
+      <div class="header-actions">
+        <button id="themeToggleBtn" class="theme-toggle" type="button" aria-pressed="false">
+          <span class="theme-toggle-icon" aria-hidden="true">🌙</span>
+          <span class="theme-toggle-label">深色模式</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <section id="overview" class="hero" aria-labelledby="overview-heading">
+      <div class="section-inner">
+        <h1 id="overview-heading">今日运维概览</h1>
+        <p class="hero-subtitle">实时掌握 AI 代理集群健康状况与任务执行进度</p>
+
+        <div class="metrics" role="list">
+          <div class="metric-card" role="listitem">
+            <p class="metric-label">总任务数</p>
+            <p class="metric-value">128</p>
+            <p class="metric-delta metric-delta--up">较昨日 +12</p>
+          </div>
+          <div class="metric-card" role="listitem">
+            <p class="metric-label">运行中代理</p>
+            <p class="metric-value">6</p>
+            <p class="metric-delta metric-delta--up">全部在线</p>
+          </div>
+          <div class="metric-card" role="listitem">
+            <p class="metric-label">已完成任务</p>
+            <p class="metric-value">96</p>
+            <p class="metric-delta metric-delta--up">完成率 75%</p>
+          </div>
+          <div class="metric-card" role="listitem">
+            <p class="metric-label">平均响应时间</p>
+            <p class="metric-value">340ms</p>
+            <p class="metric-delta metric-delta--down">较昨日 -18ms</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="agents" class="agents" aria-labelledby="agents-heading">
+      <div class="section-inner">
+        <h2 id="agents-heading">代理状态</h2>
+        <ul class="agent-grid">
+          <li class="agent-card">
+            <div class="agent-card-top">
+              <span class="agent-avatar" aria-hidden="true">A1</span>
+              <span class="status-badge status-running">运行中</span>
+            </div>
+            <h3 class="agent-name">Agent Alpha</h3>
+            <p class="agent-meta">负责：数据同步 &amp; 报表生成</p>
+            <p class="agent-meta">最近活跃：2 分钟前</p>
+          </li>
+          <li class="agent-card">
+            <div class="agent-card-top">
+              <span class="agent-avatar" aria-hidden="true">B2</span>
+              <span class="status-badge status-idle">空闲</span>
+            </div>
+            <h3 class="agent-name">Agent Beta</h3>
+            <p class="agent-meta">负责：客户工单处理</p>
+            <p class="agent-meta">最近活跃：15 分钟前</p>
+          </li>
+          <li class="agent-card">
+            <div class="agent-card-top">
+              <span class="agent-avatar" aria-hidden="true">G3</span>
+              <span class="status-badge status-maintenance">维护中</span>
+            </div>
+            <h3 class="agent-name">Agent Gamma</h3>
+            <p class="agent-meta">负责：库存预警检测</p>
+            <p class="agent-meta">最近活跃：1 小时前</p>
+          </li>
+          <li class="agent-card">
+            <div class="agent-card-top">
+              <span class="agent-avatar" aria-hidden="true">D4</span>
+              <span class="status-badge status-running">运行中</span>
+            </div>
+            <h3 class="agent-name">Agent Delta</h3>
+            <p class="agent-meta">负责：日志汇总分析</p>
+            <p class="agent-meta">最近活跃：刚刚</p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="tasks" class="tasks" aria-labelledby="tasks-heading">
+      <div class="section-inner">
+        <div class="tasks-header">
+          <h2 id="tasks-heading">任务看板</h2>
+          <button id="addTaskBtn" class="btn btn-primary" type="button">
+            <span aria-hidden="true">+</span> 添加任务
+          </button>
+        </div>
+
+        <div class="filter-group" role="group" aria-label="按状态筛选任务">
+          <button class="filter-btn is-active" type="button" data-filter="all" aria-pressed="true">
+            全部
+          </button>
+          <button class="filter-btn" type="button" data-filter="running" aria-pressed="false">
+            运行中
+          </button>
+          <button class="filter-btn" type="button" data-filter="completed" aria-pressed="false">
+            已完成
+          </button>
+        </div>
+
+        <p id="taskEmptyState" class="empty-state" hidden>没有符合条件的任务。</p>
+
+        <ul id="taskList" class="task-list">
+          <li class="task-card" data-status="running">
+            <div class="task-card-top">
+              <h3 class="task-title">数据同步任务</h3>
+              <span class="status-badge status-running">运行中</span>
+            </div>
+            <p class="task-meta">负责人：Agent Alpha</p>
+            <p class="task-meta">截止时间：今天 18:00</p>
+          </li>
+          <li class="task-card" data-status="completed">
+            <div class="task-card-top">
+              <h3 class="task-title">客户工单自动回复</h3>
+              <span class="status-badge status-completed">已完成</span>
+            </div>
+            <p class="task-meta">负责人：Agent Beta</p>
+            <p class="task-meta">完成时间：今天 09:24</p>
+          </li>
+          <li class="task-card" data-status="running">
+            <div class="task-card-top">
+              <h3 class="task-title">每日日志汇总</h3>
+              <span class="status-badge status-running">运行中</span>
+            </div>
+            <p class="task-meta">负责人：Agent Delta</p>
+            <p class="task-meta">截止时间：今天 23:00</p>
+          </li>
+          <li class="task-card" data-status="completed">
+            <div class="task-card-top">
+              <h3 class="task-title">库存预警检测</h3>
+              <span class="status-badge status-completed">已完成</span>
+            </div>
+            <p class="task-meta">负责人：Agent Gamma</p>
+            <p class="task-meta">完成时间：昨天 21:10</p>
+          </li>
+          <li class="task-card" data-status="running">
+            <div class="task-card-top">
+              <h3 class="task-title">周报生成</h3>
+              <span class="status-badge status-running">运行中</span>
+            </div>
+            <p class="task-meta">负责人：Agent Alpha</p>
+            <p class="task-meta">截止时间：本周五 12:00</p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="activity" class="activity" aria-labelledby="activity-heading">
+      <div class="section-inner">
+        <h2 id="activity-heading">活动日志</h2>
+
+        <div class="search-field">
+          <label for="activitySearch" class="visually-hidden">搜索活动日志</label>
+          <input
+            type="search"
+            id="activitySearch"
+            class="search-input"
+            placeholder="搜索活动日志，例如“Agent Alpha”或“同步”"
+            autocomplete="off"
+          />
+        </div>
+
+        <p id="activityEmptyState" class="empty-state" hidden>没有找到匹配的活动记录。</p>
+
+        <ul id="activityList" class="activity-list">
+          <li class="activity-item">
+            <span class="activity-time">10:42</span>
+            <span class="activity-text">Agent Alpha 完成了「数据同步任务」的第 3 阶段</span>
+          </li>
+          <li class="activity-item">
+            <span class="activity-time">10:31</span>
+            <span class="activity-text">Agent Beta 自动回复了 12 条客户工单</span>
+          </li>
+          <li class="activity-item">
+            <span class="activity-time">09:58</span>
+            <span class="activity-text">Agent Gamma 触发了库存预警检测维护流程</span>
+          </li>
+          <li class="activity-item">
+            <span class="activity-time">09:20</span>
+            <span class="activity-text">Agent Delta 生成了每日日志汇总报告</span>
+          </li>
+          <li class="activity-item">
+            <span class="activity-time">08:47</span>
+            <span class="activity-text">系统检测到 Agent Alpha 响应时间恢复正常</span>
+          </li>
+          <li class="activity-item">
+            <span class="activity-time">08:02</span>
+            <span class="activity-text">Agent Delta 启动，开始监听新任务队列</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="section-inner">
+      <p>© 2026 GoodBuddy Control Center. 保留所有权利。</p>
+      <p class="footer-marker">CONTINUE_WEB_DEMO_OK</p>
+    </div>
+  </footer>
+
+  <div class="modal-overlay" id="taskModalOverlay" hidden></div>
+  <div
+    class="modal"
+    id="taskModal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="taskModalTitle"
+    hidden
+  >
+    <form id="taskForm" class="modal-form" novalidate>
+      <div class="modal-header">
+        <h2 id="taskModalTitle">添加新任务</h2>
+        <button type="button" id="modalCloseBtn" class="modal-close" aria-label="关闭对话框">
+          ×
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="form-field">
+          <label for="taskTitleInput">任务名称</label>
+          <input
+            type="text"
+            id="taskTitleInput"
+            name="taskTitle"
+            required
+            maxlength="80"
+            placeholder="例如：生成月度运营报告"
+          />
+        </div>
+
+        <div class="form-field">
+          <label for="taskAssigneeSelect">负责人</label>
+          <select id="taskAssigneeSelect" name="taskAssignee">
+            <option value="Agent Alpha">Agent Alpha</option>
+            <option value="Agent Beta">Agent Beta</option>
+            <option value="Agent Gamma">Agent Gamma</option>
+            <option value="Agent Delta">Agent Delta</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label for="taskStatusSelect">初始状态</label>
+          <select id="taskStatusSelect" name="taskStatus">
+            <option value="running">运行中</option>
+            <option value="completed">已完成</option>
+          </select>
+        </div>
+
+        <p id="taskFormError" class="form-error" role="alert" hidden>请填写任务名称。</p>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="modalCancelBtn">取消</button>
+        <button type="submit" class="btn btn-primary">保存任务</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

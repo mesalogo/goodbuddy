@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
+import type { BrowserLiveState } from '../shared/contracts'
 import { registerIpcHandlers } from './ipc'
 
 type InvokeHandler = (event: unknown, input?: unknown) => unknown
@@ -18,6 +19,131 @@ const electronMocks = vi.hoisted(() => {
       handlers.delete(channel)
     })
   }
+})
+
+describe('registerIpcHandlers computer capabilities', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates computer capability requests and restricts them to the trusted renderer', async () => {
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const snapshot = {
+      skills: [],
+      mcpServers: [],
+      computerCapabilities: [],
+      browserProfiles: { profiles: [], defaultProfileId: null }
+    }
+    const capabilityService = {
+      setComputerCapabilityEnabled: vi.fn(async () => snapshot),
+      createBrowserProfile: vi.fn(async () => snapshot),
+      diagnoseComputerCapability: vi.fn(async () => ({
+        capabilityId: 'host-browser-control',
+        status: 'disabled',
+        checkedAt: '2026-08-05T00:00:00.000Z',
+        checks: []
+      }))
+    }
+    const onRuntimeSettingsChanged = vi.fn(async () => {})
+    const releaseConversation = vi.fn(async () => {})
+    let browserStateListener:
+      | ((state: BrowserLiveState) => void)
+      | undefined
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      capabilityService as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      onRuntimeSettingsChanged,
+      undefined,
+      {
+        releaseConversation,
+        onState: (listener) => {
+          browserStateListener = listener
+          return vi.fn()
+        }
+      }
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesToggleComputer
+      )?.(event, {
+        capabilityId: 'host-browser-control',
+        enabled: true
+      })
+    ).resolves.toEqual(snapshot)
+    expect(
+      capabilityService.setComputerCapabilityEnabled
+    ).toHaveBeenCalledWith('host-browser-control', true)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+
+    browserStateListener?.({
+      conversationId: 'browser-conversation',
+      status: 'ready',
+      updatedAt: 1
+    })
+    expect(webContents.send).toHaveBeenCalledWith(
+      ipcChannels.browserState,
+      expect.objectContaining({
+        conversationId: 'browser-conversation',
+        status: 'ready'
+      })
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserStop)?.(event, {
+        conversationId: 'browser-conversation'
+      })
+    ).resolves.toBeUndefined()
+    expect(releaseConversation).toHaveBeenCalledWith(
+      'browser-conversation'
+    )
+
+    expect(() =>
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesCreateBrowserProfile
+      )?.(event, {
+        name: '工作配置',
+        executable: 'C:\\unsafe.exe'
+      })
+    ).toThrow()
+    expect(capabilityService.createBrowserProfile).not.toHaveBeenCalled()
+
+    expect(() =>
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesDiagnoseComputer
+      )?.(
+        {
+          sender: {},
+          senderFrame: webContents.mainFrame
+        },
+        'host-browser-control'
+      )
+    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+    await dispose()
+  })
 })
 
 vi.mock('electron', () => ({
@@ -273,14 +399,19 @@ describe('registerIpcHandlers agent terminal state', () => {
     vi.clearAllMocks()
   })
 
-  function createHarness(runtime: Record<string, unknown>) {
+  function createHarness(
+    runtime: Record<string, unknown>,
+    onBeforeClearLocalData?: () => Promise<void>,
+    toolApproval: 'always' | 'policy' = 'always'
+  ) {
     const assistantDatabase = {
       claimDueSchedules: vi.fn(() => []),
       createTask: vi.fn(),
       appendTaskEvent: vi.fn(),
       updateTaskStatus: vi.fn(),
       createTextArtifact: vi.fn(),
-      upsertModelUsageCall: vi.fn()
+      upsertModelUsageCall: vi.fn(),
+      clearAssistantData: vi.fn()
     }
     const webContents = {
       mainFrame: { url: 'file:///goodbuddy/index.html' },
@@ -309,7 +440,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       'CommandOrControl+Shift+Space',
       {
         getResolvedSettings: vi.fn(async () => ({
-          toolApproval: 'always'
+          toolApproval
         }))
       } as never,
       {} as never,
@@ -318,12 +449,16 @@ describe('registerIpcHandlers agent terminal state', () => {
       assistantDatabase as never,
       approvalBroker as never,
       {} as never,
-      vi.fn(async () => {})
+      vi.fn(async () => {}),
+      onBeforeClearLocalData
     )
     return {
       approvalBroker,
       assistantDatabase,
       dispose,
+      clearHandler: electronMocks.handlers.get(
+        ipcChannels.appClearLocalData
+      ),
       handler: electronMocks.handlers.get(ipcChannels.agentRun),
       webContents
     }
@@ -334,6 +469,62 @@ describe('registerIpcHandlers agent terminal state', () => {
   }) => ({
     sender: webContents,
     senderFrame: webContents.mainFrame
+  })
+
+  it('aborts active work and clears browser sessions before assistant data', async () => {
+    const lifecycle: string[] = []
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const runtime = {
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(
+        _request: unknown,
+        signal: AbortSignal
+      ): AsyncGenerator<never, void, void> {
+        markStarted()
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              lifecycle.push('aborted')
+              reject(signal.reason)
+            },
+            { once: true }
+          )
+        })
+        yield undefined as never
+      }
+    }
+    const harness = createHarness(runtime, async () => {
+      lifecycle.push('browser-cleared')
+    })
+    vi.mocked(
+      harness.assistantDatabase.clearAssistantData
+    ).mockImplementation(() => {
+      lifecycle.push('assistant-cleared')
+    })
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+      conversationId: 'conversation-clear',
+      prompt: 'keep running',
+      workMode: 'execute'
+    })
+    await started
+
+    await harness.clearHandler?.(trustedEvent(harness.webContents))
+
+    expect(lifecycle).toEqual([
+      'aborted',
+      'browser-cleared',
+      'assistant-cleared'
+    ])
+    await harness.dispose()
   })
 
   it('marks a request failed when a tool fails before runtime done', async () => {
@@ -382,6 +573,51 @@ describe('registerIpcHandlers agent terminal state', () => {
         type: 'error',
         status: 'failed'
       })
+    )
+    await harness.dispose()
+  })
+
+  it('allows a completed request after a recoverable tool failure', async () => {
+    const runtime = {
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'tool',
+          callId: 'call-recoverable',
+          name: '浏览器输入',
+          state: 'recoverable',
+          summary: '直连模型工具需要刷新后重试：浏览器输入'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'conversation-1',
+      prompt: 'retry browser input',
+      workMode: 'execute'
+    })
+
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).not.toHaveBeenCalledWith(
+      requestId,
+      'failed',
+      expect.any(String)
     )
     await harness.dispose()
   })
@@ -438,6 +674,55 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   )
 
+  it.each(['model', 'opencode'] as const)(
+    'normalizes legacy interactive Plan requests to Ask for %s',
+    async (runtimeId) => {
+      let receivedRequest:
+        | { requestId: string; prompt: string; workMode?: string }
+        | undefined
+      const runtime = {
+        runtimeId,
+        capability: 'chat',
+        requiresToolApproval: false,
+        supportsToolExecution: true,
+        getStatus: vi.fn(),
+        dispose: vi.fn(),
+        async *run(request: {
+          requestId: string
+          prompt: string
+          workMode?: string
+        }) {
+          receivedRequest = request
+          yield { requestId: request.requestId, type: 'done' }
+        }
+      }
+      const harness = createHarness(runtime)
+      const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId,
+        conversationId: 'conversation-1',
+        prompt: 'draft a plan',
+        workMode: 'plan'
+      })
+
+      await vi.waitFor(() =>
+        expect(
+          harness.assistantDatabase.updateTaskStatus
+        ).toHaveBeenCalledWith(requestId, 'completed')
+      )
+      expect(receivedRequest?.workMode).toBe('ask')
+      expect(receivedRequest?.prompt).toContain('Work mode: Ask.')
+      expect(receivedRequest?.prompt).not.toContain('Work mode: Plan.')
+      expect(
+        harness.assistantDatabase.createTask
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ id: requestId, workMode: 'ask' })
+      )
+      await harness.dispose()
+    }
+  )
+
   it('rejects Execute before creating a task on an unsupported runtime', async () => {
     const runtime = {
       capability: 'chat',
@@ -461,7 +746,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('routes direct-model tool calls through the GoodBuddy approval broker', async () => {
+  it('authorizes direct-model Execute tools without approval events or broker prompts', async () => {
     let receivedAuthorize:
       | ((
           request: {
@@ -471,6 +756,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           }
         ) => Promise<string>)
       | undefined
+    let decision: string | undefined
     const runtime = {
       runtimeId: 'model',
       capability: 'chat',
@@ -484,7 +770,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         authorize: typeof receivedAuthorize
       ) {
         receivedAuthorize = authorize
-        await authorize?.({
+        decision = await authorize?.({
           scopeKey: 'model:builtin:workspace_read_text',
           title: '允许读取工作区文本？',
           description: '读取 README.md'
@@ -501,7 +787,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       }
     }
     const harness = createHarness(runtime)
-    harness.approvalBroker.request.mockResolvedValue('once')
     const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
 
     harness.handler?.(trustedEvent(harness.webContents), {
@@ -517,14 +802,66 @@ describe('registerIpcHandlers agent terminal state', () => {
       ).toHaveBeenCalledWith(requestId, 'completed')
     )
     expect(receivedAuthorize).toEqual(expect.any(Function))
-    expect(harness.approvalBroker.request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestId,
-        conversationId: 'conversation-1',
-        scopeKey: 'model:builtin:workspace_read_text'
-      }),
-      expect.any(AbortSignal),
-      expect.any(Function)
+    expect(decision).toBe('once')
+    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).not.toHaveBeenCalledWith(requestId, 'waiting_approval')
+    expect(harness.webContents.send).not.toHaveBeenCalledWith(
+      ipcChannels.agentEvent,
+      expect.objectContaining({ type: 'approval' })
+    )
+    await harness.dispose()
+  })
+
+  it('denies direct-model Execute tools when the deny-all policy is selected', async () => {
+    let decision: string | undefined
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(
+        request: { requestId: string },
+        _signal: AbortSignal,
+        authorize: (
+          request: {
+            scopeKey: string
+            title: string
+            description: string
+          }
+        ) => Promise<string>
+      ) {
+        decision = await authorize({
+          scopeKey: 'model:builtin:workspace_read_text',
+          title: '允许读取工作区文本？',
+          description: '读取 README.md'
+        })
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime, undefined, 'policy')
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'conversation-1',
+      prompt: '读取文件',
+      workMode: 'execute'
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+    expect(decision).toBe('deny')
+    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(harness.webContents.send).not.toHaveBeenCalledWith(
+      ipcChannels.agentEvent,
+      expect.objectContaining({ type: 'approval' })
     )
     await harness.dispose()
   })

@@ -2,6 +2,16 @@ import { z } from 'zod'
 
 export const assistantIdSchema = z.string().uuid()
 export const workModeSchema = z.enum(['ask', 'plan', 'execute'])
+export const interactiveWorkModes = ['ask', 'execute'] as const
+
+export type WorkMode = z.infer<typeof workModeSchema>
+export type InteractiveWorkMode = (typeof interactiveWorkModes)[number]
+
+export function normalizeInteractiveWorkMode(
+  workMode: WorkMode | undefined
+): InteractiveWorkMode {
+  return workMode === 'execute' ? 'execute' : 'ask'
+}
 
 export const projectCreateSchema = z
   .object({
@@ -14,7 +24,6 @@ export const projectCreateSchema = z
 
 export const projectUpdateSchema = projectCreateSchema
 
-export type WorkMode = z.infer<typeof workModeSchema>
 export type ProjectCreateInput = z.infer<typeof projectCreateSchema>
 
 export const conversationSnapshotSchema = z
@@ -44,6 +53,7 @@ export const conversationSnapshotSchema = z
                       'running',
                       'completed',
                       'failed',
+                      'recoverable',
                       'cancelled',
                       'interrupted'
                     ]),
@@ -433,6 +443,7 @@ export const expertCreateSchema = z
   .strict()
 
 export type ExpertCreateInput = z.infer<typeof expertCreateSchema>
+export type ExpertUpdateInput = ExpertCreateInput
 
 export type AssistantExpert = ExpertCreateInput & {
   id: string

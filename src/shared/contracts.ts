@@ -1,7 +1,11 @@
 import { z } from 'zod'
 import type {
+  BrowserProfileCreateInput,
+  BrowserProfileRenameInput,
+  CapabilityDiagnosticReport,
   CapabilityAssignments,
   CapabilitySnapshot,
+  ComputerCapabilityId,
   McpServerInput,
   McpServerTestResult
 } from './capability-contracts'
@@ -27,7 +31,8 @@ import {
   type ScheduleCreateInput,
   type HeartbeatCreateInput,
   type HeartbeatUpdateInput,
-  type ExpertCreateInput
+  type ExpertCreateInput,
+  type ExpertUpdateInput
 } from './assistant-contracts'
 
 export const workspaceRelativePathSchema = z
@@ -61,10 +66,12 @@ export const workspaceFileRequestSchema = z
   })
   .strict()
 
+export const conversationIdSchema = z.string().min(1).max(128)
+
 export const agentRequestSchema = z
   .object({
     requestId: z.string().uuid(),
-    conversationId: z.string().min(1).max(128),
+    conversationId: conversationIdSchema,
     projectId: z.string().uuid().optional(),
     expertId: z.string().uuid().optional(),
     teamMode: z.boolean().optional(),
@@ -550,7 +557,12 @@ export type AgentEvent =
       type: 'tool'
       callId: string
       name: string
-      state: 'pending' | 'running' | 'completed' | 'failed'
+      state:
+        | 'pending'
+        | 'running'
+        | 'completed'
+        | 'failed'
+        | 'recoverable'
       summary: string
     }
   | {
@@ -589,6 +601,39 @@ export type AppInfo = {
   arch: string
   shortcut: string
 }
+
+export const browserLiveStateSchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    status: z.enum([
+      'creating',
+      'loading',
+      'ready',
+      'acting',
+      'failed',
+      'stopped'
+    ]),
+    url: z.string().max(2_048).optional(),
+    frameDataUrl: z
+      .string()
+      .max(7_000_000)
+      .refine(
+        (value) => value.startsWith('data:image/png;base64,'),
+        '浏览器画面格式无效'
+      )
+      .optional(),
+    error: z.string().min(1).max(240).optional(),
+    updatedAt: z.number().int().nonnegative()
+  })
+  .strict()
+
+export type BrowserLiveState = z.infer<typeof browserLiveStateSchema>
+
+export const browserStopRequestSchema = z
+  .object({
+    conversationId: conversationIdSchema
+  })
+  .strict()
 
 export const knowledgeIdSchema = z.string().uuid()
 export const knowledgeCreateSchema = z
@@ -749,6 +794,10 @@ export type DesktopApi = {
     ) => Promise<void>
     onEvent: (listener: (event: AgentEvent) => void) => () => void
   }
+  browser: {
+    stop: (conversationId: string) => Promise<void>
+    onState: (listener: (state: BrowserLiveState) => void) => () => void
+  }
   settings: {
     getRuntime: () => Promise<RuntimeSettings>
     updateRuntime: (input: RuntimeSettingsInput) => Promise<RuntimeSettings>
@@ -836,6 +885,11 @@ export type DesktopApi = {
   experts: {
     list: () => Promise<AssistantExpert[]>
     create: (input: ExpertCreateInput) => Promise<AssistantExpert>
+    update: (
+      expertId: string,
+      input: ExpertUpdateInput
+    ) => Promise<AssistantExpert>
+    remove: (expertId: string) => Promise<void>
   }
   capabilities: {
     getSnapshot: () => Promise<CapabilitySnapshot>
@@ -855,6 +909,29 @@ export type DesktopApi = {
     ) => Promise<CapabilitySnapshot>
     removeMcpServer: (serverId: string) => Promise<CapabilitySnapshot>
     testMcpServer: (serverId: string) => Promise<McpServerTestResult>
+    setComputerCapabilityEnabled?: (
+      capabilityId: ComputerCapabilityId,
+      enabled: boolean
+    ) => Promise<CapabilitySnapshot>
+    setComputerCapabilityBrowserProfile?: (
+      capabilityId: ComputerCapabilityId,
+      browserProfileId: string | null
+    ) => Promise<CapabilitySnapshot>
+    diagnoseComputerCapability?: (
+      capabilityId: ComputerCapabilityId
+    ) => Promise<CapabilityDiagnosticReport>
+    createBrowserProfile?: (
+      input: BrowserProfileCreateInput
+    ) => Promise<CapabilitySnapshot>
+    renameBrowserProfile?: (
+      input: BrowserProfileRenameInput
+    ) => Promise<CapabilitySnapshot>
+    setDefaultBrowserProfile?: (
+      profileId: string
+    ) => Promise<CapabilitySnapshot>
+    removeBrowserProfile?: (
+      profileId: string
+    ) => Promise<CapabilitySnapshot>
   }
   context: {
     selectFiles: () => Promise<ContextAttachment[]>

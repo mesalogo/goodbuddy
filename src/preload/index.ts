@@ -6,6 +6,7 @@ import {
   type AgentRuntimeDetection,
   type AgentRuntimeStatus,
   type AppInfo,
+  type BrowserLiveState,
   type ContextAttachment,
   type DesktopApi,
   type KnowledgeLibrary,
@@ -17,7 +18,11 @@ import {
 } from '../shared/contracts'
 import { ipcChannels } from '../shared/ipc-channels'
 import type {
+  BrowserProfileCreateInput,
+  BrowserProfileRenameInput,
+  CapabilityDiagnosticReport,
   CapabilitySnapshot,
+  ComputerCapabilityId,
   McpServerTestResult
 } from '../shared/capability-contracts'
 import type {
@@ -40,7 +45,8 @@ import type {
   ScheduleCreateInput,
   HeartbeatCreateInput,
   HeartbeatUpdateInput,
-  ExpertCreateInput
+  ExpertCreateInput,
+  ExpertUpdateInput
 } from '../shared/assistant-contracts'
 
 const desktopApi: DesktopApi = {
@@ -114,6 +120,23 @@ const desktopApi: DesktopApi = {
         listener(payload)
       ipcRenderer.on(ipcChannels.agentEvent, handler)
       return () => ipcRenderer.removeListener(ipcChannels.agentEvent, handler)
+    }
+  },
+  browser: {
+    stop: async (conversationId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.browserStop,
+        { conversationId }
+      )
+    },
+    onState: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: BrowserLiveState
+      ): void => listener(payload)
+      ipcRenderer.on(ipcChannels.browserState, handler)
+      return () =>
+        ipcRenderer.removeListener(ipcChannels.browserState, handler)
     }
   },
   settings: {
@@ -329,7 +352,15 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.expertsCreate,
         input
-      ) as Promise<AssistantExpert>
+      ) as Promise<AssistantExpert>,
+    update: (expertId: string, input: ExpertUpdateInput) =>
+      ipcRenderer.invoke(ipcChannels.expertsUpdate, {
+        expertId,
+        input
+      }) as Promise<AssistantExpert>,
+    remove: async (expertId: string) => {
+      await ipcRenderer.invoke(ipcChannels.expertsRemove, expertId)
+    }
   },
   capabilities: {
     getSnapshot: () =>
@@ -369,7 +400,46 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.capabilitiesTestMcp,
         serverId
-      ) as Promise<McpServerTestResult>
+      ) as Promise<McpServerTestResult>,
+    setComputerCapabilityEnabled: (
+      capabilityId: ComputerCapabilityId,
+      enabled: boolean
+    ) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesToggleComputer, {
+        capabilityId,
+        enabled
+      }) as Promise<CapabilitySnapshot>,
+    setComputerCapabilityBrowserProfile: (
+      capabilityId: ComputerCapabilityId,
+      browserProfileId: string | null
+    ) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesConfigureComputer, {
+        capabilityId,
+        browserProfileId
+      }) as Promise<CapabilitySnapshot>,
+    diagnoseComputerCapability: (capabilityId: ComputerCapabilityId) =>
+      ipcRenderer.invoke(
+        ipcChannels.capabilitiesDiagnoseComputer,
+        capabilityId
+      ) as Promise<CapabilityDiagnosticReport>,
+    createBrowserProfile: (input: BrowserProfileCreateInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.capabilitiesCreateBrowserProfile,
+        input
+      ) as Promise<CapabilitySnapshot>,
+    renameBrowserProfile: (input: BrowserProfileRenameInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.capabilitiesRenameBrowserProfile,
+        input
+      ) as Promise<CapabilitySnapshot>,
+    setDefaultBrowserProfile: (profileId: string) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesDefaultBrowserProfile, {
+        profileId
+      }) as Promise<CapabilitySnapshot>,
+    removeBrowserProfile: (profileId: string) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesRemoveBrowserProfile, {
+        profileId
+      }) as Promise<CapabilitySnapshot>
   },
   context: {
     selectFiles: () =>

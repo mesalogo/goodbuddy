@@ -9,6 +9,7 @@ import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { ContinueHostLauncher } from './continue-host-adapter'
 import { resolveRuntimeSandbox } from './runtime-sandbox'
+import type { BrowserToolService } from '../browser/browser-model-tools'
 
 export type AgentCapabilityContext = {
   skillInstructions?: string
@@ -16,6 +17,7 @@ export type AgentCapabilityContext = {
   continueHostCacheRoot?: string
   bundledRuntimePaths?: BundledRuntimePaths
   continueHostLauncher?: ContinueHostLauncher
+  browserService?: BrowserToolService
 }
 
 export function createAgentRuntime(
@@ -127,7 +129,8 @@ export function createAgentRuntime(
       authentication: modelAuthentication,
       skillInstructions: capabilities.skillInstructions,
       defaultWorkspace: workspace,
-      mcpServers: capabilities.mcpServers
+      mcpServers: capabilities.mcpServers,
+      browserService: capabilities.browserService
     })
   }
 

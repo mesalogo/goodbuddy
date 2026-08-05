@@ -40,6 +40,7 @@ import type {
   AgentEvent,
   AgentRuntimeStatus,
   AppInfo,
+  BrowserLiveState,
   ContextAttachment,
   KnowledgeSearchReference,
   KnowledgeSnapshot,
@@ -60,8 +61,12 @@ import type {
   TokenUsageSummary,
   ConversationSnapshot,
   ProjectCreateInput,
-  WorkMode,
+  InteractiveWorkMode,
   WorkspaceChanges
+} from '../../shared/assistant-contracts'
+import {
+  interactiveWorkModes,
+  normalizeInteractiveWorkMode
 } from '../../shared/assistant-contracts'
 import { ActivityPanel } from './ActivityPanel'
 import {
@@ -110,6 +115,7 @@ type ToolActivity = {
     | 'running'
     | 'completed'
     | 'failed'
+    | 'recoverable'
     | 'cancelled'
     | 'interrupted'
   summary: string
@@ -194,6 +200,7 @@ const toolStateLabels: Record<ToolActivity['state'], string> = {
   running: '进行中',
   completed: '已完成',
   failed: '失败',
+  recoverable: '可重试',
   cancelled: '已取消',
   interrupted: '已中断'
 }
@@ -552,7 +559,8 @@ function App(): React.JSX.Element {
   const workspaceChangesRequestRef = useRef(0)
   const viewRef = useRef<WorkspaceView>('chat')
   const heartbeatLoadRequestRef = useRef(0)
-  const [workMode, setWorkMode] = useState<WorkMode>('ask')
+  const [workMode, setWorkMode] =
+    useState<InteractiveWorkMode>('ask')
   const [input, setInput] = useState('')
   const [voiceListening, setVoiceListening] = useState(false)
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
@@ -585,6 +593,9 @@ function App(): React.JSX.Element {
   )
   const [assistantSidebarTab, setAssistantSidebarTab] =
     useState<AssistantSidebarTab>('tasks')
+  const [browserStates, setBrowserStates] = useState<
+    Record<string, BrowserLiveState>
+  >({})
   const [view, setView] = useState<WorkspaceView>('chat')
   const [searchQuery, setSearchQuery] = useState('')
   const [conversationActionsId, setConversationActionsId] = useState('')
@@ -1286,7 +1297,9 @@ function App(): React.JSX.Element {
         const project = value[0]!
         setProjects(value)
         setActiveProjectId(project.id)
-        setWorkMode(project.defaultWorkMode)
+        setWorkMode(
+          normalizeInteractiveWorkMode(project.defaultWorkMode)
+        )
         let nextConversations: Conversation[] =
           persistedConversations.length > 0
             ? persistedConversations
@@ -1666,6 +1679,41 @@ function App(): React.JSX.Element {
   }, [handleAgentEvent])
 
   useEffect(
+    () => {
+      const browserApi = window.goodbuddy.browser
+      if (!browserApi) {
+        return
+      }
+      return browserApi.onState((state) => {
+        setBrowserStates((current) => {
+          const previous = current[state.conversationId]
+          return {
+            ...current,
+            [state.conversationId]:
+              state.status === 'stopped' ||
+              state.frameDataUrl ||
+              !previous?.frameDataUrl
+                ? state
+                : {
+                    ...state,
+                    frameDataUrl: previous.frameDataUrl
+                  }
+          }
+        })
+        if (
+          state.status !== 'stopped' &&
+          state.conversationId ===
+            conversationNavigationRef.current.activeId
+        ) {
+          setAssistantSidebarOpen(true)
+          setAssistantSidebarTab('browser')
+        }
+      })
+    },
+    []
+  )
+
+  useEffect(
     () =>
       window.goodbuddy.app.onNewConversation(() => {
         startNewConversation(activeProjectIdRef.current || undefined)
@@ -1689,7 +1737,7 @@ function App(): React.JSX.Element {
       return
     }
     setActiveProjectId(projectId)
-    setWorkMode(project.defaultWorkMode)
+    setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode))
     const conversation = conversations.find(
       (candidate) => candidate.projectId === projectId
     )
@@ -1709,7 +1757,7 @@ function App(): React.JSX.Element {
     const project = await window.goodbuddy.projects.create(input)
     setProjects((current) => [project, ...current])
     setActiveProjectId(project.id)
-    setWorkMode(project.defaultWorkMode)
+    setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode))
     const conversation = createConversation(project.id)
     setConversations((current) => [conversation, ...current])
     setActiveId(conversation.id)
@@ -1747,7 +1795,7 @@ function App(): React.JSX.Element {
 
   const useHeartbeatTask = (task: AssistantTask): void => {
     newConversation()
-    setWorkMode('plan')
+    setWorkMode('ask')
     setInput(
       [
         '请根据以下智能心跳建议制定可执行方案：',
@@ -1790,6 +1838,17 @@ function App(): React.JSX.Element {
     if (activeRequest) {
       void window.goodbuddy.agent.cancel(activeRequest)
     }
+    const browserStop = window.goodbuddy.browser?.stop(conversationId)
+    if (browserStop) {
+      void browserStop.catch(() => {
+        setNotice('关闭已删除对话的浏览器失败')
+      })
+    }
+    setBrowserStates((current) => {
+      const next = { ...current }
+      delete next[conversationId]
+      return next
+    })
     const remaining = conversations.filter(
       (conversation) => conversation.id !== conversationId
     )
@@ -2232,7 +2291,9 @@ function App(): React.JSX.Element {
       )
       setActiveProjectId(conversation.projectId)
       if (project) {
-        setWorkMode(project.defaultWorkMode)
+        setWorkMode(
+          normalizeInteractiveWorkMode(project.defaultWorkMode)
+        )
       }
     }
     setActiveId(conversationId)
@@ -3129,24 +3190,24 @@ function App(): React.JSX.Element {
                     aria-label="工作模式"
                     disabled={agentRuntimeSelected}
                     onChange={(event) =>
-                      setWorkMode(event.target.value as WorkMode)
+                      setWorkMode(
+                        event.target.value as InteractiveWorkMode
+                      )
                     }
                     value={effectiveWorkMode}
                   >
-                    {Object.entries(workModeLabels).map(
-                      ([value, label]) => (
-                        <option
-                          disabled={
-                            value === 'execute' &&
-                            !runtime?.supportsToolExecution
-                          }
-                          key={value}
-                          value={value}
-                        >
-                          {label}
-                        </option>
-                      )
-                    )}
+                    {interactiveWorkModes.map((value) => (
+                      <option
+                        disabled={
+                          value === 'execute' &&
+                          !runtime?.supportsToolExecution
+                        }
+                        key={value}
+                        value={value}
+                      >
+                        {workModeLabels[value]}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <div className="runtime-picker">
@@ -3288,10 +3349,8 @@ function App(): React.JSX.Element {
                   : agentRuntimeSelected
                     ? `${runtime.label} 固定为 Execute，工具调用不会弹出 GoodBuddy 审批，并会记录到活动。`
                   : effectiveWorkMode === 'ask'
-                  ? 'Ask 模式：只读问答，不会调用工具或修改文件。'
-                  : effectiveWorkMode === 'plan'
-                    ? 'Plan 模式：只读制定计划，不会调用工具或修改文件。'
-                    : 'Execute 模式：可执行工具，调用前请检查参数和权限。')}
+                    ? 'Ask 模式：只读问答，不会调用工具或修改文件。'
+                    : 'Execute 模式：已启用工具自动授权，调用仍会记录到活动。')}
             {appInfo?.shortcut && ` 快捷唤起：${appInfo.shortcut}`}
           </p>
             </footer>
@@ -3471,6 +3530,19 @@ function App(): React.JSX.Element {
             onClearLocalData={clearLocalData}
             onClose={() => setView('chat')}
             onCreateHeartbeat={createHeartbeat}
+            onExpertsChanged={(experts) => {
+              setAssistantExperts(experts)
+              if (
+                (selectedExpertId === 'team' && experts.length < 2) ||
+                (selectedExpertId &&
+                  selectedExpertId !== 'team' &&
+                  !experts.some(
+                    (expert) => expert.id === selectedExpertId
+                  ))
+              ) {
+                setSelectedExpertId('')
+              }
+            }}
             onRemoveHeartbeat={removeHeartbeat}
             onRunHeartbeat={runHeartbeat}
             onSaved={(settings) => {
@@ -3511,11 +3583,27 @@ function App(): React.JSX.Element {
         approvals={pendingSidebarApprovals}
         artifacts={sidebarArtifacts}
         attachments={attachments}
+        browserState={browserStates[activeId]}
         enabledLibraries={enabledSidebarLibraries}
         heartbeatEntries={heartbeatEntries}
         heartbeats={assistantHeartbeats}
         memories={assistantMemories}
         onClose={() => setAssistantSidebarOpen(false)}
+        onStopBrowser={async () => {
+          if (!activeId) {
+            return
+          }
+          const browserApi = window.goodbuddy.browser
+          if (!browserApi) {
+            setNotice('浏览器控制组件尚未加载，请重启 GoodBuddy')
+            return
+          }
+          try {
+            await browserApi.stop(activeId)
+          } catch {
+            setNotice('停止浏览器失败，请重试')
+          }
+        }}
         onOpenHeartbeat={() => setView('heartbeat')}
         onCreateMemory={async (content) => {
           const memory = await window.goodbuddy.memory.create({

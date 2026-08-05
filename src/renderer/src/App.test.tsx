@@ -8,10 +8,15 @@ import {
   waitFor
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentEvent, DesktopApi } from '../../shared/contracts'
+import type {
+  AgentEvent,
+  BrowserLiveState,
+  DesktopApi
+} from '../../shared/contracts'
 import App from './App'
 
 let agentListener: ((event: AgentEvent) => void) | undefined
+let browserListener: ((state: BrowserLiveState) => void) | undefined
 let newConversationListener: (() => void) | undefined
 let maximizedChangedListener: ((maximized: boolean) => void) | undefined
 const removeMaximizedChangedListener = vi.fn()
@@ -72,6 +77,15 @@ const api: DesktopApi = {
       agentListener = listener
       return () => {
         agentListener = undefined
+      }
+    })
+  },
+  browser: {
+    stop: vi.fn(async () => {}),
+    onState: vi.fn((listener) => {
+      browserListener = listener
+      return () => {
+        browserListener = undefined
       }
     })
   },
@@ -319,7 +333,15 @@ const api: DesktopApi = {
       enabled: true,
       createdAt: '2026-07-31T00:00:00.000Z',
       updatedAt: '2026-07-31T00:00:00.000Z'
-    }))
+    })),
+    update: vi.fn(async (expertId, input) => ({
+      ...input,
+      id: expertId,
+      enabled: true,
+      createdAt: '2026-07-31T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:00.000Z'
+    })),
+    remove: vi.fn(async () => {})
   },
   capabilities: {
     getSnapshot: vi.fn(async () => ({
@@ -413,6 +435,7 @@ describe('App', () => {
     document.documentElement.style.colorScheme = ''
     vi.clearAllMocks()
     newConversationListener = undefined
+    browserListener = undefined
     maximizedChangedListener = undefined
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: 'model',
@@ -450,6 +473,22 @@ describe('App', () => {
 
     unmount()
     expect(removeMaximizedChangedListener).toHaveBeenCalledOnce()
+  })
+
+  it('keeps rendering when an older preload has no browser bridge', async () => {
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        ...api,
+        browser: undefined
+      }
+    })
+
+    render(<App />)
+
+    expect(
+      await screen.findByLabelText('向 GoodBuddy 提问')
+    ).toBeInTheDocument()
   })
 
   it('keeps conversation actions in the conversation list', async () => {
@@ -938,6 +977,55 @@ describe('App', () => {
     expect(within(stats).getByText('345')).toBeInTheDocument()
   })
 
+  it('offers only Ask and Execute in visible work mode controls', async () => {
+    render(<App />)
+
+    const mode = await screen.findByLabelText('工作模式')
+    expect(
+      within(mode)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['Ask · 只读问答', 'Execute · 受控执行'])
+
+    fireEvent.click(screen.getByLabelText('新建项目'))
+    const dialog = screen.getByRole('dialog', { name: '新建项目' })
+    const defaultMode = within(dialog).getByRole('combobox', {
+      name: '默认模式'
+    })
+    expect(
+      within(defaultMode)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['Ask · 只读问答', 'Execute · 受控执行'])
+    expect(screen.queryByRole('option', { name: /Plan/u })).toBeNull()
+  })
+
+  it('normalizes a legacy Plan project default to Ask', async () => {
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      {
+        ...project,
+        defaultWorkMode: 'plan'
+      }
+    ])
+    render(<App />)
+
+    const mode = await screen.findByLabelText('工作模式')
+    expect(mode).toHaveValue('ask')
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '制定发布方案' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '制定发布方案',
+          workMode: 'ask'
+        })
+      )
+    )
+  })
+
   it.each([
     ['opencode', 'OpenCode'],
     ['continue', 'Continue CLI']
@@ -1347,6 +1435,47 @@ describe('App', () => {
     expect(screen.getByText('对话成果')).toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
+  })
+
+  it('opens the live browser tab for the active conversation and can stop it', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '打开示例网页' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const conversationId = run.mock.calls[0]?.[0].conversationId
+    expect(conversationId).toBeTruthy()
+
+    act(() => {
+      browserListener?.({
+        conversationId: conversationId ?? '',
+        status: 'ready',
+        url: 'https://example.com/',
+        frameDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+        updatedAt: Date.now()
+      })
+    })
+
+    expect(screen.getByLabelText('助手工作栏')).toHaveClass(
+      'assistant-sidebar--open'
+    )
+    expect(
+      screen.getByRole('tab', { name: '浏览器' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByAltText('Agent 实时浏览器画面')
+    ).toHaveAttribute(
+      'src',
+      'data:image/png;base64,iVBORw0KGgo='
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '停止浏览器' })
+    )
+    await waitFor(() =>
+      expect(api.browser.stop).toHaveBeenCalledWith(conversationId)
+    )
   })
 
   it('opens Smart Heartbeat as a first-class workspace', async () => {

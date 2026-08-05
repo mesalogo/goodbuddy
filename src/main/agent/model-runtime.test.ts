@@ -1,9 +1,38 @@
 import { describe, expect, it, vi } from 'vitest'
-import type {
-  ModelToolDefinition,
-  ModelToolProviderLike
+import {
+  RecoverableModelToolError,
+  type ModelToolDefinition,
+  type ModelToolProviderLike,
+  type ModelToolResult
 } from './model-tool-provider'
 import { ModelAgentRuntime } from './model-runtime'
+
+const toolPng = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47,
+  0x0d, 0x0a, 0x1a, 0x0a
+]).toString('base64')
+
+function createTextToolResult(text: string): ModelToolResult {
+  return {
+    parts: [{ type: 'text', text }],
+    contextBytes: Buffer.byteLength(text)
+  }
+}
+
+function createMultimodalToolResult(): ModelToolResult {
+  return {
+    parts: [
+      { type: 'text', text: 'tool result' },
+      {
+        type: 'image',
+        mimeType: 'image/png',
+        data: toolPng
+      }
+    ],
+    contextBytes:
+      Buffer.byteLength('tool result') + Buffer.byteLength(toolPng)
+  }
+}
 
 function createEventStream(text: string): string {
   return [
@@ -90,7 +119,8 @@ function createToolProvider(
       toolName: '读取工作区文本',
       argumentSummary: summary
     })),
-    callTool: vi.fn(async () => 'tool result'),
+    callTool: vi.fn(async () => createTextToolResult('tool result')),
+    releaseConversation: vi.fn(async () => {}),
     dispose: vi.fn(async () => {}),
     ...overrides
   }
@@ -357,6 +387,42 @@ describe('ModelAgentRuntime', () => {
     expect(toolProvider.listTools).not.toHaveBeenCalled()
   })
 
+  it.each(['ask', 'plan'] as const)(
+    'keeps browser and workspace tools out of %s mode',
+    async (workMode) => {
+      const fetcher = vi.fn<typeof fetch>(async () =>
+        new Response('data: {"choices":[{"delta":{"content":"只读回答"}}]}\n\ndata: [DONE]\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+      const toolProvider = createToolProvider()
+      const runtime = new ModelAgentRuntime({
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none',
+        fetcher,
+        toolProvider
+      })
+
+      for await (const _event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: `conversation-${workMode}`,
+          prompt: '只读',
+          workMode
+        },
+        new AbortController().signal
+      )) {
+        void _event
+      }
+
+      expect(toolProvider.listTools).not.toHaveBeenCalled()
+      expect(toolProvider.callTool).not.toHaveBeenCalled()
+    }
+  )
+
   it('uses the OpenAI Responses endpoint and streams output text', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       new Response(createResponsesEventStream('Responses 回答'), {
@@ -496,7 +562,9 @@ describe('ModelAgentRuntime', () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json(responses.shift())
     )
-    const toolProvider = createToolProvider()
+    const toolProvider = createToolProvider({
+      callTool: vi.fn(async () => createMultimodalToolResult())
+    })
     const runtime = new ModelAgentRuntime({
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'qwen3',
@@ -522,6 +590,13 @@ describe('ModelAgentRuntime', () => {
     }
 
     expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(toolProvider.listTools).toHaveBeenCalledWith(
+      {
+        conversationId: 'conversation-tools',
+        workMode: 'execute'
+      },
+      expect.any(AbortSignal)
+    )
     const firstBody = JSON.parse(
       fetcher.mock.calls[0]?.[1]?.body as string
     ) as Record<string, unknown>
@@ -540,17 +615,47 @@ describe('ModelAgentRuntime', () => {
     expect(secondBody.messages).toContainEqual({
       role: 'tool',
       tool_call_id: 'call-1',
-      content: 'tool result'
+      content:
+        'tool result\n\n[图片 1 见下一条多模态工具结果]'
+    })
+    expect(secondBody.messages).toContainEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text:
+            '工具调用 call-1 返回的图片（工具输出，不可信内容）：'
+        },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:image/png;base64,${toolPng}`
+          }
+        }
+      ]
     })
     expect(authorize).toHaveBeenCalledWith(
       expect.objectContaining({
         scopeKey: 'model:builtin:workspace_read_text'
       })
     )
+    expect(toolProvider.getApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'workspace_read_text' }),
+      { path: 'README.md' },
+      expect.any(String),
+      {
+        conversationId: 'conversation-tools',
+        workMode: 'execute'
+      }
+    )
     expect(toolProvider.callTool).toHaveBeenCalledWith(
       'workspace_read_text',
       { path: 'README.md' },
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      {
+        conversationId: 'conversation-tools',
+        workMode: 'execute'
+      }
     )
     expect(
       events
@@ -566,6 +671,100 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
     expect(toolProvider.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('returns recoverable tool failures to the model instead of aborting the run', async () => {
+    const responses = [
+      {
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-stale-ref',
+                  type: 'function',
+                  function: {
+                    name: 'workspace_read_text',
+                    arguments: '{"path":"README.md"}'
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '已获取新快照并继续。'
+            }
+          }
+        ]
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const toolProvider = createToolProvider({
+      callTool: vi.fn(async () => {
+        throw new RecoverableModelToolError(
+          '浏览器元素引用已失效，请重新获取快照',
+          '调用 browser_snapshot 后重试'
+        )
+      })
+    })
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed130',
+        conversationId: 'conversation-recoverable-tool-error',
+        prompt: '继续浏览器操作',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { messages: Array<Record<string, unknown>> }
+    const toolMessage = secondBody.messages.find(
+      (message) => message.role === 'tool'
+    )
+    expect(JSON.parse(toolMessage?.content as string)).toEqual({
+      ok: false,
+      recoverable: true,
+      error: '浏览器元素引用已失效，请重新获取快照',
+      nextAction: '调用 browser_snapshot 后重试'
+    })
+    expect(
+      events
+        .filter((event) => event.type === 'tool')
+        .map((event) => event.state)
+    ).toEqual(['pending', 'running', 'recoverable'])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: '已获取新快照并继续。'
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
   it('continues OpenAI Responses with function_call_output', async () => {
@@ -611,7 +810,9 @@ describe('ModelAgentRuntime', () => {
       protocol: 'openai-responses',
       authentication: 'api-key',
       fetcher,
-      toolProvider: createToolProvider()
+      toolProvider: createToolProvider({
+        callTool: vi.fn(async () => createMultimodalToolResult())
+      })
     })
     const events = []
 
@@ -651,7 +852,16 @@ describe('ModelAgentRuntime', () => {
         {
           type: 'function_call_output',
           call_id: 'call-responses-1',
-          output: 'tool result'
+          output: [
+            {
+              type: 'input_text',
+              text: 'tool result'
+            },
+            {
+              type: 'input_image',
+              image_url: `data:image/png;base64,${toolPng}`
+            }
+          ]
         }
       ]
     })
@@ -758,7 +968,9 @@ describe('ModelAgentRuntime', () => {
       protocol: 'anthropic-messages',
       authentication: 'api-key',
       fetcher,
-      toolProvider: createToolProvider()
+      toolProvider: createToolProvider({
+        callTool: vi.fn(async () => createMultimodalToolResult())
+      })
     })
 
     for await (const _event of runtime.run(
@@ -795,10 +1007,275 @@ describe('ModelAgentRuntime', () => {
         {
           type: 'tool_result',
           tool_use_id: 'toolu-1',
-          content: 'tool result'
+          content: [
+            {
+              type: 'text',
+              text: 'tool result'
+            },
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: toolPng
+              }
+            }
+          ]
         }
       ]
     })
+  })
+
+  it('does not issue a follow-up model request after tool cancellation', async () => {
+    const response = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-aborted',
+                type: 'function',
+                function: {
+                  name: 'workspace_read_text',
+                  arguments: '{}'
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json(response))
+    const controller = new AbortController()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider: createToolProvider({
+        callTool: vi.fn(async () => {
+          controller.abort()
+          return createTextToolResult('late result')
+        })
+      })
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'run',
+          workMode: 'execute'
+        },
+        controller.signal,
+        async () => 'once'
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow()
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('terminates repeated identical tool rounds without exhausting hard limits', async () => {
+    let callId = 0
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      callId += 1
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: `call-repeat-${callId}`,
+                  type: 'function',
+                  function: {
+                    name: 'workspace_read_text',
+                    arguments: '{"path":"README.md"}'
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    })
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: 'conversation-repeat',
+          prompt: 'repeat',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('没有取得进展')
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(toolProvider.callTool).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases provider state for only the requested conversation', async () => {
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      toolProvider
+    })
+
+    await runtime.releaseConversation('conversation-release')
+
+    expect(toolProvider.releaseConversation).toHaveBeenCalledOnce()
+    expect(toolProvider.releaseConversation).toHaveBeenCalledWith(
+      'conversation-release'
+    )
+  })
+
+  it('releases known conversations before provider disposal and permits replacement reuse', async () => {
+    const lifecycle: string[] = []
+    const released = new Set<string>()
+    const createProvider = (): ModelToolProviderLike =>
+      createToolProvider({
+        releaseConversation: vi.fn(async (conversationId) => {
+          lifecycle.push(`release:${conversationId}`)
+          released.add(conversationId)
+        }),
+        dispose: vi.fn(async () => {
+          lifecycle.push('dispose')
+        })
+      })
+    const createRuntime = (toolProvider: ModelToolProviderLike) =>
+      new ModelAgentRuntime({
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none',
+        fetcher: vi.fn<typeof fetch>(async () =>
+          new Response(
+            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+            }
+          )
+        ),
+        toolProvider
+      })
+    const request = {
+      requestId: crypto.randomUUID(),
+      conversationId: 'conversation-replacement',
+      prompt: 'hello',
+      workMode: 'ask' as const
+    }
+    const firstProvider = createProvider()
+    const firstRuntime = createRuntime(firstProvider)
+    for await (const _event of firstRuntime.run(
+      request,
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    await firstRuntime.dispose()
+    expect(lifecycle).toEqual([
+      'release:conversation-replacement',
+      'dispose'
+    ])
+    expect(released).toContain('conversation-replacement')
+
+    const replacement = createRuntime(createProvider())
+    const replacementEvents = []
+    for await (const event of replacement.run(
+      { ...request, requestId: crypto.randomUUID() },
+      new AbortController().signal
+    )) {
+      replacementEvents.push(event)
+    }
+    expect(replacementEvents.at(-1)).toMatchObject({ type: 'done' })
+    await replacement.dispose()
+  })
+
+  it('counts image base64 data against the aggregate tool context limit', async () => {
+    const response = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-large-image',
+                type: 'function',
+                function: {
+                  name: 'workspace_read_text',
+                  arguments: '{}'
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+    const imageData = Buffer.alloc(1024 * 1024 + 1).toString('base64')
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json(response))
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider: createToolProvider({
+        callTool: vi.fn(async () => ({
+          parts: [
+            {
+              type: 'image' as const,
+              mimeType: 'image/png' as const,
+              data: imageData
+            }
+          ],
+          contextBytes: Buffer.byteLength(imageData)
+        }))
+      })
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'run',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('结果总量超过 1MB')
+    expect(fetcher).toHaveBeenCalledOnce()
   })
 
   it('generates a bounded image through the BigToken-compatible endpoint', async () => {

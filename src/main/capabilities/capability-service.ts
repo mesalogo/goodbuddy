@@ -14,19 +14,43 @@ import { basename, dirname, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import {
+  browserProfileIdSchema,
+  browserProfileNameSchema,
+  browserProfilesSummarySchema,
+  capabilityDiagnosticReportSchema,
   capabilityAssignmentsSchema,
+  computerCapabilityConfigSummarySchema,
+  computerCapabilityIdSchema,
   mcpServerIdSchema,
   mcpServerInputSchema,
   mcpServerSummarySchema,
   skillIdSchema,
   skillSummarySchema,
   type CapabilityAssignments,
+  type CapabilityDiagnosticReport,
   type CapabilitySnapshot,
+  type BrowserProfilesSummary,
+  type ComputerCapabilityId,
   type McpServerInput,
   type McpServerSummary,
   type RuntimeTarget,
   type SkillSummary
 } from '../../shared/capability-contracts'
+import {
+  BrowserProfileService,
+  FileBrowserProfileStore,
+  type BrowserProfileState
+} from './browser-profile-service'
+import {
+  CapabilityDiagnostics,
+  type CapabilityDiagnosticCheck
+} from './capability-diagnostics'
+import {
+  computerCapabilityCatalog,
+  getComputerCapability,
+  isComputerCapabilitySupported,
+  type ComputerCapabilityImplementationKind
+} from './computer-capability-catalog'
 
 const MAX_SKILL_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SKILL_PACKAGE_BYTES = 10 * 1024 * 1024
@@ -92,7 +116,7 @@ const storedMcpServerSchema = z.discriminatedUnion('transport', [
     .strict()
 ])
 
-const storedCapabilitiesSchema = z
+const storedCapabilitiesV1Schema = z
   .object({
     version: z.literal(1),
     skills: z.record(skillIdSchema, skillStateSchema),
@@ -100,6 +124,28 @@ const storedCapabilitiesSchema = z
   })
   .strict()
 
+const computerCapabilityStateSchema = z
+  .object({
+    enabled: z.boolean(),
+    browserProfileId: browserProfileIdSchema.nullable()
+  })
+  .strict()
+
+const storedCapabilitiesSchema = z
+  .object({
+    version: z.literal(2),
+    skills: z.record(skillIdSchema, skillStateSchema),
+    mcpServers: z.array(storedMcpServerSchema).max(64),
+    computerCapabilities: z
+      .object({
+        'host-browser-control': computerCapabilityStateSchema,
+        'linux-desktop-control': computerCapabilityStateSchema
+      })
+      .strict()
+  })
+  .strict()
+
+type StoredCapabilitiesV1 = z.infer<typeof storedCapabilitiesV1Schema>
 type StoredCapabilities = z.infer<typeof storedCapabilitiesSchema>
 type StoredMcpServer = z.infer<typeof storedMcpServerSchema>
 
@@ -119,6 +165,37 @@ export type CapabilityCipher = {
 
 export type ResolvedMcpServer = McpServerSummary & {
   secret?: string
+}
+
+export type CapabilityServiceOptions = Readonly<{
+  platform?: NodeJS.Platform
+  architecture?: string
+  electronTarget?: boolean
+  browserProfiles?: BrowserProfileService
+  diagnostics?: CapabilityDiagnostics
+  availableComputerCapabilityImplementations?: readonly ComputerCapabilityImplementationKind[]
+}>
+
+function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabilities'] {
+  return {
+    'host-browser-control': {
+      enabled: false,
+      browserProfileId: null
+    },
+    'linux-desktop-control': {
+      enabled: false,
+      browserProfileId: null
+    }
+  }
+}
+
+function emptyStoredCapabilities(): StoredCapabilities {
+  return {
+    version: 2,
+    skills: {},
+    mcpServers: [],
+    computerCapabilities: defaultComputerCapabilityStates()
+  }
 }
 
 function defaultSkillState(): z.infer<typeof skillStateSchema> {
@@ -235,24 +312,109 @@ async function copySkillPackage(
 
 export class CapabilityService {
   private state?: StoredCapabilities
+  private loadPromise?: Promise<StoredCapabilities>
   private updateQueue: Promise<void> = Promise.resolve()
+  private readonly platform: NodeJS.Platform
+  private readonly architecture: string
+  private readonly electronTarget: boolean
+  private readonly browserProfiles: BrowserProfileService
+  private readonly diagnostics: CapabilityDiagnostics
+  private readonly availableComputerCapabilityImplementations: ReadonlySet<ComputerCapabilityImplementationKind>
 
   constructor(
     private readonly filePath: string,
     private readonly builtinSkillsRoot: string,
     private readonly importedSkillsRoot: string,
-    private readonly cipher: CapabilityCipher
-  ) {}
-
-  private async load(): Promise<StoredCapabilities> {
-    if (this.state) {
-      return this.state
-    }
-    let loaded: StoredCapabilities
-    try {
-      loaded = storedCapabilitiesSchema.parse(
-        JSON.parse(await readFile(this.filePath, 'utf8'))
+    private readonly cipher: CapabilityCipher,
+    options: CapabilityServiceOptions = {}
+  ) {
+    this.platform = options.platform ?? process.platform
+    this.architecture = options.architecture ?? process.arch
+    this.electronTarget =
+      options.electronTarget ?? Boolean(process.versions.electron)
+    this.availableComputerCapabilityImplementations = new Set(
+      options.availableComputerCapabilityImplementations ?? [
+        'managed-browser-driver'
+      ]
+    )
+    this.browserProfiles =
+      options.browserProfiles ??
+      new BrowserProfileService(
+        new FileBrowserProfileStore(
+          join(dirname(this.filePath), 'browser-profiles')
+        )
       )
+    const checks: CapabilityDiagnosticCheck[] = [
+      {
+        id: 'browser-executable',
+        run: async () =>
+          this.electronTarget
+            ? {
+                status: 'available',
+                summary: 'GoodBuddy 的受管 Electron 浏览器核心可用。'
+              }
+            : {
+                status: 'unavailable',
+                summary: '当前进程不是受支持的 Electron 桌面目标。',
+                remedy: '请从 GoodBuddy 桌面应用运行此诊断。'
+              }
+      },
+      {
+        id: 'managed-profile-root',
+        run: async () => {
+          await this.browserProfiles.getSnapshot()
+          return {
+            status: 'available',
+            summary: '隔离的托管浏览器配置存储可用。'
+          }
+        }
+      }
+    ]
+    this.diagnostics =
+      options.diagnostics ?? new CapabilityDiagnostics(checks)
+  }
+
+  private load(): Promise<StoredCapabilities> {
+    if (this.state) {
+      return Promise.resolve(this.state)
+    }
+    if (this.loadPromise) {
+      return this.loadPromise
+    }
+    const pending = this.loadUncached()
+    const tracked = pending.catch((error: unknown) => {
+      if (this.loadPromise === tracked) {
+        this.loadPromise = undefined
+        this.state = undefined
+      }
+      throw error
+    })
+    this.loadPromise = tracked
+    return tracked
+  }
+
+  private async loadUncached(): Promise<StoredCapabilities> {
+    let loaded: StoredCapabilities
+    let shouldPersist = false
+    try {
+      const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
+      const version = z
+        .object({ version: z.union([z.literal(1), z.literal(2)]) })
+        .passthrough()
+        .parse(raw).version
+      if (version === 1) {
+        const legacy: StoredCapabilitiesV1 =
+          storedCapabilitiesV1Schema.parse(raw)
+        loaded = {
+          version: 2,
+          skills: legacy.skills,
+          mcpServers: legacy.mcpServers,
+          computerCapabilities: defaultComputerCapabilityStates()
+        }
+        shouldPersist = true
+      } else {
+        loaded = storedCapabilitiesSchema.parse(raw)
+      }
     } catch (error) {
       if (
         error &&
@@ -260,13 +422,13 @@ export class CapabilityService {
         'code' in error &&
         error.code === 'ENOENT'
       ) {
-        loaded = { version: 1, skills: {}, mcpServers: [] }
+        loaded = emptyStoredCapabilities()
       } else {
         await rename(
           this.filePath,
           `${this.filePath}.corrupt-${Date.now()}`
         ).catch(() => undefined)
-        loaded = { version: 1, skills: {}, mcpServers: [] }
+        loaded = emptyStoredCapabilities()
       }
     }
     const migrateMcpAssignments = loaded.mcpServers.some((server) =>
@@ -284,10 +446,28 @@ export class CapabilityService {
         }
       : loaded
     this.state = storedCapabilitiesSchema.parse(migrated)
-    if (migrateMcpAssignments) {
+    await this.validateBrowserProfileReferences(this.state)
+    if (shouldPersist || migrateMcpAssignments) {
       await this.persist(this.state)
     }
     return this.state
+  }
+
+  private async validateBrowserProfileReferences(
+    state: StoredCapabilities
+  ): Promise<void> {
+    const profiles = await this.browserProfiles.getSnapshot()
+    const profileIds = new Set(profiles.profiles.map((profile) => profile.id))
+    for (const capability of computerCapabilityCatalog) {
+      const profileId =
+        state.computerCapabilities[capability.id].browserProfileId
+      if (profileId && !profileIds.has(profileId)) {
+        throw new Error('电脑控制能力引用了不存在的浏览器配置')
+      }
+      if (capability.id !== 'host-browser-control' && profileId) {
+        throw new Error('此电脑控制能力不支持浏览器配置')
+      }
+    }
   }
 
   private queue<T>(operation: () => Promise<T>): Promise<T> {
@@ -339,9 +519,10 @@ export class CapabilityService {
   }
 
   async getSnapshot(): Promise<CapabilitySnapshot> {
-    const [state, catalog] = await Promise.all([
+    const [state, catalog, browserProfileState] = await Promise.all([
       this.load(),
-      this.getSkillCatalog()
+      this.getSkillCatalog(),
+      this.browserProfiles.getSnapshot()
     ])
     return {
       skills: catalog
@@ -358,8 +539,282 @@ export class CapabilityService {
         ),
       mcpServers: state.mcpServers.map((server) =>
         this.toMcpSummary(server)
+      ),
+      computerCapabilities: computerCapabilityCatalog.map((capability) =>
+        computerCapabilityConfigSummarySchema.parse({
+          id: capability.id,
+          name: capability.name,
+          description: capability.description,
+          enabled: state.computerCapabilities[capability.id].enabled,
+          supported: isComputerCapabilitySupported(
+            capability,
+            this.platform,
+            this.architecture,
+            this.availableComputerCapabilityImplementations
+          ),
+          browserProfileId:
+            state.computerCapabilities[capability.id].browserProfileId,
+          riskSummary: capability.riskSummary
+        })
+      ),
+      browserProfiles: this.toBrowserProfilesSummary(browserProfileState)
+    }
+  }
+
+  async getComputerCapabilityStatus(
+    capabilityId: ComputerCapabilityId
+  ): Promise<{ enabled: boolean; supported: boolean }> {
+    const id = computerCapabilityIdSchema.parse(capabilityId)
+    const capability = getComputerCapability(id)
+    const state = await this.load()
+    return {
+      enabled: state.computerCapabilities[id].enabled,
+      supported: isComputerCapabilitySupported(
+        capability,
+        this.platform,
+        this.architecture,
+        this.availableComputerCapabilityImplementations
       )
     }
+  }
+
+  private toBrowserProfilesSummary(
+    state: BrowserProfileState
+  ): BrowserProfilesSummary {
+    return browserProfilesSummarySchema.parse({
+      profiles: state.profiles.map((profile) => ({
+        id: profile.id,
+        name: profile.name,
+        mode: profile.mode
+      })),
+      defaultProfileId: state.defaultProfileId
+    })
+  }
+
+  setComputerCapabilityEnabled(
+    capabilityId: ComputerCapabilityId,
+    enabled: boolean
+  ): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      const id = computerCapabilityIdSchema.parse(capabilityId)
+      const capability = getComputerCapability(id)
+      if (
+        enabled &&
+        !isComputerCapabilitySupported(
+          capability,
+          this.platform,
+          this.architecture,
+          this.availableComputerCapabilityImplementations
+        )
+      ) {
+        throw new Error('当前操作系统或处理器架构不支持此能力')
+      }
+      if (enabled) {
+        const report = await this.diagnoseComputerCapabilityState(id, true)
+        if (report.status === 'unavailable') {
+          throw new Error('能力诊断不可用，未启用此能力')
+        }
+      }
+      const state = await this.load()
+      await this.persist({
+        ...state,
+        computerCapabilities: {
+          ...state.computerCapabilities,
+          [id]: {
+            ...state.computerCapabilities[id],
+            enabled
+          }
+        }
+      })
+      return this.getSnapshot()
+    })
+  }
+
+  setComputerCapabilityBrowserProfile(
+    capabilityId: ComputerCapabilityId,
+    browserProfileId: string | null
+  ): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      const id = computerCapabilityIdSchema.parse(capabilityId)
+      const profileId = browserProfileIdSchema.nullable().parse(
+        browserProfileId
+      )
+      if (id !== 'host-browser-control' && profileId) {
+        throw new Error('此电脑控制能力不支持浏览器配置')
+      }
+      const profiles = await this.browserProfiles.getSnapshot()
+      if (
+        profileId &&
+        !profiles.profiles.some((profile) => profile.id === profileId)
+      ) {
+        throw new Error('浏览器配置不存在')
+      }
+      const state = await this.load()
+      const previousProfileId =
+        state.computerCapabilities[id].browserProfileId
+      if (profileId === previousProfileId) {
+        return this.getSnapshot()
+      }
+      const reference = { kind: 'capability' as const, id }
+      if (profileId) {
+        try {
+          await this.browserProfiles.addReference(profileId, reference)
+        } catch (error) {
+          try {
+            await this.browserProfiles.removeReference(profileId, reference)
+          } catch (compensationError) {
+            throw new AggregateError(
+              [error, compensationError],
+              '浏览器配置引用添加失败，且补偿清理未完成',
+              { cause: compensationError }
+            )
+          }
+          throw error
+        }
+      }
+      const nextState: StoredCapabilities = {
+        ...state,
+        computerCapabilities: {
+          ...state.computerCapabilities,
+          [id]: {
+            ...state.computerCapabilities[id],
+            browserProfileId: profileId
+          }
+        }
+      }
+      try {
+        await this.persist(nextState)
+      } catch (error) {
+        if (profileId) {
+          try {
+            await this.browserProfiles.removeReference(profileId, reference)
+          } catch (compensationError) {
+            throw new AggregateError(
+              [error, compensationError],
+              '电脑控制配置保存失败，且新增引用补偿清理未完成',
+              { cause: compensationError }
+            )
+          }
+        }
+        throw error
+      }
+      if (previousProfileId) {
+        try {
+          await this.browserProfiles.removeReference(
+            previousProfileId,
+            reference
+          )
+        } catch (error) {
+          try {
+            await this.browserProfiles.addReference(
+              previousProfileId,
+              reference
+            )
+            await this.persist(state)
+            if (profileId) {
+              await this.browserProfiles.removeReference(
+                profileId,
+                reference
+              )
+            }
+          } catch (compensationError) {
+            throw new AggregateError(
+              [error, compensationError],
+              '旧浏览器配置引用移除失败，且回滚未完成',
+              { cause: compensationError }
+            )
+          }
+          throw error
+        }
+      }
+      return this.getSnapshot()
+    })
+  }
+
+  async diagnoseComputerCapability(
+    capabilityId: ComputerCapabilityId
+  ): Promise<CapabilityDiagnosticReport> {
+    const id = computerCapabilityIdSchema.parse(capabilityId)
+    const state = await this.load()
+    return this.diagnoseComputerCapabilityState(
+      id,
+      state.computerCapabilities[id].enabled
+    )
+  }
+
+  private async diagnoseComputerCapabilityState(
+    id: ComputerCapabilityId,
+    enabled: boolean
+  ): Promise<CapabilityDiagnosticReport> {
+    if (
+      id === 'host-browser-control' &&
+      enabled &&
+      !this.electronTarget
+    ) {
+      return capabilityDiagnosticReportSchema.parse({
+        capabilityId: id,
+        status: 'unavailable',
+        checkedAt: new Date().toISOString(),
+        checks: [
+          {
+            id: 'electron-target',
+            status: 'unavailable',
+            summary: '当前进程不是受支持的 Electron 桌面目标。',
+            remedy: '请从 GoodBuddy 桌面应用运行此诊断。'
+          }
+        ]
+      })
+    }
+    return capabilityDiagnosticReportSchema.parse(
+      await this.diagnostics.diagnose({
+        capabilityId: id,
+        enabled,
+        platform: this.platform,
+        architecture: this.architecture,
+        availableImplementationKinds:
+          this.availableComputerCapabilityImplementations
+      })
+    )
+  }
+
+  createBrowserProfile(name: string): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      await this.browserProfiles.createProfile(
+        browserProfileNameSchema.parse(name)
+      )
+      return this.getSnapshot()
+    })
+  }
+
+  renameBrowserProfile(
+    profileId: string,
+    name: string
+  ): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      await this.browserProfiles.renameProfile(
+        browserProfileIdSchema.parse(profileId),
+        browserProfileNameSchema.parse(name)
+      )
+      return this.getSnapshot()
+    })
+  }
+
+  setDefaultBrowserProfile(profileId: string): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      await this.browserProfiles.setDefaultProfile(
+        browserProfileIdSchema.parse(profileId)
+      )
+      return this.getSnapshot()
+    })
+  }
+
+  removeBrowserProfile(profileId: string): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      await this.browserProfiles.deleteProfile(
+        browserProfileIdSchema.parse(profileId)
+      )
+      return this.getSnapshot()
+    })
   }
 
   importSkill(sourcePath: string): Promise<CapabilitySnapshot> {

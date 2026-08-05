@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type {
+  AssistantExpert,
   AssistantHeartbeatConfig,
   HeartbeatCreateInput
 } from '../../shared/assistant-contracts'
@@ -22,11 +23,8 @@ import type {
   RuntimeModelSource
 } from '../../shared/contracts'
 import { defaultRuntimeSettings } from '../../shared/contracts'
-import {
-  modelProfilePresets,
-  type ModelProfilePreset
-} from '../../shared/model-presets'
 import { McpSettingsSection } from './McpSettingsSection'
+import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 import { SkillsSettingsSection } from './SkillsSettingsSection'
 import { HeartbeatSettings } from './HeartbeatSettings'
 import type { AppearanceTheme } from './theme'
@@ -37,6 +35,7 @@ type SettingsTab =
   | 'runtime'
   | 'security'
   | 'automation'
+  | 'roles'
   | 'skills'
   | 'mcp'
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
@@ -49,6 +48,7 @@ type SettingsPanelProps = {
   presentation?: 'modal' | 'page'
   onClose: () => void
   onSaved: (settings: RuntimeSettings) => void
+  onExpertsChanged?: (experts: AssistantExpert[]) => void
   onClearLocalData: () => Promise<void>
   heartbeats: AssistantHeartbeatConfig[]
   onCreateHeartbeat: (input: HeartbeatCreateInput) => Promise<void>
@@ -92,6 +92,7 @@ export function SettingsPanel({
   onSetHeartbeatPaused,
   onRemoveHeartbeat,
   onRunHeartbeat,
+  onExpertsChanged = () => {},
   appearanceTheme = 'system',
   onAppearanceThemeChange = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
@@ -101,9 +102,8 @@ export function SettingsPanel({
       defaultRuntimeSettings.provider
     )
   const [modelProfiles, setModelProfiles] = useState<ModelProfileDraft[]>([])
-  const [selectedPresetId, setSelectedPresetId] = useState<string>(
-    modelProfilePresets[0].id
-  )
+  const [selectedModelProfileId, setSelectedModelProfileId] =
+    useState('')
   const [defaultModelProfileId, setDefaultModelProfileId] = useState('')
   const [opencodeModelSource, setOpencodeModelSource] =
     useState<RuntimeModelSource>({ kind: 'platform' })
@@ -176,6 +176,13 @@ export function SettingsPanel({
         setSettings(value)
         setProvider(value.provider)
         setModelProfiles(toModelProfileDrafts(value))
+        setSelectedModelProfileId(
+          value.modelProfiles.some(
+            (profile) => profile.id === value.defaultModelProfileId
+          )
+            ? value.defaultModelProfileId
+            : value.modelProfiles[0]?.id ?? ''
+        )
         setDefaultModelProfileId(value.defaultModelProfileId)
         setOpencodeModelSource(value.opencodeModelSource)
         setContinueModelSource(value.continueModelSource)
@@ -281,6 +288,11 @@ export function SettingsPanel({
       })
       setSettings(value)
       setModelProfiles(toModelProfileDrafts(value))
+      setSelectedModelProfileId((selectedId) =>
+        value.modelProfiles.some((profile) => profile.id === selectedId)
+          ? selectedId
+          : value.defaultModelProfileId
+      )
       setDefaultModelProfileId(value.defaultModelProfileId)
       setOpencodeModelSource(value.opencodeModelSource)
       setContinueModelSource(value.continueModelSource)
@@ -396,37 +408,7 @@ export function SettingsPanel({
     if (!defaultModelProfileId) {
       setDefaultModelProfileId(id)
     }
-  }
-
-  const addPresetProfile = (preset: ModelProfilePreset): void => {
-    const id = crypto.randomUUID()
-    setModelProfiles((profiles) => {
-      const usedNames = new Set(profiles.map((profile) => profile.name))
-      let name = preset.name
-      let suffix = 2
-      while (usedNames.has(name)) {
-        name = `${preset.name} ${suffix}`
-        suffix += 1
-      }
-      return [
-        ...profiles,
-        {
-          id,
-          name,
-          baseUrl: preset.baseUrl,
-          modelName: preset.modelName,
-          protocol: preset.protocol,
-          authentication: preset.authentication,
-          apiKeyConfigured: false,
-          credentialSource: 'none',
-          apiKey: '',
-          clearApiKey: false
-        }
-      ]
-    })
-    if (!defaultModelProfileId) {
-      setDefaultModelProfileId(id)
-    }
+    setSelectedModelProfileId(id)
   }
 
   const removeModelProfile = (id: string): void => {
@@ -434,8 +416,17 @@ export function SettingsPanel({
       setError('请至少保留一个模型连接')
       return
     }
+    const removedIndex = modelProfiles.findIndex(
+      (profile) => profile.id === id
+    )
     const remaining = modelProfiles.filter((profile) => profile.id !== id)
     setModelProfiles(remaining)
+    if (selectedModelProfileId === id) {
+      setSelectedModelProfileId(
+        remaining[Math.min(removedIndex, remaining.length - 1)]?.id ??
+          remaining[0]!.id
+      )
+    }
     if (defaultModelProfileId === id) {
       setDefaultModelProfileId(remaining[0]!.id)
     }
@@ -469,6 +460,11 @@ export function SettingsPanel({
   ): boolean =>
     profile.protocol === 'anthropic-messages' ||
     profile.protocol === 'openai-chat-completions'
+
+  const selectedModelProfile =
+    modelProfiles.find(
+      (profile) => profile.id === selectedModelProfileId
+    ) ?? modelProfiles[0]
 
   const detectionSummary = (
     value: AgentRuntimeDetection['opencode'] | undefined
@@ -564,7 +560,7 @@ export function SettingsPanel({
               type="button"
             >
               <strong>安全与数据</strong>
-              <small>工具审批与本地隐私</small>
+              <small>工具策略与本地隐私</small>
             </button>
             <button
               aria-label="自动化"
@@ -575,6 +571,16 @@ export function SettingsPanel({
             >
               <strong>自动化</strong>
               <small>智能心跳与周期回顾</small>
+            </button>
+            <button
+              aria-label="角色与提示词"
+              aria-selected={activeTab === 'roles'}
+              onClick={() => setActiveTab('roles')}
+              role="tab"
+              type="button"
+            >
+              <strong>角色与提示词</strong>
+              <small>角色、说明与系统提示词</small>
             </button>
             <button
               aria-label="Skills"
@@ -998,7 +1004,7 @@ export function SettingsPanel({
           {activeTab === 'model' && (
             <>
           <div className="settings-section">
-            <div className="settings-section__title">
+            <div className="settings-section__title settings-section__title--actions">
               <KeyRound size={17} />
               <div>
                 <strong>模型连接</strong>
@@ -1009,7 +1015,7 @@ export function SettingsPanel({
                 </small>
               </div>
               <button
-                className="secondary-button"
+                className="secondary-button model-connection-add"
                 onClick={addModelProfile}
                 type="button"
               >
@@ -1017,52 +1023,65 @@ export function SettingsPanel({
                 添加自定义
               </button>
             </div>
-            <div className="runtime-note">
-              <label className="field">
-                <span>模型预设</span>
-                <select
-                  aria-label="模型预设"
-                  onChange={(event) =>
-                    setSelectedPresetId(event.target.value)
-                  }
-                  value={selectedPresetId}
-                >
-                  {modelProfilePresets.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.name}
-                    </option>
-                  ))}
-                </select>
-                <small>
-                  {
-                    modelProfilePresets.find(
-                      (preset) => preset.id === selectedPresetId
-                    )?.description
-                  }
-                </small>
-              </label>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  const preset = modelProfilePresets.find(
-                    (candidate) => candidate.id === selectedPresetId
-                  )
-                  if (preset) {
-                    addPresetProfile(preset)
-                  }
-                }}
-                type="button"
+            <div className="model-connection-manager">
+              <aside
+                aria-label="模型连接列表"
+                className="model-connection-list"
               >
-                <Plus size={14} />
-                从预设添加
-              </button>
-            </div>
-            {modelProfiles.map((profile) => {
+                <div className="model-connection-list__header">
+                  <strong>连接列表</strong>
+                  <span>{modelProfiles.length}</span>
+                </div>
+                <div role="list">
+                  {modelProfiles.map((profile) => (
+                    <div key={profile.id} role="listitem">
+                      <button
+                        aria-current={
+                          selectedModelProfile?.id === profile.id
+                            ? 'page'
+                            : undefined
+                        }
+                        aria-label={`编辑模型连接 ${profile.name}`}
+                        onClick={() =>
+                          setSelectedModelProfileId(profile.id)
+                        }
+                        type="button"
+                      >
+                        <span className="model-connection-list__name">
+                          <strong>{profile.name}</strong>
+                          <small>{profile.modelName}</small>
+                        </span>
+                        <span className="model-connection-list__badges">
+                          {defaultModelProfileId === profile.id && (
+                            <span>默认</span>
+                          )}
+                          {profile.protocol ===
+                            'openai-images-generations' && (
+                            <span>图像</span>
+                          )}
+                        </span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </aside>
+              {selectedModelProfile && (() => {
+                const profile = selectedModelProfile
               const environmentManaged =
                 profile.credentialSource === 'environment'
               return (
-                <div className="runtime-note" key={profile.id}>
+                <div
+                  aria-labelledby={`model-connection-${profile.id}`}
+                  className="model-connection-detail"
+                  key={profile.id}
+                >
                   <div className="settings-section__title">
+                    <div>
+                      <strong id={`model-connection-${profile.id}`}>
+                        {profile.name}
+                      </strong>
+                      <small>连接详情</small>
+                    </div>
                     <label className="check-field">
                       <input
                         checked={defaultModelProfileId === profile.id}
@@ -1248,7 +1267,7 @@ export function SettingsPanel({
                       <span>无需认证，不会发送 API Key</span>
                     </div>
                   )}
-                  <small>
+                  <small className="model-connection-detail__compatibility">
                     直连模型：
                     {profile.protocol === 'openai-images-generations'
                       ? '图像生成'
@@ -1262,7 +1281,8 @@ export function SettingsPanel({
                   </small>
                 </div>
               )
-            })}
+              })()}
+            </div>
             {settings && !settings.secureStorageAvailable && (
               <p className="settings-warning">
                 当前系统密钥服务不可用。为了避免明文落盘，请使用环境变量提供
@@ -1299,6 +1319,7 @@ export function SettingsPanel({
           <label className="field">
             <span>直连模型工具安全策略</span>
             <select
+              aria-label="直连模型工具安全策略"
               value={toolApproval}
               onChange={(event) =>
                 setToolApproval(
@@ -1306,13 +1327,16 @@ export function SettingsPanel({
                 )
               }
             >
-              <option value="always">调用时询问</option>
+              <option value="always">
+                Execute 自动授权已启用的工具
+              </option>
               <option value="policy">禁止所有工具执行</option>
             </select>
             <small>
               直连模型的 Execute 模式可使用内置工作区工具及已分配的
-              MCP 工具，每次调用均受此策略控制。OpenCode 与 Continue
-              继续使用各自的工具系统。
+              MCP 工具；选择 Execute 即授权当前交互运行自动调用这些工具，
+              不再逐次询问。禁止策略会拒绝所有工具调用。OpenCode 与
+              Continue 继续使用各自的工具系统。
             </small>
           </label>
 
@@ -1415,6 +1439,11 @@ export function SettingsPanel({
                 onSetPaused={onSetHeartbeatPaused}
               />
             </div>
+          )}
+          {activeTab === 'roles' && (
+            <RolePromptSettingsSection
+              onChanged={onExpertsChanged}
+            />
           )}
           {activeTab === 'skills' && <SkillsSettingsSection />}
           {activeTab === 'mcp' && <McpSettingsSection />}

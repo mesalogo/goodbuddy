@@ -5,6 +5,7 @@ import {
   FileText,
   FolderTree,
   Hourglass,
+  Monitor,
   PanelRightClose,
   PlayCircle,
   RefreshCw,
@@ -13,7 +14,7 @@ import {
   X,
   XCircle
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AssistantMemory,
   AssistantSchedule,
@@ -29,6 +30,7 @@ import type {
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type {
   ApprovalDecision,
+  BrowserLiveState,
   ContextAttachment,
   KnowledgeLibrary
 } from '../../shared/contracts'
@@ -41,6 +43,7 @@ export type AssistantSidebarTab =
   | 'context'
   | 'artifacts'
   | 'changes'
+  | 'browser'
   | 'preview'
 
 export type SidebarArtifact = {
@@ -75,7 +78,9 @@ type RightAssistantSidebarProps = {
   heartbeatEntries: AssistantHeartbeatEntry[]
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
+  browserState?: BrowserLiveState
   onClose: () => void
+  onStopBrowser: () => Promise<void>
   onOpenHeartbeat: () => void
   onOpenConversation: (conversationId: string) => void
   onImportArtifacts: () => Promise<void>
@@ -117,15 +122,44 @@ const tabs: Array<{
   { id: 'context', label: '上下文' },
   { id: 'artifacts', label: '成果' },
   { id: 'changes', label: '更改' },
+  { id: 'browser', label: '浏览器' },
   { id: 'preview', label: '预览' }
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
+const defaultSidebarWidth = 350
+const minimumSidebarWidth = 300
+const maximumSidebarWidth = 640
+const minimumRemainingAppWidth = 520
+const compactSidebarBreakpoint = 720
+const keyboardResizeStep = 16
+const sidebarTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit'
+})
+
+function getSidebarWidthLimits(viewportWidth: number): {
+  minimum: number
+  maximum: number
+} {
+  return {
+    minimum: minimumSidebarWidth,
+    maximum: Math.max(
+      minimumSidebarWidth,
+      Math.min(
+        maximumSidebarWidth,
+        viewportWidth - minimumRemainingAppWidth
+      )
+    )
+  }
+}
+
+function clampSidebarWidth(width: number, viewportWidth: number): number {
+  const limits = getSidebarWidthLimits(viewportWidth)
+  return Math.min(limits.maximum, Math.max(limits.minimum, width))
+}
 
 function formatTime(timestamp: number | string): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(new Date(timestamp))
+  return sidebarTimeFormatter.format(new Date(timestamp))
 }
 
 export function RightAssistantSidebar({
@@ -143,7 +177,9 @@ export function RightAssistantSidebar({
   heartbeatEntries,
   workspaceChanges,
   workspaceProjectId,
+  browserState,
   onClose,
+  onStopBrowser,
   onOpenHeartbeat,
   onOpenConversation,
   onImportArtifacts,
@@ -165,6 +201,12 @@ export function RightAssistantSidebar({
   onRespondApproval,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
+  const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth)
+  const [isResizing, setIsResizing] = useState(false)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const liveSidebarWidth = useRef(defaultSidebarWidth)
+  const resizePointerId = useRef<number | undefined>(undefined)
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [workspacePreview, setWorkspacePreview] = useState<
     | {
@@ -198,12 +240,20 @@ export function RightAssistantSidebar({
   const [scheduleRecurrence, setScheduleRecurrence] = useState<
     ScheduleCreateInput['recurrence']
   >('once')
-  const recentTasks = activities
-    .filter((activity) => activity.kind === 'request')
-    .slice(0, 20)
-  const changes = activities
-    .filter((activity) => activity.kind === 'tool')
-    .slice(0, 30)
+  const recentTasks = useMemo(
+    () =>
+      activities
+        .filter((activity) => activity.kind === 'request')
+        .slice(0, 20),
+    [activities]
+  )
+  const changes = useMemo(
+    () =>
+      activities
+        .filter((activity) => activity.kind === 'tool')
+        .slice(0, 30),
+    [activities]
+  )
   const artifactPreview =
     artifacts.find((artifact) => artifact.id === selectedArtifactId) ??
     artifacts[0]
@@ -211,6 +261,86 @@ export function RightAssistantSidebar({
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
       : undefined
+  const sidebarWidthLimits = getSidebarWidthLimits(viewportWidth)
+  const canResize =
+    open && viewportWidth >= compactSidebarBreakpoint
+
+  useEffect(() => {
+    const handleViewportResize = (): void => {
+      setViewportWidth(window.innerWidth)
+      setSidebarWidth((currentWidth) => {
+        const width = clampSidebarWidth(
+          currentWidth,
+          window.innerWidth
+        )
+        liveSidebarWidth.current = width
+        return width
+      })
+    }
+
+    window.addEventListener('resize', handleViewportResize)
+    return () => window.removeEventListener('resize', handleViewportResize)
+  }, [])
+
+  const resizeFromClientX = (
+    clientX: number,
+    commit: boolean
+  ): void => {
+    const width = clampSidebarWidth(
+      window.innerWidth - clientX,
+      window.innerWidth
+    )
+    liveSidebarWidth.current = width
+    if (commit) {
+      setSidebarWidth(width)
+      return
+    }
+    sidebarRef.current?.style.setProperty(
+      '--assistant-sidebar-width',
+      `${width}px`
+    )
+  }
+
+  const finishResize = (
+    event: React.PointerEvent<HTMLDivElement>
+  ): void => {
+    if (resizePointerId.current !== event.pointerId) {
+      return
+    }
+    resizePointerId.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    setSidebarWidth(liveSidebarWidth.current)
+    setIsResizing(false)
+  }
+
+  const resizeWithKeyboard = (
+    event: React.KeyboardEvent<HTMLDivElement>
+  ): void => {
+    if (!canResize) {
+      return
+    }
+    const limits = getSidebarWidthLimits(window.innerWidth)
+    const nextWidth =
+      event.key === 'Home'
+        ? limits.minimum
+        : event.key === 'End'
+          ? limits.maximum
+          : event.key === 'ArrowLeft'
+            ? sidebarWidth + keyboardResizeStep
+            : event.key === 'ArrowRight'
+              ? sidebarWidth - keyboardResizeStep
+              : undefined
+
+    if (nextWidth === undefined) {
+      return
+    }
+    event.preventDefault()
+    setSidebarWidth(
+      clampSidebarWidth(nextWidth, window.innerWidth)
+    )
+  }
 
   const openWorkspaceFile = (path: string): void => {
     const requestId = workspacePreviewRequest.current + 1
@@ -276,15 +406,65 @@ export function RightAssistantSidebar({
 
   return (
     <aside
+      ref={sidebarRef}
       aria-label="助手工作栏"
       aria-hidden={!open}
       className={
         open
-          ? 'assistant-sidebar assistant-sidebar--open'
+          ? `assistant-sidebar assistant-sidebar--open${isResizing && canResize ? ' assistant-sidebar--resizing' : ''}`
           : 'assistant-sidebar'
       }
       inert={!open}
+      style={
+        {
+          '--assistant-sidebar-width': `${sidebarWidth}px`
+        } as React.CSSProperties
+      }
     >
+      <div
+        aria-controls="assistant-sidebar-panel"
+        aria-label="调整助手工作栏宽度"
+        aria-orientation="vertical"
+        aria-valuemax={sidebarWidthLimits.maximum}
+        aria-valuemin={sidebarWidthLimits.minimum}
+        aria-valuenow={sidebarWidth}
+        aria-valuetext={`${sidebarWidth} 像素`}
+        aria-disabled={!canResize}
+        className="assistant-sidebar__resize-handle"
+        onKeyDown={resizeWithKeyboard}
+        onLostPointerCapture={(event) => {
+          if (resizePointerId.current === event.pointerId) {
+            resizePointerId.current = undefined
+            setSidebarWidth(liveSidebarWidth.current)
+            setIsResizing(false)
+          }
+        }}
+        onPointerCancel={finishResize}
+        onPointerDown={(event) => {
+          if (event.button !== 0 || !canResize) {
+            return
+          }
+          event.preventDefault()
+          resizePointerId.current = event.pointerId
+          event.currentTarget.setPointerCapture(event.pointerId)
+          resizeFromClientX(event.clientX, true)
+          setIsResizing(true)
+        }}
+        onPointerMove={(event) => {
+          if (resizePointerId.current !== event.pointerId) {
+            return
+          }
+          if (!canResize) {
+            finishResize(event)
+            return
+          }
+          event.preventDefault()
+          resizeFromClientX(event.clientX, false)
+        }}
+        onPointerUp={finishResize}
+        role="separator"
+        tabIndex={canResize ? 0 : -1}
+      />
       <header className="assistant-sidebar__header">
         <strong>工作栏</strong>
         <button
@@ -798,6 +978,76 @@ export function RightAssistantSidebar({
               )}
             </section>
           </>
+        )}
+
+        {tab === 'browser' && (
+          <section className="assistant-sidebar__browser">
+            <header>
+              <span>
+                <Monitor size={15} />
+                <strong>实时浏览器</strong>
+              </span>
+              {browserState &&
+                browserState.status !== 'stopped' && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => void onStopBrowser()}
+                    type="button"
+                  >
+                    停止浏览器
+                  </button>
+                )}
+            </header>
+            {!browserState ? (
+              <p className="assistant-sidebar__empty">
+                Agent 打开网页后，实时画面会显示在这里。
+              </p>
+            ) : (
+              <>
+                <div
+                  aria-live="polite"
+                  className={`assistant-sidebar__browser-status assistant-sidebar__browser-status--${browserState.status}`}
+                  role="status"
+                >
+                  {browserState.status === 'creating'
+                    ? '正在启动浏览器…'
+                    : browserState.status === 'loading'
+                      ? '正在加载页面…'
+                      : browserState.status === 'acting'
+                        ? 'Agent 正在操作页面…'
+                        : browserState.status === 'ready'
+                          ? '浏览器已就绪'
+                          : browserState.status === 'failed'
+                            ? browserState.error ?? '浏览器操作失败'
+                            : '浏览器已停止'}
+                </div>
+                {browserState.url && (
+                  <div
+                    className="assistant-sidebar__browser-url"
+                    title={browserState.url}
+                  >
+                    {browserState.url}
+                  </div>
+                )}
+                {browserState.frameDataUrl ? (
+                  <img
+                    alt="Agent 实时浏览器画面"
+                    className="assistant-sidebar__browser-frame"
+                    src={browserState.frameDataUrl}
+                  />
+                ) : (
+                  <div className="assistant-sidebar__browser-placeholder">
+                    <Monitor size={28} />
+                    <span>
+                      {browserState.status === 'failed'
+                        ? '未能获取页面画面'
+                        : '等待首个页面画面…'}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
         )}
 
         {tab === 'preview' && (

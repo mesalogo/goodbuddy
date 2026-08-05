@@ -12,6 +12,7 @@ import type {
   AssistantTask,
   ConversationSnapshot,
   ExpertCreateInput,
+  ExpertUpdateInput,
   HeartbeatCreateInput,
   HeartbeatSummaryOutput,
   HeartbeatUpdateInput,
@@ -22,6 +23,13 @@ import type {
   TokenUsageRecord,
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
+import {
+  computerControlErrorCodeSchema,
+  computerControlRiskSchema,
+  type ComputerControlErrorCode,
+  type ComputerControlRisk
+} from '../../shared/computer-control-contracts'
+import type { ComputerControlAuditEvent } from '../computer-control/audit'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
 type ProjectRow = {
@@ -187,6 +195,23 @@ type TokenUsageRecordRow = {
   cache_read_tokens: number
   cache_write_tokens: number
 }
+
+type ComputerControlActionRow = {
+  command_id: string
+  task_id: string
+  conversation_id: string
+  lease_id: string
+  action: ComputerControlAuditEvent['action']
+  risk: ComputerControlRisk
+  outcome: ComputerControlAuditEvent['outcome']
+  error_code: ComputerControlErrorCode | null
+  occurred_at: number
+  text_length: number | null
+  text_digest: string | null
+}
+
+export type PersistedComputerControlAuditEvent =
+  ComputerControlAuditEvent
 
 export type ClaimedHeartbeatRun = {
   config: AssistantHeartbeatConfig
@@ -407,6 +432,76 @@ function validateTokenCount(value: number, label: string): number {
   return value
 }
 
+const computerControlActions = [
+  'observe',
+  'activate',
+  'replace_text',
+  'select_option',
+  'scroll'
+] as const
+const computerControlOutcomes = [
+  'completed',
+  'denied',
+  'failed',
+  'outcome_unknown'
+] as const
+function validateComputerControlId(
+  value: string,
+  label: string,
+  maximumLength: number,
+  opaque = false
+): string {
+  if (typeof value !== 'string') {
+    throw new TypeError(`${label} must be a string`)
+  }
+  if (
+    value.length < (opaque ? 16 : 1) ||
+    value.length > maximumLength ||
+    (opaque
+      ? !/^[A-Za-z0-9_-]+$/.test(value)
+      : [...value].some((character) => {
+          const code = character.charCodeAt(0)
+          return code <= 31 || code === 127
+        }))
+  ) {
+    throw new RangeError(`Invalid ${label}`)
+  }
+  return value
+}
+
+function validateComputerControlEnum<T extends string>(
+  value: string,
+  label: string,
+  allowed: readonly T[]
+): T {
+  if (!allowed.includes(value as T)) {
+    throw new RangeError(`Invalid ${label}`)
+  }
+  return value as T
+}
+
+function toComputerControlAuditEvent(
+  row: ComputerControlActionRow
+): PersistedComputerControlAuditEvent {
+  return {
+    timestamp: row.occurred_at,
+    taskId: row.task_id,
+    conversationId: row.conversation_id,
+    leaseId: row.lease_id,
+    commandId: row.command_id,
+    action: row.action,
+    risk: row.risk,
+    outcome: row.outcome,
+    ...(row.error_code ? { errorCode: row.error_code } : {}),
+    ...(row.text_length === null
+      ? {}
+      : { textLength: row.text_length }),
+    ...(row.text_digest === null
+      ? {}
+      : { textDigest: row.text_digest })
+  }
+}
+
 const interruptedTaskError = '应用退出时任务仍在运行'
 const interruptedMessageStatus = '上次运行意外中断，可以重新发送问题'
 
@@ -575,6 +670,7 @@ export class AssistantDatabase {
         'schedules',
         'memory_items',
         'artifacts',
+        'computer_control_actions',
         'task_events',
         'runs',
         'model_usage_calls',
@@ -1110,6 +1206,165 @@ export class AssistantDatabase {
         JSON.stringify(payload),
         new Date().toISOString()
       )
+  }
+
+  persistComputerControlAudit(
+    event: ComputerControlAuditEvent
+  ): void {
+    if (!event || typeof event !== 'object') {
+      throw new TypeError('Computer control audit event is required')
+    }
+    const taskId = validateComputerControlId(
+      event.taskId,
+      'taskId',
+      128
+    )
+    const conversationId = validateComputerControlId(
+      event.conversationId,
+      'conversationId',
+      128
+    )
+    const leaseId = validateComputerControlId(
+      event.leaseId,
+      'leaseId',
+      160,
+      true
+    )
+    const commandId = validateComputerControlId(
+      event.commandId,
+      'commandId',
+      160,
+      true
+    )
+    const action = validateComputerControlEnum(
+      event.action,
+      'action',
+      computerControlActions
+    )
+    const risk = computerControlRiskSchema.parse(event.risk)
+    const outcome = validateComputerControlEnum(
+      event.outcome,
+      'outcome',
+      computerControlOutcomes
+    )
+    if (
+      !Number.isSafeInteger(event.timestamp) ||
+      event.timestamp < 0
+    ) {
+      throw new RangeError('Invalid timestamp')
+    }
+    const errorCode =
+      event.errorCode === undefined
+        ? undefined
+        : computerControlErrorCodeSchema.parse(event.errorCode)
+    if (
+      (outcome === 'completed' && errorCode !== undefined) ||
+      (outcome !== 'completed' && errorCode === undefined)
+    ) {
+      throw new RangeError('Invalid outcome and errorCode combination')
+    }
+    const hasTextMetadata =
+      event.textLength !== undefined ||
+      event.textDigest !== undefined
+    if (
+      (action === 'replace_text') !== hasTextMetadata ||
+      (hasTextMetadata &&
+        (!Number.isInteger(event.textLength) ||
+          event.textLength! < 0 ||
+          event.textLength! > 4_096 ||
+          typeof event.textDigest !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(event.textDigest)))
+    ) {
+      throw new RangeError('Invalid redacted text metadata')
+    }
+
+    const database = this.requireDatabase()
+    const createdAt = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const inserted = database
+        .prepare(
+          `INSERT OR IGNORE INTO computer_control_actions
+            (command_id, task_id, conversation_id, lease_id, action, risk,
+             outcome, error_code, occurred_at, text_length, text_digest,
+             created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          commandId,
+          taskId,
+          conversationId,
+          leaseId,
+          action,
+          risk,
+          outcome,
+          errorCode ?? null,
+          event.timestamp,
+          event.textLength ?? null,
+          event.textDigest ?? null,
+          createdAt
+        )
+      if (inserted.changes === 1) {
+        database
+          .prepare(
+            `INSERT INTO task_events
+              (task_id, run_id, kind, payload_json, created_at)
+             VALUES (?, NULL, 'computer_control', ?, ?)`
+          )
+          .run(
+            taskId,
+            JSON.stringify({
+              commandId,
+              action,
+              risk,
+              outcome,
+              ...(errorCode ? { errorCode } : {}),
+              ...(event.textLength === undefined
+                ? {}
+                : { textLength: event.textLength }),
+              ...(event.textDigest === undefined
+                ? {}
+                : { textDigest: event.textDigest })
+            }),
+            createdAt
+          )
+        database
+          .prepare(
+            `DELETE FROM computer_control_actions
+             WHERE command_id IN (
+               SELECT command_id FROM computer_control_actions
+               ORDER BY occurred_at DESC, created_at DESC
+               LIMIT -1 OFFSET 10000
+             )`
+          )
+          .run()
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  listRecentComputerControlAudit(
+    limit = 100
+  ): PersistedComputerControlAuditEvent[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new RangeError(
+        'Computer control audit limit must be between 1 and 500'
+      )
+    }
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT command_id, task_id, conversation_id, lease_id, action,
+                risk, outcome, error_code, occurred_at, text_length,
+                text_digest
+         FROM computer_control_actions
+         ORDER BY occurred_at DESC, created_at DESC
+         LIMIT ?`
+      )
+      .all(limit) as ComputerControlActionRow[]
+    return rows.map(toComputerControlAuditEvent)
   }
 
   listArtifacts(projectId?: string, limit = 100): AssistantArtifact[] {
@@ -2304,6 +2559,43 @@ export class AssistantDatabase {
     return this.getExpert(id)
   }
 
+  updateExpert(
+    expertId: string,
+    input: ExpertUpdateInput
+  ): AssistantExpert {
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE experts
+         SET name = ?, description = ?, system_instructions = ?,
+             updated_at = ?
+         WHERE id = ? AND enabled = 1`
+      )
+      .run(
+        input.name,
+        input.description,
+        input.systemInstructions,
+        new Date().toISOString(),
+        expertId
+      )
+    if (result.changes === 0) {
+      throw new Error('专家不存在或已停用')
+    }
+    return this.getExpert(expertId)
+  }
+
+  removeExpert(expertId: string): void {
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE experts
+         SET enabled = 0, updated_at = ?
+         WHERE id = ? AND enabled = 1`
+      )
+      .run(new Date().toISOString(), expertId)
+    if (result.changes === 0) {
+      throw new Error('专家不存在或已停用')
+    }
+  }
+
   getExpert(expertId: string): AssistantExpert {
     const row = this.requireDatabase()
       .prepare('SELECT * FROM experts WHERE id = ? AND enabled = 1')
@@ -2358,7 +2650,7 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version >= 5) {
+    if (version.user_version >= 6) {
       return
     }
     if (version.user_version < 1) {
@@ -2620,9 +2912,10 @@ export class AssistantDatabase {
       COMMIT;
     `)
     }
-    database.exec(`
-      BEGIN IMMEDIATE;
-      CREATE TABLE IF NOT EXISTS model_usage_calls (
+    if (version.user_version < 4) {
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS model_usage_calls (
         request_id TEXT NOT NULL
           REFERENCES tasks(id) ON DELETE CASCADE,
         call_id TEXT NOT NULL,
@@ -2642,17 +2935,81 @@ export class AssistantDatabase {
       CREATE INDEX IF NOT EXISTS model_usage_calls_dimensions_idx
         ON model_usage_calls(runtime, provider, model);
       PRAGMA user_version = 4;
-      COMMIT;
-    `)
-    database.exec(`
-      BEGIN IMMEDIATE;
-      CREATE INDEX IF NOT EXISTS tasks_status_idx
+        COMMIT;
+      `)
+    }
+    if (version.user_version < 5) {
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE INDEX IF NOT EXISTS tasks_status_idx
         ON tasks(status);
       CREATE INDEX IF NOT EXISTS messages_state_idx
         ON messages(state);
       PRAGMA user_version = 5;
-      COMMIT;
-    `)
+        COMMIT;
+      `)
+    }
+    if (version.user_version < 6) {
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS computer_control_actions (
+          command_id TEXT PRIMARY KEY
+            CHECK(length(command_id) BETWEEN 16 AND 160),
+          task_id TEXT NOT NULL
+            REFERENCES tasks(id) ON DELETE CASCADE
+            CHECK(length(task_id) BETWEEN 1 AND 128),
+          conversation_id TEXT NOT NULL
+            CHECK(length(conversation_id) BETWEEN 1 AND 128),
+          lease_id TEXT NOT NULL
+            CHECK(length(lease_id) BETWEEN 16 AND 160),
+          action TEXT NOT NULL
+            CHECK(action IN ('observe', 'activate', 'replace_text',
+              'select_option', 'scroll')),
+          risk TEXT NOT NULL
+            CHECK(risk IN ('observe', 'navigate', 'input', 'commit',
+              'forbidden')),
+          outcome TEXT NOT NULL
+            CHECK(outcome IN ('completed', 'denied', 'failed',
+              'outcome_unknown')),
+          error_code TEXT
+            CHECK(error_code IS NULL OR error_code IN (
+              'invalid_request', 'driver_unavailable', 'driver_timeout',
+              'lease_not_found', 'lease_expired', 'lease_mismatch',
+              'observation_not_found', 'observation_stale',
+              'observation_consumed', 'element_not_found',
+              'window_not_foreground', 'element_identity_changed',
+              'focus_failed', 'forbidden', 'approval_denied',
+              'approval_timeout', 'cancelled', 'command_id_conflict',
+              'outcome_unknown', 'internal_error')),
+          occurred_at INTEGER NOT NULL
+            CHECK(occurred_at BETWEEN 0 AND 9007199254740991),
+          text_length INTEGER
+            CHECK(text_length IS NULL OR
+              text_length BETWEEN 0 AND 4096),
+          text_digest TEXT
+            CHECK(text_digest IS NULL OR (
+              length(text_digest) = 64 AND
+              text_digest NOT GLOB '*[^0-9a-f]*')),
+          created_at TEXT NOT NULL,
+          CHECK(
+            (outcome = 'completed' AND error_code IS NULL) OR
+            (outcome <> 'completed' AND error_code IS NOT NULL)
+          ),
+          CHECK(
+            (action = 'replace_text' AND text_length IS NOT NULL AND
+              text_digest IS NOT NULL) OR
+            (action <> 'replace_text' AND text_length IS NULL AND
+              text_digest IS NULL)
+          )
+        );
+        CREATE INDEX IF NOT EXISTS computer_control_actions_recent_idx
+          ON computer_control_actions(occurred_at DESC, created_at DESC);
+        CREATE INDEX IF NOT EXISTS computer_control_actions_task_idx
+          ON computer_control_actions(task_id, occurred_at DESC);
+        PRAGMA user_version = 6;
+        COMMIT;
+      `)
+    }
   }
 
   private requireDatabase(): DatabaseSync {

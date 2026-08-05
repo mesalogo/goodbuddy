@@ -11,4 +11,29 @@ describe('sandboxed preload', () => {
     expect(source).not.toMatch(/\bfrom\s+['"]node:/u)
     expect(source).not.toMatch(/\brequire\(\s*['"]node:/u)
   })
+
+  it('does not load runtime schema libraries in the Electron sandbox', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).not.toMatch(/\b\w+Schema\b/u)
+    expect(source).not.toMatch(/\bfrom\s+['"]zod['"]/u)
+  })
+
+  it('exposes only explicit computer capability and managed profile IPC methods', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('setComputerCapabilityEnabled:')
+    expect(source).toContain('diagnoseComputerCapability:')
+    expect(source).toContain('createBrowserProfile:')
+    expect(source).toContain('renameBrowserProfile:')
+    expect(source).toContain('setDefaultBrowserProfile:')
+    expect(source).toContain('removeBrowserProfile:')
+    expect(source).not.toMatch(
+      /(?:setComputerCapability|BrowserProfile).{0,80}(?:executablePath|command|env|args)/su
+    )
+  })
 })

@@ -1,6 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
+import type { BrowserToolService } from '../browser/browser-model-tools'
 import { createAgentRuntime } from './create-runtime'
+import { AgentRuntimeController } from './runtime-controller'
+
+function createBrowserService(): BrowserToolService & {
+  dispose: ReturnType<typeof vi.fn>
+} {
+  return {
+    getOrigin: vi.fn(() => undefined),
+    navigate: vi.fn(),
+    snapshot: vi.fn(),
+    click: vi.fn(),
+    type: vi.fn(),
+    select: vi.fn(),
+    back: vi.fn(),
+    screenshot: vi.fn(),
+    releaseConversation: vi.fn(async () => undefined),
+    dispose: vi.fn(async () => undefined)
+  }
+}
 
 function settings(
   overrides: Partial<ResolvedRuntimeSettings> = {}
@@ -39,6 +58,50 @@ describe('createAgentRuntime model compatibility', () => {
       detail: expect.stringContaining('OpenAI Chat Completions')
     })
     await runtime.dispose()
+  })
+
+  it('shares injected browser service without runtime-owned disposal', async () => {
+    const browserService = createBrowserService()
+    const first = createAgentRuntime(process.cwd(), settings(), {
+      browserService
+    })
+    const second = createAgentRuntime(process.cwd(), settings(), {
+      browserService
+    })
+    const controller = new AgentRuntimeController(first)
+
+    await controller.releaseConversation('conversation-one')
+    await controller.replace(second)
+    await controller.releaseConversation('conversation-two')
+    await controller.dispose()
+
+    expect(browserService.releaseConversation).toHaveBeenNthCalledWith(
+      1,
+      'conversation-one'
+    )
+    expect(browserService.releaseConversation).toHaveBeenNthCalledWith(
+      2,
+      'conversation-two'
+    )
+    expect(browserService.dispose).not.toHaveBeenCalled()
+  })
+
+  it('does not expose the browser service to OpenCode runtimes', async () => {
+    const browserService = createBrowserService()
+    const runtime = createAgentRuntime(
+      process.cwd(),
+      settings({
+        provider: 'opencode',
+        opencodeBaseUrl: 'http://127.0.0.1:4096'
+      }),
+      { browserService }
+    )
+
+    await runtime.releaseConversation?.('opencode-conversation')
+    await runtime.dispose()
+
+    expect(browserService.releaseConversation).not.toHaveBeenCalled()
+    expect(browserService.dispose).not.toHaveBeenCalled()
   })
 
   it('keeps OpenCode independent profiles Anthropic API-key only', () => {
