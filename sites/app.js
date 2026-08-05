@@ -48,12 +48,16 @@
 
   const configureReleaseLinks = () => {
     const releaseLinks = document.querySelectorAll("[data-release-link]");
+    const hasValidVersion =
+      typeof config?.version === "string" &&
+      /^\d+\.\d+\.\d+$/.test(config.version);
+    const expectedReleaseUrl = hasValidVersion
+      ? `https://github.com/mesalogo/goodbuddy/releases/tag/v${config.version}`
+      : "";
     const isReady =
       config?.releasePublished === true &&
       typeof config.releaseUrl === "string" &&
-      /^https:\/\/github\.com\/mesalogo\/goodbuddy\/releases\/tag\/v0\.8\.0$/.test(
-        config.releaseUrl,
-      );
+      config.releaseUrl === expectedReleaseUrl;
 
     releaseLinks.forEach((link) => {
       if (!isReady) {

@@ -24,17 +24,20 @@ node --check sites/site.config.js
 
 ## Release 配置
 
-未来 v0.8.0 Release 地址集中在 `site.config.js`：
+当前版本的 Release 地址集中在 `site.config.js`，版本号必须与根目录
+`package.json` 保持一致：
 
 ```js
 window.GOODBUDDY_SITE_CONFIG = Object.freeze({
-  version: "0.8.0",
-  releasePublished: false,
-  releaseUrl: "https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.0",
+  version: "0.8.1",
+  releasePublished: true,
+  releaseUrl: "https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.1",
 });
 ```
 
-正式 Release 确认发布后，将 `releasePublished` 改为 `true`，页面上的下载入口才会指向 Release 页面。官网不配置或猜测具体安装资产名称。
+准备尚未发布的版本时，将 `releasePublished` 暂时设为 `false`；正式
+Release 确认发布后改回 `true`，页面上的下载入口才会指向 Release
+页面。官网不配置或猜测具体安装资产名称。
 
 ## 文件
 

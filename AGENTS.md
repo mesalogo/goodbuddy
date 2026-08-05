@@ -76,8 +76,9 @@ Keep Electron security boundaries intact:
 - `build/build-release.cjs` verifies the unpacked application, `app.asar`,
   bundled Continue and OpenCode runtimes, executable architecture, and package
   signatures before atomically replacing a release directory.
-- Keep electron-builder invocations on `--publish never`. Current CI uploads
-  30-day GitHub Actions artifacts and does not create GitHub Release assets.
+- Keep electron-builder invocations on `--publish never`. Main-branch builds
+  upload 30-day GitHub Actions artifacts. Version-tag builds additionally
+  verify and aggregate packages before publishing GitHub Release assets.
   Signing and macOS notarization are not configured.
 - Keep `ELECTRON_CACHE` and `ELECTRON_BUILDER_CACHE` under
   `${{ runner.temp }}` in step-level workflow contexts. A cache beneath the

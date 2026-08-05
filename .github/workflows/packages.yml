@@ -30,9 +30,9 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -54,7 +54,7 @@ jobs:
         run: npm run build:bundle
 
       - name: Upload production bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: goodbuddy-production-bundle
           path: out
@@ -90,15 +90,15 @@ jobs:
     timeout-minutes: 75
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
 
       - name: Cache packaging toolsets
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ runner.temp }}/electron
@@ -112,7 +112,7 @@ jobs:
           ELECTRON_CACHE: ${{ runner.temp }}/electron
 
       - name: Download production bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: goodbuddy-production-bundle
           path: out
@@ -124,7 +124,7 @@ jobs:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
 
       - name: Upload release packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: goodbuddy-${{ matrix.platform }}-${{ matrix.arch }}
           path: dist/release/${{ matrix.platform }}-${{ matrix.arch }}
@@ -143,11 +143,11 @@ jobs:
       actions: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -160,19 +160,19 @@ jobs:
           test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
 
       - name: Download Windows packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: goodbuddy-windows-*
           path: dist/release-downloads
 
       - name: Download macOS packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: goodbuddy-macos-*
           path: dist/release-downloads
 
       - name: Download Linux packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: goodbuddy-linux-*
           path: dist/release-downloads

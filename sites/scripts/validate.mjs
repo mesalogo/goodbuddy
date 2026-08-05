@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = path.resolve(siteRoot, "..");
 const errors = [];
 
 const requiredFiles = [
@@ -46,6 +47,14 @@ const [html, css, appJs, configJs] = await Promise.all([
   readSiteFile("app.js"),
   readSiteFile("site.config.js"),
 ]);
+let packageVersion = "";
+try {
+  packageVersion = JSON.parse(
+    await readFile(path.join(repositoryRoot, "package.json"), "utf8"),
+  ).version;
+} catch {
+  errors.push("无法读取 package.json 版本");
+}
 
 for (const [relativePath, content] of [
   ["index.html", html],
@@ -87,22 +96,26 @@ for (const copy of requiredCopy) {
 }
 
 report(
-  /version:\s*"0\.8\.0"/.test(configJs),
-  "site.config.js 必须集中配置 0.8.0 版本",
+  configJs.includes(`version: "${packageVersion}"`),
+  `site.config.js 版本必须与 package.json 的 ${packageVersion} 一致`,
 );
 report(
   /releasePublished:\s*true/.test(configJs),
-  "v0.8.0 Release 发布后 releasePublished 必须为 true",
+  `v${packageVersion} Release 发布后 releasePublished 必须为 true`,
 );
 report(
-  /releaseUrl:\s*"https:\/\/github\.com\/mesalogo\/goodbuddy\/releases\/tag\/v0\.8\.0"/.test(
-    configJs,
+  configJs.includes(
+    `releaseUrl: "https://github.com/mesalogo/goodbuddy/releases/tag/v${packageVersion}"`,
   ),
-  "v0.8.0 Release URL 配置不正确",
+  `v${packageVersion} Release URL 配置不正确`,
 );
 report(
   appJs.includes("config?.releasePublished === true"),
   "下载链接必须受 releasePublished 配置保护",
+);
+report(
+  appJs.includes("config.releaseUrl === expectedReleaseUrl"),
+  "下载链接必须与配置版本对应的 GitHub Release 地址一致",
 );
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
