@@ -174,7 +174,8 @@ describe('ModelAgentRuntime', () => {
       {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed125',
         conversationId: 'conversation-1',
-        prompt: '你好'
+        prompt: '你好',
+        trustedInstructions: 'Trusted specialist system instruction.'
       },
       new AbortController().signal
     )) {
@@ -196,6 +197,7 @@ describe('ModelAgentRuntime', () => {
       stream: true
     })
     expect(body.system).toContain('# 文档写作')
+    expect(body.system).toContain('Trusted specialist system instruction.')
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'text',
@@ -1278,6 +1280,28 @@ describe('ModelAgentRuntime', () => {
     expect(fetcher).toHaveBeenCalledOnce()
   })
 
+  it('reports image configuration checks without pretending to generate', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai/v1',
+      model: 'gpt-image-2',
+      protocol: 'openai-images-generations',
+      authentication: 'api-key',
+      imageGenerationQuality: 'medium',
+      fetcher
+    })
+
+    await expect(runtime.testConnection()).resolves.toMatchObject({
+      available: true,
+      capability: 'image-generation',
+      detail: expect.stringContaining(
+        '发送提示词时执行实际生成验证'
+      )
+    })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('generates a bounded image through the BigToken-compatible endpoint', async () => {
     const png = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -1301,6 +1325,7 @@ describe('ModelAgentRuntime', () => {
       model: 'gpt-image-2',
       protocol: 'openai-images-generations',
       authentication: 'api-key',
+      imageGenerationQuality: 'high',
       fetcher
     })
     const events = []
@@ -1328,6 +1353,7 @@ describe('ModelAgentRuntime', () => {
       model: 'gpt-image-2',
       prompt: '一只在窗边睡觉的猫',
       n: 1,
+      quality: 'high',
       response_format: 'b64_json'
     })
     expect(events).toContainEqual(

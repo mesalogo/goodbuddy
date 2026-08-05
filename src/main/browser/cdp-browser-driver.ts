@@ -4,15 +4,21 @@ import type {
   BrowserEventListener,
   BrowserWebContents
 } from './electron-browser-session'
+import {
+  BROWSER_JPEG_QUALITIES,
+  isValidBrowserJpeg,
+  MAX_BROWSER_SCREENSHOT_BYTES,
+  type BrowserScreenshot
+} from './browser-screenshot'
+import {
+  MAX_BROWSER_INPUT_LENGTH as MAX_INPUT_LENGTH,
+  MAX_BROWSER_SELECT_LENGTH as MAX_SELECT_LENGTH
+} from './browser-limits'
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const MAX_AX_NODES = 500
 const MAX_AX_DEPTH = 20
-const MAX_AX_BYTES = 1024 * 1024
 const MAX_SNAPSHOT_BYTES = 128 * 1024
-const MAX_SCREENSHOT_BYTES = 512 * 1024
-const MAX_INPUT_LENGTH = 16_384
-const MAX_SELECT_LENGTH = 1_024
 const SELECT_OPTION_FUNCTION = `function (expectedValue) {
   const options = Array.from(this.options);
   const option = options.find((candidate) => candidate.value === expectedValue);
@@ -66,12 +72,6 @@ export type BrowserSnapshot = {
   truncated: boolean
 }
 
-export type BrowserScreenshot = {
-  type: 'image'
-  mimeType: 'image/png'
-  data: string
-}
-
 export class BrowserStaleReferenceError extends Error {
   constructor(message = '浏览器元素引用已失效，请重新获取快照') {
     super(message)
@@ -95,7 +95,6 @@ export type CdpBrowserDriverOptions = {
   timeoutMs?: number
   maximumAxNodes?: number
   maximumAxDepth?: number
-  maximumAxBytes?: number
   maximumSnapshotBytes?: number
   maximumScreenshotBytes?: number
 }
@@ -103,6 +102,11 @@ export type CdpBrowserDriverOptions = {
 type ResolvedTarget = {
   backendNodeId: number
   bounds: { x: number; y: number; width: number; height: number }
+}
+
+type NavigationWait = {
+  promise: Promise<void>
+  cancel(error: unknown): void
 }
 
 function stringValue(value: CdpAxValue | undefined): string {
@@ -159,89 +163,34 @@ function delayAbortable(
   })
 }
 
-function jsonStringBytes(value: string): number {
-  let bytes = 2
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (
-      code === 0x08 ||
-      code === 0x09 ||
-      code === 0x0a ||
-      code === 0x0c ||
-      code === 0x0d ||
-      code === 0x22 ||
-      code === 0x5c
-    ) {
-      bytes += 2
-    } else if (code < 0x20) {
-      bytes += 6
-    } else if (code < 0x80) {
-      bytes += 1
-    } else if (code < 0x800) {
-      bytes += 2
-    } else if (
-      code >= 0xd800 &&
-      code <= 0xdbff &&
-      value.charCodeAt(index + 1) >= 0xdc00 &&
-      value.charCodeAt(index + 1) <= 0xdfff
-    ) {
-      bytes += 4
-      index += 1
-    } else if (code >= 0xd800 && code <= 0xdfff) {
-      bytes += 6
-    } else {
-      bytes += 3
+function isTransientNavigationError(error: unknown): boolean {
+  let current = error
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!(current instanceof Error)) {
+      return false
     }
-  }
-  return bytes
-}
-
-function exceedsJsonByteLimit(value: unknown, maximumBytes: number): boolean {
-  let bytes = 0
-  const stack = [value]
-  const seen = new WeakSet<object>()
-  const add = (amount: number): boolean => {
-    bytes += amount
-    return bytes > maximumBytes
-  }
-
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (current === null) {
-      if (add(4)) return true
-    } else if (typeof current === 'string') {
-      if (add(jsonStringBytes(current))) return true
-    } else if (typeof current === 'number') {
-      if (add(Number.isFinite(current) ? String(current).length : 4)) {
-        return true
-      }
-    } else if (typeof current === 'boolean') {
-      if (add(current ? 4 : 5)) return true
-    } else if (Array.isArray(current)) {
-      if (seen.has(current) || add(current.length > 0 ? current.length + 1 : 2)) {
-        return true
-      }
-      seen.add(current)
-      for (let index = current.length - 1; index >= 0; index -= 1) {
-        stack.push(current[index])
-      }
-    } else if (typeof current === 'object') {
-      if (seen.has(current)) return true
-      seen.add(current)
-      const entries = Object.entries(current).filter(
-        ([, entryValue]) => entryValue !== undefined
+    if (
+      /Inspected target navigated|Execution context was destroyed|Cannot find context/iu.test(
+        current.message
       )
-      if (add(entries.length > 0 ? entries.length + 1 : 2)) return true
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const [key, entryValue] = entries[index]!
-        if (add(jsonStringBytes(key) + 1)) return true
-        stack.push(entryValue)
-      }
-    } else {
+    ) {
       return true
     }
+    current = current.cause
   }
   return false
+}
+
+function isPlaceholderSnapshot(snapshot: BrowserSnapshot): boolean {
+  return (
+    snapshot.title.length === 0 &&
+    snapshot.nodes.length <= 1 &&
+    snapshot.nodes.every(
+      (node) =>
+        node.role.toLowerCase() === 'rootwebarea' &&
+        node.name.length === 0
+    )
+  )
 }
 
 export class CdpBrowserDriver {
@@ -249,7 +198,6 @@ export class CdpBrowserDriver {
   private readonly timeoutMs: number
   private readonly maximumAxNodes: number
   private readonly maximumAxDepth: number
-  private readonly maximumAxBytes: number
   private readonly maximumSnapshotBytes: number
   private readonly maximumScreenshotBytes: number
   private readonly refSecret = randomBytes(16)
@@ -259,6 +207,9 @@ export class CdpBrowserDriver {
     event: string
     listener: BrowserEventListener
   }> = []
+  private readonly navigationCancels = new Set<
+    (error: unknown) => void
+  >()
   private generation = 0
   private disposed = false
 
@@ -270,11 +221,10 @@ export class CdpBrowserDriver {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.maximumAxNodes = options.maximumAxNodes ?? MAX_AX_NODES
     this.maximumAxDepth = options.maximumAxDepth ?? MAX_AX_DEPTH
-    this.maximumAxBytes = options.maximumAxBytes ?? MAX_AX_BYTES
     this.maximumSnapshotBytes =
       options.maximumSnapshotBytes ?? MAX_SNAPSHOT_BYTES
     this.maximumScreenshotBytes =
-      options.maximumScreenshotBytes ?? MAX_SCREENSHOT_BYTES
+      options.maximumScreenshotBytes ?? MAX_BROWSER_SCREENSHOT_BYTES
     this.listen(
       webContents,
       'did-start-navigation',
@@ -363,14 +313,135 @@ export class CdpBrowserDriver {
 
   async navigate(url: string, signal: AbortSignal): Promise<{ url: string }> {
     this.invalidate()
-    const result = await this.command<{
+    const navigation = this.waitForMainFrameCommit(url, signal)
+    let result: {
       errorText?: string
-    }>('Page.navigate', { url }, signal)
-    if (result.errorText) {
-      throw new Error(`浏览器导航失败：${result.errorText.slice(0, 200)}`)
+      isDownload?: boolean
     }
+    try {
+      result = await this.command<{
+        errorText?: string
+        isDownload?: boolean
+      }>('Page.navigate', { url }, signal)
+    } catch (error) {
+      navigation.cancel(error)
+      await navigation.promise.catch(() => undefined)
+      throw error
+    }
+    if (result.errorText) {
+      const error = new Error(
+        `浏览器导航失败：${result.errorText.slice(0, 200)}`
+      )
+      navigation.cancel(error)
+      await navigation.promise.catch(() => undefined)
+      throw error
+    }
+    if (result.isDownload) {
+      const error = new Error('浏览器导航目标是下载文件，未打开页面')
+      navigation.cancel(error)
+      await navigation.promise.catch(() => undefined)
+      throw error
+    }
+    await navigation.promise
     await this.waitForDocument(signal)
     return { url: this.webContents.getURL() || url }
+  }
+
+  private waitForMainFrameCommit(
+    targetUrl: string,
+    signal: AbortSignal
+  ): NavigationWait {
+    let settle:
+      | { resolve(): void; reject(error: unknown): void }
+      | undefined
+    const promise = new Promise<void>((resolve, reject) => {
+      settle = { resolve, reject }
+    })
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      this.webContents.off('did-navigate', onNavigate)
+      this.webContents.off('did-navigate-in-page', onNavigateInPage)
+      this.webContents.off('did-fail-load', onFailLoad)
+      this.webContents.off('render-process-gone', onRenderGone)
+      this.navigationCancels.delete(reject)
+    }
+    const resolve = (): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      settle?.resolve()
+    }
+    const reject = (error: unknown): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      settle?.reject(error)
+    }
+    const onNavigate = (_event: unknown, committedUrl: string): void => {
+      if (
+        targetUrl !== 'about:blank' &&
+        committedUrl === 'about:blank'
+      ) {
+        return
+      }
+      resolve()
+    }
+    const onNavigateInPage = (
+      _event: unknown,
+      committedUrl: string,
+      isMainFrame: boolean | undefined
+    ): void => {
+      if (
+        isMainFrame === false ||
+        (targetUrl !== 'about:blank' &&
+          committedUrl === 'about:blank')
+      ) {
+        return
+      }
+      resolve()
+    }
+    const onFailLoad = (
+      _event: unknown,
+      errorCode: number,
+      errorDescription: string,
+      failedUrl: string,
+      isMainFrame: boolean | undefined
+    ): void => {
+      if (isMainFrame === false) {
+        return
+      }
+      reject(
+        new Error(
+          `浏览器导航失败：${String(errorDescription || errorCode).slice(0, 160)}${failedUrl ? `（${failedUrl.slice(0, 500)}）` : ''}`
+        )
+      )
+    }
+    const onRenderGone = (): void =>
+      reject(new Error('浏览器渲染进程在页面提交前退出'))
+    const onAbort = (): void => reject(signal.reason)
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(`浏览器页面未在安全期限内提交（${this.timeoutMs}ms）`)
+        ),
+      this.timeoutMs
+    )
+    this.webContents.on('did-navigate', onNavigate)
+    this.webContents.on('did-navigate-in-page', onNavigateInPage)
+    this.webContents.on('did-fail-load', onFailLoad)
+    this.webContents.on('render-process-gone', onRenderGone)
+    this.navigationCancels.add(reject)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+    }
+    return { promise, cancel: reject }
   }
 
   private async waitForDocument(signal: AbortSignal): Promise<void> {
@@ -408,19 +479,71 @@ export class CdpBrowserDriver {
   }
 
   async snapshot(signal: AbortSignal): Promise<BrowserSnapshot> {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const expectedGeneration = this.generation + 1
+      try {
+        const snapshot = await this.snapshotOnce(signal)
+        if (attempt < 4 && isPlaceholderSnapshot(snapshot)) {
+          await delayAbortable(500, signal)
+          continue
+        }
+        return snapshot
+      } catch (error) {
+        lastError = error
+        if (
+          attempt === 4 ||
+          (this.generation === expectedGeneration &&
+            !isTransientNavigationError(error))
+        ) {
+          throw error
+        }
+        await delayAbortable(100, signal)
+      }
+    }
+    throw lastError
+  }
+
+  private async snapshotOnce(
+    signal: AbortSignal
+  ): Promise<BrowserSnapshot> {
     this.invalidate()
+    const snapshotGeneration = this.generation
     const response = await this.command<{ nodes?: CdpAxNode[] }>(
       'Accessibility.getFullAXTree',
       { depth: this.maximumAxDepth },
       signal
     )
-    if (exceedsJsonByteLimit(response, this.maximumAxBytes)) {
-      throw new Error('浏览器可访问性树超过安全限制')
+    const document = await this.command<{
+      result?: { value?: { title?: unknown; url?: unknown } }
+    }>(
+      'Runtime.evaluate',
+      {
+        expression: '({title: document.title, url: location.href})',
+        returnByValue: true,
+        awaitPromise: false
+      },
+      signal
+    )
+    if (this.generation !== snapshotGeneration) {
+      throw new Error('浏览器页面在生成快照时发生变化，请重试')
     }
+    const title =
+      typeof document.result?.value?.title === 'string'
+        ? document.result.value.title.slice(0, 500)
+        : ''
+    const url =
+      typeof document.result?.value?.url === 'string'
+        ? document.result.value.url.slice(0, 8_192)
+        : this.webContents.getURL()
     const allNodes = response.nodes ?? []
     const limited = allNodes.slice(0, this.maximumAxNodes)
     const knownDepth = new Map<string, number>()
     const output: BrowserSnapshotNode[] = []
+    let outputBytes = Buffer.byteLength(
+      JSON.stringify({ url, title, nodes: [], truncated: false })
+    )
+    let truncated = allNodes.length > limited.length
     for (const node of limited) {
       const parentDepth = node.parentId
         ? knownDepth.get(node.parentId)
@@ -439,12 +562,6 @@ export class CdpBrowserDriver {
       const role = stringValue(node.role) || 'unknown'
       const ref = this.refFor(node.backendDOMNodeId)
       const protectedNode = isProtectedAxNode(node)
-      this.refs.set(ref, {
-        backendNodeId: node.backendDOMNodeId,
-        generation: this.generation,
-        role,
-        protected: protectedNode
-      })
       const item: BrowserSnapshotNode = {
         ref,
         role,
@@ -463,38 +580,28 @@ export class CdpBrowserDriver {
       if (value && !redactedValue) {
         item.value = value
       }
+      const itemBytes =
+        Buffer.byteLength(JSON.stringify(item)) +
+        (output.length > 0 ? 1 : 0)
+      if (outputBytes + itemBytes > this.maximumSnapshotBytes) {
+        truncated = true
+        continue
+      }
+      outputBytes += itemBytes
+      this.refs.set(ref, {
+        backendNodeId: node.backendDOMNodeId,
+        generation: this.generation,
+        role,
+        protected: protectedNode
+      })
       output.push(item)
     }
-    const document = await this.command<{
-      result?: { value?: { title?: unknown; url?: unknown } }
-    }>(
-      'Runtime.evaluate',
-      {
-        expression: '({title: document.title, url: location.href})',
-        returnByValue: true,
-        awaitPromise: false
-      },
-      signal
-    )
-    const title =
-      typeof document.result?.value?.title === 'string'
-        ? document.result.value.title.slice(0, 500)
-        : ''
-    const url =
-      typeof document.result?.value?.url === 'string'
-        ? document.result.value.url.slice(0, 8_192)
-        : this.webContents.getURL()
-    const snapshot = {
+    return {
       url,
       title,
       nodes: output,
-      truncated: allNodes.length > limited.length
+      truncated
     }
-    if (Buffer.byteLength(JSON.stringify(snapshot)) > this.maximumSnapshotBytes) {
-      this.refs.clear()
-      throw new Error('浏览器快照超过安全限制')
-    }
-    return snapshot
   }
 
   private async resolveTarget(
@@ -737,11 +844,19 @@ export class CdpBrowserDriver {
       throw new Error('浏览器历史记录已改变，请重试')
     }
     this.invalidate()
-    await this.command(
-      'Page.navigateToHistoryEntry',
-      { entryId: target.entryId },
-      signal
-    )
+    const navigation = this.waitForMainFrameCommit(target.url, signal)
+    try {
+      await this.command(
+        'Page.navigateToHistoryEntry',
+        { entryId: target.entryId },
+        signal
+      )
+    } catch (error) {
+      navigation.cancel(error)
+      await navigation.promise.catch(() => undefined)
+      throw error
+    }
+    await navigation.promise
     await this.waitForDocument(signal)
     return { url: this.webContents.getURL() }
   }
@@ -751,37 +866,43 @@ export class CdpBrowserDriver {
   }
 
   async screenshot(signal: AbortSignal): Promise<BrowserScreenshot> {
-    const result = await this.command<{ data?: string }>(
-      'Page.captureScreenshot',
-      {
-        format: 'png',
-        fromSurface: true,
-        captureBeyondViewport: false
-      },
-      signal
-    )
-    if (
-      typeof result.data !== 'string' ||
-      result.data.length === 0 ||
-      result.data.length % 4 !== 0 ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-        result.data
+    for (const quality of BROWSER_JPEG_QUALITIES) {
+      const result = await this.command<{ data?: string }>(
+        'Page.captureScreenshot',
+        {
+          format: 'jpeg',
+          quality,
+          fromSurface: true,
+          captureBeyondViewport: false
+        },
+        signal
       )
-    ) {
-      throw new Error('浏览器返回了无效截图')
+      if (
+        typeof result.data !== 'string' ||
+        result.data.length === 0 ||
+        result.data.length % 4 !== 0 ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+          result.data
+        )
+      ) {
+        throw new Error('浏览器返回了无效截图')
+      }
+      const data = Buffer.from(result.data, 'base64')
+      if (
+        data.toString('base64') !== result.data ||
+        !isValidBrowserJpeg(data)
+      ) {
+        throw new Error('浏览器截图无效')
+      }
+      if (data.byteLength <= this.maximumScreenshotBytes) {
+        return {
+          type: 'image',
+          mimeType: 'image/jpeg',
+          data: result.data
+        }
+      }
     }
-    const data = Buffer.from(result.data, 'base64')
-    if (
-      data.byteLength > this.maximumScreenshotBytes ||
-      data.byteLength < 8 ||
-      !data.subarray(0, 8).equals(
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-      ) ||
-      data.toString('base64') !== result.data
-    ) {
-      throw new Error('浏览器截图无效或超过安全限制')
-    }
-    return { type: 'image', mimeType: 'image/png', data: result.data }
+    throw new Error('浏览器截图超过约 220KB 限制')
   }
 
   dispose(): void {
@@ -790,6 +911,10 @@ export class CdpBrowserDriver {
     }
     this.disposed = true
     this.invalidate()
+    for (const cancel of this.navigationCancels) {
+      cancel(new Error('浏览器驱动已关闭'))
+    }
+    this.navigationCancels.clear()
     for (const { target, event, listener } of this.listeners.splice(0)) {
       target.off(event, listener)
     }

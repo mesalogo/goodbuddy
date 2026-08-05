@@ -51,6 +51,7 @@ const png = Buffer.from([
   0x89, 0x50, 0x4e, 0x47,
   0x0d, 0x0a, 0x1a, 0x0a
 ]).toString('base64')
+const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')
 const toolContext = {
   conversationId: 'provider-test-conversation',
   workMode: 'execute'
@@ -78,8 +79,8 @@ function createBrowserService(): BrowserToolService {
     })),
     screenshot: vi.fn(async () => ({
       type: 'image' as const,
-      mimeType: 'image/png' as const,
-      data: png
+      mimeType: 'image/jpeg' as const,
+      data: jpeg
     })),
     releaseConversation: vi.fn(async () => undefined)
   }
@@ -259,8 +260,8 @@ describe('ModelToolProvider', () => {
     await expect(
       provider.callTool('browser_screenshot', {}, signal, firstContext)
     ).resolves.toEqual({
-      parts: [{ type: 'image', mimeType: 'image/png', data: png }],
-      contextBytes: Buffer.byteLength(png)
+      parts: [{ type: 'image', mimeType: 'image/jpeg', data: jpeg }],
+      contextBytes: Buffer.byteLength(jpeg)
     })
     await provider.callTool('browser_screenshot', {}, signal, secondContext)
     expect(browserService.screenshot).toHaveBeenNthCalledWith(

@@ -27,6 +27,7 @@ import { McpSettingsSection } from './McpSettingsSection'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 import { SkillsSettingsSection } from './SkillsSettingsSection'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import { SegmentedControl } from './WorkspacePrimitives'
 import type { AppearanceTheme } from './theme'
 
 type SettingsTab =
@@ -38,6 +39,7 @@ type SettingsTab =
   | 'roles'
   | 'skills'
   | 'mcp'
+type ModelType = 'llm' | 'embedding'
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   apiKey: string
   clearApiKey: boolean
@@ -141,6 +143,12 @@ export function SettingsPanel({
     useState<string>(defaultRuntimeSettings.knowledgeEmbeddingBaseUrl)
   const [knowledgeEmbeddingModel, setKnowledgeEmbeddingModel] =
     useState<string>(defaultRuntimeSettings.knowledgeEmbeddingModel)
+  const [knowledgeEmbeddingApiKey, setKnowledgeEmbeddingApiKey] =
+    useState('')
+  const [
+    clearKnowledgeEmbeddingApiKey,
+    setClearKnowledgeEmbeddingApiKey
+  ] = useState(false)
   const [workspacePath, setWorkspacePath] = useState<string>(
     defaultRuntimeSettings.workspacePath
   )
@@ -148,6 +156,10 @@ export function SettingsPanel({
     useState<RuntimeSettingsInput['toolApproval']>(
       defaultRuntimeSettings.toolApproval
     )
+  const [
+    subagentSmartRoutingEnabled,
+    setSubagentSmartRoutingEnabled
+  ] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [error, setError] = useState<string>()
@@ -157,6 +169,7 @@ export function SettingsPanel({
   const [detection, setDetection] = useState<AgentRuntimeDetection>()
   const [detecting, setDetecting] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('runtime')
+  const [modelType, setModelType] = useState<ModelType>('llm')
   const configurationTab =
     activeTab === 'model' ||
     activeTab === 'runtime' ||
@@ -173,6 +186,7 @@ export function SettingsPanel({
         setSaved(false)
         setConnectionResult(undefined)
         setConfirmingClear(false)
+        setModelType('llm')
         setSettings(value)
         setProvider(value.provider)
         setModelProfiles(toModelProfileDrafts(value))
@@ -197,9 +211,14 @@ export function SettingsPanel({
         setKnowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
         setKnowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
         setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
+        setKnowledgeEmbeddingApiKey('')
+        setClearKnowledgeEmbeddingApiKey(false)
         setWorkspacePath(value.workspacePath)
         setToolApproval(
           value.toolApproval === 'policy' ? 'policy' : 'always'
+        )
+        setSubagentSmartRoutingEnabled(
+          value.subagentSmartRoutingEnabled
         )
       })
       .catch((reason: unknown) => {
@@ -227,6 +246,8 @@ export function SettingsPanel({
         clearApiKey: false
       }))
     )
+    setKnowledgeEmbeddingApiKey('')
+    setClearKnowledgeEmbeddingApiKey(false)
     setError(undefined)
     onClose()
   }
@@ -250,6 +271,7 @@ export function SettingsPanel({
         modelName: profile.modelName,
         protocol: profile.protocol,
         authentication: profile.authentication,
+        imageGenerationQuality: profile.imageGenerationQuality,
         apiKey: profile.clearApiKey
           ? ({ action: 'clear' } as const)
           : profile.apiKey.trim()
@@ -265,6 +287,8 @@ export function SettingsPanel({
         modelName: defaultProfile.modelName,
         modelProtocol: defaultProfile.protocol,
         modelAuthentication: defaultProfile.authentication,
+        imageGenerationQuality:
+          defaultProfile.imageGenerationQuality,
         opencodeBaseUrl,
         opencodeEmbedded,
         opencodeBinaryPath,
@@ -276,6 +300,14 @@ export function SettingsPanel({
         knowledgeEmbeddingEnabled,
         knowledgeEmbeddingBaseUrl,
         knowledgeEmbeddingModel,
+        knowledgeEmbeddingApiKey: clearKnowledgeEmbeddingApiKey
+          ? { action: 'clear' }
+          : knowledgeEmbeddingApiKey.trim()
+            ? {
+                action: 'replace',
+                value: knowledgeEmbeddingApiKey.trim()
+              }
+            : { action: 'keep' },
         workspacePath,
         apiKey: profileInputs.find(
           (profile) => profile.id === defaultProfile.id
@@ -284,7 +316,8 @@ export function SettingsPanel({
         defaultModelProfileId: defaultProfile.id,
         opencodeModelSource,
         continueModelSource,
-        toolApproval
+        toolApproval,
+        subagentSmartRoutingEnabled
       })
       setSettings(value)
       setModelProfiles(toModelProfileDrafts(value))
@@ -305,8 +338,13 @@ export function SettingsPanel({
       setKnowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
       setKnowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
       setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
+      setKnowledgeEmbeddingApiKey('')
+      setClearKnowledgeEmbeddingApiKey(false)
       setToolApproval(
         value.toolApproval === 'policy' ? 'policy' : 'always'
+      )
+      setSubagentSmartRoutingEnabled(
+        value.subagentSmartRoutingEnabled
       )
       setSaved(true)
       onSaved(value)
@@ -399,6 +437,8 @@ export function SettingsPanel({
         modelName: defaultRuntimeSettings.modelName,
         protocol: defaultRuntimeSettings.modelProtocol,
         authentication: defaultRuntimeSettings.modelAuthentication,
+        imageGenerationQuality:
+          defaultRuntimeSettings.imageGenerationQuality,
         apiKeyConfigured: false,
         credentialSource: 'none',
         apiKey: '',
@@ -540,7 +580,7 @@ export function SettingsPanel({
               type="button"
             >
               <strong>模型连接</strong>
-              <small>接口、模型与凭据</small>
+              <small>LLM、向量模型与凭据</small>
             </button>
             <button
               aria-label="Agent Runtime"
@@ -1003,15 +1043,32 @@ export function SettingsPanel({
 
           {activeTab === 'model' && (
             <>
+          <div className="model-type-navigation">
+            <SegmentedControl
+              ariaLabel="模型类型"
+              onChange={setModelType}
+              options={[
+                { label: 'LLM 模型', value: 'llm' },
+                { label: '向量模型', value: 'embedding' }
+              ]}
+              value={modelType}
+            />
+            <small>
+              {modelType === 'llm'
+                ? '配置对话、推理和图片生成使用的模型连接。'
+                : '配置知识库语义检索与 GraphRAG 使用的向量模型。'}
+            </small>
+          </div>
+          {modelType === 'llm' && (
           <div className="settings-section">
             <div className="settings-section__title settings-section__title--actions">
               <KeyRound size={17} />
               <div>
-                <strong>模型连接</strong>
+                <strong>LLM 模型连接</strong>
                 <small>
-                  直连文本支持 OpenAI Responses、Anthropic Messages 和
-                  OpenAI 兼容 Chat Completions；另可配置 OpenAI Images
-                  Generations 图像生成接口
+                  支持 OpenAI Responses、Anthropic Messages 和
+                  OpenAI 兼容 Chat Completions；图片模型使用独立的
+                  OpenAI Images Generations 接口类型
                 </small>
               </div>
               <button
@@ -1214,6 +1271,30 @@ export function SettingsPanel({
                       <option value="none">无需认证</option>
                     </select>
                   </label>
+                  {profile.protocol ===
+                    'openai-images-generations' && (
+                      <label className="field">
+                        <span>图片质量</span>
+                        <select
+                          aria-label={`图片质量 ${profile.name}`}
+                          onChange={(event) =>
+                            updateModelProfile(profile.id, {
+                              imageGenerationQuality: event.target
+                                .value as ModelProfileDraft['imageGenerationQuality']
+                            })
+                          }
+                          value={profile.imageGenerationQuality}
+                        >
+                          <option value="auto">自动</option>
+                          <option value="low">低</option>
+                          <option value="medium">中</option>
+                          <option value="high">高</option>
+                        </select>
+                        <small>
+                          仅用于 OpenAI 兼容图像生成请求。
+                        </small>
+                      </label>
+                    )}
                   {profile.authentication === 'api-key' ? (
                     <>
                       <label className="field">
@@ -1290,11 +1371,140 @@ export function SettingsPanel({
               </p>
             )}
           </div>
+          )}
+          {modelType === 'embedding' && (
+            <div className="settings-section">
+              <div className="settings-section__title">
+                <KeyRound size={17} />
+                <div>
+                  <strong>向量模型连接</strong>
+                  <small>
+                    使用 OpenAI 兼容 Embeddings 接口，不限定服务提供商
+                  </small>
+                </div>
+              </div>
+              <div className="runtime-note">
+                <label className="check-field">
+                  <input
+                    checked={knowledgeEmbeddingEnabled}
+                    onChange={(event) =>
+                      setKnowledgeEmbeddingEnabled(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  <span>启用向量模型</span>
+                </label>
+                <label className="field">
+                  <span>向量接口 URL</span>
+                  <input
+                    aria-label="向量接口 URL"
+                    disabled={!knowledgeEmbeddingEnabled}
+                    inputMode="url"
+                    onChange={(event) =>
+                      setKnowledgeEmbeddingBaseUrl(event.target.value)
+                    }
+                    placeholder="https://provider.example/v1/embeddings"
+                    value={knowledgeEmbeddingBaseUrl}
+                  />
+                  <small>
+                    填写完整的 OpenAI 兼容 Embeddings 端点。
+                  </small>
+                </label>
+                <label className="field">
+                  <span>模型名称</span>
+                  <input
+                    aria-label="模型名称"
+                    disabled={!knowledgeEmbeddingEnabled}
+                    onChange={(event) =>
+                      setKnowledgeEmbeddingModel(event.target.value)
+                    }
+                    value={knowledgeEmbeddingModel}
+                  />
+                </label>
+                <label className="field">
+                  <span>API Key（可选）</span>
+                  <input
+                    aria-label="API Key（可选）"
+                    autoComplete="off"
+                    disabled={
+                      !knowledgeEmbeddingEnabled ||
+                      settings?.knowledgeEmbeddingCredentialSource ===
+                        'environment' ||
+                      !settings?.secureStorageAvailable
+                    }
+                    onChange={(event) => {
+                      setKnowledgeEmbeddingApiKey(event.target.value)
+                      setClearKnowledgeEmbeddingApiKey(false)
+                    }}
+                    placeholder={
+                      settings?.knowledgeEmbeddingApiKeyConfigured
+                        ? '已配置，留空保持不变'
+                        : '本地无认证服务可留空'
+                    }
+                    type="password"
+                    value={knowledgeEmbeddingApiKey}
+                  />
+                </label>
+                <div className="credential-state">
+                  <LockKeyhole size={15} />
+                  <span>
+                    {settings
+                      ? credentialLabels[
+                          settings.knowledgeEmbeddingCredentialSource
+                        ]
+                      : '尚未配置'}
+                  </span>
+                  {settings?.knowledgeEmbeddingCredentialSource ===
+                    'encrypted' && (
+                    <button
+                      onClick={() => {
+                        setKnowledgeEmbeddingApiKey('')
+                        setClearKnowledgeEmbeddingApiKey(true)
+                      }}
+                      type="button"
+                    >
+                      {clearKnowledgeEmbeddingApiKey
+                        ? '保存后清除'
+                        : '清除凭据'}
+                    </button>
+                  )}
+                </div>
+                <small>
+                  仅向所填接口发送已启用知识库的分块文本。API Key
+                  由系统安全存储加密；向量服务失败时自动回退到 FTS5
+                  与证据图谱。
+                </small>
+              </div>
+            </div>
+          )}
             </>
           )}
 
           {activeTab === 'security' && (
             <>
+          <div className="settings-section subagent-routing-settings">
+            <div className="settings-section__title">
+              <div>
+                <strong>Subagent 智能路由</strong>
+                <small>按问题内容自动选择最匹配的专家角色</small>
+              </div>
+            </div>
+            <label className="check-field">
+              <input
+                aria-describedby="subagent-smart-routing-help"
+                checked={subagentSmartRoutingEnabled}
+                onChange={(event) =>
+                  setSubagentSmartRoutingEnabled(event.target.checked)
+                }
+                type="checkbox"
+              />
+              <span>启用 Subagent 智能路由</span>
+            </label>
+            <small id="subagent-smart-routing-help">
+              默认关闭。仅在 Ask 或 Plan 模式且未显式选择专家或团队时，
+              自动选择 1 位专家；子专家使用默认文本模型，只读运行且不使用工具。
+            </small>
+          </div>
           <label className="field">
             <span>Runtime OS 沙箱</span>
             <select
@@ -1339,44 +1549,6 @@ export function SettingsPanel({
               Continue 继续使用各自的工具系统。
             </small>
           </label>
-
-          <div className="runtime-note">
-            <label className="check-field">
-              <input
-                checked={knowledgeEmbeddingEnabled}
-                onChange={(event) =>
-                  setKnowledgeEmbeddingEnabled(event.target.checked)
-                }
-                type="checkbox"
-              />
-              <span>启用 Ollama 本地向量检索与 GraphRAG</span>
-            </label>
-            <label className="field">
-              <span>Ollama 地址</span>
-              <input
-                disabled={!knowledgeEmbeddingEnabled}
-                inputMode="url"
-                onChange={(event) =>
-                  setKnowledgeEmbeddingBaseUrl(event.target.value)
-                }
-                value={knowledgeEmbeddingBaseUrl}
-              />
-            </label>
-            <label className="field">
-              <span>Embedding 模型</span>
-              <input
-                disabled={!knowledgeEmbeddingEnabled}
-                onChange={(event) =>
-                  setKnowledgeEmbeddingModel(event.target.value)
-                }
-                value={knowledgeEmbeddingModel}
-              />
-            </label>
-            <small>
-              仅向所填 Ollama 服务发送已启用知识库的分块文本。向量服务失败时自动回退到
-              FTS5 与证据图谱。
-            </small>
-          </div>
 
           <div className="settings-section settings-section--danger">
             <div>

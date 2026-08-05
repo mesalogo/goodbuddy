@@ -10,6 +10,19 @@ import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { ContinueHostLauncher } from './continue-host-adapter'
 import { resolveRuntimeSandbox } from './runtime-sandbox'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import type { ModelToolProviderLike } from './model-tool-provider'
+
+const noSubagentTools: ModelToolProviderLike = {
+  listTools: async () => [],
+  getApproval: () => {
+    throw new Error('子专家不允许工具调用')
+  },
+  callTool: async () => {
+    throw new Error('子专家不允许工具调用')
+  },
+  releaseConversation: async () => undefined,
+  dispose: async () => undefined
+}
 
 export type AgentCapabilityContext = {
   skillInstructions?: string
@@ -18,6 +31,24 @@ export type AgentCapabilityContext = {
   bundledRuntimePaths?: BundledRuntimePaths
   continueHostLauncher?: ContinueHostLauncher
   browserService?: BrowserToolService
+}
+
+export function createDefaultModelRuntime(
+  defaultWorkspace: string,
+  settings: ResolvedRuntimeSettings
+): AgentRuntime {
+  if (settings.modelProtocol === 'openai-images-generations') {
+    return new UnconfiguredAgentRuntime()
+  }
+  return new ModelAgentRuntime({
+    apiKey: settings.apiKey,
+    baseUrl: settings.modelBaseUrl,
+    model: settings.modelName,
+    protocol: settings.modelProtocol,
+    authentication: settings.modelAuthentication,
+    defaultWorkspace: settings.workspacePath || defaultWorkspace,
+    toolProvider: noSubagentTools
+  })
 }
 
 export function createAgentRuntime(
@@ -127,6 +158,9 @@ export function createAgentRuntime(
         settings?.modelProtocol ??
         defaultRuntimeSettings.modelProtocol,
       authentication: modelAuthentication,
+      imageGenerationQuality:
+        settings?.imageGenerationQuality ??
+        defaultRuntimeSettings.imageGenerationQuality,
       skillInstructions: capabilities.skillInstructions,
       defaultWorkspace: workspace,
       mcpServers: capabilities.mcpServers,

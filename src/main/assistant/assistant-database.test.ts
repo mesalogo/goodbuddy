@@ -24,7 +24,7 @@ async function createDatabase(): Promise<AssistantDatabase> {
 }
 
 describe('AssistantDatabase', () => {
-  it('migrates existing databases to schema version 6', async () => {
+  it('migrates existing databases to schema version 7', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -52,7 +52,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(6)
+    ).toBe(7)
     expect(
       current
         .prepare(
@@ -125,7 +125,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(6)
+    ).toBe(7)
     expect(
       current
         .prepare(
@@ -211,19 +211,23 @@ describe('AssistantDatabase', () => {
     const expert = database.createExpert({
       name: '代码审查专家',
       description: '检查代码正确性',
-      systemInstructions: 'Review code for actionable bugs.'
+      systemInstructions: 'Review code for actionable bugs.',
+      routingKeywords: [' ＣＯＤＥ ', 'code', '代码审查']
     })
+    expect(expert.routingKeywords).toEqual(['code', '代码审查'])
 
     const updated = database.updateExpert(expert.id, {
       name: '高级代码审查专家',
       description: '检查正确性和安全性',
-      systemInstructions: 'Review correctness and security risks.'
+      systemInstructions: 'Review correctness and security risks.',
+      routingKeywords: ['security', '安全审查']
     })
     expect(updated).toMatchObject({
       id: expert.id,
       name: '高级代码审查专家',
       description: '检查正确性和安全性',
       systemInstructions: 'Review correctness and security risks.',
+      routingKeywords: ['security', '安全审查'],
       enabled: true
     })
 
@@ -255,13 +259,39 @@ describe('AssistantDatabase', () => {
       status: 'running',
       projectId: project.id
     })
+    const expert = database.listExperts()[0]!
+    const childTaskId = '00000000-0000-4000-8000-000000000202'
+    database.createTask({
+      id: childTaskId,
+      projectId: project.id,
+      conversationId: 'conversation-1',
+      parentTaskId: taskId,
+      expertId: expert.id,
+      routingMode: 'smart',
+      title: '研究子任务',
+      instructions: '只读分析',
+      workMode: 'ask',
+      origin: 'subagent',
+      status: 'queued'
+    })
+    expect(database.listTasks()[0]).toMatchObject({
+      id: childTaskId,
+      parentTaskId: taskId,
+      expertId: expert.id,
+      routingMode: 'smart',
+      status: 'queued'
+    })
 
     database.updateTaskStatus(taskId, 'waiting_approval')
-    expect(database.listTasks()[0]).toMatchObject({
+    expect(
+      database.listTasks().find((task) => task.id === taskId)
+    ).toMatchObject({
       status: 'waiting_approval'
     })
     database.updateTaskStatus(taskId, 'completed')
-    expect(database.listTasks()[0]).toMatchObject({
+    expect(
+      database.listTasks().find((task) => task.id === taskId)
+    ).toMatchObject({
       status: 'completed',
       completedAt: expect.any(String)
     })
@@ -450,7 +480,25 @@ describe('AssistantDatabase', () => {
             role: 'user',
             content: '整理发布说明',
             createdAt: 1_775_000_000_000,
-            state: 'complete'
+            state: 'complete',
+            attachments: [
+              {
+                id: '00000000-0000-4000-8000-000000000220',
+                name: '发布清单.md',
+                size: 2_048,
+                preview: '发布前检查项',
+                kind: 'text'
+              },
+              {
+                id: '00000000-0000-4000-8000-000000000221',
+                name: '发布页面.png',
+                size: 4_096,
+                preview: '1280 × 720',
+                kind: 'image',
+                thumbnailUrl:
+                  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
+              }
+            ]
           },
           {
             id: '00000000-0000-4000-8000-000000000213',
@@ -483,7 +531,23 @@ describe('AssistantDatabase', () => {
         id: conversationId,
         projectId: project.id,
         messages: [
-          expect.objectContaining({ role: 'user', state: 'complete' }),
+          expect.objectContaining({
+            role: 'user',
+            state: 'complete',
+            attachments: [
+              expect.objectContaining({
+                name: '发布清单.md',
+                kind: 'text'
+              }),
+              expect.objectContaining({
+                name: '发布页面.png',
+                kind: 'image',
+                thumbnailUrl: expect.stringContaining(
+                  'data:image/png;base64,'
+                )
+              })
+            ]
+          }),
           expect.objectContaining({
             role: 'assistant',
             state: 'error',
@@ -566,7 +630,8 @@ describe('AssistantDatabase', () => {
               {
                 name: 'cancelled-tool',
                 state: 'running',
-                summary: '取消前仍在运行'
+                summary: '取消前仍在运行',
+                error: 'runtime parser detail'
               }
             ]
           }
@@ -604,7 +669,8 @@ describe('AssistantDatabase', () => {
       tools: [
         expect.objectContaining({
           name: 'cancelled-tool',
-          state: 'interrupted'
+          state: 'interrupted',
+          error: 'runtime parser detail'
         })
       ]
     })

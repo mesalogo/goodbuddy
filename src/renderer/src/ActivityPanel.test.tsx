@@ -140,12 +140,42 @@ describe('ActivityPanel', () => {
     )
     expect(
       screen.getByText(
-        '任务请求、工具调用和审批决定会显示在这里。'
+        '任务请求、子专家、工具调用和审批决定会显示在这里。'
       )
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: '清空记录' })
     ).toBeDisabled()
+  })
+
+  it('labels Subagent activity as child expert work', () => {
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[
+          {
+            ...makeRecord(1),
+            kind: 'subagent',
+            title: '研究专家',
+            detail: '智能路由 · 分析证据',
+            status: 'running'
+          }
+        ]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    expect(screen.getByText('子专家')).toBeInTheDocument()
+    const item = screen.getByText('研究专家').closest('article')
+    expect(item).not.toBeNull()
+    if (!item) {
+      return
+    }
+    expect(
+      within(item).getByText('智能路由 · 分析证据')
+    ).toBeInTheDocument()
+    expect(within(item).getByText('进行中')).toBeInTheDocument()
   })
 
   it('uses the shared page hierarchy and explicit global scope', () => {

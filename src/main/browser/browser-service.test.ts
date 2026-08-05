@@ -69,8 +69,8 @@ function createHarness(options: {
       }),
       screenshot: vi.fn(async () => ({
         type: 'image' as const,
-        mimeType: 'image/png' as const,
-        data: 'iVBORw0KGgo='
+        mimeType: 'image/jpeg' as const,
+        data: '/9j/2Q=='
       })),
       dispose: vi.fn()
     }
@@ -132,7 +132,7 @@ describe('BrowserService', () => {
       'stopped'
     ])
     expect(states.find((state) => state.status === 'ready')?.frameDataUrl).toBe(
-      'data:image/png;base64,iVBORw0KGgo='
+      'data:image/jpeg;base64,/9j/2Q=='
     )
     expect(states.at(-1)?.frameDataUrl).toBeUndefined()
     const replayed: string[] = []

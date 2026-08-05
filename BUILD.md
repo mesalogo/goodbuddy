@@ -125,9 +125,40 @@ npm run dist:linux:arm64
 
 跨架构打包前，确认目标架构的 OpenCode 资源已经准备完成。不要用其他架构的二进制替代目标资源。
 
-## Linux CI
+## 跨平台 CI 与 GitHub Release
 
-`.github/workflows/linux-packages.yml` 支持手动触发，也会在推送 `v*` 标签时构建 Linux 包。`x64` 与 `arm64` 应分别使用对应的原生 Linux Runner 完成构建和校验。
+`.github/workflows/packages.yml` 是统一发布工作流。它先验证并生成一次
+`out` 生产 bundle，再在六个原生 Runner 上分别打包 Windows、macOS 和
+Linux 的 `x64`、`arm64` 版本。生产 bundle 仅作为短期 Actions artifact
+供打包任务复用，不会上传到 GitHub Release。
+
+本地构建单个平台目标：
+
+```bash
+npm run release:package -- --platform <windows|macos|linux> --arch <x64|arm64>
+```
+
+默认产物为 Windows 的 NSIS 与 portable EXE、macOS 的 DMG 与 ZIP，以及
+Linux 的 AppImage 与 DEB。每个目标目录都包含带文件大小和 SHA-256 的
+`release-manifest.json`。
+
+推送 `v${package.version}` 标签时，只有在六个打包目标全部成功后，工作流
+才会严格校验并聚合所有平台产物，生成按平台重命名的 manifests、总
+`release-manifest.json` 和 `SHA256SUMS`。随后工作流创建或更新 draft
+GitHub Release，上传全部资产成功后才发布。重跑会保留人工编辑的 Release
+notes 和未知附件。推送 `main` 或普通手动触发只构建 Actions artifacts，
+不会创建或更新 Release。
+
+发布标签必须与 `package.json` 版本完全一致。实际推送标签和触发发布前仍
+需人工确认，例如当前版本应使用：
+
+```bash
+git tag v$(node -p "require('./package.json').version")
+git push origin v$(node -p "require('./package.json').version")
+```
+
+当前未配置 Windows/macOS 代码签名或 macOS notarization。对外分发前应按
+目标平台配置签名凭据并重新验证安装、升级和系统安全提示。
 
 ## 发布前冒烟测试
 

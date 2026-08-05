@@ -40,6 +40,7 @@ const kindLabels: Record<ActivityRecord['kind'], string> = {
   request: '任务',
   tool: '工具',
   approval: '审批',
+  subagent: '子专家',
   result: '结果'
 }
 
@@ -128,7 +129,7 @@ function emptyMessage(filter: ActivityFilter): string {
   if (filter === 'failed') {
     return '当前没有失败、取消或中断的活动。'
   }
-  return '任务请求、工具调用和审批决定会显示在这里。'
+  return '任务请求、子专家、工具调用和审批决定会显示在这里。'
 }
 
 export function ActivityPanel({
@@ -187,7 +188,7 @@ export function ActivityPanel({
             triggerLabel="清空记录"
           />
         }
-        description="查看全部项目中的任务请求、工具调用、审批结果和 Token 用量。"
+        description="查看全部项目中的任务请求、子专家、工具调用、审批结果和 Token 用量。"
         eyebrow="ACTIVITY AUDIT"
         headingId="activity-panel-title"
         icon={<Activity size={20} />}

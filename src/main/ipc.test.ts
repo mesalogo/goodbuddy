@@ -21,10 +21,34 @@ const electronMocks = vi.hoisted(() => {
   }
 })
 
+const channelMocks = vi.hoisted(() => ({
+  executor: undefined as
+    | ((
+        message: {
+          channel: string
+          eventId: string
+          senderId: string
+          conversationId: string
+          conversationType: 'direct' | 'group'
+          text: string
+          mentioned: boolean
+          workMode: 'ask' | 'plan'
+        },
+        signal: AbortSignal
+      ) => Promise<{
+        status: string
+        output?: string
+        error?: string
+      }>)
+    | undefined,
+  stop: vi.fn(async () => undefined)
+}))
+
 describe('registerIpcHandlers computer capabilities', () => {
   afterEach(() => {
     electronMocks.handlers.clear()
     vi.clearAllMocks()
+    channelMocks.stop.mockResolvedValue(undefined)
   })
 
   it('validates computer capability requests and restricts them to the trusted renderer', async () => {
@@ -168,6 +192,22 @@ vi.mock('./assistant/heartbeat-service', () => ({
   HeartbeatService: class {
     async processDue(): Promise<void> {}
   }
+}))
+
+vi.mock('./channels/channel-env', () => ({
+  isReadOnlyChannelMessage: (message: { workMode: string }) =>
+    message.workMode === 'ask' || message.workMode === 'plan',
+  startEnvironmentChannels: vi.fn(
+    (options: { executor: typeof channelMocks.executor }) => {
+      channelMocks.executor = options.executor
+      return [
+        {
+          start: vi.fn(async () => undefined),
+          stop: channelMocks.stop
+        }
+      ]
+    }
+  )
 }))
 
 describe('registerIpcHandlers window controls', () => {
@@ -402,7 +442,9 @@ describe('registerIpcHandlers agent terminal state', () => {
   function createHarness(
     runtime: Record<string, unknown>,
     onBeforeClearLocalData?: () => Promise<void>,
-    toolApproval: 'always' | 'policy' = 'always'
+    toolApproval: 'always' | 'policy' = 'always',
+    subagentService?: Record<string, unknown>,
+    smartRoutingEnabled = false
   ) {
     const assistantDatabase = {
       claimDueSchedules: vi.fn(() => []),
@@ -411,7 +453,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       updateTaskStatus: vi.fn(),
       createTextArtifact: vi.fn(),
       upsertModelUsageCall: vi.fn(),
-      clearAssistantData: vi.fn()
+      clearAssistantData: vi.fn(),
+      listExperts: vi.fn<() => Array<Record<string, unknown>>>(() => []),
+      getExpert: vi.fn()
     }
     const webContents = {
       mainFrame: { url: 'file:///goodbuddy/index.html' },
@@ -440,7 +484,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       'CommandOrControl+Shift+Space',
       {
         getResolvedSettings: vi.fn(async () => ({
-          toolApproval
+          toolApproval,
+          subagentSmartRoutingEnabled: smartRoutingEnabled
         }))
       } as never,
       {} as never,
@@ -450,16 +495,20 @@ describe('registerIpcHandlers agent terminal state', () => {
       approvalBroker as never,
       {} as never,
       vi.fn(async () => {}),
-      onBeforeClearLocalData
+      onBeforeClearLocalData,
+      undefined,
+      subagentService as never
     )
     return {
       approvalBroker,
       assistantDatabase,
+      contextManager,
       dispose,
       clearHandler: electronMocks.handlers.get(
         ipcChannels.appClearLocalData
       ),
       handler: electronMocks.handlers.get(ipcChannels.agentRun),
+      cancelHandler: electronMocks.handlers.get(ipcChannels.agentCancel),
       webContents
     }
   }
@@ -541,7 +590,8 @@ describe('registerIpcHandlers agent terminal state', () => {
           callId: 'call-1',
           name: 'write',
           state: 'failed',
-          summary: 'OpenCode 工具：write'
+          summary: 'OpenCode 工具：write',
+          error: 'write path denied'
         }
         yield { requestId: request.requestId, type: 'done' }
       }
@@ -560,7 +610,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
         requestId,
         'failed',
-        'write 工具执行失败'
+        'write 工具执行失败：write path denied'
       )
     )
     expect(
@@ -571,7 +621,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.objectContaining({
         requestId,
         type: 'error',
-        status: 'failed'
+        status: 'failed',
+        message: 'write 工具执行失败：write path denied'
       })
     )
     await harness.dispose()
@@ -723,6 +774,218 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   )
 
+  it('routes eligible Ask requests through the persisted smart expert service and publishes child events', async () => {
+    const runtime = {
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      run: vi.fn()
+    }
+    const childTaskId = '00000000-0000-4000-8000-000000000099'
+    const expert = {
+      id: '00000000-0000-4000-8000-000000000001',
+      name: '研究专家',
+      description: '',
+      systemInstructions: 'Analyze evidence.',
+      routingKeywords: ['资料分析'],
+      enabled: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    }
+    const subagentService = {
+      run: vi.fn(async (input: {
+        parentRequest: { requestId: string }
+        onEvent: (event: Record<string, unknown>) => void
+      }) => {
+        for (const state of ['queued', 'running', 'completed']) {
+          input.onEvent({
+            requestId: input.parentRequest.requestId,
+            type: 'subagent',
+            childTaskId,
+            expertId: expert.id,
+            expertName: expert.name,
+            routingMode: 'smart',
+            state
+          })
+        }
+        return { childTaskId, output: '专家结果' }
+      }),
+      cancelAll: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      subagentService,
+      true
+    )
+    vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([
+      expert
+    ])
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'conversation-smart',
+      prompt: '请做资料分析',
+      workMode: 'ask',
+      smartRouting: true
+    })
+
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+    expect(runtime.run).not.toHaveBeenCalled()
+    expect(subagentService.run).toHaveBeenCalledWith(
+      expect.objectContaining({ expert, routingMode: 'smart' })
+    )
+    expect(harness.assistantDatabase.appendTaskEvent).toHaveBeenCalledWith(
+      requestId,
+      'subagent',
+      expect.objectContaining({ childTaskId, state: 'queued' })
+    )
+    expect(harness.webContents.send).toHaveBeenCalledWith(
+      ipcChannels.agentEvent,
+      expect.objectContaining({ type: 'subagent', state: 'completed' })
+    )
+    await harness.dispose()
+  })
+
+  it.each([
+    { workMode: 'ask' as const, persisted: false },
+    { workMode: 'execute' as const, persisted: true }
+  ])(
+    'falls back to the ordinary runtime for ineligible smart routing %#',
+    async ({ workMode, persisted }) => {
+      const runtime = {
+        capability: 'chat',
+        requiresToolApproval: false,
+        supportsToolExecution: true,
+        getStatus: vi.fn(),
+        dispose: vi.fn(),
+        async *run(request: { requestId: string }) {
+          yield { requestId: request.requestId, type: 'done' }
+        }
+      }
+      const run = vi.spyOn(runtime, 'run')
+      const subagentService = {
+        run: vi.fn(),
+        cancelAll: vi.fn(),
+        dispose: vi.fn(async () => undefined)
+      }
+      const harness = createHarness(
+        runtime,
+        undefined,
+        'always',
+        subagentService,
+        persisted
+      )
+      vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          name: '研究专家',
+          description: '',
+          systemInstructions: 'Analyze.',
+          routingKeywords: ['资料分析'],
+          enabled: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z'
+        }
+      ])
+      const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId,
+        conversationId: 'conversation-fallback',
+        prompt: '请做资料分析',
+        workMode,
+        smartRouting: true
+      })
+      await vi.waitFor(() =>
+        expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+          requestId,
+          'completed'
+        )
+      )
+      expect(run).toHaveBeenCalledOnce()
+      expect(subagentService.run).not.toHaveBeenCalled()
+      await harness.dispose()
+    }
+  )
+
+  it('does not fall back to the ordinary runtime after smart subagent cancellation', async () => {
+    const runtime = {
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      run: vi.fn()
+    }
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const subagentService = {
+      run: vi.fn((input: { signal: AbortSignal }) => {
+        markStarted()
+        return new Promise((_resolve, reject) => {
+          input.signal.addEventListener(
+            'abort',
+            () => reject(input.signal.reason),
+            { once: true }
+          )
+        })
+      }),
+      cancelAll: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      subagentService,
+      true
+    )
+    vi.mocked(harness.assistantDatabase.listExperts).mockReturnValue([
+      {
+        id: '00000000-0000-4000-8000-000000000001',
+        name: '研究专家',
+        description: '',
+        systemInstructions: 'Analyze.',
+        routingKeywords: ['资料分析'],
+        enabled: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ])
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'conversation-cancel-smart',
+      prompt: '请做资料分析',
+      workMode: 'ask',
+      smartRouting: true
+    })
+    await started
+    harness.cancelHandler?.(trustedEvent(harness.webContents), requestId)
+
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'cancelled',
+        '请求已取消'
+      )
+    )
+    expect(runtime.run).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
   it('rejects Execute before creating a task on an unsupported runtime', async () => {
     const runtime = {
       capability: 'chat',
@@ -744,6 +1007,112 @@ describe('registerIpcHandlers agent terminal state', () => {
     ).toThrow('当前 Runtime 不支持工具执行')
     expect(harness.assistantDatabase.createTask).not.toHaveBeenCalled()
     await harness.dispose()
+  })
+
+  it('bridges channel requests to read-only delegation tasks without approval', async () => {
+    let received:
+      | {
+          request: {
+            requestId: string
+            conversationId: string
+            prompt: string
+            workMode: string
+          }
+          authorize?: (request: {
+            scopeKey: string
+            title: string
+            description: string
+          }) => Promise<string>
+        }
+      | undefined
+    const runtime = {
+      capability: 'chat',
+      async *run(
+        request: {
+          requestId: string
+          conversationId: string
+          prompt: string
+          workMode: string
+        },
+        _signal: AbortSignal,
+        authorize?: (request: {
+          scopeKey: string
+          title: string
+          description: string
+        }) => Promise<string>
+      ) {
+        received = { request, authorize }
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: '只读结果'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+
+    await expect(
+      executor(
+        {
+          channel: 'wecom',
+          eventId: 'event-1',
+          senderId: 'user-1',
+          conversationId: 'conversation-1',
+          conversationType: 'direct',
+          text: '请制定只读计划',
+          mentioned: false,
+          workMode: 'plan'
+        },
+        new AbortController().signal
+      )
+    ).resolves.toEqual({
+      status: 'completed',
+      output: '只读结果'
+    })
+    expect(received?.request).toMatchObject({
+      workMode: 'plan',
+      prompt: expect.stringContaining('请制定只读计划')
+    })
+    await expect(
+      received?.authorize?.({
+        scopeKey: 'model:builtin:workspace_read_text',
+        title: '读取文件',
+        description: '不应申请批准'
+      })
+    ).resolves.toBe('deny')
+    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(harness.assistantDatabase.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '企业微信远程请求',
+        instructions: '请制定只读计划',
+        workMode: 'plan',
+        origin: 'delegation'
+      })
+    )
+    await harness.dispose()
+  })
+
+  it('stops channels before clearing other IPC resources', async () => {
+    const order: string[] = []
+    channelMocks.stop.mockImplementationOnce(async () => {
+      order.push('channel-stop')
+    })
+    const harness = createHarness({
+      capability: 'chat',
+      run: vi.fn()
+    })
+    harness.contextManager.clear.mockImplementation(() => {
+      order.push('context-clear')
+    })
+
+    await harness.dispose()
+
+    expect(order).toEqual(['channel-stop', 'context-clear'])
   })
 
   it('authorizes direct-model Execute tools without approval events or broker prompts', async () => {

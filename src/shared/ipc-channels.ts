@@ -75,6 +75,7 @@ export const ipcChannels = {
   capabilitiesRemoveBrowserProfile: 'capabilities:browser-profile:remove',
   contextSelectFiles: 'context:select-files',
   contextCaptureScreen: 'context:capture-screen',
+  contextListWindows: 'context:list-windows',
   contextCaptureWindow: 'context:capture-window',
   contextReadClipboard: 'context:read-clipboard',
   contextRemove: 'context:remove',

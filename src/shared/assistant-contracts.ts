@@ -26,6 +26,40 @@ export const projectUpdateSchema = projectCreateSchema
 
 export type ProjectCreateInput = z.infer<typeof projectCreateSchema>
 
+export const conversationAttachmentSchema = z
+  .object({
+    id: assistantIdSchema,
+    name: z.string().trim().min(1).max(500),
+    size: z.number().int().nonnegative().max(12 * 1024 * 1024),
+    preview: z.string().max(500),
+    kind: z.enum(['text', 'image']),
+    thumbnailUrl: z
+      .string()
+      .max(2_000_000)
+      .refine(
+        (value) =>
+          value.startsWith('data:image/png;base64,') ||
+          value.startsWith('data:image/jpeg;base64,'),
+        '会话附件缩略图格式无效'
+      )
+      .optional(),
+    contentUrl: z
+      .string()
+      .max(400_000)
+      .refine(
+        (value) =>
+          value.startsWith('data:image/png;base64,') ||
+          value.startsWith('data:image/jpeg;base64,'),
+        '会话附件图片格式无效'
+      )
+      .optional()
+  })
+  .strict()
+
+export type ConversationAttachment = z.infer<
+  typeof conversationAttachmentSchema
+>
+
 export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
@@ -57,7 +91,8 @@ export const conversationSnapshotSchema = z
                       'cancelled',
                       'interrupted'
                     ]),
-                    summary: z.string().max(2_000)
+                    summary: z.string().max(2_000),
+                    error: z.string().max(2_000).optional()
                   })
                   .strict()
               )
@@ -90,7 +125,11 @@ export const conversationSnapshotSchema = z
               )
               .max(20)
               .optional(),
-            artifactIds: z.array(assistantIdSchema).max(8).optional()
+            artifactIds: z.array(assistantIdSchema).max(8).optional(),
+            attachments: z
+              .array(conversationAttachmentSchema)
+              .max(8)
+              .optional()
           })
           .strict()
       )
@@ -162,6 +201,9 @@ export type AssistantTask = {
   id: string
   projectId?: string
   conversationId?: string
+  parentTaskId?: string
+  expertId?: string
+  routingMode?: 'manual' | 'smart'
   title: string
   instructions: string
   origin: 'user' | 'assistant' | 'schedule' | 'delegation' | 'subagent'
@@ -434,18 +476,30 @@ export type AssistantHeartbeatEntry = {
   createdAt: string
 }
 
+const routingKeywordSchema = z
+  .string()
+  .transform((value) =>
+    value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
+  )
+  .pipe(z.string().min(2).max(48))
+
 export const expertCreateSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
     description: z.string().trim().max(500),
-    systemInstructions: z.string().trim().min(1).max(20_000)
+    systemInstructions: z.string().trim().min(1).max(20_000),
+    routingKeywords: z
+      .array(routingKeywordSchema)
+      .max(32)
+      .default([])
+      .transform((keywords) => [...new Set(keywords)])
   })
   .strict()
 
-export type ExpertCreateInput = z.infer<typeof expertCreateSchema>
+export type ExpertCreateInput = z.input<typeof expertCreateSchema>
 export type ExpertUpdateInput = ExpertCreateInput
 
-export type AssistantExpert = ExpertCreateInput & {
+export type AssistantExpert = z.output<typeof expertCreateSchema> & {
   id: string
   enabled: boolean
   createdAt: string

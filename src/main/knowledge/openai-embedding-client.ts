@@ -11,9 +11,10 @@ const MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 const MIN_TIMEOUT_MS = 100
 const MAX_TIMEOUT_MS = 120_000
 
-export interface OllamaEmbeddingClientOptions {
-  url: string
+export interface OpenAIEmbeddingClientOptions {
+  endpoint: string
   model: string
+  apiKey?: string
   batchSize?: number
   timeoutMs?: number
   fetch?: typeof fetch
@@ -44,18 +45,22 @@ function requiredString(value: string, field: string, maximum: number): string {
   return normalized
 }
 
-function endpointFor(input: string): string {
-  const value = requiredString(input, 'url', MAX_URL_LENGTH)
+function normalizedEndpoint(input: string): string {
+  const value = requiredString(input, 'endpoint', MAX_URL_LENGTH)
   const url = new URL(value)
   if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new RangeError('url must use HTTP or HTTPS')
+    throw new RangeError('endpoint must use HTTP or HTTPS')
   }
-  if (url.username || url.password) {
-    throw new RangeError('url must not contain credentials')
+  if (
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new RangeError(
+      'endpoint must not contain credentials, a query, or a fragment'
+    )
   }
-  url.search = ''
-  url.hash = ''
-  url.pathname = `${url.pathname.replace(/\/+$/u, '')}/api/embed`
   return url.toString()
 }
 
@@ -65,10 +70,10 @@ async function readBoundedJson(response: Response): Promise<unknown> {
     declaredLength !== null &&
     Number(declaredLength) > MAX_RESPONSE_BYTES
   ) {
-    throw new RangeError('Ollama embedding response is too large')
+    throw new RangeError('Embedding response is too large')
   }
   if (!response.body) {
-    throw new Error('Ollama embedding response has no body')
+    throw new Error('Embedding response has no body')
   }
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
@@ -81,7 +86,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
     length += result.value.byteLength
     if (length > MAX_RESPONSE_BYTES) {
       await reader.cancel()
-      throw new RangeError('Ollama embedding response is too large')
+      throw new RangeError('Embedding response is too large')
     }
     chunks.push(result.value)
   }
@@ -94,63 +99,86 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   try {
     return JSON.parse(new TextDecoder().decode(bytes)) as unknown
   } catch {
-    throw new Error('Ollama embedding response is not valid JSON')
+    throw new Error('Embedding response is not valid JSON')
   }
+}
+
+function validateVector(value: unknown, index: number): number[] {
+  if (
+    !Array.isArray(value) ||
+    value.length < 1 ||
+    value.length > MAX_DIMENSIONS
+  ) {
+    throw new RangeError(`Embedding ${index} has invalid dimensions`)
+  }
+  let magnitudeSquared = 0
+  const vector = value.map((component) => {
+    if (typeof component !== 'number' || !Number.isFinite(component)) {
+      throw new TypeError('Embeddings must contain finite numbers')
+    }
+    magnitudeSquared += component * component
+    return component
+  })
+  if (!Number.isFinite(magnitudeSquared) || magnitudeSquared <= 0) {
+    throw new RangeError('Embeddings must have a finite non-zero norm')
+  }
+  return vector
 }
 
 function validateEmbeddings(value: unknown, expected: number): number[][] {
   if (
     typeof value !== 'object' ||
     value === null ||
-    !('embeddings' in value) ||
-    !Array.isArray(value.embeddings) ||
-    value.embeddings.length !== expected
+    !('data' in value) ||
+    !Array.isArray(value.data) ||
+    value.data.length !== expected
   ) {
-    throw new Error('Ollama embedding response has an invalid result count')
+    throw new Error('Embedding response has an invalid result count')
   }
-  let dimensions: number | undefined
-  return value.embeddings.map((candidate, embeddingIndex) => {
-    if (
-      !Array.isArray(candidate) ||
-      candidate.length < 1 ||
-      candidate.length > MAX_DIMENSIONS
-    ) {
-      throw new RangeError(
-        `Ollama embedding ${embeddingIndex} has invalid dimensions`
-      )
-    }
-    if (dimensions === undefined) {
-      dimensions = candidate.length
-    } else if (candidate.length !== dimensions) {
-      throw new Error('Ollama embeddings have inconsistent dimensions')
-    }
-    let magnitudeSquared = 0
-    const vector = candidate.map((component) => {
-      if (typeof component !== 'number' || !Number.isFinite(component)) {
-        throw new TypeError('Ollama embeddings must contain finite numbers')
-      }
-      magnitudeSquared += component * component
-      return component
-    })
-    if (!Number.isFinite(magnitudeSquared) || magnitudeSquared <= 0) {
-      throw new RangeError('Ollama embeddings must have a finite non-zero norm')
-    }
-    return vector
+  const vectors: Array<number[] | undefined> = Array.from({
+    length: expected
   })
+  for (const [position, item] of value.data.entries()) {
+    if (
+      typeof item !== 'object' ||
+      item === null ||
+      !('embedding' in item)
+    ) {
+      throw new Error(`Embedding response item ${position} is invalid`)
+    }
+    const index =
+      'index' in item && Number.isSafeInteger(item.index)
+        ? (item.index as number)
+        : position
+    if (index < 0 || index >= expected || vectors[index]) {
+      throw new Error('Embedding response contains invalid indexes')
+    }
+    vectors[index] = validateVector(item.embedding, index)
+  }
+  const dimensions = vectors[0]?.length
+  if (
+    dimensions === undefined ||
+    vectors.some((vector) => vector?.length !== dimensions)
+  ) {
+    throw new Error('Embeddings have inconsistent dimensions')
+  }
+  return vectors as number[][]
 }
 
-export class OllamaEmbeddingClient implements EmbeddingProvider {
-  readonly provider = 'ollama'
+export class OpenAIEmbeddingClient implements EmbeddingProvider {
+  readonly provider = 'openai-compatible'
   readonly model: string
   readonly fingerprint: string
   private readonly endpoint: string
+  private readonly apiKey?: string
   private readonly batchSize: number
   private readonly timeoutMs: number
   private readonly transport: typeof fetch
 
-  constructor(options: OllamaEmbeddingClientOptions) {
-    this.endpoint = endpointFor(options.url)
+  constructor(options: OpenAIEmbeddingClientOptions) {
+    this.endpoint = normalizedEndpoint(options.endpoint)
     this.model = requiredString(options.model, 'model', MAX_MODEL_LENGTH)
+    this.apiKey = options.apiKey?.trim() || undefined
     this.fingerprint = `${this.provider}:${this.endpoint}:${this.model}`
     this.batchSize = boundedInteger(
       options.batchSize ?? 16,
@@ -206,13 +234,15 @@ export class OllamaEmbeddingClient implements EmbeddingProvider {
         characters += next.length
         end += 1
       }
-      const batch = normalized.slice(offset, end)
-      const vectors = await this.embedBatch(batch, signal)
+      const vectors = await this.embedBatch(
+        normalized.slice(offset, end),
+        signal
+      )
       for (const vector of vectors) {
         if (expectedDimensions === undefined) {
           expectedDimensions = vector.length
         } else if (vector.length !== expectedDimensions) {
-          throw new Error('Ollama embedding batches have inconsistent dimensions')
+          throw new Error('Embedding batches have inconsistent dimensions')
         }
         embeddings.push(vector)
       }
@@ -230,32 +260,32 @@ export class OllamaEmbeddingClient implements EmbeddingProvider {
     }
     const timeout = AbortSignal.timeout(this.timeoutMs)
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      'content-type': 'application/json'
+    }
+    if (this.apiKey) {
+      headers.authorization = `Bearer ${this.apiKey}`
+    }
     let response: Response
     try {
       response = await this.transport(this.endpoint, {
         method: 'POST',
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: this.model,
-          input,
-          truncate: true
-        }),
+        headers,
+        body: JSON.stringify({ model: this.model, input }),
         redirect: 'error',
         signal: requestSignal
       })
     } catch (error) {
       if (requestSignal.aborted) {
-        const abortError = new Error('Ollama embedding request was cancelled')
+        const abortError = new Error('Embedding request was cancelled')
         abortError.name = 'AbortError'
         throw abortError
       }
-      throw new Error('Ollama embedding request failed', { cause: error })
+      throw new Error('Embedding request failed', { cause: error })
     }
     if (!response.ok) {
-      throw new Error(`Ollama embedding request failed with HTTP ${response.status}`)
+      throw new Error(`Embedding request failed with HTTP ${response.status}`)
     }
     return validateEmbeddings(await readBoundedJson(response), input.length)
   }

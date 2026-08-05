@@ -12,6 +12,7 @@ const activityKinds = [
   'request',
   'tool',
   'approval',
+  'subagent',
   'result'
 ] as const
 const activityStatuses = [
@@ -86,13 +87,16 @@ export function upsertActivityRecord(
   records: readonly ActivityRecord[],
   incoming: ActivityRecord
 ): ActivityRecord[] {
-  if (incoming.kind !== 'tool' || !incoming.callId) {
+  if (
+    (incoming.kind !== 'tool' && incoming.kind !== 'subagent') ||
+    !incoming.callId
+  ) {
     return [incoming, ...records].slice(0, MAX_ACTIVITY_RECORDS)
   }
 
   const existingIndex = records.findIndex(
     (record) =>
-      record.kind === 'tool' &&
+      record.kind === incoming.kind &&
       record.requestId === incoming.requestId &&
       record.callId === incoming.callId
   )
@@ -153,7 +157,9 @@ export function reconcileActivityRecords(
       ...record,
       status:
         terminalStatus === 'completed' &&
-        (record.kind === 'tool' || record.kind === 'approval')
+        (record.kind === 'tool' ||
+          record.kind === 'approval' ||
+          record.kind === 'subagent')
           ? 'interrupted'
           : terminalStatus,
       detail:

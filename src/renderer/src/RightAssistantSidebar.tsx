@@ -20,6 +20,7 @@ import type {
   AssistantSchedule,
   AssistantHeartbeatConfig,
   AssistantHeartbeatEntry,
+  AssistantExpert,
   HeartbeatCreateInput,
   ScheduleCreateInput,
   AssistantTask,
@@ -68,6 +69,7 @@ type RightAssistantSidebarProps = {
   tab: AssistantSidebarTab
   activities: ActivityRecord[]
   tasks: AssistantTask[]
+  experts?: AssistantExpert[]
   artifacts: SidebarArtifact[]
   attachments: ContextAttachment[]
   enabledLibraries: KnowledgeLibrary[]
@@ -117,13 +119,38 @@ type RightAssistantSidebarProps = {
 const tabs: Array<{
   id: AssistantSidebarTab
   label: string
+  description: string
 }> = [
-  { id: 'tasks', label: '任务' },
-  { id: 'context', label: '上下文' },
-  { id: 'artifacts', label: '成果' },
-  { id: 'changes', label: '更改' },
-  { id: 'browser', label: '浏览器' },
-  { id: 'preview', label: '预览' }
+  {
+    id: 'tasks',
+    label: '任务中心',
+    description: '查看运行状态、处理审批并安排自动化'
+  },
+  {
+    id: 'context',
+    label: '上下文',
+    description: '管理本次对话的附件、知识库与长期记忆'
+  },
+  {
+    id: 'artifacts',
+    label: '成果库',
+    description: '集中保存和打开对话生成或手动导入的内容'
+  },
+  {
+    id: 'changes',
+    label: '工作区',
+    description: '浏览项目文件、Git 变更与工具活动'
+  },
+  {
+    id: 'browser',
+    label: '浏览器',
+    description: '查看 Agent 操作网页时的实时画面'
+  },
+  {
+    id: 'preview',
+    label: '预览',
+    description: '预览选中的成果或工作区文件'
+  }
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
 const defaultSidebarWidth = 350
@@ -162,11 +189,50 @@ function formatTime(timestamp: number | string): string {
   return sidebarTimeFormatter.format(new Date(timestamp))
 }
 
+export function orderTasksWithChildren(
+  tasks: readonly AssistantTask[]
+): AssistantTask[] {
+  const childIds = new Set(
+    tasks.flatMap((task) => (task.parentTaskId ? [task.id] : []))
+  )
+  const childrenByParent = new Map<string, AssistantTask[]>()
+  for (const task of tasks) {
+    if (!task.parentTaskId) {
+      continue
+    }
+    const children = childrenByParent.get(task.parentTaskId) ?? []
+    children.push(task)
+    childrenByParent.set(task.parentTaskId, children)
+  }
+  const ordered: AssistantTask[] = []
+  const included = new Set<string>()
+  const append = (task: AssistantTask): void => {
+    if (included.has(task.id)) {
+      return
+    }
+    included.add(task.id)
+    ordered.push(task)
+    for (const child of childrenByParent.get(task.id) ?? []) {
+      append(child)
+    }
+  }
+  for (const task of tasks) {
+    if (!childIds.has(task.id)) {
+      append(task)
+    }
+  }
+  for (const task of tasks) {
+    append(task)
+  }
+  return ordered
+}
+
 export function RightAssistantSidebar({
   open,
   tab,
   activities,
   tasks,
+  experts = [],
   artifacts,
   attachments,
   enabledLibraries,
@@ -246,6 +312,14 @@ export function RightAssistantSidebar({
         .filter((activity) => activity.kind === 'request')
         .slice(0, 20),
     [activities]
+  )
+  const orderedTasks = useMemo(
+    () => orderTasksWithChildren(tasks),
+    [tasks]
+  )
+  const expertNames = useMemo(
+    () => new Map(experts.map((expert) => [expert.id, expert.name])),
+    [experts]
   )
   const changes = useMemo(
     () =>
@@ -497,6 +571,7 @@ export function RightAssistantSidebar({
             onKeyDown={(event) => moveTabFocus(event, item.id)}
             role="tab"
             tabIndex={tab === item.id ? 0 : -1}
+            title={item.description}
             type="button"
           >
             {item.label}
@@ -517,6 +592,9 @@ export function RightAssistantSidebar({
       >
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
+            <p className="assistant-sidebar__section-description">
+              查看当前和最近请求的运行状态、处理待审批操作，并安排定时任务与智能心跳。
+            </p>
             {approvals.length > 0 && (
               <>
                 <h3>
@@ -565,9 +643,13 @@ export function RightAssistantSidebar({
                 发送请求后，任务状态会显示在这里。
               </p>
             ) : (
-              (tasks.length > 0 ? tasks : recentTasks).map((task) => (
+              (orderedTasks.length > 0 ? orderedTasks : recentTasks).map((task) => (
                 <button
-                  className="assistant-sidebar__row"
+                  className={
+                    'parentTaskId' in task && task.parentTaskId
+                      ? 'assistant-sidebar__row assistant-sidebar__row--subtask'
+                      : 'assistant-sidebar__row'
+                  }
                   key={task.id}
                   onClick={() => {
                     if (task.conversationId) {
@@ -590,6 +672,19 @@ export function RightAssistantSidebar({
                     <small>
                       {formatTime(task.createdAt)} · {task.status}
                     </small>
+                    {'parentTaskId' in task && task.parentTaskId && (
+                      <small className="assistant-sidebar__subtask-meta">
+                        子专家：
+                        {task.expertId
+                          ? expertNames.get(task.expertId) ??
+                            task.title
+                          : task.title}
+                        {' · '}
+                        {task.routingMode === 'smart'
+                          ? '智能路由'
+                          : '手动指定'}
+                      </small>
+                    )}
                   </span>
                   <ChevronRight size={14} />
                 </button>
@@ -867,9 +962,12 @@ export function RightAssistantSidebar({
 
         {tab === 'artifacts' && (
           <section className="assistant-sidebar__section">
+            <p className="assistant-sidebar__section-description">
+              保存并预览由对话生成或手动导入的文本、图片、PDF 与网页内容。
+            </p>
             <h3>
               <FileText size={15} />
-              对话成果
+              对话与导入成果
             </h3>
             <button
               className="secondary-button assistant-sidebar__import"
@@ -912,6 +1010,10 @@ export function RightAssistantSidebar({
         {tab === 'changes' && (
           <>
             <section className="assistant-sidebar__section">
+              <p className="assistant-sidebar__section-description">
+                浏览当前项目文件、检查未提交 Git 变更，并查看 Agent
+                的工具活动。
+              </p>
               <h3>
                 <FolderTree size={15} />
                 项目工作区

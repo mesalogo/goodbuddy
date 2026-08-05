@@ -1,4 +1,5 @@
 import type {
+  AgentEvent,
   AgentRuntimeStatus,
   RuntimeSettings,
   RuntimeBinaryDetection
@@ -17,7 +18,8 @@ import {
   hasContinueModelConfiguration,
   type ContinueHostAdapterOptions,
   type ContinueHostLauncher,
-  type ContinueHostRunResult
+  type ContinueHostRunResult,
+  type ContinueHostTool
 } from './continue-host-adapter'
 
 export type ContinueRuntimeOptions = {
@@ -40,6 +42,33 @@ export type ContinueRuntimeOptions = {
 
 const MAX_CONTINUE_PROMPT_CHARACTERS =
   process.platform === 'win32' ? 24_000 : 128_000
+
+function continueToolFailureMessage(tool: ContinueHostTool): string {
+  const callId = tool.callId.slice(0, 128)
+  const detail = tool.error ? `：${tool.error}` : ''
+  return tool.state === 'failed'
+    ? `Continue 工具执行失败（${callId}）${detail}`
+    : `Continue 工具未完成（${callId}）`
+}
+
+function toContinueToolEvent(
+  requestId: string,
+  tool: ContinueHostTool,
+  terminalize: boolean
+): Extract<AgentEvent, { type: 'tool' }> {
+  return {
+    requestId,
+    type: 'tool',
+    callId: tool.callId,
+    name: tool.name,
+    state:
+      terminalize && tool.state !== 'completed'
+        ? 'failed'
+        : tool.state,
+    summary: `Continue 工具：${tool.name}`,
+    ...(tool.error ? { error: tool.error } : {})
+  }
+}
 
 function flattenContinueSegment(value: string): string {
   return [...value]
@@ -256,15 +285,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
     } catch (error) {
       if (error instanceof ContinueHostRunError) {
         for (const tool of error.tools) {
-          yield {
-            requestId: request.requestId,
-            type: 'tool',
-            callId: tool.callId,
-            name: tool.name,
-            state:
-              tool.state === 'completed' ? 'completed' : 'failed',
-            summary: `Continue 工具：${tool.name}`
-          }
+          yield toContinueToolEvent(request.requestId, tool, true)
         }
       }
       throw error
@@ -279,32 +300,13 @@ export class ContinueAgentRuntime implements AgentRuntime {
     )
     if (unsuccessfulTool) {
       for (const tool of tools) {
-        yield {
-          requestId: request.requestId,
-          type: 'tool',
-          callId: tool.callId,
-          name: tool.name,
-          state:
-            tool.state === 'completed' ? 'completed' : 'failed',
-          summary: `Continue 工具：${tool.name}`
-        }
+        yield toContinueToolEvent(request.requestId, tool, true)
       }
-      throw new Error(
-        unsuccessfulTool.state === 'failed'
-          ? `Continue 工具执行失败（${unsuccessfulTool.callId.slice(0, 128)}）`
-          : `Continue 工具未完成（${unsuccessfulTool.callId.slice(0, 128)}）`
-      )
+      throw new Error(continueToolFailureMessage(unsuccessfulTool))
     }
 
     for (const tool of tools) {
-      yield {
-        requestId: request.requestId,
-        type: 'tool',
-        callId: tool.callId,
-        name: tool.name,
-        state: tool.state,
-        summary: `Continue 工具：${tool.name}`
-      }
+      yield toContinueToolEvent(request.requestId, tool, false)
     }
     yield {
       requestId: request.requestId,

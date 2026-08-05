@@ -33,8 +33,8 @@ function createService(): BrowserToolService {
     })),
     screenshot: vi.fn(async () => ({
       type: 'image' as const,
-      mimeType: 'image/png' as const,
-      data: 'iVBORw0KGgo='
+      mimeType: 'image/jpeg' as const,
+      data: '/9j/2Q=='
     })),
     releaseConversation: vi.fn(async () => undefined)
   }
@@ -180,11 +180,11 @@ describe('BrowserModelTools', () => {
       parts: [
         {
           type: 'image',
-          mimeType: 'image/png',
-          data: 'iVBORw0KGgo='
+          mimeType: 'image/jpeg',
+          data: '/9j/2Q=='
         }
       ],
-      contextBytes: Buffer.byteLength('iVBORw0KGgo=')
+      contextBytes: Buffer.byteLength('/9j/2Q==')
     })
     await tools.release()
     expect(service.releaseConversation).toHaveBeenCalledWith('conversation')

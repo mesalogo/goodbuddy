@@ -5,6 +5,8 @@ import {
   type ValidatedBrowserUrl
 } from './browser-url-policy'
 import { FilteringProxy } from './filtering-proxy'
+import type { BrowserScreenshot } from './browser-screenshot'
+import { encodeBoundedJpeg } from '../bounded-jpeg'
 
 export type BrowserEventListener = (...argumentsValue: never[]) => void
 
@@ -20,6 +22,15 @@ export type BrowserDebugger = {
   off(event: string, listener: BrowserEventListener): unknown
 }
 
+export type BrowserCapturedImage = {
+  getSize(): { width: number; height: number }
+  resize(options: {
+    width: number
+    quality: 'good'
+  }): BrowserCapturedImage
+  toJPEG(quality: number): Buffer
+}
+
 export type BrowserWebContents = {
   debugger: BrowserDebugger
   on(event: string, listener: BrowserEventListener): unknown
@@ -27,9 +38,7 @@ export type BrowserWebContents = {
   setWindowOpenHandler(
     handler: (details: { url: string }) => { action: 'deny' }
   ): void
-  capturePage?(): Promise<{
-    toPNG(): Buffer
-  }>
+  capturePage?(): Promise<BrowserCapturedImage>
   getURL(): string
   stop(): void
   close?(options?: { waitForBeforeUnload?: boolean }): void
@@ -67,6 +76,10 @@ export type BrowserPartitionSession = {
     proxyRules: string
     proxyBypassRules: string
   }): Promise<void>
+  setUserAgent?(
+    userAgent: string,
+    acceptLanguages?: string
+  ): void
   on(event: string, listener: BrowserEventListener): unknown
   off(event: string, listener: BrowserEventListener): unknown
   clearData(): Promise<void>
@@ -93,6 +106,16 @@ type Listener = {
   target: { off(event: string, listener: BrowserEventListener): unknown }
   event: string
   listener: BrowserEventListener
+}
+
+function managedBrowserUserAgent(): string {
+  const platform =
+    process.platform === 'win32'
+      ? 'Windows NT 10.0; Win64; x64'
+      : process.platform === 'darwin'
+        ? 'Macintosh; Intel Mac OS X 10_15_7'
+        : `X11; Linux ${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}`
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome ?? '136.0.0.0'} Safari/537.36`
 }
 
 async function cleanupIsolatedState(
@@ -257,6 +280,10 @@ export class ElectronBrowserSession {
       )
       partitionSession.setDisplayMediaRequestHandler(
         (_request, callback) => callback({})
+      )
+      partitionSession.setUserAgent?.(
+        managedBrowserUserAgent(),
+        'zh-CN,zh,en'
       )
       setupStage = '配置网络代理'
       await boundedSetup(
@@ -465,11 +492,7 @@ export class ElectronBrowserSession {
 
   async captureScreenshot(
     signal: AbortSignal
-  ): Promise<{
-    type: 'image'
-    mimeType: 'image/png'
-    data: string
-  }> {
+  ): Promise<BrowserScreenshot> {
     this.assertOpen()
     if (!this.webContents.capturePage) {
       throw new Error('浏览器原生画面捕获不可用')
@@ -480,19 +503,10 @@ export class ElectronBrowserSession {
       2_000
     )
     this.assertOpen()
-    const data = image.toPNG()
-    if (
-      data.byteLength < 8 ||
-      data.byteLength > 5 * 1_024 * 1_024 ||
-      !data.subarray(0, 8).equals(
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-      )
-    ) {
-      throw new Error('浏览器原生画面无效或过大')
-    }
+    const data = encodeBoundedJpeg(image)
     return {
       type: 'image',
-      mimeType: 'image/png',
+      mimeType: 'image/jpeg',
       data: data.toString('base64')
     }
   }

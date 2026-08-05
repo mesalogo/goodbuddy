@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
+import { expertCreateSchema } from '../../shared/assistant-contracts'
 import type {
   AssistantArtifact,
   AssistantExpert,
@@ -47,6 +48,9 @@ type TaskRow = {
   id: string
   project_id: string | null
   conversation_id: string | null
+  parent_task_id: string | null
+  expert_id: string | null
+  routing_mode: AssistantTask['routingMode'] | null
   title: string
   instructions: string
   origin: AssistantTask['origin']
@@ -82,6 +86,7 @@ type MessageMetadata = {
   sources?: string[]
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
   artifactIds?: string[]
+  attachments?: ConversationSnapshot['messages'][number]['attachments']
 }
 
 type ArtifactRow = {
@@ -127,6 +132,7 @@ type ExpertRow = {
   name: string
   description: string
   system_instructions: string
+  capability_policy_json: string
   enabled: number
   created_at: string
   updated_at: string
@@ -264,6 +270,9 @@ function toTask(row: TaskRow): AssistantTask {
     id: row.id,
     projectId: row.project_id ?? undefined,
     conversationId: row.conversation_id ?? undefined,
+    parentTaskId: row.parent_task_id ?? undefined,
+    expertId: row.expert_id ?? undefined,
+    routingMode: row.routing_mode ?? undefined,
     title: row.title,
     instructions: row.instructions,
     origin: row.origin,
@@ -331,11 +340,28 @@ function toSchedule(row: ScheduleRow): AssistantSchedule {
 }
 
 function toExpert(row: ExpertRow): AssistantExpert {
+  let routingKeywords: string[]
+  try {
+    const policy = JSON.parse(row.capability_policy_json) as {
+      routingKeywords?: unknown
+    }
+    routingKeywords = expertCreateSchema.parse({
+      name: row.name,
+      description: row.description,
+      systemInstructions: row.system_instructions,
+      routingKeywords: Array.isArray(policy.routingKeywords)
+        ? policy.routingKeywords
+        : []
+    }).routingKeywords
+  } catch {
+    routingKeywords = []
+  }
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     systemInstructions: row.system_instructions,
+    routingKeywords,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -555,19 +581,46 @@ export class AssistantDatabase {
           name: '研究分析专家',
           description: '负责资料分析、证据整理和结论验证',
           systemInstructions:
-            'Act as a rigorous research analyst. Separate evidence, assumptions, and conclusions. Cite provided sources and identify uncertainty.'
+            'Act as a rigorous research analyst. Separate evidence, assumptions, and conclusions. Cite provided sources and identify uncertainty.',
+          routingKeywords: [
+            '研究',
+            '调研',
+            '分析证据',
+            '资料分析',
+            'research',
+            'evidence',
+            'investigate'
+          ]
         })
         this.createExpert({
           name: '文档写作专家',
           description: '负责结构化写作、编辑和内容润色',
           systemInstructions:
-            'Act as a professional document editor. Produce clear structure, concise language, and actionable content appropriate to the user context.'
+            'Act as a professional document editor. Produce clear structure, concise language, and actionable content appropriate to the user context.',
+          routingKeywords: [
+            '写作',
+            '撰写',
+            '润色',
+            '文档',
+            'write',
+            'draft',
+            'edit'
+          ]
         })
         this.createExpert({
           name: '项目规划专家',
           description: '负责目标拆解、风险分析和执行计划',
           systemInstructions:
-            'Act as a project planning specialist. Decompose goals into verifiable steps, dependencies, risks, owners, and acceptance criteria.'
+            'Act as a project planning specialist. Decompose goals into verifiable steps, dependencies, risks, owners, and acceptance criteria.',
+          routingKeywords: [
+            '规划',
+            '计划',
+            '拆解',
+            '里程碑',
+            'plan',
+            'roadmap',
+            'milestone'
+          ]
         })
       }
       const recoveredAt = new Date().toISOString()
@@ -814,7 +867,8 @@ export class AssistantDatabase {
             : metadata.tools,
           sources: metadata.sources,
           sourceReferences: metadata.sourceReferences,
-          artifactIds: metadata.artifactIds
+          artifactIds: metadata.artifactIds,
+          attachments: metadata.attachments
         }
       })
     }))
@@ -863,7 +917,8 @@ export class AssistantDatabase {
               tools: message.tools,
               sources: message.sources,
               sourceReferences: message.sourceReferences,
-              artifactIds: message.artifactIds
+              artifactIds: message.artifactIds,
+              attachments: message.attachments
             }),
             new Date(message.createdAt).toISOString()
           )
@@ -974,31 +1029,41 @@ export class AssistantDatabase {
     id: string
     projectId?: string
     conversationId?: string
+    parentTaskId?: string
+    expertId?: string
+    routingMode?: AssistantTask['routingMode']
     title: string
     instructions: string
     workMode: 'ask' | 'plan' | 'execute'
     origin?: AssistantTask['origin']
+    status?: 'queued' | 'running'
   }): AssistantTask {
     const now = new Date().toISOString()
+    const status = input.status ?? 'running'
     this.requireDatabase()
       .prepare(
         `INSERT INTO tasks
-          (id, project_id, conversation_id, title, instructions, origin,
-           status, priority, work_mode, progress, created_at, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'running', 0, ?, NULL, ?, ?)`
+          (id, project_id, conversation_id, parent_task_id, expert_id,
+           routing_mode, title, instructions, origin, status, priority,
+           work_mode, progress, created_at, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?)`
       )
       .run(
         input.id,
         input.projectId ?? null,
         input.conversationId ?? null,
+        input.parentTaskId ?? null,
+        input.expertId ?? null,
+        input.routingMode ?? null,
         input.title,
         input.instructions,
         input.origin ?? 'user',
+        status,
         input.workMode,
         now,
-        now
+        status === 'running' ? now : null
       )
-    this.appendTaskEvent(input.id, 'started', {
+    this.appendTaskEvent(input.id, status, {
       workMode: input.workMode
     })
     return this.getTask(input.id)
@@ -1155,12 +1220,18 @@ export class AssistantDatabase {
       .prepare(
         `UPDATE tasks
          SET status = ?, error = ?,
+             started_at = CASE
+               WHEN ? = 'running' AND started_at IS NULL THEN ?
+               ELSE started_at
+             END,
              completed_at = CASE WHEN ? THEN ? ELSE completed_at END
          WHERE id = ?`
       )
       .run(
         status,
         error ?? null,
+        status,
+        new Date().toISOString(),
         terminal ? 1 : 0,
         new Date().toISOString(),
         taskId
@@ -2538,6 +2609,7 @@ export class AssistantDatabase {
   }
 
   createExpert(input: ExpertCreateInput): AssistantExpert {
+    const normalized = expertCreateSchema.parse(input)
     const id = randomUUID()
     const now = new Date().toISOString()
     this.requireDatabase()
@@ -2546,13 +2618,16 @@ export class AssistantDatabase {
           (id, name, description, system_instructions,
            capability_policy_json, model_policy_json, enabled,
            created_at, updated_at)
-         VALUES (?, ?, ?, ?, '{}', '{}', 1, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, '{}', 1, ?, ?)`
       )
       .run(
         id,
-        input.name,
-        input.description,
-        input.systemInstructions,
+        normalized.name,
+        normalized.description,
+        normalized.systemInstructions,
+        JSON.stringify({
+          routingKeywords: normalized.routingKeywords
+        }),
         now,
         now
       )
@@ -2563,17 +2638,22 @@ export class AssistantDatabase {
     expertId: string,
     input: ExpertUpdateInput
   ): AssistantExpert {
+    const normalized = expertCreateSchema.parse(input)
     const result = this.requireDatabase()
       .prepare(
         `UPDATE experts
          SET name = ?, description = ?, system_instructions = ?,
+             capability_policy_json = ?,
              updated_at = ?
          WHERE id = ? AND enabled = 1`
       )
       .run(
-        input.name,
-        input.description,
-        input.systemInstructions,
+        normalized.name,
+        normalized.description,
+        normalized.systemInstructions,
+        JSON.stringify({
+          routingKeywords: normalized.routingKeywords
+        }),
         new Date().toISOString(),
         expertId
       )
@@ -2650,7 +2730,7 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version >= 6) {
+    if (version.user_version >= 7) {
       return
     }
     if (version.user_version < 1) {
@@ -3009,6 +3089,39 @@ export class AssistantDatabase {
         PRAGMA user_version = 6;
         COMMIT;
       `)
+    }
+    if (version.user_version < 7) {
+      const taskColumns = new Set(
+        (database.prepare('PRAGMA table_info(tasks)').all() as Array<{
+          name: string
+        }>).map((column) => column.name)
+      )
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!taskColumns.has('parent_task_id')) {
+          database.exec(`ALTER TABLE tasks ADD COLUMN parent_task_id TEXT
+            REFERENCES tasks(id) ON DELETE CASCADE`)
+        }
+        if (!taskColumns.has('expert_id')) {
+          database.exec(`ALTER TABLE tasks ADD COLUMN expert_id TEXT
+            REFERENCES experts(id) ON DELETE SET NULL`)
+        }
+        if (!taskColumns.has('routing_mode')) {
+          database.exec(`ALTER TABLE tasks ADD COLUMN routing_mode TEXT
+            CHECK(routing_mode IS NULL OR routing_mode IN ('manual', 'smart'))`)
+        }
+        database.exec(`
+          CREATE INDEX IF NOT EXISTS tasks_parent_task_idx
+            ON tasks(parent_task_id, created_at);
+          CREATE INDEX IF NOT EXISTS tasks_expert_idx
+            ON tasks(expert_id, created_at);
+          PRAGMA user_version = 7;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
     }
   }
 

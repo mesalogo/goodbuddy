@@ -45,7 +45,8 @@ import type {
   KnowledgeSearchReference,
   KnowledgeSnapshot,
   RuntimeSettings,
-  RuntimeSettingsInput
+  RuntimeSettingsInput,
+  WindowCaptureOption
 } from '../../shared/contracts'
 import type {
   AssistantProject,
@@ -60,11 +61,13 @@ import type {
   AssistantTask,
   TokenUsageSummary,
   ConversationSnapshot,
+  ConversationAttachment,
   ProjectCreateInput,
   InteractiveWorkMode,
   WorkspaceChanges
 } from '../../shared/assistant-contracts'
 import {
+  conversationAttachmentSchema,
   interactiveWorkModes,
   normalizeInteractiveWorkMode
 } from '../../shared/assistant-contracts'
@@ -107,6 +110,12 @@ function isAgentRuntime(
   return runtime?.id === 'opencode' || runtime?.id === 'continue'
 }
 
+function supportsSubagentSmartRouting(
+  workMode: string
+): boolean {
+  return workMode === 'ask' || ['plan'].includes(workMode)
+}
+
 type ToolActivity = {
   callId?: string
   name: string
@@ -119,6 +128,17 @@ type ToolActivity = {
     | 'cancelled'
     | 'interrupted'
   summary: string
+  error?: string
+}
+
+type SubagentActivity = {
+  childTaskId: string
+  expertId: string
+  expertName: string
+  routingMode: 'manual' | 'smart'
+  state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  reason?: string
+  error?: string
 }
 
 type Message = {
@@ -129,6 +149,7 @@ type Message = {
   state: 'streaming' | 'complete' | 'error'
   status?: string
   tools?: ToolActivity[]
+  subagents?: SubagentActivity[]
   approval?: {
     id: string
     title: string
@@ -140,6 +161,7 @@ type Message = {
   sources?: string[]
   sourceReferences?: KnowledgeSearchReference[]
   artifactIds?: string[]
+  attachments?: ConversationAttachment[]
 }
 
 type Conversation = {
@@ -148,6 +170,11 @@ type Conversation = {
   title: string
   updatedAt: number
   messages: Message[]
+}
+
+type ImageViewerItem = {
+  src: string
+  title: string
 }
 
 type ActiveRun = {
@@ -205,6 +232,14 @@ const toolStateLabels: Record<ToolActivity['state'], string> = {
   interrupted: '已中断'
 }
 
+const subagentStateLabels: Record<SubagentActivity['state'], string> = {
+  queued: '等待中',
+  running: '进行中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消'
+}
+
 function createConversation(projectId?: string): Conversation {
   const now = Date.now()
   return {
@@ -231,6 +266,12 @@ function isUnusedConversation(conversation: Conversation): boolean {
     conversation.messages.length === 1 &&
     conversation.messages[0]?.role === 'assistant'
   )
+}
+
+function isConversationAttachment(
+  value: unknown
+): value is ConversationAttachment {
+  return conversationAttachmentSchema.safeParse(value).success
 }
 
 function loadConversations(): Conversation[] {
@@ -297,7 +338,11 @@ function isConversation(value: unknown): value is Conversation {
             entry.artifactIds.length <= 8 &&
             entry.artifactIds.every(
               (artifactId) => typeof artifactId === 'string'
-            )))
+            ))) &&
+        (entry.attachments === undefined ||
+          (Array.isArray(entry.attachments) &&
+            entry.attachments.length <= 8 &&
+            entry.attachments.every(isConversationAttachment)))
       )
     })
   )
@@ -321,7 +366,8 @@ function toConversationSnapshots(
       tools: message.tools,
       sources: message.sources,
       sourceReferences: message.sourceReferences,
-      artifactIds: message.artifactIds
+      artifactIds: message.artifactIds,
+      attachments: message.attachments
     }))
   }))
 }
@@ -361,6 +407,8 @@ function createRuntimeSwitchInput(
     modelName: selectedProfile.modelName,
     modelProtocol: selectedProfile.protocol,
     modelAuthentication: selectedProfile.authentication,
+    imageGenerationQuality:
+      selectedProfile.imageGenerationQuality,
     opencodeBaseUrl: settings.opencodeBaseUrl,
     opencodeEmbedded: settings.opencodeEmbedded,
     opencodeBinaryPath: settings.opencodeBinaryPath,
@@ -369,6 +417,8 @@ function createRuntimeSwitchInput(
     continueConfigPath: settings.continueConfigPath,
     continueMode: settings.continueMode,
     runtimeSandboxMode: settings.runtimeSandboxMode,
+    subagentSmartRoutingEnabled:
+      settings.subagentSmartRoutingEnabled,
     knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
     knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
     knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
@@ -381,6 +431,7 @@ function createRuntimeSwitchInput(
       modelName: profile.modelName,
       protocol: profile.protocol,
       authentication: profile.authentication,
+      imageGenerationQuality: profile.imageGenerationQuality,
       apiKey: { action: 'keep' }
     })),
     defaultModelProfileId: selectedProfile.id,
@@ -395,6 +446,37 @@ function formatTime(timestamp: number): string {
     hour: '2-digit',
     minute: '2-digit'
   }).format(timestamp)
+}
+
+function formatAttachmentSize(size: number): string {
+  return `${Math.max(1, Math.ceil(size / 1024))} KB`
+}
+
+const imageDataUrlPattern =
+  /^data:image\/(png|jpeg|webp);base64,/u
+
+function getImageDownloadName(title: string, src: string): string {
+  const extension = imageDataUrlPattern.exec(src)?.[1] ?? 'png'
+  const normalizedExtension = extension === 'jpeg' ? 'jpg' : extension
+  const safeTitle =
+    title
+      .replace(/\.(?:jpe?g|png|webp)$/iu, '')
+      .replace(/[\\/:*?"<>|]/gu, '_')
+      .trim() || 'GoodBuddy 图片'
+  return `${safeTitle}.${normalizedExtension}`
+}
+
+function formatAttachmentList(
+  attachments: ConversationAttachment[] | undefined
+): string {
+  return attachments?.length
+    ? `\n\n附件：\n${attachments
+        .map(
+          (attachment) =>
+            `- ${attachment.name}（${formatAttachmentSize(attachment.size)}）`
+        )
+        .join('\n')}`
+    : ''
 }
 
 function buildKnowledgeContext(
@@ -602,7 +684,32 @@ function App(): React.JSX.Element {
   const [renamingConversationId, setRenamingConversationId] = useState('')
   const [notice, setNotice] = useState<string>()
   const [attachments, setAttachments] = useState<ContextAttachment[]>([])
+  const attachmentsRef = useRef<ContextAttachment[]>([])
+  const updateAttachments = useCallback(
+    (
+      update:
+        | ContextAttachment[]
+        | ((current: ContextAttachment[]) => ContextAttachment[])
+    ): void => {
+      const next =
+        typeof update === 'function'
+          ? update(attachmentsRef.current)
+          : update
+      attachmentsRef.current = next
+      setAttachments(next)
+    },
+    []
+  )
   const [contextError, setContextError] = useState<string>()
+  const [imageViewerItem, setImageViewerItem] =
+    useState<ImageViewerItem>()
+  const imageViewerTriggerRef = useRef<HTMLElement | undefined>(
+    undefined
+  )
+  const [windowCaptureOptions, setWindowCaptureOptions] = useState<
+    WindowCaptureOption[]
+  >()
+  const [windowCaptureLoading, setWindowCaptureLoading] = useState(false)
   const [knowledgeSnapshot, setKnowledgeSnapshot] = useState<KnowledgeSnapshot>({
     libraries: [],
     sources: [],
@@ -781,7 +888,7 @@ function App(): React.JSX.Element {
       setActiveId(conversation.id)
       setView('chat')
       setInput('')
-      setAttachments((current) => {
+      updateAttachments((current) => {
         for (const attachment of current) {
           void window.goodbuddy.context.remove(attachment.id)
         }
@@ -789,7 +896,7 @@ function App(): React.JSX.Element {
       })
       requestAnimationFrame(() => inputRef.current?.focus())
     },
-    []
+    [updateAttachments]
   )
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -1123,7 +1230,10 @@ function App(): React.JSX.Element {
           callId: event.callId.slice(0, 256),
           kind: 'tool',
           title: event.name,
-          detail: event.summary.slice(0, 4_000),
+          detail: [event.summary, event.error]
+            .filter(Boolean)
+            .join('\n')
+            .slice(0, 4_000),
           status:
             event.state === 'pending'
               ? 'pending'
@@ -1142,7 +1252,8 @@ function App(): React.JSX.Element {
             callId: event.callId.slice(0, 256),
             name: event.name,
             state: event.state,
-            summary: event.summary
+            summary: event.summary,
+            error: event.error
           }
           if (index >= 0) {
             tools[index] = tool
@@ -1150,6 +1261,86 @@ function App(): React.JSX.Element {
             tools.push(tool)
           }
           return { ...message, tools }
+        })
+      } else if (event.type === 'subagent') {
+        const childStatus = event.state
+        const completedAt =
+          event.state === 'completed' ||
+          event.state === 'failed' ||
+          event.state === 'cancelled'
+            ? new Date().toISOString()
+            : undefined
+        setAssistantTasks((current) => {
+          const existing = current.find(
+            (task) => task.id === event.childTaskId
+          )
+          const childTask: AssistantTask = {
+            id: event.childTaskId,
+            projectId: run.projectId,
+            conversationId: run.conversationId,
+            parentTaskId: event.requestId,
+            expertId: event.expertId,
+            routingMode: event.routingMode,
+            title: event.expertName,
+            instructions:
+              event.reason ?? `${event.expertName} 子专家任务`,
+            origin: 'subagent',
+            status: childStatus,
+            createdAt:
+              existing?.createdAt ?? new Date().toISOString(),
+            startedAt:
+              event.state === 'running'
+                ? existing?.startedAt ?? new Date().toISOString()
+                : existing?.startedAt,
+            completedAt: completedAt ?? existing?.completedAt,
+            error: event.error
+          }
+          return existing
+            ? current.map((task) =>
+                task.id === event.childTaskId ? childTask : task
+              )
+            : [...current, childTask].slice(0, 100)
+        })
+        recordActivity({
+          conversationId: run.conversationId,
+          requestId: event.requestId,
+          callId: event.childTaskId,
+          kind: 'subagent',
+          title: event.expertName,
+          detail: [
+            event.routingMode === 'smart' ? '智能路由' : '手动指定',
+            event.reason,
+            event.error
+          ]
+            .filter(Boolean)
+            .join(' · ')
+            .slice(0, 4_000),
+          status:
+            event.state === 'queued'
+              ? 'pending'
+              : event.state
+        })
+        updateMessage(run.conversationId, run.messageId, (message) => {
+          const subagents = [...(message.subagents ?? [])]
+          const index = subagents.findIndex(
+            (subagent) =>
+              subagent.childTaskId === event.childTaskId
+          )
+          const subagent: SubagentActivity = {
+            childTaskId: event.childTaskId,
+            expertId: event.expertId,
+            expertName: event.expertName,
+            routingMode: event.routingMode,
+            state: event.state,
+            reason: event.reason,
+            error: event.error
+          }
+          if (index >= 0) {
+            subagents[index] = subagent
+          } else if (subagents.length < 3) {
+            subagents.push(subagent)
+          }
+          return { ...message, subagents }
         })
       } else if (event.type === 'approval') {
         recordActivity({
@@ -1898,7 +2089,7 @@ function App(): React.JSX.Element {
     const transcript = conversation.messages
       .map(
         (message) =>
-          `${message.role === 'user' ? '你' : 'GoodBuddy'}：\n${message.content}`
+          `${message.role === 'user' ? '你' : 'GoodBuddy'}：\n${message.content}${formatAttachmentList(message.attachments)}`
       )
       .join('\n\n')
     try {
@@ -1918,7 +2109,7 @@ function App(): React.JSX.Element {
       ...conversation.messages.flatMap((message) => [
         `## ${message.role === 'user' ? '你' : 'GoodBuddy'}`,
         '',
-        message.content,
+        `${message.content}${formatAttachmentList(message.attachments)}`,
         ''
       ])
     ].join('\n')
@@ -1932,6 +2123,39 @@ function App(): React.JSX.Element {
     anchor.click()
     URL.revokeObjectURL(url)
     setNotice('对话已导出')
+  }
+
+  const openImageViewer = (
+    item: ImageViewerItem,
+    trigger: HTMLElement
+  ): void => {
+    if (!imageDataUrlPattern.test(item.src)) {
+      setNotice('图片内容不可用')
+      return
+    }
+    imageViewerTriggerRef.current = trigger
+    setImageViewerItem(item)
+  }
+
+  const closeImageViewer = (): void => {
+    setImageViewerItem(undefined)
+    requestAnimationFrame(() => {
+      imageViewerTriggerRef.current?.focus()
+      imageViewerTriggerRef.current = undefined
+    })
+  }
+
+  const downloadImage = (item: ImageViewerItem): void => {
+    if (!imageDataUrlPattern.test(item.src)) {
+      setNotice('图片内容不可用')
+      return
+    }
+    const anchor = document.createElement('a')
+    anchor.href = item.src
+    anchor.download = getImageDownloadName(item.title, item.src)
+    anchor.rel = 'noopener'
+    anchor.click()
+    setNotice('图片下载已开始')
   }
 
   const submit = async (): Promise<void> => {
@@ -1959,7 +2183,7 @@ function App(): React.JSX.Element {
 
     const requestId = crypto.randomUUID()
     const conversationId = activeConversation.id
-    const attachmentSnapshot = attachments
+    const attachmentSnapshot = attachments.slice(0, 8)
     const historySnapshot = activeConversation.messages
     const projectIdSnapshot = activeProjectId || undefined
     const selectedExpertSnapshot =
@@ -1967,7 +2191,34 @@ function App(): React.JSX.Element {
     const workModeSnapshot = effectiveWorkMode
     preparingConversations.current.add(conversationId)
     setInput('')
-    setAttachments([])
+    updateAttachments([])
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: prompt,
+      createdAt: Date.now(),
+      state: 'complete',
+      attachments:
+        attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined
+    }
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId
+          ? {
+              ...conversation,
+              title:
+                conversation.title === '新对话'
+                  ? prompt.slice(0, 24)
+                  : conversation.title,
+              updatedAt: Date.now(),
+              messages: [
+                ...conversation.messages.slice(-499),
+                userMessage
+              ]
+            }
+          : conversation
+      )
+    )
     let knowledgeResults: KnowledgeSearchReference[] = []
     if (
       runtime.capability !== 'image-generation' &&
@@ -1995,13 +2246,6 @@ function App(): React.JSX.Element {
     const executionPrompt = supplementalContext
       ? `${prompt}\n\n${supplementalContext}`
       : prompt
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: prompt,
-      createdAt: Date.now(),
-      state: 'complete'
-    }
     const assistantMessage: Message = {
       id: crypto.randomUUID(),
       role: 'assistant',
@@ -2058,14 +2302,9 @@ function App(): React.JSX.Element {
         conversation.id === conversationId
           ? {
               ...conversation,
-              title:
-                conversation.title === '新对话'
-                  ? prompt.slice(0, 24)
-                  : conversation.title,
               updatedAt: Date.now(),
               messages: [
-                ...conversation.messages.slice(-498),
-                userMessage,
+                ...conversation.messages.slice(-499),
                 assistantMessage
               ]
             }
@@ -2082,6 +2321,13 @@ function App(): React.JSX.Element {
             ? selectedExpertSnapshot
             : undefined,
         teamMode: selectedExpertSnapshot === 'team',
+        smartRouting:
+          runtime.capability !== 'image-generation' &&
+          runtimeSettings?.subagentSmartRoutingEnabled === true &&
+          !selectedExpertSnapshot &&
+          supportsSubagentSmartRouting(workModeSnapshot)
+            ? true
+            : undefined,
         workMode: workModeSnapshot,
         prompt: executionPrompt,
         contextIds: attachmentSnapshot.map(
@@ -2180,13 +2426,22 @@ function App(): React.JSX.Element {
     try {
       const result = await action()
       const selected = Array.isArray(result) ? result : [result]
-      setAttachments((current) => [
-        ...current,
-        ...selected.filter(
-          (item) =>
-            !current.some((existing) => existing.id === item.id)
-        )
-      ])
+      const current = attachmentsRef.current
+      const unique = selected.filter(
+        (item) =>
+          !current.some((existing) => existing.id === item.id)
+      )
+      const accepted = unique.slice(
+        0,
+        Math.max(0, 8 - current.length)
+      )
+      for (const attachment of unique.slice(accepted.length)) {
+        void window.goodbuddy.context.remove(attachment.id)
+      }
+      updateAttachments([...current, ...accepted])
+      if (accepted.length < unique.length) {
+        setContextError('单次消息最多添加 8 个附件')
+      }
     } catch (reason) {
       setContextError(
         reason instanceof Error ? reason.message : '添加上下文失败'
@@ -2194,9 +2449,34 @@ function App(): React.JSX.Element {
     }
   }
 
+  const openWindowCapture = async (): Promise<void> => {
+    setContextError(undefined)
+    setWindowCaptureLoading(true)
+    try {
+      setWindowCaptureOptions(
+        await window.goodbuddy.context.listWindows()
+      )
+    } catch (reason) {
+      setContextError(
+        reason instanceof Error ? reason.message : '读取应用窗口失败'
+      )
+    } finally {
+      setWindowCaptureLoading(false)
+    }
+  }
+
+  const captureSelectedWindow = async (
+    sourceId: string
+  ): Promise<void> => {
+    setWindowCaptureOptions(undefined)
+    await addContext(() =>
+      window.goodbuddy.context.captureWindow(sourceId)
+    )
+  }
+
   const removeAttachment = (attachmentId: string): void => {
     void window.goodbuddy.context.remove(attachmentId)
-    setAttachments((current) =>
+    updateAttachments((current) =>
       current.filter((attachment) => attachment.id !== attachmentId)
     )
   }
@@ -2333,7 +2613,7 @@ function App(): React.JSX.Element {
       evidence: []
     })
     setEnabledKnowledgeLibraryIds([])
-    setAttachments([])
+    updateAttachments([])
     setInput('')
     setView('chat')
     setNotice('本地对话、任务、记忆、心跳、自动化和知识库索引已清除')
@@ -2803,6 +3083,92 @@ function App(): React.JSX.Element {
                     </strong>
                     <span>{formatTime(message.createdAt)}</span>
                   </div>
+                  {message.attachments &&
+                    message.attachments.length > 0 && (
+                      <div
+                        aria-label="消息附件"
+                        className="message-attachments"
+                      >
+                        {message.attachments.map((attachment) => {
+                          const imageSource =
+                            attachment.kind === 'image'
+                              ? attachment.contentUrl ??
+                                attachment.thumbnailUrl
+                              : undefined
+                          const imageItem = imageSource
+                            ? {
+                                src: imageSource,
+                                title: attachment.name
+                              }
+                            : undefined
+                          return (
+                            <div
+                              className={`message-attachment message-attachment--${attachment.kind}`}
+                              key={attachment.id}
+                              title={attachment.preview}
+                            >
+                              {imageItem ? (
+                                <button
+                                  aria-label={`查看图片 ${attachment.name}`}
+                                  className="message-image-button"
+                                  onClick={(event) =>
+                                    openImageViewer(
+                                      imageItem,
+                                      event.currentTarget
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  <img
+                                    alt={attachment.name}
+                                    loading="lazy"
+                                    src={imageSource}
+                                  />
+                                </button>
+                              ) : (
+                                <span
+                                  aria-hidden="true"
+                                  className="message-attachment__icon"
+                                >
+                                  <FileText size={16} />
+                                </span>
+                              )}
+                              <span className="message-attachment__details">
+                                <strong>{attachment.name}</strong>
+                                <small>
+                                  {formatAttachmentSize(attachment.size)}
+                                </small>
+                                {imageItem && (
+                                  <span className="message-image-actions">
+                                    <button
+                                      onClick={(event) =>
+                                        openImageViewer(
+                                          imageItem,
+                                          event.currentTarget
+                                        )
+                                      }
+                                      type="button"
+                                    >
+                                      查看
+                                    </button>
+                                    <button
+                                      aria-label={`下载图片 ${attachment.name}`}
+                                      onClick={() =>
+                                        downloadImage(imageItem)
+                                      }
+                                      type="button"
+                                    >
+                                      <Download size={12} />
+                                      下载
+                                    </button>
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   {message.content && (
                     <div className="markdown-content message__content">
                       <MarkdownRenderer>
@@ -2826,12 +3192,56 @@ function App(): React.JSX.Element {
                         className="message-generated-image"
                         key={artifact.id}
                       >
-                        <img
-                          alt={artifact.title}
-                          loading="lazy"
-                          src={artifact.content}
-                        />
+                        <button
+                          aria-label={`查看图片 ${artifact.title}`}
+                          className="message-image-button"
+                          onClick={(event) =>
+                            openImageViewer(
+                              {
+                                src: artifact.content!,
+                                title: artifact.title
+                              },
+                              event.currentTarget
+                            )
+                          }
+                          type="button"
+                        >
+                          <img
+                            alt={artifact.title}
+                            loading="lazy"
+                            src={artifact.content}
+                          />
+                        </button>
                         <figcaption>{artifact.title}</figcaption>
+                        <div className="message-image-actions">
+                          <button
+                            onClick={(event) =>
+                              openImageViewer(
+                                {
+                                  src: artifact.content!,
+                                  title: artifact.title
+                                },
+                                event.currentTarget
+                              )
+                            }
+                            type="button"
+                          >
+                            查看
+                          </button>
+                          <button
+                            aria-label={`下载图片 ${artifact.title}`}
+                            onClick={() =>
+                              downloadImage({
+                                src: artifact.content!,
+                                title: artifact.title
+                              })
+                            }
+                            type="button"
+                          >
+                            <Download size={12} />
+                            下载
+                          </button>
+                        </div>
                       </figure>
                     ) : null
                   })}
@@ -2889,10 +3299,46 @@ function App(): React.JSX.Element {
                       key={tool.callId ?? tool.name}
                     >
                       <TerminalSquare size={15} />
-                      <span>{tool.summary}</span>
+                      <div className="tool-activity__content">
+                        <span>{tool.summary}</span>
+                        {tool.error && <code>{tool.error}</code>}
+                      </div>
                       <small>{toolStateLabels[tool.state]}</small>
                     </div>
                   ))}
+                  {message.subagents && message.subagents.length > 0 && (
+                    <section
+                      aria-label="子专家状态"
+                      className="subagent-status-list"
+                    >
+                      {message.subagents.slice(0, 3).map((subagent) => (
+                        <article
+                          className={`subagent-status-card subagent-status-card--${subagent.state}`}
+                          key={subagent.childTaskId}
+                        >
+                          <Bot aria-hidden="true" size={15} />
+                          <div>
+                            <strong>{subagent.expertName}</strong>
+                            <small>
+                              {subagent.routingMode === 'smart'
+                                ? '智能路由'
+                                : '手动指定'}
+                            </small>
+                            {(subagent.error || subagent.reason) &&
+                              (subagent.state === 'failed' ||
+                                subagent.state === 'cancelled') && (
+                                <p>
+                                  {subagent.error ?? subagent.reason}
+                                </p>
+                              )}
+                          </div>
+                          <span>
+                            {subagentStateLabels[subagent.state]}
+                          </span>
+                        </article>
+                      ))}
+                    </section>
+                  )}
                   {message.approval && (
                     <div className="approval-card">
                       <ShieldCheck size={18} />
@@ -3020,14 +3466,14 @@ function App(): React.JSX.Element {
                     <span>
                       <strong>{attachment.name}</strong>
                       <small>
-                        {Math.max(1, Math.ceil(attachment.size / 1024))} KB
+                        {formatAttachmentSize(attachment.size)}
                       </small>
                     </span>
                     <button
                       aria-label={`移除 ${attachment.name}`}
                       onClick={() => {
                         void window.goodbuddy.context.remove(attachment.id)
-                        setAttachments((current) =>
+                        updateAttachments((current) =>
                           current.filter(
                             (item) => item.id !== attachment.id
                           )
@@ -3111,11 +3557,8 @@ function App(): React.JSX.Element {
                 </button>
                 <button
                   aria-label="捕获应用窗口"
-                  onClick={() =>
-                    void addContext(() =>
-                      window.goodbuddy.context.captureWindow()
-                    )
-                  }
+                  disabled={windowCaptureLoading}
+                  onClick={() => void openWindowCapture()}
                   title="选择一个应用或浏览器窗口，仅捕获当前画面"
                   type="button"
                 >
@@ -3578,6 +4021,119 @@ function App(): React.JSX.Element {
           </button>
         </div>
       )}
+      {imageViewerItem && (
+        <div
+          className="image-viewer-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeImageViewer()
+            }
+          }}
+        >
+          <section
+            aria-labelledby="image-viewer-title"
+            aria-modal="true"
+            className="image-viewer-dialog"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                closeImageViewer()
+              }
+            }}
+            role="dialog"
+          >
+            <header className="image-viewer-dialog__header">
+              <strong id="image-viewer-title">
+                {imageViewerItem.title}
+              </strong>
+              <div>
+                <button
+                  className="secondary-button"
+                  onClick={() => downloadImage(imageViewerItem)}
+                  type="button"
+                >
+                  <Download size={14} />
+                  下载图片
+                </button>
+                <button
+                  aria-label="关闭图片查看器"
+                  autoFocus
+                  className="icon-button"
+                  onClick={closeImageViewer}
+                  type="button"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </header>
+            <div className="image-viewer-dialog__content">
+              <img
+                alt={imageViewerItem.title}
+                src={imageViewerItem.src}
+              />
+            </div>
+          </section>
+        </div>
+      )}
+      {windowCaptureOptions && (
+        <div
+          className="window-capture-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setWindowCaptureOptions(undefined)
+            }
+          }}
+        >
+          <section
+            aria-labelledby="window-capture-title"
+            aria-modal="true"
+            className="window-capture-dialog"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setWindowCaptureOptions(undefined)
+              }
+            }}
+            role="dialog"
+          >
+            <div className="window-capture-dialog__header">
+              <div>
+                <strong id="window-capture-title">选择应用窗口</strong>
+                <small>仅捕获所选窗口的当前画面，不会持续监控。</small>
+              </div>
+              <button
+                aria-label="关闭应用窗口选择"
+                className="icon-button"
+                onClick={() => setWindowCaptureOptions(undefined)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+            <div
+              aria-label="可捕获的应用窗口"
+              className="window-capture-dialog__list"
+            >
+              {windowCaptureOptions.map((source, index) => (
+                <button
+                  autoFocus={index === 0}
+                  key={source.id}
+                  onClick={() => void captureSelectedWindow(source.id)}
+                  type="button"
+                >
+                  <PanelsTopLeft size={16} />
+                  <span>{source.name}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              className="secondary-button"
+              onClick={() => setWindowCaptureOptions(undefined)}
+              type="button"
+            >
+              取消
+            </button>
+          </section>
+        </div>
+      )}
       <RightAssistantSidebar
         activities={activityRecords}
         approvals={pendingSidebarApprovals}
@@ -3585,6 +4141,7 @@ function App(): React.JSX.Element {
         attachments={attachments}
         browserState={browserStates[activeId]}
         enabledLibraries={enabledSidebarLibraries}
+        experts={assistantExperts}
         heartbeatEntries={heartbeatEntries}
         heartbeats={assistantHeartbeats}
         memories={assistantMemories}

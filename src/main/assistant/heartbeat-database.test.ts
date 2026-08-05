@@ -91,7 +91,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(6)
+    ).toBe(7)
     expect(
       (
         check

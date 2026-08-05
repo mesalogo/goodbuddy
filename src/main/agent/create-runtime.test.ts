@@ -30,6 +30,7 @@ function settings(
     modelName: 'qwen3',
     modelProtocol: 'openai-chat-completions',
     modelAuthentication: 'none',
+    imageGenerationQuality: 'auto',
     opencodeBaseUrl: '',
     opencodeEmbedded: false,
     opencodeBinaryPath: '',
@@ -38,8 +39,10 @@ function settings(
     continueConfigPath: '',
     continueMode: 'chat',
     runtimeSandboxMode: 'off',
+    subagentSmartRoutingEnabled: false,
     knowledgeEmbeddingEnabled: false,
-    knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+    knowledgeEmbeddingBaseUrl:
+      'http://127.0.0.1:11434/v1/embeddings',
     knowledgeEmbeddingModel: 'nomic-embed-text',
     workspacePath: process.cwd(),
     toolApproval: 'always',
@@ -117,6 +120,7 @@ describe('createAgentRuntime model compatibility', () => {
             modelName: 'model',
             protocol: 'openai-chat-completions',
             authentication: 'api-key',
+            imageGenerationQuality: 'auto',
             apiKey: 'secret'
           }
         })
@@ -130,6 +134,7 @@ describe('createAgentRuntime model compatibility', () => {
       modelName: 'gpt-image-2',
       modelProtocol: 'openai-images-generations',
       modelAuthentication: 'api-key',
+      imageGenerationQuality: 'high',
       apiKey: 'secret'
     })
     const runtime = createAgentRuntime(process.cwd(), imageSettings)
@@ -150,6 +155,7 @@ describe('createAgentRuntime model compatibility', () => {
             modelName: 'gpt-image-2',
             protocol: 'openai-images-generations',
             authentication: 'api-key',
+            imageGenerationQuality: 'high',
             apiKey: 'secret'
           }
         })
@@ -167,6 +173,7 @@ describe('createAgentRuntime model compatibility', () => {
             modelName: 'gpt-5',
             protocol: 'openai-responses',
             authentication: 'api-key',
+            imageGenerationQuality: 'auto',
             apiKey: 'secret'
           }
         })

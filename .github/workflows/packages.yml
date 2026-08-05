@@ -10,6 +10,7 @@ on:
     paths:
       - '.github/workflows/packages.yml'
       - 'build/build-release.cjs'
+      - 'build/aggregate-release.cjs'
       - 'build/file-hash.cjs'
       - 'build/runtime-hooks.cjs'
       - 'package.json'
@@ -20,7 +21,7 @@ permissions:
 
 concurrency:
   group: packages-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   validate:
@@ -130,3 +131,67 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="v$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "$expected"
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
+
+      - name: Download Windows packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: goodbuddy-windows-*
+          path: dist/release-downloads
+
+      - name: Download macOS packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: goodbuddy-macos-*
+          path: dist/release-downloads
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: goodbuddy-linux-*
+          path: dist/release-downloads
+
+      - name: Verify and aggregate release assets
+        run: node build/aggregate-release.cjs --input dist/release-downloads --output dist/release-upload
+
+      - name: Create or update draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --draft
+          else
+            version="$(node -p "require('./package.json').version")"
+            gh release create "$tag" --draft --verify-tag --generate-notes --title "GoodBuddy $version"
+          fi
+          gh release upload "$tag" dist/release-upload/* --clobber
+          gh release edit "$tag" --draft=false --latest

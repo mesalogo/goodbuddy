@@ -168,6 +168,113 @@ describe('FilteringProxy', () => {
     expect(policy.validate).toHaveBeenCalled()
   })
 
+  it('retries an alternate approved HTTP address after a CDN rejection', async () => {
+    let upstreamRequests = 0
+    const rejectedEdge = createHttpServer((_request, response) => {
+      upstreamRequests += 1
+      response.writeHead(412)
+      response.end('rejected edge')
+    })
+    const upstreamPort = await listen(rejectedEdge)
+    disposals.push(() => closeServer(rejectedEdge))
+    const workingEdge = createHttpServer((_request, response) => {
+      upstreamRequests += 1
+      response.end('working edge')
+    })
+    await new Promise<void>((resolve, reject) => {
+      workingEdge.once('error', reject)
+      workingEdge.listen(upstreamPort, '127.0.0.2', () => {
+        workingEdge.off('error', reject)
+        resolve()
+      })
+    })
+    disposals.push(() => closeServer(workingEdge))
+    const policy = {
+      validate: vi.fn(async (url: URL) => ({
+        url,
+        origin: url.origin,
+        addresses: [
+          { address: '127.0.0.1', family: 4 as const },
+          { address: '127.0.0.2', family: 4 as const }
+        ]
+      }))
+    } as unknown as BrowserUrlPolicy
+    const proxy = new FilteringProxy({ policy })
+    disposals.push(() => proxy.dispose())
+    const proxyUrl = new URL(await proxy.start())
+
+    const result = await new Promise<{
+      status: number | undefined
+      body: string
+    }>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          host: proxyUrl.hostname,
+          port: proxyUrl.port,
+          path: `http://example.com:${upstreamPort}/`
+        },
+        (response) => {
+          let body = ''
+          response.setEncoding('utf8')
+          response.on('data', (chunk: string) => {
+            body += chunk
+          })
+          response.on('end', () =>
+            resolve({ status: response.statusCode, body })
+          )
+        }
+      )
+      request.once('error', reject)
+      request.end()
+    })
+
+    expect(result).toEqual({ status: 200, body: 'working edge' })
+    expect(upstreamRequests).toBe(2)
+  })
+
+  it('retries an alternate approved HTTP address after connection failure', async () => {
+    const upstream = createHttpServer((_request, response) => {
+      response.end('fallback connected')
+    })
+    const upstreamPort = await listen(upstream)
+    disposals.push(() => closeServer(upstream))
+    const policy = {
+      validate: vi.fn(async (url: URL) => ({
+        url,
+        origin: url.origin,
+        addresses: [
+          { address: '127.0.0.2', family: 4 as const },
+          { address: '127.0.0.1', family: 4 as const }
+        ]
+      }))
+    } as unknown as BrowserUrlPolicy
+    const proxy = new FilteringProxy({ policy })
+    disposals.push(() => proxy.dispose())
+    const proxyUrl = new URL(await proxy.start())
+
+    const body = await new Promise<string>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          host: proxyUrl.hostname,
+          port: proxyUrl.port,
+          path: `http://example.com:${upstreamPort}/`
+        },
+        (response) => {
+          let value = ''
+          response.setEncoding('utf8')
+          response.on('data', (chunk: string) => {
+            value += chunk
+          })
+          response.on('end', () => resolve(value))
+        }
+      )
+      request.once('error', reject)
+      request.end()
+    })
+
+    expect(body).toBe('fallback connected')
+  })
+
   it('contains aborted upstream HTTP responses', async () => {
     const upstream = createHttpServer((_request, response) => {
       response.writeHead(200)

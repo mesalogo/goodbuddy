@@ -27,7 +27,9 @@ import {
   buildBubblewrapLaunch,
   type RuntimeSandboxResolution
 } from './runtime-sandbox'
-import { redactSensitiveText } from './approval-summary'
+import {
+  safeToolErrorDetail
+} from './approval-summary'
 
 const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
 const STARTUP_TIMEOUT_MS = 10_000
@@ -65,20 +67,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function opencodeErrorMessage(value: unknown, fallback: string): string {
-  if (!isRecord(value)) {
-    return fallback
-  }
-  if (typeof value.message === 'string' && value.message.trim()) {
-    return redactSensitiveText(value.message).slice(0, 1_000)
-  }
-  if (
-    isRecord(value.data) &&
-    typeof value.data.message === 'string' &&
-    value.data.message.trim()
-  ) {
-    return redactSensitiveText(value.data.message).slice(0, 1_000)
-  }
-  return fallback
+  return safeToolErrorDetail(value, 1_000) ?? fallback
 }
 
 function byteLengthWithin(value: string, maximum: number): boolean {
@@ -698,6 +687,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       {
         name: string
         state: 'pending' | 'running' | 'completed' | 'failed'
+        error?: string
       }
     >()
     try {
@@ -777,14 +767,23 @@ export class OpenCodeRuntime implements AgentRuntime {
             }
             const state =
               part.state.status === 'error' ? 'failed' : part.state.status
-            toolStates.set(callId, { name: toolName, state })
+            const error =
+              part.state.status === 'error'
+                ? safeToolErrorDetail(part.state.error)
+                : undefined
+            toolStates.set(callId, {
+              name: toolName,
+              state,
+              ...(error ? { error } : {})
+            })
             yield {
               requestId: request.requestId,
               type: 'tool',
               callId,
               name: toolName,
               state,
-              summary: `OpenCode 工具：${toolName}`
+              summary: `OpenCode 工具：${toolName}`,
+              ...(error ? { error } : {})
             }
           }
         }
@@ -908,7 +907,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             const [callId, tool] = unsuccessfulTool
             throw new Error(
               tool.state === 'failed'
-                ? `OpenCode 工具执行失败（${callId.slice(0, 128)}）`
+                ? `OpenCode 工具执行失败（${callId.slice(0, 128)}）${tool.error ? `：${tool.error}` : ''}`
                 : `OpenCode 工具未完成（${callId.slice(0, 128)}）`
             )
           }
@@ -941,7 +940,8 @@ export class OpenCodeRuntime implements AgentRuntime {
             callId,
             name: tool.name,
             state: 'failed',
-            summary: `OpenCode 工具：${tool.name}`
+            summary: `OpenCode 工具：${tool.name}`,
+            ...(tool.error ? { error: tool.error } : {})
           }
         }
       }

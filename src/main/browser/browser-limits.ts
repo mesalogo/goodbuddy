@@ -1,0 +1,2 @@
+export const MAX_BROWSER_INPUT_LENGTH = 16_384
+export const MAX_BROWSER_SELECT_LENGTH = 1_024

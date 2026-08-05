@@ -24,6 +24,12 @@ function createHarness() {
   let currentUrl = ''
   let openHandler: ((details: { url: string }) => { action: 'deny' }) | undefined
   const sendCommand = vi.fn(async () => ({}))
+  const capturedImage = {
+    getSize: () => ({ width: 1_280, height: 800 }),
+    resize: vi.fn(),
+    toJPEG: () => Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+  }
+  capturedImage.resize.mockReturnValue(capturedImage)
   const webContents: BrowserWebContents = {
     debugger: {
       attach: vi.fn(),
@@ -54,12 +60,7 @@ function createHarness() {
     setWindowOpenHandler: vi.fn((handler) => {
       openHandler = handler
     }),
-    capturePage: vi.fn(async () => ({
-      toPNG: () =>
-        Buffer.from([
-          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
-        ])
-    })),
+    capturePage: vi.fn(async () => capturedImage),
     getURL: vi.fn(() => currentUrl),
     stop: vi.fn(),
     destroy: vi.fn(),
@@ -99,6 +100,7 @@ function createHarness() {
       displayMedia = handler
     }),
     setProxy: vi.fn(async () => undefined),
+    setUserAgent: vi.fn(),
     on: (event, listener) =>
       partitionEvents.on(
         event,
@@ -167,6 +169,13 @@ describe('ElectronBrowserSession', () => {
       proxyRules: 'http://127.0.0.1:12345',
       proxyBypassRules: '<-loopback>'
     })
+    expect(harness.partition.setUserAgent).toHaveBeenCalledWith(
+      expect.stringMatching(/ Chrome\/.+ Safari\/537\.36$/u),
+      'zh-CN,zh,en'
+    )
+    expect(
+      vi.mocked(harness.partition.setUserAgent!).mock.calls[0]?.[0]
+    ).not.toContain('Electron')
     expect(harness.getPermissionCheck()?.()).toBe(false)
     const permissionCallback = vi.fn()
     harness.getPermissionRequest()?.({}, 'geolocation', permissionCallback, {})
@@ -194,8 +203,8 @@ describe('ElectronBrowserSession', () => {
       session.captureScreenshot(new AbortController().signal)
     ).resolves.toEqual({
       type: 'image',
-      mimeType: 'image/png',
-      data: 'iVBORw0KGgo='
+      mimeType: 'image/jpeg',
+      data: '/9j/2Q=='
     })
 
     const downloadEvent = { preventDefault: vi.fn() }

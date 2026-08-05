@@ -34,6 +34,7 @@ function settings(
     modelName: 'sonnet-5',
     modelProtocol: 'anthropic-messages',
     modelAuthentication: 'api-key',
+    imageGenerationQuality: 'auto',
     opencodeBaseUrl: '',
     opencodeEmbedded: false,
     opencodeBinaryPath: '',
@@ -43,7 +44,8 @@ function settings(
     continueMode: 'chat',
     runtimeSandboxMode: 'auto',
     knowledgeEmbeddingEnabled: false,
-    knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+    knowledgeEmbeddingBaseUrl:
+      'http://127.0.0.1:11434/v1/embeddings',
     knowledgeEmbeddingModel: 'nomic-embed-text',
     workspacePath: 'test-workspace',
     apiKey: { action: 'keep' },
@@ -73,12 +75,56 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
-  it('allows private Ollama embedding origins but rejects public HTTP', () => {
+  it('migrates version 8 settings with smart routing disabled', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings({ subagentSmartRoutingEnabled: true }))
+    const versionEight = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      subagentSmartRoutingEnabled?: boolean
+    }
+    versionEight.version = 8
+    delete versionEight.subagentSmartRoutingEnabled
+    await writeFile(filePath, JSON.stringify(versionEight), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      subagentSmartRoutingEnabled: false
+    })
+    await migrated.update(settings())
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+    }
+    expect(persisted.version).toBe(9)
+  })
+
+  it('accepts only supported image quality values', () => {
+    for (const imageGenerationQuality of [
+      'auto',
+      'low',
+      'medium',
+      'high'
+    ] as const) {
+      expect(
+        runtimeSettingsInputSchema.safeParse(
+          settings({ imageGenerationQuality })
+        ).success
+      ).toBe(true)
+    }
+    expect(
+      runtimeSettingsInputSchema.safeParse({
+        ...settings(),
+        imageGenerationQuality: 'ultra'
+      }).success
+    ).toBe(false)
+  })
+
+  it('allows private HTTP embedding endpoints but rejects public HTTP', () => {
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
           knowledgeEmbeddingEnabled: true,
-          knowledgeEmbeddingBaseUrl: 'http://10.7.0.23:11434',
+          knowledgeEmbeddingBaseUrl:
+            'http://10.7.0.23:11434/v1/embeddings',
           knowledgeEmbeddingModel: 'bge-m3'
         })
       ).success
@@ -87,10 +133,100 @@ describe('RuntimeSettingsStore', () => {
       runtimeSettingsInputSchema.safeParse(
         settings({
           knowledgeEmbeddingEnabled: true,
-          knowledgeEmbeddingBaseUrl: 'http://example.com:11434'
+          knowledgeEmbeddingBaseUrl:
+            'http://example.com:11434/v1/embeddings'
         })
       ).success
     ).toBe(false)
+  })
+
+  it('encrypts an OpenAI-compatible embedding API key and binds it to the full endpoint', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        knowledgeEmbeddingEnabled: true,
+        knowledgeEmbeddingBaseUrl:
+          'https://vectors.example/custom/embeddings',
+        knowledgeEmbeddingModel: 'vendor/embed-large',
+        knowledgeEmbeddingApiKey: {
+          action: 'replace',
+          value: 'vector-secret-value'
+        }
+      })
+    )
+
+    const contents = await readFile(filePath, 'utf8')
+    expect(contents).not.toContain('vector-secret-value')
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      knowledgeEmbeddingBaseUrl:
+        'https://vectors.example/custom/embeddings',
+      knowledgeEmbeddingModel: 'vendor/embed-large',
+      knowledgeEmbeddingApiKey: 'vector-secret-value'
+    })
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      knowledgeEmbeddingApiKeyConfigured: true,
+      knowledgeEmbeddingCredentialSource: 'encrypted'
+    })
+    await expect(
+      store.update(
+        settings({
+          knowledgeEmbeddingBaseUrl:
+            'https://vectors.example/v1/embeddings',
+          knowledgeEmbeddingApiKey: { action: 'keep' }
+        })
+      )
+    ).rejects.toThrow('重新输入或清除 API Key')
+  })
+
+  it('migrates version 6 Ollama origins to OpenAI-compatible embedding endpoints', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    persisted.version = 6
+    persisted.knowledgeEmbeddingBaseUrl = 'http://127.0.0.1:11434'
+    delete persisted.knowledgeEmbeddingCredential
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migratedStore = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migratedStore.getPublicSettings()).resolves.toMatchObject({
+      knowledgeEmbeddingBaseUrl:
+        'http://127.0.0.1:11434/v1/embeddings',
+      knowledgeEmbeddingApiKeyConfigured: false,
+      imageGenerationQuality: 'auto',
+      modelProfiles: [
+        expect.objectContaining({ imageGenerationQuality: 'auto' })
+      ]
+    })
+  })
+
+  it('defaults image quality when migrating version 7 settings', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({ imageGenerationQuality: 'high' })
+    )
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    persisted.version = 7
+    for (const profile of persisted.modelProfiles) {
+      delete profile.imageGenerationQuality
+    }
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migratedStore = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migratedStore.getResolvedSettings()).resolves.toMatchObject({
+      imageGenerationQuality: 'auto'
+    })
+    await expect(migratedStore.getPublicSettings()).resolves.toMatchObject({
+      imageGenerationQuality: 'auto',
+      modelProfiles: [
+        expect.objectContaining({ imageGenerationQuality: 'auto' })
+      ]
+    })
   })
 
   it('encrypts the API key and binds it to the configured origin', async () => {
@@ -152,7 +288,7 @@ describe('RuntimeSettingsStore', () => {
   })
 
   it('uses the explicit protocol as the image-generation capability marker', async () => {
-    const { store } = await createStore()
+    const { filePath, store } = await createStore()
     const chatId = crypto.randomUUID()
     const imageId = crypto.randomUUID()
     await store.update(
@@ -165,6 +301,7 @@ describe('RuntimeSettingsStore', () => {
             modelName: 'chat-model',
             protocol: 'openai-chat-completions',
             authentication: 'api-key',
+            imageGenerationQuality: 'auto',
             apiKey: { action: 'replace', value: 'chat-secret' }
           },
           {
@@ -174,6 +311,7 @@ describe('RuntimeSettingsStore', () => {
             modelName: 'vendor/custom-renderer',
             protocol: 'openai-images-generations',
             authentication: 'api-key',
+            imageGenerationQuality: 'high',
             apiKey: { action: 'replace', value: 'image-secret' }
           }
         ],
@@ -191,7 +329,8 @@ describe('RuntimeSettingsStore', () => {
           id: imageId,
           baseUrl: 'https://images.example/custom/v2',
           modelName: 'vendor/custom-renderer',
-          protocol: 'openai-images-generations'
+          protocol: 'openai-images-generations',
+          imageGenerationQuality: 'high'
         })
       ]
     })
@@ -199,8 +338,20 @@ describe('RuntimeSettingsStore', () => {
       modelBaseUrl: 'https://images.example/custom/v2',
       modelName: 'vendor/custom-renderer',
       modelProtocol: 'openai-images-generations',
+      imageGenerationQuality: 'high',
       apiKey: 'image-secret'
     })
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    expect(persisted.version).toBe(9)
+    expect(persisted.modelProfiles).toContainEqual(
+      expect.objectContaining({
+        id: imageId,
+        imageGenerationQuality: 'high'
+      })
+    )
   })
 
   it('stores multiple encrypted model profiles and resolves runtime sources', async () => {
@@ -217,6 +368,7 @@ describe('RuntimeSettingsStore', () => {
             modelName: 'work-model',
             protocol: 'anthropic-messages',
             authentication: 'api-key',
+            imageGenerationQuality: 'auto',
             apiKey: { action: 'replace', value: 'work-secret' }
           },
           {
@@ -226,6 +378,7 @@ describe('RuntimeSettingsStore', () => {
             modelName: 'default-model',
             protocol: 'anthropic-messages',
             authentication: 'api-key',
+            imageGenerationQuality: 'auto',
             apiKey: { action: 'replace', value: 'default-secret' }
           }
         ],
@@ -365,7 +518,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 6,
+      version: 9,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -598,6 +751,7 @@ describe('RuntimeSettingsStore', () => {
             modelName: 'qwen3',
             protocol: 'openai-chat-completions',
             authentication: 'none',
+            imageGenerationQuality: 'auto',
             apiKey: { action: 'clear' }
           }
         ],
@@ -615,7 +769,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(6)
+    expect(persisted.version).toBe(9)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

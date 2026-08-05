@@ -69,4 +69,6 @@ export type AgentImage = {
 
 export type AgentExecutionRequest = AgentRequest & {
   images?: AgentImage[]
+  /** Main-process-only instructions placed in the model system layer. */
+  trustedInstructions?: string
 }

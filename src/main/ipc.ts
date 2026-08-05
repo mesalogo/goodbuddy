@@ -22,6 +22,7 @@ import {
   knowledgeUrlImportSchema,
   runtimeFileSelectionKindSchema,
   runtimeSettingsInputSchema,
+  windowCaptureRequestSchema,
   workspaceDirectoryRequestSchema,
   workspaceFileRequestSchema,
   type AgentRuntimeDetection,
@@ -68,7 +69,7 @@ import type {
   RuntimeModelUsageEvent
 } from './agent/runtime'
 import { detectAgentRuntimes } from './agent/runtime-discovery'
-import { redactSensitiveText } from './agent/approval-summary'
+import { safeToolErrorDetail } from './agent/approval-summary'
 import type { BundledRuntimePaths } from './agent/bundled-runtimes'
 import type { CapabilityService } from './capabilities/capability-service'
 import { testMcpServer } from './capabilities/mcp-tester'
@@ -89,6 +90,15 @@ import {
   readWorkspaceFile
 } from './assistant/workspace-changes-service'
 import { HeartbeatService } from './assistant/heartbeat-service'
+import {
+  SubagentRunError,
+  type SubagentService
+} from './assistant/subagent-service'
+import { routeSubagent } from './assistant/subagent-router'
+import {
+  isReadOnlyChannelMessage,
+  startEnvironmentChannels
+} from './channels/channel-env'
 
 const requestIdSchema = z.string().uuid()
 
@@ -100,9 +110,7 @@ function isAgentRuntime(runtime: AgentRuntime): boolean {
 }
 
 function safeRuntimeError(error: unknown, fallback: string): string {
-  return redactSensitiveText(
-    error instanceof Error ? error.message : fallback
-  ).slice(0, 2_000)
+  return safeToolErrorDetail(error, 2_000) ?? fallback
 }
 
 const approvalResponseSchema = z
@@ -367,7 +375,8 @@ export function registerIpcHandlers(
   browserControl?: {
     releaseConversation(conversationId: string): Promise<void>
     onState(listener: (state: BrowserLiveState) => void): () => void
-  }
+  },
+  subagentService?: SubagentService
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
   const heartbeatControllers = new Set<AbortController>()
@@ -463,6 +472,20 @@ export function registerIpcHandlers(
       cacheRead: event.cacheReadTokens,
       cacheWrite: event.cacheWriteTokens
     })
+  }
+
+  const publishSubagentEvent = (
+    parentTaskId: string,
+    event: Extract<AgentEvent, { type: 'subagent' }>
+  ): void => {
+    assistantDatabase.appendTaskEvent(
+      parentTaskId,
+      event.type,
+      event
+    )
+    if (!window.isDestroyed()) {
+      window.webContents.send(ipcChannels.agentEvent, event)
+    }
   }
 
   const heartbeatService = new HeartbeatService(
@@ -566,7 +589,8 @@ export function registerIpcHandlers(
 
   const executeSchedule = async (
     schedule: AssistantSchedule,
-    origin: 'schedule' | 'delegation' = 'schedule'
+    origin: 'schedule' | 'delegation' = 'schedule',
+    externalSignal?: AbortSignal
   ): Promise<{
     status: 'completed' | 'failed'
     output?: string
@@ -575,8 +599,17 @@ export function registerIpcHandlers(
     if (shuttingDown || executionPaused) {
       return { status: 'failed', error: '应用正在退出' }
     }
+    if (externalSignal?.aborted) {
+      return { status: 'failed', error: '请求已取消' }
+    }
     const requestId = randomUUID()
     const controller = new AbortController()
+    const abortFromExternal = (): void => {
+      controller.abort(externalSignal?.reason)
+    }
+    externalSignal?.addEventListener('abort', abortFromExternal, {
+      once: true
+    })
     activeRequests.set(requestId, controller)
     assistantDatabase.createTask({
       id: requestId,
@@ -606,6 +639,9 @@ export function registerIpcHandlers(
         },
         controller.signal,
         async (approvalRequest) => {
+          if (origin === 'delegation') {
+            return 'deny'
+          }
           assistantDatabase.updateTaskStatus(
             requestId,
             'waiting_approval'
@@ -701,6 +737,10 @@ export function registerIpcHandlers(
       }
       return { status: 'failed', error: message }
     } finally {
+      externalSignal?.removeEventListener(
+        'abort',
+        abortFromExternal
+      )
       activeRequests.delete(requestId)
     }
   }
@@ -709,8 +749,8 @@ export function registerIpcHandlers(
     request: AgentExecutionRequest,
     signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
-    if (runtime.capability === 'image-generation') {
-      throw new Error('专家团队需要文本模型，当前默认连接仅支持图像生成')
+    if (!subagentService) {
+      throw new Error('专家子任务服务不可用')
     }
     const experts = assistantDatabase.listExperts().slice(0, 3)
     if (experts.length < 2) {
@@ -722,83 +762,20 @@ export function registerIpcHandlers(
       message: `正在并行委派给 ${experts.length} 位专家`
     }
     const results = await Promise.allSettled(
-      experts.map(async (expert) => {
-        const childRequestId = randomUUID()
-        const childConversationId =
-          `subagent:${request.requestId}:${childRequestId}`
-        assistantDatabase.createTask({
-          id: childRequestId,
-          projectId: request.projectId,
-          conversationId: request.conversationId,
-          title: `${expert.name}：${request.prompt.slice(0, 80)}`,
-          instructions: request.prompt,
-          workMode: 'ask',
-          origin: 'subagent'
-        })
-        let output = ''
-        let completed = false
-        try {
-          for await (const event of runtime.run(
-            {
-              ...request,
-              requestId: childRequestId,
-              conversationId: childConversationId,
-              expertId: undefined,
-              teamMode: false,
-              workMode: 'ask',
-              history: undefined,
-              prompt: [
-                `Trusted expert role: ${expert.name}`,
-                expert.systemInstructions,
-                'Analyze the user request independently. Do not call tools or make changes.',
-                request.prompt
-              ].join('\n\n')
-            },
-            signal,
-            async () => 'deny'
-          )) {
-            if (event.type === 'generated-image') {
-              throw new Error('专家团队不支持图像生成模型')
-            }
-            if (event.type === 'model-usage') {
-              persistModelUsage(event)
-              continue
-            }
-            if (event.type === 'tool') {
-              throw new Error('专家只读子任务不允许工具调用')
-            }
-            if (event.type === 'error') {
-              throw new Error(event.message)
-            }
-            if (event.type === 'text' && output.length < 60_000) {
-              output = `${output}${event.delta}`.slice(0, 60_000)
-            } else if (event.type === 'done') {
-              completed = true
-            }
-          }
-          if (!completed) {
-            throw new Error('专家子任务未报告完成')
-          }
-          assistantDatabase.updateTaskStatus(
-            childRequestId,
-            'completed'
-          )
-          return {
-            expert: expert.name,
-            output
-          }
-        } catch (error) {
-          const message = safeRuntimeError(error, '专家子任务失败')
-          assistantDatabase.updateTaskStatus(
-            childRequestId,
-            signal.aborted ? 'cancelled' : 'failed',
-            message
-          )
-          throw new Error(message, { cause: error })
-        } finally {
-          await runtime.releaseConversation?.(childConversationId)
-        }
-      })
+      experts.map((expert) =>
+        subagentService.run({
+          parentRequest: request,
+          expert,
+          routingMode: 'manual',
+          signal,
+          onEvent: (event) =>
+            publishSubagentEvent(request.requestId, event),
+          onModelUsage: persistModelUsage
+        }).then((result) => ({
+          expert: expert.name,
+          output: result.output
+        }))
+      )
     )
     signal.throwIfAborted()
     const successful = results.flatMap((result, index) =>
@@ -828,26 +805,50 @@ export function registerIpcHandlers(
           `<expert-analysis>${JSON.stringify(result)}</expert-analysis>`
       )
     ].join('\n\n')
-    for await (const event of runtime.run(
-      {
-        ...request,
-        teamMode: false,
-        expertId: undefined,
-        workMode: 'ask',
-        history: undefined,
-        prompt: synthesisPrompt.slice(0, 100_000)
-      },
+    const synthesis = await subagentService.synthesize(
+      request,
+      synthesisPrompt,
       signal,
-      async () => 'deny'
-    )) {
-      if (event.type === 'generated-image') {
-        throw new Error('专家团队不支持图像生成模型')
-      }
+      persistModelUsage
+    )
+    if (synthesis) {
       yield {
-        ...event,
-        requestId: request.requestId
+        requestId: request.requestId,
+        type: 'text',
+        delta: synthesis
       }
     }
+    yield { requestId: request.requestId, type: 'done' }
+  }
+
+  const runSingleExpert = async function* (
+    request: AgentExecutionRequest,
+    expert: ReturnType<AssistantDatabase['getExpert']>,
+    routingMode: 'manual' | 'smart',
+    signal: AbortSignal,
+    reason?: string
+  ): AsyncGenerator<RuntimeEvent, void, void> {
+    if (!subagentService) {
+      throw new Error('专家子任务服务不可用')
+    }
+    const result = await subagentService.run({
+      parentRequest: request,
+      expert,
+      routingMode,
+      reason,
+      signal,
+      onEvent: (event) =>
+        publishSubagentEvent(request.requestId, event),
+      onModelUsage: persistModelUsage
+    })
+    if (result.output) {
+      yield {
+        requestId: request.requestId,
+        type: 'text',
+        delta: result.output
+      }
+    }
+    yield { requestId: request.requestId, type: 'done' }
   }
 
   let scheduleTickRunning = false
@@ -906,6 +907,37 @@ export function registerIpcHandlers(
         })
       : undefined
   remoteDelegation?.start()
+  const channelServices = startEnvironmentChannels({
+    executor: (message, signal) => {
+      if (!isReadOnlyChannelMessage(message)) {
+        return Promise.resolve({
+          status: 'failed',
+          error: '远程通道仅允许 Ask 或 Plan 模式'
+        })
+      }
+      const now = new Date().toISOString()
+      return trackExecution(
+        executeSchedule(
+          {
+            id: randomUUID(),
+            title:
+              message.channel === 'dingtalk'
+                ? '钉钉远程请求'
+                : '企业微信远程请求',
+            prompt: message.text,
+            workMode: message.workMode,
+            recurrence: 'once',
+            nextRunAt: now,
+            enabled: true,
+            createdAt: now,
+            updatedAt: now
+          },
+          'delegation',
+          signal
+        )
+      )
+    }
+  })
 
   ipcMain.handle(ipcChannels.appInfo, (event): AppInfo => {
     assertTrustedSender(event, window)
@@ -961,6 +993,7 @@ export function registerIpcHandlers(
         controller.abort(new Error('用户正在清除本地数据'))
       }
       heartbeatControllers.clear()
+      subagentService?.cancelAll('用户正在清除本地数据')
       approvalBroker.clear()
       await Promise.allSettled([...activeExecutions])
       await onBeforeClearLocalData?.()
@@ -1019,20 +1052,10 @@ export function registerIpcHandlers(
               ? 'Work mode: Execute. Follow the user request. Agent Runtime tool calls execute without GoodBuddy approval and must remain visible in runtime activity.'
               : 'Work mode: Execute. Follow the approved request. Enabled direct-model tools are authorized for this interactive run and must remain visible in runtime activity.'
             : ''
-    const expertInstruction =
-      enrichedRequest.expertId && !imageGeneration
-        ? `Selected expert role:\n${
-            assistantDatabase.getExpert(enrichedRequest.expertId)
-              .systemInstructions
-          }`
-        : ''
-    const trustedInstructions = [modeInstruction, expertInstruction]
-      .filter(Boolean)
-      .join('\n\n')
-    const request = trustedInstructions
+    const request = modeInstruction
       ? {
           ...enrichedRequest,
-          prompt: `${trustedInstructions}\n\n${enrichedRequest.prompt}`
+          trustedInstructions: modeInstruction
         }
       : enrichedRequest
     if (activeRequests.has(request.requestId)) {
@@ -1071,13 +1094,77 @@ export function registerIpcHandlers(
             ? 'once'
             : 'deny'
         }
+        let smartRoute:
+          | ReturnType<typeof routeSubagent>
+          | undefined
+        if (
+          !imageGeneration &&
+          !request.expertId &&
+          !request.teamMode &&
+          request.smartRouting === true &&
+          (request.workMode === 'ask' || request.workMode === 'plan')
+        ) {
+          const settings = await settingsStore.getResolvedSettings()
+          if (settings.subagentSmartRoutingEnabled) {
+            smartRoute = routeSubagent(
+              request.prompt,
+              assistantDatabase.listExperts()
+            )
+          }
+        }
+        const ordinaryStream = (): AsyncGenerator<RuntimeEvent, void, void> =>
+          runtime.run(
+            modeInstruction
+              ? {
+                  ...request,
+                  prompt: `${modeInstruction}\n\n${request.prompt}`
+                }
+              : request,
+            controller.signal,
+            agentRuntimeSelected ? undefined : authorize
+          )
+        const runSmartRoute = async function* (): AsyncGenerator<
+          RuntimeEvent,
+          void,
+          void
+        > {
+          if (!smartRoute) {
+            yield* ordinaryStream()
+            return
+          }
+          try {
+            yield* runSingleExpert(
+              request,
+              smartRoute.expert,
+              'smart',
+              controller.signal,
+              `匹配 ${smartRoute.matches} 个关键词，得分 ${smartRoute.score}`
+            )
+          } catch (error) {
+            if (controller.signal.aborted) {
+              throw error
+            }
+            if (error instanceof SubagentRunError && error.output) {
+              yield {
+                requestId: request.requestId,
+                type: 'text',
+                delta: error.output
+              }
+              throw error
+            }
+            yield* ordinaryStream()
+          }
+        }
         const eventStream = request.teamMode
           ? runExpertTeam(request, controller.signal)
-          : runtime.run(
-              request,
-              controller.signal,
-              agentRuntimeSelected ? undefined : authorize
-            )
+          : request.expertId && !imageGeneration
+            ? runSingleExpert(
+                request,
+                assistantDatabase.getExpert(request.expertId),
+                'manual',
+                controller.signal
+              )
+            : runSmartRoute()
         for await (const agentEvent of eventStream) {
           if (agentEvent.type === 'model-usage') {
             persistModelUsage(agentEvent)
@@ -1123,7 +1210,7 @@ export function registerIpcHandlers(
             if (unsuccessfulTool) {
               throw new Error(
                 unsuccessfulTool.state === 'failed'
-                  ? `${unsuccessfulTool.name} 工具执行失败`
+                  ? `${unsuccessfulTool.name} 工具执行失败${unsuccessfulTool.error ? `：${unsuccessfulTool.error}` : ''}`
                   : `${unsuccessfulTool.name} 工具未完成，任务不能标记为成功`
               )
             }
@@ -1837,9 +1924,15 @@ export function registerIpcHandlers(
     return contextManager.captureScreen(window)
   })
 
-  ipcMain.handle(ipcChannels.contextCaptureWindow, (event) => {
+  ipcMain.handle(ipcChannels.contextListWindows, (event) => {
     assertTrustedSender(event, window)
-    return contextManager.captureWindow(window)
+    return contextManager.listWindows(window)
+  })
+
+  ipcMain.handle(ipcChannels.contextCaptureWindow, (event, input) => {
+    assertTrustedSender(event, window)
+    const { sourceId } = windowCaptureRequestSchema.parse(input)
+    return contextManager.captureWindow(window, sourceId)
   })
 
   ipcMain.handle(ipcChannels.contextReadClipboard, (event) => {
@@ -2139,6 +2232,9 @@ export function registerIpcHandlers(
 
   return async () => {
     shuttingDown = true
+    await Promise.allSettled(
+      channelServices.map((service) => service.stop())
+    )
     removeBrowserStateListener?.()
     clearInterval(scheduleInterval)
     remoteDelegation?.stop()
@@ -2149,7 +2245,9 @@ export function registerIpcHandlers(
     heartbeatControllers.clear()
     approvalBroker.clear()
     contextManager.clear()
+    subagentService?.cancelAll('应用正在退出')
     await Promise.allSettled([...activeExecutions])
+    await subagentService?.dispose()
     window.removeListener('maximize', notifyMaximizedChanged)
     window.removeListener('unmaximize', notifyMaximizedChanged)
     for (const channel of channels) {

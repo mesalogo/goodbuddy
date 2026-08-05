@@ -454,7 +454,13 @@ describe('ContinueHostAdapter', () => {
                             toolCall: {
                               function: { name: 'Bash' }
                             },
-                            status: 'errored'
+                            status: 'errored',
+                            output: [
+                              {
+                                content:
+                                  'PowerShell parser failed Authorization: Bearer secret-token'
+                              }
+                            ]
                           }
                         ]
                       },
@@ -505,7 +511,9 @@ describe('ContinueHostAdapter', () => {
         {
           callId: 'call-1',
           name: 'Bash',
-          state: 'failed'
+          state: 'failed',
+          error:
+            'PowerShell parser failed Authorization: [REDACTED]'
         }
       ]
     })

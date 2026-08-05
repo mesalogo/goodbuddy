@@ -23,6 +23,7 @@ const runtimeSettings: RuntimeSettings = {
   modelName: 'sonnet-5',
   modelProtocol: 'anthropic-messages',
   modelAuthentication: 'api-key',
+  imageGenerationQuality: 'auto',
   opencodeBaseUrl: '',
   opencodeEmbedded: false,
   opencodeBinaryPath: '',
@@ -31,9 +32,13 @@ const runtimeSettings: RuntimeSettings = {
   continueConfigPath: '',
   continueMode: 'chat',
   runtimeSandboxMode: 'auto',
+  subagentSmartRoutingEnabled: false,
   knowledgeEmbeddingEnabled: false,
-  knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+  knowledgeEmbeddingBaseUrl:
+    'http://127.0.0.1:11434/v1/embeddings',
   knowledgeEmbeddingModel: 'nomic-embed-text',
+  knowledgeEmbeddingApiKeyConfigured: false,
+  knowledgeEmbeddingCredentialSource: 'none',
   workspacePath: 'C:\\Workspace',
   apiKeyConfigured: false,
   credentialSource: 'none',
@@ -45,6 +50,7 @@ const runtimeSettings: RuntimeSettings = {
       modelName: 'sonnet-5',
       protocol: 'anthropic-messages',
       authentication: 'api-key',
+      imageGenerationQuality: 'auto',
       apiKeyConfigured: false,
       credentialSource: 'none'
     }
@@ -199,6 +205,7 @@ const assistantExpert: AssistantExpert = {
   name: '研究分析专家',
   description: '负责资料分析',
   systemInstructions: 'Separate evidence from assumptions.',
+  routingKeywords: ['研究', '分析'],
   enabled: true,
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z'
@@ -209,6 +216,7 @@ const listExperts = vi.fn<DesktopApi['experts']['list']>(
 const createExpert = vi.fn<DesktopApi['experts']['create']>(
   async (input) => ({
     ...input,
+    routingKeywords: input.routingKeywords ?? [],
     id: '00000000-0000-4000-8000-000000000102',
     enabled: true,
     createdAt: '2026-08-04T00:00:00.000Z',
@@ -218,6 +226,7 @@ const createExpert = vi.fn<DesktopApi['experts']['create']>(
 const updateExpert = vi.fn<DesktopApi['experts']['update']>(
   async (expertId, input) => ({
     ...input,
+    routingKeywords: input.routingKeywords ?? [],
     id: expertId,
     enabled: true,
     createdAt: assistantExpert.createdAt,
@@ -343,6 +352,40 @@ describe('SettingsPanel runtime files', () => {
     await waitFor(() =>
       expect(updateRuntime).toHaveBeenCalledWith(
         expect.objectContaining({ toolApproval: 'policy' })
+      )
+    )
+  })
+
+  it('saves the accessible Subagent smart routing switch', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    const smartRouting = await screen.findByRole('checkbox', {
+      name: '启用 Subagent 智能路由'
+    })
+    expect(smartRouting).not.toBeChecked()
+    expect(screen.getByText(/仅在 Ask 或 Plan 模式/)).toHaveTextContent(
+      '自动选择 1 位专家'
+    )
+    expect(screen.getByText(/仅在 Ask 或 Plan 模式/)).toHaveTextContent(
+      '只读运行且不使用工具'
+    )
+
+    fireEvent.click(smartRouting)
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subagentSmartRoutingEnabled: true
+        })
       )
     )
   })
@@ -555,11 +598,92 @@ describe('SettingsPanel runtime files', () => {
       screen.queryByRole('button', { name: '从预设添加' })
     ).not.toBeInTheDocument()
 
+    expect(
+      screen.queryByRole('checkbox', {
+        name: '支持图片输出 默认模型'
+      })
+    ).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('接口协议 默认模型'), {
       target: { value: 'openai-images-generations' }
     })
-    expect(screen.getByText('图像生成', { selector: 'span' }))
-      .toBeInTheDocument()
+    const qualitySelect = screen.getByLabelText('图片质量 默认模型')
+    expect(qualitySelect).toHaveValue('auto')
+    fireEvent.change(qualitySelect, {
+      target: { value: 'high' }
+    })
+    expect(
+      screen.getByText('图像生成', {
+        selector: '.model-capability-badge'
+      })
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: [
+            expect.objectContaining({
+              protocol: 'openai-images-generations',
+              imageGenerationQuality: 'high'
+            })
+          ],
+          imageGenerationQuality: 'high'
+        })
+      )
+    )
+  })
+
+  it('configures vector models under model connections instead of security', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    expect(
+      screen.queryByRole('checkbox', { name: '启用向量模型' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+    expect(
+      screen.getByText('向量模型连接', { selector: 'strong' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: '启用向量模型' })
+    )
+    fireEvent.change(screen.getByLabelText('向量接口 URL'), {
+      target: { value: 'https://vectors.example/v1/embeddings' }
+    })
+    fireEvent.change(screen.getByLabelText('模型名称'), {
+      target: { value: 'bge-m3' }
+    })
+    fireEvent.change(screen.getByLabelText('API Key（可选）'), {
+      target: { value: 'vector-secret' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          knowledgeEmbeddingEnabled: true,
+          knowledgeEmbeddingBaseUrl:
+            'https://vectors.example/v1/embeddings',
+          knowledgeEmbeddingModel: 'bge-m3',
+          knowledgeEmbeddingApiKey: {
+            action: 'replace',
+            value: 'vector-secret'
+          }
+        })
+      )
+    )
   })
 
   it('manages heartbeat automation from Settings', async () => {
@@ -815,6 +939,30 @@ describe('SettingsPanel runtime files', () => {
       )
     )
 
+    fireEvent.change(screen.getByLabelText('路由关键词'), {
+      target: { value: 'x' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存角色' }))
+    expect(
+      await screen.findByText('关键词“x”需为 2 至 48 个字符。')
+    ).toBeInTheDocument()
+    expect(updateExpert).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByLabelText('路由关键词'), {
+      target: {
+        value: ' TypeScript，代码 审查\nTYPESCRIPT '
+      }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存角色' }))
+    await waitFor(() =>
+      expect(updateExpert).toHaveBeenLastCalledWith(
+        assistantExpert.id,
+        expect.objectContaining({
+          routingKeywords: ['typescript', '代码 审查']
+        })
+      )
+    )
+
     fireEvent.click(screen.getByRole('button', { name: '新建角色' }))
     fireEvent.change(screen.getByLabelText('角色名称'), {
       target: { value: '代码审查专家' }
@@ -830,7 +978,8 @@ describe('SettingsPanel runtime files', () => {
       expect(createExpert).toHaveBeenCalledWith({
         name: '代码审查专家',
         description: '检查代码正确性',
-        systemInstructions: 'Review code and report actionable bugs.'
+        systemInstructions: 'Review code and report actionable bugs.',
+        routingKeywords: []
       })
     )
     expect(onExpertsChanged).toHaveBeenLastCalledWith(

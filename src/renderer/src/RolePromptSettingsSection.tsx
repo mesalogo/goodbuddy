@@ -6,8 +6,9 @@ import type {
 } from '../../shared/assistant-contracts'
 import { DestructiveConfirmActions } from './WorkspacePrimitives'
 
-type ExpertDraft = ExpertCreateInput & {
+type ExpertDraft = Omit<ExpertCreateInput, 'routingKeywords'> & {
   id?: string
+  routingKeywordsText: string
 }
 
 type RolePromptSettingsSectionProps = {
@@ -17,7 +18,8 @@ type RolePromptSettingsSectionProps = {
 const emptyDraft: ExpertDraft = {
   name: '',
   description: '',
-  systemInstructions: ''
+  systemInstructions: '',
+  routingKeywordsText: ''
 }
 
 function draftFromExpert(expert: AssistantExpert): ExpertDraft {
@@ -25,8 +27,38 @@ function draftFromExpert(expert: AssistantExpert): ExpertDraft {
     id: expert.id,
     name: expert.name,
     description: expert.description,
-    systemInstructions: expert.systemInstructions
+    systemInstructions: expert.systemInstructions,
+    routingKeywordsText: (expert.routingKeywords ?? []).join('、')
   }
+}
+
+export function normalizeRoutingKeywords(value: string): string[] {
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const keyword of value.split(/[,，\r\n]+/u)) {
+    const normalizedKeyword = keyword
+      .normalize('NFKC')
+      .trim()
+      .replace(/\s+/gu, ' ')
+      .toLocaleLowerCase('zh-CN')
+    if (normalizedKeyword && !seen.has(normalizedKeyword)) {
+      seen.add(normalizedKeyword)
+      normalized.push(normalizedKeyword)
+    }
+  }
+  return normalized
+}
+
+function validateRoutingKeywords(keywords: readonly string[]): string | undefined {
+  if (keywords.length > 32) {
+    return '路由关键词最多 32 个。'
+  }
+  const invalid = keywords.find(
+    (keyword) => keyword.length < 2 || keyword.length > 48
+  )
+  return invalid
+    ? `关键词“${invalid.slice(0, 48)}”需为 2 至 48 个字符。`
+    : undefined
 }
 
 function sortExperts(experts: AssistantExpert[]): AssistantExpert[] {
@@ -43,6 +75,8 @@ export function RolePromptSettingsSection({
   const [draft, setDraft] = useState<ExpertDraft>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [routingKeywordsError, setRoutingKeywordsError] =
+    useState<string>()
   const [confirmingRemove, setConfirmingRemove] = useState(false)
 
   useEffect(() => {
@@ -68,6 +102,7 @@ export function RolePromptSettingsSection({
     setDraft(draftFromExpert(expert))
     setConfirmingRemove(false)
     setError(undefined)
+    setRoutingKeywordsError(undefined)
   }
 
   const createDraft = (): void => {
@@ -75,6 +110,7 @@ export function RolePromptSettingsSection({
     setDraft({ ...emptyDraft })
     setConfirmingRemove(false)
     setError(undefined)
+    setRoutingKeywordsError(undefined)
   }
 
   const save = async (): Promise<void> => {
@@ -83,11 +119,22 @@ export function RolePromptSettingsSection({
     }
     setBusy(true)
     setError(undefined)
+    const routingKeywords = normalizeRoutingKeywords(
+      draft.routingKeywordsText
+    )
+    const keywordError = validateRoutingKeywords(routingKeywords)
+    if (keywordError) {
+      setRoutingKeywordsError(keywordError)
+      setBusy(false)
+      return
+    }
+    setRoutingKeywordsError(undefined)
     try {
       const input: ExpertCreateInput = {
         name: draft.name,
         description: draft.description,
-        systemInstructions: draft.systemInstructions
+        systemInstructions: draft.systemInstructions,
+        routingKeywords
       }
       const saved = draft.id
         ? await window.goodbuddy.experts.update(draft.id, input)
@@ -248,6 +295,41 @@ export function RolePromptSettingsSection({
                 已输入 {draft.systemInstructions.length.toLocaleString()} /
                 20,000 字符。
               </small>
+            </label>
+            <label className="field">
+              <span>路由关键词</span>
+              <textarea
+                aria-describedby={
+                  routingKeywordsError
+                    ? 'role-routing-keywords-error role-routing-keywords-help'
+                    : 'role-routing-keywords-help'
+                }
+                aria-invalid={routingKeywordsError ? 'true' : undefined}
+                aria-label="路由关键词"
+                onChange={(event) => {
+                  setDraft({
+                    ...draft,
+                    routingKeywordsText: event.target.value
+                  })
+                  setRoutingKeywordsError(undefined)
+                }}
+                placeholder="例如：代码审查、TypeScript、性能分析"
+                rows={3}
+                value={draft.routingKeywordsText}
+              />
+              <small id="role-routing-keywords-help">
+                使用逗号或换行分隔，保存时会去重并规范化。最多 32 个，
+                每个 2 至 48 个字符。
+              </small>
+              {routingKeywordsError && (
+                <small
+                  className="field-error"
+                  id="role-routing-keywords-error"
+                  role="alert"
+                >
+                  {routingKeywordsError}
+                </small>
+              )}
             </label>
             <div className="role-prompt-detail__actions">
               {draft.id ? (

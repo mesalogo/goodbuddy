@@ -8,10 +8,12 @@ import type {
 import type { RuntimeApprovalRequest } from '../agent/runtime'
 import { canonicalizeBrowserUrl } from './browser-url-policy'
 import type { BrowserService } from './browser-service'
+import {
+  MAX_BROWSER_INPUT_LENGTH as MAX_INPUT_LENGTH,
+  MAX_BROWSER_SELECT_LENGTH as MAX_SELECT_LENGTH
+} from './browser-limits'
 
 const MAX_REF_LENGTH = 64
-const MAX_INPUT_LENGTH = 16_384
-const MAX_SELECT_LENGTH = 1_024
 
 const refSchema = z
   .string()

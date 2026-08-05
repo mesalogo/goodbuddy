@@ -783,7 +783,11 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
             callID: 'call-1',
             type: 'tool',
             tool: 'write',
-            state: { status: 'error' }
+            state: {
+              status: 'error',
+              error:
+                'write failed Authorization: Bearer secret-token'
+            }
           }
         }
       },
@@ -794,9 +798,29 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       }
     ])
     const runtime = embeddedRuntime(client)
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
 
-    await expect(collectRun(runtime)).rejects.toThrow(
-      'OpenCode 工具执行失败'
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'tool',
+        callId: 'call-1',
+        state: 'failed',
+        error: 'write failed Authorization: [REDACTED]'
+      }
+    })
+    await expect(stream.next()).rejects.toThrow(
+      'write failed Authorization: [REDACTED]'
     )
     expect(session.abort).toHaveBeenCalledOnce()
     await runtime.dispose()

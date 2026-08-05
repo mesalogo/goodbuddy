@@ -64,7 +64,7 @@ export const builtinModelTools = [
   {
     name: 'browser_screenshot',
     displayName: '截取浏览器页面',
-    description: '截取当前可见页面区域的有界 PNG 图片。',
+    description: '截取当前可见页面区域、约 200KB 的有界 JPEG 图片。',
     access: 'read'
   }
 ] as const satisfies readonly BuiltinModelToolSummary[]

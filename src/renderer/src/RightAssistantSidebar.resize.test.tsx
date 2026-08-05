@@ -1,5 +1,9 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  AssistantExpert,
+  AssistantTask
+} from '../../shared/assistant-contracts'
 import { RightAssistantSidebar } from './RightAssistantSidebar'
 
 afterEach(cleanup)
@@ -11,7 +15,15 @@ beforeEach(() => {
   })
 })
 
-function renderSidebar(): HTMLElement {
+function renderSidebar({
+  tasks = [],
+  experts = [],
+  tab = 'context'
+}: {
+  tasks?: AssistantTask[]
+  experts?: AssistantExpert[]
+  tab?: 'tasks' | 'context'
+} = {}): HTMLElement {
   render(
     <RightAssistantSidebar
       activities={[]}
@@ -19,6 +31,7 @@ function renderSidebar(): HTMLElement {
       artifacts={[]}
       attachments={[]}
       enabledLibraries={[]}
+      experts={experts}
       heartbeatEntries={[]}
       heartbeats={[]}
       memories={[]}
@@ -50,8 +63,8 @@ function renderSidebar(): HTMLElement {
       onTabChange={vi.fn()}
       open
       schedules={[]}
-      tab="context"
-      tasks={[]}
+      tab={tab}
+      tasks={tasks}
     />
   )
 
@@ -147,5 +160,52 @@ describe('RightAssistantSidebar resizing', () => {
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
     ).toBe('424px')
+  })
+
+  it('indents child tasks and names their expert and routing mode', () => {
+    const parentTask: AssistantTask = {
+      id: 'parent-task',
+      conversationId: 'conversation-1',
+      title: '分析发布计划',
+      instructions: '分析发布计划',
+      origin: 'user',
+      status: 'running',
+      createdAt: '2026-08-01T00:00:00.000Z'
+    }
+    const childTask: AssistantTask = {
+      id: 'child-task',
+      conversationId: 'conversation-1',
+      parentTaskId: parentTask.id,
+      expertId: 'expert-1',
+      routingMode: 'smart',
+      title: '研究子任务',
+      instructions: '收集资料',
+      origin: 'subagent',
+      status: 'completed',
+      createdAt: '2026-08-01T00:01:00.000Z'
+    }
+    renderSidebar({
+      tab: 'tasks',
+      tasks: [childTask, parentTask],
+      experts: [
+        {
+          id: 'expert-1',
+          name: '研究专家',
+          description: '分析证据',
+          systemInstructions: 'Analyze evidence.',
+          routingKeywords: ['研究'],
+          enabled: true,
+          createdAt: '2026-08-01T00:00:00.000Z',
+          updatedAt: '2026-08-01T00:00:00.000Z'
+        }
+      ]
+    })
+
+    const taskButtons = screen.getAllByRole('button', {
+      name: /分析发布计划|研究子任务/u
+    })
+    expect(taskButtons[0]).toHaveTextContent('分析发布计划')
+    expect(taskButtons[1]).toHaveClass('assistant-sidebar__row--subtask')
+    expect(taskButtons[1]).toHaveTextContent('子专家：研究专家 · 智能路由')
   })
 })

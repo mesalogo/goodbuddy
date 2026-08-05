@@ -29,7 +29,8 @@ import {
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import { createOpenAIApiBaseUrl } from './openai-endpoint'
 import {
-  redactSensitiveText
+  redactSensitiveText,
+  safeToolErrorDetail
 } from './approval-summary'
 
 const supportedVersion = '1.5.47'
@@ -103,6 +104,7 @@ export type ContinueHostTool = {
   callId: string
   name: string
   state: 'pending' | 'running' | 'completed' | 'failed'
+  error?: string
 }
 
 export type ContinueHostRunResult = {
@@ -354,10 +356,15 @@ function extractContinueTools(
             : status === 'generated' || status === 'pending'
               ? 'pending'
               : 'failed'
+      const error =
+        normalizedState === 'failed'
+          ? safeToolErrorDetail(state.output)
+          : undefined
       tools.set(callId, {
         callId,
         name: name.trim().slice(0, 200),
-        state: normalizedState
+        state: normalizedState,
+        ...(error ? { error } : {})
       })
     }
   }

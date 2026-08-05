@@ -106,6 +106,33 @@ describe('activity-store', () => {
       })
   })
 
+  it('persists and upserts Subagent state transitions', () => {
+    const queued: ActivityRecord = {
+      ...makeRecord(1),
+      kind: 'subagent',
+      callId: 'child-task-1',
+      title: '研究专家',
+      status: 'pending'
+    }
+    const completed = upsertActivityRecord([queued], {
+      ...queued,
+      id: 'replacement-id',
+      createdAt: 99,
+      status: 'completed'
+    })
+
+    expect(completed).toEqual([
+      expect.objectContaining({
+        id: queued.id,
+        createdAt: queued.createdAt,
+        kind: 'subagent',
+        status: 'completed'
+      })
+    ])
+    expect(saveActivityRecords(completed)).toBe(true)
+    expect(loadActivityRecords()).toEqual(completed)
+  })
+
   it('reconciles stale active records with durable task outcomes', () => {
     const records: ActivityRecord[] = [
       { ...makeRecord(1), status: 'running' },

@@ -2,9 +2,9 @@ import { BrowserUrlPolicy, canonicalizeBrowserUrl } from './browser-url-policy'
 import {
   CdpBrowserDriver,
   type BrowserHistoryTarget,
-  type BrowserScreenshot,
   type BrowserSnapshot
 } from './cdp-browser-driver'
+import type { BrowserScreenshot } from './browser-screenshot'
 import {
   ElectronBrowserSession,
   type BrowserWebContents
@@ -718,7 +718,9 @@ export class BrowserService {
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
         const screenshot =
-          await slot.driver.screenshot(effectiveSignal)
+          slot.session.captureScreenshot
+            ? await slot.session.captureScreenshot(effectiveSignal)
+            : await slot.driver.screenshot(effectiveSignal)
         await this.captureFrame(
           conversationId,
           slot,

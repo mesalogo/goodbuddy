@@ -363,7 +363,8 @@ describe('ContinueAgentRuntime', () => {
           {
             callId: 'call-1',
             name: 'Bash',
-            state: 'failed'
+            state: 'failed',
+            error: 'PowerShell parser failed'
           }
         ]
       })
@@ -385,10 +386,49 @@ describe('ContinueAgentRuntime', () => {
       value: {
         type: 'tool',
         callId: 'call-1',
-        state: 'failed'
+        state: 'failed',
+        error: 'PowerShell parser failed'
       }
     })
     await expect(stream.next()).rejects.toThrow('Continue failed')
+  })
+
+  it('returns a failed Continue tool detail through AgentRuntime', async () => {
+    mocks.runHost.mockResolvedValue({
+      text: 'Continue response',
+      tools: [
+        {
+          callId: 'call-1',
+          name: 'Bash',
+          state: 'failed',
+          error: 'PowerShell EmptyPipeElement'
+        }
+      ]
+    })
+    const stream = createRuntime().run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'tool',
+        callId: 'call-1',
+        state: 'failed',
+        error: 'PowerShell EmptyPipeElement'
+      }
+    })
+    await expect(stream.next()).rejects.toThrow(
+      'PowerShell EmptyPipeElement'
+    )
   })
 
   it('fails a run that returns a nonterminal tool state', async () => {

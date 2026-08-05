@@ -4,12 +4,20 @@ import { connect as netConnect } from 'node:net'
 import type { NetConnectOpts, Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
-import { BrowserUrlPolicy, type ValidatedBrowserUrl } from './browser-url-policy'
+import {
+  BrowserUrlPolicy,
+  type BrowserResolvedAddress,
+  type ValidatedBrowserUrl
+} from './browser-url-policy'
+
+const MAX_UPSTREAM_ADDRESSES = 8
 
 export type FilteringProxyOptions = {
   policy: BrowserUrlPolicy
   maximumConnections?: number
   maximumRequestBytes?: number
+  upstreamTimeoutMs?: number
+  upstreamIdleTimeoutMs?: number
   connect?: (options: NetConnectOpts) => Socket
 }
 
@@ -43,10 +51,53 @@ function stripProxyHeaders(
   return result
 }
 
+function canRetryHttpRequest(request: IncomingMessage): boolean {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return false
+  }
+  const contentLength = Number(request.headers['content-length'] ?? 0)
+  if (
+    request.headers['transfer-encoding'] !== undefined ||
+    !Number.isFinite(contentLength) ||
+    contentLength > 0
+  ) {
+    return false
+  }
+  return ![
+    'if-match',
+    'if-unmodified-since',
+    'if-none-match',
+    'if-modified-since',
+    'if-range'
+  ].some((name) => request.headers[name] !== undefined)
+}
+
+function shouldRetryHttpStatus(statusCode: number | undefined): boolean {
+  return statusCode === 412 || statusCode === 421 || statusCode === 425
+}
+
+function boundedApprovedAddresses(
+  target: ValidatedBrowserUrl
+): BrowserResolvedAddress[] {
+  const seen = new Set<string>()
+  return target.addresses
+    .filter((address) => {
+      const key = `${address.family}:${address.address}`
+      if (seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+    .slice(0, MAX_UPSTREAM_ADDRESSES)
+}
+
 export class FilteringProxy {
   private readonly policy: BrowserUrlPolicy
   private readonly maximumConnections: number
   private readonly maximumRequestBytes: number
+  private readonly upstreamTimeoutMs: number
+  private readonly upstreamIdleTimeoutMs: number
   private readonly connectSocket: (options: NetConnectOpts) => Socket
   private readonly controller = new AbortController()
   private readonly streams = new Set<ActiveStream>()
@@ -59,7 +110,18 @@ export class FilteringProxy {
     this.policy = options.policy
     this.maximumConnections = options.maximumConnections ?? 32
     this.maximumRequestBytes = options.maximumRequestBytes ?? 1024 * 1024
+    this.upstreamTimeoutMs = options.upstreamTimeoutMs ?? 3_000
+    this.upstreamIdleTimeoutMs =
+      options.upstreamIdleTimeoutMs ?? 15_000
     this.connectSocket = options.connect ?? netConnect
+    if (
+      !Number.isSafeInteger(this.upstreamTimeoutMs) ||
+      this.upstreamTimeoutMs < 1 ||
+      !Number.isSafeInteger(this.upstreamIdleTimeoutMs) ||
+      this.upstreamIdleTimeoutMs < 1
+    ) {
+      throw new Error('浏览器过滤代理超时配置无效')
+    }
   }
 
   async start(): Promise<string> {
@@ -149,82 +211,166 @@ export class FilteringProxy {
         return
       }
       const target = await this.validateAtConnect(new URL(incoming.url))
-      const address = target.addresses[0]
-      if (!address) {
+      const addresses = boundedApprovedAddresses(target)
+      if (addresses.length === 0) {
         rejectHttp(response)
         return
       }
       if (
-        incoming.destroyed ||
+        (incoming.destroyed && !incoming.complete) ||
         response.destroyed ||
         response.writableEnded ||
         responseClosed
       ) {
         return
       }
-      const request = (
-        target.url.protocol === 'https:' ? httpsRequest : httpRequest
-      )(
-        target.url,
-        {
-          method: incoming.method,
-          headers: {
-            ...stripProxyHeaders(incoming.headers),
-            host: target.url.host
-          },
-          lookup: (_hostname, options, callback) => {
-            if (options.all) {
-              callback(null, [
-                { address: address.address, family: address.family }
-              ])
-            } else {
-              callback(null, address.address, address.family)
-            }
-          },
-          signal: this.controller.signal
-        },
-        (upstream) => {
-          const destroyForward = (): void => {
-            upstream.destroy()
-            request.destroy()
-            if (!response.destroyed) {
-              response.destroy()
-            }
-          }
-          upstream.once('error', destroyForward)
-          response.once('error', destroyForward)
-          response.once('close', () => {
-            if (!upstream.complete) {
-              upstream.destroy()
-            }
-          })
-          response.writeHead(
-            upstream.statusCode ?? 502,
-            stripProxyHeaders(upstream.headers)
-          )
-          upstream.pipe(response)
-        }
-      )
-      this.streams.add(request)
-      request.once('close', () => this.releaseStream(request))
-      request.once('error', () => {
-        if (response.headersSent) {
-          response.destroy()
-        } else if (!response.destroyed) {
-          rejectHttp(response, 502)
-        }
-      })
-      incoming.once('aborted', () => request.destroy())
-      incoming.once('error', () => request.destroy())
+      const retryable = canRetryHttpRequest(incoming)
+      let activeRequest: ActiveStream | undefined
+      incoming.once('aborted', () => activeRequest?.destroy())
+      incoming.once('error', () => activeRequest?.destroy())
       let bytes = 0
       incoming.on('data', (chunk: Buffer) => {
         bytes += chunk.byteLength
         if (bytes > this.maximumRequestBytes) {
-          request.destroy(new Error('浏览器请求超过安全限制'))
+          activeRequest?.destroy(
+            new Error('浏览器请求超过安全限制')
+          )
           incoming.destroy()
         }
       })
-      incoming.pipe(request)
+
+      const attempt = (addressIndex: number): void => {
+        const address = addresses[addressIndex]
+        if (
+          !address ||
+          (incoming.destroyed && !incoming.complete) ||
+          response.destroyed ||
+          response.writableEnded ||
+          responseClosed
+        ) {
+          if (!response.headersSent && !response.destroyed) {
+            rejectHttp(response, 502)
+          }
+          return
+        }
+        let retryStarted = false
+        let responseReceived = false
+        const request = (
+          target.url.protocol === 'https:' ? httpsRequest : httpRequest
+        )(
+          target.url,
+          {
+            method: incoming.method,
+            headers: {
+              ...stripProxyHeaders(incoming.headers),
+              host: target.url.host
+            },
+            lookup: (_hostname, options, callback) => {
+              if (options.all) {
+                callback(null, [
+                  { address: address.address, family: address.family }
+                ])
+              } else {
+                callback(null, address.address, address.family)
+              }
+            },
+            signal: this.controller.signal
+          },
+          (upstream) => {
+            responseReceived = true
+            if (headerTimer) {
+              clearTimeout(headerTimer)
+            }
+            const retry = (): boolean => {
+              if (
+                !retryStarted &&
+                retryable &&
+                addressIndex + 1 < addresses.length
+              ) {
+                retryStarted = true
+                upstream.destroy()
+                request.destroy()
+                attempt(addressIndex + 1)
+                return true
+              }
+              return false
+            }
+            if (
+              shouldRetryHttpStatus(upstream.statusCode) &&
+              retry()
+            ) {
+              return
+            }
+            const destroyForward = (): void => {
+              upstream.destroy()
+              request.destroy()
+              if (!response.destroyed) {
+                response.destroy()
+              }
+            }
+            upstream.setTimeout(
+              this.upstreamIdleTimeoutMs,
+              destroyForward
+            )
+            upstream.once('error', destroyForward)
+            response.once('error', destroyForward)
+            response.once('close', () => {
+              if (!upstream.complete) {
+                upstream.destroy()
+              }
+            })
+            response.writeHead(
+              upstream.statusCode ?? 502,
+              stripProxyHeaders(upstream.headers)
+            )
+            upstream.pipe(response)
+          }
+        )
+        activeRequest = request
+        this.streams.add(request)
+        request.once('close', () => this.releaseStream(request))
+        request.once('error', () => {
+          if (headerTimer) {
+            clearTimeout(headerTimer)
+          }
+          if (retryStarted) {
+            return
+          }
+          if (
+            !responseReceived &&
+            retryable &&
+            addressIndex + 1 < addresses.length
+          ) {
+            retryStarted = true
+            attempt(addressIndex + 1)
+          } else if (response.headersSent) {
+            response.destroy()
+          } else if (!response.destroyed) {
+            rejectHttp(response, 502)
+          }
+        })
+        const headerTimer = setTimeout(() => {
+          if (responseReceived || retryStarted) {
+            return
+          }
+          retryStarted = true
+          request.destroy(new Error('浏览器上游响应超时'))
+          if (
+            retryable &&
+            addressIndex + 1 < addresses.length
+          ) {
+            attempt(addressIndex + 1)
+          } else if (!response.headersSent && !response.destroyed) {
+            rejectHttp(response, 504)
+          }
+        }, this.upstreamTimeoutMs)
+        if (retryable) {
+          request.end()
+        } else {
+          incoming.pipe(request)
+        }
+      }
+      attempt(0)
     } catch {
       rejectHttp(response)
     }
@@ -277,8 +423,8 @@ export class FilteringProxy {
         return
       }
       const target = await this.validateAtConnect(authority)
-      const address = target.addresses[0]
-      if (!address) {
+      const addresses = boundedApprovedAddresses(target)
+      if (addresses.length === 0) {
         client.destroy()
         return
       }
@@ -290,35 +436,99 @@ export class FilteringProxy {
       if (client.destroyed) {
         return
       }
-      const connectedUpstream = this.connectSocket({
-        // Pin the TCP destination to the policy-approved address. The CONNECT
-        // tunnel remains opaque, so Chromium still verifies TLS against the
-        // original authority hostname rather than this address.
-        host: address.address,
-        port,
-        family: address.family
-      })
-      upstream = connectedUpstream
-      this.streams.add(connectedUpstream)
-      const release = (): void => this.releaseStream(connectedUpstream)
-      connectedUpstream.once('close', release)
-      connectedUpstream.once('error', destroyTunnel)
-      if (client.destroyed) {
-        connectedUpstream.destroy()
-        return
-      }
-      connectedUpstream.once('connect', () => {
+      const attempt = (addressIndex: number): void => {
+        const address = addresses[addressIndex]
+        if (!address || client.destroyed) {
+          destroyTunnel()
+          return
+        }
+        const connectedUpstream = this.connectSocket({
+          // Pin the TCP destination to a policy-approved address. The CONNECT
+          // tunnel remains opaque, so Chromium still verifies TLS against the
+          // original authority hostname rather than this address.
+          host: address.address,
+          port,
+          family: address.family
+        })
+        upstream = connectedUpstream
+        this.streams.add(connectedUpstream)
+        let settled = false
+        const timer = setTimeout(() => {
+          if (settled) {
+            return
+          }
+          settled = true
+          connectedUpstream.destroy()
+          if (addressIndex + 1 < addresses.length) {
+            attempt(addressIndex + 1)
+          } else {
+            destroyTunnel()
+          }
+        }, this.upstreamTimeoutMs)
+        const release = (): void =>
+          this.releaseStream(connectedUpstream)
+        connectedUpstream.once('close', release)
+        connectedUpstream.once('error', () => {
+          if (settled) {
+            if (connectedUpstream === upstream) {
+              destroyTunnel()
+            }
+            return
+          }
+          settled = true
+          clearTimeout(timer)
+          connectedUpstream.destroy()
+          if (addressIndex + 1 < addresses.length) {
+            attempt(addressIndex + 1)
+          } else {
+            destroyTunnel()
+          }
+        })
         if (client.destroyed) {
+          settled = true
+          clearTimeout(timer)
           connectedUpstream.destroy()
           return
         }
-        client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
-        if (head.length > 0) {
-          connectedUpstream.write(head)
-        }
-        connectedUpstream.pipe(client)
-        client.pipe(connectedUpstream)
-      })
+        connectedUpstream.once('connect', () => {
+          if (settled) {
+            return
+          }
+          settled = true
+          clearTimeout(timer)
+          if (client.destroyed) {
+            connectedUpstream.destroy()
+            return
+          }
+          client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+          if (head.length > 0) {
+            connectedUpstream.write(head)
+          }
+          const upstreamWithTimeout = connectedUpstream as Socket & {
+            setTimeout?(
+              milliseconds: number,
+              callback: () => void
+            ): unknown
+          }
+          upstreamWithTimeout.setTimeout?.(
+            this.upstreamIdleTimeoutMs,
+            destroyTunnel
+          )
+          const clientWithTimeout = client as Duplex & {
+            setTimeout?(
+              milliseconds: number,
+              callback: () => void
+            ): unknown
+          }
+          clientWithTimeout.setTimeout?.(
+            this.upstreamIdleTimeoutMs,
+            destroyTunnel
+          )
+          connectedUpstream.pipe(client)
+          client.pipe(connectedUpstream)
+        })
+      }
+      attempt(0)
     } catch {
       destroyTunnel()
     }

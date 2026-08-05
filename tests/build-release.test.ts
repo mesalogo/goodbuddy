@@ -58,6 +58,9 @@ interface ReleaseBuilderModule {
 }
 
 const require = createRequire(import.meta.url)
+const packageVersion = (
+  require('../package.json') as { version: string }
+).version
 const releaseBuilder = require(
   '../build/build-release.cjs'
 ) as ReleaseBuilderModule
@@ -297,14 +300,14 @@ describe('release output safety', () => {
       writeFileSync(
         join(
           directory,
-          'GoodBuddy-0.1.0-windows-x64-setup.exe'
+          `GoodBuddy-${packageVersion}-windows-x64-setup.exe`
         ),
         'MZ'
       )
       writeFileSync(
         join(
           directory,
-          'GoodBuddy-0.1.0-windows-x64-portable.exe'
+          `GoodBuddy-${packageVersion}-windows-x64-portable.exe`
         ),
         'MZ'
       )
@@ -317,7 +320,7 @@ describe('release output safety', () => {
       rmSync(
         join(
           directory,
-          'GoodBuddy-0.1.0-windows-x64-portable.exe'
+          `GoodBuddy-${packageVersion}-windows-x64-portable.exe`
         )
       )
       expect(() =>

@@ -14,6 +14,7 @@ import {
   continueModeSchema,
   defaultModelProfileId,
   defaultRuntimeSettings,
+  imageGenerationQualitySchema,
   modelAuthenticationSchema,
   modelProtocolSchema,
   runtimeModelSourceSchema,
@@ -76,22 +77,51 @@ const version5StoredSettingsSchema = z.object({
   toolApproval: toolApprovalPolicySchema
 })
 
-const storedModelProfileSchema = version5StoredModelProfileSchema.extend({
-  protocol: modelProtocolSchema,
-  authentication: modelAuthenticationSchema
-})
+const version6StoredModelProfileSchema =
+  version5StoredModelProfileSchema.extend({
+    protocol: modelProtocolSchema,
+    authentication: modelAuthenticationSchema
+  })
 
-const storedSettingsSchema = version5StoredSettingsSchema
+const version6StoredSettingsSchema = version5StoredSettingsSchema
   .omit({ version: true, modelProfiles: true })
   .extend({
     version: z.literal(6),
-    modelProfiles: z.array(storedModelProfileSchema).min(1).max(20),
+    modelProfiles: z
+      .array(version6StoredModelProfileSchema)
+      .min(1)
+      .max(20),
     runtimeSandboxMode: runtimeSandboxModeSchema.default('auto'),
     knowledgeEmbeddingEnabled: z.boolean().default(false),
     knowledgeEmbeddingBaseUrl: z
       .string()
       .default('http://127.0.0.1:11434'),
     knowledgeEmbeddingModel: z.string().default('nomic-embed-text')
+  })
+
+const version7StoredSettingsSchema = version6StoredSettingsSchema
+  .omit({ version: true })
+  .extend({
+    version: z.literal(7),
+    knowledgeEmbeddingCredential: credentialSchema
+  })
+
+const storedModelProfileSchema = version6StoredModelProfileSchema.extend({
+  imageGenerationQuality: imageGenerationQualitySchema
+})
+
+const version8StoredSettingsSchema = version7StoredSettingsSchema
+  .omit({ version: true, modelProfiles: true })
+  .extend({
+    version: z.literal(8),
+    modelProfiles: z.array(storedModelProfileSchema).min(1).max(20)
+  })
+
+const storedSettingsSchema = version8StoredSettingsSchema
+  .omit({ version: true })
+  .extend({
+    version: z.literal(9),
+    subagentSmartRoutingEnabled: z.boolean()
   })
 
 type StoredSettings = z.infer<typeof storedSettingsSchema>
@@ -132,6 +162,12 @@ const credentialPayloadSchema = z.object({
   origin: z.string()
 })
 
+const embeddingCredentialPayloadSchema = z.object({
+  version: z.literal(1),
+  apiKey: z.string(),
+  endpoint: z.string()
+})
+
 export type CredentialCipher = {
   isAvailable: () => boolean
   encrypt: (value: string) => Buffer
@@ -144,6 +180,7 @@ export type ResolvedRuntimeSettings = {
   modelName: string
   modelProtocol: RuntimeSettings['modelProtocol']
   modelAuthentication: RuntimeSettings['modelAuthentication']
+  imageGenerationQuality: RuntimeSettings['imageGenerationQuality']
   apiKey?: string
   opencodeModelProfile?: ResolvedModelProfile
   continueModelProfile?: ResolvedModelProfile
@@ -155,9 +192,11 @@ export type ResolvedRuntimeSettings = {
   continueConfigPath: string
   continueMode: RuntimeSettings['continueMode']
   runtimeSandboxMode: RuntimeSettings['runtimeSandboxMode']
+  subagentSmartRoutingEnabled: boolean
   knowledgeEmbeddingEnabled: boolean
   knowledgeEmbeddingBaseUrl: string
   knowledgeEmbeddingModel: string
+  knowledgeEmbeddingApiKey?: string
   workspacePath: string
   toolApproval: RuntimeSettings['toolApproval']
 }
@@ -169,11 +208,12 @@ export type ResolvedModelProfile = {
   modelName: string
   protocol: RuntimeSettings['modelProtocol']
   authentication: RuntimeSettings['modelAuthentication']
+  imageGenerationQuality?: RuntimeSettings['imageGenerationQuality']
   apiKey?: string
 }
 
 const defaultSettings: StoredSettings = {
-  version: 6,
+  version: 9,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -182,7 +222,9 @@ const defaultSettings: StoredSettings = {
       baseUrl: defaultRuntimeSettings.modelBaseUrl,
       modelName: defaultRuntimeSettings.modelName,
       protocol: defaultRuntimeSettings.modelProtocol,
-      authentication: defaultRuntimeSettings.modelAuthentication
+      authentication: defaultRuntimeSettings.modelAuthentication,
+      imageGenerationQuality:
+        defaultRuntimeSettings.imageGenerationQuality
     }
   ],
   defaultModelProfileId,
@@ -196,6 +238,8 @@ const defaultSettings: StoredSettings = {
   continueConfigPath: defaultRuntimeSettings.continueConfigPath,
   continueMode: defaultRuntimeSettings.continueMode,
   runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
+  subagentSmartRoutingEnabled:
+    defaultRuntimeSettings.subagentSmartRoutingEnabled,
   knowledgeEmbeddingEnabled:
     defaultRuntimeSettings.knowledgeEmbeddingEnabled,
   knowledgeEmbeddingBaseUrl:
@@ -215,7 +259,7 @@ function migrateVersion4(
   settings: z.infer<typeof version4StoredSettingsSchema>
 ): StoredSettings {
   return {
-    version: 6,
+    version: 9,
     provider: settings.provider,
     modelProfiles: [
       {
@@ -225,6 +269,8 @@ function migrateVersion4(
         modelName: settings.modelName,
         protocol: 'anthropic-messages',
         authentication: 'api-key',
+        imageGenerationQuality:
+          defaultRuntimeSettings.imageGenerationQuality,
         credential: settings.credential
       }
     ],
@@ -239,6 +285,8 @@ function migrateVersion4(
     continueConfigPath: settings.continueConfigPath,
     continueMode: settings.continueMode,
     runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
+    subagentSmartRoutingEnabled:
+      defaultRuntimeSettings.subagentSmartRoutingEnabled,
     knowledgeEmbeddingEnabled:
       defaultRuntimeSettings.knowledgeEmbeddingEnabled,
     knowledgeEmbeddingBaseUrl:
@@ -255,8 +303,10 @@ function migrateVersion5(
 ): StoredSettings {
   return {
     ...settings,
-    version: 6,
+    version: 9,
     runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
+    subagentSmartRoutingEnabled:
+      defaultRuntimeSettings.subagentSmartRoutingEnabled,
     knowledgeEmbeddingEnabled:
       defaultRuntimeSettings.knowledgeEmbeddingEnabled,
     knowledgeEmbeddingBaseUrl:
@@ -266,8 +316,55 @@ function migrateVersion5(
     modelProfiles: settings.modelProfiles.map((profile) => ({
       ...profile,
       protocol: 'anthropic-messages',
-      authentication: 'api-key'
+      authentication: 'api-key',
+      imageGenerationQuality:
+        defaultRuntimeSettings.imageGenerationQuality
     }))
+  }
+}
+
+function migrateVersion6(
+  settings: z.infer<typeof version6StoredSettingsSchema>
+): StoredSettings {
+  const endpoint = new URL(settings.knowledgeEmbeddingBaseUrl)
+  endpoint.pathname = `${endpoint.pathname.replace(/\/+$/u, '')}/v1/embeddings`
+  return {
+    ...settings,
+    version: 9,
+    subagentSmartRoutingEnabled:
+      defaultRuntimeSettings.subagentSmartRoutingEnabled,
+    knowledgeEmbeddingBaseUrl: endpoint.toString(),
+    modelProfiles: settings.modelProfiles.map((profile) => ({
+      ...profile,
+      imageGenerationQuality:
+        defaultRuntimeSettings.imageGenerationQuality
+    }))
+  }
+}
+
+function migrateVersion7(
+  settings: z.infer<typeof version7StoredSettingsSchema>
+): StoredSettings {
+  return {
+    ...settings,
+    version: 9,
+    subagentSmartRoutingEnabled:
+      defaultRuntimeSettings.subagentSmartRoutingEnabled,
+    modelProfiles: settings.modelProfiles.map((profile) => ({
+      ...profile,
+      imageGenerationQuality:
+        defaultRuntimeSettings.imageGenerationQuality
+    }))
+  }
+}
+
+function migrateVersion8(
+  settings: z.infer<typeof version8StoredSettingsSchema>
+): StoredSettings {
+  return {
+    ...settings,
+    version: 9,
+    subagentSmartRoutingEnabled: false
   }
 }
 
@@ -300,65 +397,82 @@ export class RuntimeSettingsStore {
       if (current.success) {
         this.settings = current.data
       } else {
-        const version5 = version5StoredSettingsSchema.safeParse(parsed)
-        if (version5.success) {
-          this.settings = migrateVersion5(version5.data)
+        const version8 = version8StoredSettingsSchema.safeParse(parsed)
+        if (version8.success) {
+          this.settings = migrateVersion8(version8.data)
         } else {
-          const version4 = version4StoredSettingsSchema.safeParse(parsed)
-          if (version4.success) {
-            this.settings = migrateVersion4(version4.data)
+          const version7 = version7StoredSettingsSchema.safeParse(parsed)
+          if (version7.success) {
+            this.settings = migrateVersion7(version7.data)
           } else {
-            const version3 = version3StoredSettingsSchema.safeParse(parsed)
-            if (version3.success) {
-              this.settings = migrateVersion4({
-                ...version3.data,
-                version: 4,
-                continueMode: 'chat'
-              })
+            const version6 = version6StoredSettingsSchema.safeParse(parsed)
+            if (version6.success) {
+              this.settings = migrateVersion6(version6.data)
             } else {
-              const version2 = version2StoredSettingsSchema.safeParse(parsed)
-              if (version2.success) {
-                this.settings = migrateVersion4({
-                  version: 4,
-                  provider: version2.data.provider,
-                  modelBaseUrl: version2.data.modelBaseUrl,
-                  modelName: version2.data.modelName,
-                  opencodeBaseUrl: version2.data.opencodeBaseUrl,
-                  opencodeEmbedded: version2.data.opencodeEmbedded,
-                  opencodeBinaryPath: '',
-                  opencodeConfigPath: '',
-                  continueBinaryPath: migrateContinueCommand(
-                    version2.data.continueCommand
-                  ),
-                  continueConfigPath: '',
-                  continueMode: 'chat',
-                  workspacePath: version2.data.workspacePath,
-                  credential: version2.data.credential,
-                  toolApproval: version2.data.toolApproval
-                })
+              const version5 = version5StoredSettingsSchema.safeParse(parsed)
+              if (version5.success) {
+                this.settings = migrateVersion5(version5.data)
               } else {
-                const legacy = legacyStoredSettingsSchema.parse(parsed)
-                this.settings = migrateVersion4({
-                  version: 4,
-                  provider:
-                    legacy.provider === 'bigtoken'
-                      ? 'model'
-                      : legacy.provider,
-                  modelBaseUrl: legacy.bigtokenBaseUrl,
-                  modelName: legacy.bigtokenModel,
-                  opencodeBaseUrl: legacy.opencodeBaseUrl,
-                  opencodeEmbedded: legacy.opencodeEmbedded,
-                  opencodeBinaryPath: '',
-                  opencodeConfigPath: '',
-                  continueBinaryPath: migrateContinueCommand(
-                    legacy.continueCommand
-                  ),
-                  continueConfigPath: '',
-                  continueMode: 'chat',
-                  workspacePath: legacy.workspacePath,
-                  credential: legacy.credential,
-                  toolApproval: legacy.toolApproval
-                })
+                const version4 = version4StoredSettingsSchema.safeParse(parsed)
+                if (version4.success) {
+                  this.settings = migrateVersion4(version4.data)
+                } else {
+                  const version3 =
+                    version3StoredSettingsSchema.safeParse(parsed)
+                  if (version3.success) {
+                    this.settings = migrateVersion4({
+                      ...version3.data,
+                      version: 4,
+                      continueMode: 'chat'
+                    })
+                  } else {
+                    const version2 =
+                      version2StoredSettingsSchema.safeParse(parsed)
+                    if (version2.success) {
+                      this.settings = migrateVersion4({
+                        version: 4,
+                        provider: version2.data.provider,
+                        modelBaseUrl: version2.data.modelBaseUrl,
+                        modelName: version2.data.modelName,
+                        opencodeBaseUrl: version2.data.opencodeBaseUrl,
+                        opencodeEmbedded: version2.data.opencodeEmbedded,
+                        opencodeBinaryPath: '',
+                        opencodeConfigPath: '',
+                        continueBinaryPath: migrateContinueCommand(
+                          version2.data.continueCommand
+                        ),
+                        continueConfigPath: '',
+                        continueMode: 'chat',
+                        workspacePath: version2.data.workspacePath,
+                        credential: version2.data.credential,
+                        toolApproval: version2.data.toolApproval
+                      })
+                    } else {
+                      const legacy = legacyStoredSettingsSchema.parse(parsed)
+                      this.settings = migrateVersion4({
+                        version: 4,
+                        provider:
+                          legacy.provider === 'bigtoken'
+                            ? 'model'
+                            : legacy.provider,
+                        modelBaseUrl: legacy.bigtokenBaseUrl,
+                        modelName: legacy.bigtokenModel,
+                        opencodeBaseUrl: legacy.opencodeBaseUrl,
+                        opencodeEmbedded: legacy.opencodeEmbedded,
+                        opencodeBinaryPath: '',
+                        opencodeConfigPath: '',
+                        continueBinaryPath: migrateContinueCommand(
+                          legacy.continueCommand
+                        ),
+                        continueConfigPath: '',
+                        continueMode: 'chat',
+                        workspacePath: legacy.workspacePath,
+                        credential: legacy.credential,
+                        toolApproval: legacy.toolApproval
+                      })
+                    }
+                  }
+                }
               }
             }
           }
@@ -407,6 +521,34 @@ export class RuntimeSettingsStore {
     }
   }
 
+  private getStoredEmbeddingApiKey(
+    settings: StoredSettings
+  ): string | undefined {
+    if (
+      !settings.knowledgeEmbeddingCredential ||
+      !this.cipher.isAvailable()
+    ) {
+      return undefined
+    }
+    try {
+      const payload = embeddingCredentialPayloadSchema.parse(
+        JSON.parse(
+          this.cipher.decrypt(
+            Buffer.from(
+              settings.knowledgeEmbeddingCredential.ciphertextBase64,
+              'base64'
+            )
+          )
+        )
+      )
+      return payload.endpoint === settings.knowledgeEmbeddingBaseUrl
+        ? payload.apiKey
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   private getEnvironmentApiKey(): string | undefined {
     return (
       this.environment.GOODBUDDY_MODEL_API_KEY?.trim() ||
@@ -421,6 +563,7 @@ export class RuntimeSettingsStore {
     model: string
     protocol: RuntimeSettings['modelProtocol']
     authentication: RuntimeSettings['modelAuthentication']
+    imageGenerationQuality: RuntimeSettings['imageGenerationQuality']
     credentialSource: RuntimeSettings['credentialSource']
   } {
     const profile =
@@ -456,6 +599,7 @@ export class RuntimeSettingsStore {
       model,
       protocol: profile.protocol,
       authentication: profile.authentication,
+      imageGenerationQuality: profile.imageGenerationQuality,
       credentialSource: environmentApiKey
         ? 'environment'
         : storedApiKey
@@ -483,6 +627,7 @@ export class RuntimeSettingsStore {
         modelName: effective.model,
         protocol: effective.protocol,
         authentication: effective.authentication,
+        imageGenerationQuality: effective.imageGenerationQuality,
         apiKey: effective.apiKey
       }
     }
@@ -493,6 +638,7 @@ export class RuntimeSettingsStore {
       modelName: profile.modelName,
       protocol: profile.protocol,
       authentication: profile.authentication,
+      imageGenerationQuality: profile.imageGenerationQuality,
       apiKey:
         profile.authentication === 'api-key'
           ? this.getStoredApiKey(profile)
@@ -571,6 +717,9 @@ export class RuntimeSettingsStore {
         authentication: isDefault
           ? effective.authentication
           : profile.authentication,
+        imageGenerationQuality: isDefault
+          ? effective.imageGenerationQuality
+          : profile.imageGenerationQuality,
         apiKeyConfigured: isDefault
           ? Boolean(effective.apiKey)
           : Boolean(apiKey),
@@ -581,12 +730,17 @@ export class RuntimeSettingsStore {
             : ('none' as const)
       }
     })
+    const embeddingEnvironmentApiKey =
+      this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim()
+    const embeddingStoredApiKey =
+      this.getStoredEmbeddingApiKey(settings)
     return {
       provider: settings.provider,
       modelBaseUrl: effective.baseUrl,
       modelName: effective.model,
       modelProtocol: effective.protocol,
       modelAuthentication: effective.authentication,
+      imageGenerationQuality: effective.imageGenerationQuality,
       opencodeBaseUrl: agent.opencodeBaseUrl,
       opencodeEmbedded: agent.opencodeEmbedded,
       opencodeBinaryPath: agent.opencodeBinaryPath,
@@ -595,9 +749,19 @@ export class RuntimeSettingsStore {
       continueConfigPath: agent.continueConfigPath,
       continueMode: agent.continueMode,
       runtimeSandboxMode: agent.runtimeSandboxMode,
+      subagentSmartRoutingEnabled:
+        settings.subagentSmartRoutingEnabled,
       knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
       knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
       knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
+      knowledgeEmbeddingApiKeyConfigured: Boolean(
+        embeddingEnvironmentApiKey ?? embeddingStoredApiKey
+      ),
+      knowledgeEmbeddingCredentialSource: embeddingEnvironmentApiKey
+        ? 'environment'
+        : embeddingStoredApiKey
+          ? 'encrypted'
+          : 'none',
       workspacePath: agent.workspacePath,
       apiKeyConfigured: Boolean(effective.apiKey),
       credentialSource: effective.credentialSource,
@@ -639,13 +803,19 @@ export class RuntimeSettingsStore {
       modelName: effective.model,
       modelProtocol: effective.protocol,
       modelAuthentication: effective.authentication,
+      imageGenerationQuality: effective.imageGenerationQuality,
       apiKey: effective.apiKey,
       opencodeModelProfile,
       continueModelProfile,
       ...agent,
+      subagentSmartRoutingEnabled:
+        settings.subagentSmartRoutingEnabled,
       knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
       knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
       knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
+      knowledgeEmbeddingApiKey:
+        this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim() ||
+        this.getStoredEmbeddingApiKey(settings),
       toolApproval: settings.toolApproval
     }
   }
@@ -681,6 +851,7 @@ export class RuntimeSettingsStore {
               modelName: input.modelName,
               protocol: input.modelProtocol,
               authentication: input.modelAuthentication,
+              imageGenerationQuality: input.imageGenerationQuality,
               apiKey: input.apiKey
             }
           : {
@@ -690,14 +861,18 @@ export class RuntimeSettingsStore {
               modelName: profile.modelName,
               protocol: profile.protocol,
               authentication: profile.authentication,
+              imageGenerationQuality: profile.imageGenerationQuality,
               apiKey: { action: 'keep' as const }
             }
       )
     if (
-      profileInputs.some(
-        (profile) =>
-          profile.authentication === 'api-key' &&
-          profile.apiKey.action === 'replace'
+      (
+        profileInputs.some(
+          (profile) =>
+            profile.authentication === 'api-key' &&
+            profile.apiKey.action === 'replace'
+        ) ||
+        input.knowledgeEmbeddingApiKey?.action === 'replace'
       ) &&
       !this.cipher.isAvailable()
     ) {
@@ -728,7 +903,8 @@ export class RuntimeSettingsStore {
           baseUrl: normalizedBaseUrl,
           modelName: profile.modelName,
           protocol: profile.protocol,
-          authentication: profile.authentication
+          authentication: profile.authentication,
+          imageGenerationQuality: profile.imageGenerationQuality
         }
         if (
           profile.authentication === 'api-key' &&
@@ -757,6 +933,43 @@ export class RuntimeSettingsStore {
         return nextProfile
       })
 
+    const embeddingEndpoint = new URL(
+      input.knowledgeEmbeddingBaseUrl
+    ).toString()
+    const embeddingApiKeyUpdate =
+      input.knowledgeEmbeddingApiKey ?? { action: 'keep' as const }
+    if (
+      embeddingApiKeyUpdate.action === 'keep' &&
+      current.knowledgeEmbeddingCredential &&
+      current.knowledgeEmbeddingBaseUrl !== embeddingEndpoint
+    ) {
+      throw new Error(
+        '向量接口 URL 已更改，请重新输入或清除 API Key'
+      )
+    }
+    let knowledgeEmbeddingCredential: StoredSettings['knowledgeEmbeddingCredential']
+    if (
+      embeddingApiKeyUpdate.action === 'keep' &&
+      current.knowledgeEmbeddingCredential
+    ) {
+      knowledgeEmbeddingCredential =
+        current.knowledgeEmbeddingCredential
+    } else if (embeddingApiKeyUpdate.action === 'replace') {
+      knowledgeEmbeddingCredential = {
+        formatVersion: 1,
+        scheme: 'electron-safe-storage',
+        ciphertextBase64: this.cipher
+          .encrypt(
+            JSON.stringify({
+              version: 1,
+              apiKey: embeddingApiKeyUpdate.value,
+              endpoint: embeddingEndpoint
+            })
+          )
+          .toString('base64')
+      }
+    }
+
     const [
       opencodeBinaryPath,
       opencodeConfigPath,
@@ -783,7 +996,7 @@ export class RuntimeSettingsStore {
 
     const next: StoredSettings = {
       ...current,
-      version: 6,
+      version: 9,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId:
@@ -805,11 +1018,13 @@ export class RuntimeSettingsStore {
       continueConfigPath,
       continueMode: input.continueMode,
       runtimeSandboxMode: input.runtimeSandboxMode,
+      subagentSmartRoutingEnabled:
+        input.subagentSmartRoutingEnabled ??
+        current.subagentSmartRoutingEnabled,
       knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,
-      knowledgeEmbeddingBaseUrl: new URL(
-        input.knowledgeEmbeddingBaseUrl
-      ).origin,
+      knowledgeEmbeddingBaseUrl: embeddingEndpoint,
       knowledgeEmbeddingModel: input.knowledgeEmbeddingModel,
+      knowledgeEmbeddingCredential,
       workspacePath: input.workspacePath,
       toolApproval: input.toolApproval
     }

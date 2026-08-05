@@ -96,6 +96,7 @@ const api: DesktopApi = {
       modelName: 'sonnet-5',
       modelProtocol: 'anthropic-messages',
       modelAuthentication: 'api-key',
+      imageGenerationQuality: 'auto',
       opencodeBaseUrl: '',
       opencodeEmbedded: false,
       opencodeBinaryPath: '',
@@ -104,9 +105,13 @@ const api: DesktopApi = {
       continueConfigPath: '',
       continueMode: 'chat',
       runtimeSandboxMode: 'auto',
+      subagentSmartRoutingEnabled: false,
       knowledgeEmbeddingEnabled: false,
-      knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+      knowledgeEmbeddingBaseUrl:
+        'http://127.0.0.1:11434/v1/embeddings',
       knowledgeEmbeddingModel: 'nomic-embed-text',
+      knowledgeEmbeddingApiKeyConfigured: false,
+      knowledgeEmbeddingCredentialSource: 'none',
       workspacePath: 'C:\\Users\\test',
       apiKeyConfigured: false,
       credentialSource: 'none',
@@ -118,6 +123,7 @@ const api: DesktopApi = {
           modelName: 'sonnet-5',
           protocol: 'anthropic-messages',
           authentication: 'api-key',
+          imageGenerationQuality: 'auto',
           apiKeyConfigured: false,
           credentialSource: 'none'
         }
@@ -135,6 +141,7 @@ const api: DesktopApi = {
         modelName: input.modelName,
         modelProtocol: input.modelProtocol,
         modelAuthentication: input.modelAuthentication,
+        imageGenerationQuality: input.imageGenerationQuality,
         opencodeBaseUrl: input.opencodeBaseUrl,
         opencodeEmbedded: input.opencodeEmbedded,
         opencodeBinaryPath: input.opencodeBinaryPath,
@@ -143,9 +150,17 @@ const api: DesktopApi = {
         continueConfigPath: input.continueConfigPath,
         continueMode: input.continueMode,
         runtimeSandboxMode: input.runtimeSandboxMode,
+        subagentSmartRoutingEnabled:
+          input.subagentSmartRoutingEnabled ?? false,
         knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,
         knowledgeEmbeddingBaseUrl: input.knowledgeEmbeddingBaseUrl,
         knowledgeEmbeddingModel: input.knowledgeEmbeddingModel,
+        knowledgeEmbeddingApiKeyConfigured:
+          input.knowledgeEmbeddingApiKey?.action === 'replace',
+        knowledgeEmbeddingCredentialSource:
+          input.knowledgeEmbeddingApiKey?.action === 'replace'
+            ? 'encrypted'
+            : 'none',
         workspacePath: input.workspacePath,
         apiKeyConfigured: input.apiKey.action === 'replace',
         credentialSource:
@@ -159,6 +174,8 @@ const api: DesktopApi = {
               modelName: input.modelName,
               protocol: input.modelProtocol,
               authentication: input.modelAuthentication,
+              imageGenerationQuality:
+                input.imageGenerationQuality,
               apiKey: input.apiKey
             }
           ]
@@ -382,6 +399,7 @@ const api: DesktopApi = {
     captureScreen: vi.fn(async () => {
       throw new Error('not used')
     }),
+    listWindows: vi.fn(async () => []),
     captureWindow: vi.fn(async () => {
       throw new Error('not used')
     }),
@@ -452,6 +470,7 @@ describe('App', () => {
 
   afterEach(() => {
     cleanup()
+    vi.restoreAllMocks()
   })
 
   it('provides custom minimize, maximize, and close controls', async () => {
@@ -607,6 +626,185 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
+  it('keeps sent documents and images in conversation history', async () => {
+    const documentAttachment = {
+      id: '00000000-0000-4000-8000-000000000301',
+      name: '需求说明.md',
+      size: 2_048,
+      preview: '需要保留在用户消息中的文档',
+      kind: 'text' as const
+    }
+    const imageAttachment = {
+      id: '00000000-0000-4000-8000-000000000302',
+      name: '页面截图.png',
+      size: 4_096,
+      preview: '1280 × 720',
+      kind: 'image' as const,
+      thumbnailUrl:
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+      contentUrl:
+        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q=='
+    }
+    vi.mocked(api.context.selectFiles).mockResolvedValueOnce([
+      documentAttachment,
+      imageAttachment
+    ])
+    render(<App />)
+
+    fireEvent.click(await screen.findByLabelText('添加附件'))
+    expect(await screen.findByText('需求说明.md')).toBeInTheDocument()
+    expect(screen.getByText('页面截图.png')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '分析这些附件' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    expect(run.mock.calls[0]?.[0].contextIds).toEqual([
+      documentAttachment.id,
+      imageAttachment.id
+    ])
+    const userArticle = screen
+      .getAllByText('分析这些附件')
+      .map((element) => element.closest('article'))
+      .find((element) => element?.classList.contains('message--user'))
+    expect(userArticle).not.toBeNull()
+    if (!userArticle) {
+      return
+    }
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+    expect(within(userArticle).getByText('需求说明.md')).toBeInTheDocument()
+    expect(within(userArticle).getByText('2 KB')).toBeInTheDocument()
+    expect(
+      within(userArticle).getByRole('img', { name: '页面截图.png' })
+    ).toHaveAttribute('src', imageAttachment.contentUrl)
+    fireEvent.click(
+      within(userArticle).getByRole('button', {
+        name: '查看图片 页面截图.png'
+      })
+    )
+    const imageDialog = await screen.findByRole('dialog', {
+      name: '页面截图.png'
+    })
+    expect(
+      within(imageDialog).getByRole('img', { name: '页面截图.png' })
+    ).toHaveAttribute('src', imageAttachment.contentUrl)
+    fireEvent.click(
+      within(imageDialog).getByRole('button', {
+        name: '关闭图片查看器'
+      })
+    )
+    expect(
+      screen.queryByRole('dialog', { name: '页面截图.png' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(
+      within(userArticle).getByRole('button', {
+        name: '下载图片 页面截图.png'
+      })
+    )
+    expect(anchorClick).toHaveBeenCalledOnce()
+    await waitFor(
+      () =>
+        expect(api.conversations.replace).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({
+              messages: expect.arrayContaining([
+                expect.objectContaining({
+                  role: 'user',
+                  attachments: [
+                    documentAttachment,
+                    imageAttachment
+                  ]
+                })
+              ])
+            })
+          ])
+        ),
+      { timeout: 2_000 }
+    )
+  })
+
+  it('sends and renders five selected images together', async () => {
+    const imageAttachments = Array.from({ length: 5 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-00000000031${index}`,
+      name: `参考图-${index + 1}.png`,
+      size: 4_096,
+      preview: '640 × 480',
+      kind: 'image' as const,
+      thumbnailUrl:
+        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q==',
+      contentUrl:
+        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q=='
+    }))
+    vi.mocked(api.context.selectFiles).mockResolvedValueOnce(imageAttachments)
+    render(<App />)
+
+    fireEvent.click(await screen.findByLabelText('添加附件'))
+    await waitFor(() =>
+      expect(screen.getAllByText(/^参考图-\d\.png$/u)).toHaveLength(5)
+    )
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '比较这五张图片' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    expect(run.mock.calls[0]?.[0].contextIds).toEqual(
+      imageAttachments.map((attachment) => attachment.id)
+    )
+    const userArticle = screen
+      .getAllByText('比较这五张图片')
+      .map((element) => element.closest('article'))
+      .find((element) => element?.classList.contains('message--user'))
+    expect(userArticle).not.toBeNull()
+    if (!userArticle) {
+      return
+    }
+    expect(within(userArticle).getAllByRole('img')).toHaveLength(5)
+    expect(within(userArticle).getByLabelText('消息附件')).toHaveClass(
+      'message-attachments'
+    )
+  })
+
+  it('lists capturable application windows vertically before capture', async () => {
+    vi.mocked(api.context.listWindows).mockResolvedValueOnce([
+      { id: 'window-1', name: 'Visual Studio Code' },
+      { id: 'window-2', name: 'Browser' },
+      { id: 'window-3', name: 'Terminal' }
+    ])
+    vi.mocked(api.context.captureWindow).mockResolvedValueOnce({
+      id: '00000000-0000-4000-8000-000000000303',
+      name: '窗口-Browser.jpg',
+      size: 120_000,
+      preview: '1280 × 800',
+      kind: 'image',
+      thumbnailUrl:
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
+    })
+    render(<App />)
+
+    fireEvent.click(await screen.findByLabelText('捕获应用窗口'))
+
+    const dialog = await screen.findByRole('dialog', {
+      name: '选择应用窗口'
+    })
+    const list = within(dialog).getByLabelText('可捕获的应用窗口')
+    expect(list).toHaveClass('window-capture-dialog__list')
+    expect(within(list).getAllByRole('button')).toHaveLength(3)
+
+    fireEvent.click(
+      within(list).getByRole('button', { name: 'Browser' })
+    )
+    await waitFor(() =>
+      expect(api.context.captureWindow).toHaveBeenCalledWith('window-2')
+    )
+    expect(
+      await screen.findByText('窗口-Browser.jpg')
+    ).toBeInTheDocument()
+  })
+
   it('keeps a draft in chat when Enter is pressed while the runtime loads', async () => {
     vi.mocked(api.agent.getStatus).mockReturnValue(
       new Promise(() => {})
@@ -741,7 +939,7 @@ describe('App', () => {
     render(<App />)
 
     fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(await screen.findByRole('tab', { name: '更改' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
     fireEvent.click(
       await screen.findByRole('button', { name: /README\.md/u })
     )
@@ -776,7 +974,7 @@ describe('App', () => {
     render(<App />)
 
     fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(await screen.findByRole('tab', { name: '更改' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledOnce()
     )
@@ -828,7 +1026,7 @@ describe('App', () => {
     render(<App />)
 
     fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(await screen.findByRole('tab', { name: '更改' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId)
     )
@@ -1258,6 +1456,9 @@ describe('App', () => {
   })
 
   it('marks an image model and renders its generated artifact', async () => {
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
       id: 'model',
       label: 'gpt-image-2',
@@ -1316,6 +1517,35 @@ describe('App', () => {
     expect(
       await screen.findByRole('img', { name: '生成一只蓝色的猫' })
     ).toHaveAttribute('src', expect.stringMatching(/^data:image\/png/u))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '下载图片 生成一只蓝色的猫'
+      })
+    )
+    expect(anchorClick).toHaveBeenCalledOnce()
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '查看图片 生成一只蓝色的猫'
+      })
+    )
+    const imageDialog = await screen.findByRole('dialog', {
+      name: '生成一只蓝色的猫'
+    })
+    expect(
+      within(imageDialog).getByRole('img', {
+        name: '生成一只蓝色的猫'
+      })
+    ).toHaveAttribute('src', expect.stringMatching(/^data:image\/png/u))
+    fireEvent.click(
+      within(imageDialog).getByRole('button', { name: '下载图片' })
+    )
+    expect(anchorClick).toHaveBeenCalledTimes(2)
+    fireEvent.keyDown(imageDialog, { key: 'Escape' })
+    expect(
+      screen.queryByRole('dialog', { name: '生成一只蓝色的猫' })
+    ).not.toBeInTheDocument()
+    anchorClick.mockRestore()
   })
 
   it('can dispatch a request to the parallel expert team', async () => {
@@ -1338,6 +1568,164 @@ describe('App', () => {
         })
       )
     )
+  })
+
+  it('requests smart routing only when enabled without an explicit expert', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      subagentSmartRoutingEnabled: true
+    })
+    render(<App />)
+
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '分析发布风险' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          smartRouting: true,
+          expertId: undefined,
+          teamMode: false,
+          workMode: 'ask'
+        })
+      )
+    )
+  })
+
+  it('gives an explicitly selected expert priority over smart routing', async () => {
+    const expertId = '00000000-0000-4000-8000-000000000501'
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      subagentSmartRoutingEnabled: true
+    })
+    vi.mocked(api.experts.list).mockResolvedValueOnce([
+      {
+        id: expertId,
+        name: '发布专家',
+        description: '检查发布风险',
+        systemInstructions: 'Review release risks.',
+        routingKeywords: ['发布', '风险'],
+        enabled: true,
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z'
+      }
+    ])
+    render(<App />)
+
+    await screen.findByRole('option', { name: '发布专家' })
+    fireEvent.change(screen.getByLabelText('专家角色'), {
+      target: { value: expertId }
+    })
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '检查发布方案' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expertId,
+          smartRouting: undefined,
+          teamMode: false
+        })
+      )
+    )
+  })
+
+  it('shows bounded Subagent states and records child expert activity', async () => {
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '分析复杂问题' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+
+    const events = [
+      {
+        childTaskId: '00000000-0000-4000-8000-000000000601',
+        expertId: '00000000-0000-4000-8000-000000000701',
+        expertName: '研究专家',
+        routingMode: 'smart' as const,
+        state: 'queued' as const
+      },
+      {
+        childTaskId: '00000000-0000-4000-8000-000000000602',
+        expertId: '00000000-0000-4000-8000-000000000702',
+        expertName: '代码专家',
+        routingMode: 'manual' as const,
+        state: 'running' as const
+      },
+      {
+        childTaskId: '00000000-0000-4000-8000-000000000603',
+        expertId: '00000000-0000-4000-8000-000000000703',
+        expertName: '安全专家',
+        routingMode: 'smart' as const,
+        state: 'failed' as const,
+        error: '无法读取必要上下文'
+      },
+      {
+        childTaskId: '00000000-0000-4000-8000-000000000604',
+        expertId: '00000000-0000-4000-8000-000000000704',
+        expertName: '第四位专家',
+        routingMode: 'smart' as const,
+        state: 'completed' as const
+      }
+    ]
+    act(() => {
+      for (const event of events) {
+        agentListener?.({
+          requestId: request.requestId,
+          type: 'subagent',
+          ...event
+        })
+      }
+    })
+
+    const statusRegion = await screen.findByLabelText('子专家状态')
+    expect(within(statusRegion).getByText('研究专家')).toBeInTheDocument()
+    expect(within(statusRegion).getByText('等待中')).toBeInTheDocument()
+    expect(within(statusRegion).getByText('代码专家')).toBeInTheDocument()
+    expect(within(statusRegion).getByText('进行中')).toBeInTheDocument()
+    expect(within(statusRegion).getByText('安全专家')).toBeInTheDocument()
+    expect(within(statusRegion).getByText('失败')).toBeInTheDocument()
+    expect(
+      within(statusRegion).getByText('无法读取必要上下文')
+    ).toBeInTheDocument()
+    expect(
+      within(statusRegion).queryByText('第四位专家')
+    ).not.toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'subagent',
+        ...events[0]!,
+        state: 'completed'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'subagent',
+        ...events[1]!,
+        state: 'cancelled',
+        reason: '父任务已停止'
+      })
+    })
+    expect(within(statusRegion).getByText('已完成')).toBeInTheDocument()
+    expect(within(statusRegion).getByText('已取消')).toBeInTheDocument()
+    expect(within(statusRegion).getByText('父任务已停止')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('任务与活动'))
+    expect(await screen.findAllByText('子专家')).toHaveLength(4)
+    expect(screen.getAllByText(/智能路由/u).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/手动指定/u).length).toBeGreaterThan(0)
   })
 
   it('offers once, session, permanent, and deny for a tool call', async () => {
@@ -1431,8 +1819,15 @@ describe('App', () => {
     expect(
       screen.getByText('尚未添加文件、截图或剪贴板内容。')
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '成果' }))
-    expect(screen.getByText('对话成果')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '任务中心' }))
+    expect(
+      screen.getByText(/查看当前和最近请求的运行状态/)
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '成果库' }))
+    expect(screen.getByText('对话与导入成果')).toBeInTheDocument()
+    expect(
+      screen.getByText(/保存并预览由对话生成或手动导入/)
+    ).toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
   })
@@ -1453,7 +1848,7 @@ describe('App', () => {
         conversationId: conversationId ?? '',
         status: 'ready',
         url: 'https://example.com/',
-        frameDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+        frameDataUrl: 'data:image/jpeg;base64,/9j/2Q==',
         updatedAt: Date.now()
       })
     })
@@ -1468,7 +1863,7 @@ describe('App', () => {
       screen.getByAltText('Agent 实时浏览器画面')
     ).toHaveAttribute(
       'src',
-      'data:image/png;base64,iVBORw0KGgo='
+      'data:image/jpeg;base64,/9j/2Q=='
     )
     fireEvent.click(
       screen.getByRole('button', { name: '停止浏览器' })

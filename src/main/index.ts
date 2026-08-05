@@ -12,7 +12,10 @@ import {
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
-import { createAgentRuntime } from './agent/create-runtime'
+import {
+  createAgentRuntime,
+  createDefaultModelRuntime
+} from './agent/create-runtime'
 import { AgentRuntimeController } from './agent/runtime-controller'
 import { CapabilityService } from './capabilities/capability-service'
 import { ContextManager } from './context-manager'
@@ -20,7 +23,7 @@ import { registerIpcHandlers } from './ipc'
 import { KnowledgeService } from './knowledge/knowledge-service'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { createModelGraphExtractor } from './knowledge/model-extractor'
-import { OllamaEmbeddingClient } from './knowledge/ollama-embedding-client'
+import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
 import { RuntimeSettingsStore } from './runtime-settings-store'
 import type { ResolvedRuntimeSettings } from './runtime-settings-store'
 import { ToolApprovalBroker } from './tool-approval-broker'
@@ -38,6 +41,7 @@ import type {
 } from './agent/continue-host-adapter'
 import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
+import { SubagentService } from './assistant/subagent-service'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const portableUserDataPath = resolvePortableUserDataPath({
@@ -68,11 +72,12 @@ let browserService: BrowserService | undefined
 
 function createEmbeddingProvider(
   settings: ResolvedRuntimeSettings
-): OllamaEmbeddingClient | undefined {
+): OpenAIEmbeddingClient | undefined {
   return settings.knowledgeEmbeddingEnabled
-    ? new OllamaEmbeddingClient({
-        url: settings.knowledgeEmbeddingBaseUrl,
-        model: settings.knowledgeEmbeddingModel
+    ? new OpenAIEmbeddingClient({
+        endpoint: settings.knowledgeEmbeddingBaseUrl,
+        model: settings.knowledgeEmbeddingModel,
+        apiKey: settings.knowledgeEmbeddingApiKey
       })
     : undefined
 }
@@ -250,6 +255,13 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'assistant.sqlite')
     )
     assistantDatabase.initialize(defaultWorkspace)
+    const subagentService = new SubagentService(
+      createDefaultModelRuntime(
+        defaultWorkspace,
+        await settingsStore.getResolvedSettings()
+      ),
+      assistantDatabase
+    )
     const createConfiguredRuntime = async () => {
       const settings = await settingsStore.getResolvedSettings()
       const useOpenCode =
@@ -329,11 +341,15 @@ if (hasSingleInstanceLock) {
             await createConfiguredRuntime()
           )
         }
+        await subagentService.replaceRuntime(
+          createDefaultModelRuntime(defaultWorkspace, settings)
+        )
       },
       async () => {
         await browserService?.clearSessions()
       },
-      browserService
+      browserService,
+      subagentService
     )
     loadMainWindow(mainWindow)
 

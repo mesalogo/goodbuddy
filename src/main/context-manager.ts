@@ -2,20 +2,24 @@ import {
   clipboard,
   desktopCapturer,
   dialog,
+  nativeImage,
   screen,
   type BrowserWindow,
+  type DesktopCapturerSource,
   type NativeImage
 } from 'electron'
 import { open, realpath } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import type {
   AgentRequest,
-  ContextAttachment
+  ContextAttachment,
+  WindowCaptureOption
 } from '../shared/contracts'
 import type {
   AgentExecutionRequest,
   AgentImage
 } from './agent/runtime'
+import { encodeBoundedJpeg } from './bounded-jpeg'
 
 type StoredTextContext = ContextAttachment & {
   kind: 'text'
@@ -33,8 +37,8 @@ type StoredContext = StoredTextContext | StoredImageContext
 const maximumFileSize = 256 * 1024
 const maximumContextBytes = 12 * 1024 * 1024
 const maximumContextCount = 16
+const maximumAttachmentsPerMessage = 8
 const maximumPromptBytes = 1024 * 1024
-const maximumImageBytes = 8 * 1024 * 1024
 const supportedExtensions = new Set([
   '.c',
   '.cpp',
@@ -58,6 +62,12 @@ const supportedExtensions = new Set([
   '.yaml',
   '.yml'
 ])
+const supportedImageExtensions = new Set([
+  '.jpeg',
+  '.jpg',
+  '.png',
+  '.webp'
+])
 
 export class ContextManager {
   private readonly contexts = new Map<string, StoredContext>()
@@ -70,7 +80,11 @@ export class ContextManager {
       size: context.size,
       preview: context.preview,
       kind: context.kind,
-      thumbnailUrl: context.thumbnailUrl
+      thumbnailUrl: context.thumbnailUrl,
+      contentUrl:
+        context.kind === 'image'
+          ? `data:${context.mediaType};base64,${context.data}`
+          : undefined
     }
   }
 
@@ -109,24 +123,22 @@ export class ContextManager {
     if (image.isEmpty()) {
       throw new Error('没有可用的图片内容')
     }
-    const buffer = image.toPNG()
-    if (buffer.byteLength > maximumImageBytes) {
-      throw new Error('图片不能超过 8MB')
-    }
+    const buffer = encodeBoundedJpeg(image)
     this.assertCapacity(buffer.byteLength)
     const size = image.getSize()
     const preview = image.resize({
       width: Math.min(320, size.width),
       quality: 'good'
     })
+    const thumbnail = encodeBoundedJpeg(preview, 100 * 1024)
     const context: StoredImageContext = {
       id: crypto.randomUUID(),
       name,
       size: buffer.byteLength,
       preview: `${size.width} × ${size.height}`,
       kind: 'image',
-      thumbnailUrl: preview.toDataURL(),
-      mediaType: 'image/png',
+      thumbnailUrl: `data:image/jpeg;base64,${thumbnail.toString('base64')}`,
+      mediaType: 'image/jpeg',
       data: buffer.toString('base64')
     }
     this.contexts.set(context.id, context)
@@ -143,6 +155,12 @@ export class ContextManager {
           extensions: [...supportedExtensions].map((extension) =>
             extension.slice(1)
           )
+        },
+        {
+          name: '图片',
+          extensions: [...supportedImageExtensions].map((extension) =>
+            extension.slice(1)
+          )
         }
       ]
     })
@@ -151,15 +169,41 @@ export class ContextManager {
     }
 
     const attachments: ContextAttachment[] = []
-    for (const selectedPath of result.filePaths.slice(0, 4)) {
+    for (const selectedPath of result.filePaths.slice(
+      0,
+      maximumAttachmentsPerMessage
+    )) {
       try {
         const canonicalPath = await realpath(selectedPath)
         const extension = extname(canonicalPath).toLowerCase()
-        if (!supportedExtensions.has(extension)) {
+        if (
+          !supportedExtensions.has(extension) &&
+          !supportedImageExtensions.has(extension)
+        ) {
           throw new Error(`不支持的文件类型：${extension || '未知'}`)
         }
 
         const handle = await open(canonicalPath, 'r')
+        if (supportedImageExtensions.has(extension)) {
+          try {
+            const fileStat = await handle.stat()
+            if (
+              !fileStat.isFile() ||
+              fileStat.size > maximumContextBytes
+            ) {
+              throw new Error('图片必须小于 12MB 且不能是目录')
+            }
+            const image = nativeImage.createFromBuffer(
+              await handle.readFile()
+            )
+            attachments.push(
+              this.storeImage(basename(canonicalPath), image)
+            )
+          } finally {
+            await handle.close()
+          }
+          continue
+        }
         let content: string
         try {
           const fileStat = await handle.stat()
@@ -214,13 +258,15 @@ export class ContextManager {
       throw new Error('无法获取屏幕画面，请检查系统录屏权限')
     }
     return this.storeImage(
-      `屏幕截图-${new Date().toISOString().replaceAll(':', '-')}.png`,
+      `屏幕截图-${new Date().toISOString().replaceAll(':', '-')}.jpg`,
       source.thumbnail
     )
   }
 
-  async captureWindow(window: BrowserWindow): Promise<ContextAttachment> {
-    const sources = (
+  private async getWindowSources(
+    window: BrowserWindow
+  ): Promise<DesktopCapturerSource[]> {
+    return (
       await desktopCapturer.getSources({
         types: ['window'],
         thumbnailSize: { width: 1280, height: 800 },
@@ -229,31 +275,40 @@ export class ContextManager {
     )
       .filter(
         (source) =>
+          source.id.length > 0 &&
+          source.id.length <= 512 &&
           source.name.trim() &&
           source.name !== window.getTitle() &&
           !source.thumbnail.isEmpty()
       )
       .slice(0, 12)
+  }
+
+  async listWindows(window: BrowserWindow): Promise<WindowCaptureOption[]> {
+    const sources = await this.getWindowSources(window)
     if (sources.length === 0) {
       throw new Error('未找到可捕获的应用窗口')
     }
-    const result = await dialog.showMessageBox(window, {
-      type: 'question',
-      title: '选择应用窗口',
-      message: '选择要添加到本次对话的窗口截图',
-      detail: '仅所选窗口的当前画面会被读取，不会持续监控。',
-      buttons: [...sources.map((source) => source.name), '取消'],
-      cancelId: sources.length,
-      noLink: true
-    })
-    const source = sources[result.response]
+    return sources.map((source) => ({
+      id: source.id,
+      name: source.name.trim().slice(0, 200)
+    }))
+  }
+
+  async captureWindow(
+    window: BrowserWindow,
+    sourceId: string
+  ): Promise<ContextAttachment> {
+    const source = (await this.getWindowSources(window)).find(
+      (candidate) => candidate.id === sourceId
+    )
     if (!source) {
-      throw new Error('已取消窗口捕获')
+      throw new Error('所选应用窗口已关闭，请重新选择')
     }
     return this.storeImage(
       `窗口-${source.name.slice(0, 80)}-${new Date()
         .toISOString()
-        .replaceAll(':', '-')}.png`,
+        .replaceAll(':', '-')}.jpg`,
       source.thumbnail
     )
   }
@@ -265,7 +320,7 @@ export class ContextManager {
     }
     const image = clipboard.readImage()
     if (!image.isEmpty()) {
-      return this.storeImage('剪贴板图片.png', image)
+      return this.storeImage('剪贴板图片.jpg', image)
     }
     throw new Error('剪贴板中没有可用的文本或图片')
   }

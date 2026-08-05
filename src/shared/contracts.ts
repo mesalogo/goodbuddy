@@ -23,6 +23,7 @@ import {
   type AssistantTask,
   type TokenUsageSummary,
   type ConversationSnapshot,
+  type ConversationAttachment,
   type WorkspaceChanges,
   type WorkspaceDirectoryListing,
   type WorkspaceFilePreview,
@@ -75,6 +76,7 @@ export const agentRequestSchema = z
     projectId: z.string().uuid().optional(),
     expertId: z.string().uuid().optional(),
     teamMode: z.boolean().optional(),
+    smartRouting: z.boolean().optional(),
     workMode: workModeSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
     contextIds: z.array(z.string().uuid()).max(8).optional(),
@@ -131,9 +133,18 @@ export const modelProtocolSchema = z.enum([
   'openai-images-generations'
 ])
 export const modelAuthenticationSchema = z.enum(['api-key', 'none'])
+export const imageGenerationQualitySchema = z.enum([
+  'auto',
+  'low',
+  'medium',
+  'high'
+])
 export type ModelProtocol = z.infer<typeof modelProtocolSchema>
 export type ModelAuthentication = z.infer<
   typeof modelAuthenticationSchema
+>
+export type ImageGenerationQuality = z.infer<
+  typeof imageGenerationQualitySchema
 >
 export const defaultModelProfileId =
   '00000000-0000-4000-8000-000000000001'
@@ -144,6 +155,7 @@ export const defaultRuntimeSettings = {
   modelName: 'sonnet-5',
   modelProtocol: 'anthropic-messages',
   modelAuthentication: 'api-key',
+  imageGenerationQuality: 'auto',
   opencodeBaseUrl: '',
   opencodeEmbedded: false,
   opencodeBinaryPath: '',
@@ -152,8 +164,10 @@ export const defaultRuntimeSettings = {
   continueConfigPath: '',
   continueMode: 'chat',
   runtimeSandboxMode: 'auto',
+  subagentSmartRoutingEnabled: false,
   knowledgeEmbeddingEnabled: false,
-  knowledgeEmbeddingBaseUrl: 'http://127.0.0.1:11434',
+  knowledgeEmbeddingBaseUrl:
+    'http://127.0.0.1:11434/v1/embeddings',
   knowledgeEmbeddingModel: 'nomic-embed-text',
   workspacePath: '',
   toolApproval: 'always'
@@ -220,6 +234,7 @@ const modelProfileInputSchema = z
       .regex(/^[\w./:-]+$/, '模型名称包含不支持的字符'),
     protocol: modelProtocolSchema,
     authentication: modelAuthenticationSchema,
+    imageGenerationQuality: imageGenerationQualitySchema,
     apiKey: modelApiKeyUpdateSchema
   })
   .strict()
@@ -246,6 +261,7 @@ export const runtimeSettingsInputSchema = z
       .regex(/^[\w./:-]+$/, '模型名称包含不支持的字符'),
     modelProtocol: modelProtocolSchema,
     modelAuthentication: modelAuthenticationSchema,
+    imageGenerationQuality: imageGenerationQualitySchema,
     opencodeBaseUrl: z.union([
       z.literal(''),
       z.string().url().max(2_048)
@@ -257,6 +273,7 @@ export const runtimeSettingsInputSchema = z
     continueConfigPath: runtimePathSchema,
     continueMode: continueModeSchema,
     runtimeSandboxMode: runtimeSandboxModeSchema,
+    subagentSmartRoutingEnabled: z.boolean().optional(),
     knowledgeEmbeddingEnabled: z.boolean(),
     knowledgeEmbeddingBaseUrl: z.string().url().max(2_048),
     knowledgeEmbeddingModel: z
@@ -265,6 +282,7 @@ export const runtimeSettingsInputSchema = z
       .min(1)
       .max(256)
       .regex(/^[\w./:-]+$/, '向量模型名称包含不支持的字符'),
+    knowledgeEmbeddingApiKey: modelApiKeyUpdateSchema.optional(),
     workspacePath: z.string().trim().min(1).max(4_096),
     apiKey: modelApiKeyUpdateSchema,
     modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
@@ -440,18 +458,19 @@ export const runtimeSettingsInputSchema = z
       embeddingUrl.password ||
       embeddingUrl.search ||
       embeddingUrl.hash ||
-      (embeddingUrl.pathname !== '/' && embeddingUrl.pathname !== '')
+      embeddingUrl.pathname === '/' ||
+      embeddingUrl.pathname === ''
     ) {
       context.addIssue({
         code: 'custom',
         path: ['knowledgeEmbeddingBaseUrl'],
         message:
-          'Ollama 向量地址必须使用 HTTPS，或使用本机/私有网络 HTTP origin，且不得包含凭据、路径、查询参数或片段'
+          '向量接口 URL 必须是完整的 HTTPS 端点；本机或私有网络可使用 HTTP，且不得包含凭据、查询参数或片段'
       })
     }
   })
 
-export type RuntimeSettingsInput = z.infer<typeof runtimeSettingsInputSchema>
+export type RuntimeSettingsInput = z.input<typeof runtimeSettingsInputSchema>
 
 export type RuntimeModelSource = z.infer<typeof runtimeModelSourceSchema>
 
@@ -462,6 +481,7 @@ export type ModelConnectionSettings = {
   modelName: string
   protocol: ModelProtocol
   authentication: ModelAuthentication
+  imageGenerationQuality: ImageGenerationQuality
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment'
 }
@@ -472,6 +492,7 @@ export type RuntimeSettings = {
   modelName: string
   modelProtocol: ModelProtocol
   modelAuthentication: ModelAuthentication
+  imageGenerationQuality: ImageGenerationQuality
   opencodeBaseUrl: string
   opencodeEmbedded: boolean
   opencodeBinaryPath: string
@@ -480,9 +501,12 @@ export type RuntimeSettings = {
   continueConfigPath: string
   continueMode: RuntimeSettingsInput['continueMode']
   runtimeSandboxMode: RuntimeSettingsInput['runtimeSandboxMode']
+  subagentSmartRoutingEnabled: boolean
   knowledgeEmbeddingEnabled: boolean
   knowledgeEmbeddingBaseUrl: string
   knowledgeEmbeddingModel: string
+  knowledgeEmbeddingApiKeyConfigured: boolean
+  knowledgeEmbeddingCredentialSource: 'none' | 'encrypted' | 'environment'
   workspacePath: string
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment'
@@ -495,13 +519,30 @@ export type RuntimeSettings = {
   warning?: string
 }
 
-export type ContextAttachment = {
+export type ContextAttachment = ConversationAttachment
+
+export const windowCaptureSourceIdSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine(
+    (value) =>
+      [...value].every((character) => {
+        const code = character.charCodeAt(0)
+        return code > 31 && code !== 127
+      }),
+    '窗口来源 ID 无效'
+  )
+
+export const windowCaptureRequestSchema = z
+  .object({
+    sourceId: windowCaptureSourceIdSchema
+  })
+  .strict()
+
+export type WindowCaptureOption = {
   id: string
   name: string
-  size: number
-  preview: string
-  kind: 'text' | 'image'
-  thumbnailUrl?: string
 }
 
 export type AgentRuntimeStatus = {
@@ -541,6 +582,28 @@ export const approvalDecisionSchema = z.enum([
 
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 
+export const subagentEventSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    type: z.literal('subagent'),
+    childTaskId: z.string().uuid(),
+    expertId: z.string().uuid(),
+    expertName: z.string().trim().min(1).max(80),
+    routingMode: z.enum(['manual', 'smart']),
+    state: z.enum([
+      'queued',
+      'running',
+      'completed',
+      'failed',
+      'cancelled'
+    ]),
+    reason: z.string().trim().min(1).max(240).optional(),
+    error: z.string().trim().min(1).max(1_000).optional()
+  })
+  .strict()
+
+export type SubagentEvent = z.infer<typeof subagentEventSchema>
+
 export type AgentEvent =
   | {
       requestId: string
@@ -564,6 +627,7 @@ export type AgentEvent =
         | 'failed'
         | 'recoverable'
       summary: string
+      error?: string
     }
   | {
       requestId: string
@@ -593,6 +657,7 @@ export type AgentEvent =
       status: 'failed' | 'cancelled'
       message: string
     }
+  | SubagentEvent
 
 export type AppInfo = {
   name: string
@@ -616,9 +681,9 @@ export const browserLiveStateSchema = z
     url: z.string().max(2_048).optional(),
     frameDataUrl: z
       .string()
-      .max(7_000_000)
+      .max(400_000)
       .refine(
-        (value) => value.startsWith('data:image/png;base64,'),
+        (value) => value.startsWith('data:image/jpeg;base64,'),
         '浏览器画面格式无效'
       )
       .optional(),
@@ -936,7 +1001,8 @@ export type DesktopApi = {
   context: {
     selectFiles: () => Promise<ContextAttachment[]>
     captureScreen: () => Promise<ContextAttachment>
-    captureWindow: () => Promise<ContextAttachment>
+    listWindows: () => Promise<WindowCaptureOption[]>
+    captureWindow: (sourceId: string) => Promise<ContextAttachment>
     readClipboard: () => Promise<ContextAttachment>
     remove: (contextId: string) => Promise<void>
   }

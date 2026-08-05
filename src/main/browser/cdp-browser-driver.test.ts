@@ -157,9 +157,7 @@ function standardCommand(
   }
   if (method === 'Page.captureScreenshot') {
     return Promise.resolve({
-      data: Buffer.from([
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
-      ]).toString('base64')
+      data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')
     })
   }
   return Promise.resolve({})
@@ -211,6 +209,109 @@ function selectCommand(
 }
 
 describe('CdpBrowserDriver', () => {
+  it('waits for the requested main-frame commit instead of incumbent about:blank readiness', async () => {
+    let readinessChecks = 0
+    const harness = createHarness(async (method, parameters) => {
+      if (method === 'Page.navigate') {
+        return { frameId: 'main', loaderId: 'loader-1' }
+      }
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === 'document.readyState'
+      ) {
+        readinessChecks += 1
+        return { result: { value: 'complete' } }
+      }
+      return standardCommand(method, parameters)
+    })
+    harness.setUrl('about:blank')
+    const driver = new CdpBrowserDriver(harness.webContents)
+    const navigation = driver.navigate(
+      'https://example.com/page',
+      new AbortController().signal
+    )
+
+    await vi.waitFor(() =>
+      expect(harness.sendCommand).toHaveBeenCalledWith(
+        'Page.navigate',
+        { url: 'https://example.com/page' }
+      )
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(readinessChecks).toBe(0)
+
+    harness.contentEvents.emit(
+      'did-navigate-in-page',
+      {},
+      'https://example.com/frame',
+      false
+    )
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(readinessChecks).toBe(0)
+
+    harness.setUrl('https://example.com/page')
+    harness.contentEvents.emit(
+      'did-navigate',
+      {},
+      'https://example.com/page'
+    )
+    await expect(navigation).resolves.toEqual({
+      url: 'https://example.com/page'
+    })
+    expect(readinessChecks).toBe(1)
+    driver.dispose()
+  })
+
+  it('fails when the requested main frame never commits', async () => {
+    const harness = createHarness(async (method, parameters) =>
+      method === 'Page.navigate'
+        ? { frameId: 'main', loaderId: 'loader-1' }
+        : standardCommand(method, parameters)
+    )
+    harness.setUrl('about:blank')
+    const driver = new CdpBrowserDriver(harness.webContents, {
+      timeoutMs: 30
+    })
+
+    await expect(
+      driver.navigate(
+        'https://example.com/page',
+        new AbortController().signal
+      )
+    ).rejects.toThrow('未在安全期限内提交')
+    driver.dispose()
+  })
+
+  it('surfaces a main-frame load failure before reporting ready', async () => {
+    const harness = createHarness(async (method, parameters) =>
+      method === 'Page.navigate'
+        ? { frameId: 'main', loaderId: 'loader-1' }
+        : standardCommand(method, parameters)
+    )
+    const driver = new CdpBrowserDriver(harness.webContents)
+    const navigation = driver.navigate(
+      'https://example.com/page',
+      new AbortController().signal
+    )
+    await vi.waitFor(() =>
+      expect(harness.sendCommand).toHaveBeenCalledWith(
+        'Page.navigate',
+        { url: 'https://example.com/page' }
+      )
+    )
+    harness.contentEvents.emit(
+      'did-fail-load',
+      {},
+      -105,
+      'NAME_NOT_RESOLVED',
+      'https://example.com/page',
+      true
+    )
+
+    await expect(navigation).rejects.toThrow('NAME_NOT_RESOLVED')
+    driver.dispose()
+  })
+
   it('creates opaque refs and redacts editable and protected values', async () => {
     const harness = createHarness(standardCommand)
     const driver = new CdpBrowserDriver(harness.webContents)
@@ -232,15 +333,127 @@ describe('CdpBrowserDriver', () => {
     driver.dispose()
   })
 
-  it('rejects accessibility trees above the configured byte limit', async () => {
-    const harness = createHarness(standardCommand)
-    const driver = new CdpBrowserDriver(harness.webContents, {
-      maximumAxBytes: 100
+  it('truncates very large accessibility trees without failing', async () => {
+    const largeNodes = [
+      {
+        nodeId: 'root',
+        backendDOMNodeId: 100,
+        role: { value: 'RootWebArea' },
+        name: { value: 'Large page' }
+      },
+      ...Array.from({ length: 2_000 }, (_, index) => ({
+        nodeId: `node-${index}`,
+        parentId: 'root',
+        backendDOMNodeId: index + 101,
+        role: { value: 'button' },
+        name: { value: `Item ${index} ${'x'.repeat(2_000)}` }
+      }))
+    ]
+    const harness = createHarness((method, parameters) =>
+      method === 'Accessibility.getFullAXTree'
+        ? Promise.resolve({ nodes: largeNodes })
+        : standardCommand(method, parameters)
+    )
+    const driver = new CdpBrowserDriver(harness.webContents)
+
+    const snapshot = await driver.snapshot(new AbortController().signal)
+
+    expect(snapshot.truncated).toBe(true)
+    expect(snapshot.nodes.length).toBeGreaterThan(0)
+    expect(snapshot.nodes.length).toBeLessThan(500)
+    expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeLessThanOrEqual(
+      128 * 1024
+    )
+    driver.dispose()
+  })
+
+  it('rejects a snapshot crossed by main-frame navigation', async () => {
+    const harness = createHarness(async (method, parameters) => {
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression !== 'document.readyState'
+      ) {
+        harness.contentEvents.emit(
+          'did-start-navigation',
+          {},
+          'https://example.com/changed',
+          false,
+          true
+        )
+      }
+      return standardCommand(method, parameters)
     })
+    const driver = new CdpBrowserDriver(harness.webContents)
 
     await expect(
       driver.snapshot(new AbortController().signal)
-    ).rejects.toThrow('可访问性树超过安全限制')
+    ).rejects.toThrow('生成快照时发生变化')
+    driver.dispose()
+  })
+
+  it('retries a transient CDP navigation race while taking a snapshot', async () => {
+    let metadataAttempts = 0
+    const harness = createHarness(async (method, parameters) => {
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression !== 'document.readyState'
+      ) {
+        metadataAttempts += 1
+        if (metadataAttempts === 1) {
+          throw new Error('Inspected target navigated or closed')
+        }
+      }
+      return standardCommand(method, parameters)
+    })
+    const driver = new CdpBrowserDriver(harness.webContents)
+
+    await expect(
+      driver.snapshot(new AbortController().signal)
+    ).resolves.toMatchObject({ title: 'Example' })
+    expect(metadataAttempts).toBe(2)
+    driver.dispose()
+  })
+
+  it('waits briefly for a placeholder challenge document to populate', async () => {
+    let snapshotAttempts = 0
+    const harness = createHarness(async (method, parameters) => {
+      if (method === 'Accessibility.getFullAXTree') {
+        snapshotAttempts += 1
+        return snapshotAttempts === 1
+          ? {
+              nodes: [
+                {
+                  nodeId: 'root',
+                  backendDOMNodeId: 10,
+                  role: { value: 'RootWebArea' },
+                  name: { value: '' }
+                }
+              ]
+            }
+          : standardCommand(method, parameters)
+      }
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression !== 'document.readyState' &&
+        snapshotAttempts === 1
+      ) {
+        return {
+          result: {
+            value: {
+              title: '',
+              url: 'https://example.com/challenge'
+            }
+          }
+        }
+      }
+      return standardCommand(method, parameters)
+    })
+    const driver = new CdpBrowserDriver(harness.webContents)
+
+    await expect(
+      driver.snapshot(new AbortController().signal)
+    ).resolves.toMatchObject({ title: 'Example' })
+    expect(snapshotAttempts).toBe(2)
     driver.dispose()
   })
 
@@ -417,15 +630,24 @@ describe('CdpBrowserDriver', () => {
     driver.dispose()
   })
 
-  it('bounds screenshots and returns only validated PNG data', async () => {
+  it('bounds screenshots and returns only validated JPEG data', async () => {
     const harness = createHarness(standardCommand)
     const driver = new CdpBrowserDriver(harness.webContents)
     await expect(
       driver.screenshot(new AbortController().signal)
     ).resolves.toMatchObject({
       type: 'image',
-      mimeType: 'image/png'
+      mimeType: 'image/jpeg'
     })
+    expect(harness.sendCommand).toHaveBeenCalledWith(
+      'Page.captureScreenshot',
+      {
+        format: 'jpeg',
+        quality: 60,
+        fromSurface: true,
+        captureBeyondViewport: false
+      }
+    )
     harness.sendCommand.mockImplementation(async (method) =>
       method === 'Page.captureScreenshot' ? { data: 'bm90LXBuZw==' } : {}
     )
@@ -444,9 +666,24 @@ describe('CdpBrowserDriver', () => {
       url: 'https://previous.example/'
     })
     harness.setUrl('https://previous.example/')
-    await expect(
-      driver.backTo(target, new AbortController().signal)
-    ).resolves.toEqual({ url: 'https://previous.example/' })
+    const navigation = driver.backTo(
+      target,
+      new AbortController().signal
+    )
+    await vi.waitFor(() =>
+      expect(harness.sendCommand).toHaveBeenCalledWith(
+        'Page.navigateToHistoryEntry',
+        { entryId: 4 }
+      )
+    )
+    harness.contentEvents.emit(
+      'did-navigate',
+      {},
+      'https://previous.example/'
+    )
+    await expect(navigation).resolves.toEqual({
+      url: 'https://previous.example/'
+    })
     expect(harness.sendCommand).toHaveBeenCalledWith(
       'Page.navigateToHistoryEntry',
       { entryId: 4 }
@@ -466,5 +703,27 @@ describe('CdpBrowserDriver', () => {
     await expect(
       driver.screenshot(new AbortController().signal)
     ).rejects.toThrow('不可用')
+  })
+
+  it('cancels an uncommitted navigation and removes temporary listeners on disposal', async () => {
+    const harness = createHarness(async (method, parameters) =>
+      method === 'Page.navigate'
+        ? { frameId: 'main', loaderId: 'loader-1' }
+        : standardCommand(method, parameters)
+    )
+    const driver = new CdpBrowserDriver(harness.webContents)
+    const navigation = driver.navigate(
+      'https://example.com/page',
+      new AbortController().signal
+    )
+    await vi.waitFor(() =>
+      expect(harness.contentEvents.listenerCount('did-navigate')).toBe(1)
+    )
+
+    driver.dispose()
+
+    await expect(navigation).rejects.toThrow('驱动已关闭')
+    expect(harness.contentEvents.listenerCount('did-navigate')).toBe(0)
+    expect(harness.contentEvents.listenerCount('did-fail-load')).toBe(0)
   })
 })

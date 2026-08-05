@@ -14,7 +14,8 @@ import {
   type KnowledgeSnapshot,
   type RuntimeSettings,
   type RuntimeSettingsInput,
-  type RuntimeFileSelectionKind
+  type RuntimeFileSelectionKind,
+  type WindowCaptureOption
 } from '../shared/contracts'
 import { ipcChannels } from '../shared/ipc-channels'
 import type {
@@ -450,9 +451,14 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.contextCaptureScreen
       ) as Promise<ContextAttachment>,
-    captureWindow: () =>
+    listWindows: () =>
       ipcRenderer.invoke(
-        ipcChannels.contextCaptureWindow
+        ipcChannels.contextListWindows
+      ) as Promise<WindowCaptureOption[]>,
+    captureWindow: (sourceId) =>
+      ipcRenderer.invoke(
+        ipcChannels.contextCaptureWindow,
+        { sourceId }
       ) as Promise<ContextAttachment>,
     readClipboard: () =>
       ipcRenderer.invoke(
