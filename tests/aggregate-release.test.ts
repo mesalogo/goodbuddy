@@ -58,7 +58,7 @@ function artifactName(
     return `${base}-setup.exe`
   }
   if (format === 'portable') {
-    return `${base}-portable.exe`
+    return `${base}-portable.zip`
   }
   const extension = format === 'zip' ? 'zip' : format
   return `${base}.${extension}`

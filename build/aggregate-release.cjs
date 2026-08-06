@@ -26,7 +26,7 @@ const targetDefinitions = [
 ]
 const allowedExtensions = {
   nsis: '.exe',
-  portable: '.exe',
+  portable: '.zip',
   dmg: '.dmg',
   zip: '.zip',
   AppImage: '.AppImage',
@@ -117,7 +117,7 @@ function expectedFormatForFile(name, target) {
     if (/-setup\.exe$/u.test(name)) {
       return 'nsis'
     }
-    if (/-portable\.exe$/u.test(name)) {
+    if (/-portable\.zip$/u.test(name)) {
       return 'portable'
     }
     return undefined

@@ -70,16 +70,17 @@ Keep Electron security boundaries intact:
   `npm run release:package -- --platform <platform> --arch <arch>`. It only
   packages for the native host and writes to
   `dist/release/<platform>-<arch>`.
-- Default deliverables are NSIS and portable EXE for Windows, DMG and ZIP for
+- Default deliverables are NSIS and portable ZIP for Windows, DMG and ZIP for
   macOS, and AppImage and DEB for Linux. Every target includes
   `release-manifest.json` with SHA-256 hashes.
 - `build/build-release.cjs` verifies the unpacked application, `app.asar`,
   bundled Continue and OpenCode runtimes, executable architecture, and package
   signatures before atomically replacing a release directory.
 - Keep electron-builder invocations on `--publish never`. Main-branch builds
-  upload 30-day GitHub Actions artifacts. Version-tag builds additionally
-  verify and aggregate packages before publishing GitHub Release assets.
-  Signing and macOS notarization are not configured.
+  run validation and build the production bundle without running the native
+  package matrix. Manual builds upload 30-day GitHub Actions artifacts.
+  Version-tag builds verify and aggregate packages before publishing GitHub
+  Release assets. Signing and macOS notarization are not configured.
 - Keep `ELECTRON_CACHE` and `ELECTRON_BUILDER_CACHE` under
   `${{ runner.temp }}` in step-level workflow contexts. A cache beneath the
   repository inherits the root `"type": "module"` and breaks electron-builder's

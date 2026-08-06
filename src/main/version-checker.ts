@@ -310,7 +310,7 @@ function hasExpectedFileFormats(
   if (platform === 'windows') {
     return (
       files.filter((file) => /-setup\.exe$/u.test(file.name)).length === 1 &&
-      files.filter((file) => /-portable\.exe$/u.test(file.name)).length === 1
+      files.filter((file) => /-portable\.zip$/u.test(file.name)).length === 1
     )
   }
   const extensions =

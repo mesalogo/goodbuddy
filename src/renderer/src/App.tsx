@@ -1021,24 +1021,22 @@ function App(): React.JSX.Element {
     if (!updates) {
       return
     }
-    const removeListener = updates.onResult((result) => {
-      if (result.updateAvailable) {
-        notify({
-          tone: 'info',
-          message: `发现 GoodBuddy ${result.latestVersion}，可在“关于与更新”中查看`,
-          dedupeKey: 'update-available'
-        })
-      }
-    })
     void updates
       .getSettings()
-      .then((settings) =>
-        settings.checkUpdatesOnStartup
-          ? updates.check()
-          : undefined
-      )
+      .then(async (settings) => {
+        if (!settings.checkUpdatesOnStartup) {
+          return
+        }
+        const result = await updates.check()
+        if (result.updateAvailable) {
+          notify({
+            tone: 'info',
+            message: `发现 GoodBuddy ${result.latestVersion}，可在“关于与更新”中查看`,
+            dedupeKey: 'update-available'
+          })
+        }
+      })
       .catch(() => undefined)
-    return removeListener
   }, [])
 
   useEffect(() => {
@@ -2647,7 +2645,7 @@ function App(): React.JSX.Element {
     const transcript = conversation.messages
       .map(
         (message) =>
-          `${message.role === 'user' ? '你' : 'GoodBuddy'}：\n${message.content}${formatAttachmentList(message.attachments)}`
+          `${message.role === 'user' ? '用户' : 'GoodBuddy'}：\n${message.content}${formatAttachmentList(message.attachments)}`
       )
       .join('\n\n')
     try {
@@ -2668,7 +2666,7 @@ function App(): React.JSX.Element {
       `# ${conversation.title}`,
       '',
       ...conversation.messages.flatMap((message) => [
-        `## ${message.role === 'user' ? '你' : 'GoodBuddy'}`,
+        `## ${message.role === 'user' ? '用户' : 'GoodBuddy'}`,
         '',
         `${message.content}${formatAttachmentList(message.attachments)}`,
         ''
@@ -3802,7 +3800,9 @@ function App(): React.JSX.Element {
                 <div className="message__body">
                   <div className="message__meta">
                     <strong>
-                      {message.role === 'assistant' ? 'GoodBuddy' : '你'}
+                      {message.role === 'assistant'
+                        ? 'GoodBuddy'
+                        : '用户'}
                     </strong>
                     <span>{formatTime(message.createdAt)}</span>
                   </div>

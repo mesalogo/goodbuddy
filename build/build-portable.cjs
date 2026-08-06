@@ -283,6 +283,50 @@ const electronDist = ensureElectronRuntime()
 mkdirSync(outputRoot, { recursive: true })
 rmSync(stagingRoot, { recursive: true, force: true })
 
+for (const [label, script, args] of [
+  [
+    'Node 类型检查',
+    join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
+    ['--noEmit', '-p', 'tsconfig.node.json']
+  ],
+  [
+    'Renderer 类型检查',
+    join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
+    ['--noEmit', '-p', 'tsconfig.web.json']
+  ],
+  [
+    'Production bundle',
+    join(
+      root,
+      'node_modules',
+      'electron-vite',
+      'bin',
+      'electron-vite.js'
+    ),
+    ['build']
+  ]
+]) {
+  const buildResult = spawnSync(
+    process.execPath,
+    [script, ...args],
+    {
+      cwd: root,
+      env: process.env,
+      shell: false,
+      stdio: 'inherit',
+      windowsHide: true
+    }
+  )
+  if (buildResult.error) {
+    throw buildResult.error
+  }
+  if (buildResult.status !== 0) {
+    throw new Error(
+      `${label}失败（code ${buildResult.status ?? 1}）`
+    )
+  }
+}
+
 const result = spawnSync(
   process.execPath,
   [

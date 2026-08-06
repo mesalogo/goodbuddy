@@ -79,7 +79,7 @@ npm run dist
 npm run dist:win
 ```
 
-生成 Windows 便携目录：
+生成用于本机调试的 Windows 便携目录：
 
 ```bash
 npm run portable
@@ -138,23 +138,30 @@ Linux 的 `x64`、`arm64` 版本。生产 bundle 仅作为短期 Actions artifac
 npm run release:package -- --platform <windows|macos|linux> --arch <x64|arm64>
 ```
 
-默认产物为 Windows 的 NSIS 与 portable EXE、macOS 的 DMG 与 ZIP，以及
-Linux 的 AppImage 与 DEB。每个目标目录都包含带文件大小和 SHA-256 的
+默认发布产物为 Windows 的 NSIS 安装包与 portable ZIP、macOS 的 DMG 与
+ZIP，以及 Linux 的 AppImage 与 DEB。Windows portable ZIP 解压后可直接
+运行 `GoodBuddy.exe`，并包含启用便携数据目录的
+`.goodbuddy-portable.json`。每个目标目录都包含带文件大小和 SHA-256 的
 `release-manifest.json`。
 
-推送 `v${package.version}` 标签时，只有在六个打包目标全部成功后，工作流
-才会严格校验并聚合所有平台产物，生成按平台重命名的 manifests、总
-`release-manifest.json` 和 `SHA256SUMS`。随后工作流创建或更新 draft
-GitHub Release，上传全部资产成功后才发布。重跑会保留人工编辑的 Release
-notes 和未知附件。推送 `main` 或普通手动触发只构建 Actions artifacts，
-不会创建或更新 Release。
+推送 `main` 时只运行源码验证和 production bundle 构建，不运行六平台
+打包矩阵，避免随后推送版本标签时对同一提交重复完整打包。手动触发会运行
+验证和六平台打包，并保留 30 天 Actions artifacts，但不会创建 Release。
+
+推送 `v${package.version}` 标签时，工作流运行验证和六平台打包。只有在
+全部目标成功后，才会严格校验并聚合所有平台产物，生成按平台重命名的
+manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流创建或
+更新 draft GitHub Release，上传全部资产成功后才发布。重跑会保留人工
+编辑的 Release notes 和未知附件。
 
 发布标签必须与 `package.json` 版本完全一致。实际推送标签和触发发布前仍
 需人工确认，例如当前版本应使用：
 
 ```bash
-git tag v$(node -p "require('./package.json').version")
-git push origin v$(node -p "require('./package.json').version")
+tag="v$(node -p "require('./package.json').version")"
+git tag "$tag"
+git push origin "$tag"
+git push github "$tag"
 ```
 
 当前未配置 Windows/macOS 代码签名或 macOS notarization。对外分发前应按

@@ -84,7 +84,18 @@ GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode �
 
 ## 功能矩阵与路线图
 
-完整的现有能力、开发中功能和重大规划统一记录在 [FEATURES.md](FEATURES.md)。其中包含 Agent Runtime、模型连接、Skills 与 MCP、知识库与知识图谱、企业通信、可选语音模型，以及阿里云 ECS、腾讯云 CVM、AWS EC2 多云远程沙盒 Agent 路线图。
+以下为仓库首页的简要路线图；完整能力说明、状态和重大规划统一记录在 [FEATURES.md](FEATURES.md)。
+
+- [x] [跨平台桌面工作空间与安全上下文](FEATURES.md#桌面基础工作空间与上下文)
+- [x] [多 Runtime、模型连接、Skills 与 MCP](FEATURES.md#agent-runtime-与模型连接)
+- [x] [本地知识库、向量检索与知识图谱](FEATURES.md#skillsmcp-与知识库)
+- [x] [任务、成果、记忆与智能心跳](FEATURES.md#工作管理长期协作与工作流)
+- [ ] [本地录音与离线转写](FEATURES.md#浏览器通信语音与应用维护)
+- [ ] [魔法笔记 / Magic Notes](FEATURES.md#知识工作空间与魔法笔记)：本地优先的结构化笔记、可追溯摘录与受控 AI 整理。
+- [ ] [Agent 框架、受控工作流与团队协作](FEATURES.md#agent-框架与协作能力)
+- [ ] [多云远程沙盒 Agent](FEATURES.md#多云远程沙盒-agent)
+
+`[x]` 表示当前已提供，`[ ]` 表示开发中或规划中；未完成项目不代表已包含在当前发布版本中。
 
 ## 隐私说明
 

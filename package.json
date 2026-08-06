@@ -1,6 +1,6 @@
 {
   "name": "goodbuddy",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "private": true,
   "description": "Secure desktop AI workspace with controlled Agent Runtimes",
   "desktopName": "GoodBuddy",
@@ -28,7 +28,7 @@
     "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb --arm64",
     "icons": "node build/generate-icons.mjs",
     "release:package": "node build/build-release.cjs",
-    "portable": "npm run build && node build/build-portable.cjs"
+    "portable": "node build/build-portable.cjs"
   },
   "build": {
     "appId": "live.digiman.goodbuddy",
@@ -134,6 +134,7 @@
     "@wecom/aibot-node-sdk": "^1.0.6",
     "cross-spawn": "^7.0.6",
     "dingtalk-stream": "^2.1.6-beta.1",
+    "echarts": "^6.1.0",
     "fflate": "^0.8.3",
     "html-to-text": "^10.0.0",
     "json5": "^2.2.3",

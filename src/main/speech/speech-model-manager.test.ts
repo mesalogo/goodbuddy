@@ -55,7 +55,8 @@ function downloadableCatalog(
       languages: ['中文'],
       family: 'whisper',
       quantization: 'int8',
-      repositoryUrl: 'https://huggingface.co/example/download-test-model',
+      repositoryUrl:
+        'https://modelscope.cn/models/example/download-test-model',
       license: {
         name: 'MIT License',
         notice: 'Test-only model metadata.',
@@ -68,8 +69,8 @@ function downloadableCatalog(
           role: 'model',
           download: {
             url:
-              'https://huggingface.co/example/download-test-model/' +
-              'resolve/revision/model.onnx',
+              'https://modelscope.cn/models/example/download-test-model/' +
+              `resolve/${'a'.repeat(40)}/model.onnx`,
             size: modelBytes.byteLength,
             sha256: sha256(modelBytes)
           }
@@ -79,8 +80,8 @@ function downloadableCatalog(
           role: 'tokens',
           download: {
             url:
-              'https://huggingface.co/example/download-test-model/' +
-              'resolve/revision/tokens.txt',
+              'https://modelscope.cn/models/example/download-test-model/' +
+              `resolve/${'a'.repeat(40)}/tokens.txt`,
             size: tokenBytes.byteLength,
             sha256: sha256(tokenBytes)
           }
@@ -124,6 +125,16 @@ describe('speech model catalog', () => {
       'tiny-decoder.int8.onnx',
       'tiny-tokens.txt'
     ])
+    for (const entry of SPEECH_MODEL_CATALOG) {
+      expect(entry.repositoryUrl).toMatch(
+        /^https:\/\/modelscope\.cn\/models\//u
+      )
+      for (const file of entry.files) {
+        expect(file.download?.url).toMatch(
+          /^https:\/\/modelscope\.cn\/models\/[^/]+\/[^/]+\/resolve\/[a-f0-9]{40}\/[^/]+$/u
+        )
+      }
+    }
   })
 })
 
@@ -168,7 +179,9 @@ describe('SpeechModelManager downloads', () => {
     })
     expect(transport).toHaveBeenCalledTimes(2)
     for (const [input, init] of transport.mock.calls) {
-      expect(String(input)).toMatch(/^https:\/\/huggingface\.co\//u)
+      expect(String(input)).toMatch(
+        /^https:\/\/modelscope\.cn\/models\//u
+      )
       expect(init).toMatchObject({
         method: 'GET',
         redirect: 'manual',
@@ -203,26 +216,66 @@ describe('SpeechModelManager downloads', () => {
     })
   })
 
-  it('rejects untrusted redirects and bad digests without installing', async () => {
+  it('accepts arbitrary HTTP hosts and cross-host redirects', async () => {
     const userData = await temporaryDirectory()
     const modelBytes = new TextEncoder().encode('expected')
-    const catalog = downloadableCatalog(modelBytes)
+    const tokenBytes = new TextEncoder().encode('tokens')
+    const catalog = downloadableCatalog(modelBytes).map((entry) => ({
+      ...entry,
+      files: entry.files.map((file) => ({
+        ...file,
+        download: file.download
+          ? {
+              ...file.download,
+              url: file.download.url.replace(
+                'https://modelscope.cn',
+                'http://models.internal.example'
+              )
+            }
+          : undefined
+      }))
+    }))
+    const transport = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input))
+      if (url.hostname === 'models.internal.example') {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: `https://cdn.example.net${url.pathname}`
+          }
+        })
+      }
+      const bytes = url.pathname.endsWith('model.onnx')
+        ? modelBytes
+        : tokenBytes
+      return new Response(bytes, {
+        headers: { 'content-length': String(bytes.byteLength) }
+      })
+    })
     const redirected = new SpeechModelManager({
       userDataDirectory: userData,
       catalog,
-      fetch: vi.fn<typeof fetch>(async () =>
-        new Response(null, {
-          status: 302,
-          headers: {
-            location: 'https://attacker.invalid/model.onnx'
-          }
-        })
-      )
+      fetch: transport
     })
+
     await expect(
       redirected.install('download-test-model')
-    ).rejects.toThrow('允许的 Hugging Face HTTPS')
+    ).resolves.toMatchObject({ id: 'download-test-model' })
+    expect(transport).toHaveBeenCalledTimes(4)
+    expect(
+      transport.mock.calls.map(([input]) => new URL(String(input)).hostname)
+    ).toEqual([
+      'models.internal.example',
+      'cdn.example.net',
+      'models.internal.example',
+      'cdn.example.net'
+    ])
+  })
 
+  it('rejects bad digests without installing', async () => {
+    const userData = await temporaryDirectory()
+    const modelBytes = new TextEncoder().encode('expected')
+    const catalog = downloadableCatalog(modelBytes)
     const badDigest = new SpeechModelManager({
       userDataDirectory: userData,
       catalog,

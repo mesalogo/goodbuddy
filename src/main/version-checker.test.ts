@@ -22,7 +22,7 @@ const files = [
     sha256: 'a'.repeat(64)
   },
   {
-    name: `GoodBuddy-${latestVersion}-windows-x64-portable.exe`,
+    name: `GoodBuddy-${latestVersion}-windows-x64-portable.zip`,
     size: 102,
     sha256: 'b'.repeat(64)
   }

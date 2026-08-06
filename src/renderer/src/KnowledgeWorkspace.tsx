@@ -37,6 +37,7 @@ import {
   PageTabs,
   type PageTab
 } from './WorkspacePrimitives'
+import { KnowledgeGraphChart } from './KnowledgeGraphChart'
 import { trapTabFocus } from './dialog-focus'
 
 export type KnowledgeStorageMode = 'reference' | 'managed'
@@ -265,14 +266,13 @@ const styles = {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 7,
-    font: 'inherit'
+    gap: 'var(--space-2)'
   },
   input: {
     width: '100%',
     boxSizing: 'border-box' as const,
-    minHeight: 40,
-    padding: '9px 11px',
+    minHeight: 'var(--control-height)',
+    padding: 'var(--space-2) var(--space-3)',
     border: '1px solid var(--border-control)',
     borderRadius: 'var(--radius-control)',
     outline: 'none',
@@ -282,14 +282,14 @@ const styles = {
   },
   label: {
     display: 'grid',
-    gap: 7,
+    gap: 'var(--space-2)',
     color: 'var(--text-secondary)',
-    fontSize: 13,
+    fontSize: 'var(--font-body)',
     fontWeight: 650
   },
   muted: {
     color: 'var(--text-muted)',
-    fontSize: 13,
+    fontSize: 'var(--font-body)',
     lineHeight: 1.55
   }
 } as const
@@ -1524,12 +1524,7 @@ function GraphView({
     useState<KnowledgeGraphRelation | 'new'>()
   const [mergeTargetId, setMergeTargetId] = useState('')
   const [zoom, setZoom] = useState(1)
-  const [draggingNode, setDraggingNode] = useState<{
-    id: string
-    offsetX: number
-    offsetY: number
-  }>()
-  const svgRef = useRef<SVGSVGElement>(null)
+  const [relationsExpanded, setRelationsExpanded] = useState(false)
 
   const nodeMap = useMemo(
     () => new Map(graphNodes.map((node) => [node.id, node])),
@@ -1554,10 +1549,14 @@ function GraphView({
     () => new Set(visibleNodes.map((node) => node.id)),
     [visibleNodes]
   )
-  const visibleRelations = graphRelations.filter(
-    (relation) =>
-      visibleIds.has(relation.sourceId) &&
-      visibleIds.has(relation.targetId)
+  const visibleRelations = useMemo(
+    () =>
+      graphRelations.filter(
+        (relation) =>
+          visibleIds.has(relation.sourceId) &&
+          visibleIds.has(relation.targetId)
+      ),
+    [graphRelations, visibleIds]
   )
   const selectedNode = selectedNodeId
     ? nodeMap.get(selectedNodeId)
@@ -1577,21 +1576,11 @@ function GraphView({
     selectedEvidenceIds.has(item.id)
   )
 
-  const pointerPosition = (
-    event: React.PointerEvent<SVGElement>
-  ): { x: number; y: number } | undefined => {
-    const svg = svgRef.current
-    if (!svg) {
-      return undefined
-    }
-    const rect = svg.getBoundingClientRect()
-    if (!rect.width || !rect.height) {
-      return undefined
-    }
-    return {
-      x: ((event.clientX - rect.left) / rect.width) * 900 / zoom,
-      y: ((event.clientY - rect.top) / rect.height) * 560 / zoom
-    }
+  const selectNode = (nodeId: string): void => {
+    setSelectedNodeId(nodeId)
+    setCreatingEntity(false)
+    setEditingEntity(false)
+    setRelationForm(undefined)
   }
 
   return (
@@ -1608,7 +1597,7 @@ function GraphView({
         style={{
           ...styles.surface,
           display: 'grid',
-          gridTemplateRows: 'auto minmax(0, 1fr)',
+          gridTemplateRows: 'auto minmax(0, 1fr) auto',
           overflow: 'hidden'
         }}
       >
@@ -1647,6 +1636,27 @@ function GraphView({
               </option>
             ))}
           </select>
+          <select
+            aria-label="选择图谱实体"
+            className="knowledge-graph__entity-picker"
+            onChange={(event) => {
+              if (event.currentTarget.value) {
+                selectNode(event.currentTarget.value)
+              }
+            }}
+            value={
+              selectedNodeId && visibleIds.has(selectedNodeId)
+                ? selectedNodeId
+                : ''
+            }
+          >
+            <option value="">选择实体</option>
+            {visibleNodes.map((node) => (
+              <option key={node.id} value={node.id}>
+                {node.label} · {node.type}
+              </option>
+            ))}
+          </select>
           <button
             className="secondary-button"
             onClick={() => {
@@ -1673,10 +1683,10 @@ function GraphView({
           </button>
           <span
             aria-live="polite"
+            className="knowledge-graph__zoom"
             style={{
               minWidth: 42,
-              color: 'var(--text-muted)',
-              fontSize: 12
+              color: 'var(--text-muted)'
             }}
           >
             {Math.round(zoom * 100)}%
@@ -1710,153 +1720,50 @@ function GraphView({
             </div>
           </div>
         ) : (
-          <svg
-            aria-label="实体关系图"
-            onPointerMove={(event) => {
-              if (!draggingNode) {
-                return
-              }
-              const point = pointerPosition(event)
-              if (!point) {
-                return
-              }
-              onMoveNode(draggingNode.id, {
-                x: Math.max(38, Math.min(862, point.x - draggingNode.offsetX)),
-                y: Math.max(28, Math.min(532, point.y - draggingNode.offsetY))
-              })
-            }}
-            onPointerUp={(event) => {
-              if (draggingNode) {
-                event.currentTarget.releasePointerCapture(event.pointerId)
-                setDraggingNode(undefined)
-              }
-            }}
-            ref={svgRef}
-            role="img"
-            className="knowledge-graph__svg"
-            style={{
-              width: '100%',
-              background: 'var(--surface-subtle)',
-              touchAction: 'none'
-            }}
-            viewBox={`0 0 ${900 / zoom} ${560 / zoom}`}
-          >
-            <defs>
-              <marker
-                id="knowledge-arrow"
-                markerHeight="7"
-                markerWidth="7"
-                orient="auto-start-reverse"
-                refX="17"
-                refY="3.5"
+          <>
+            <KnowledgeGraphChart
+              nodes={visibleNodes}
+              onMoveNode={onMoveNode}
+              onSelectNode={selectNode}
+              onZoomChange={setZoom}
+              relations={visibleRelations}
+              selectedNodeId={selectedNodeId}
+              zoom={zoom}
+            />
+            {visibleRelations.length > 0 && (
+              <details
+                className="knowledge-graph__accessible-surface"
+                onToggle={(event) =>
+                  setRelationsExpanded(event.currentTarget.open)
+                }
+                open={relationsExpanded}
               >
-                <polygon
-                  fill="var(--text-muted)"
-                  points="0 0, 7 3.5, 0 7"
-                />
-              </marker>
-            </defs>
-            {visibleRelations.map((relation) => {
-              const source = nodeMap.get(relation.sourceId)
-              const target = nodeMap.get(relation.targetId)
-              if (!source || !target) {
-                return null
-              }
-              return (
-                <g key={relation.id}>
-                  <line
-                    markerEnd="url(#knowledge-arrow)"
-                    stroke="var(--text-muted)"
-                    strokeWidth="1.5"
-                    x1={source.x}
-                    x2={target.x}
-                    y1={source.y}
-                    y2={target.y}
-                  />
-                  <text
-                    fill="var(--text-secondary)"
-                    fontSize="11"
-                    textAnchor="middle"
-                    x={(source.x + target.x) / 2}
-                    y={(source.y + target.y) / 2 - 6}
+                <summary>
+                  可见关系 {visibleRelations.length} 条
+                </summary>
+                {relationsExpanded && (
+                  <ul
+                    aria-label="可见关系列表"
+                    className="knowledge-graph__relation-list"
                   >
-                    {relation.type}
-                  </text>
-                </g>
-              )
-            })}
-            {visibleNodes.map((node) => {
-              const selected = selectedNodeId === node.id
-              return (
-                <g
-                  aria-label={`实体 ${node.label}`}
-                  key={node.id}
-                  onClick={() => {
-                    setSelectedNodeId(node.id)
-                    setCreatingEntity(false)
-                    setEditingEntity(false)
-                    setRelationForm(undefined)
-                  }}
-                  onPointerDown={(event) => {
-                    const point = pointerPosition(event)
-                    if (!point) {
-                      return
-                    }
-                    event.currentTarget.ownerSVGElement?.setPointerCapture(
-                      event.pointerId
-                    )
-                    setDraggingNode({
-                      id: node.id,
-                      offsetX: point.x - node.x,
-                      offsetY: point.y - node.y
-                    })
-                  }}
-                  role="button"
-                  style={{ cursor: 'grab', outline: 'none' }}
-                  tabIndex={0}
-                  transform={`translate(${node.x} ${node.y})`}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      setSelectedNodeId(node.id)
-                      setCreatingEntity(false)
-                    }
-                  }}
-                >
-                  <circle
-                    fill={
-                      selected
-                        ? 'var(--accent-selected)'
-                        : 'var(--accent-subtle)'
-                    }
-                    r={selected ? 30 : 26}
-                    stroke={
-                      selected ? 'var(--accent)' : 'var(--accent-hover)'
-                    }
-                    strokeWidth={selected ? 3 : 2}
-                  />
-                  <text
-                    fill="var(--text-primary)"
-                    fontSize="12"
-                    fontWeight="700"
-                    textAnchor="middle"
-                    y="4"
-                  >
-                    {node.label.length > 8
-                      ? `${node.label.slice(0, 8)}…`
-                      : node.label}
-                  </text>
-                  <text
-                    fill="var(--text-secondary)"
-                    fontSize="10"
-                    textAnchor="middle"
-                    y="44"
-                  >
-                    {node.type}
-                  </text>
-                </g>
-              )
-            })}
-          </svg>
+                    {visibleRelations.map((relation) => (
+                      <li key={relation.id}>
+                        <span>
+                          {nodeMap.get(relation.sourceId)?.label}
+                        </span>
+                        <ArrowRight aria-hidden="true" size={12} />
+                        <strong>{relation.type}</strong>
+                        <ArrowRight aria-hidden="true" size={12} />
+                        <span>
+                          {nodeMap.get(relation.targetId)?.label}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </details>
+            )}
+          </>
         )}
       </section>
 

@@ -9,6 +9,7 @@ import {
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Writable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
 
 interface ReleaseOptions {
@@ -29,6 +30,13 @@ interface ReleaseBuilderModule {
     options: ReleaseOptions,
     outputDirectory: string
   ) => string[]
+  createPortableZip: (
+    unpackedDirectory: string,
+    zipPath: string,
+    dependencies?: {
+      openOutput: (filePath: string) => Writable
+    }
+  ) => Promise<void>
   detectBinaryArchitecture: (
     buffer: Buffer
   ) => 'x64' | 'arm64' | undefined
@@ -45,6 +53,7 @@ interface ReleaseBuilderModule {
     directory: string,
     options: ReleaseOptions
   ) => void
+  verifyPortableZip: (filePath: string) => void
   writeManifest: (
     directory: string,
     options: ReleaseOptions
@@ -98,6 +107,43 @@ function machO(cpuType: number): Buffer {
   const buffer = Buffer.alloc(8)
   buffer.writeUInt32LE(0xfeedfacf, 0)
   buffer.writeUInt32LE(cpuType, 4)
+  return buffer
+}
+
+function portableDirectory(parent: string): string {
+  const directory = join(parent, 'portable')
+  mkdirSync(
+    join(directory, 'resources', 'runtimes', 'opencode'),
+    { recursive: true }
+  )
+  mkdirSync(
+    join(directory, 'resources', 'runtimes', 'continue'),
+    { recursive: true }
+  )
+  for (const [path, content] of [
+    ['GoodBuddy.exe', 'MZ'],
+    ['resources/app.asar', 'asar'],
+    ['resources/icon.ico', 'icon'],
+    ['resources/tray-icon.png', 'tray'],
+    ['resources/runtimes/opencode/opencode.exe', 'MZ'],
+    ['resources/runtimes/continue/package.json', '{}']
+  ] satisfies Array<[string, string]>) {
+    writeFileSync(join(directory, ...path.split('/')), content)
+  }
+  return directory
+}
+
+function endOfCentralDirectory(
+  entryCount: number,
+  centralSize: number,
+  centralOffset = 0
+): Buffer {
+  const buffer = Buffer.alloc(22)
+  buffer.writeUInt32LE(0x06054b50, 0)
+  buffer.writeUInt16LE(entryCount, 8)
+  buffer.writeUInt16LE(entryCount, 10)
+  buffer.writeUInt32LE(centralSize, 12)
+  buffer.writeUInt32LE(centralOffset, 16)
   return buffer
 }
 
@@ -175,15 +221,20 @@ describe('release build arguments', () => {
       expect.arrayContaining([
         '--win',
         'nsis',
-        'portable',
+        'dir',
         '--arm64',
         '--config.directories.output=C:\\release-stage',
         '--publish',
         'never',
-        expect.stringContaining('nsis.artifactName='),
-        expect.stringContaining('portable.artifactName=')
+        expect.stringContaining('nsis.artifactName=')
       ])
     )
+    expect(arguments_).not.toContain('portable')
+    expect(
+      arguments_.some((argument) =>
+        argument.includes('portable.artifactName=')
+      )
+    ).toBe(false)
   })
 })
 
@@ -204,6 +255,75 @@ describe('release binary architecture detection', () => {
 })
 
 describe('release output safety', () => {
+  it('preserves an existing portable ZIP when exclusive creation fails', async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-portable-existing-')
+    )
+    try {
+      const unpacked = portableDirectory(directory)
+      const zipPath = join(directory, 'portable.zip')
+      writeFileSync(zipPath, 'keep-existing-output')
+
+      await expect(
+        releaseBuilder.createPortableZip(unpacked, zipPath)
+      ).rejects.toMatchObject({ code: 'EEXIST' })
+      expect(readFileSync(zipPath, 'utf8')).toBe(
+        'keep-existing-output'
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('handles portable ZIP output stream failures without hanging', async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-portable-write-error-')
+    )
+    try {
+      const unpacked = portableDirectory(directory)
+      const failure = new Error('simulated ZIP write failure')
+      const output = new Writable({
+        write(_chunk, _encoding, callback) {
+          callback(failure)
+        }
+      })
+
+      await expect(
+        releaseBuilder.createPortableZip(
+          unpacked,
+          join(directory, 'unused.zip'),
+          { openOutput: () => output }
+        )
+      ).rejects.toThrow('simulated ZIP write failure')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    [
+      'an excessive entry count',
+      endOfCentralDirectory(50_001, 46)
+    ],
+    [
+      'an oversized central directory',
+      endOfCentralDirectory(7, 64 * 1024 * 1024 + 1)
+    ]
+  ])('rejects %s before reading ZIP central data', (_case, bytes) => {
+    const directory = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-portable-invalid-')
+    )
+    try {
+      const zipPath = join(directory, 'portable.zip')
+      writeFileSync(zipPath, bytes)
+      expect(() =>
+        releaseBuilder.verifyPortableZip(zipPath)
+      ).toThrow('中央目录无效')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('writes a deterministic artifact manifest with streaming hashes', async () => {
     const directory = mkdtempSync(
       join(tmpdir(), 'goodbuddy-release-manifest-')
@@ -292,7 +412,7 @@ describe('release output safety', () => {
     }
   })
 
-  it('requires one artifact for every requested format', () => {
+  it('requires one artifact for every requested format', async () => {
     const directory = mkdtempSync(
       join(tmpdir(), 'goodbuddy-release-artifacts-')
     )
@@ -304,12 +424,14 @@ describe('release output safety', () => {
         ),
         'MZ'
       )
-      writeFileSync(
-        join(
-          directory,
-          `GoodBuddy-${packageVersion}-windows-x64-portable.exe`
-        ),
-        'MZ'
+      const unpacked = portableDirectory(directory)
+      const portableZip = join(
+        directory,
+        `GoodBuddy-${packageVersion}-windows-x64-portable.zip`
+      )
+      await releaseBuilder.createPortableZip(
+        unpacked,
+        portableZip
       )
       expect(() =>
         releaseBuilder.verifyArtifacts(
@@ -317,12 +439,7 @@ describe('release output safety', () => {
           windowsOptions
         )
       ).not.toThrow()
-      rmSync(
-        join(
-          directory,
-          `GoodBuddy-${packageVersion}-windows-x64-portable.exe`
-        )
-      )
+      rmSync(portableZip)
       expect(() =>
         releaseBuilder.verifyArtifacts(
           directory,

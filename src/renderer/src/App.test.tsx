@@ -549,6 +549,94 @@ describe('App', () => {
     expect(removeMaximizedChangedListener).toHaveBeenCalledOnce()
   })
 
+  it('checks for updates silently on startup and only reports a new version', async () => {
+    const check = vi.fn(async () => ({
+      updateAvailable: true,
+      currentVersion: '0.8.3',
+      latestVersion: '0.9.0',
+      releaseUrl:
+        'https://github.com/mesalogo/goodbuddy/releases/tag/v0.9.0',
+      target: {
+        platform: 'windows' as const,
+        arch: 'x64' as const,
+        formats: ['nsis', 'portable'],
+        files: [
+          {
+            name: 'GoodBuddy-0.9.0-windows-x64-portable.zip',
+            size: 1,
+            sha256: 'a'.repeat(64)
+          }
+        ]
+      }
+    }))
+    api.updates = {
+      getSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: true
+      })),
+      updateSettings: vi.fn(async (input) => input),
+      check,
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      render(<App />)
+      await waitFor(() => expect(check).toHaveBeenCalledOnce())
+      expect(
+        await screen.findByText(
+          '发现 GoodBuddy 0.9.0，可在“关于与更新”中查看'
+        )
+      ).toBeInTheDocument()
+      expect(api.updates.onResult).not.toHaveBeenCalled()
+    } finally {
+      delete api.updates
+    }
+  })
+
+  it('does not disturb startup when updates are current or offline', async () => {
+    const currentResult = {
+      updateAvailable: false,
+      currentVersion: '0.8.3',
+      latestVersion: '0.8.3',
+      releaseUrl:
+        'https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.3',
+      target: {
+        platform: 'windows' as const,
+        arch: 'x64' as const,
+        formats: ['nsis', 'portable'],
+        files: []
+      }
+    }
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(currentResult)
+      .mockRejectedValueOnce(new Error('offline'))
+    api.updates = {
+      getSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: true
+      })),
+      updateSettings: vi.fn(async (input) => input),
+      check,
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      const first = render(<App />)
+      await waitFor(() => expect(check).toHaveBeenCalledTimes(1))
+      expect(
+        screen.queryByText(/发现 GoodBuddy|版本检查失败/u)
+      ).not.toBeInTheDocument()
+
+      first.unmount()
+      render(<App />)
+      await waitFor(() => expect(check).toHaveBeenCalledTimes(2))
+      expect(
+        screen.queryByText(/发现 GoodBuddy|版本检查失败/u)
+      ).not.toBeInTheDocument()
+    } finally {
+      delete api.updates
+    }
+  })
+
   it('keeps rendering when an older preload has no browser bridge', async () => {
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,

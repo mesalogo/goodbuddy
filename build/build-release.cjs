@@ -1,5 +1,7 @@
 const { spawn } = require('node:child_process')
 const {
+  createReadStream,
+  createWriteStream,
   existsSync,
   closeSync,
   openSync,
@@ -11,7 +13,18 @@ const {
   statSync,
   writeFileSync
 } = require('node:fs')
-const { basename, dirname, join, parse, resolve } = require('node:path')
+const { once } = require('node:events')
+const {
+  basename,
+  dirname,
+  join,
+  parse,
+  relative,
+  resolve,
+  sep
+} = require('node:path')
+const { finished } = require('node:stream/promises')
+const { Zip, ZipDeflate } = require('fflate')
 const { sha256File } = require('./file-hash.cjs')
 
 const root = join(__dirname, '..')
@@ -21,6 +34,17 @@ const packageJson = JSON.parse(
 const productName = packageJson.build?.productName ?? packageJson.name
 const releaseRoot = join(root, 'dist', 'release')
 const manifestName = 'release-manifest.json'
+const portableMarkerName = '.goodbuddy-portable.json'
+const portableRequiredFiles = [
+  `${productName}.exe`,
+  'resources/app.asar',
+  'resources/icon.ico',
+  'resources/tray-icon.png',
+  'resources/runtimes/opencode/opencode.exe',
+  'resources/runtimes/continue/package.json'
+]
+const maxPortableZipEntries = 50_000
+const maxPortableCentralDirectoryBytes = 64 * 1024 * 1024
 const ansiEscapeCharacter = String.fromCharCode(27)
 const ansiSequenceSuffixPattern = /\[[0-9;]*[A-Za-z]/gu
 const supportedArchitectures = new Set(['x64', 'arm64'])
@@ -71,7 +95,7 @@ const platformDefinitions = {
 }
 const formatExtensions = {
   nsis: '.exe',
-  portable: '.exe',
+  portable: '.zip',
   dmg: '.dmg',
   zip: '.zip',
   AppImage: '.AppImage',
@@ -201,10 +225,17 @@ function run(command, args, environment = process.env) {
 
 function buildElectronBuilderArguments(options, outputDirectory) {
   const definition = platformDefinitions[options.platform]
+  const builderFormats = [...new Set(
+    options.formats.map((format) =>
+      options.platform === 'windows' && format === 'portable'
+        ? 'dir'
+        : format
+    )
+  )]
   const builderArguments = [
     join(root, 'node_modules', 'electron-builder', 'cli.js'),
     definition.builderFlag,
-    ...options.formats,
+    ...builderFormats,
     `--${options.arch}`,
     `--config.directories.output=${outputDirectory}`,
     '--publish',
@@ -216,14 +247,6 @@ function buildElectronBuilderArguments(options, outputDirectory) {
   ) {
     builderArguments.push(
       `--config.nsis.artifactName=${productName}-\${version}-windows-\${arch}-setup.\${ext}`
-    )
-  }
-  if (
-    options.platform === 'windows' &&
-    options.formats.includes('portable')
-  ) {
-    builderArguments.push(
-      `--config.portable.artifactName=${productName}-\${version}-windows-\${arch}-portable.\${ext}`
     )
   }
   return builderArguments
@@ -376,6 +399,300 @@ function verifyUnpackedOutput(directory, options) {
   return unpackedDirectory
 }
 
+function toArchivePath(rootDirectory, filePath) {
+  return relative(rootDirectory, filePath).split(sep).join('/')
+}
+
+function listPortableFiles(rootDirectory) {
+  const files = []
+  const pending = [rootDirectory]
+  while (pending.length > 0) {
+    const directory = pending.pop()
+    const entries = readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => right.name.localeCompare(left.name))
+    for (const entry of entries) {
+      const filePath = join(directory, entry.name)
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Portable 目录不能包含符号链接：${filePath}`)
+      }
+      if (entry.isDirectory()) {
+        pending.push(filePath)
+      } else if (entry.isFile()) {
+        files.push(filePath)
+        if (files.length > maxPortableZipEntries) {
+          throw new Error(
+            `Portable ZIP 文件数量超过限制：${files.length}`
+          )
+        }
+      } else {
+        throw new Error(`Portable 目录包含不支持的文件类型：${filePath}`)
+      }
+    }
+  }
+  return files.sort((left, right) =>
+    toArchivePath(rootDirectory, left).localeCompare(
+      toArchivePath(rootDirectory, right)
+    )
+  )
+}
+
+async function addFileToZip(
+  zip,
+  rootDirectory,
+  filePath,
+  waitForDrain
+) {
+  const input = new ZipDeflate(
+    toArchivePath(rootDirectory, filePath),
+    { level: 6 }
+  )
+  zip.add(input)
+  const stream = createReadStream(filePath)
+  try {
+    for await (const chunk of stream) {
+      input.push(
+        new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+        false
+      )
+      await waitForDrain()
+    }
+    input.push(new Uint8Array(), true)
+    await waitForDrain()
+  } catch (error) {
+    stream.destroy()
+    throw error
+  }
+}
+
+function openExclusiveWriteStream(filePath) {
+  const descriptor = openSync(filePath, 'wx')
+  try {
+    return createWriteStream(filePath, {
+      fd: descriptor,
+      autoClose: true
+    })
+  } catch (error) {
+    closeSync(descriptor)
+    rmSync(filePath, { force: true })
+    throw error
+  }
+}
+
+async function createPortableZip(
+  unpackedDirectory,
+  zipPath,
+  dependencies = {}
+) {
+  const markerPath = join(unpackedDirectory, portableMarkerName)
+  writeFileSync(
+    markerPath,
+    `${JSON.stringify({
+      formatVersion: 1,
+      productName,
+      version: packageJson.version
+    }, null, 2)}\n`,
+    'utf8'
+  )
+  const portableFiles = listPortableFiles(unpackedDirectory)
+  const output = (
+    dependencies.openOutput ?? openExclusiveWriteStream
+  )(zipPath)
+  let zipError
+  let pendingDrain
+  let zipFinal = false
+  const outputCompletion = finished(output).then(
+    () => undefined,
+    (error) => {
+      zipError ??= error
+    }
+  )
+  const waitForDrain = async () => {
+    if (pendingDrain) {
+      await pendingDrain
+    }
+    if (zipError) {
+      throw zipError
+    }
+  }
+  const zip = new Zip((error, chunk, final) => {
+    if (error) {
+      zipError ??= error
+      output.destroy(error)
+      return
+    }
+    try {
+      if (!output.write(chunk) && !pendingDrain) {
+        const drain = once(output, 'drain').then(
+          () => undefined,
+          (writeError) => {
+            zipError ??= writeError
+          }
+        )
+        const currentDrain = Promise.race([
+          drain,
+          outputCompletion
+        ]).finally(() => {
+          if (pendingDrain === currentDrain) {
+            pendingDrain = undefined
+          }
+        })
+        pendingDrain = currentDrain
+      }
+      if (final) {
+        zipFinal = true
+      }
+    } catch (writeError) {
+      zipError ??= writeError
+      output.destroy(writeError)
+    }
+  })
+  try {
+    for (const filePath of portableFiles) {
+      await addFileToZip(
+        zip,
+        unpackedDirectory,
+        filePath,
+        waitForDrain
+      )
+      if (zipError) {
+        throw zipError
+      }
+    }
+    zip.end()
+    await waitForDrain()
+    if (zipError) {
+      throw zipError
+    }
+    if (!zipFinal) {
+      throw new Error('Portable ZIP 未正常结束')
+    }
+    output.end()
+    await outputCompletion
+    if (zipError) {
+      throw zipError
+    }
+  } catch (error) {
+    zip.terminate()
+    output.destroy()
+    await outputCompletion
+    if (!dependencies.openOutput) {
+      rmSync(zipPath, { force: true })
+    }
+    throw error
+  }
+}
+
+function readZipEntryNames(filePath) {
+  const fileSize = statSync(filePath).size
+  if (fileSize < 22) {
+    throw new Error('Portable ZIP 缺少中央目录')
+  }
+  const endChunkSize = Math.min(fileSize, 65_557)
+  const endChunkStart = fileSize - endChunkSize
+  const endChunk = readChunk(
+    filePath,
+    endChunkSize,
+    endChunkStart
+  )
+  let endOffset = -1
+  for (let index = endChunk.length - 22; index >= 0; index -= 1) {
+    if (
+      endChunk.readUInt32LE(index) === 0x06054b50 &&
+      index + 22 + endChunk.readUInt16LE(index + 20) ===
+        endChunk.length
+    ) {
+      endOffset = index
+      break
+    }
+  }
+  if (endOffset < 0) {
+    throw new Error('Portable ZIP 缺少中央目录')
+  }
+  const diskNumber = endChunk.readUInt16LE(endOffset + 4)
+  const centralDisk = endChunk.readUInt16LE(endOffset + 6)
+  const diskEntryCount = endChunk.readUInt16LE(endOffset + 8)
+  const entryCount = endChunk.readUInt16LE(endOffset + 10)
+  const centralSize = endChunk.readUInt32LE(endOffset + 12)
+  const centralOffset = endChunk.readUInt32LE(endOffset + 16)
+  const absoluteEndOffset = endChunkStart + endOffset
+  if (
+    diskNumber !== 0 ||
+    centralDisk !== 0 ||
+    diskEntryCount !== entryCount ||
+    entryCount === 0xffff ||
+    centralSize === 0xffffffff ||
+    centralOffset === 0xffffffff ||
+    entryCount < portableRequiredFiles.length + 1 ||
+    entryCount > maxPortableZipEntries ||
+    centralSize < 46 ||
+    centralSize > maxPortableCentralDirectoryBytes ||
+    centralOffset + centralSize !== absoluteEndOffset
+  ) {
+    throw new Error('Portable ZIP 中央目录无效')
+  }
+  const centralDirectory = readChunk(
+    filePath,
+    centralSize,
+    centralOffset
+  )
+  const names = []
+  let offset = 0
+  for (let index = 0; index < entryCount; index += 1) {
+    if (
+      offset + 46 > centralDirectory.length ||
+      centralDirectory.readUInt32LE(offset) !== 0x02014b50
+    ) {
+      throw new Error('Portable ZIP 中央目录条目无效')
+    }
+    const nameLength = centralDirectory.readUInt16LE(offset + 28)
+    const extraLength = centralDirectory.readUInt16LE(offset + 30)
+    const commentLength = centralDirectory.readUInt16LE(offset + 32)
+    const entryLength = 46 + nameLength + extraLength + commentLength
+    if (offset + entryLength > centralDirectory.length) {
+      throw new Error('Portable ZIP 中央目录条目越界')
+    }
+    const name = centralDirectory
+      .subarray(offset + 46, offset + 46 + nameLength)
+      .toString(
+        centralDirectory.readUInt16LE(offset + 8) & 0x0800
+          ? 'utf8'
+          : 'latin1'
+      )
+      .replaceAll('\\', '/')
+    if (
+      !name ||
+      name.startsWith('/') ||
+      /^[a-z]:\//iu.test(name) ||
+      name.includes('\0') ||
+      name.split('/').some((part) => part === '..')
+    ) {
+      throw new Error(`Portable ZIP 包含不安全路径：${name}`)
+    }
+    names.push(name)
+    offset += entryLength
+  }
+  if (offset !== centralDirectory.length) {
+    throw new Error('Portable ZIP 中央目录数量不一致')
+  }
+  return names
+}
+
+function verifyPortableZip(filePath) {
+  const entries = readZipEntryNames(filePath)
+  const names = new Set(entries)
+  if (names.size !== entries.length) {
+    throw new Error('Portable ZIP 包含重复文件')
+  }
+  for (const required of [
+    portableMarkerName,
+    ...portableRequiredFiles
+  ]) {
+    if (!names.has(required)) {
+      throw new Error(`Portable ZIP 缺少必要文件：${required}`)
+    }
+  }
+}
+
 function verifyArtifacts(directory, options) {
   const files = readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isFile())
@@ -388,7 +705,7 @@ function verifyArtifacts(directory, options) {
         ? candidates.filter((name) =>
             format === 'nsis'
               ? /-setup\.exe$/iu.test(name)
-              : /-portable\.exe$/iu.test(name)
+              : /-portable\.zip$/iu.test(name)
           )
         : candidates
     if (matches.length !== 1) {
@@ -401,17 +718,20 @@ function verifyArtifacts(directory, options) {
       format,
       options.arch
     )
+    if (format === 'portable') {
+      verifyPortableZip(join(directory, matches[0]))
+    }
   }
 }
 
 function verifyArtifactSignature(filePath, format, arch) {
-  if (format === 'nsis' || format === 'portable') {
+  if (format === 'nsis') {
     if (readChunk(filePath, 2).toString('ascii') !== 'MZ') {
       throw new Error(`${format} 产物不是有效的 Windows PE 文件`)
     }
     return
   }
-  if (format === 'zip') {
+  if (format === 'portable' || format === 'zip') {
     const signature = readChunk(filePath, 4).toString('hex')
     if (
       !['504b0304', '504b0506', '504b0708'].includes(signature)
@@ -575,7 +895,7 @@ function printHelp() {
   --dry-run        仅显示目标与 electron-builder 参数
 
 默认格式：
-  windows: nsis, portable
+  windows: nsis, portable (ZIP)
   macos:   dmg, zip
   linux:   AppImage, deb`)
 }
@@ -634,6 +954,18 @@ async function main(argv = process.argv.slice(2)) {
       stagingDirectory,
       options
     )
+    if (
+      options.platform === 'windows' &&
+      options.formats.includes('portable')
+    ) {
+      await createPortableZip(
+        unpackedDirectory,
+        join(
+          stagingDirectory,
+          `${productName}-${packageJson.version}-windows-${options.arch}-portable.zip`
+        )
+      )
+    }
     verifyArtifacts(stagingDirectory, options)
     rmSync(unpackedDirectory, { recursive: true, force: true })
     const manifest = await writeManifest(stagingDirectory, options)
@@ -652,6 +984,7 @@ async function main(argv = process.argv.slice(2)) {
 module.exports = {
   assertReplaceableOutput,
   buildElectronBuilderArguments,
+  createPortableZip,
   detectBinaryArchitecture,
   normalizePlatform,
   parseArguments,
@@ -659,6 +992,7 @@ module.exports = {
   replaceOutput,
   verifyArtifacts,
   verifyArtifactSignature,
+  verifyPortableZip,
   writeManifest
 }
 

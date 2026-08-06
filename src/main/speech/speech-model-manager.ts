@@ -32,17 +32,6 @@ const MANIFEST_FILE_NAME = 'manifest.json'
 const SELECTION_FILE_NAME = '.selection.json'
 const PARTIAL_SUFFIX = '.partial'
 
-const SPEECH_MODEL_ALLOWED_DOWNLOAD_HOSTS = new Set([
-  'huggingface.co',
-  'cdn-lfs.huggingface.co',
-  'cdn-lfs-us-1.huggingface.co',
-  'cdn-lfs-eu-1.huggingface.co',
-  'cdn-lfs.hf.co',
-  'cdn-lfs-us-1.hf.co',
-  'cdn-lfs-eu-1.hf.co',
-  'cas-bridge.xethub.hf.co'
-])
-
 const selectionSchema = z
   .object({
     selectedModelId: speechModelIdSchema.nullable()
@@ -110,13 +99,10 @@ function safeChild(parent: string, name: string): string {
 function validateDownloadUrl(value: string): URL {
   const url = new URL(value)
   if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    !SPEECH_MODEL_ALLOWED_DOWNLOAD_HOSTS.has(url.hostname.toLowerCase())
+    url.protocol !== 'http:' &&
+    url.protocol !== 'https:'
   ) {
-    throw new Error('模型下载地址必须是允许的 Hugging Face HTTPS 地址')
+    throw new Error('模型下载地址必须使用 HTTP 或 HTTPS')
   }
   return url
 }

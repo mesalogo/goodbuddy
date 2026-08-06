@@ -7,14 +7,6 @@ on:
       - main
     tags:
       - 'v*'
-    paths:
-      - '.github/workflows/packages.yml'
-      - 'build/build-release.cjs'
-      - 'build/aggregate-release.cjs'
-      - 'build/file-hash.cjs'
-      - 'build/runtime-hooks.cjs'
-      - 'package.json'
-      - 'package-lock.json'
 
 permissions:
   contents: read
@@ -54,6 +46,7 @@ jobs:
         run: npm run build:bundle
 
       - name: Upload production bundle
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
         uses: actions/upload-artifact@v7
         with:
           name: goodbuddy-production-bundle
@@ -63,6 +56,7 @@ jobs:
 
   package:
     name: ${{ matrix.platform }} ${{ matrix.arch }}
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     needs: validate
     strategy:
       fail-fast: false

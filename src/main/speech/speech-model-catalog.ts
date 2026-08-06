@@ -19,7 +19,8 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
       family: 'sensevoice',
       quantization: 'int8',
       repositoryUrl:
-        'https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17',
+        'https://modelscope.cn/models/pengzhendong/' +
+        'sherpa-onnx-sense-voice-zh-en-ja-ko-yue',
       license: {
         name: '模型仓库自定义许可（Model License）',
         notice:
@@ -33,9 +34,9 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           role: 'model',
           download: {
             url:
-              'https://huggingface.co/csukuangfj/' +
-              'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/' +
-              'resolve/6a65851692da9706cbddfac66ea9b96ebb1dee21/' +
+              'https://modelscope.cn/models/pengzhendong/' +
+              'sherpa-onnx-sense-voice-zh-en-ja-ko-yue/' +
+              'resolve/73eca47697f980daa3d16112404174b6b950b514/' +
               'model.int8.onnx',
             size: 239_233_841,
             sha256:
@@ -47,9 +48,9 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           role: 'tokens',
           download: {
             url:
-              'https://huggingface.co/csukuangfj/' +
-              'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/' +
-              'resolve/86f7114c4a83bcba0c609dd8d8dfa730d967ade9/' +
+              'https://modelscope.cn/models/pengzhendong/' +
+              'sherpa-onnx-sense-voice-zh-en-ja-ko-yue/' +
+              'resolve/73eca47697f980daa3d16112404174b6b950b514/' +
               'tokens.txt',
             size: 315_894,
             sha256:
@@ -67,7 +68,8 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
       family: 'whisper',
       quantization: 'int8',
       repositoryUrl:
-        'https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny',
+        'https://modelscope.cn/models/pengzhendong/' +
+        'sherpa-onnx-whisper-tiny',
       license: {
         name: 'MIT License',
         notice:
@@ -81,9 +83,9 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           role: 'encoder',
           download: {
             url:
-              'https://huggingface.co/csukuangfj/' +
+              'https://modelscope.cn/models/pengzhendong/' +
               'sherpa-onnx-whisper-tiny/resolve/' +
-              '65176e2deb88badc814a94058666cadccc29b61c/' +
+              '33a655645234f82ce833cf27b689d9c2212e693f/' +
               'tiny-encoder.int8.onnx',
             size: 12_937_772,
             sha256:
@@ -95,9 +97,9 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           role: 'decoder',
           download: {
             url:
-              'https://huggingface.co/csukuangfj/' +
+              'https://modelscope.cn/models/pengzhendong/' +
               'sherpa-onnx-whisper-tiny/resolve/' +
-              '65176e2deb88badc814a94058666cadccc29b61c/' +
+              '33a655645234f82ce833cf27b689d9c2212e693f/' +
               'tiny-decoder.int8.onnx',
             size: 89_855_401,
             sha256:
@@ -109,9 +111,9 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           role: 'tokens',
           download: {
             url:
-              'https://huggingface.co/csukuangfj/' +
+              'https://modelscope.cn/models/pengzhendong/' +
               'sherpa-onnx-whisper-tiny/resolve/' +
-              '65176e2deb88badc814a94058666cadccc29b61c/' +
+              '33a655645234f82ce833cf27b689d9c2212e693f/' +
               'tiny-tokens.txt',
             size: 816_730,
             sha256:
