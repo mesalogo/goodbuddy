@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
 
 export const assistantIdSchema = z.string().uuid()
 export const workModeSchema = z.enum(['ask', 'plan', 'execute'])
@@ -64,6 +65,7 @@ export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
     projectId: assistantIdSchema.optional(),
+    runtimeSelection: agentRuntimeSelectionSchema.optional(),
     title: z.string().trim().min(1).max(200),
     updatedAt: z.number().int().nonnegative(),
     messages: z
@@ -488,6 +490,7 @@ export const expertCreateSchema = z
     name: z.string().trim().min(1).max(80),
     description: z.string().trim().max(500),
     systemInstructions: z.string().trim().min(1).max(20_000),
+    modelProfileId: assistantIdSchema.optional(),
     routingKeywords: z
       .array(routingKeywordSchema)
       .max(32)

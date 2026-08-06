@@ -1,3 +1,23 @@
+import { isControlledChildTlsCompatibilityEnabled } from '../global-tls-policy'
+
+const runtimeProviderEnvironmentNames = [
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'GOOGLE_GENERATIVE_AI_API_KEY',
+  'GEMINI_API_KEY',
+  'GROQ_API_KEY',
+  'AZURE_OPENAI_API_KEY',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_REGION',
+  'AWS_PROFILE',
+  'OPENROUTER_API_KEY',
+  'XAI_API_KEY',
+  'MISTRAL_API_KEY',
+  'COHERE_API_KEY'
+] as const
+
 const runtimeEnvironmentAllowlist = [
   'PATH',
   'Path',
@@ -21,22 +41,13 @@ const runtimeEnvironmentAllowlist = [
   'HTTP_PROXY',
   'HTTPS_PROXY',
   'NO_PROXY',
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
-  'GOOGLE_GENERATIVE_AI_API_KEY',
-  'GEMINI_API_KEY',
-  'GROQ_API_KEY',
-  'AZURE_OPENAI_API_KEY',
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
-  'AWS_SESSION_TOKEN',
-  'AWS_REGION',
-  'AWS_PROFILE',
-  'OPENROUTER_API_KEY',
-  'XAI_API_KEY',
-  'MISTRAL_API_KEY',
-  'COHERE_API_KEY'
+  ...runtimeProviderEnvironmentNames
 ] as const
+
+export type RuntimeProfileCredential = {
+  name: 'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY'
+  value: string
+}
 
 export const runtimePrivacyEnvironment: NodeJS.ProcessEnv = {
   DO_NOT_TRACK: '1',
@@ -54,7 +65,9 @@ export const runtimePrivacyEnvironment: NodeJS.ProcessEnv = {
 
 export function buildRuntimeEnvironment(
   overrides: NodeJS.ProcessEnv,
-  source: NodeJS.ProcessEnv = process.env
+  source: NodeJS.ProcessEnv = process.env,
+  tlsCompatibilityEnabled =
+    isControlledChildTlsCompatibilityEnabled()
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {}
   for (const name of runtimeEnvironmentAllowlist) {
@@ -62,8 +75,35 @@ export function buildRuntimeEnvironment(
       environment[name] = source[name]
     }
   }
-  return {
+  const runtimeEnvironment = {
     ...environment,
     ...overrides
   }
+  if (tlsCompatibilityEnabled) {
+    runtimeEnvironment.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+  } else {
+    delete runtimeEnvironment.NODE_TLS_REJECT_UNAUTHORIZED
+  }
+  return runtimeEnvironment
+}
+
+export function buildExplicitProfileRuntimeEnvironment(
+  overrides: NodeJS.ProcessEnv,
+  credential?: RuntimeProfileCredential,
+  source: NodeJS.ProcessEnv = process.env,
+  tlsCompatibilityEnabled =
+    isControlledChildTlsCompatibilityEnabled()
+): NodeJS.ProcessEnv {
+  const environment = buildRuntimeEnvironment(
+    overrides,
+    source,
+    tlsCompatibilityEnabled
+  )
+  for (const name of runtimeProviderEnvironmentNames) {
+    delete environment[name]
+  }
+  if (credential) {
+    environment[credential.name] = credential.value
+  }
+  return environment
 }

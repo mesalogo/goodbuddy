@@ -59,7 +59,7 @@ const summary = {
 }
 
 describe('AssistantDatabase heartbeat persistence', () => {
-  it('migrates v2 to v3 without changing existing schedules', async () => {
+  it('migrates a v2 database without changing existing schedules', async () => {
     const { database, path } = await createDatabase()
     const schedule = database.createSchedule({
       title: 'Existing schedule',
@@ -85,25 +85,23 @@ describe('AssistantDatabase heartbeat persistence', () => {
       })
     ])
     const check = new DatabaseSync(path)
-    expect(
-      (
-        check.prepare('PRAGMA user_version').get() as {
-          user_version: number
-        }
-      ).user_version
-    ).toBe(7)
-    expect(
-      (
-        check
-          .prepare(
-            `SELECT COUNT(*) AS count FROM sqlite_master
-             WHERE type = 'table' AND name LIKE 'heartbeat_%'`
-          )
-          .get() as { count: number }
-      ).count
-    ).toBe(3)
+    const version = (
+      check.prepare('PRAGMA user_version').get() as {
+        user_version: number
+      }
+    ).user_version
+    const heartbeatTableCount = (
+      check
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sqlite_master
+           WHERE type = 'table' AND name LIKE 'heartbeat_%'`
+        )
+        .get() as { count: number }
+    ).count
     check.close()
     migrated.close()
+    expect(version).toBe(8)
+    expect(heartbeatTableCount).toBe(3)
   })
 
   it('claims one scheduled run durably and advances local recurrence', async () => {

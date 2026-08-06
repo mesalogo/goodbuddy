@@ -11,6 +11,7 @@ import type {
 } from './runtime'
 import { detectRuntimeBinary } from './runtime-discovery'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import {
   ContinueHostAdapter,
   ContinueHostRunError,
@@ -32,6 +33,7 @@ export type ContinueRuntimeOptions = {
   skillInstructions?: string
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
+  knowledgeGateway?: KnowledgeMcpGateway
   createHostAdapter?: (
     options: ContinueHostAdapterOptions
   ) => Pick<
@@ -218,7 +220,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
       available: detection.available,
       supportsToolExecution: this.supportsToolExecution,
       detail: detection.available
-        ? `${detection.detail}；固定为 Execute；工具调用自动放行并保留审计；未启用 OS 进程沙箱`
+        ? `${detection.detail}；Ask 可搜索已启用知识库，Execute 工具调用自动放行并保留审计；未启用 OS 进程沙箱`
         : detection.detail
     }
   }
@@ -272,16 +274,42 @@ export class ContinueAgentRuntime implements AgentRuntime {
     }
 
     const execute = request.workMode === 'execute'
+    const knowledgeEndpoint = this.options.knowledgeGateway?.getEndpoint()
+    const knowledgeCapability =
+      request.knowledgeCapabilityToken && knowledgeEndpoint
+        ? {
+            endpoint: knowledgeEndpoint,
+            token: request.knowledgeCapabilityToken
+          }
+        : undefined
     let result: ContinueHostRunResult
     try {
-      result = await this.getHostAdapter(
+      const host = this.getHostAdapter(
         binaryPath,
-        execute ? 'agent' : 'chat'
-      ).run(
-        conversationContext,
-        signal,
-        async () => (execute ? 'once' : 'deny')
+        execute || knowledgeCapability ? 'agent' : 'chat'
       )
+      const authorize = async (
+        approval: Parameters<
+          Parameters<typeof host.run>[2]
+        >[0]
+      ) =>
+        execute ||
+        (request.workMode === 'ask' &&
+          Boolean(knowledgeCapability) &&
+          approval.toolName === 'knowledge_search')
+          ? 'once' as const
+          : 'deny' as const
+      result = knowledgeCapability
+        ? await host.run(
+            conversationContext,
+            signal,
+            authorize,
+            {
+              workMode: request.workMode,
+              knowledgeCapability
+            }
+          )
+        : await host.run(conversationContext, signal, authorize)
     } catch (error) {
       if (error instanceof ContinueHostRunError) {
         for (const tool of error.tools) {

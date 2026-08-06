@@ -2,11 +2,13 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile
 } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +18,38 @@ import {
 } from './continue-host-adapter'
 
 const temporaryDirectories: string[] = []
+const environmentRestorations: Array<() => void> = []
+
+const inheritedProviderCredentials = {
+  ANTHROPIC_API_KEY: 'inherited-anthropic',
+  OPENAI_API_KEY: 'inherited-openai',
+  GOOGLE_GENERATIVE_AI_API_KEY: 'inherited-google',
+  GEMINI_API_KEY: 'inherited-gemini',
+  AWS_ACCESS_KEY_ID: 'inherited-aws-access',
+  AWS_SECRET_ACCESS_KEY: 'inherited-aws-secret',
+  AWS_SESSION_TOKEN: 'inherited-aws-session',
+  AWS_PROFILE: 'inherited-aws-profile',
+  OPENROUTER_API_KEY: 'inherited-openrouter'
+} as const
+
+function inheritProviderCredentials(): void {
+  const previousEnvironment = Object.fromEntries(
+    Object.keys(inheritedProviderCredentials).map((name) => [
+      name,
+      process.env[name]
+    ])
+  )
+  Object.assign(process.env, inheritedProviderCredentials)
+  environmentRestorations.push(() => {
+    for (const [name, value] of Object.entries(previousEnvironment)) {
+      if (value === undefined) {
+        delete process.env[name]
+      } else {
+        process.env[name] = value
+      }
+    }
+  })
+}
 
 async function createDistribution(version = '1.5.47'): Promise<{
   cacheRoot: string
@@ -38,9 +72,12 @@ async function createDistribution(version = '1.5.47'): Promise<{
     'toolPermissionOverrides:s,headless:!0});let[a,u,l,c]',
     'i={allow:o.allow,ask:o.ask,exclude:o.exclude,isHeadless:e.headless}',
     'E6t.initialize({isHeadless:e.headless},r,n)',
+    'function ZZo(e){let t=[];if(e.exclude)for(let n of e.exclude){let r=n;t.push({tool:r,permission:"exclude"})}if(e.ask)for(let n of e.ask){let r=n;t.push({tool:r,permission:"ask"})}if(e.allow)for(let n of e.allow){let r=n;t.push({tool:r,permission:"allow"})}return t}',
     'let j=(0,atn.default)();j.use(atn.default.json()),j.get("/state"',
     'listen(i,async()=>{console.log(Ht.green(`Server started on http://localhost:${i}`))',
-    'async function SCt(e){return n5e||'
+    'async function SCt(e){return n5e||',
+    'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}',
+    'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}'
   ].join(';')
   await writeFile(join(distribution, 'index.js'), sourceBundle, 'utf8')
   return {
@@ -54,6 +91,9 @@ async function createDistribution(version = '1.5.47'): Promise<{
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  for (const restoreEnvironment of environmentRestorations.splice(0)) {
+    restoreEnvironment()
+  }
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true })
@@ -92,6 +132,15 @@ describe('ContinueHostAdapter', () => {
     expect(bundle).toContain(
       'GOODBUDDY_DISABLE_CONTINUE_UPDATES'
     )
+    expect(bundle).toContain(
+      'this.config.useResponsesApi===!0?!0'
+    )
+    expect(bundle).toContain(
+      'useResponsesApi:e.useResponsesApi'
+    )
+    expect(bundle).toContain(
+      'function ZZo(e){let t=[];if(e.allow)'
+    )
     expect(bundle).not.toContain(
       'toolPermissionOverrides:s,headless:!0});let'
     )
@@ -127,6 +176,88 @@ describe('ContinueHostAdapter', () => {
 
     await expect(adapter.getPreparedHost()).rejects.toThrow(
       '兼容性校验'
+    )
+  })
+
+  it('removes capability config when host preparation fails after generation', async () => {
+    const distribution = await createDistribution()
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [],
+      modelProfile: {
+        id: '00000000-0000-4000-8000-000000000099',
+        name: 'Local model',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
+      }
+    })
+
+    await expect(
+      adapter.run(
+        'search',
+        new AbortController().signal,
+        async () => 'deny',
+        {
+          workMode: 'ask',
+          knowledgeCapability: {
+            endpoint: 'http://127.0.0.1:4567/mcp',
+            token: 'main-only-token'
+          }
+        }
+      )
+    ).rejects.toThrow('未通过宿主兼容性校验')
+    await expect(readdir(distribution.cacheRoot)).resolves.not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^model-config-/u)
+      ])
+    )
+  })
+
+  it('removes capability config when cancellation reaches the pre-spawn check', async () => {
+    const distribution = await createDistribution()
+    const launchHost = vi.fn<ContinueHostLauncher>()
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost,
+      modelProfile: {
+        id: '00000000-0000-4000-8000-000000000098',
+        name: 'Local model',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
+      }
+    })
+    const controller = new AbortController()
+    const pending = adapter.run(
+      'search',
+      controller.signal,
+      async () => 'deny',
+      {
+        workMode: 'ask',
+        knowledgeCapability: {
+          endpoint: 'http://127.0.0.1:4567/mcp',
+          token: 'main-only-token'
+        }
+      }
+    )
+    setTimeout(() => controller.abort(new Error('cancelled')), 0)
+
+    await expect(pending).rejects.toThrow('cancelled')
+    expect(launchHost).not.toHaveBeenCalled()
+    await expect(readdir(distribution.cacheRoot)).resolves.not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^model-config-/u)
+      ])
     )
   })
 
@@ -263,7 +394,7 @@ describe('ContinueHostAdapter', () => {
         cacheWriteTokens: 0
       }
     })
-    expect(launch?.entryPath).toContain('host-v2')
+    expect(launch?.entryPath).toContain('host-v4')
     expect(launch?.args).toEqual([
       '--config',
       expect.stringContaining('model-config-'),
@@ -310,20 +441,58 @@ describe('ContinueHostAdapter', () => {
     expect(existsSync(generatedConfigPath)).toBe(false)
   })
 
-  it('generates an OpenAI config without a fake key for Ollama', async () => {
+  it('injects scoped knowledge into a temporary copy of a JSONC config', async () => {
     const distribution = await createDistribution()
+    const configPath = join(
+      distribution.cacheRoot,
+      '..',
+      'continue.jsonc'
+    )
+    const originalConfig = [
+      '{',
+      '  // User-managed Continue configuration',
+      '  "name": "Private Continue",',
+      '  "version": "1.0.0",',
+      '  "schema": "v1",',
+      '  "models": [{ "provider": "ollama", "model": "qwen3" }],',
+      '  "mcpServers": [{ "name": "user-tools", "command": "tool.exe" }],',
+      '}'
+    ].join('\n')
+    await writeFile(configPath, originalConfig, 'utf8')
     let generatedConfig = ''
-    let launchedEnvironment: NodeJS.ProcessEnv | undefined
-    const launchHost: ContinueHostLauncher = (_entryPath, args, options) => {
+    let generatedConfigPath = ''
+    let killed = false
+    const launchHost: ContinueHostLauncher = (
+      _entryPath,
+      args
+    ) => {
       const configIndex = args.indexOf('--config')
-      generatedConfig = readFileSync(args[configIndex + 1] ?? '', 'utf8')
-      launchedEnvironment = options.env
+      generatedConfigPath = args[configIndex + 1] ?? ''
+      generatedConfig = readFileSync(generatedConfigPath, 'utf8')
+      expect(args).toEqual([
+        '--config',
+        expect.stringContaining('knowledge-config-'),
+        '--allow',
+        'knowledge_search',
+        '--exclude',
+        '*',
+        'serve',
+        '--port',
+        expect.any(String),
+        '--timeout',
+        '300'
+      ])
       return {
         exitCode: null,
-        killed: false,
+        get killed() {
+          return killed
+        },
         stderr: null,
         once: () => undefined,
-        kill: () => true
+        kill: () => {
+          killed = true
+          return true
+        }
       }
     }
     let stateRequests = 0
@@ -341,28 +510,10 @@ describe('ContinueHostAdapter', () => {
                       {
                         message: {
                           role: 'assistant',
-                          content: 'OLLAMA_OK'
+                          content: 'CONFIG_KNOWLEDGE_OK'
                         }
                       }
-                    ],
-              usage:
-                stateRequests === 1
-                  ? {
-                      promptTokens: 100,
-                      completionTokens: 20,
-                      promptTokensDetails: {
-                        cachedTokens: 10,
-                        cacheWriteTokens: 3
-                      }
-                    }
-                  : {
-                      promptTokens: 131,
-                      completionTokens: 29,
-                      promptTokensDetails: {
-                        cachedTokens: 23,
-                        cacheWriteTokens: 7
-                      }
-                    }
+                    ]
             },
             isProcessing: false,
             messageQueueLength: 0,
@@ -374,47 +525,242 @@ describe('ContinueHostAdapter', () => {
     )
     const adapter = new ContinueHostAdapter({
       binaryPath: distribution.entryPath,
-      configPath: '',
+      configPath,
       workspace: process.cwd(),
       cacheRoot: distribution.cacheRoot,
       trustedBundleHashes: [distribution.sourceHash],
       launchHost,
-      modelProfile: {
-        id: '00000000-0000-4000-8000-000000000012',
-        name: 'Ollama',
-        baseUrl: 'http://127.0.0.1:11434/v1',
-        modelName: 'qwen3',
-        protocol: 'openai-chat-completions',
-        authentication: 'none'
-      }
+      mode: 'agent'
     })
 
     await expect(
-      adapter.run('hello', new AbortController().signal, async () => 'deny')
-    ).resolves.toEqual({
-      text: 'OLLAMA_OK',
-      usage: {
-        provider: 'openai',
-        model: 'qwen3',
-        inputTokens: 31,
-        outputTokens: 9,
-        cacheReadTokens: 13,
-        cacheWriteTokens: 4
-      }
-    })
-    expect(JSON.parse(generatedConfig)).toMatchObject({
-      models: [
+      adapter.run(
+        'search',
+        new AbortController().signal,
+        async () => 'deny',
         {
-          provider: 'openai',
-          apiBase: 'http://127.0.0.1:11434/v1',
-          model: 'qwen3'
+          workMode: 'ask',
+          knowledgeCapability: {
+            endpoint: 'http://127.0.0.1:4567/mcp',
+            token: 'main-only-token'
+          }
+        }
+      )
+    ).resolves.toEqual({ text: 'CONFIG_KNOWLEDGE_OK' })
+    expect(JSON.parse(generatedConfig)).toMatchObject({
+      name: 'Private Continue',
+      models: [{ provider: 'ollama', model: 'qwen3' }],
+      mcpServers: [
+        {
+          name: 'goodbuddy-knowledge',
+          type: 'streamable-http',
+          url: 'http://127.0.0.1:4567/mcp',
+          requestOptions: {
+            headers: {
+              Authorization: 'Bearer main-only-token'
+            }
+          }
         }
       ]
     })
-    expect(generatedConfig).not.toContain('apiKey')
-    expect(launchedEnvironment).not.toHaveProperty('OPENAI_API_KEY')
-    expect(launchedEnvironment).not.toHaveProperty('ANTHROPIC_API_KEY')
+    expect(generatedConfig).not.toContain('user-tools')
+    await expect(readFile(configPath, 'utf8')).resolves.toBe(
+      originalConfig
+    )
+    expect(killed).toBe(true)
+    expect(existsSync(generatedConfigPath)).toBe(false)
   })
+
+  it.each([
+    {
+      label: 'Chat Completions without authentication',
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'none' as const,
+      useResponsesApi: false
+    },
+    {
+      label: 'Responses with an API key',
+      protocol: 'openai-responses' as const,
+      authentication: 'api-key' as const,
+      useResponsesApi: true
+    }
+  ])(
+    'generates an explicit OpenAI config for $label',
+    async ({
+      protocol,
+      authentication,
+      useResponsesApi
+    }) => {
+      inheritProviderCredentials()
+      const distribution = await createDistribution()
+      let generatedConfig = ''
+      let launchedEnvironment: NodeJS.ProcessEnv | undefined
+      let launchedArgs: string[] = []
+      const launchHost: ContinueHostLauncher = (
+        _entryPath,
+        args,
+        options
+      ) => {
+        launchedArgs = args
+        const configIndex = args.indexOf('--config')
+        generatedConfig = readFileSync(
+          args[configIndex + 1] ?? '',
+          'utf8'
+        )
+        launchedEnvironment = options.env
+        return {
+          exitCode: null,
+          killed: false,
+          stderr: null,
+          once: () => undefined,
+          kill: () => true
+        }
+      }
+      let stateRequests = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request) => {
+          if (String(input).endsWith('/state')) {
+            stateRequests += 1
+            return Response.json({
+              session: {
+                history:
+                  stateRequests === 1
+                    ? []
+                    : [
+                        {
+                          message: {
+                            role: 'assistant',
+                            content: 'OLLAMA_OK'
+                          }
+                        }
+                      ],
+                usage:
+                  stateRequests === 1
+                    ? {
+                        promptTokens: 100,
+                        completionTokens: 20,
+                        promptTokensDetails: {
+                          cachedTokens: 10,
+                          cacheWriteTokens: 3
+                        }
+                      }
+                    : {
+                        promptTokens: 131,
+                        completionTokens: 29,
+                        promptTokensDetails: {
+                          cachedTokens: 23,
+                          cacheWriteTokens: 7
+                        }
+                      }
+              },
+              isProcessing: false,
+              messageQueueLength: 0,
+              pendingPermission: null
+            })
+          }
+          return Response.json({})
+        })
+      )
+      const adapter = new ContinueHostAdapter({
+        binaryPath: distribution.entryPath,
+        configPath: '',
+        workspace: process.cwd(),
+        cacheRoot: distribution.cacheRoot,
+        trustedBundleHashes: [distribution.sourceHash],
+        launchHost,
+        modelProfile: {
+          id: '00000000-0000-4000-8000-000000000012',
+          name: 'Ollama',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          protocol,
+          authentication,
+          ...(authentication === 'api-key'
+            ? { apiKey: 'private-key' }
+            : {})
+        }
+      })
+
+      await expect(
+        adapter.run(
+          'hello',
+          new AbortController().signal,
+          async () => 'deny',
+          {
+            workMode: 'ask',
+            knowledgeCapability: {
+              endpoint: 'http://127.0.0.1:4567/mcp',
+              token: 'main-only-token'
+            }
+          }
+        )
+      ).resolves.toEqual({
+        text: 'OLLAMA_OK',
+        usage: {
+          provider: 'openai',
+          model: 'qwen3',
+          inputTokens: 31,
+          outputTokens: 9,
+          cacheReadTokens: 13,
+          cacheWriteTokens: 4
+        }
+      })
+      expect(JSON.parse(generatedConfig)).toMatchObject({
+        models: [
+          {
+            provider: 'openai',
+            apiBase: 'http://127.0.0.1:11434/v1',
+            model: 'qwen3',
+            useResponsesApi
+          }
+        ],
+        mcpServers: [
+          {
+            name: 'goodbuddy-knowledge',
+            type: 'streamable-http',
+            url: 'http://127.0.0.1:4567/mcp',
+            requestOptions: {
+              headers: {
+                Authorization: 'Bearer main-only-token'
+              }
+            }
+          }
+        ]
+      })
+      expect(launchedArgs).toEqual(
+        expect.arrayContaining([
+          '--allow',
+          'knowledge_search',
+          '--exclude',
+          '*'
+        ])
+      )
+      expect(launchedArgs).not.toContain('--readonly')
+      if (authentication === 'api-key') {
+        expect(JSON.parse(generatedConfig)).toMatchObject({
+          models: [
+            {
+              apiKey: '${{ secrets.OPENAI_API_KEY }}'
+            }
+          ]
+        })
+        expect(launchedEnvironment?.OPENAI_API_KEY).toBe('private-key')
+      } else {
+        expect(generatedConfig).not.toContain('apiKey')
+        expect(launchedEnvironment).not.toHaveProperty(
+          'OPENAI_API_KEY'
+        )
+      }
+      for (const name of Object.keys(inheritedProviderCredentials)) {
+        const selectedCredential =
+          authentication === 'api-key' ? 'OPENAI_API_KEY' : undefined
+        if (name !== selectedCredential) {
+          expect(launchedEnvironment).not.toHaveProperty(name)
+        }
+      }
+    }
+  )
 
   it('turns a strict upstream error envelope into a failed run', async () => {
     const distribution = await createDistribution()
@@ -632,4 +978,99 @@ describe('ContinueHostAdapter', () => {
       { requestId: 'permission-1', approved: true }
     ])
   })
+
+  it.each([
+    {
+      label: 'Chat Completions',
+      protocol: 'openai-chat-completions' as const,
+      expectedPath: '/v1/chat/completions',
+      unexpectedPath: '/v1/responses'
+    },
+    {
+      label: 'Responses',
+      protocol: 'openai-responses' as const,
+      expectedPath: '/v1/responses',
+      unexpectedPath: '/v1/chat/completions'
+    }
+  ])(
+    'routes a custom-base $label profile to its explicit endpoint in Continue 1.5.47',
+    async ({
+      protocol,
+      expectedPath,
+      unexpectedPath
+    }) => {
+      const root = await mkdtemp(
+        join(tmpdir(), 'goodbuddy-continue-responses-')
+      )
+      temporaryDirectories.push(root)
+      const requestPaths: string[] = []
+      const server = createServer((request, response) => {
+        requestPaths.push(request.url ?? '')
+        request.resume()
+        response.writeHead(400, {
+          'content-type': 'application/json'
+        })
+        response.end(
+          JSON.stringify({
+            error: {
+              message: 'Intentional local routing probe'
+            }
+          })
+        )
+      })
+      await new Promise<void>((resolveListen, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', () => resolveListen())
+      })
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        throw new Error('Failed to bind local routing probe')
+      }
+      const adapter = new ContinueHostAdapter({
+        binaryPath: join(
+          process.cwd(),
+          'node_modules',
+          '@continuedev',
+          'cli',
+          'dist',
+          'cn.js'
+        ),
+        configPath: '',
+        workspace: root,
+        cacheRoot: join(root, 'cache'),
+        modelProfile: {
+          id: '00000000-0000-4000-8000-000000000014',
+          name: 'Local endpoint probe',
+          baseUrl: `http://127.0.0.1:${address.port}/v1`,
+          modelName: 'probe-model',
+          protocol,
+          authentication: 'none'
+        }
+      })
+      const controller = new AbortController()
+      const timeout = setTimeout(
+        () => controller.abort(new Error('Routing probe timed out')),
+        20_000
+      )
+      try {
+        await adapter
+          .run('Reply with OK', controller.signal, async () => 'deny')
+          .catch(() => undefined)
+        expect(requestPaths).toContain(expectedPath)
+        expect(requestPaths).not.toContain(unexpectedPath)
+      } finally {
+        clearTimeout(timeout)
+        adapter.dispose()
+        await new Promise((resolveWait) =>
+          setTimeout(resolveWait, 500)
+        )
+        await new Promise<void>((resolveClose, reject) => {
+          server.close((error) =>
+            error ? reject(error) : resolveClose()
+          )
+        })
+      }
+    },
+    30_000
+  )
 })

@@ -35,6 +35,33 @@ import {
   type ExpertCreateInput,
   type ExpertUpdateInput
 } from './assistant-contracts'
+import type {
+  ChannelConnectionTestResult,
+  ChannelSettingsApply,
+  ChannelSettingsSnapshot,
+  DingTalkChannelSettingsInput,
+  ManagedChannel,
+  WeComChannelSettingsInput
+} from './channel-settings-contracts'
+import { isIntranetHostname } from './intranet-hostname'
+import type {
+  ApplicationSettings,
+  VersionCheckResult
+} from './application-settings-contracts'
+import type {
+  SpeechModelSnapshot,
+  SpeechTranscriptionInput,
+  SpeechTranscriptionResult
+} from './speech-model-contracts'
+import type {
+  EmbeddingDiagnosticResult,
+  EmbeddingIndexStatus,
+  EmbeddingSettingsSnapshot
+} from './embedding-contracts'
+import {
+  agentRuntimeSelectionSchema,
+  type AgentRuntimeSelection
+} from './runtime-selection-contracts'
 
 export const workspaceRelativePathSchema = z
   .string()
@@ -77,8 +104,13 @@ export const agentRequestSchema = z
     expertId: z.string().uuid().optional(),
     teamMode: z.boolean().optional(),
     smartRouting: z.boolean().optional(),
+    runtimeSelection: agentRuntimeSelectionSchema.optional(),
     workMode: workModeSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
+    knowledgeLibraryIds: z
+      .array(z.string().uuid())
+      .max(20)
+      .default([]),
     contextIds: z.array(z.string().uuid()).max(8).optional(),
     history: z
       .array(
@@ -108,7 +140,7 @@ export const agentRequestSchema = z
     }
   })
 
-export type AgentRequest = z.infer<typeof agentRequestSchema>
+export type AgentRequest = z.input<typeof agentRequestSchema>
 
 export const runtimeProviderSchema = z.enum([
   'auto',
@@ -140,6 +172,11 @@ export const imageGenerationQualitySchema = z.enum([
   'high'
 ])
 export type ModelProtocol = z.infer<typeof modelProtocolSchema>
+export function isAgentRuntimeModelProtocol(
+  protocol: ModelProtocol
+): boolean {
+  return protocol !== 'openai-images-generations'
+}
 export type ModelAuthentication = z.infer<
   typeof modelAuthenticationSchema
 >
@@ -148,16 +185,17 @@ export type ImageGenerationQuality = z.infer<
 >
 export const defaultModelProfileId =
   '00000000-0000-4000-8000-000000000001'
+export const modelProfileIdSchema = z.string().uuid()
 
 export const defaultRuntimeSettings = {
-  provider: 'auto',
+  provider: 'model',
   modelBaseUrl: 'https://bigtoken.ai',
   modelName: 'sonnet-5',
   modelProtocol: 'anthropic-messages',
   modelAuthentication: 'api-key',
   imageGenerationQuality: 'auto',
   opencodeBaseUrl: '',
-  opencodeEmbedded: false,
+  opencodeEmbedded: true,
   opencodeBinaryPath: '',
   opencodeConfigPath: '',
   continueBinaryPath: '',
@@ -165,6 +203,7 @@ export const defaultRuntimeSettings = {
   continueMode: 'chat',
   runtimeSandboxMode: 'auto',
   subagentSmartRoutingEnabled: false,
+  intranetCompatibilityEnabled: false,
   knowledgeEmbeddingEnabled: false,
   knowledgeEmbeddingBaseUrl:
     'http://127.0.0.1:11434/v1/embeddings',
@@ -196,6 +235,17 @@ export type RuntimeFileSelectionKind = z.infer<
   typeof runtimeFileSelectionKindSchema
 >
 
+export const runtimeConfigActionInputSchema = z
+  .object({
+    runtime: z.enum(['opencode', 'continue']),
+    action: z.enum(['open-file', 'show-file', 'open-directory'])
+  })
+  .strict()
+
+export type RuntimeConfigActionInput = z.infer<
+  typeof runtimeConfigActionInputSchema
+>
+
 const modelApiKeyUpdateSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('keep') }).strict(),
   z
@@ -223,7 +273,7 @@ const modelApiKeyUpdateSchema = z.discriminatedUnion('action', [
 
 const modelProfileInputSchema = z
   .object({
-    id: z.string().uuid(),
+    id: modelProfileIdSchema,
     name: z.string().trim().min(1).max(64),
     baseUrl: z.string().url().max(2_048),
     modelName: z
@@ -274,6 +324,7 @@ export const runtimeSettingsInputSchema = z
     continueMode: continueModeSchema,
     runtimeSandboxMode: runtimeSandboxModeSchema,
     subagentSmartRoutingEnabled: z.boolean().optional(),
+    intranetCompatibilityEnabled: z.boolean().default(false),
     knowledgeEmbeddingEnabled: z.boolean(),
     knowledgeEmbeddingBaseUrl: z.string().url().max(2_048),
     knowledgeEmbeddingModel: z
@@ -286,7 +337,7 @@ export const runtimeSettingsInputSchema = z
     workspacePath: z.string().trim().min(1).max(4_096),
     apiKey: modelApiKeyUpdateSchema,
     modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
-    defaultModelProfileId: z.string().uuid().optional(),
+    defaultModelProfileId: modelProfileIdSchema.optional(),
     opencodeModelSource: runtimeModelSourceSchema.optional(),
     continueModelSource: runtimeModelSourceSchema.optional(),
     toolApproval: toolApprovalPolicySchema
@@ -316,8 +367,13 @@ export const runtimeSettingsInputSchema = z
         hostname === '[::1]' ||
         /^127(?:\.\d{1,3}){3}$/u.test(hostname)
       if (
-        (url.protocol !== 'https:' &&
-          !(url.protocol === 'http:' && loopback)) ||
+        !(
+          url.protocol === 'https:' ||
+          (url.protocol === 'http:' &&
+            (loopback ||
+              (settings.intranetCompatibilityEnabled &&
+                isIntranetHostname(hostname))))
+        ) ||
         url.username ||
         url.password ||
         url.search ||
@@ -326,8 +382,9 @@ export const runtimeSettingsInputSchema = z
         context.addIssue({
           code: 'custom',
           path: endpoint.path,
-          message:
-            '模型服务地址必须使用 HTTPS；仅本机回环地址可使用 HTTP，且不得包含凭据、查询参数或片段'
+          message: settings.intranetCompatibilityEnabled
+            ? '模型服务地址必须使用 HTTP(S)，且不得包含凭据、查询参数或片段'
+            : '模型服务地址必须使用 HTTPS；仅本机回环地址可使用 HTTP，且不得包含凭据、查询参数或片段'
         })
       }
     }
@@ -388,14 +445,13 @@ export const runtimeSettingsInputSchema = z
           : undefined
       if (
         opencodeProfile &&
-        (opencodeProfile.protocol !== 'anthropic-messages' ||
-          opencodeProfile.authentication !== 'api-key')
+        !isAgentRuntimeModelProtocol(opencodeProfile.protocol)
       ) {
         context.addIssue({
           code: 'custom',
           path: ['opencodeModelSource'],
           message:
-            'OpenCode 独立模型连接仅支持需要 API Key 的 Anthropic Messages 协议'
+            'OpenCode 独立模型连接仅支持文本对话协议，不支持图像生成协议'
         })
       }
       const continueSource = settings.continueModelSource
@@ -407,14 +463,13 @@ export const runtimeSettingsInputSchema = z
           : undefined
       if (
         continueProfile &&
-        continueProfile.protocol !== 'anthropic-messages' &&
-        continueProfile.protocol !== 'openai-chat-completions'
+        !isAgentRuntimeModelProtocol(continueProfile.protocol)
       ) {
         context.addIssue({
           code: 'custom',
           path: ['continueModelSource'],
           message:
-            'Continue 独立模型连接仅支持 Anthropic Messages 或 OpenAI 兼容 Chat Completions'
+            'Continue 独立模型连接仅支持文本对话协议，不支持图像生成协议'
         })
       }
     }
@@ -449,11 +504,14 @@ export const runtimeSettingsInputSchema = z
       embeddingHost === '[::1]' ||
       /^127(?:\.\d{1,3}){3}$/u.test(embeddingHost)
     if (
-      (embeddingUrl.protocol !== 'https:' &&
-        !(
-          embeddingUrl.protocol === 'http:' &&
-          (loopback || privateIpv4)
-        )) ||
+      !(
+        embeddingUrl.protocol === 'https:' ||
+        (embeddingUrl.protocol === 'http:' &&
+          ((settings.intranetCompatibilityEnabled &&
+            isIntranetHostname(embeddingHost)) ||
+            loopback ||
+            privateIpv4))
+      ) ||
       embeddingUrl.username ||
       embeddingUrl.password ||
       embeddingUrl.search ||
@@ -464,13 +522,14 @@ export const runtimeSettingsInputSchema = z
       context.addIssue({
         code: 'custom',
         path: ['knowledgeEmbeddingBaseUrl'],
-        message:
-          '向量接口 URL 必须是完整的 HTTPS 端点；本机或私有网络可使用 HTTP，且不得包含凭据、查询参数或片段'
+        message: settings.intranetCompatibilityEnabled
+          ? '向量接口 URL 必须是完整的 HTTP(S) 端点，且不得包含凭据、查询参数或片段'
+          : '向量接口 URL 必须是完整的 HTTPS 端点；本机或私有网络可使用 HTTP，且不得包含凭据、查询参数或片段'
       })
     }
   })
 
-export type RuntimeSettingsInput = z.input<typeof runtimeSettingsInputSchema>
+export type RuntimeSettingsInput = z.infer<typeof runtimeSettingsInputSchema>
 
 export type RuntimeModelSource = z.infer<typeof runtimeModelSourceSchema>
 
@@ -502,6 +561,7 @@ export type RuntimeSettings = {
   continueMode: RuntimeSettingsInput['continueMode']
   runtimeSandboxMode: RuntimeSettingsInput['runtimeSandboxMode']
   subagentSmartRoutingEnabled: boolean
+  intranetCompatibilityEnabled: boolean
   knowledgeEmbeddingEnabled: boolean
   knowledgeEmbeddingBaseUrl: string
   knowledgeEmbeddingModel: string
@@ -645,6 +705,11 @@ export type AgentEvent =
       artifactId: string
       kind: 'image'
       title: string
+    }
+  | {
+      requestId: string
+      type: 'source-references'
+      references: KnowledgeSearchReference[]
     }
   | {
       requestId: string
@@ -850,7 +915,9 @@ export type DesktopApi = {
     onOpenSettings: (listener: () => void) => () => void
   }
   agent: {
-    getStatus: () => Promise<AgentRuntimeStatus>
+    getStatus: (
+      selection?: AgentRuntimeSelection
+    ) => Promise<AgentRuntimeStatus>
     run: (request: AgentRequest) => Promise<void>
     cancel: (requestId: string) => Promise<void>
     respondApproval: (
@@ -871,7 +938,59 @@ export type DesktopApi = {
     selectRuntimeFile: (
       kind: RuntimeFileSelectionKind
     ) => Promise<string | undefined>
-    testRuntime: () => Promise<AgentRuntimeStatus>
+    openRuntimeConfig: (input: RuntimeConfigActionInput) => Promise<void>
+    testModelConnection: (
+      profileId: string
+    ) => Promise<AgentRuntimeStatus>
+    testRuntime: (
+      selection: AgentRuntimeSelection
+    ) => Promise<AgentRuntimeStatus>
+  }
+  channels?: {
+    getSnapshot: () => Promise<ChannelSettingsSnapshot>
+    apply: (input: ChannelSettingsApply) => Promise<ChannelSettingsSnapshot>
+    testConnection: (
+      channel: ManagedChannel,
+      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+    ) => Promise<ChannelConnectionTestResult>
+  }
+  updates?: {
+    getSettings: () => Promise<ApplicationSettings>
+    updateSettings: (
+      input: ApplicationSettings
+    ) => Promise<ApplicationSettings>
+    check: () => Promise<VersionCheckResult>
+    openReleasePage: () => Promise<void>
+    onResult: (
+      listener: (result: VersionCheckResult) => void
+    ) => () => void
+  }
+  speechModels?: {
+    getSnapshot: () => Promise<SpeechModelSnapshot>
+    install: (modelId: string) => Promise<SpeechModelSnapshot>
+    cancel: (modelId: string) => Promise<boolean>
+    remove: (modelId: string) => Promise<SpeechModelSnapshot>
+    select: (modelId: string | null) => Promise<SpeechModelSnapshot>
+    importLocalDirectory: (
+      modelId: string
+    ) => Promise<SpeechModelSnapshot | undefined>
+    openRepository: (modelId: string) => Promise<void>
+    openModelsDirectory: () => Promise<void>
+  }
+  speech?: {
+    transcribe: (
+      input: SpeechTranscriptionInput
+    ) => Promise<SpeechTranscriptionResult>
+    cancel: (requestId: string) => Promise<boolean>
+  }
+  embeddings?: {
+    getSnapshot: () => Promise<EmbeddingSettingsSnapshot>
+    diagnose: () => Promise<EmbeddingDiagnosticResult>
+    rebuild: () => Promise<EmbeddingIndexStatus>
+    cancel: (jobId: string) => Promise<boolean>
+    onStatus: (
+      listener: (status: EmbeddingIndexStatus) => void
+    ) => () => void
   }
   projects: {
     list: (includeArchived?: boolean) => Promise<AssistantProject[]>

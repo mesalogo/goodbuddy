@@ -24,7 +24,35 @@ async function createDatabase(): Promise<AssistantDatabase> {
 }
 
 describe('AssistantDatabase', () => {
-  it('migrates existing databases to schema version 7', async () => {
+  it('rejects a newer unsupported schema without changing its version', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-assistant-future-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.close()
+    const future = new DatabaseSync(databasePath)
+    future.exec('PRAGMA user_version = 99;')
+    future.close()
+
+    const downgraded = new AssistantDatabase(databasePath)
+    expect(() => downgraded.initialize('C:\\Workspace')).toThrow(
+      '不支持助理数据库版本 99'
+    )
+    const unchanged = new DatabaseSync(databasePath)
+    expect(
+      (
+        unchanged.prepare('PRAGMA user_version').get() as {
+          user_version: number
+        }
+      ).user_version
+    ).toBe(99)
+    unchanged.close()
+  })
+
+  it('migrates existing databases to schema version 8', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -52,7 +80,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(7)
+    ).toBe(8)
     expect(
       current
         .prepare(
@@ -125,7 +153,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(7)
+    ).toBe(8)
     expect(
       current
         .prepare(
@@ -240,6 +268,83 @@ describe('AssistantDatabase', () => {
       '专家不存在或已停用'
     )
     database.close()
+  })
+
+  it('roundtrips expert model profiles and tolerates malformed model policies', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-expert-model-policy-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const firstModelProfileId =
+      '00000000-0000-4000-8000-000000000401'
+    const secondModelProfileId =
+      '00000000-0000-4000-8000-000000000402'
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+
+    const expert = database.createExpert({
+      name: '模型绑定专家',
+      description: '验证模型策略持久化',
+      systemInstructions: 'Use the assigned model connection.',
+      modelProfileId: firstModelProfileId,
+      routingKeywords: ['模型绑定']
+    })
+    expect(expert.modelProfileId).toBe(firstModelProfileId)
+    expect(
+      database.listExperts().find((item) => item.id === expert.id)
+    ).toMatchObject({
+      modelProfileId: firstModelProfileId,
+      routingKeywords: ['模型绑定']
+    })
+
+    const updated = database.updateExpert(expert.id, {
+      name: expert.name,
+      description: expert.description,
+      systemInstructions: expert.systemInstructions,
+      modelProfileId: secondModelProfileId,
+      routingKeywords: expert.routingKeywords
+    })
+    expect(updated.modelProfileId).toBe(secondModelProfileId)
+    database.close()
+
+    const persisted = new DatabaseSync(databasePath)
+    expect(
+      JSON.parse(
+        (
+          persisted
+            .prepare(
+              'SELECT model_policy_json FROM experts WHERE id = ?'
+            )
+            .get(expert.id) as { model_policy_json: string }
+        ).model_policy_json
+      )
+    ).toEqual({ modelProfileId: secondModelProfileId })
+    expect(
+      (
+        persisted.prepare('PRAGMA table_info(experts)').all() as Array<{
+          name: string
+        }>
+      ).some((column) => column.name === 'model_profile_id')
+    ).toBe(false)
+    persisted
+      .prepare(
+        'UPDATE experts SET model_policy_json = ? WHERE id = ?'
+      )
+      .run('{malformed-json', expert.id)
+    persisted.close()
+
+    const reopened = new AssistantDatabase(databasePath)
+    reopened.initialize('C:\\Workspace')
+    const recoveredExpert = reopened
+      .listExperts()
+      .find((item) => item.id === expert.id)
+    reopened.close()
+    expect(recoveredExpert).toMatchObject({
+      id: expert.id,
+      routingKeywords: ['模型绑定']
+    })
+    expect(recoveredExpert?.modelProfileId).toBeUndefined()
   })
 
   it('persists task lifecycle and events', async () => {
@@ -472,6 +577,10 @@ describe('AssistantDatabase', () => {
       {
         id: conversationId,
         projectId: project.id,
+        runtimeSelection: {
+          provider: 'model',
+          profileId: '00000000-0000-4000-8000-000000000299'
+        },
         title: '发布讨论',
         updatedAt: 1_775_000_000_000,
         messages: [
@@ -530,6 +639,10 @@ describe('AssistantDatabase', () => {
       expect.objectContaining({
         id: conversationId,
         projectId: project.id,
+        runtimeSelection: {
+          provider: 'model',
+          profileId: '00000000-0000-4000-8000-000000000299'
+        },
         messages: [
           expect.objectContaining({
             role: 'user',
@@ -567,6 +680,57 @@ describe('AssistantDatabase', () => {
     ])
     database.replaceConversations([])
     expect(database.listConversations()).toEqual([])
+    database.close()
+  })
+
+  it('rebinds persisted conversations whose model profile was removed', async () => {
+    const database = await createDatabase()
+    const removedProfileId =
+      '00000000-0000-4000-8000-000000000291'
+    const defaultProfileId =
+      '00000000-0000-4000-8000-000000000292'
+    const runtimeProfileId =
+      '00000000-0000-4000-8000-000000000293'
+    database.replaceConversations(
+      ([
+        ['model', removedProfileId],
+        ['opencode', removedProfileId],
+        ['continue', removedProfileId],
+        ['model', runtimeProfileId]
+      ] as const).map(([provider, profileId], index) => ({
+        id: `00000000-0000-4000-8000-00000000030${index}`,
+        runtimeSelection: { provider, profileId },
+        title: `对话 ${index}`,
+        updatedAt: index + 1,
+        messages: []
+      }))
+    )
+
+    expect(
+      database.repairConversationRuntimeSelections({
+        modelProfiles: [
+          { id: defaultProfileId },
+          { id: runtimeProfileId }
+        ],
+        defaultModelProfileId: defaultProfileId,
+        opencodeModelSource: {
+          kind: 'profile',
+          profileId: runtimeProfileId
+        },
+        continueModelSource: { kind: 'platform' }
+      })
+    ).toBe(3)
+    expect(
+      database
+        .listConversations()
+        .sort((left, right) => left.title.localeCompare(right.title))
+        .map((conversation) => conversation.runtimeSelection)
+    ).toEqual([
+      { provider: 'model', profileId: defaultProfileId },
+      { provider: 'opencode', profileId: runtimeProfileId },
+      { provider: 'continue' },
+      { provider: 'model', profileId: runtimeProfileId }
+    ])
     database.close()
   })
 

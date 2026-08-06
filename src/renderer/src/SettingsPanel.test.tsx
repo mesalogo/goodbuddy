@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -12,6 +13,13 @@ import type {
   DesktopApi,
   RuntimeSettings
 } from '../../shared/contracts'
+import type { CapabilitySnapshot } from '../../shared/capability-contracts'
+import type {
+  EmbeddingDiagnosticResult,
+  EmbeddingIndexStatus,
+  EmbeddingSettingsSnapshot
+} from '../../shared/embedding-contracts'
+import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelTools } from '../../shared/builtin-model-tools'
 import { SettingsPanel } from './SettingsPanel'
 
@@ -33,6 +41,7 @@ const runtimeSettings: RuntimeSettings = {
   continueMode: 'chat',
   runtimeSandboxMode: 'auto',
   subagentSmartRoutingEnabled: false,
+  intranetCompatibilityEnabled: true,
   knowledgeEmbeddingEnabled: false,
   knowledgeEmbeddingBaseUrl:
     'http://127.0.0.1:11434/v1/embeddings',
@@ -56,8 +65,14 @@ const runtimeSettings: RuntimeSettings = {
     }
   ],
   defaultModelProfileId: modelProfileId,
-  opencodeModelSource: { kind: 'platform' },
-  continueModelSource: { kind: 'platform' },
+  opencodeModelSource: {
+    kind: 'profile',
+    profileId: modelProfileId
+  },
+  continueModelSource: {
+    kind: 'profile',
+    profileId: modelProfileId
+  },
   secureStorageAvailable: true,
   toolApproval: 'always'
 }
@@ -107,6 +122,27 @@ const selectRuntimeFile = vi.fn<
 >(async (kind) =>
   kind === 'continueBinary' ? 'C:\\Tools\\cn.exe' : undefined
 )
+const openRuntimeConfig = vi.fn<
+  DesktopApi['settings']['openRuntimeConfig']
+>(async () => {})
+const testModelConnection = vi.fn<
+  DesktopApi['settings']['testModelConnection']
+>(async () => ({
+  id: 'model',
+  label: 'sonnet-5',
+  available: true,
+  supportsToolExecution: true,
+  detail: 'Ready'
+}))
+const testRuntime = vi.fn<DesktopApi['settings']['testRuntime']>(
+  async () => ({
+    id: 'continue',
+    label: 'Continue',
+    available: true,
+    supportsToolExecution: true,
+    detail: 'Ready'
+  })
+)
 const capabilitySnapshot = {
   skills: [
     {
@@ -125,7 +161,7 @@ const capabilitySnapshot = {
       )[]
     }
   ],
-  mcpServers: [],
+  mcpServers: [] as CapabilitySnapshot['mcpServers'],
   computerCapabilities: [
     {
       id: 'host-browser-control' as const,
@@ -156,8 +192,9 @@ const capabilitySnapshot = {
     ],
     defaultProfileId: browserProfileId
   }
-}
+} satisfies CapabilitySnapshot
 const getCapabilitySnapshot = vi.fn(async () => capabilitySnapshot)
+const saveMcpServer = vi.fn(async () => capabilitySnapshot)
 const setSkillEnabled = vi.fn(async (_skillId: string, enabled: boolean) => ({
   ...capabilitySnapshot,
   skills: capabilitySnapshot.skills.map((skill) => ({
@@ -236,10 +273,61 @@ const updateExpert = vi.fn<DesktopApi['experts']['update']>(
 const removeExpert = vi.fn<DesktopApi['experts']['remove']>(
   async () => {}
 )
+const embeddingIndexStatus: EmbeddingIndexStatus = {
+  job: null
+}
+const embeddingSnapshot: EmbeddingSettingsSnapshot = {
+  configuration: {
+    provider: 'openai-compatible',
+    model: 'nomic-embed-text',
+    endpoint: 'http://127.0.0.1:11434/v1/embeddings',
+    credentialConfigured: false
+  },
+  indexStatus: embeddingIndexStatus
+}
+const getEmbeddingSnapshot = vi.fn(async () => embeddingSnapshot)
+const diagnoseEmbedding = vi.fn(
+  async (): Promise<EmbeddingDiagnosticResult> => ({
+    status: 'available',
+    provider: 'openai-compatible',
+    model: 'nomic-embed-text',
+    dimensions: 768,
+    latencyMs: 128,
+    checkedAt: Date.UTC(2026, 7, 5, 12, 0, 0)
+  })
+)
+const rebuildEmbeddingIndex = vi.fn(
+  async (): Promise<EmbeddingIndexStatus> => ({
+    ...embeddingIndexStatus,
+    job: {
+      id: 'job-1',
+      status: 'running',
+      provider: 'openai-compatible',
+      model: 'nomic-embed-text',
+      progress: { completed: 3, total: 42, percent: (3 / 42) * 100 },
+      createdAt: Date.UTC(2026, 7, 5, 12, 0, 0),
+      startedAt: Date.UTC(2026, 7, 5, 12, 0, 1)
+    }
+  })
+)
+const cancelEmbeddingIndex = vi.fn(async () => true)
+const embeddingStatusListeners: ((status: EmbeddingIndexStatus) => void)[] = []
+const onEmbeddingStatus = vi.fn(
+  (listener: (status: EmbeddingIndexStatus) => void) => {
+    embeddingStatusListeners.push(listener)
+    return () => {
+      const index = embeddingStatusListeners.indexOf(listener)
+      if (index >= 0) {
+        embeddingStatusListeners.splice(index, 1)
+      }
+    }
+  }
+)
 
 describe('SettingsPanel runtime files', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    embeddingStatusListeners.splice(0)
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
@@ -249,13 +337,9 @@ describe('SettingsPanel runtime files', () => {
           selectWorkspace: vi.fn(async () => undefined),
           detectAgentRuntimes,
           selectRuntimeFile,
-          testRuntime: vi.fn(async () => ({
-            id: 'continue',
-            label: 'Continue',
-            available: true,
-            supportsToolExecution: true,
-            detail: 'Ready'
-          }))
+          openRuntimeConfig,
+          testModelConnection,
+          testRuntime
         },
         capabilities: {
           getSnapshot: getCapabilitySnapshot,
@@ -263,7 +347,7 @@ describe('SettingsPanel runtime files', () => {
           removeSkill: vi.fn(async () => capabilitySnapshot),
           setSkillEnabled,
           setSkillAssignments: vi.fn(async () => capabilitySnapshot),
-          saveMcpServer: vi.fn(async () => capabilitySnapshot),
+          saveMcpServer,
           removeMcpServer: vi.fn(async () => capabilitySnapshot),
           testMcpServer: vi.fn(async () => ({
             toolCount: 0,
@@ -284,6 +368,13 @@ describe('SettingsPanel runtime files', () => {
           create: createExpert,
           update: updateExpert,
           remove: removeExpert
+        },
+        embeddings: {
+          getSnapshot: getEmbeddingSnapshot,
+          diagnose: diagnoseEmbedding,
+          rebuild: rebuildEmbeddingIndex,
+          cancel: cancelEmbeddingIndex,
+          onStatus: onEmbeddingStatus
         }
       } as unknown as DesktopApi
     })
@@ -342,14 +433,14 @@ describe('SettingsPanel runtime files', () => {
     expect(runtimeTab).toHaveAttribute('tabindex', '-1')
 
     fireEvent.keyDown(securityTab, { key: 'End' })
-    const mcpTab = screen.getByRole('tab', { name: 'MCP' })
-    expect(mcpTab).toHaveFocus()
-    expect(mcpTab).toHaveAttribute('aria-selected', 'true')
+    const aboutTab = screen.getByRole('tab', { name: '关于与更新' })
+    expect(aboutTab).toHaveFocus()
+    expect(aboutTab).toHaveAttribute('aria-selected', 'true')
     expect(
       screen.getByRole('tabpanel')
-    ).toHaveAttribute('aria-labelledby', 'settings-tab-mcp')
+    ).toHaveAttribute('aria-labelledby', 'settings-tab-about')
 
-    fireEvent.keyDown(mcpTab, { key: 'Home' })
+    fireEvent.keyDown(aboutTab, { key: 'Home' })
     expect(
       screen.getByRole('tab', { name: '外观' })
     ).toHaveFocus()
@@ -408,6 +499,12 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    expect(
+      screen.queryByRole('checkbox', {
+        name: '启用 Subagent 智能路由'
+      })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '角色与提示词' }))
     const smartRouting = await screen.findByRole('checkbox', {
       name: '启用 Subagent 智能路由'
     })
@@ -430,6 +527,80 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
+  it('offers roles only model connections that have been saved', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '尚未保存的角色模型' }
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: '角色与提示词' }))
+    const roleModel = await screen.findByLabelText('角色模型连接')
+    expect(
+      within(roleModel).queryByRole('option', {
+        name: '尚未保存的角色模型'
+      })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(
+        within(roleModel).getByRole('option', {
+          name: '尚未保存的角色模型'
+        })
+      ).toBeInTheDocument()
+    )
+  })
+
+  it('shows and saves the global intranet compatibility mode', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    const intranetCompatibility = await screen.findByRole('checkbox', {
+      name: '内网兼容模式'
+    })
+    expect(intranetCompatibility).toBeChecked()
+    const warning = screen.getByText(/HTTP 传输未加密/)
+    expect(warning).toHaveTextContent(
+      '无效、自签名或已过期的 HTTPS 证书'
+    )
+    expect(warning).toHaveTextContent('整个应用')
+    expect(warning).toHaveTextContent(
+      '关闭后恢复严格的地址与证书校验'
+    )
+
+    fireEvent.click(intranetCompatibility)
+    expect(intranetCompatibility).not.toBeChecked()
+    expect(warning).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intranetCompatibilityEnabled: false
+        })
+      )
+    )
+  })
+
   it('automatically detects runtimes and displays path, version, and detail', async () => {
     render(
       <SettingsPanel
@@ -444,14 +615,22 @@ describe('SettingsPanel runtime files', () => {
     expect(detectAgentRuntimes).toHaveBeenCalledOnce()
     expect(
       await screen.findByText(
-        'C:\\Tools\\opencode.exe · 1.2.3 · 通过 PATH 检测'
+        '已就绪 · C:\\Tools\\opencode.exe · 1.2.3 · 通过 PATH 检测'
       )
     ).toBeInTheDocument()
+    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(
-      screen.getByText(/未找到可执行文件 · 未检测到 Continue/)
+      screen.getByText('尚未就绪 · 未检测到 Continue')
     ).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '重新检测' }))
+    expect(
+      screen.queryByRole('button', { name: '重新检测 Continue' })
+    ).not.toBeVisible()
+    fireEvent.click(screen.getByText('高级设置'))
+    fireEvent.click(
+      screen.getByRole('button', { name: '重新检测 Continue' })
+    )
     await waitFor(() =>
       expect(detectAgentRuntimes).toHaveBeenCalledTimes(2)
     )
@@ -468,6 +647,9 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
+    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByText('高级设置'))
     const input = await screen.findByLabelText('Continue 可执行文件路径')
     const field = input.closest('label')
     if (!field) {
@@ -483,12 +665,8 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 Continue 可执行文件将以当前用户权限运行/)
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Continue 固定以 Execute 运行/)
+      screen.getByText(/Ask 仅可调用当前授权的知识库搜索/)
     ).toBeInTheDocument()
-    expect(
-      screen.getByText(/不会匿名加载远程默认模型/)
-    ).toBeInTheDocument()
-
     fireEvent.click(within(field).getByRole('button', { name: '清除' }))
     expect(input).toHaveValue('')
 
@@ -502,6 +680,167 @@ describe('SettingsPanel runtime files', () => {
           continueMode: 'chat',
           opencodeBinaryPath: '',
           opencodeConfigPath: ''
+        })
+      )
+    )
+  })
+
+  it('separates bundled Agent Runtimes and collapses low-level overrides', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    expect(
+      await screen.findByText(
+        /OpenCode 和 Continue 已随 GoodBuddy 内置/
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/配置可兼容的直连文本模型后即可使用/)
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'OpenCode' }))
+      .toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('默认 Runtime')).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/GoodBuddy 内置 OpenCode/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/模型配置：/).closest('.runtime-note')
+    ).toHaveTextContent(
+      '跟随 GoodBuddy · 默认模型（sonnet-5）'
+    )
+    expect(
+      screen.getByText(/^已就绪 ·/u)
+    ).toBeInTheDocument()
+    expect(screen.getByText('高级设置').closest('details'))
+      .not.toHaveAttribute('open')
+    expect(
+      screen.queryByLabelText('OpenCode GoodBuddy 模型连接')
+    ).not.toBeVisible()
+
+    fireEvent.click(screen.getByText('高级设置'))
+    expect(
+      screen.getByLabelText('OpenCode 可执行文件路径')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('OpenCode GoodBuddy 模型连接')
+    ).toHaveValue(modelProfileId)
+    expect(
+      screen.getByText(/留空时自动启动 GoodBuddy 内置的本机 OpenCode/)
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('checkbox', {
+        name: /自动启动内置 OpenCode/
+      })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(
+      screen.getByText(/GoodBuddy 内置 Continue/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/模型配置：/).closest('.runtime-note')
+    ).toHaveTextContent(
+      '跟随 GoodBuddy · 默认模型（sonnet-5）'
+    )
+    expect(screen.getByText('尚未就绪 · 未检测到 Continue'))
+      .toBeInTheDocument()
+    expect(screen.getByText('高级设置').closest('details'))
+      .not.toHaveAttribute('open')
+  })
+
+  it('opens only saved Runtime-owned config files or fixed config directories', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      continueModelSource: { kind: 'platform' },
+      continueConfigPath: 'C:\\Users\\test\\.continue\\config.yaml'
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByText('高级设置'))
+    expect(
+      screen.getByRole('radio', {
+        name: /使用 Continue 自有配置/
+      })
+    ).toBeChecked()
+    expect(
+      screen.getByLabelText('Continue 配置文件路径')
+    ).toHaveValue('C:\\Users\\test\\.continue\\config.yaml')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '打开配置文件' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '在文件夹中显示' })
+    )
+    await waitFor(() =>
+      expect(openRuntimeConfig).toHaveBeenNthCalledWith(1, {
+        runtime: 'continue',
+        action: 'open-file'
+      })
+    )
+    expect(openRuntimeConfig).toHaveBeenNthCalledWith(2, {
+      runtime: 'continue',
+      action: 'show-file'
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }))
+    fireEvent.click(screen.getByText('高级设置'))
+    fireEvent.click(
+      screen.getByRole('radio', {
+        name: /使用 OpenCode 自有配置/
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '打开 OpenCode 配置目录'
+      })
+    )
+    await waitFor(() =>
+      expect(openRuntimeConfig).toHaveBeenLastCalledWith({
+        runtime: 'opencode',
+        action: 'open-directory'
+      })
+    )
+  })
+
+  it('saves blank OpenCode Server addresses as bundled local mode', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    fireEvent.click(screen.getByText('高级设置'))
+    expect(screen.getByLabelText('OpenCode Server 地址')).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          opencodeBaseUrl: '',
+          opencodeEmbedded: true
         })
       )
     )
@@ -553,7 +892,16 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     fireEvent.click(screen.getByRole('tab', { name: 'Agent Runtime' }))
-    const sourceSelect = screen.getAllByLabelText('模型连接')[0]!
+    fireEvent.click(screen.getByText('高级设置'))
+    const profileOption = (
+      await screen.findAllByRole('option', {
+        name: 'OpenCode 独立模型'
+      })
+    )[0]!
+    const sourceSelect = profileOption.closest('select')
+    if (!sourceSelect) {
+      throw new Error('Missing OpenCode model source select')
+    }
     const sourceOptions = within(sourceSelect).getAllByRole('option')
     fireEvent.change(sourceSelect, {
       target: {
@@ -575,6 +923,345 @@ describe('SettingsPanel runtime files', () => {
         })
       )
     )
+  })
+
+  it('assigns an OpenAI Responses connection to both Agent Runtimes', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.change(
+      screen.getByLabelText('接口协议 默认模型'),
+      {
+        target: { value: 'openai-responses' }
+      }
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent Runtime' }))
+    for (const runtimeName of ['OpenCode', 'Continue']) {
+      fireEvent.click(screen.getByRole('button', { name: runtimeName }))
+      fireEvent.click(screen.getByText('高级设置'))
+      const option = await screen.findByRole('option', {
+        name: '默认模型'
+      })
+      expect(option).not.toBeDisabled()
+      const select = option.closest('select')
+      if (!select) {
+        throw new Error('Missing Agent Runtime model source select')
+      }
+      fireEvent.change(select, {
+        target: { value: modelProfileId }
+      })
+    }
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: [
+            expect.objectContaining({
+              id: modelProfileId,
+              protocol: 'openai-responses'
+            })
+          ],
+          opencodeModelSource: {
+            kind: 'profile',
+            profileId: modelProfileId
+          },
+          continueModelSource: {
+            kind: 'profile',
+            profileId: modelProfileId
+          }
+        })
+      )
+    )
+  })
+
+  it('keeps saved Runtime sources valid when defaulting a new text profile', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '新的默认文本模型' }
+    })
+    fireEvent.click(screen.getByRole('radio', { name: '默认连接' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() => expect(updateRuntime).toHaveBeenCalled())
+    const savedInput = updateRuntime.mock.lastCall?.[0]
+    const nextDefault = savedInput?.modelProfiles?.find(
+      (profile) => profile.name === '新的默认文本模型'
+    )
+    expect(nextDefault).toBeDefined()
+    expect(savedInput).toEqual(
+      expect.objectContaining({
+        defaultModelProfileId: nextDefault?.id,
+        opencodeModelSource: {
+          kind: 'profile',
+          profileId: nextDefault?.id
+        },
+        continueModelSource: {
+          kind: 'profile',
+          profileId: nextDefault?.id
+        }
+      })
+    )
+  })
+
+  it('preserves explicit profile and platform overrides when defaulting', async () => {
+    const explicitProfileId = '00000000-0000-4000-8000-000000000002'
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelProfiles: [
+        runtimeSettings.modelProfiles[0]!,
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          id: explicitProfileId,
+          name: 'Runtime 专用模型',
+          modelName: 'runtime-model'
+        }
+      ],
+      opencodeModelSource: {
+        kind: 'profile',
+        profileId: explicitProfileId
+      },
+      continueModelSource: { kind: 'platform' }
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
+    fireEvent.click(screen.getByRole('radio', { name: '默认连接' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          opencodeModelSource: {
+            kind: 'profile',
+            profileId: explicitProfileId
+          },
+          continueModelSource: { kind: 'platform' }
+        })
+      )
+    )
+  })
+
+  it('repoints a removed Runtime profile to a compatible text profile', async () => {
+    const removedProfileId = '00000000-0000-4000-8000-000000000003'
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelProfiles: [
+        runtimeSettings.modelProfiles[0]!,
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          id: removedProfileId,
+          name: '待删除 Runtime 模型',
+          modelName: 'runtime-model'
+        }
+      ],
+      opencodeModelSource: {
+        kind: 'profile',
+        profileId: removedProfileId
+      }
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑模型连接 待删除 Runtime 模型'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '删除模型连接 待删除 Runtime 模型'
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          opencodeModelSource: {
+            kind: 'profile',
+            profileId: modelProfileId
+          }
+        })
+      )
+    )
+  })
+
+  it('tests the selected model instead of a selected Continue Runtime', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      provider: 'continue',
+      modelAuthentication: 'none',
+      modelProfiles: [
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          authentication: 'none',
+          apiKeyConfigured: false,
+          credentialSource: 'none'
+        }
+      ]
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存并测试模型' })
+    )
+
+    await waitFor(() =>
+      expect(testModelConnection).toHaveBeenCalledWith(modelProfileId)
+    )
+    expect(testRuntime).not.toHaveBeenCalled()
+    expect(await screen.findByText('连接成功：sonnet-5')).toBeInTheDocument()
+  })
+
+  it('shows an actionable model error without Electron IPC prefixes', async () => {
+    testModelConnection.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'settings:runtime:test-model': Error: 模型连接“默认模型”未配置 API Key"
+      )
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存并测试模型' })
+    )
+
+    expect(
+      await screen.findByText('模型连接“默认模型”未配置 API Key')
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Error invoking remote method/u))
+      .not.toBeInTheDocument()
+  })
+
+  it('shows the first settings validation issue without IPC wrappers', async () => {
+    updateRuntime.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'settings:runtime:update': [ { \"code\": \"custom\", \"path\": [ \"modelProfiles\", 0, \"baseUrl\" ], \"message\": \"模型服务地址必须使用 HTTPS\" } ]"
+      )
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByDisplayValue('C:\\Workspace')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    expect(
+      await screen.findByText('模型服务地址必须使用 HTTPS')
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Error invoking remote method/u))
+      .not.toBeInTheDocument()
+  })
+
+  it('tests the active Runtime with its saved model source', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      opencodeModelSource: {
+        kind: 'profile',
+        profileId: modelProfileId
+      },
+      continueModelSource: { kind: 'platform' }
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '保存并测试 OpenCode'
+      })
+    )
+
+    await waitFor(() =>
+      expect(testRuntime).toHaveBeenCalledWith({
+        provider: 'opencode',
+        profileId: modelProfileId
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '保存并测试 Continue'
+      })
+    )
+    await waitFor(() =>
+      expect(testRuntime).toHaveBeenLastCalledWith({
+        provider: 'continue'
+      })
+    )
+    expect(testModelConnection).not.toHaveBeenCalled()
   })
 
   it('moves the detail selection after deleting a model connection', async () => {
@@ -671,9 +1358,26 @@ describe('SettingsPanel runtime files', () => {
         })
       )
     )
+    expect(updateRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opencodeModelSource: { kind: 'platform' },
+        continueModelSource: { kind: 'platform' }
+      })
+    )
   })
 
   it('configures vector models under model connections instead of security', async () => {
+    getEmbeddingSnapshot
+      .mockResolvedValueOnce(embeddingSnapshot)
+      .mockResolvedValue({
+        ...embeddingSnapshot,
+        configuration: {
+          provider: 'openai-compatible',
+          model: 'bge-m3',
+          endpoint: 'https://vectors.example/v1/embeddings',
+          credentialConfigured: true
+        }
+      })
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -695,6 +1399,9 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByText('向量模型连接', { selector: 'strong' })
     ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '保存并测试模型' })
+    ).not.toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('checkbox', { name: '启用向量模型' })
@@ -724,6 +1431,98 @@ describe('SettingsPanel runtime files', () => {
         })
       )
     )
+    const section = screen.getByRole('region', { name: '向量模型' })
+    await waitFor(() => {
+      expect(
+        within(section).getByText('bge-m3', { selector: 'strong' })
+      ).toBeInTheDocument()
+      expect(
+        within(section).getByText(
+          /https:\/\/vectors\.example\/v1\/embeddings/u
+        )
+      ).toBeInTheDocument()
+      expect(within(section).getByText('已配置凭据'))
+        .toBeInTheDocument()
+    })
+  })
+
+  it('tests vector generation and rebuilds the index by document', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    await waitFor(() => expect(getEmbeddingSnapshot).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+
+    const section = screen.getByRole('region', { name: '向量模型' })
+    expect(
+      within(section).getByRole('button', { name: '测试向量模型' })
+    ).toBeDisabled()
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: '启用向量模型' })
+    )
+    fireEvent.click(
+      within(section).getByRole('button', { name: '测试向量模型' })
+    )
+    await waitFor(() => expect(diagnoseEmbedding).toHaveBeenCalledTimes(1))
+    expect(
+      await within(section).findByText(/服务返回 768 维向量/u)
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      within(section).getByRole('button', { name: '重建向量索引' })
+    )
+    await waitFor(() =>
+      expect(rebuildEmbeddingIndex).toHaveBeenCalledTimes(1)
+    )
+    expect(
+      await within(section).findByText('已完成 3 / 42 篇文档')
+    ).toBeInTheDocument()
+    expect(
+      within(section).getByText(
+        /每篇文档会一次性更新，处理完成后立即可用于检索/
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      within(section).getByRole('button', { name: '取消向量索引重建' })
+    )
+    await waitFor(() =>
+      expect(cancelEmbeddingIndex).toHaveBeenCalledWith('job-1')
+    )
+
+    expect(embeddingStatusListeners).toHaveLength(1)
+    act(() => {
+      embeddingStatusListeners[0]?.({
+        job: {
+          id: 'job-1',
+          status: 'cancelled',
+          provider: 'openai-compatible',
+          model: 'nomic-embed-text',
+          progress: { completed: 3, total: 42, percent: (3 / 42) * 100 },
+          createdAt: Date.UTC(2026, 7, 5, 12, 0, 0),
+          startedAt: Date.UTC(2026, 7, 5, 12, 0, 1),
+          completedAt: Date.UTC(2026, 7, 5, 12, 0, 9)
+        }
+      })
+    })
+    expect(
+      within(section).getByText('已完成 3 / 42 篇文档。')
+    ).toBeInTheDocument()
+    expect(
+      within(section).getByText(
+        /已完成文档保留新向量；其余文档保留原有向量/
+      )
+    ).toBeInTheDocument()
   })
 
   it('manages heartbeat automation from Settings', async () => {
@@ -928,6 +1727,14 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('列出工作区目录')).toBeInTheDocument()
     expect(screen.getByText('写入工作区文本')).toBeInTheDocument()
+    expect(screen.getByText('知识库 MCP')).toBeInTheDocument()
+    expect(screen.getByText('knowledge_search')).toBeInTheDocument()
+    expect(screen.getAllByText('内置 MCP')).toHaveLength(
+      builtinMcpServers.length
+    )
+    expect(
+      screen.getByText(/不公开服务地址或凭据/)
+    ).toBeInTheDocument()
     expect(screen.getAllByText('直连模型')).toHaveLength(
       builtinModelTools.length
     )
@@ -940,10 +1747,145 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByText(/自定义 stdio MCP 会以受限环境启动/)
     ).toHaveTextContent('不会获得桌面会话变量')
-    fireEvent.click(screen.getByRole('button', { name: /添加 Server/ }))
-    expect(screen.getByLabelText('模型')).toBeChecked()
+    const addServer = screen.getByRole('button', { name: /添加 Server/ })
+    fireEvent.click(addServer)
+    const dialog = screen.getByRole('dialog', {
+      name: '添加 MCP Server'
+    })
+    expect(within(dialog).getByLabelText('模型')).toBeChecked()
     expect(
-      screen.queryByLabelText('OpenCode')
+      within(dialog).queryByLabelText('OpenCode')
+    ).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText('名称')).toHaveFocus()
+    )
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(addServer).toHaveFocus())
+    expect(
+      screen.queryByRole('dialog', { name: '添加 MCP Server' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('traps MCP editor focus and restores it after saving or backdrop dismissal', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    const addServer = await screen.findByRole('button', {
+      name: '添加 Server'
+    })
+    fireEvent.click(addServer)
+    const dialog = screen.getByRole('dialog', {
+      name: '添加 MCP Server'
+    })
+    const closeButton = within(dialog).getByRole('button', {
+      name: '关闭 MCP 编辑器'
+    })
+    const saveButton = within(dialog).getByRole('button', {
+      name: '保存 MCP Server'
+    })
+    closeButton.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(saveButton).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(closeButton).toHaveFocus()
+
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: '本地文件工具' }
+    })
+    fireEvent.change(within(dialog).getByLabelText('传输方式'), {
+      target: { value: 'http' }
+    })
+    fireEvent.change(within(dialog).getByLabelText('Server URL'), {
+      target: { value: 'https://mcp.example.com/mcp' }
+    })
+    fireEvent.change(within(dialog).getByLabelText('Bearer Token'), {
+      target: { value: ' token-with-significant-spaces ' }
+    })
+    fireEvent.click(saveButton)
+    await waitFor(() =>
+      expect(saveMcpServer).toHaveBeenCalledWith(
+        undefined,
+        expect.objectContaining({
+          name: '本地文件工具',
+          transport: 'http',
+          url: 'https://mcp.example.com/mcp',
+          secret: {
+            action: 'replace',
+            value: ' token-with-significant-spaces '
+          }
+        })
+      )
+    )
+    await waitFor(() => expect(addServer).toHaveFocus())
+    expect(
+      screen.queryByRole('dialog', { name: '添加 MCP Server' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(addServer)
+    const reopenedDialog = screen.getByRole('dialog', {
+      name: '添加 MCP Server'
+    })
+    const backdrop = reopenedDialog.parentElement
+    if (!backdrop) {
+      throw new Error('Missing MCP editor backdrop')
+    }
+    fireEvent.mouseDown(backdrop)
+    await waitFor(() => expect(addServer).toHaveFocus())
+    expect(
+      screen.queryByRole('dialog', { name: '添加 MCP Server' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('opens an existing MCP Server in the same modal and returns focus on Escape', async () => {
+    getCapabilitySnapshot.mockResolvedValueOnce({
+      ...capabilitySnapshot,
+      mcpServers: [
+        {
+          id: '00000000-0000-4000-8000-000000000301',
+          name: '团队知识服务',
+          description: '公司内部 MCP',
+          enabled: true,
+          assignments: ['model'],
+          secretConfigured: true,
+          transport: 'http',
+          url: 'https://mcp.example.com/mcp'
+        }
+      ]
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    const editButton = await screen.findByRole('button', {
+      name: '编辑 团队知识服务'
+    })
+    fireEvent.click(editButton)
+    const dialog = screen.getByRole('dialog', {
+      name: '编辑 MCP Server'
+    })
+    expect(within(dialog).getByLabelText('名称')).toHaveValue(
+      '团队知识服务'
+    )
+    expect(within(dialog).getByLabelText('Bearer Token')).toHaveValue('')
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(editButton).toHaveFocus())
+    expect(
+      screen.queryByRole('dialog', { name: '编辑 MCP Server' })
     ).not.toBeInTheDocument()
   })
 

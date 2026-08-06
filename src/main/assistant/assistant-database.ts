@@ -30,6 +30,12 @@ import {
   type ComputerControlErrorCode,
   type ComputerControlRisk
 } from '../../shared/computer-control-contracts'
+import {
+  agentRuntimeSelectionKey,
+  agentRuntimeSelectionSchema,
+  repairAgentRuntimeSelection,
+  type RuntimeSelectionRepairSettings
+} from '../../shared/runtime-selection-contracts'
 import type { ComputerControlAuditEvent } from '../computer-control/audit'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
@@ -65,6 +71,7 @@ type TaskRow = {
 type ConversationRow = {
   id: string
   project_id: string | null
+  runtime_selection_json: string | null
   title: string
   updated_at: string
 }
@@ -87,6 +94,22 @@ type MessageMetadata = {
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
   artifactIds?: string[]
   attachments?: ConversationSnapshot['messages'][number]['attachments']
+}
+
+function parseRuntimeSelection(value: string | null):
+  | ConversationSnapshot['runtimeSelection']
+  | undefined {
+  if (!value) {
+    return undefined
+  }
+  try {
+    const parsed = agentRuntimeSelectionSchema.safeParse(
+      JSON.parse(value)
+    )
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
 }
 
 type ArtifactRow = {
@@ -133,6 +156,7 @@ type ExpertRow = {
   description: string
   system_instructions: string
   capability_policy_json: string
+  model_policy_json: string
   enabled: number
   created_at: string
   updated_at: string
@@ -341,6 +365,7 @@ function toSchedule(row: ScheduleRow): AssistantSchedule {
 
 function toExpert(row: ExpertRow): AssistantExpert {
   let routingKeywords: string[]
+  let modelProfileId: string | undefined
   try {
     const policy = JSON.parse(row.capability_policy_json) as {
       routingKeywords?: unknown
@@ -356,11 +381,24 @@ function toExpert(row: ExpertRow): AssistantExpert {
   } catch {
     routingKeywords = []
   }
+  try {
+    const policy = JSON.parse(row.model_policy_json) as {
+      modelProfileId?: unknown
+    }
+    modelProfileId = expertCreateSchema
+      .pick({ modelProfileId: true })
+      .parse({
+        modelProfileId: policy.modelProfileId
+      }).modelProfileId
+  } catch {
+    modelProfileId = undefined
+  }
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     systemInstructions: row.system_instructions,
+    ...(modelProfileId ? { modelProfileId } : {}),
     routingKeywords,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
@@ -825,7 +863,7 @@ export class AssistantDatabase {
     const database = this.requireDatabase()
     const conversations = database
       .prepare(
-        `SELECT id, project_id, title, updated_at
+        `SELECT id, project_id, runtime_selection_json, title, updated_at
          FROM conversations
          WHERE status = 'active'
          ORDER BY updated_at DESC
@@ -843,6 +881,9 @@ export class AssistantDatabase {
     return conversations.map((conversation) => ({
       id: conversation.id,
       projectId: conversation.project_id ?? undefined,
+      runtimeSelection: parseRuntimeSelection(
+        conversation.runtime_selection_json
+      ),
       title: conversation.title,
       updatedAt: Date.parse(conversation.updated_at),
       messages: (
@@ -874,6 +915,53 @@ export class AssistantDatabase {
     }))
   }
 
+  repairConversationRuntimeSelections(
+    settings: RuntimeSelectionRepairSettings
+  ): number {
+    const database = this.requireDatabase()
+    const conversations = database
+      .prepare(
+        `SELECT id, runtime_selection_json
+         FROM conversations
+         WHERE runtime_selection_json IS NOT NULL`
+      )
+      .all() as Array<{
+        id: string
+        runtime_selection_json: string
+      }>
+    const update = database.prepare(
+      `UPDATE conversations
+       SET runtime_selection_json = ?
+       WHERE id = ?`
+    )
+    let repaired = 0
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const conversation of conversations) {
+        const current = parseRuntimeSelection(
+          conversation.runtime_selection_json
+        )
+        if (!current) {
+          continue
+        }
+        const next = repairAgentRuntimeSelection(current, settings)
+        if (
+          agentRuntimeSelectionKey(next) ===
+          agentRuntimeSelectionKey(current)
+        ) {
+          continue
+        }
+        update.run(JSON.stringify(next), conversation.id)
+        repaired += 1
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return repaired
+  }
+
   replaceConversations(
     conversations: ConversationSnapshot[]
   ): void {
@@ -883,8 +971,9 @@ export class AssistantDatabase {
       database.exec('DELETE FROM messages; DELETE FROM conversations;')
       const insertConversation = database.prepare(
         `INSERT INTO conversations
-          (id, project_id, work_mode, title, status, created_at, updated_at)
-         VALUES (?, ?, 'ask', ?, 'active', ?, ?)`
+          (id, project_id, runtime_selection_json, work_mode, title, status,
+           created_at, updated_at)
+         VALUES (?, ?, ?, 'ask', ?, 'active', ?, ?)`
       )
       const insertMessage = database.prepare(
         `INSERT INTO messages
@@ -897,6 +986,9 @@ export class AssistantDatabase {
         insertConversation.run(
           conversation.id,
           conversation.projectId ?? null,
+          conversation.runtimeSelection
+            ? JSON.stringify(conversation.runtimeSelection)
+            : null,
           conversation.title,
           updatedAt,
           updatedAt
@@ -2618,7 +2710,7 @@ export class AssistantDatabase {
           (id, name, description, system_instructions,
            capability_policy_json, model_policy_json, enabled,
            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, '{}', 1, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`
       )
       .run(
         id,
@@ -2627,6 +2719,9 @@ export class AssistantDatabase {
         normalized.systemInstructions,
         JSON.stringify({
           routingKeywords: normalized.routingKeywords
+        }),
+        JSON.stringify({
+          modelProfileId: normalized.modelProfileId
         }),
         now,
         now
@@ -2644,6 +2739,7 @@ export class AssistantDatabase {
         `UPDATE experts
          SET name = ?, description = ?, system_instructions = ?,
              capability_policy_json = ?,
+             model_policy_json = ?,
              updated_at = ?
          WHERE id = ? AND enabled = 1`
       )
@@ -2653,6 +2749,9 @@ export class AssistantDatabase {
         normalized.systemInstructions,
         JSON.stringify({
           routingKeywords: normalized.routingKeywords
+        }),
+        JSON.stringify({
+          modelProfileId: normalized.modelProfileId
         }),
         new Date().toISOString(),
         expertId
@@ -2730,7 +2829,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version >= 7) {
+    if (version.user_version > 8) {
+      throw new Error(
+        `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
+      )
+    }
+    if (version.user_version === 8) {
       return
     }
     if (version.user_version < 1) {
@@ -2750,6 +2854,7 @@ export class AssistantDatabase {
       CREATE TABLE conversations (
         id TEXT PRIMARY KEY,
         project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        runtime_selection_json TEXT,
         work_mode TEXT NOT NULL DEFAULT 'ask'
           CHECK(work_mode IN ('ask', 'plan', 'execute')),
         title TEXT NOT NULL,
@@ -3118,6 +3223,27 @@ export class AssistantDatabase {
           PRAGMA user_version = 7;
           COMMIT;
         `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 8) {
+      const conversationColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(conversations)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!conversationColumns.has('runtime_selection_json')) {
+          database.exec(
+            'ALTER TABLE conversations ADD COLUMN runtime_selection_json TEXT'
+          )
+        }
+        database.exec('PRAGMA user_version = 8; COMMIT;')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

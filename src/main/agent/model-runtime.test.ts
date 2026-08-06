@@ -675,6 +675,104 @@ describe('ModelAgentRuntime', () => {
     expect(toolProvider.dispose).toHaveBeenCalledOnce()
   })
 
+  it('runs only scoped knowledge in Ask without requesting approval', async () => {
+    const responses = [
+      {
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'knowledge-call',
+                  type: 'function',
+                  function: {
+                    name: 'knowledge_search',
+                    arguments: '{"query":"release notes","limit":3}'
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '基于知识库证据回答。'
+            }
+          }
+        ]
+      }
+    ]
+    const knowledgeTool: ModelToolDefinition = {
+      name: 'knowledge_search',
+      displayName: '知识库搜索',
+      description: 'Scoped evidence',
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+        additionalProperties: false
+      },
+      source: 'builtin'
+    }
+    const toolProvider = createToolProvider({
+      listTools: vi.fn(async () => [knowledgeTool])
+    })
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+    const authorize = vi.fn(async () => 'deny' as const)
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed139',
+        conversationId: 'conversation-knowledge-ask',
+        prompt: '查找发布说明',
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'main-only-token'
+      },
+      new AbortController().signal,
+      authorize
+    )) {
+      events.push(event)
+    }
+
+    expect(toolProvider.listTools).toHaveBeenCalledWith(
+      {
+        conversationId: 'conversation-knowledge-ask',
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'main-only-token'
+      },
+      expect.any(AbortSignal)
+    )
+    expect(toolProvider.callTool).toHaveBeenCalledWith(
+      'knowledge_search',
+      { query: 'release notes', limit: 3 },
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'main-only-token'
+      })
+    )
+    expect(authorize).not.toHaveBeenCalled()
+    expect(toolProvider.getApproval).not.toHaveBeenCalled()
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
   it('returns recoverable tool failures to the model instead of aborting the run', async () => {
     const responses = [
       {
@@ -776,6 +874,19 @@ describe('ModelAgentRuntime', () => {
         model: 'gpt-5',
         output: [
           {
+            id: 'msg-responses-1',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [
+              {
+                type: 'output_text',
+                text: '先读取 README。'
+              }
+            ]
+          },
+          {
+            id: 'fc-responses-1',
             type: 'function_call',
             call_id: 'call-responses-1',
             name: 'workspace_read_text',
@@ -789,6 +900,20 @@ describe('ModelAgentRuntime', () => {
         model: 'gpt-5',
         output: [
           {
+            id: 'fc-responses-2',
+            type: 'function_call',
+            call_id: 'call-responses-2',
+            name: 'workspace_read_text',
+            arguments: '{"path":"DESIGN.md"}'
+          }
+        ],
+        usage: { input_tokens: 21, output_tokens: 4 }
+      },
+      {
+        id: 'resp-tool-3',
+        model: 'gpt-5',
+        output: [
+          {
             type: 'message',
             role: 'assistant',
             content: [
@@ -799,7 +924,7 @@ describe('ModelAgentRuntime', () => {
             ]
           }
         ],
-        usage: { input_tokens: 21, output_tokens: 6 }
+        usage: { input_tokens: 30, output_tokens: 6 }
       }
     ]
     const fetcher = vi.fn<typeof fetch>(async () =>
@@ -845,12 +970,35 @@ describe('ModelAgentRuntime', () => {
         }
       ]
     })
+    expect(firstBody).not.toHaveProperty('previous_response_id')
     const secondBody = JSON.parse(
       fetcher.mock.calls[1]?.[1]?.body as string
     ) as Record<string, unknown>
     expect(secondBody).toMatchObject({
-      previous_response_id: 'resp-tool-1',
       input: [
+        {
+          role: 'user',
+          content: '读取 README'
+        },
+        {
+          id: 'msg-responses-1',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [
+            {
+              type: 'output_text',
+              text: '先读取 README。'
+            }
+          ]
+        },
+        {
+          id: 'fc-responses-1',
+          type: 'function_call',
+          call_id: 'call-responses-1',
+          name: 'workspace_read_text',
+          arguments: '{"path":"README.md"}'
+        },
         {
           type: 'function_call_output',
           call_id: 'call-responses-1',
@@ -867,11 +1015,52 @@ describe('ModelAgentRuntime', () => {
         }
       ]
     })
+    const thirdBody = JSON.parse(
+      fetcher.mock.calls[2]?.[1]?.body as string
+    ) as {
+      input: Array<Record<string, unknown>>
+    }
+    expect(thirdBody.input).toEqual([
+      ...(secondBody.input as Array<Record<string, unknown>>),
+      {
+        id: 'fc-responses-2',
+        type: 'function_call',
+        call_id: 'call-responses-2',
+        name: 'workspace_read_text',
+        arguments: '{"path":"DESIGN.md"}'
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call-responses-2',
+        output: [
+          {
+            type: 'input_text',
+            text: 'tool result'
+          },
+          {
+            type: 'input_image',
+            image_url: `data:image/png;base64,${toolPng}`
+          }
+        ]
+      }
+    ])
+    for (const [, init] of fetcher.mock.calls) {
+      expect(JSON.parse(init?.body as string)).not.toHaveProperty(
+        'previous_response_id'
+      )
+    }
     expect(
       events
         .filter((event) => event.type === 'tool')
         .map((event) => event.state)
-    ).toEqual(['pending', 'running', 'completed'])
+    ).toEqual([
+      'pending',
+      'running',
+      'completed',
+      'pending',
+      'running',
+      'completed'
+    ])
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'text',

@@ -229,6 +229,7 @@ describe('KnowledgeWorkspace', () => {
     expect(workspace.querySelector('aside')).toHaveClass(
       'knowledge-workspace__sidebar'
     )
+    expect(workspace.querySelector('aside')).not.toHaveAttribute('style')
     expect(workspace.querySelector('main')).toHaveClass(
       'knowledge-workspace__main'
     )
@@ -236,6 +237,18 @@ describe('KnowledgeWorkspace', () => {
       background: 'var(--surface-raised)'
     })
     expect(screen.getByText('全局')).toHaveClass('scope-badge')
+    const mobileBack = screen.getByRole('button', {
+      name: '返回知识库列表'
+    })
+    expect(mobileBack).toHaveClass('knowledge-workspace__mobile-back')
+    fireEvent.click(mobileBack)
+    expect(workspace).toHaveClass('knowledge-workspace--mobile-list')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /^产品知识 1 个文档/u
+      })
+    )
+    expect(workspace).not.toHaveClass('knowledge-workspace--mobile-list')
     expect(screen.getByRole('tablist', { name: '知识库视图' })).toHaveClass(
       'page-tabs'
     )
@@ -369,9 +382,17 @@ describe('KnowledgeWorkspace', () => {
       />
     )
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '删除知识库 产品知识' })
-    )
+    const trigger = screen.getByRole('button', {
+      name: '删除知识库 产品知识'
+    })
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', {
+      name: '删除知识库确认'
+    })
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(trigger).toHaveFocus())
+    fireEvent.click(trigger)
     expect(
       screen.getByText(
         '此知识库使用托管存储。删除后，应用保存的托管副本、索引和图谱都会被永久删除。'

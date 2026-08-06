@@ -1,7 +1,13 @@
 import { lookup as dnsLookup } from 'node:dns/promises'
+import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { isIP } from 'node:net'
 import { z } from 'zod'
-import { isPublicAddress } from '../knowledge/url-importer'
+import { isIntranetCompatibilityEnabled } from '../intranet-compatibility-policy'
+import {
+  isIntranetAddress,
+  isPublicAddress
+} from '../knowledge/url-importer'
 
 const remoteTaskSchema = z
   .object({
@@ -52,17 +58,39 @@ type RemoteDelegationOptions = {
   }
 }
 
+const BLOCKED_REMOTE_HOSTS = new Set([
+  'instance-data',
+  'instance-data.ec2.internal',
+  'metadata',
+  'metadata.aws.internal',
+  'metadata.google.internal'
+])
+
 function normalizeEndpoint(input: string): URL {
   const url = new URL(input.trim())
   if (
-    url.protocol !== 'https:' ||
+    (
+      url.protocol !== 'https:' &&
+      (
+        url.protocol !== 'http:' ||
+        !isIntranetCompatibilityEnabled()
+      )
+    ) ||
     url.username ||
     url.password ||
     url.search ||
     url.hash ||
     (url.pathname !== '' && url.pathname !== '/')
   ) {
-    throw new Error('远程委派地址必须是无凭据和路径的 HTTPS origin')
+    throw new Error(
+      isIntranetCompatibilityEnabled()
+        ? '远程委派地址必须是无凭据和路径的 HTTP(S) origin'
+        : '远程委派地址必须是无凭据和路径的 HTTPS origin'
+    )
+  }
+  const hostname = url.hostname.toLowerCase().replace(/\.$/u, '')
+  if (BLOCKED_REMOTE_HOSTS.has(hostname)) {
+    throw new Error('远程委派地址不允许访问云元数据服务')
   }
   return url
 }
@@ -88,7 +116,7 @@ function defaultTransport(
       settled = true
       reject(error)
     }
-    const request = httpsRequest(
+    const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(
       url,
       {
         method,
@@ -103,7 +131,9 @@ function defaultTransport(
         lookup: (_hostname, _options, callback) => {
           callback(null, address.address, address.family)
         },
-        servername: url.hostname,
+        ...(url.protocol === 'https:'
+          ? { servername: url.hostname }
+          : {}),
         signal
       },
       (response) => {
@@ -187,7 +217,7 @@ export class RemoteDelegationService {
     const controller = new AbortController()
     this.activeRequest = controller
     try {
-      const address = await this.resolvePublicAddress()
+      const address = await this.resolveAddress()
       const durablePending = this.options.outbox?.listPending()[0]
       const memoryPending = this.pendingResults.entries().next().value
       const pending = durablePending
@@ -295,12 +325,45 @@ export class RemoteDelegationService {
     }
   }
 
-  private async resolvePublicAddress(): Promise<ResolvedAddress> {
+  private async resolveAddress(): Promise<ResolvedAddress> {
+    if (
+      this.endpoint.protocol === 'http:' &&
+      !isIntranetCompatibilityEnabled()
+    ) {
+      throw new Error('远程委派地址必须使用 HTTPS')
+    }
     const addresses = await this.lookup(this.endpoint.hostname)
-    const address = addresses.find((candidate) =>
-      isPublicAddress(candidate.address)
+    const addressTypes = addresses.map((candidate) =>
+      candidate.family !== isIP(candidate.address)
+        ? 'blocked'
+        : isPublicAddress(candidate.address)
+        ? 'public'
+        : isIntranetAddress(candidate.address)
+          ? 'intranet'
+          : 'blocked'
     )
-    if (!address || addresses.some((candidate) => !isPublicAddress(candidate.address))) {
+    const address = addresses[0]
+    const compatibilityEnabled = isIntranetCompatibilityEnabled()
+    const plaintextOutsideIntranet =
+      this.endpoint.protocol === 'http:' &&
+      addressTypes.some((addressType) => addressType !== 'intranet')
+    if (
+      !address ||
+      addressTypes.includes('blocked') ||
+      new Set(addressTypes).size !== 1 ||
+      plaintextOutsideIntranet ||
+      (
+        !compatibilityEnabled &&
+        addressTypes.some((addressType) => addressType !== 'public')
+      )
+    ) {
+      if (
+        plaintextOutsideIntranet &&
+        !addressTypes.includes('blocked') &&
+        new Set(addressTypes).size === 1
+      ) {
+        throw new Error('HTTP 远程委派仅允许解析到内网地址')
+      }
       throw new Error('远程委派地址解析到私有或不安全网络')
     }
     return address

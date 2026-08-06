@@ -10,9 +10,14 @@ import {
 
 type MessageListener = (frame: unknown) => void
 type ErrorListener = (error: Error) => void
+type AuthenticatedListener = () => void
 
 class FakeTransport implements WeComSdkTransport {
-  readonly connect = vi.fn(() => undefined)
+  readonly connect = vi.fn(() => {
+    if (this.autoAuthenticate) {
+      this.emitAuthenticated()
+    }
+  })
   readonly disconnect = vi.fn(() => undefined)
   readonly replyStream = vi.fn<WeComSdkTransport['replyStream']>(
     async () => ({})
@@ -20,33 +25,52 @@ class FakeTransport implements WeComSdkTransport {
 
   readonly #messageListeners = new Set<MessageListener>()
   readonly #errorListeners = new Set<ErrorListener>()
+  readonly #authenticatedListeners = new Set<AuthenticatedListener>()
+
+  constructor(private readonly autoAuthenticate = true) {}
 
   on(event: 'message', listener: MessageListener): unknown
   on(event: 'error', listener: ErrorListener): unknown
+  on(event: 'authenticated', listener: AuthenticatedListener): unknown
   on(
-    event: 'message' | 'error',
-    listener: MessageListener | ErrorListener
+    event: 'message' | 'error' | 'authenticated',
+    listener: MessageListener | ErrorListener | AuthenticatedListener
   ): unknown {
     if (event === 'message') {
       this.#messageListeners.add(listener as MessageListener)
-    } else {
+    } else if (event === 'error') {
       this.#errorListeners.add(listener as ErrorListener)
+    } else {
+      this.#authenticatedListeners.add(
+        listener as AuthenticatedListener
+      )
     }
     return this
   }
 
   off(event: 'message', listener: MessageListener): unknown
   off(event: 'error', listener: ErrorListener): unknown
+  off(event: 'authenticated', listener: AuthenticatedListener): unknown
   off(
-    event: 'message' | 'error',
-    listener: MessageListener | ErrorListener
+    event: 'message' | 'error' | 'authenticated',
+    listener: MessageListener | ErrorListener | AuthenticatedListener
   ): unknown {
     if (event === 'message') {
       this.#messageListeners.delete(listener as MessageListener)
-    } else {
+    } else if (event === 'error') {
       this.#errorListeners.delete(listener as ErrorListener)
+    } else {
+      this.#authenticatedListeners.delete(
+        listener as AuthenticatedListener
+      )
     }
     return this
+  }
+
+  emitAuthenticated(): void {
+    for (const listener of this.#authenticatedListeners) {
+      listener()
+    }
   }
 
   emitMessage(frame: unknown): void {
@@ -61,10 +85,15 @@ class FakeTransport implements WeComSdkTransport {
     }
   }
 
-  get listenerCounts(): { message: number; error: number } {
+  get listenerCounts(): {
+    message: number
+    error: number
+    authenticated: number
+  } {
     return {
       message: this.#messageListeners.size,
-      error: this.#errorListeners.size
+      error: this.#errorListeners.size,
+      authenticated: this.#authenticatedListeners.size
     }
   }
 }
@@ -344,17 +373,103 @@ describe('WeComDriver', () => {
 
     await Promise.all([driver.start(), driver.start(), driver.start()])
     expect(transport.connect).toHaveBeenCalledOnce()
-    expect(transport.listenerCounts).toEqual({ message: 1, error: 1 })
+    expect(transport.listenerCounts).toEqual({
+      message: 1,
+      error: 1,
+      authenticated: 0
+    })
     expect(driver.started).toBe(true)
 
     await driver.stop()
     await driver.stop()
     expect(transport.disconnect).toHaveBeenCalledOnce()
-    expect(transport.listenerCounts).toEqual({ message: 0, error: 0 })
+    expect(transport.listenerCounts).toEqual({
+      message: 0,
+      error: 0,
+      authenticated: 0
+    })
     expect(driver.started).toBe(false)
 
     transport.emitMessage(textFrame())
     expect(messages).toHaveLength(0)
+  })
+
+  it('does not finish starting until the SDK authenticates', async () => {
+    const transport = new FakeTransport(false)
+    const driver = new WeComDriver({
+      botId: 'bot-main',
+      secret: 'main-process-secret',
+      transportFactory: () => transport,
+      authenticationTimeoutMs: 100,
+      onMessage: () => undefined
+    })
+    let completed = false
+
+    const start = driver.start().then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+
+    transport.emitAuthenticated()
+    await start
+    expect(completed).toBe(true)
+    await driver.stop()
+  })
+
+  it('fails startup when the SDK reports an authentication error', async () => {
+    const transport = new FakeTransport(false)
+    const driver = new WeComDriver({
+      botId: 'bot-main',
+      secret: 'main-process-secret',
+      transportFactory: () => transport,
+      authenticationTimeoutMs: 100,
+      onMessage: () => undefined
+    })
+
+    const start = driver.start()
+    await Promise.resolve()
+    transport.emitError(new Error('invalid credentials'))
+
+    await expect(start).rejects.toMatchObject({
+      code: 'transport_error'
+    })
+    expect(transport.disconnect).toHaveBeenCalledOnce()
+    expect(driver.started).toBe(false)
+  })
+
+  it('shares an in-flight authentication failure with later start calls', async () => {
+    const transport = new FakeTransport(false)
+    const driver = new WeComDriver({
+      botId: 'bot-main',
+      secret: 'main-process-secret',
+      transportFactory: () => transport,
+      authenticationTimeoutMs: 100,
+      onMessage: () => undefined
+    })
+
+    const first = driver.start()
+    await vi.waitFor(() =>
+      expect(transport.connect).toHaveBeenCalledOnce()
+    )
+    const second = driver.start()
+    transport.emitError(new Error('invalid credentials'))
+
+    const results = await Promise.allSettled([first, second])
+    expect(results.map((result) => result.status)).toEqual([
+      'rejected',
+      'rejected'
+    ])
+    expect(
+      results.map((result) =>
+        result.status === 'rejected' ? result.reason : undefined
+      )
+    ).toEqual([
+      expect.objectContaining({ code: 'transport_error' }),
+      expect.objectContaining({ code: 'transport_error' })
+    ])
+    expect(transport.connect).toHaveBeenCalledOnce()
+    expect(transport.disconnect).toHaveBeenCalledOnce()
   })
 
   it('invalidates reply contexts when restarted with another transport', async () => {

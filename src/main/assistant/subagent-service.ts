@@ -45,24 +45,53 @@ export class SubagentService {
   constructor(
     private runtime: AgentRuntime,
     private readonly database: AssistantDatabase,
-    private readonly scheduler = new SubagentScheduler()
+    private readonly scheduler = new SubagentScheduler(),
+    private profileRuntimes: ReadonlyMap<string, AgentRuntime> =
+      new Map()
   ) {}
 
   async replaceRuntime(runtime: AgentRuntime): Promise<void> {
-    if (runtime === this.runtime) {
+    await this.replaceRuntimes(runtime, new Map())
+  }
+
+  async replaceRuntimes(
+    runtime: AgentRuntime,
+    profileRuntimes: ReadonlyMap<string, AgentRuntime>
+  ): Promise<void> {
+    const nextProfiles = new Map(profileRuntimes)
+    if (
+      runtime === this.runtime &&
+      nextProfiles.size === this.profileRuntimes.size &&
+      [...nextProfiles].every(
+        ([profileId, profileRuntime]) =>
+          this.profileRuntimes.get(profileId) === profileRuntime
+      )
+    ) {
       return
     }
     this.scheduler.cancelAll(new Error('默认模型设置已更改'))
-    const previous = this.runtime
+    const previous = new Set([
+      this.runtime,
+      ...this.profileRuntimes.values()
+    ])
     this.runtime = runtime
+    this.profileRuntimes = nextProfiles
     await this.scheduler.waitForIdle()
-    await previous.dispose()
+    const retained = new Set([runtime, ...nextProfiles.values()])
+    await Promise.allSettled(
+      [...previous]
+        .filter((candidate) => !retained.has(candidate))
+        .map((candidate) => candidate.dispose())
+    )
   }
 
   async dispose(): Promise<void> {
     this.scheduler.dispose()
     await this.scheduler.waitForIdle()
-    await this.runtime.dispose()
+    await Promise.allSettled(
+      [...new Set([this.runtime, ...this.profileRuntimes.values()])]
+        .map((runtime) => runtime.dispose())
+    )
   }
 
   cancelAll(reason: string): void {
@@ -149,7 +178,10 @@ export class SubagentService {
       started = true
       this.database.updateTaskStatus(childTaskId, 'running')
       this.emit(input, { childTaskId, state: 'running' })
-      const runtime = this.runtime
+      const runtime =
+        (input.expert.modelProfileId
+          ? this.profileRuntimes.get(input.expert.modelProfileId)
+          : undefined) ?? this.runtime
       let output = ''
       let completed = false
       try {

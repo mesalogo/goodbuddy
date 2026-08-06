@@ -1,9 +1,13 @@
 import { EventEmitter } from 'node:events'
-import { resolve } from 'node:path'
+import { createServer } from 'node:http'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { createOpencodeClient } from '@opencode-ai/sdk/v2'
 import type spawn from 'cross-spawn'
 import { describe, expect, it, vi } from 'vitest'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import {
   OpenCodeRuntime,
   type OpenCodeRuntimeDependencies
@@ -189,7 +193,16 @@ function runClient(events: Record<string, unknown>[]) {
       reply: permissionReply
     },
     mcp: {
-      add: vi.fn().mockResolvedValue({ data: true, error: undefined }),
+      add: vi
+        .fn()
+        .mockImplementation(
+          async (input: { name: string }) => ({
+            data: {
+              [input.name]: { status: 'connected' }
+            },
+            error: undefined
+          })
+        ),
       disconnect: vi
         .fn()
         .mockResolvedValue({ data: true, error: undefined })
@@ -404,18 +417,325 @@ describe('OpenCodeRuntime embedded launcher', () => {
       spawnOptions?.env?.OPENCODE_CONFIG_CONTENT ?? '{}'
     ) as Record<string, unknown>
     expect(config).toMatchObject({
-      model: 'anthropic/private-model',
+      model: 'goodbuddy-anthropic/private-model',
       provider: {
-        anthropic: {
+        'goodbuddy-anthropic': {
+          npm: '@ai-sdk/anthropic',
           options: {
             apiKey: 'private-key',
             baseURL: 'https://model.example/v1'
+          },
+          models: {
+            'private-model': {
+              provider: {
+                npm: '@ai-sdk/anthropic'
+              }
+            }
           }
         }
       }
     })
     await runtime.dispose()
   })
+
+  it('isolates an explicit profile from unrelated inherited credentials', async () => {
+    const child = fakeChild()
+    const { deps, spawnMock } = dependencies(child)
+    const inheritedCredentials = {
+      ANTHROPIC_API_KEY: 'inherited-anthropic',
+      OPENAI_API_KEY: 'inherited-openai',
+      GOOGLE_GENERATIVE_AI_API_KEY: 'inherited-google',
+      GEMINI_API_KEY: 'inherited-gemini',
+      AWS_ACCESS_KEY_ID: 'inherited-aws-access',
+      AWS_SECRET_ACCESS_KEY: 'inherited-aws-secret',
+      AWS_SESSION_TOKEN: 'inherited-aws-session',
+      AWS_PROFILE: 'inherited-aws-profile',
+      OPENROUTER_API_KEY: 'inherited-openrouter'
+    }
+    const previousEnvironment = Object.fromEntries(
+      Object.keys(inheritedCredentials).map((name) => [
+        name,
+        process.env[name]
+      ])
+    )
+    Object.assign(process.env, inheritedCredentials)
+    setTimeout(() => {
+      stdoutOf(child).write(
+        'opencode server listening on http://127.0.0.1:3013\n'
+      )
+    }, 0)
+    const runtime = new OpenCodeRuntime(
+      options({
+        modelProfile: {
+          id: '00000000-0000-4000-8000-000000000014',
+          name: 'Explicit OpenAI profile',
+          baseUrl: 'https://model.example/v1',
+          modelName: 'private-model',
+          protocol: 'openai-responses',
+          authentication: 'api-key',
+          apiKey: 'selected-openai-key'
+        }
+      }),
+      deps
+    )
+
+    try {
+      await expect(runtime.getStatus()).resolves.toMatchObject({
+        available: true
+      })
+      const environment = (
+        spawnMock.mock.calls[0]?.[2] as
+          | { env?: NodeJS.ProcessEnv }
+          | undefined
+      )?.env
+      expect(environment?.OPENAI_API_KEY).toBe('selected-openai-key')
+      for (const name of Object.keys(inheritedCredentials)) {
+        if (name !== 'OPENAI_API_KEY') {
+          expect(environment).not.toHaveProperty(name)
+        }
+      }
+    } finally {
+      await runtime.dispose()
+      for (const [name, value] of Object.entries(
+        previousEnvironment
+      )) {
+        if (value === undefined) {
+          delete process.env[name]
+        } else {
+          process.env[name] = value
+        }
+      }
+    }
+  })
+
+  it.each([
+    {
+      label: 'Chat Completions',
+      protocol: 'openai-chat-completions' as const,
+      expectedPath: '/v1/chat/completions',
+      unexpectedPath: '/v1/responses'
+    },
+    {
+      label: 'Responses',
+      protocol: 'openai-responses' as const,
+      expectedPath: '/v1/responses',
+      unexpectedPath: '/v1/chat/completions'
+    }
+  ])(
+    'routes a custom-base $label profile through the bundled OpenCode provider',
+    async ({
+      protocol,
+      expectedPath,
+      unexpectedPath
+    }) => {
+      const root = await mkdtemp(
+        join(tmpdir(), 'goodbuddy-opencode-routing-')
+      )
+      const requestPaths: string[] = []
+      const server = createServer((request, response) => {
+        requestPaths.push(request.url ?? '')
+        request.resume()
+        response.writeHead(400, {
+          'content-type': 'application/json'
+        })
+        response.end(
+          JSON.stringify({
+            error: {
+              message: 'Intentional local routing probe'
+            }
+          })
+        )
+      })
+      await new Promise<void>((resolveListen, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', () => resolveListen())
+      })
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        throw new Error('Failed to bind local routing probe')
+      }
+      const isolatedEnvironment = {
+        APPDATA: join(root, 'appdata'),
+        HOME: root,
+        LOCALAPPDATA: join(root, 'localappdata'),
+        USERPROFILE: root
+      } as const
+      const previousEnvironment = Object.fromEntries(
+        Object.keys(isolatedEnvironment).map((name) => [
+          name,
+          process.env[name]
+        ])
+      )
+      Object.assign(process.env, isolatedEnvironment)
+      const runtime = new OpenCodeRuntime(
+        options({
+          binaryPath: join(
+            process.cwd(),
+            'node_modules',
+            'opencode-ai',
+            'bin',
+            process.platform === 'win32'
+              ? 'opencode.exe'
+              : 'opencode'
+          ),
+          defaultWorkspace: root,
+          modelProfile: {
+            id: '00000000-0000-4000-8000-000000000013',
+            name: 'Local endpoint probe',
+            baseUrl: `http://127.0.0.1:${address.port}/v1`,
+            modelName: 'probe-model',
+            protocol,
+            authentication: 'api-key',
+            apiKey: 'local-probe-key'
+          }
+        })
+      )
+      const controller = new AbortController()
+      const timeout = setTimeout(
+        () => controller.abort(new Error('Routing probe timed out')),
+        20_000
+      )
+      try {
+        let failure = ''
+        await (async () => {
+          for await (const _event of runtime.run(
+            {
+              requestId:
+                '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+              conversationId: 'routing-probe',
+              prompt: 'Reply with OK',
+              workMode: 'execute'
+            },
+            controller.signal
+          )) {
+            // The local probe intentionally returns an upstream error.
+            void _event
+          }
+        })().catch((error) => {
+          failure =
+            error instanceof Error ? error.message : String(error)
+        })
+        if (requestPaths.length === 0) {
+          throw new Error(`OpenCode routing probe failed: ${failure}`)
+        }
+        expect(requestPaths).toContain(expectedPath)
+        expect(requestPaths).not.toContain(unexpectedPath)
+      } finally {
+        clearTimeout(timeout)
+        await runtime.dispose()
+        for (const [name, value] of Object.entries(
+          previousEnvironment
+        )) {
+          if (value === undefined) {
+            delete process.env[name]
+          } else {
+            process.env[name] = value
+          }
+        }
+        await new Promise<void>((resolveClose, reject) => {
+          server.close((error) =>
+            error ? reject(error) : resolveClose()
+          )
+        })
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    30_000
+  )
+
+  it.each([
+    {
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'none' as const,
+      providerId: 'goodbuddy-openai-chat',
+      providerPackage: '@ai-sdk/openai-compatible'
+    },
+    {
+      protocol: 'openai-responses' as const,
+      authentication: 'api-key' as const,
+      providerId: 'goodbuddy-openai-responses',
+      providerPackage: '@ai-sdk/openai'
+    }
+  ])(
+    'generates an explicit $protocol provider configuration',
+    async ({
+      protocol,
+      authentication,
+      providerId,
+      providerPackage
+    }) => {
+      const child = fakeChild()
+      const { deps, spawnMock } = dependencies(child)
+      setTimeout(() => {
+        stdoutOf(child).write(
+          'opencode server listening on http://127.0.0.1:3012\n'
+        )
+      }, 0)
+      const runtime = new OpenCodeRuntime(
+        options({
+          modelProfile: {
+            id: '00000000-0000-4000-8000-000000000012',
+            name: 'OpenAI 独立模型',
+            baseUrl: 'https://model.example/v1',
+            modelName: 'custom-model',
+            protocol,
+            authentication,
+            ...(authentication === 'api-key'
+              ? { apiKey: 'private-key' }
+              : {})
+          }
+        }),
+        deps
+      )
+
+      await expect(runtime.getStatus()).resolves.toMatchObject({
+        available: true
+      })
+      const spawnOptions = spawnMock.mock.calls[0]?.[2] as
+        | { env?: NodeJS.ProcessEnv }
+        | undefined
+      const config = JSON.parse(
+        spawnOptions?.env?.OPENCODE_CONFIG_CONTENT ?? '{}'
+      ) as {
+        model?: string
+        provider?: Record<
+          string,
+          {
+            npm?: string
+            options?: Record<string, unknown>
+            models?: Record<
+              string,
+              { provider?: { npm?: string } }
+            >
+          }
+        >
+      }
+      expect(config.model).toBe(`${providerId}/custom-model`)
+      expect(config.provider?.[providerId]).toMatchObject({
+        npm: providerPackage,
+        options: {
+          baseURL: 'https://model.example/v1'
+        },
+        models: {
+          'custom-model': {
+            provider: {
+              npm: providerPackage
+            }
+          }
+        }
+      })
+      if (authentication === 'api-key') {
+        expect(
+          config.provider?.[providerId]?.options?.apiKey
+        ).toBe('private-key')
+      } else {
+        expect(
+          config.provider?.[providerId]?.options
+        ).not.toHaveProperty('apiKey')
+      }
+      await runtime.dispose()
+    }
+  )
 
   it('isolates embedded server configuration from inherited env', async () => {
     const child = fakeChild()
@@ -658,6 +978,350 @@ describe('OpenCodeRuntime embedded launcher', () => {
 })
 
 describe('OpenCodeRuntime embedded permission mediation', () => {
+  it('adds only the request-scoped knowledge MCP tool for Ask and disconnects it', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const toolIds = setup.tool.ids as unknown as ReturnType<typeof vi.fn>
+    toolIds
+      .mockResolvedValueOnce({
+        data: ['read', 'write', 'bash'],
+        error: undefined
+      })
+      .mockResolvedValueOnce({
+        data: [
+          'read',
+          'write',
+          'bash',
+          'goodbuddy_knowledge_search'
+        ],
+        error: undefined
+      })
+      .mockResolvedValue({
+        data: [
+          'read',
+          'write',
+          'bash',
+          'goodbuddy_knowledge_search'
+        ],
+        error: undefined
+      })
+    const gateway = {
+      getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+    } as unknown as KnowledgeMcpGateway
+    const child = fakeChild()
+    const { deps } = dependencies(child, {
+      createClient: vi.fn(
+        () => setup.client
+      ) as unknown as typeof createOpencodeClient
+    })
+    setTimeout(() => {
+      stdoutOf(child).write(
+        'opencode server listening on http://127.0.0.1:4010\n'
+      )
+    }, 0)
+    const runtime = new OpenCodeRuntime(
+      options({ knowledgeGateway: gateway }),
+      deps
+    )
+
+    const events = []
+    for await (const event of runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'search',
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'secret-capability'
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(setup.client.mcp.add).toHaveBeenCalledWith({
+      directory: process.cwd(),
+      name: expect.stringMatching(/^goodbuddy-knowledge-[a-f0-9]{20}$/u),
+      config: {
+        type: 'remote',
+        url: 'http://127.0.0.1:4567/mcp',
+        enabled: true,
+        headers: {
+          Authorization: 'Bearer secret-capability'
+        },
+        oauth: false
+      }
+    })
+    const knowledgeMcpName = (
+      (
+        setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls[0]?.[0] as { name: string }
+    ).name
+    const knowledgeToolId = `${knowledgeMcpName}_knowledge_search`
+    expect(setup.session.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        permission: [
+          { permission: '*', pattern: '*', action: 'deny' },
+          {
+            permission: knowledgeToolId,
+            pattern: '*',
+            action: 'allow'
+          }
+        ]
+      })
+    )
+    expect(setup.session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: {
+          read: false,
+          write: false,
+          bash: false,
+          [knowledgeToolId]: true
+        }
+      }),
+      expect.anything()
+    )
+    expect(setup.client.mcp.disconnect).toHaveBeenCalledWith({
+      name: expect.stringMatching(/^goodbuddy-knowledge-/u),
+      directory: process.cwd()
+    })
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+    await runtime.dispose()
+  })
+
+  it('enables the deterministic MCP tool name when tool ids omit dynamic tools', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const baseline = {
+      data: ['read', 'write', 'bash'],
+      error: undefined
+    }
+    const toolIds = setup.tool.ids as unknown as ReturnType<typeof vi.fn>
+    toolIds.mockResolvedValue(baseline)
+    const child = fakeChild()
+    const { deps } = dependencies(child, {
+      createClient: vi.fn(
+        () => setup.client
+      ) as unknown as typeof createOpencodeClient
+    })
+    setTimeout(() => {
+      stdoutOf(child).write(
+        'opencode server listening on http://127.0.0.1:4010\n'
+      )
+    }, 0)
+    const runtime = new OpenCodeRuntime(
+      options({
+        knowledgeGateway: {
+          getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+        } as unknown as KnowledgeMcpGateway
+      }),
+      deps
+    )
+
+    for await (const _event of runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'search',
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'secret-capability'
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    const knowledgeMcpName = (
+      (
+        setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls[0]?.[0] as { name: string }
+    ).name
+    const knowledgeToolId = `${knowledgeMcpName}_knowledge_search`
+    expect(toolIds).toHaveBeenCalledTimes(1)
+    expect(setup.session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: expect.objectContaining({
+          read: false,
+          write: false,
+          bash: false,
+          [knowledgeToolId]: true
+        })
+      }),
+      expect.anything()
+    )
+    await runtime.dispose()
+  })
+
+  it('serializes overlapping embedded MCP registration and discovery', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const toolIds = setup.tool.ids as unknown as ReturnType<typeof vi.fn>
+    const baseline = {
+      data: ['read', 'write'],
+      error: undefined
+    }
+    const withKnowledge = {
+      data: ['read', 'write', 'goodbuddy_knowledge_search'],
+      error: undefined
+    }
+    for (const response of [
+      baseline,
+      withKnowledge,
+      withKnowledge,
+      baseline,
+      withKnowledge,
+      withKnowledge
+    ]) {
+      toolIds.mockResolvedValueOnce(response)
+    }
+    let resolveFirstAdd!: () => void
+    const firstAdd = new Promise<void>((resolve) => {
+      resolveFirstAdd = resolve
+    })
+    const mcpAdd = setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>
+    mcpAdd
+      .mockImplementationOnce(async (input: { name: string }) => {
+        await firstAdd
+        return {
+          data: {
+            [input.name]: { status: 'connected' }
+          },
+          error: undefined
+        }
+      })
+      .mockImplementation(async (input: { name: string }) => ({
+        data: {
+          [input.name]: { status: 'connected' }
+        },
+        error: undefined
+      }))
+    const child = fakeChild()
+    const { deps } = dependencies(child, {
+      createClient: vi.fn(
+        () => setup.client
+      ) as unknown as typeof createOpencodeClient
+    })
+    setTimeout(() => {
+      stdoutOf(child).write(
+        'opencode server listening on http://127.0.0.1:4010\n'
+      )
+    }, 0)
+    const runtime = new OpenCodeRuntime(
+      options({
+        knowledgeGateway: {
+          getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+        } as unknown as KnowledgeMcpGateway
+      }),
+      deps
+    )
+    const collect = async (
+      requestId: string,
+      conversationId: string,
+      token: string
+    ): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId,
+          conversationId,
+          prompt: 'search',
+          workMode: 'ask',
+          knowledgeCapabilityToken: token
+        },
+        new AbortController().signal
+      )) {
+        void _event
+      }
+    }
+
+    const first = collect(
+      '3f496642-f47d-4e0a-8944-a32c77b0d6e1',
+      'conversation-one',
+      'first-token'
+    )
+    await vi.waitFor(() => expect(mcpAdd).toHaveBeenCalledTimes(1))
+    const second = collect(
+      '3f496642-f47d-4e0a-8944-a32c77b0d6e2',
+      'conversation-two',
+      'second-token'
+    )
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(mcpAdd).toHaveBeenCalledTimes(1)
+
+    resolveFirstAdd()
+    await first
+    await vi.waitFor(() => expect(mcpAdd).toHaveBeenCalledTimes(2))
+    await second
+    expect(
+      mcpAdd.mock.calls.map(
+        ([input]) =>
+          (input as {
+            config: { headers: { Authorization: string } }
+          }).config.headers.Authorization
+      )
+    ).toEqual(['Bearer first-token', 'Bearer second-token'])
+    expect(setup.client.mcp.disconnect).toHaveBeenCalledTimes(2)
+    await runtime.dispose()
+  })
+
+  it('does not send a knowledge capability to external OpenCode', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = new OpenCodeRuntime(
+      options({
+        embedded: false,
+        baseUrl: 'http://127.0.0.1:4096',
+        knowledgeGateway: {
+          getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+        } as unknown as KnowledgeMcpGateway
+      }),
+      {
+        createClient: vi.fn(
+          () => setup.client
+        ) as unknown as typeof createOpencodeClient
+      }
+    )
+    for await (const _event of runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'search',
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'must-not-leave-main'
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+    expect(setup.client.mcp.add).not.toHaveBeenCalled()
+    expect(
+      JSON.stringify(
+        (
+          setup.session.promptAsync as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls
+      )
+    ).not.toContain('must-not-leave-main')
+    await runtime.dispose()
+  })
+
   it('subscribes before prompting and auto-allows a tool request', async () => {
     const {
       client,

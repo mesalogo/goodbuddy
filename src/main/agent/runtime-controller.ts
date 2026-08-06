@@ -73,22 +73,38 @@ export class AgentRuntimeController implements AgentRuntime {
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
-    const slot = this.current
-    const status = await slot.runtime.getStatus()
-    return {
-      ...status,
-      supportsToolExecution: slot.runtime.supportsToolExecution
-    }
+    return this.probe((runtime) => runtime.getStatus())
   }
 
   async testConnection(): Promise<AgentRuntimeStatus> {
-    const slot = this.current
-    const status = await (
-      slot.runtime.testConnection?.() ?? slot.runtime.getStatus()
+    return this.probe(
+      (runtime) =>
+        runtime.testConnection?.() ?? runtime.getStatus()
     )
-    return {
-      ...status,
-      supportsToolExecution: slot.runtime.supportsToolExecution
+  }
+
+  private async probe(
+    operation: (runtime: AgentRuntime) => Promise<AgentRuntimeStatus>
+  ): Promise<AgentRuntimeStatus> {
+    if (this.closing) {
+      throw new Error('Agent Runtime 正在关闭')
+    }
+    const slot = this.current
+    slot.activeRequests += 1
+    try {
+      const status = await operation(slot.runtime)
+      if (slot !== this.current) {
+        throw new Error('Runtime 已切换，请重试')
+      }
+      return {
+        ...status,
+        supportsToolExecution: slot.runtime.supportsToolExecution
+      }
+    } finally {
+      slot.activeRequests -= 1
+      if (slot.retiring && slot.activeRequests === 0) {
+        await this.disposeSlot(slot)
+      }
     }
   }
 
@@ -97,6 +113,9 @@ export class AgentRuntimeController implements AgentRuntime {
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void> {
+    if (this.closing) {
+      throw new Error('Agent Runtime 正在关闭')
+    }
     const slot = this.current
     const toolsAllowed = request.workMode === 'execute'
     const effectiveAuthorize: RuntimeAuthorizer | undefined = toolsAllowed

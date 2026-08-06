@@ -9,7 +9,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   AssistantExpert,
   AssistantHeartbeatConfig,
@@ -17,18 +17,31 @@ import type {
 } from '../../shared/assistant-contracts'
 import type {
   AgentRuntimeDetection,
+  RuntimeConfigActionInput,
   RuntimeFileSelectionKind,
   RuntimeSettings,
   RuntimeSettingsInput,
   RuntimeModelSource
 } from '../../shared/contracts'
-import { defaultRuntimeSettings } from '../../shared/contracts'
+import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
+import {
+  defaultRuntimeSettings,
+  isAgentRuntimeModelProtocol
+} from '../../shared/contracts'
 import { McpSettingsSection } from './McpSettingsSection'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 import { SkillsSettingsSection } from './SkillsSettingsSection'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import { ChannelSettingsSection } from './ChannelSettingsSection'
+import { UpdateSettingsSection } from './UpdateSettingsSection'
+import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
+import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { SegmentedControl } from './WorkspacePrimitives'
 import type { AppearanceTheme } from './theme'
+import type {
+  EmbeddingDiagnosticResult,
+  EmbeddingSettingsSnapshot
+} from '../../shared/embedding-contracts'
 
 type SettingsTab =
   | 'appearance'
@@ -36,10 +49,13 @@ type SettingsTab =
   | 'runtime'
   | 'security'
   | 'automation'
+  | 'channels'
   | 'roles'
   | 'skills'
   | 'mcp'
-type ModelType = 'llm' | 'embedding'
+  | 'about'
+type ModelType = 'llm' | 'embedding' | 'speech'
+type AgentRuntimeType = RuntimeConfigActionInput['runtime']
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   apiKey: string
   clearApiKey: boolean
@@ -51,9 +67,11 @@ const settingsTabs: readonly SettingsTab[] = [
   'runtime',
   'security',
   'automation',
+  'channels',
   'roles',
   'skills',
-  'mcp'
+  'mcp',
+  'about'
 ]
 
 type SettingsPanelProps = {
@@ -84,6 +102,31 @@ const credentialLabels: Record<
   environment: '由环境变量提供'
 }
 
+function settingsErrorMessage(reason: unknown, fallback: string): string {
+  if (!(reason instanceof Error)) {
+    return fallback
+  }
+  const message = reason.message.replace(
+    /^Error invoking remote method '[^']+': (?:Error: )?/u,
+    ''
+  )
+  try {
+    const issues: unknown = JSON.parse(message)
+    if (
+      Array.isArray(issues) &&
+      typeof issues[0] === 'object' &&
+      issues[0] !== null &&
+      'message' in issues[0] &&
+      typeof issues[0].message === 'string'
+    ) {
+      return issues[0].message
+    }
+  } catch {
+    // Keep provider and local errors as-is when they are not validation JSON.
+  }
+  return message
+}
+
 function toModelProfileDrafts(
   settings: RuntimeSettings
 ): ModelProfileDraft[] {
@@ -92,6 +135,108 @@ function toModelProfileDrafts(
     apiKey: '',
     clearApiKey: false
   }))
+}
+
+type RuntimeConfigCardProps = {
+  runtime: AgentRuntimeType
+  runtimeLabel: string
+  description: string
+  fileKind: Extract<
+    RuntimeFileSelectionKind,
+    'opencodeConfig' | 'continueConfig'
+  >
+  path: string
+  savedPath?: string
+  onPathChange: (value: string) => void
+  onSelect: (
+    kind: RuntimeFileSelectionKind,
+    setValue: (value: string) => void
+  ) => Promise<void>
+  onOpen: (
+    runtime: RuntimeConfigActionInput['runtime'],
+    action: RuntimeConfigActionInput['action']
+  ) => Promise<void>
+}
+
+function RuntimeConfigCard({
+  runtime,
+  runtimeLabel,
+  description,
+  fileKind,
+  path,
+  savedPath,
+  onPathChange,
+  onSelect,
+  onOpen
+}: RuntimeConfigCardProps): React.JSX.Element {
+  const saved = Boolean(path) && savedPath === path
+  return (
+    <div className="runtime-config-card">
+      <div>
+        <strong>{runtimeLabel} 自有配置</strong>
+        <small>{description}</small>
+      </div>
+      <label className="field">
+        <span>配置文件</span>
+        <div className="workspace-picker">
+          <input
+            aria-label={`${runtimeLabel} 配置文件路径`}
+            onChange={(event) => onPathChange(event.target.value)}
+            placeholder={`选择可信的本地 ${runtimeLabel} 配置文件`}
+            value={path}
+          />
+          <button
+            className="secondary-button"
+            onClick={() => void onSelect(fileKind, onPathChange)}
+            type="button"
+          >
+            选择文件
+          </button>
+          <button
+            className="secondary-button"
+            disabled={!path}
+            onClick={() => onPathChange('')}
+            type="button"
+          >
+            清除
+          </button>
+        </div>
+      </label>
+      <div className="runtime-config-actions">
+        {saved ? (
+          <>
+            <button
+              className="secondary-button"
+              onClick={() => void onOpen(runtime, 'open-file')}
+              type="button"
+            >
+              打开配置文件
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => void onOpen(runtime, 'show-file')}
+              type="button"
+            >
+              在文件夹中显示
+            </button>
+          </>
+        ) : (
+          <button
+            className="secondary-button"
+            onClick={() => void onOpen(runtime, 'open-directory')}
+            type="button"
+          >
+            打开 {runtimeLabel} 配置目录
+          </button>
+        )}
+      </div>
+      {path && !saved && (
+        <small className="runtime-config-card__hint">
+          保存设置后可直接打开或定位该文件。
+        </small>
+      )}
+    </div>
+  )
 }
 
 export function SettingsPanel({
@@ -124,9 +269,6 @@ export function SettingsPanel({
     useState<RuntimeModelSource>({ kind: 'platform' })
   const [opencodeBaseUrl, setOpencodeBaseUrl] = useState<string>(
     defaultRuntimeSettings.opencodeBaseUrl
-  )
-  const [opencodeEmbedded, setOpencodeEmbedded] = useState<boolean>(
-    defaultRuntimeSettings.opencodeEmbedded
   )
   const [opencodeBinaryPath, setOpencodeBinaryPath] = useState<string>(
     defaultRuntimeSettings.opencodeBinaryPath
@@ -171,8 +313,20 @@ export function SettingsPanel({
     subagentSmartRoutingEnabled,
     setSubagentSmartRoutingEnabled
   ] = useState(false)
+  const [
+    intranetCompatibilityEnabled,
+    setIntranetCompatibilityEnabled
+  ] = useState<boolean>(
+    defaultRuntimeSettings.intranetCompatibilityEnabled
+  )
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [embeddingSnapshot, setEmbeddingSnapshot] =
+    useState<EmbeddingSettingsSnapshot>()
+  const [embeddingDiagnostic, setEmbeddingDiagnostic] =
+    useState<EmbeddingDiagnosticResult>()
+  const [embeddingDiagnosticRunning, setEmbeddingDiagnosticRunning] =
+    useState(false)
   const [error, setError] = useState<string>()
   const [saved, setSaved] = useState(false)
   const [connectionResult, setConnectionResult] = useState<string>()
@@ -181,10 +335,14 @@ export function SettingsPanel({
   const [detecting, setDetecting] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('runtime')
   const [modelType, setModelType] = useState<ModelType>('llm')
+  const [agentRuntimeType, setAgentRuntimeType] =
+    useState<AgentRuntimeType>('opencode')
+  const settingsBodyRef = useRef<HTMLDivElement>(null)
   const configurationTab =
     activeTab === 'model' ||
     activeTab === 'runtime' ||
-    activeTab === 'security'
+    activeTab === 'security' ||
+    activeTab === 'roles'
 
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -228,6 +386,7 @@ export function SettingsPanel({
         setConnectionResult(undefined)
         setConfirmingClear(false)
         setModelType('llm')
+        setAgentRuntimeType('opencode')
         setSettings(value)
         setProvider(value.provider)
         setModelProfiles(toModelProfileDrafts(value))
@@ -242,7 +401,6 @@ export function SettingsPanel({
         setOpencodeModelSource(value.opencodeModelSource)
         setContinueModelSource(value.continueModelSource)
         setOpencodeBaseUrl(value.opencodeBaseUrl)
-        setOpencodeEmbedded(value.opencodeEmbedded)
         setOpencodeBinaryPath(value.opencodeBinaryPath)
         setOpencodeConfigPath(value.opencodeConfigPath)
         setContinueBinaryPath(value.continueBinaryPath)
@@ -261,18 +419,57 @@ export function SettingsPanel({
         setSubagentSmartRoutingEnabled(
           value.subagentSmartRoutingEnabled
         )
+        setIntranetCompatibilityEnabled(
+          value.intranetCompatibilityEnabled
+        )
       })
       .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : '读取设置失败')
+        setError(settingsErrorMessage(reason, '读取设置失败'))
       })
     void window.goodbuddy.settings
       .detectAgentRuntimes()
       .then(setDetection)
       .catch((reason: unknown) => {
-        setError(
-          reason instanceof Error ? reason.message : 'Runtime 自动检测失败'
-        )
+        setError(settingsErrorMessage(reason, 'Runtime 自动检测失败'))
       })
+  }, [open])
+
+  useEffect(() => {
+    if (open && settingsBodyRef.current) {
+      settingsBodyRef.current.scrollTop = 0
+    }
+  }, [activeTab, open])
+
+  useEffect(() => {
+    const embeddings = window.goodbuddy.embeddings
+    if (!open || !embeddings) {
+      return
+    }
+    let active = true
+    void embeddings
+      .getSnapshot()
+      .then((snapshot) => {
+        if (active) {
+          setEmbeddingDiagnostic(undefined)
+          setEmbeddingSnapshot(snapshot)
+        }
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setError(settingsErrorMessage(reason, '读取向量索引状态失败'))
+        }
+      })
+    const unsubscribe = embeddings.onStatus((indexStatus) => {
+      if (active) {
+        setEmbeddingSnapshot((snapshot) =>
+          snapshot ? { ...snapshot, indexStatus } : snapshot
+        )
+      }
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
   }, [open])
 
   if (!open) {
@@ -293,7 +490,7 @@ export function SettingsPanel({
     onClose()
   }
 
-  const save = async (): Promise<boolean> => {
+  const save = async (): Promise<RuntimeSettings | undefined> => {
     setSaving(true)
     setError(undefined)
     setSaved(false)
@@ -331,7 +528,7 @@ export function SettingsPanel({
         imageGenerationQuality:
           defaultProfile.imageGenerationQuality,
         opencodeBaseUrl,
-        opencodeEmbedded,
+        opencodeEmbedded: !opencodeBaseUrl,
         opencodeBinaryPath,
         opencodeConfigPath,
         continueBinaryPath,
@@ -358,7 +555,8 @@ export function SettingsPanel({
         opencodeModelSource,
         continueModelSource,
         toolApproval,
-        subagentSmartRoutingEnabled
+        subagentSmartRoutingEnabled,
+        intranetCompatibilityEnabled
       })
       setSettings(value)
       setModelProfiles(toModelProfileDrafts(value))
@@ -370,6 +568,7 @@ export function SettingsPanel({
       setDefaultModelProfileId(value.defaultModelProfileId)
       setOpencodeModelSource(value.opencodeModelSource)
       setContinueModelSource(value.continueModelSource)
+      setOpencodeBaseUrl(value.opencodeBaseUrl)
       setOpencodeBinaryPath(value.opencodeBinaryPath)
       setOpencodeConfigPath(value.opencodeConfigPath)
       setContinueBinaryPath(value.continueBinaryPath)
@@ -387,27 +586,58 @@ export function SettingsPanel({
       setSubagentSmartRoutingEnabled(
         value.subagentSmartRoutingEnabled
       )
+      setIntranetCompatibilityEnabled(
+        value.intranetCompatibilityEnabled
+      )
+      const embeddings = window.goodbuddy.embeddings
+      if (embeddings) {
+        try {
+          setEmbeddingSnapshot(await embeddings.getSnapshot())
+        } catch (reason) {
+          setError(
+            settingsErrorMessage(
+              reason,
+              '设置已保存，但刷新向量模型状态失败'
+            )
+          )
+        }
+      }
       setSaved(true)
       onSaved(value)
-      return true
+      return value
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存设置失败')
-      return false
+      setError(settingsErrorMessage(reason, '保存设置失败'))
+      return undefined
     } finally {
       setSaving(false)
     }
   }
 
   const testConnection = async (): Promise<void> => {
+    const testingModel = activeTab === 'model' && modelType === 'llm'
+    const profileId = selectedModelProfileId
     setTesting(true)
     setConnectionResult(undefined)
-    const didSave = await save()
-    if (!didSave) {
+    const savedSettings = await save()
+    if (!savedSettings) {
       setTesting(false)
       return
     }
     try {
-      const status = await window.goodbuddy.settings.testRuntime()
+      const runtimeSource =
+        agentRuntimeType === 'opencode'
+          ? savedSettings.opencodeModelSource
+          : savedSettings.continueModelSource
+      const runtimeSelection: AgentRuntimeSelection =
+        runtimeSource.kind === 'profile'
+          ? {
+              provider: agentRuntimeType,
+              profileId: runtimeSource.profileId
+            }
+          : { provider: agentRuntimeType }
+      const status = testingModel
+        ? await window.goodbuddy.settings.testModelConnection(profileId)
+        : await window.goodbuddy.settings.testRuntime(runtimeSelection)
       if (!status.available) {
         throw new Error(status.detail)
       }
@@ -418,10 +648,70 @@ export function SettingsPanel({
       )
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : 'Runtime 连接测试失败'
+        settingsErrorMessage(
+          reason,
+          testingModel ? '模型连接测试失败' : 'Runtime 连接测试失败'
+        )
       )
     } finally {
       setTesting(false)
+    }
+  }
+
+  const runEmbeddingDiagnostic = async (): Promise<void> => {
+    const embeddings = window.goodbuddy.embeddings
+    if (!embeddings) {
+      setError('向量诊断服务不可用')
+      return
+    }
+    setEmbeddingDiagnosticRunning(true)
+    setEmbeddingDiagnostic(undefined)
+    setError(undefined)
+    try {
+      if (!(await save())) {
+        return
+      }
+      const diagnostic = await embeddings.diagnose()
+      setEmbeddingDiagnostic(diagnostic)
+      setEmbeddingSnapshot(await embeddings.getSnapshot())
+    } catch (reason) {
+      setError(settingsErrorMessage(reason, '向量模型测试失败'))
+    } finally {
+      setEmbeddingDiagnosticRunning(false)
+    }
+  }
+
+  const rebuildEmbeddingIndex = async (): Promise<void> => {
+    const embeddings = window.goodbuddy.embeddings
+    if (!embeddings) {
+      setError('向量索引服务不可用')
+      return
+    }
+    setError(undefined)
+    try {
+      if (!(await save())) {
+        return
+      }
+      const indexStatus = await embeddings.rebuild()
+      setEmbeddingSnapshot((snapshot) =>
+        snapshot ? { ...snapshot, indexStatus } : snapshot
+      )
+    } catch (reason) {
+      setError(settingsErrorMessage(reason, '启动向量索引重建失败'))
+    }
+  }
+
+  const cancelEmbeddingIndex = async (jobId: string): Promise<void> => {
+    const embeddings = window.goodbuddy.embeddings
+    if (!embeddings) {
+      return
+    }
+    try {
+      if (!(await embeddings.cancel(jobId))) {
+        throw new Error('当前向量索引任务已结束')
+      }
+    } catch (reason) {
+      setError(settingsErrorMessage(reason, '取消向量索引重建失败'))
     }
   }
 
@@ -436,7 +726,23 @@ export function SettingsPanel({
         setValue(selected)
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '选择文件失败')
+      setError(settingsErrorMessage(reason, '选择文件失败'))
+    }
+  }
+
+  const openRuntimeConfig = async (
+    runtime: RuntimeConfigActionInput['runtime'],
+    action: RuntimeConfigActionInput['action']
+  ): Promise<void> => {
+    try {
+      await window.goodbuddy.settings.openRuntimeConfig({
+        runtime,
+        action
+      })
+    } catch (reason) {
+      setError(
+        settingsErrorMessage(reason, '打开 Runtime 配置失败')
+      )
     }
   }
 
@@ -448,9 +754,7 @@ export function SettingsPanel({
         await window.goodbuddy.settings.detectAgentRuntimes()
       )
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : 'Runtime 自动检测失败'
-      )
+      setError(settingsErrorMessage(reason, 'Runtime 自动检测失败'))
     } finally {
       setDetecting(false)
     }
@@ -501,6 +805,18 @@ export function SettingsPanel({
       (profile) => profile.id === id
     )
     const remaining = modelProfiles.filter((profile) => profile.id !== id)
+    const compatibleFallback =
+      remaining.find(
+        (profile) =>
+          profile.id === defaultModelProfileId &&
+          isAgentRuntimeModelProtocol(profile.protocol)
+      ) ??
+      remaining.find((profile) =>
+        isAgentRuntimeModelProtocol(profile.protocol)
+      )
+    const runtimeFallback: RuntimeModelSource = compatibleFallback
+      ? { kind: 'profile', profileId: compatibleFallback.id }
+      : { kind: 'platform' }
     setModelProfiles(remaining)
     if (selectedModelProfileId === id) {
       setSelectedModelProfileId(
@@ -509,19 +825,50 @@ export function SettingsPanel({
       )
     }
     if (defaultModelProfileId === id) {
-      setDefaultModelProfileId(remaining[0]!.id)
+      setDefaultModelProfileId(
+        compatibleFallback?.id ?? remaining[0]!.id
+      )
     }
     if (
       opencodeModelSource.kind === 'profile' &&
       opencodeModelSource.profileId === id
     ) {
-      setOpencodeModelSource({ kind: 'platform' })
+      setOpencodeModelSource(runtimeFallback)
     }
     if (
       continueModelSource.kind === 'profile' &&
       continueModelSource.profileId === id
     ) {
-      setContinueModelSource({ kind: 'platform' })
+      setContinueModelSource(runtimeFallback)
+    }
+  }
+
+  const selectDefaultModelProfile = (
+    profile: ModelProfileDraft
+  ): void => {
+    const previousDefaultProfileId = defaultModelProfileId
+    const compatibleProfile = isAgentRuntimeModelProtocol(
+      profile.protocol
+    )
+      ? profile
+      : modelProfiles.find((candidate) =>
+          isAgentRuntimeModelProtocol(candidate.protocol)
+        )
+    const nextRuntimeSource: RuntimeModelSource = compatibleProfile
+      ? { kind: 'profile', profileId: compatibleProfile.id }
+      : { kind: 'platform' }
+    setDefaultModelProfileId(profile.id)
+    if (
+      opencodeModelSource.kind === 'profile' &&
+      opencodeModelSource.profileId === previousDefaultProfileId
+    ) {
+      setOpencodeModelSource(nextRuntimeSource)
+    }
+    if (
+      continueModelSource.kind === 'profile' &&
+      continueModelSource.profileId === previousDefaultProfileId
+    ) {
+      setContinueModelSource(nextRuntimeSource)
     }
   }
 
@@ -532,20 +879,48 @@ export function SettingsPanel({
 
   const isOpenCodeCompatible = (
     profile: ModelProfileDraft
-  ): boolean =>
-    profile.protocol === 'anthropic-messages' &&
-    profile.authentication === 'api-key'
+  ): boolean => isAgentRuntimeModelProtocol(profile.protocol)
 
   const isContinueCompatible = (
     profile: ModelProfileDraft
-  ): boolean =>
-    profile.protocol === 'anthropic-messages' ||
-    profile.protocol === 'openai-chat-completions'
+  ): boolean => isAgentRuntimeModelProtocol(profile.protocol)
 
   const selectedModelProfile =
     modelProfiles.find(
       (profile) => profile.id === selectedModelProfileId
     ) ?? modelProfiles[0]
+  const defaultTextModelProfile =
+    modelProfiles.find(
+      (profile) =>
+        profile.id === defaultModelProfileId &&
+        isAgentRuntimeModelProtocol(profile.protocol)
+    ) ??
+    modelProfiles.find((profile) =>
+      isAgentRuntimeModelProtocol(profile.protocol)
+    )
+  const activeRuntimeModelSource =
+    agentRuntimeType === 'opencode'
+      ? opencodeModelSource
+      : continueModelSource
+  const activeRuntimeModelProfile =
+    activeRuntimeModelSource.kind === 'profile'
+      ? modelProfiles.find(
+          (profile) =>
+            profile.id === activeRuntimeModelSource.profileId &&
+            isAgentRuntimeModelProtocol(profile.protocol)
+        )
+      : undefined
+  const savedRoleModelProfiles = (settings?.modelProfiles ?? [])
+    .filter((profile) =>
+      isAgentRuntimeModelProtocol(profile.protocol)
+    )
+    .map(({ id, name }) => ({ id, name }))
+  const savedRoleDefaultModelProfileId =
+    savedRoleModelProfiles.some(
+      (profile) => profile.id === settings?.defaultModelProfileId
+    )
+      ? settings?.defaultModelProfileId
+      : undefined
 
   const detectionSummary = (
     value: AgentRuntimeDetection['opencode'] | undefined
@@ -554,13 +929,16 @@ export function SettingsPanel({
       <TerminalSquare size={15} />
       <span>
         {value
-          ? [
-              value.path || '未找到可执行文件',
-              value.version,
-              value.detail
-            ]
-              .filter(Boolean)
-              .join(' · ')
+          ? value.available
+            ? [
+                '已就绪',
+                value.path,
+                value.version,
+                value.detail
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            : `尚未就绪 · ${value.detail}`
           : detecting
             ? '正在检测…'
             : '尚未检测'}
@@ -601,7 +979,7 @@ export function SettingsPanel({
           </button>
         </header>
 
-        <div className="settings-panel__body">
+        <div className="settings-panel__body" ref={settingsBodyRef}>
           <nav
             aria-label="设置分类"
             aria-orientation="vertical"
@@ -689,6 +1067,22 @@ export function SettingsPanel({
               <small>智能心跳与周期回顾</small>
             </button>
             <button
+              aria-controls="settings-panel-channels"
+              aria-label="企业通信"
+              aria-selected={activeTab === 'channels'}
+              id="settings-tab-channels"
+              onClick={() => setActiveTab('channels')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'channels')
+              }
+              role="tab"
+              tabIndex={activeTab === 'channels' ? 0 : -1}
+              type="button"
+            >
+              <strong>企业通信</strong>
+              <small>企业微信与钉钉</small>
+            </button>
+            <button
               aria-controls="settings-panel-roles"
               aria-label="角色与提示词"
               aria-selected={activeTab === 'roles'}
@@ -735,6 +1129,22 @@ export function SettingsPanel({
             >
               <strong>MCP</strong>
               <small>工具服务与凭据</small>
+            </button>
+            <button
+              aria-controls="settings-panel-about"
+              aria-label="关于与更新"
+              aria-selected={activeTab === 'about'}
+              id="settings-tab-about"
+              onClick={() => setActiveTab('about')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'about')
+              }
+              role="tab"
+              tabIndex={activeTab === 'about' ? 0 : -1}
+              type="button"
+            >
+              <strong>关于与更新</strong>
+              <small>版本检查与下载页</small>
             </button>
           </nav>
 
@@ -793,26 +1203,6 @@ export function SettingsPanel({
               {settings?.warning && (
                 <p className="settings-warning">{settings.warning}</p>
               )}
-          <label className="field">
-            <span>默认 Runtime</span>
-            <select
-              value={provider}
-              onChange={(event) =>
-                setProvider(
-                  event.target.value as RuntimeSettingsInput['provider']
-                )
-              }
-            >
-              <option value="auto">自动选择</option>
-              <option value="model">直连模型（模型接口）</option>
-              <option value="opencode">OpenCode Agent</option>
-              <option value="continue">Continue CLI Agent</option>
-            </select>
-            <small>
-              自动模式优先使用已配置的 OpenCode，其次使用已配置的模型接口。
-            </small>
-          </label>
-
           <div className="settings-section">
             <div className="settings-section__title">
               <FolderOpen size={17} />
@@ -841,9 +1231,10 @@ export function SettingsPanel({
                       })
                       .catch((reason: unknown) => {
                         setError(
-                          reason instanceof Error
-                            ? reason.message
-                            : '选择工作区目录失败'
+                          settingsErrorMessage(
+                            reason,
+                            '选择工作区目录失败'
+                          )
                         )
                       })
                   }}
@@ -855,293 +1246,392 @@ export function SettingsPanel({
             </label>
           </div>
 
-          <div className="settings-section">
-            <div className="settings-section__title">
-              <TerminalSquare size={17} />
-              <div>
-                <strong>Runtime 自动检测</strong>
-                <small>仅检测程序路径和版本，不读取配置文件内容</small>
-              </div>
-            </div>
-            <button
-              className="secondary-button"
-              disabled={detecting}
-              onClick={() => void detectRuntimes()}
-              type="button"
-            >
-              {detecting ? '检测中…' : '重新检测'}
-            </button>
+          <div className="model-type-navigation agent-runtime-navigation">
+            <SegmentedControl
+              ariaLabel="Agent Runtime"
+              onChange={setAgentRuntimeType}
+              options={[
+                { label: 'OpenCode', value: 'opencode' },
+                { label: 'Continue', value: 'continue' }
+              ]}
+              value={agentRuntimeType}
+            />
+            <small>
+              OpenCode 和 Continue 已随 GoodBuddy 内置；配置可兼容的直连文本模型后即可使用。
+            </small>
           </div>
 
-          {(provider === 'opencode' || provider === 'auto') && (
+          {agentRuntimeType === 'opencode' && (
             <div className="settings-section">
               <div className="settings-section__title">
                 <TerminalSquare size={17} />
                 <div>
                   <strong>OpenCode Agent</strong>
-                  <small>连接现有服务或由 GoodBuddy 启动本机服务</small>
+                  <small>GoodBuddy 内置 Runtime，默认跟随文本模型连接</small>
                 </div>
               </div>
-              <label className="field">
-                <span>模型连接</span>
-                <select
-                  value={
-                    opencodeModelSource.kind === 'platform'
-                      ? 'platform'
-                      : opencodeModelSource.profileId
-                  }
-                  onChange={(event) =>
-                    setOpencodeModelSource(
-                      parseModelSource(event.target.value)
-                    )
-                  }
-                >
-                  <option value="platform">使用 OpenCode 平台默认</option>
-                  {modelProfiles.map((profile) => (
-                    <option
-                      disabled={!isOpenCodeCompatible(profile)}
-                      key={profile.id}
-                      value={profile.id}
-                    >
-                      独立配置：{profile.name}
-                      {isOpenCodeCompatible(profile)
-                        ? '（兼容）'
-                        : '（不兼容）'}
-                    </option>
-                  ))}
-                </select>
-                {opencodeModelSource.kind === 'profile' && (
-                    <small>
-                      OpenCode 独立配置仅支持需要 API Key 的 Anthropic
-                      Messages 连接
-                      {opencodeBaseUrl
-                        ? '，且仅支持由 GoodBuddy 启动的本机 OpenCode。'
-                        : '。'}
-                    </small>
-                  )}
-              </label>
               <div className="runtime-note">
-                OpenCode 固定以 Execute 运行，不弹出 GoodBuddy 工具审批；工具调用仍记录到活动。
+                <strong>Runtime：</strong>GoodBuddy 内置 OpenCode
+                <br />
+                <strong>模型配置：</strong>
+                {activeRuntimeModelSource.kind === 'platform'
+                  ? '使用 OpenCode 自有配置'
+                  : activeRuntimeModelProfile
+                    ? `跟随 GoodBuddy · ${activeRuntimeModelProfile.name}（${activeRuntimeModelProfile.modelName}）`
+                    : defaultTextModelProfile
+                      ? `跟随 GoodBuddy · ${defaultTextModelProfile.name}（${defaultTextModelProfile.modelName}）`
+                      : '尚未配置兼容的文本模型'}
+                <br />
+                推荐直接跟随 GoodBuddy 模型。只有需要复用 OpenCode
+                原生模型、插件或 MCP 配置时，才切换到 Runtime 自有配置。
               </div>
-              <label className="field">
-                <span>Server 地址</span>
-                <input
-                  inputMode="url"
-                  onChange={(event) =>
-                    setOpencodeBaseUrl(event.target.value)
-                  }
-                  placeholder="例如 http://127.0.0.1:4096"
-                  value={opencodeBaseUrl}
-                />
-              </label>
-              <label className="check-field">
-                <input
-                  checked={opencodeEmbedded}
-                  onChange={(event) =>
-                    setOpencodeEmbedded(event.target.checked)
-                  }
-                  type="checkbox"
-                />
-                <span>没有 Server 地址时，自动启动本机 OpenCode</span>
-              </label>
-              <label className="field">
-                <span>OpenCode 可执行文件路径</span>
-                <div className="workspace-picker">
-                  <input
-                    aria-label="OpenCode 可执行文件路径"
-                    onChange={(event) =>
-                      setOpencodeBinaryPath(event.target.value)
-                    }
-                    placeholder="留空使用内置版本"
-                    value={opencodeBinaryPath}
-                  />
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      void selectRuntimeFile(
-                        'opencodeBinary',
-                        setOpencodeBinaryPath
-                      )
-                    }
-                    type="button"
-                  >
-                    选择
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={!opencodeBinaryPath}
-                    onClick={() => setOpencodeBinaryPath('')}
-                    type="button"
-                  >
-                    清除
-                  </button>
-                </div>
-              </label>
-              <label className="field">
-                <span>OpenCode 配置文件路径</span>
-                <div className="workspace-picker">
-                  <input
-                    aria-label="OpenCode 配置文件路径"
-                    onChange={(event) =>
-                      setOpencodeConfigPath(event.target.value)
-                    }
-                    placeholder="留空使用工具默认配置"
-                    value={opencodeConfigPath}
-                  />
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      void selectRuntimeFile(
-                        'opencodeConfig',
-                        setOpencodeConfigPath
-                      )
-                    }
-                    type="button"
-                  >
-                    选择
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={!opencodeConfigPath}
-                    onClick={() => setOpencodeConfigPath('')}
-                    type="button"
-                  >
-                    清除
-                  </button>
-                </div>
-              </label>
-              {opencodeBinaryPath && (
-                <p className="settings-warning">
-                  自定义 OpenCode 可执行文件将以当前用户权限运行，请仅选择可信文件。
-                </p>
-              )}
+              <div className="runtime-note">
+                对话时可选择 Ask 或 Execute。Ask 仅可调用当前授权的知识库搜索；Execute
+                可调用已启用工具，调用过程会记录到活动。
+              </div>
               {detectionSummary(detection?.opencode)}
+              <details className="settings-section">
+                <summary>高级设置</summary>
+                <p className="settings-panel__description">
+                  普通使用无需修改。这里可以切换模型配置来源、管理
+                  Runtime 自有配置，或覆盖内置程序与服务。
+                </p>
+                <fieldset className="runtime-source-options">
+                  <legend>模型配置来源</legend>
+                  <label>
+                    <input
+                      checked={opencodeModelSource.kind === 'profile'}
+                      disabled={!defaultTextModelProfile}
+                      name="opencode-model-source"
+                      onChange={() => {
+                        if (defaultTextModelProfile) {
+                          setOpencodeModelSource({
+                            kind: 'profile',
+                            profileId: defaultTextModelProfile.id
+                          })
+                          setOpencodeBaseUrl('')
+                        }
+                      }}
+                      type="radio"
+                    />
+                    <span>
+                      <strong>跟随 GoodBuddy 模型（推荐）</strong>
+                      <small>
+                        自动生成安全的运行期配置，无需维护 Runtime 配置文件。
+                      </small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      checked={opencodeModelSource.kind === 'platform'}
+                      name="opencode-model-source"
+                      onChange={() =>
+                        setOpencodeModelSource({ kind: 'platform' })
+                      }
+                      type="radio"
+                    />
+                    <span>
+                      <strong>使用 OpenCode 自有配置</strong>
+                      <small>
+                        适合需要原生模型、插件或 MCP 配置的专业用户。
+                      </small>
+                    </span>
+                  </label>
+                </fieldset>
+                {opencodeModelSource.kind === 'profile' && (
+                  <label className="field">
+                    <span>GoodBuddy 模型连接</span>
+                    <select
+                      aria-label="OpenCode GoodBuddy 模型连接"
+                      value={opencodeModelSource.profileId}
+                      onChange={(event) => {
+                        setOpencodeModelSource(
+                          parseModelSource(event.target.value)
+                        )
+                        setOpencodeBaseUrl('')
+                      }}
+                    >
+                      {modelProfiles.map((profile) => (
+                        <option
+                          disabled={!isOpenCodeCompatible(profile)}
+                          key={profile.id}
+                          value={profile.id}
+                        >
+                          {profile.name}
+                          {isOpenCodeCompatible(profile)
+                            ? ''
+                            : '（不兼容）'}
+                        </option>
+                      ))}
+                    </select>
+                    <small>
+                      可固定到其他 GoodBuddy 文本模型连接。
+                    </small>
+                  </label>
+                )}
+                {opencodeModelSource.kind === 'platform' &&
+                  !opencodeBaseUrl.trim() && (
+                  <RuntimeConfigCard
+                    description="GoodBuddy 不会打开或暴露自动生成的运行期配置；这里只管理你明确选择的本地文件。"
+                    fileKind="opencodeConfig"
+                    onOpen={openRuntimeConfig}
+                    onPathChange={setOpencodeConfigPath}
+                    onSelect={selectRuntimeFile}
+                    path={opencodeConfigPath}
+                    runtime="opencode"
+                    runtimeLabel="OpenCode"
+                    savedPath={settings?.opencodeConfigPath}
+                  />
+                )}
+                {opencodeModelSource.kind === 'platform' &&
+                  Boolean(opencodeBaseUrl.trim()) && (
+                    <p className="settings-warning">
+                      外部 OpenCode Server
+                      的模型、插件与工具由服务端管理，本地配置文件不会传给该服务。按请求授权的本机知识库工具也不会注入外部服务。
+                    </p>
+                  )}
+                <label className="field">
+                  <span>Server 地址</span>
+                  <input
+                    aria-label="OpenCode Server 地址"
+                    inputMode="url"
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setOpencodeBaseUrl(value)
+                      if (value.trim()) {
+                        setOpencodeModelSource({ kind: 'platform' })
+                      }
+                    }}
+                    placeholder="留空使用内置本机服务"
+                    value={opencodeBaseUrl}
+                  />
+                  <small>
+                    留空时自动启动 GoodBuddy 内置的本机 OpenCode
+                    服务，无需安装或填写地址。
+                  </small>
+                </label>
+                <label className="field">
+                  <span>OpenCode 可执行文件路径</span>
+                  <div className="workspace-picker">
+                    <input
+                      aria-label="OpenCode 可执行文件路径"
+                      onChange={(event) =>
+                        setOpencodeBinaryPath(event.target.value)
+                      }
+                      placeholder="留空使用 GoodBuddy 内置程序"
+                      value={opencodeBinaryPath}
+                    />
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        void selectRuntimeFile(
+                          'opencodeBinary',
+                          setOpencodeBinaryPath
+                        )
+                      }
+                      type="button"
+                    >
+                      选择
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={!opencodeBinaryPath}
+                      onClick={() => setOpencodeBinaryPath('')}
+                      type="button"
+                    >
+                      清除
+                    </button>
+                  </div>
+                </label>
+                {opencodeBinaryPath && (
+                  <p className="settings-warning">
+                    自定义 OpenCode 可执行文件将以当前用户权限运行，请仅选择可信文件。
+                  </p>
+                )}
+                <button
+                  className="secondary-button"
+                  disabled={detecting}
+                  onClick={() => void detectRuntimes()}
+                  type="button"
+                >
+                  {detecting ? '检测中…' : '重新检测 OpenCode'}
+                </button>
+              </details>
             </div>
           )}
 
-          {(provider === 'continue' || provider === 'auto') && (
+          {agentRuntimeType === 'continue' && (
             <div className="settings-section">
               <div className="settings-section__title">
                 <TerminalSquare size={17} />
                 <div>
                   <strong>Continue CLI</strong>
-                  <small>使用本机已安装的 Continue headless CLI</small>
+                  <small>GoodBuddy 内置 Runtime，默认跟随文本模型连接</small>
                 </div>
               </div>
               <div className="runtime-note">
-                Continue 固定以 Execute 运行，不弹出 GoodBuddy 工具审批；工具调用仍记录到活动。
+                <strong>Runtime：</strong>GoodBuddy 内置 Continue
+                <br />
+                <strong>模型配置：</strong>
+                {activeRuntimeModelSource.kind === 'platform'
+                  ? '使用 Continue 自有配置'
+                  : activeRuntimeModelProfile
+                    ? `跟随 GoodBuddy · ${activeRuntimeModelProfile.name}（${activeRuntimeModelProfile.modelName}）`
+                    : defaultTextModelProfile
+                      ? `跟随 GoodBuddy · ${defaultTextModelProfile.name}（${defaultTextModelProfile.modelName}）`
+                      : '尚未配置兼容的文本模型'}
+                <br />
+                推荐直接跟随 GoodBuddy 模型。只有需要复用 Continue
+                原生模型、规则或 MCP 配置时，才切换到 Runtime 自有配置。
               </div>
-              <label className="field">
-                <span>模型连接</span>
-                <select
-                  value={
-                    continueModelSource.kind === 'platform'
-                      ? 'platform'
-                      : continueModelSource.profileId
-                  }
-                  onChange={(event) =>
-                    setContinueModelSource(
-                      parseModelSource(event.target.value)
-                    )
-                  }
-                >
-                  <option value="platform">使用指定的 Continue 配置文件</option>
-                  {modelProfiles.map((profile) => (
-                    <option
-                      disabled={!isContinueCompatible(profile)}
-                      key={profile.id}
-                      value={profile.id}
+              <div className="runtime-note">
+                对话时可选择 Ask 或 Execute。Ask 仅可调用当前授权的知识库搜索；Execute
+                可调用已启用工具，调用过程会记录到活动。
+              </div>
+              {detectionSummary(detection?.continue)}
+              <details className="settings-section">
+                <summary>高级设置</summary>
+                <p className="settings-panel__description">
+                  普通使用无需修改。这里可以切换模型配置来源、管理
+                  Runtime 自有配置，或覆盖内置程序。
+                </p>
+                <fieldset className="runtime-source-options">
+                  <legend>模型配置来源</legend>
+                  <label>
+                    <input
+                      checked={continueModelSource.kind === 'profile'}
+                      disabled={!defaultTextModelProfile}
+                      name="continue-model-source"
+                      onChange={() => {
+                        if (defaultTextModelProfile) {
+                          setContinueModelSource({
+                            kind: 'profile',
+                            profileId: defaultTextModelProfile.id
+                          })
+                        }
+                      }}
+                      type="radio"
+                    />
+                    <span>
+                      <strong>跟随 GoodBuddy 模型（推荐）</strong>
+                      <small>
+                        自动生成安全的临时运行期配置，任务结束后立即删除。
+                      </small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      checked={continueModelSource.kind === 'platform'}
+                      name="continue-model-source"
+                      onChange={() =>
+                        setContinueModelSource({ kind: 'platform' })
+                      }
+                      type="radio"
+                    />
+                    <span>
+                      <strong>使用 Continue 自有配置</strong>
+                      <small>
+                        适合需要原生模型、规则或 MCP 配置的专业用户。
+                      </small>
+                    </span>
+                  </label>
+                </fieldset>
+                {continueModelSource.kind === 'profile' && (
+                  <label className="field">
+                    <span>GoodBuddy 模型连接</span>
+                    <select
+                      aria-label="Continue GoodBuddy 模型连接"
+                      value={continueModelSource.profileId}
+                      onChange={(event) =>
+                        setContinueModelSource(
+                          parseModelSource(event.target.value)
+                        )
+                      }
                     >
-                      独立配置：{profile.name}
-                      {isContinueCompatible(profile)
-                        ? '（兼容）'
-                        : '（不兼容）'}
-                    </option>
-                  ))}
-                </select>
-                <small>
-                  Continue 独立连接支持 Anthropic Messages、OpenAI
-                  兼容 Chat Completions 和无认证本机模型。未选择独立连接时，必须在下方指定配置文件。
-                </small>
-              </label>
-              <label className="field">
-                <span>Continue 可执行文件路径</span>
-                <div className="workspace-picker">
-                  <input
-                    aria-label="Continue 可执行文件路径"
-                    onChange={(event) =>
-                      setContinueBinaryPath(event.target.value)
-                    }
-                    placeholder="留空使用内置版本"
-                    value={continueBinaryPath}
+                      {modelProfiles.map((profile) => (
+                        <option
+                          disabled={!isContinueCompatible(profile)}
+                          key={profile.id}
+                          value={profile.id}
+                        >
+                          {profile.name}
+                          {isContinueCompatible(profile)
+                            ? ''
+                            : '（不兼容）'}
+                        </option>
+                      ))}
+                    </select>
+                    <small>
+                      可固定到其他 GoodBuddy 文本模型连接。
+                    </small>
+                  </label>
+                )}
+                {continueModelSource.kind === 'platform' && (
+                  <RuntimeConfigCard
+                    description="GoodBuddy 不会打开或暴露含临时凭据的运行期配置；这里只管理你明确选择的本地文件。"
+                    fileKind="continueConfig"
+                    onOpen={openRuntimeConfig}
+                    onPathChange={setContinueConfigPath}
+                    onSelect={selectRuntimeFile}
+                    path={continueConfigPath}
+                    runtime="continue"
+                    runtimeLabel="Continue"
+                    savedPath={settings?.continueConfigPath}
                   />
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      void selectRuntimeFile(
-                        'continueBinary',
-                        setContinueBinaryPath
-                      )
-                    }
-                    type="button"
-                  >
-                    选择
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={!continueBinaryPath}
-                    onClick={() => setContinueBinaryPath('')}
-                    type="button"
-                  >
-                    清除
-                  </button>
-                </div>
-              </label>
-              <label className="field">
-                <span>Continue 配置文件路径</span>
-                <div className="workspace-picker">
-                  <input
-                    aria-label="Continue 配置文件路径"
-                    onChange={(event) =>
-                      setContinueConfigPath(event.target.value)
-                    }
-                    placeholder="选择可信的本地 Continue 配置文件"
-                    value={continueConfigPath}
-                  />
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      void selectRuntimeFile(
-                        'continueConfig',
-                        setContinueConfigPath
-                      )
-                    }
-                    type="button"
-                  >
-                    选择
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={!continueConfigPath}
-                    onClick={() => setContinueConfigPath('')}
-                    type="button"
-                  >
-                    清除
-                  </button>
-                </div>
-              </label>
-              {continueModelSource.kind === 'platform' &&
-                !continueConfigPath && (
+                )}
+                <label className="field">
+                  <span>Continue 可执行文件路径</span>
+                  <div className="workspace-picker">
+                    <input
+                      aria-label="Continue 可执行文件路径"
+                      onChange={(event) =>
+                        setContinueBinaryPath(event.target.value)
+                      }
+                      placeholder="留空使用 GoodBuddy 内置程序"
+                      value={continueBinaryPath}
+                    />
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        void selectRuntimeFile(
+                          'continueBinary',
+                          setContinueBinaryPath
+                        )
+                      }
+                      type="button"
+                    >
+                      选择
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={!continueBinaryPath}
+                      onClick={() => setContinueBinaryPath('')}
+                      type="button"
+                    >
+                      清除
+                    </button>
+                  </div>
+                </label>
+                {continueModelSource.kind === 'platform' &&
+                  !continueConfigPath && (
                   <p className="settings-warning">
                     未指定配置文件时 Continue 将保持不可用，不会匿名加载远程默认模型。
                   </p>
+                  )}
+                {continueBinaryPath && (
+                  <p className="settings-warning">
+                    自定义 Continue 可执行文件将以当前用户权限运行，请仅选择可信文件。
+                  </p>
                 )}
-              {continueBinaryPath && (
-                <p className="settings-warning">
-                  自定义 Continue 可执行文件将以当前用户权限运行，请仅选择可信文件。
-                </p>
-              )}
-              {detectionSummary(detection?.continue)}
+                <button
+                  className="secondary-button"
+                  disabled={detecting}
+                  onClick={() => void detectRuntimes()}
+                  type="button"
+                >
+                  {detecting ? '检测中…' : '重新检测 Continue'}
+                </button>
+              </details>
             </div>
           )}
             </>
@@ -1155,14 +1645,17 @@ export function SettingsPanel({
               onChange={setModelType}
               options={[
                 { label: 'LLM 模型', value: 'llm' },
-                { label: '向量模型', value: 'embedding' }
+                { label: '向量模型', value: 'embedding' },
+                { label: '语音模型', value: 'speech' }
               ]}
               value={modelType}
             />
             <small>
               {modelType === 'llm'
                 ? '配置对话、推理和图片生成使用的模型连接。'
-                : '配置知识库语义检索与 GraphRAG 使用的向量模型。'}
+                : modelType === 'embedding'
+                  ? '配置知识库语义检索与 GraphRAG 使用的向量模型。'
+                  : '按需下载或从本地目录导入离线语音识别模型。'}
             </small>
           </div>
           {modelType === 'llm' && (
@@ -1250,7 +1743,7 @@ export function SettingsPanel({
                         checked={defaultModelProfileId === profile.id}
                         name="default-model-profile"
                         onChange={() =>
-                          setDefaultModelProfileId(profile.id)
+                          selectDefaultModelProfile(profile)
                         }
                         type="radio"
                       />
@@ -1316,20 +1809,42 @@ export function SettingsPanel({
                           const protocol = event.target
                             .value as ModelProfileDraft['protocol']
                           updateModelProfile(profile.id, { protocol })
+                          const compatibleFallback =
+                            modelProfiles.find(
+                              (candidate) =>
+                                candidate.id !== profile.id &&
+                                candidate.id === defaultModelProfileId &&
+                                isAgentRuntimeModelProtocol(
+                                  candidate.protocol
+                                )
+                            ) ??
+                            modelProfiles.find(
+                              (candidate) =>
+                                candidate.id !== profile.id &&
+                                isAgentRuntimeModelProtocol(
+                                  candidate.protocol
+                                )
+                            )
+                          const runtimeFallback: RuntimeModelSource =
+                            compatibleFallback
+                              ? {
+                                  kind: 'profile',
+                                  profileId: compatibleFallback.id
+                                }
+                              : { kind: 'platform' }
                           if (
-                            protocol !== 'anthropic-messages' &&
+                            !isAgentRuntimeModelProtocol(protocol) &&
                             opencodeModelSource.kind === 'profile' &&
                             opencodeModelSource.profileId === profile.id
                           ) {
-                            setOpencodeModelSource({ kind: 'platform' })
+                            setOpencodeModelSource(runtimeFallback)
                           }
                           if (
-                            protocol !== 'anthropic-messages' &&
-                            protocol !== 'openai-chat-completions' &&
+                            !isAgentRuntimeModelProtocol(protocol) &&
                             continueModelSource.kind === 'profile' &&
                             continueModelSource.profileId === profile.id
                           ) {
-                            setContinueModelSource({ kind: 'platform' })
+                            setContinueModelSource(runtimeFallback)
                           }
                         }
                       }
@@ -1363,13 +1878,6 @@ export function SettingsPanel({
                             authentication === 'none' &&
                             profile.apiKeyConfigured
                         })
-                        if (
-                          authentication !== 'api-key' &&
-                          opencodeModelSource.kind === 'profile' &&
-                          opencodeModelSource.profileId === profile.id
-                        ) {
-                          setOpencodeModelSource({ kind: 'platform' })
-                        }
                       }}
                       value={profile.authentication}
                     >
@@ -1464,7 +1972,7 @@ export function SettingsPanel({
                     OpenCode：
                     {isOpenCodeCompatible(profile)
                       ? '兼容'
-                      : '不兼容（仅支持 Anthropic Messages + API Key）'}
+                      : '不兼容（不支持图像生成协议）'}
                   </small>
                 </div>
               )
@@ -1583,33 +2091,56 @@ export function SettingsPanel({
               </div>
             </div>
           )}
+          {modelType === 'embedding' && embeddingSnapshot && (
+            <EmbeddingSettingsSection
+              configuration={embeddingSnapshot.configuration}
+              diagnostic={embeddingDiagnostic}
+              diagnosticRunning={embeddingDiagnosticRunning}
+              disabled={saving || !knowledgeEmbeddingEnabled}
+              indexStatus={embeddingSnapshot.indexStatus}
+              onCancel={(jobId) => {
+                void cancelEmbeddingIndex(jobId)
+              }}
+              onRebuild={() => {
+                void rebuildEmbeddingIndex()
+              }}
+              onTest={() => {
+                void runEmbeddingDiagnostic()
+              }}
+            />
+          )}
+          {modelType === 'speech' && <SpeechModelSettingsSection />}
             </>
           )}
 
           {activeTab === 'security' && (
             <>
-          <div className="settings-section subagent-routing-settings">
+          <div className="settings-section">
             <div className="settings-section__title">
               <div>
-                <strong>Subagent 智能路由</strong>
-                <small>按问题内容自动选择最匹配的专家角色</small>
+                <strong>内网兼容模式</strong>
+                <small>统一控制全应用的内网连接兼容性</small>
               </div>
             </div>
             <label className="check-field">
               <input
-                aria-describedby="subagent-smart-routing-help"
-                checked={subagentSmartRoutingEnabled}
+                aria-describedby="intranet-compatibility-warning"
+                checked={intranetCompatibilityEnabled}
                 onChange={(event) =>
-                  setSubagentSmartRoutingEnabled(event.target.checked)
+                  setIntranetCompatibilityEnabled(event.target.checked)
                 }
                 type="checkbox"
               />
-              <span>启用 Subagent 智能路由</span>
+              <span>内网兼容模式</span>
             </label>
-            <small id="subagent-smart-routing-help">
-              默认关闭。仅在 Ask 或 Plan 模式且未显式选择专家或团队时，
-              自动选择 1 位专家；子专家使用默认文本模型，只读运行且不使用工具。
-            </small>
+            <p
+              className="settings-warning"
+              id="intranet-compatibility-warning"
+            >
+              {
+                'HTTP 传输未加密。启用后，整个应用允许 HTTP 内网地址，并接受无效、自签名或已过期的 HTTPS 证书；关闭后恢复严格的地址与证书校验。'
+              }
+            </p>
           </div>
           <label className="field">
             <span>Runtime OS 沙箱</span>
@@ -1684,9 +2215,10 @@ export function SettingsPanel({
                       })
                       .catch((reason: unknown) => {
                         setError(
-                          reason instanceof Error
-                            ? reason.message
-                            : '本地数据清除失败'
+                          settingsErrorMessage(
+                            reason,
+                            '本地数据清除失败'
+                          )
                         )
                       })
                   }}
@@ -1718,13 +2250,43 @@ export function SettingsPanel({
               />
             </div>
           )}
+          {activeTab === 'channels' && <ChannelSettingsSection />}
           {activeTab === 'roles' && (
-            <RolePromptSettingsSection
-              onChanged={onExpertsChanged}
-            />
+            <>
+              <div className="settings-section subagent-routing-settings">
+                <div className="settings-section__title">
+                  <div>
+                    <strong>Subagent 智能路由</strong>
+                    <small>按问题内容自动选择最匹配的专家角色</small>
+                  </div>
+                </div>
+                <label className="check-field">
+                  <input
+                    aria-describedby="subagent-smart-routing-help"
+                    checked={subagentSmartRoutingEnabled}
+                    onChange={(event) =>
+                      setSubagentSmartRoutingEnabled(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  <span>启用 Subagent 智能路由</span>
+                </label>
+                <small id="subagent-smart-routing-help">
+                  默认关闭。仅在 Ask 或 Plan
+                  模式且未显式选择专家或团队时，自动选择 1
+                  位专家；子专家使用默认文本模型，只读运行且不使用工具。
+                </small>
+              </div>
+              <RolePromptSettingsSection
+                defaultModelProfileId={savedRoleDefaultModelProfileId}
+                modelProfiles={savedRoleModelProfiles}
+                onChanged={onExpertsChanged}
+              />
+            </>
           )}
           {activeTab === 'skills' && <SkillsSettingsSection />}
           {activeTab === 'mcp' && <McpSettingsSection />}
+          {activeTab === 'about' && <UpdateSettingsSection />}
           </div>
         </div>
 
@@ -1734,7 +2296,7 @@ export function SettingsPanel({
             {saved && (
               <span className="settings-success">
                 <Check size={14} />
-                {connectionResult ?? '已保存并切换 Runtime'}
+                {connectionResult ?? '设置已保存'}
               </span>
             )}
           </div>
@@ -1743,14 +2305,23 @@ export function SettingsPanel({
           </button>
           {configurationTab && (
             <>
-              <button
-                className="secondary-button"
-                disabled={saving || testing}
-                onClick={() => void testConnection()}
-                type="button"
-              >
-                {testing ? '测试中…' : '保存并测试'}
-              </button>
+              {(activeTab === 'runtime' ||
+                (activeTab === 'model' && modelType === 'llm')) && (
+                <button
+                  className="secondary-button"
+                  disabled={saving || testing}
+                  onClick={() => void testConnection()}
+                  type="button"
+                >
+                  {testing
+                    ? '测试中…'
+                    : activeTab === 'model'
+                      ? '保存并测试模型'
+                      : agentRuntimeType === 'opencode'
+                        ? '保存并测试 OpenCode'
+                        : '保存并测试 Continue'}
+                </button>
+              )}
               <button
                 className="primary-button"
                 disabled={saving || testing}

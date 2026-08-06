@@ -43,6 +43,7 @@ function settings(
     continueConfigPath: '',
     continueMode: 'chat',
     runtimeSandboxMode: 'auto',
+    intranetCompatibilityEnabled: true,
     knowledgeEmbeddingEnabled: false,
     knowledgeEmbeddingBaseUrl:
       'http://127.0.0.1:11434/v1/embeddings',
@@ -75,6 +76,270 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('keeps global intranet TLS compatibility opt-in', async () => {
+    const { store } = await createStore()
+
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      intranetCompatibilityEnabled: false,
+      opencodeEmbedded: true,
+      opencodeModelSource: {
+        kind: 'profile',
+        profileId: '00000000-0000-4000-8000-000000000001'
+      },
+      continueModelSource: {
+        kind: 'profile',
+        profileId: '00000000-0000-4000-8000-000000000001'
+      }
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      intranetCompatibilityEnabled: false,
+      opencodeEmbedded: true,
+      opencodeModelProfile: {
+        id: '00000000-0000-4000-8000-000000000001'
+      },
+      continueModelProfile: {
+        id: '00000000-0000-4000-8000-000000000001'
+      }
+    })
+    expect(
+      runtimeSettingsInputSchema.parse({
+        ...settings(),
+        intranetCompatibilityEnabled: undefined
+      }).intranetCompatibilityEnabled
+    ).toBe(false)
+  })
+
+  it('always enables bundled OpenCode when the Server address is blank', async () => {
+    const { filePath, store } = await createStore({
+      GOODBUDDY_OPENCODE_EMBEDDED: 'false'
+    })
+
+    await expect(
+      store.update(
+        settings({
+          opencodeBaseUrl: '',
+          opencodeEmbedded: false
+        })
+      )
+    ).resolves.toMatchObject({
+      opencodeBaseUrl: '',
+      opencodeEmbedded: true
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      opencodeBaseUrl: '',
+      opencodeEmbedded: true
+    })
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      opencodeEmbedded: boolean
+    }
+    expect(persisted.opencodeEmbedded).toBe(true)
+  })
+
+  it('repairs version 11 embedded state and normalizes an external Server to platform mode', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const versionEleven = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as {
+      opencodeEmbedded: boolean
+    }
+    versionEleven.opencodeEmbedded = false
+    await writeFile(filePath, JSON.stringify(versionEleven), 'utf8')
+
+    const repaired = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(repaired.getPublicSettings()).resolves.toMatchObject({
+      opencodeEmbedded: true
+    })
+    await expect(
+      repaired.update(
+        settings({
+          opencodeBaseUrl: 'https://opencode.example',
+          opencodeEmbedded: true,
+          opencodeModelSource: {
+            kind: 'profile',
+            profileId: '00000000-0000-4000-8000-000000000001'
+          }
+        })
+      )
+    ).resolves.toMatchObject({
+      opencodeBaseUrl: 'https://opencode.example',
+      opencodeEmbedded: false,
+      opencodeModelSource: { kind: 'platform' }
+    })
+  })
+
+  it('rejects an explicit Runtime source that is missing after input merge', async () => {
+    const { store } = await createStore()
+
+    await expect(
+      store.update(
+        settings({
+          opencodeModelSource: {
+            kind: 'profile',
+            profileId: '00000000-0000-4000-8000-000000000099'
+          }
+        })
+      )
+    ).rejects.toThrow('OpenCode 引用的模型连接不存在')
+  })
+
+  it('migrates untouched version 10 platform sources to the first compatible text profile', async () => {
+    const { filePath, store } = await createStore()
+    const imageId = '00000000-0000-4000-8000-000000000031'
+    const textId = '00000000-0000-4000-8000-000000000032'
+    await store.update(
+      settings({
+        provider: 'auto',
+        modelProfiles: [
+          {
+            id: imageId,
+            name: '默认图像模型',
+            baseUrl: 'https://images.example/v1',
+            modelName: 'image-model',
+            protocol: 'openai-images-generations',
+            authentication: 'api-key',
+            imageGenerationQuality: 'high',
+            apiKey: { action: 'clear' }
+          },
+          {
+            id: textId,
+            name: '文本模型',
+            baseUrl: 'https://text.example/v1',
+            modelName: 'text-model',
+            protocol: 'openai-chat-completions',
+            authentication: 'none',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'clear' }
+          }
+        ],
+        defaultModelProfileId: imageId,
+        opencodeModelSource: { kind: 'platform' },
+        continueModelSource: { kind: 'platform' },
+        opencodeEmbedded: false
+      })
+    )
+    const versionTen = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+    }
+    versionTen.version = 10
+    await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      provider: 'model',
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: 'profile', profileId: textId },
+      continueModelSource: { kind: 'profile', profileId: textId }
+    })
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      opencodeModelProfile: { id: textId },
+      continueModelProfile: { id: textId }
+    })
+  })
+
+  it('preserves explicit and intentionally native version 10 Runtime sources', async () => {
+    const { filePath, store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000033'
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: profileId,
+            name: '文本模型',
+            baseUrl: 'https://text.example/v1',
+            modelName: 'text-model',
+            protocol: 'openai-responses',
+            authentication: 'none',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'clear' }
+          }
+        ],
+        defaultModelProfileId: profileId,
+        opencodeModelSource: { kind: 'profile', profileId },
+        continueModelSource: { kind: 'platform' },
+        continueConfigPath: ''
+      })
+    )
+    const versionTen = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      continueConfigPath: string
+    }
+    versionTen.version = 10
+    versionTen.continueConfigPath = 'C:\\Users\\test\\.continue\\config.yaml'
+    await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      opencodeModelSource: { kind: 'profile', profileId },
+      continueModelSource: { kind: 'platform' }
+    })
+  })
+
+  it('retains version 10 platform sources when no text profile exists', async () => {
+    const { filePath, store } = await createStore()
+    const imageId = '00000000-0000-4000-8000-000000000034'
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: imageId,
+            name: '图像模型',
+            baseUrl: 'https://images.example/v1',
+            modelName: 'image-model',
+            protocol: 'openai-images-generations',
+            authentication: 'api-key',
+            imageGenerationQuality: 'medium',
+            apiKey: { action: 'clear' }
+          }
+        ],
+        defaultModelProfileId: imageId,
+        opencodeModelSource: { kind: 'platform' },
+        continueModelSource: { kind: 'platform' },
+        opencodeEmbedded: false
+      })
+    )
+    const versionTen = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+    }
+    versionTen.version = 10
+    await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: 'platform' },
+      continueModelSource: { kind: 'platform' }
+    })
+  })
+
+  it('migrates version 9 settings with intranet compatibility disabled', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings({ intranetCompatibilityEnabled: false }))
+    const versionNine = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      intranetCompatibilityEnabled?: boolean
+    }
+    versionNine.version = 9
+    delete versionNine.intranetCompatibilityEnabled
+    await writeFile(filePath, JSON.stringify(versionNine), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      intranetCompatibilityEnabled: false
+    })
+    await migrated.update(
+      settings({ intranetCompatibilityEnabled: false })
+    )
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      intranetCompatibilityEnabled: boolean
+    }
+    expect(persisted).toMatchObject({
+      version: 11,
+      intranetCompatibilityEnabled: false
+    })
+  })
+
   it('migrates version 8 settings with smart routing disabled', async () => {
     const { filePath, store } = await createStore()
     await store.update(settings({ subagentSmartRoutingEnabled: true }))
@@ -94,7 +359,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(9)
+    expect(persisted.version).toBe(11)
   })
 
   it('accepts only supported image quality values', () => {
@@ -118,11 +383,12 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(false)
   })
 
-  it('allows private HTTP embedding endpoints but rejects public HTTP', () => {
+  it('preserves strict embedding HTTP validation when intranet compatibility is disabled', () => {
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
           knowledgeEmbeddingEnabled: true,
+          intranetCompatibilityEnabled: false,
           knowledgeEmbeddingBaseUrl:
             'http://10.7.0.23:11434/v1/embeddings',
           knowledgeEmbeddingModel: 'bge-m3'
@@ -133,6 +399,7 @@ describe('RuntimeSettingsStore', () => {
       runtimeSettingsInputSchema.safeParse(
         settings({
           knowledgeEmbeddingEnabled: true,
+          intranetCompatibilityEnabled: false,
           knowledgeEmbeddingBaseUrl:
             'http://example.com:11434/v1/embeddings'
         })
@@ -345,7 +612,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(9)
+    expect(persisted.version).toBe(11)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -366,7 +633,7 @@ describe('RuntimeSettingsStore', () => {
             name: '工作模型',
             baseUrl: 'https://work.example',
             modelName: 'work-model',
-            protocol: 'anthropic-messages',
+            protocol: 'openai-responses',
             authentication: 'api-key',
             imageGenerationQuality: 'auto',
             apiKey: { action: 'replace', value: 'work-secret' }
@@ -376,10 +643,10 @@ describe('RuntimeSettingsStore', () => {
             name: '默认模型',
             baseUrl: 'https://default.example',
             modelName: 'default-model',
-            protocol: 'anthropic-messages',
-            authentication: 'api-key',
+            protocol: 'openai-chat-completions',
+            authentication: 'none',
             imageGenerationQuality: 'auto',
-            apiKey: { action: 'replace', value: 'default-secret' }
+            apiKey: { action: 'keep' }
           }
         ],
         defaultModelProfileId: secondId,
@@ -391,19 +658,20 @@ describe('RuntimeSettingsStore', () => {
     await expect(store.getResolvedSettings()).resolves.toMatchObject({
       modelBaseUrl: 'https://default.example',
       modelName: 'default-model',
-      apiKey: 'default-secret',
+      modelAuthentication: 'none',
       opencodeModelProfile: {
         id: firstId,
+        protocol: 'openai-responses',
         apiKey: 'work-secret'
       },
       continueModelProfile: {
         id: secondId,
-        apiKey: 'default-secret'
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
       }
     })
     const persisted = await readFile(filePath, 'utf8')
     expect(persisted).not.toContain('work-secret')
-    expect(persisted).not.toContain('default-secret')
     const publicSettings = await store.getPublicSettings()
     expect(publicSettings.modelProfiles).toHaveLength(2)
     expect(JSON.stringify(publicSettings)).not.toContain('work-secret')
@@ -518,7 +786,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 9,
+      version: 11,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -651,10 +919,11 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(true)
   })
 
-  it('accepts pathful HTTPS roots and loopback HTTP but rejects remote HTTP', () => {
+  it('preserves strict model HTTP validation when intranet compatibility is disabled', () => {
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
+          intranetCompatibilityEnabled: false,
           modelBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
         })
       ).success
@@ -662,6 +931,7 @@ describe('RuntimeSettingsStore', () => {
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
+          intranetCompatibilityEnabled: false,
           modelBaseUrl: 'http://127.0.0.1:11434/v1',
           modelProtocol: 'openai-chat-completions',
           modelAuthentication: 'none'
@@ -670,7 +940,84 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(true)
     expect(
       runtimeSettingsInputSchema.safeParse(
-        settings({ modelBaseUrl: 'http://models.example/v1' })
+        settings({
+          intranetCompatibilityEnabled: false,
+          modelBaseUrl: 'http://models.example/v1'
+        })
+      ).success
+    ).toBe(false)
+  })
+
+  it('allows HTTP hostnames for model and embedding endpoints in intranet compatibility mode', () => {
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          modelBaseUrl: 'http://models.intranet/v1',
+          knowledgeEmbeddingEnabled: true,
+          knowledgeEmbeddingBaseUrl:
+            'http://vectors.intranet/v1/embeddings'
+        })
+      ).success
+    ).toBe(true)
+
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          modelProfiles: [
+            {
+              id: crypto.randomUUID(),
+              name: '内网模型',
+              baseUrl: 'http://models.corp.local/api',
+              modelName: 'corp-model',
+              protocol: 'openai-chat-completions',
+              authentication: 'none',
+              imageGenerationQuality: 'auto',
+              apiKey: { action: 'clear' }
+            }
+          ]
+        })
+      ).success
+    ).toBe(true)
+  })
+
+  it('rejects public HTTP endpoints in intranet compatibility mode', () => {
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          modelBaseUrl: 'http://models.example.com/v1'
+        })
+      ).success
+    ).toBe(false)
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          knowledgeEmbeddingEnabled: true,
+          knowledgeEmbeddingBaseUrl:
+            'http://vectors.example.com/v1/embeddings'
+        })
+      ).success
+    ).toBe(false)
+  })
+
+  it('keeps endpoint structure checks enabled in intranet compatibility mode', () => {
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({ modelBaseUrl: 'http://user@models.intranet/v1' })
+      ).success
+    ).toBe(false)
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          knowledgeEmbeddingBaseUrl:
+            'http://vectors.intranet/v1/embeddings?format=float'
+        })
+      ).success
+    ).toBe(false)
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          knowledgeEmbeddingBaseUrl: 'http://vectors.intranet'
+        })
       ).success
     ).toBe(false)
   })
@@ -769,7 +1116,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(9)
+    expect(persisted.version).toBe(11)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 
@@ -820,12 +1167,30 @@ describe('RuntimeSettingsStore', () => {
     ).rejects.toThrow('安全存储不可用')
   })
 
+  it('preserves settings created by a newer unsupported version', async () => {
+    const { filePath, store } = await createStore()
+    const futureSettings = JSON.stringify({
+      version: 99,
+      futureField: 'keep-me'
+    })
+    await writeFile(filePath, futureSettings, 'utf8')
+
+    await expect(store.getPublicSettings()).rejects.toThrow(
+      '不支持 Runtime 设置版本 99'
+    )
+    expect(await readFile(filePath, 'utf8')).toBe(futureSettings)
+    const files = await readdir(join(filePath, '..'))
+    expect(
+      files.some((name) => name.startsWith('runtime-settings.json.corrupt-'))
+    ).toBe(false)
+  })
+
   it('isolates a corrupt settings file and reports recovery', async () => {
     const { filePath, store } = await createStore()
     await writeFile(filePath, '{not-valid-json', 'utf8')
 
     await expect(store.getPublicSettings()).resolves.toMatchObject({
-      provider: 'auto',
+      provider: 'model',
       warning: expect.stringContaining('已损坏')
     })
     const files = await readdir(join(filePath, '..'))

@@ -19,6 +19,7 @@ import {
   resolve
 } from 'node:path'
 import { chunkDocument, parseDocument, supportedDocumentExtensions } from './document-parser'
+import { classifyEmbeddingError } from './embedding-errors'
 import {
   extractKnowledgeGraph,
   normalizeEntityAlias,
@@ -178,54 +179,8 @@ export class KnowledgeService {
   }
 
   setEmbeddingProvider(provider?: EmbeddingProvider): Promise<void> {
-    if (
-      this.embeddingProvider === provider ||
-      (this.embeddingProvider?.fingerprint !== undefined &&
-        this.embeddingProvider.fingerprint === provider?.fingerprint)
-    ) {
-      this.embeddingProvider = provider
-      return Promise.resolve()
-    }
     this.embeddingProvider = provider
-    if (!provider) {
-      return Promise.resolve()
-    }
-    const reindex = this.reindexEmbeddings(provider)
-    this.activeSyncs.set('embedding-reindex', reindex)
-    void reindex.then(
-      () => {
-        if (this.activeSyncs.get('embedding-reindex') === reindex) {
-          this.activeSyncs.delete('embedding-reindex')
-        }
-      },
-      () => {
-        if (this.activeSyncs.get('embedding-reindex') === reindex) {
-          this.activeSyncs.delete('embedding-reindex')
-        }
-      }
-    )
-    return reindex
-  }
-
-  private async reindexEmbeddings(
-    provider: EmbeddingProvider
-  ): Promise<void> {
-    for (const library of this.database.listKnowledgeBases(100)) {
-      if (this.embeddingProvider !== provider) {
-        return
-      }
-      for (const document of this.database.listDocuments(
-        library.id,
-        500
-      )) {
-        if (this.embeddingProvider !== provider) {
-          return
-        }
-        if (document.metadata.status === 'ready') {
-          await this.indexDocumentEmbeddings(document, provider)
-        }
-      }
-    }
+    return Promise.resolve()
   }
 
   createLibrary(input: CreateKnowledgeBaseInput): KnowledgeBase {
@@ -780,14 +735,13 @@ export class KnowledgeService {
       if (this.lifecycleController.signal.aborted) {
         return
       }
-      const message =
-        error instanceof Error ? error.message : 'Embedding indexing failed'
+      const safeError = classifyEmbeddingError(error)
       try {
         this.database.recordEmbeddingIndexError(
           document.id,
           provider.provider,
           provider.model,
-          message.slice(0, 2_000)
+          safeError.message
         )
       } catch {
         // FTS indexing is authoritative; embedding diagnostics are best effort.

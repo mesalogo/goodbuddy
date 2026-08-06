@@ -3,14 +3,21 @@ import { ContinueAgentRuntime } from './continue-runtime'
 import { OpenCodeRuntime } from './opencode-runtime'
 import type { AgentRuntime } from './runtime'
 import { UnconfiguredAgentRuntime } from './unconfigured-runtime'
-import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
-import { defaultRuntimeSettings } from '../../shared/contracts'
+import type {
+  ResolvedModelProfile,
+  ResolvedRuntimeSettings
+} from '../runtime-settings-store'
+import {
+  defaultRuntimeSettings,
+  isAgentRuntimeModelProtocol
+} from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { ContinueHostLauncher } from './continue-host-adapter'
 import { resolveRuntimeSandbox } from './runtime-sandbox'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { ModelToolProviderLike } from './model-tool-provider'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 
 const noSubagentTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -31,6 +38,7 @@ export type AgentCapabilityContext = {
   bundledRuntimePaths?: BundledRuntimePaths
   continueHostLauncher?: ContinueHostLauncher
   browserService?: BrowserToolService
+  knowledgeGateway?: KnowledgeMcpGateway
 }
 
 export function createDefaultModelRuntime(
@@ -51,18 +59,38 @@ export function createDefaultModelRuntime(
   })
 }
 
+export function createModelProfileRuntime(
+  defaultWorkspace: string,
+  settings: ResolvedRuntimeSettings,
+  profile: ResolvedModelProfile
+): AgentRuntime {
+  return new ModelAgentRuntime({
+    apiKey: profile.apiKey,
+    baseUrl: profile.baseUrl,
+    model: profile.modelName,
+    protocol: profile.protocol,
+    authentication: profile.authentication,
+    imageGenerationQuality:
+      profile.imageGenerationQuality ??
+      defaultRuntimeSettings.imageGenerationQuality,
+    defaultWorkspace: settings.workspacePath || defaultWorkspace,
+    toolProvider: noSubagentTools
+  })
+}
+
 export function createAgentRuntime(
   defaultWorkspace: string,
   settings?: ResolvedRuntimeSettings,
   capabilities: AgentCapabilityContext = {}
 ): AgentRuntime {
-  const baseUrl =
-    settings?.opencodeBaseUrl || process.env.GOODBUDDY_OPENCODE_URL
-  const embedded =
-    settings?.opencodeEmbedded ??
-    process.env.GOODBUDDY_OPENCODE_EMBEDDED === 'true'
+  const baseUrl = (
+    settings?.opencodeBaseUrl ||
+    process.env.GOODBUDDY_OPENCODE_URL ||
+    ''
+  ).trim()
+  const embedded = !baseUrl
   const workspace = settings?.workspacePath || defaultWorkspace
-  const provider = settings?.provider ?? 'auto'
+  const provider = settings?.provider ?? defaultRuntimeSettings.provider
   const sandboxMode =
     settings?.runtimeSandboxMode ??
     defaultRuntimeSettings.runtimeSandboxMode
@@ -70,12 +98,12 @@ export function createAgentRuntime(
   if (provider === 'continue') {
     if (
       settings?.continueModelProfile &&
-      settings.continueModelProfile.protocol !== 'anthropic-messages' &&
-      settings.continueModelProfile.protocol !==
-        'openai-chat-completions'
+      !isAgentRuntimeModelProtocol(
+        settings.continueModelProfile.protocol
+      )
     ) {
       throw new Error(
-        'Continue 独立模型连接仅支持 Anthropic Messages 或 OpenAI 兼容 Chat Completions'
+        'Continue 独立模型连接仅支持文本对话协议，不支持图像生成协议'
       )
     }
     return new ContinueAgentRuntime({
@@ -97,18 +125,20 @@ export function createAgentRuntime(
         capabilities.continueHostCacheRoot ??
         process.env.GOODBUDDY_CONTINUE_HOST_CACHE?.trim() ??
         '',
-      launchHost: capabilities.continueHostLauncher
+      launchHost: capabilities.continueHostLauncher,
+      knowledgeGateway: capabilities.knowledgeGateway
     })
   }
 
   if (provider === 'opencode' || (provider === 'auto' && (baseUrl || embedded))) {
     if (
       settings?.opencodeModelProfile &&
-      (settings.opencodeModelProfile.protocol !== 'anthropic-messages' ||
-        settings.opencodeModelProfile.authentication !== 'api-key')
+      !isAgentRuntimeModelProtocol(
+        settings.opencodeModelProfile.protocol
+      )
     ) {
       throw new Error(
-        'OpenCode 独立模型连接仅支持需要 API Key 的 Anthropic Messages 协议'
+        'OpenCode 独立模型连接仅支持文本对话协议，不支持图像生成协议'
       )
     }
     return new OpenCodeRuntime({
@@ -126,7 +156,8 @@ export function createAgentRuntime(
       modelProfile: settings?.opencodeModelProfile,
       skillInstructions: capabilities.skillInstructions,
       sandbox: resolveRuntimeSandbox(sandboxMode),
-      defaultWorkspace: workspace
+      defaultWorkspace: workspace,
+      knowledgeGateway: capabilities.knowledgeGateway
     })
   }
 
@@ -164,7 +195,8 @@ export function createAgentRuntime(
       skillInstructions: capabilities.skillInstructions,
       defaultWorkspace: workspace,
       mcpServers: capabilities.mcpServers,
-      browserService: capabilities.browserService
+      browserService: capabilities.browserService,
+      knowledgeGateway: capabilities.knowledgeGateway
     })
   }
 

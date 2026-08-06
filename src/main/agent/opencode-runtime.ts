@@ -6,20 +6,23 @@ import {
   type PermissionRuleset
 } from '@opencode-ai/sdk/v2'
 import spawn from 'cross-spawn'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { AgentRuntimeStatus } from '../../shared/contracts'
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
+import { createOpenAIApiBaseUrl } from './openai-endpoint'
 import type {
   AgentExecutionRequest,
   AgentRuntime,
   RuntimeEvent,
   RuntimeModelUsageEvent
 } from './runtime'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { detectRuntimeBinary } from './runtime-discovery'
 import { getAvailableLoopbackPort } from './loopback-port'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import {
+  buildExplicitProfileRuntimeEnvironment,
   buildRuntimeEnvironment,
   runtimePrivacyEnvironment
 } from './process-environment'
@@ -43,6 +46,36 @@ const EMBEDDED_SERVER_USERNAME = 'goodbuddy'
 
 type SpawnedProcess = ReturnType<typeof spawn>
 
+type OpenCodeProviderConfig = {
+  model: string
+  provider: Record<
+    string,
+    {
+      name: string
+      npm: string
+      options: {
+        apiKey?: string
+        baseURL: string
+      }
+      models: Record<
+        string,
+        {
+          name: string
+          provider: {
+            npm: string
+          }
+        }
+      >
+    }
+  >
+}
+
+type OpenCodeProviderDescriptor = {
+  id: string
+  npm: string
+  baseURL: string
+}
+
 type OpenCodeServer = {
   url: string
   authorization: string
@@ -57,6 +90,66 @@ const executePermissionRules: PermissionRuleset = [
 const readOnlyPermissionRules: PermissionRuleset = [
   { permission: '*', pattern: '*', action: 'deny' }
 ]
+
+function resolveOpenCodeProvider(
+  profile: ResolvedModelProfile
+): OpenCodeProviderDescriptor {
+  if (profile.protocol === 'openai-images-generations') {
+    throw new Error(
+      'OpenCode 独立模型连接不支持图像生成协议'
+    )
+  }
+  return profile.protocol === 'anthropic-messages'
+    ? {
+        id: 'goodbuddy-anthropic',
+        npm: '@ai-sdk/anthropic',
+        baseURL: createAnthropicApiBaseUrl(profile.baseUrl)
+      }
+    : profile.protocol === 'openai-chat-completions'
+      ? {
+          id: 'goodbuddy-openai-chat',
+          npm: '@ai-sdk/openai-compatible',
+          baseURL: createOpenAIApiBaseUrl(profile.baseUrl)
+        }
+      : {
+          id: 'goodbuddy-openai-responses',
+          npm: '@ai-sdk/openai',
+          baseURL: createOpenAIApiBaseUrl(profile.baseUrl)
+        }
+}
+
+function createOpenCodeProviderConfig(
+  profile: ResolvedModelProfile
+): OpenCodeProviderConfig {
+  const provider = resolveOpenCodeProvider(profile)
+  const options: {
+    apiKey?: string
+    baseURL: string
+  } = {
+    baseURL: provider.baseURL
+  }
+  if (profile.authentication === 'api-key' && profile.apiKey) {
+    options.apiKey = profile.apiKey
+  }
+  return {
+    model: `${provider.id}/${profile.modelName}`,
+    provider: {
+      [provider.id]: {
+        name: profile.name,
+        npm: provider.npm,
+        options,
+        models: {
+          [profile.modelName]: {
+            name: profile.name,
+            provider: {
+              npm: provider.npm
+            }
+          }
+        }
+      }
+    }
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return (
@@ -196,6 +289,7 @@ export type OpenCodeRuntimeOptions = {
   modelProfile?: ResolvedModelProfile
   skillInstructions?: string
   sandbox?: RuntimeSandboxResolution
+  knowledgeGateway?: KnowledgeMcpGateway
 }
 
 async function defaultDetectBinary(
@@ -261,6 +355,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     string,
     Promise<string>
   >()
+  private embeddedRunTail: Promise<void> = Promise.resolve()
   private readonly dependencies: OpenCodeRuntimeDependencies
 
   constructor(
@@ -279,6 +374,36 @@ export class OpenCodeRuntime implements AgentRuntime {
 
   private usesEmbeddedPermissionMediation(): boolean {
     return this.options.embedded && !this.options.baseUrl
+  }
+
+  private async acquireEmbeddedRun(
+    signal: AbortSignal
+  ): Promise<() => void> {
+    signal.throwIfAborted()
+    const previous = this.embeddedRunTail
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    this.embeddedRunTail = previous.then(
+      () => current,
+      () => current
+    )
+    let abort!: () => void
+    const aborted = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason)
+    })
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      await Promise.race([previous, aborted])
+      signal.throwIfAborted()
+      return release
+    } catch (error) {
+      release()
+      throw error
+    } finally {
+      signal.removeEventListener('abort', abort)
+    }
   }
 
   private terminate(child: SpawnedProcess): void {
@@ -335,10 +460,27 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw new Error('OpenCode Server 启动已取消')
     }
 
-    const env = buildRuntimeEnvironment(runtimePrivacyEnvironment)
-    if (this.options.modelProfile && !this.options.modelProfile.apiKey) {
+    if (
+      this.options.modelProfile?.authentication === 'api-key' &&
+      !this.options.modelProfile.apiKey
+    ) {
       throw new Error('OpenCode 独立模型连接尚未配置 API Key')
     }
+    const profile = this.options.modelProfile
+    const env = profile
+      ? buildExplicitProfileRuntimeEnvironment(
+          runtimePrivacyEnvironment,
+          profile.authentication === 'api-key' && profile.apiKey
+            ? {
+                name:
+                  profile.protocol === 'anthropic-messages'
+                    ? 'ANTHROPIC_API_KEY'
+                    : 'OPENAI_API_KEY',
+                value: profile.apiKey
+              }
+            : undefined
+        )
+      : buildRuntimeEnvironment(runtimePrivacyEnvironment)
     delete env.OPENCODE_CONFIG
     delete env.OPENCODE_CONFIG_CONTENT
     delete env.OPENCODE_SERVER_PASSWORD
@@ -354,20 +496,10 @@ export class OpenCodeRuntime implements AgentRuntime {
     env.OPENCODE_DISABLE_LSP_DOWNLOAD = '1'
     env.OPENCODE_DISABLE_MODELS_FETCH = '1'
     env.OPENCODE_DISABLE_SHARE = '1'
-    if (this.options.modelProfile) {
-      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-        model: `anthropic/${this.options.modelProfile.modelName}`,
-        provider: {
-          anthropic: {
-            options: {
-              apiKey: this.options.modelProfile.apiKey,
-              baseURL: createAnthropicApiBaseUrl(
-                this.options.modelProfile.baseUrl
-              )
-            }
-          }
-        }
-      })
+    if (profile) {
+      env.OPENCODE_CONFIG_CONTENT = JSON.stringify(
+        createOpenCodeProviderConfig(profile)
+      )
     } else if (this.options.configPath.trim()) {
       env.OPENCODE_CONFIG = resolve(this.options.configPath)
     }
@@ -430,10 +562,17 @@ export class OpenCodeRuntime implements AgentRuntime {
         }
         settled = true
         cleanupStartupListeners()
-        if (this.startingChild === child) {
-          this.startingChild = undefined
+        const clearStartingChild = (): void => {
+          if (this.startingChild === child) {
+            this.startingChild = undefined
+          }
         }
+        child.once('close', clearStartingChild)
         this.terminate(child)
+        if (child.exitCode !== null) {
+          child.removeListener('close', clearStartingChild)
+          clearStartingChild()
+        }
         reject(new Error(message.slice(0, 1_000)))
       }
       const succeed = (url: string): void => {
@@ -623,46 +762,120 @@ export class OpenCodeRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
+    const release = this.usesEmbeddedPermissionMediation()
+      ? await this.acquireEmbeddedRun(signal)
+      : undefined
+    try {
+      yield* this.runUnlocked(request, signal)
+    } finally {
+      release?.()
+    }
+  }
+
+  private async *runUnlocked(
+    request: AgentExecutionRequest,
+    signal: AbortSignal
+  ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
     if (request.images?.length) {
       throw new Error('OpenCode Runtime 暂不支持图片上下文，请切换到视觉模型')
     }
     const client = await this.getClient(signal)
     const directory = this.options.defaultWorkspace
-    const permission = this.usesEmbeddedPermissionMediation()
-      ? request.workMode === 'execute'
-        ? executePermissionRules
-        : readOnlyPermissionRules
-      : undefined
-    let disabledTools: Record<string, boolean> | undefined
-    if (request.workMode !== 'execute') {
-      const tools = await client.tool.ids({
-        directory
-      })
-      if (tools.error || !tools.data) {
-        throw new Error('OpenCode 无法确认工具已禁用，已阻止只读请求')
+    let knowledgeMcpName: string | undefined
+    let knowledgeToolIds: string[] = []
+    try {
+      if (
+        request.knowledgeCapabilityToken &&
+        this.usesEmbeddedPermissionMediation() &&
+        this.options.knowledgeGateway?.getEndpoint()
+      ) {
+        knowledgeMcpName = `goodbuddy-knowledge-${createHash('sha256')
+          .update(`${request.conversationId}\0${request.requestId}`)
+          .digest('hex')
+          .slice(0, 20)}`
+        const added = await client.mcp.add({
+          directory,
+          name: knowledgeMcpName,
+          config: {
+            type: 'remote',
+            url: this.options.knowledgeGateway.getEndpoint()!,
+            enabled: true,
+            headers: {
+              Authorization: `Bearer ${request.knowledgeCapabilityToken}`
+            },
+            oauth: false
+          }
+        })
+        if (added.error || !added.data) {
+          throw new Error('OpenCode 知识工具连接失败')
+        }
+        const addedStatus = added.data[knowledgeMcpName]
+        if (!addedStatus || addedStatus.status !== 'connected') {
+          throw new Error(
+            `OpenCode 知识工具连接失败（${addedStatus?.status ?? 'unknown'}）`
+          )
+        }
+        // OpenCode 1.18.x does not include dynamically added MCP tools in
+        // experimental/tool/ids. Its model tool namespace is deterministic:
+        // "<MCP server name>_<declared tool name>".
+        knowledgeToolIds = [`${knowledgeMcpName}_knowledge_search`]
       }
-      disabledTools = Object.fromEntries(
-        tools.data.map((toolId) => [toolId, false])
-      )
-    }
-    const session = await this.getSessionId(
-      client,
-      request,
-      directory,
-      permission
-    )
-    const sessionId = session.id
-    if (!session.created && permission) {
-      const update = await client.session.update({
-        sessionID: sessionId,
+      const permission = this.usesEmbeddedPermissionMediation()
+        ? request.workMode === 'execute'
+          ? [
+              ...executePermissionRules,
+              ...knowledgeToolIds.map((toolId) => ({
+                permission: toolId,
+                pattern: '*',
+                action: 'allow' as const
+              }))
+            ]
+          : knowledgeToolIds.length > 0
+            ? [
+                ...readOnlyPermissionRules,
+                ...knowledgeToolIds.map((toolId) => ({
+                  permission: toolId,
+                  pattern: '*',
+                  action: 'allow' as const
+                }))
+              ]
+            : readOnlyPermissionRules
+        : undefined
+      let disabledTools: Record<string, boolean> | undefined
+      if (request.workMode !== 'execute') {
+        const tools = await client.tool.ids({
+          directory
+        })
+        if (tools.error || !tools.data) {
+          throw new Error('OpenCode 无法确认工具已禁用，已阻止只读请求')
+        }
+        disabledTools = {
+          ...Object.fromEntries(
+            tools.data.map((toolId) => [toolId, false])
+          ),
+          ...Object.fromEntries(
+            knowledgeToolIds.map((toolId) => [toolId, true])
+          )
+        }
+      }
+      const session = await this.getSessionId(
+        client,
+        request,
         directory,
         permission
-      })
-      if (update.error || !update.data) {
-        throw new Error('OpenCode 会话权限配置失败')
+      )
+      const sessionId = session.id
+      if (!session.created && permission) {
+        const update = await client.session.update({
+          sessionID: sessionId,
+          directory,
+          permission
+        })
+        if (update.error || !update.data) {
+          throw new Error('OpenCode 会话权限配置失败')
+        }
       }
-    }
 
     yield {
       requestId: request.requestId,
@@ -705,7 +918,9 @@ export class OpenCodeRuntime implements AgentRuntime {
         directory,
         model: this.options.modelProfile
           ? {
-              providerID: 'anthropic',
+              providerID: resolveOpenCodeProvider(
+                this.options.modelProfile
+              ).id,
               modelID: this.options.modelProfile.modelName
             }
           : undefined,
@@ -867,10 +1082,16 @@ export class OpenCodeRuntime implements AgentRuntime {
             state: 'pending',
             summary: `OpenCode 工具：${toolName}`
           }
+          const allowKnowledge =
+            request.workMode === 'ask' &&
+            knowledgeToolIds.includes(permissionRequest.permission)
           const response = await client.permission.reply({
             requestID: permissionRequest.id,
             directory,
-            reply: 'once'
+            reply:
+              request.workMode === 'execute' || allowKnowledge
+                ? 'once'
+                : 'reject'
           })
           if (response.error || response.data !== true) {
             throw new Error('OpenCode 权限回复失败')
@@ -948,6 +1169,13 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw error
     } finally {
       signal.removeEventListener('abort', abortSession)
+    }
+    } finally {
+      if (knowledgeMcpName) {
+        await client.mcp
+          .disconnect({ name: knowledgeMcpName, directory })
+          .catch(() => undefined)
+      }
     }
   }
 

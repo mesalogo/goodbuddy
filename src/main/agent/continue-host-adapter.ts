@@ -13,16 +13,20 @@ import {
 import {
   basename,
   dirname,
+  extname,
   isAbsolute,
   join,
   resolve
 } from 'node:path'
+import json5 from 'json5'
+import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import type { RuntimeSettings } from '../../shared/contracts'
 import type { RuntimeAuthorizer } from './runtime'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import { getAvailableLoopbackPort } from './loopback-port'
 import {
+  buildExplicitProfileRuntimeEnvironment,
   buildRuntimeEnvironment,
   runtimePrivacyEnvironment
 } from './process-environment'
@@ -39,6 +43,9 @@ const supportedBundleHashes = new Set([
 ])
 const maximumBundleBytes = 32 * 1024 * 1024
 const maximumStateBytes = 8 * 1024 * 1024
+const maximumConfigBytes = 1024 * 1024
+const maximumConfiguredMcpServers = 100
+const knowledgeMcpName = 'goodbuddy-knowledge'
 export const continueConfigurationRequiredMessage =
   'Continue 尚未配置模型连接，请在设置中选择 GoodBuddy 模型连接或指定 Continue 配置文件'
 const utilityBootstrap = [
@@ -85,6 +92,14 @@ const stateSchema = z.object({
 })
 
 type ContinueHostState = z.infer<typeof stateSchema>
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value)
+  )
+}
 
 type PreparedHost = {
   entryPath: string
@@ -135,6 +150,67 @@ export type ContinueHostAdapterOptions = {
   trustedBundleHashes?: string[]
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
+}
+
+export type ContinueHostRunOptions = {
+  workMode?: 'ask' | 'plan' | 'execute'
+  knowledgeCapability?: {
+    endpoint: string
+    token: string
+  }
+}
+
+type KnowledgeCapability = NonNullable<
+  ContinueHostRunOptions['knowledgeCapability']
+>
+
+function createKnowledgeMcpServer(
+  capability: KnowledgeCapability
+): Record<string, unknown> {
+  return {
+    name: knowledgeMcpName,
+    type: 'streamable-http',
+    url: capability.endpoint,
+    requestOptions: {
+      headers: {
+        Authorization: `Bearer ${capability.token}`
+      }
+    }
+  }
+}
+
+async function loadContinueConfig(
+  configPath: string
+): Promise<Record<string, unknown>> {
+  const configStat = await stat(configPath)
+  if (!configStat.isFile()) {
+    throw new Error('Continue 配置路径不是文件')
+  }
+  if (configStat.size > maximumConfigBytes) {
+    throw new Error('Continue 配置文件超过 1 MB 安全大小限制')
+  }
+  const source = await readFile(configPath, 'utf8')
+  if (Buffer.byteLength(source) > maximumConfigBytes) {
+    throw new Error('Continue 配置文件超过 1 MB 安全大小限制')
+  }
+
+  let parsed: unknown
+  try {
+    const extension = extname(configPath).toLowerCase()
+    parsed =
+      extension === '.json' || extension === '.jsonc'
+        ? json5.parse(source)
+        : parseYaml(source, { maxAliasCount: 100 })
+  } catch (error) {
+    throw new Error(
+      'Continue 配置文件无法解析，无法安全注入知识库工具',
+      { cause: error }
+    )
+  }
+  if (!isRecord(parsed)) {
+    throw new Error('Continue 配置文件必须包含配置对象')
+  }
+  return parsed
 }
 
 export function hasContinueModelConfiguration(
@@ -450,12 +526,18 @@ export class ContinueHostAdapter {
       'i={allow:o.allow,ask:o.ask,exclude:o.exclude,isHeadless:e.headless}'
     const permissionInitializeMarker =
       'E6t.initialize({isHeadless:e.headless},r,n)'
+    const permissionFlagOrderMarker =
+      'function ZZo(e){let t=[];if(e.exclude)for(let n of e.exclude){let r=n;t.push({tool:r,permission:"exclude"})}if(e.ask)for(let n of e.ask){let r=n;t.push({tool:r,permission:"ask"})}if(e.allow)for(let n of e.allow){let r=n;t.push({tool:r,permission:"allow"})}return t}'
     const serverMarker =
       'let j=(0,atn.default)();j.use(atn.default.json()),j.get("/state"'
     const listenMarker =
       'listen(i,async()=>{console.log(Ht.green(`Server started on http://localhost:${i}`))'
     const versionCheckMarker =
       'async function SCt(e){return n5e||'
+    const responseRoutingMarker =
+      'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}'
+    const modelConfigurationMarker =
+      'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}'
     let patched = replaceExactly(
       sourceBundle,
       serveInitializationMarker,
@@ -473,6 +555,11 @@ export class ContinueHostAdapter {
     )
     patched = replaceExactly(
       patched,
+      permissionFlagOrderMarker,
+      'function ZZo(e){let t=[];if(e.allow)for(let n of e.allow){let r=n;t.push({tool:r,permission:"allow"})}if(e.exclude)for(let n of e.exclude){let r=n;t.push({tool:r,permission:"exclude"})}if(e.ask)for(let n of e.ask){let r=n;t.push({tool:r,permission:"ask"})}return t}'
+    )
+    patched = replaceExactly(
+      patched,
       serverMarker,
       'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"1mb"})),j.get("/state"'
     )
@@ -486,11 +573,21 @@ export class ContinueHostAdapter {
       versionCheckMarker,
       'async function SCt(e){if(process.env.GOODBUDDY_DISABLE_CONTINUE_UPDATES==="1")return null;return n5e||'
     )
+    patched = replaceExactly(
+      patched,
+      responseRoutingMarker,
+      'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!0?!0:this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}'
+    )
+    patched = replaceExactly(
+      patched,
+      modelConfigurationMarker,
+      'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env,useResponsesApi:e.useResponsesApi};return CGn(n)??null}'
+    )
     const patchedHash = hashContents(patched)
     const digest = sourceHash.slice(0, 16)
     const targetRoot = join(
       this.options.cacheRoot,
-      `host-v2-${supportedVersion}-${digest}`
+      `host-v4-${supportedVersion}-${digest}`
     )
     const targetDist = join(targetRoot, 'dist')
     const targetBundle = join(targetDist, 'index.js')
@@ -616,10 +713,119 @@ export class ContinueHostAdapter {
     throw new Error('Continue 宿主启动超时')
   }
 
+  private async writeTemporaryConfig(
+    prefix: string,
+    config: Record<string, unknown>
+  ): Promise<string> {
+    await mkdir(this.options.cacheRoot, { recursive: true })
+    const configPath = join(
+      this.options.cacheRoot,
+      `${prefix}-${crypto.randomUUID()}.yaml`
+    )
+    await writeFile(configPath, JSON.stringify(config), {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx'
+    })
+    return configPath
+  }
+
+  private async createRunConfig(
+    runOptions: ContinueHostRunOptions
+  ): Promise<string | undefined> {
+    const knowledgeCapability = runOptions.knowledgeCapability
+    if (!this.options.modelProfile) {
+      if (!knowledgeCapability) {
+        return undefined
+      }
+      const configured = await loadContinueConfig(
+        this.options.configPath.trim()
+      )
+      const existingServers = configured.mcpServers
+      if (
+        existingServers !== undefined &&
+        !Array.isArray(existingServers)
+      ) {
+        throw new Error(
+          'Continue 配置文件中的 mcpServers 必须是数组'
+        )
+      }
+      const servers = existingServers ?? []
+      if (servers.length > maximumConfiguredMcpServers) {
+        throw new Error(
+          `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
+        )
+      }
+      const retainedServers =
+        runOptions.workMode === 'ask'
+          ? []
+          : servers.filter(
+              (server) =>
+                !isRecord(server) ||
+                server.name !== knowledgeMcpName
+            )
+      if (
+        retainedServers.length >= maximumConfiguredMcpServers
+      ) {
+        throw new Error(
+          `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
+        )
+      }
+      return this.writeTemporaryConfig('knowledge-config', {
+        ...configured,
+        mcpServers: [
+          ...retainedServers,
+          createKnowledgeMcpServer(knowledgeCapability)
+        ]
+      })
+    }
+
+    if (
+      this.options.modelProfile.authentication === 'api-key' &&
+      !this.options.modelProfile.apiKey
+    ) {
+      throw new Error('Continue 独立模型连接尚未配置 API Key')
+    }
+    const anthropic =
+      this.options.modelProfile.protocol === 'anthropic-messages'
+    const modelConfig: Record<string, unknown> = {
+      name: this.options.modelProfile.name,
+      provider: anthropic ? 'anthropic' : 'openai',
+      model: this.options.modelProfile.modelName,
+      apiBase: anthropic
+        ? createAnthropicApiBaseUrl(this.options.modelProfile.baseUrl)
+        : createOpenAIApiBaseUrl(this.options.modelProfile.baseUrl),
+      roles: ['chat']
+    }
+    if (!anthropic) {
+      modelConfig.useResponsesApi =
+        this.options.modelProfile.protocol === 'openai-responses'
+    }
+    if (this.options.modelProfile.authentication === 'api-key') {
+      modelConfig.apiKey = anthropic
+        ? '${{ secrets.ANTHROPIC_API_KEY }}'
+        : '${{ secrets.OPENAI_API_KEY }}'
+    }
+    return this.writeTemporaryConfig('model-config', {
+      name: 'GoodBuddy Runtime',
+      version: '1.0.0',
+      schema: 'v1',
+      models: [modelConfig],
+      ...(knowledgeCapability
+        ? {
+            mcpServers: [
+              createKnowledgeMcpServer(knowledgeCapability)
+            ]
+          }
+        : {})
+    })
+  }
+
   async run(
     prompt: string,
     signal: AbortSignal,
-    authorize: RuntimeAuthorizer
+    authorize: RuntimeAuthorizer,
+    runOptions: ContinueHostRunOptions = {}
   ): Promise<ContinueHostRunResult> {
     signal.throwIfAborted()
     if (
@@ -631,45 +837,8 @@ export class ContinueHostAdapter {
       throw new Error(continueConfigurationRequiredMessage)
     }
     let generatedConfigPath: string | undefined
-    if (this.options.modelProfile) {
-      if (
-        this.options.modelProfile.authentication === 'api-key' &&
-        !this.options.modelProfile.apiKey
-      ) {
-        throw new Error('Continue 独立模型连接尚未配置 API Key')
-      }
-      const anthropic =
-        this.options.modelProfile.protocol === 'anthropic-messages'
-      const modelConfig: Record<string, unknown> = {
-        name: this.options.modelProfile.name,
-        provider: anthropic ? 'anthropic' : 'openai',
-        model: this.options.modelProfile.modelName,
-        apiBase: anthropic
-          ? createAnthropicApiBaseUrl(this.options.modelProfile.baseUrl)
-          : createOpenAIApiBaseUrl(this.options.modelProfile.baseUrl),
-        roles: ['chat']
-      }
-      if (this.options.modelProfile.authentication === 'api-key') {
-        modelConfig.apiKey = anthropic
-          ? '${{ secrets.ANTHROPIC_API_KEY }}'
-          : '${{ secrets.OPENAI_API_KEY }}'
-      }
-      await mkdir(this.options.cacheRoot, { recursive: true })
-      generatedConfigPath = join(
-        this.options.cacheRoot,
-        `model-config-${crypto.randomUUID()}.yaml`
-      )
-      await writeFile(
-        generatedConfigPath,
-        JSON.stringify({
-          name: 'GoodBuddy Runtime',
-          version: '1.0.0',
-          schema: 'v1',
-          models: [modelConfig]
-        }),
-        { encoding: 'utf8', mode: 0o600, flag: 'wx' }
-      )
-    }
+    try {
+      generatedConfigPath = await this.createRunConfig(runOptions)
     const [{ entryPath }, port] = await Promise.all([
       this.getPreparedHost(),
       getAvailableLoopbackPort()
@@ -692,11 +861,16 @@ export class ContinueHostAdapter {
     if (configPath) {
       args.push('--config', configPath)
     }
-    if (this.options.mode === 'chat') {
+    if (
+      runOptions.workMode === 'ask' &&
+      runOptions.knowledgeCapability
+    ) {
+      args.push('--allow', 'knowledge_search', '--exclude', '*')
+    } else if (this.options.mode === 'chat') {
       args.push('--readonly')
     }
     args.push('serve', '--port', String(port), '--timeout', '300')
-    const environment = buildRuntimeEnvironment({
+    const environmentOverrides = {
       ...runtimePrivacyEnvironment,
       CONTINUE_CLI_DISABLE_COMMIT_SIGNATURE: '1',
       CONTINUE_CLI_AUTO_UPDATED: '1',
@@ -706,21 +880,22 @@ export class ContinueHostAdapter {
       FORCE_NO_TTY: '1',
       GOODBUDDY_CONTINUE_HOST_TOKEN: token,
       GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1'
-    })
-    if (this.options.modelProfile) {
-      delete environment.ANTHROPIC_API_KEY
-      delete environment.OPENAI_API_KEY
     }
-    if (
-      this.options.modelProfile?.authentication === 'api-key' &&
-      this.options.modelProfile.apiKey
-    ) {
-      environment[
-        this.options.modelProfile.protocol === 'anthropic-messages'
-          ? 'ANTHROPIC_API_KEY'
-          : 'OPENAI_API_KEY'
-      ] = this.options.modelProfile.apiKey
-    }
+    const profile = this.options.modelProfile
+    const environment = profile
+      ? buildExplicitProfileRuntimeEnvironment(
+          environmentOverrides,
+          profile.authentication === 'api-key' && profile.apiKey
+            ? {
+                name:
+                  profile.protocol === 'anthropic-messages'
+                    ? 'ANTHROPIC_API_KEY'
+                    : 'OPENAI_API_KEY',
+                value: profile.apiKey
+              }
+            : undefined
+        )
+      : buildRuntimeEnvironment(environmentOverrides)
     signal.throwIfAborted()
     let child: ContinueHostChild
     try {
@@ -915,6 +1090,11 @@ export class ContinueHostAdapter {
         if (generatedConfigPath) {
           await rm(generatedConfigPath, { force: true })
         }
+      }
+    }
+    } finally {
+      if (generatedConfigPath) {
+        await rm(generatedConfigPath, { force: true })
       }
     }
   }

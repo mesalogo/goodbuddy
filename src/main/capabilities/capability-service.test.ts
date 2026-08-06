@@ -1,7 +1,15 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi
+} from 'vitest'
+import { setIntranetCompatibilityReader } from '../intranet-compatibility-policy'
 import {
   CapabilityService,
   type CapabilityCipher,
@@ -14,6 +22,10 @@ import {
 import { CapabilityDiagnostics } from './capability-diagnostics'
 
 const temporaryDirectories: string[] = []
+
+beforeEach(() => {
+  setIntranetCompatibilityReader(() => false)
+})
 
 const cipher: CapabilityCipher = {
   isAvailable: () => true,
@@ -113,6 +125,7 @@ async function createService(
 }
 
 afterEach(async () => {
+  setIntranetCompatibilityReader(() => true)
   delete process.env.GOODBUDDY_CAPABILITY_SERVICE_SECRET
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -319,6 +332,111 @@ describe('CapabilityService', () => {
         enabled: true,
         assignments: ['model'],
         secret: { action: 'replace', value: 'secret-token-value' },
+        transport: 'http',
+        url: 'http://mcp.example.com/mcp'
+      })
+    ).rejects.toThrow('只能通过 HTTPS')
+  })
+
+  it('allows bearer tokens over the full IPv4 loopback range', async () => {
+    const { service } = await createService()
+
+    await expect(
+      service.saveMcpServer(undefined, {
+        name: 'Loopback MCP',
+        description: '',
+        enabled: true,
+        assignments: ['model'],
+        secret: { action: 'replace', value: 'secret-token-value' },
+        transport: 'http',
+        url: 'http://127.0.0.2/mcp'
+      })
+    ).resolves.toMatchObject({
+      mcpServers: [
+        expect.objectContaining({
+          name: 'Loopback MCP',
+          url: 'http://127.0.0.2/mcp'
+        })
+      ]
+    })
+  })
+
+  it('allows bearer tokens over HTTP in intranet compatibility mode', async () => {
+    setIntranetCompatibilityReader(() => true)
+    const { service } = await createService()
+
+    const snapshot = await service.saveMcpServer(undefined, {
+      name: 'Intranet MCP',
+      description: '',
+      enabled: true,
+      assignments: ['model'],
+      secret: { action: 'replace', value: 'secret-token-value' },
+      transport: 'http',
+      url: 'http://mcp.internal/mcp'
+    })
+    expect(snapshot).toMatchObject({
+      mcpServers: [
+        expect.objectContaining({
+          name: 'Intranet MCP',
+          secretConfigured: true,
+          url: 'http://mcp.internal/mcp'
+        })
+      ]
+    })
+    const server = snapshot.mcpServers[0]
+    if (!server) {
+      throw new Error('Expected saved intranet MCP server')
+    }
+    await expect(
+      service.getResolvedMcpServer(server.id)
+    ).resolves.toMatchObject({ secret: 'secret-token-value' })
+
+    setIntranetCompatibilityReader(() => false)
+    await expect(
+      service.getResolvedMcpServer(server.id)
+    ).rejects.toThrow('只能通过 HTTPS')
+    await expect(
+      service.getResolvedMcpServers('model')
+    ).resolves.toEqual([])
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      mcpServers: [
+        expect.objectContaining({
+          id: server.id,
+          enabled: false,
+          secretConfigured: true
+        })
+      ]
+    })
+  })
+
+  it('rejects bearer tokens over public HTTP in intranet compatibility mode', async () => {
+    setIntranetCompatibilityReader(() => true)
+    const { service } = await createService()
+
+    await expect(
+      service.saveMcpServer(undefined, {
+        name: 'Public plaintext MCP',
+        description: '',
+        enabled: true,
+        assignments: ['model'],
+        secret: { action: 'replace', value: 'secret-token-value' },
+        transport: 'http',
+        url: 'http://mcp.example.com/mcp'
+      })
+    ).rejects.toThrow('只能通过 HTTPS')
+  })
+
+  it('rejects public HTTP MCP servers without bearer tokens', async () => {
+    setIntranetCompatibilityReader(() => true)
+    const { service } = await createService()
+
+    await expect(
+      service.saveMcpServer(undefined, {
+        name: 'Public plaintext MCP',
+        description: '',
+        enabled: true,
+        assignments: ['model'],
+        secret: { action: 'clear' },
         transport: 'http',
         url: 'http://mcp.example.com/mcp'
       })

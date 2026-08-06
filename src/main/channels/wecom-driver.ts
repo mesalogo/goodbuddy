@@ -5,6 +5,8 @@ export const WECOM_TEXT_MAX_BYTES = 20_480
 const IDENTIFIER_MAX_BYTES = 1_024
 const WECOM_MESSAGE_EVENT = 'message'
 const WECOM_ERROR_EVENT = 'error'
+const WECOM_AUTHENTICATED_EVENT = 'authenticated'
+const DEFAULT_AUTHENTICATION_TIMEOUT_MS = 15_000
 
 export type WeComChatType = 'single' | 'group'
 
@@ -77,8 +79,10 @@ interface WeComFrameHeaders {
 export interface WeComSdkTransport {
   on(event: 'message', listener: (frame: unknown) => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
+  on(event: 'authenticated', listener: () => void): unknown
   off(event: 'message', listener: (frame: unknown) => void): unknown
   off(event: 'error', listener: (error: Error) => void): unknown
+  off(event: 'authenticated', listener: () => void): unknown
   connect(): unknown
   disconnect(): unknown
   replyStream(
@@ -108,6 +112,7 @@ export interface WeComDriverOptions extends WeComTransportCredentials {
   readonly onError?: (error: WeComDriverError) => void
   readonly transportFactory?: WeComTransportFactory
   readonly streamIdFactory?: () => string
+  readonly authenticationTimeoutMs?: number
 }
 
 interface NormalizedWeComPayload {
@@ -329,6 +334,7 @@ export class WeComDriver {
   readonly #onError: WeComDriverOptions['onError']
   readonly #transportFactory: WeComTransportFactory
   readonly #streamIdFactory: () => string
+  readonly #authenticationTimeoutMs: number
   readonly #replyRecords = new WeakMap<WeComReplyContext, ReplyRecord>()
 
   #transport: WeComSdkTransport | undefined
@@ -354,6 +360,17 @@ export class WeComDriver {
       options.transportFactory ?? createOfficialWeComTransport
     this.#streamIdFactory =
       options.streamIdFactory ?? (() => `goodbuddy_${randomUUID()}`)
+    this.#authenticationTimeoutMs =
+      options.authenticationTimeoutMs ?? DEFAULT_AUTHENTICATION_TIMEOUT_MS
+    if (
+      !Number.isSafeInteger(this.#authenticationTimeoutMs) ||
+      this.#authenticationTimeoutMs < 1
+    ) {
+      throw new WeComDriverError(
+        'invalid_credentials',
+        '企业微信认证等待时间无效'
+      )
+    }
   }
 
   get started(): boolean {
@@ -361,23 +378,23 @@ export class WeComDriver {
   }
 
   async start(): Promise<void> {
-    if (this.#transport !== undefined) {
-      return
-    }
     if (this.#startPromise !== undefined) {
       return this.#startPromise
     }
+    if (this.#transport !== undefined) {
+      return
+    }
 
     const version = ++this.#lifecycleVersion
-    const startPromise = this.#createAndConnect(version)
-    this.#startPromise = startPromise
-    try {
-      await startPromise
-    } catch {
+    const startPromise = this.#createAndConnect(version).catch(() => {
       throw new WeComDriverError(
         'transport_error',
         '企业微信长连接启动失败'
       )
+    })
+    this.#startPromise = startPromise
+    try {
+      await startPromise
     } finally {
       if (this.#startPromise === startPromise) {
         this.#startPromise = undefined
@@ -471,7 +488,7 @@ export class WeComDriver {
     this.#transport = transport
     this.#attachTransport(transport)
     try {
-      await transport.connect()
+      await this.#connectAndAuthenticate(transport)
     } catch (error) {
       if (this.#transport === transport) {
         this.#transport = undefined
@@ -488,6 +505,46 @@ export class WeComDriver {
       this.#detachTransport(transport)
       await transport.disconnect()
     }
+  }
+
+  async #connectAndAuthenticate(
+    transport: WeComSdkTransport
+  ): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: Error): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        clearTimeout(timeout)
+        transport.off(WECOM_AUTHENTICATED_EVENT, authenticated)
+        transport.off(WECOM_ERROR_EVENT, failed)
+        if (error) {
+          reject(error)
+        } else {
+          resolve()
+        }
+      }
+      const authenticated = (): void => finish()
+      const failed = (): void =>
+        finish(new Error('企业微信认证失败'))
+      const timeout = setTimeout(
+        () => finish(new Error('企业微信认证超时')),
+        this.#authenticationTimeoutMs
+      )
+      transport.on(WECOM_AUTHENTICATED_EVENT, authenticated)
+      transport.on(WECOM_ERROR_EVENT, failed)
+      try {
+        transport.connect()
+      } catch (error) {
+        finish(
+          error instanceof Error
+            ? error
+            : new Error('企业微信长连接启动失败')
+        )
+      }
+    })
   }
 
   readonly #handleMessage = (frame: unknown): void => {

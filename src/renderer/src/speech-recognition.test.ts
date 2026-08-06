@@ -4,6 +4,7 @@ import {
   getSpeechRecognitionConstructor,
   isElectronUserAgent,
   prepareSpeechRecognition,
+  resamplePcm,
   type SpeechRecognitionConstructor,
   type SpeechRecognitionInstance
 } from './speech-recognition'
@@ -98,7 +99,7 @@ describe('speech recognition', () => {
     expect(instance.processLocally).toBeUndefined()
   })
 
-  it('avoids Electron speech APIs that can freeze the renderer', async () => {
+  it('keeps the unsafe Web Speech fallback disabled in Electron', async () => {
     const { Recognition } = createRecognitionConstructor()
     Recognition.available = vi.fn(
       async () => 'available' as const
@@ -112,9 +113,19 @@ describe('speech recognition', () => {
         {},
         'Mozilla/5.0 Electron/43.2.0'
       )
-    ).rejects.toThrow('不支持可靠的语音识别')
+    ).rejects.toThrow('本地语音识别服务未加载')
     expect(Recognition).not.toHaveBeenCalled()
     expect(Recognition.available).not.toHaveBeenCalled()
+  })
+
+  it('resamples bounded microphone PCM to the local runtime rate', () => {
+    const result = resamplePcm(
+      new Float32Array([0, 0.5, 1, 0.5]),
+      32_000,
+      16_000
+    )
+
+    expect([...result]).toEqual([0, 1])
   })
 
   it('reports a language pack that is still downloading', async () => {

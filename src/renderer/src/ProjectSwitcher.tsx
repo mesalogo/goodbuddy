@@ -7,6 +7,7 @@ import type {
   WorkMode
 } from '../../shared/assistant-contracts'
 import { interactiveWorkModes } from '../../shared/assistant-contracts'
+import { trapTabFocus } from './dialog-focus'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
@@ -59,27 +60,7 @@ export function ProjectSwitcher({
         setCreating(false)
         return
       }
-      if (event.key !== 'Tab') {
-        return
-      }
-      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])'
-      )
-      if (!focusable?.length) {
-        return
-      }
-      const first = focusable[0]!
-      const last = focusable[focusable.length - 1]!
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (
-        !event.shiftKey &&
-        document.activeElement === last
-      ) {
-        event.preventDefault()
-        first.focus()
-      }
+      trapTabFocus(event, dialogRef.current)
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)

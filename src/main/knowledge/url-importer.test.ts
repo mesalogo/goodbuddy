@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setIntranetCompatibilityReader } from '../intranet-compatibility-policy'
 import {
   isPublicAddress,
   normalizeSourceUrl,
@@ -6,6 +7,14 @@ import {
 } from './url-importer'
 
 const publicAddress = [{ address: '93.184.216.34', family: 4 }]
+
+beforeEach(() => {
+  setIntranetCompatibilityReader(() => false)
+})
+
+afterEach(() => {
+  setIntranetCompatibilityReader(() => true)
+})
 
 describe('URL importer', () => {
   it('rejects local protocols, hosts and private address ranges', async () => {
@@ -16,6 +25,10 @@ describe('URL importer', () => {
     expect(isPublicAddress('127.0.0.1')).toBe(false)
     expect(isPublicAddress('10.0.0.1')).toBe(false)
     expect(isPublicAddress('169.254.169.254')).toBe(false)
+    expect(isPublicAddress('192.0.2.1')).toBe(false)
+    expect(isPublicAddress('198.18.0.1')).toBe(false)
+    expect(isPublicAddress('198.51.100.1')).toBe(false)
+    expect(isPublicAddress('203.0.113.1')).toBe(false)
     expect(isPublicAddress('::1')).toBe(false)
     expect(isPublicAddress('fc00::1')).toBe(false)
     expect(isPublicAddress('93.184.216.34')).toBe(true)
@@ -40,6 +53,64 @@ describe('URL importer', () => {
     await expect(
       importer.import('https://example.com', new AbortController().signal)
     ).rejects.toThrow('私网')
+  })
+
+  it('imports private intranet URLs in compatibility mode', async () => {
+    setIntranetCompatibilityReader(() => true)
+    const transport = vi.fn(async () => ({
+      status: 200,
+      headers: { 'content-type': 'text/plain' },
+      body: Buffer.from('内部知识')
+    }))
+    const importer = new UrlImporter({
+      lookup: async () => [{ address: '192.168.10.25', family: 4 }],
+      transport
+    })
+
+    await expect(
+      importer.import(
+        'http://knowledge.internal/guide',
+        new AbortController().signal
+      )
+    ).resolves.toMatchObject({
+      url: 'http://knowledge.internal/guide',
+      contentType: 'text/plain'
+    })
+    expect(transport).toHaveBeenCalledWith(
+      expect.objectContaining({ hostname: 'knowledge.internal' }),
+      { address: '192.168.10.25', family: 4 },
+      expect.any(AbortSignal),
+      expect.any(Number)
+    )
+  })
+
+  it('keeps metadata, link-local and mixed answers blocked in compatibility mode', async () => {
+    setIntranetCompatibilityReader(() => true)
+    expect(() =>
+      normalizeSourceUrl('http://metadata.google.internal/latest')
+    ).toThrow('不允许')
+    expect(() =>
+      normalizeSourceUrl('http://user:secret@knowledge.internal')
+    ).toThrow('不允许')
+
+    for (const addresses of [
+      [{ address: '169.254.169.254', family: 4 }],
+      [
+        { address: '10.0.0.2', family: 4 },
+        { address: '93.184.216.34', family: 4 }
+      ]
+    ]) {
+      const importer = new UrlImporter({
+        lookup: async () => addresses,
+        transport: vi.fn()
+      })
+      await expect(
+        importer.import(
+          'http://knowledge.internal',
+          new AbortController().signal
+        )
+      ).rejects.toThrow('私网')
+    }
   })
 
   it('imports HTML and discovers only same-origin links', async () => {

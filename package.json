@@ -1,6 +1,6 @@
 {
   "name": "goodbuddy",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "description": "Secure desktop AI workspace with controlled Agent Runtimes",
   "desktopName": "GoodBuddy",
@@ -136,12 +136,15 @@
     "dingtalk-stream": "^2.1.6-beta.1",
     "fflate": "^0.8.3",
     "html-to-text": "^10.0.0",
+    "json5": "^2.2.3",
     "lucide-react": "^1.27.0",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "sherpa-onnx": "1.13.4",
+    "undici": "^7.29.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },

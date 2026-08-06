@@ -86,12 +86,17 @@ describe('KnowledgeDatabase', () => {
     const inspection = new DatabaseSync(path)
     expect(
       inspection.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 2 })
+    ).toEqual({ user_version: 4 })
     expect(
       inspection
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
-    ).toEqual([{ version: 1 }, { version: 2 }])
+    ).toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 }
+    ])
     inspection.close()
 
     const reopened = new KnowledgeDatabase(path)
@@ -108,7 +113,7 @@ describe('KnowledgeDatabase', () => {
       .toHaveLength(1)
   })
 
-  it('upgrades an existing v1 database to vector schema v2', async () => {
+  it('upgrades an existing v1 database to embedding rebuild schema v4', async () => {
     const { database, path } = await createDatabase()
     const knowledgeBase = database.createKnowledgeBase({
       name: 'Version one data',
@@ -119,9 +124,11 @@ describe('KnowledgeDatabase', () => {
 
     const downgrade = new DatabaseSync(path)
     downgrade.exec(`
+      DROP TABLE embedding_rebuild_staging;
+      DROP TABLE embedding_index_job;
       DROP TABLE embedding_index_state;
       DROP TABLE chunk_embeddings;
-      DELETE FROM schema_migrations WHERE version = 2;
+      DELETE FROM schema_migrations WHERE version IN (2, 3, 4);
       PRAGMA user_version = 1;
     `)
     downgrade.close()
@@ -131,20 +138,22 @@ describe('KnowledgeDatabase', () => {
     upgraded.initialize()
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 2
+      user_version: 4
     })
     expect(
       inspection
         .prepare(
           `SELECT name FROM sqlite_master
-           WHERE type = 'table' AND name IN
-             ('chunk_embeddings', 'embedding_index_state')
+           WHERE type = 'table'
+             AND (name = 'chunk_embeddings' OR name LIKE 'embedding_%')
            ORDER BY name`
         )
         .all()
     ).toEqual([
       { name: 'chunk_embeddings' },
-      { name: 'embedding_index_state' }
+      { name: 'embedding_index_job' },
+      { name: 'embedding_index_state' },
+      { name: 'embedding_rebuild_staging' }
     ])
     inspection.close()
     expect(
@@ -604,6 +613,202 @@ describe('KnowledgeDatabase', () => {
       foreign.chunkId
     )
     expect(database.graphSearch(first.id, unbacked.name)).toEqual([])
+  })
+
+  it('lists rebuild work by document and updates embedding state incrementally', async () => {
+    const { database } = await createDatabase()
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Incremental index',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    const alpha = seedDocument(database, knowledgeBase.id, 'incremental-alpha')
+    const beta = seedDocument(database, knowledgeBase.id, 'incremental-beta')
+    const documentIds = database.listEmbeddingIndexDocumentIds()
+    const documents = documentIds.map(
+      (documentId) =>
+        database.getEmbeddingIndexDocument(documentId)!
+    )
+    expect(documentIds).toEqual(
+      expect.arrayContaining([alpha.documentId, beta.documentId])
+    )
+    expect(documents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: alpha.documentId,
+          items: [
+            expect.objectContaining({
+              id: alpha.chunkId,
+              content: expect.stringContaining('lighthouse'),
+              contentChecksum: expect.stringMatching(/^[a-f0-9]{64}$/u)
+            })
+          ]
+        }),
+        expect.objectContaining({
+          id: beta.documentId,
+          items: [
+            expect.objectContaining({
+              id: beta.chunkId,
+              content: expect.stringContaining('lighthouse'),
+              contentChecksum: expect.stringMatching(/^[a-f0-9]{64}$/u)
+            })
+          ]
+        })
+      ])
+    )
+    const alphaDocument = documents.find(
+      (document) => document.id === alpha.documentId
+    )!
+    const betaDocument = documents.find(
+      (document) => document.id === beta.documentId
+    )!
+    for (const [document, vector] of [
+      [alphaDocument, [1, 0]],
+      [betaDocument, [0, 1]]
+    ] as const) {
+      database.replaceDocumentEmbeddings(
+        document.id,
+        'openai-compatible',
+        'embed-v1',
+        document.items.map((item) => ({
+          chunkId: item.id,
+          contentChecksum: item.contentChecksum!,
+          vector
+        }))
+      )
+    }
+
+    database.recordEmbeddingIndexError(
+      beta.documentId,
+      'openai-compatible',
+      'embed-v1',
+      '向量服务暂时不可用。'
+    )
+    expect(
+      database.getEmbeddingIndexState(
+        alpha.documentId,
+        'openai-compatible',
+        'embed-v1'
+      )
+    ).toMatchObject({ status: 'ready' })
+    expect(
+      database.getEmbeddingIndexState(
+        beta.documentId,
+        'openai-compatible',
+        'embed-v1'
+      )
+    ).toMatchObject({
+      status: 'error',
+      lastError: '向量服务暂时不可用。'
+    })
+    expect(
+      database
+        .vectorSearch({
+          knowledgeBaseId: knowledgeBase.id,
+          provider: 'openai-compatible',
+          model: 'embed-v1',
+          vector: [0, 1]
+        })
+        .map((result) => result.chunk.id)
+    ).not.toContain(beta.chunkId)
+  })
+
+  it('stages embedding batches before atomically replacing a document index', async () => {
+    const { database } = await createDatabase()
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Bounded rebuild',
+      storageMode: 'reference'
+    })
+    const seeded = seedDocument(
+      database,
+      knowledgeBase.id,
+      'bounded-rebuild'
+    )
+    const document =
+      database.getEmbeddingIndexDocument(seeded.documentId)!
+    const item = document.items[0]!
+    database.replaceDocumentEmbeddings(
+      document.id,
+      'openai-compatible',
+      'embed-v1',
+      [
+        {
+          chunkId: item.id,
+          contentChecksum: item.contentChecksum!,
+          vector: [1, 0]
+        }
+      ]
+    )
+    const replacementId =
+      database.beginDocumentEmbeddingReplacement(
+        document.id,
+        'openai-compatible',
+        'embed-v1'
+      )
+    database.appendDocumentEmbeddingBatch(
+      replacementId,
+      document.id,
+      'openai-compatible',
+      'embed-v1',
+      [
+        {
+          chunkId: item.id,
+          contentChecksum: item.contentChecksum!,
+          vector: [0, 1]
+        }
+      ]
+    )
+
+    expect(
+      database.vectorSearch({
+        knowledgeBaseId: knowledgeBase.id,
+        provider: 'openai-compatible',
+        model: 'embed-v1',
+        vector: [1, 0]
+      })[0]?.chunk.id
+    ).toBe(item.id)
+    database.finishDocumentEmbeddingReplacement(
+      replacementId,
+      document.id,
+      'openai-compatible',
+      'embed-v1'
+    )
+    expect(
+      database.vectorSearch({
+        knowledgeBaseId: knowledgeBase.id,
+        provider: 'openai-compatible',
+        model: 'embed-v1',
+        vector: [0, 1]
+      })[0]?.chunk.id
+    ).toBe(item.id)
+  })
+
+  it('persists the last embedding index job across restarts', async () => {
+    const created = await createDatabase()
+    let database = created.database
+    expect(database.getLastEmbeddingIndexJob()).toBeNull()
+
+    database.saveEmbeddingIndexJob({
+      id: 'job-1',
+      status: 'running',
+      provider: 'openai-compatible',
+      model: 'embed-v1',
+      progress: { completed: 1, total: 2, percent: 50 },
+      createdAt: 10,
+      startedAt: 11
+    })
+    database.close()
+    database = new KnowledgeDatabase(created.path)
+    openDatabases.push(database)
+    database.initialize()
+
+    expect(database.getLastEmbeddingIndexJob()).toMatchObject({
+      id: 'job-1',
+      status: 'running',
+      progress: { completed: 1, total: 2, percent: 50 }
+    })
+    database.saveEmbeddingIndexJob(null)
+    expect(database.getLastEmbeddingIndexJob()).toBeNull()
   })
 
   it('bounds inputs and rejects API keys in extensible metadata', async () => {

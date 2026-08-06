@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setIntranetCompatibilityReader } from '../intranet-compatibility-policy'
 import {
   BrowserUrlPolicy,
   canonicalizeBrowserUrl,
@@ -6,6 +7,14 @@ import {
 } from './browser-url-policy'
 
 const signal = new AbortController().signal
+
+beforeEach(() => {
+  setIntranetCompatibilityReader(() => false)
+})
+
+afterEach(() => {
+  setIntranetCompatibilityReader(() => true)
+})
 
 describe('BrowserUrlPolicy', () => {
   it.each([
@@ -81,6 +90,55 @@ describe('BrowserUrlPolicy', () => {
         '混合地址'
       )
     }
+  })
+
+  it('allows intranet names and private addresses only in compatibility mode', async () => {
+    setIntranetCompatibilityReader(() => true)
+    expect(() => canonicalizeBrowserUrl('http://printer/status')).not.toThrow()
+    expect(() =>
+      canonicalizeBrowserUrl('https://service.internal/health')
+    ).not.toThrow()
+    expect(() =>
+      canonicalizeBrowserUrl('http://192.168.1.20/status')
+    ).not.toThrow()
+
+    const policy = new BrowserUrlPolicy(async () => [
+      { address: '10.20.30.40', family: 4 }
+    ])
+    await expect(
+      policy.validate('http://printer/status', signal)
+    ).resolves.toMatchObject({
+      origin: 'http://printer',
+      addresses: [{ address: '10.20.30.40', family: 4 }]
+    })
+  })
+
+  it('keeps metadata, link-local and mixed DNS answers blocked in compatibility mode', async () => {
+    setIntranetCompatibilityReader(() => true)
+    expect(() =>
+      canonicalizeBrowserUrl('http://metadata.google.internal/latest')
+    ).toThrow()
+    expect(() =>
+      canonicalizeBrowserUrl('http://169.254.169.254/latest/meta-data')
+    ).toThrow()
+    expect(() =>
+      canonicalizeBrowserUrl('http://user:secret@printer/status')
+    ).toThrow()
+
+    const mixedPolicy = new BrowserUrlPolicy(async () => [
+      { address: '10.20.30.40', family: 4 },
+      { address: '93.184.216.34', family: 4 }
+    ])
+    await expect(
+      mixedPolicy.validate('http://printer/status', signal)
+    ).rejects.toThrow('混合地址')
+
+    const linkLocalPolicy = new BrowserUrlPolicy(async () => [
+      { address: '169.254.10.20', family: 4 }
+    ])
+    await expect(
+      linkLocalPolicy.validate('http://printer/status', signal)
+    ).rejects.toThrow('混合地址')
   })
 
   it('validates redirects and keeps them on the approved origin', async () => {

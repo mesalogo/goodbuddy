@@ -104,6 +104,37 @@ describe('AgentRuntimeController', () => {
     })
   })
 
+  it('keeps a retiring runtime alive until its status probe finishes', async () => {
+    let finishProbe!: () => void
+    const probe = new Promise<void>((resolve) => {
+      finishProbe = resolve
+    })
+    const previous = new TestRuntime()
+    previous.getStatus = vi.fn(async () => {
+      await probe
+      return {
+        id: 'opencode' as const,
+        label: 'OpenCode',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      }
+    })
+    const next = new TestRuntime()
+    const controller = new AgentRuntimeController(previous)
+
+    const status = controller.getStatus()
+    const replacement = controller.replace(next)
+    await Promise.resolve()
+    expect(previous.dispose).not.toHaveBeenCalled()
+
+    finishProbe()
+    await expect(status).rejects.toThrow('Runtime 已切换')
+    await replacement
+    expect(previous.dispose).toHaveBeenCalledOnce()
+    await controller.dispose()
+  })
+
   it.each(['ask', 'plan'] as const)(
     'denies tool authorization in %s mode without prompting the user',
     async (workMode) => {

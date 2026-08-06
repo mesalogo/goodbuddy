@@ -4,6 +4,7 @@ import type {
   AssistantExpert,
   ExpertCreateInput
 } from '../../shared/assistant-contracts'
+import type { ModelConnectionSettings } from '../../shared/contracts'
 import { DestructiveConfirmActions } from './WorkspacePrimitives'
 
 type ExpertDraft = Omit<ExpertCreateInput, 'routingKeywords'> & {
@@ -13,6 +14,10 @@ type ExpertDraft = Omit<ExpertCreateInput, 'routingKeywords'> & {
 
 type RolePromptSettingsSectionProps = {
   onChanged: (experts: AssistantExpert[]) => void
+  modelProfiles?: ReadonlyArray<
+    Pick<ModelConnectionSettings, 'id' | 'name'>
+  >
+  defaultModelProfileId?: string
 }
 
 const emptyDraft: ExpertDraft = {
@@ -28,6 +33,7 @@ function draftFromExpert(expert: AssistantExpert): ExpertDraft {
     name: expert.name,
     description: expert.description,
     systemInstructions: expert.systemInstructions,
+    modelProfileId: expert.modelProfileId,
     routingKeywordsText: (expert.routingKeywords ?? []).join('、')
   }
 }
@@ -68,7 +74,9 @@ function sortExperts(experts: AssistantExpert[]): AssistantExpert[] {
 }
 
 export function RolePromptSettingsSection({
-  onChanged
+  onChanged,
+  modelProfiles = [],
+  defaultModelProfileId
 }: RolePromptSettingsSectionProps): React.JSX.Element {
   const [experts, setExperts] = useState<AssistantExpert[]>([])
   const [selectedId, setSelectedId] = useState<string>()
@@ -134,7 +142,10 @@ export function RolePromptSettingsSection({
         name: draft.name,
         description: draft.description,
         systemInstructions: draft.systemInstructions,
-        routingKeywords
+        routingKeywords,
+        ...(draft.modelProfileId
+          ? { modelProfileId: draft.modelProfileId }
+          : {})
       }
       const saved = draft.id
         ? await window.goodbuddy.experts.update(draft.id, input)
@@ -187,6 +198,18 @@ export function RolePromptSettingsSection({
     }
   }
 
+  const defaultModelProfile = modelProfiles.find(
+    (profile) => profile.id === defaultModelProfileId
+  )
+  const selectedModelProfileAvailable =
+    !draft?.modelProfileId ||
+    modelProfiles.some(
+      (profile) => profile.id === draft.modelProfileId
+    )
+  const inheritedModelLabel = defaultModelProfile
+    ? `继承默认模型（${defaultModelProfile.name}）`
+    : '继承默认模型'
+
   return (
     <div className="settings-section">
       <div className="settings-section__title settings-section__title--actions">
@@ -208,7 +231,8 @@ export function RolePromptSettingsSection({
 
       <p className="settings-notice">
         选中的角色会把系统提示词加入本次文本对话。专家团队会并行使用最多
-        3 个已启用角色；图像生成连接不使用角色提示词。
+        3 个已启用角色；综合模式和专家团队始终继承默认模型，只有单个角色
+        会使用指定连接。图像生成连接不使用角色提示词。
       </p>
       {error && <p className="settings-warning" role="alert">{error}</p>}
 
@@ -295,6 +319,53 @@ export function RolePromptSettingsSection({
                 已输入 {draft.systemInstructions.length.toLocaleString()} /
                 20,000 字符。
               </small>
+            </label>
+            <label className="field">
+              <span>模型连接</span>
+              <select
+                aria-describedby={
+                  selectedModelProfileAvailable
+                    ? 'role-model-profile-help'
+                    : 'role-model-profile-fallback role-model-profile-help'
+                }
+                aria-label="角色模型连接"
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    modelProfileId: event.target.value || undefined
+                  })
+                }
+                value={draft.modelProfileId ?? ''}
+              >
+                <option value="">{inheritedModelLabel}</option>
+                {!selectedModelProfileAvailable &&
+                  draft.modelProfileId && (
+                    <option disabled value={draft.modelProfileId}>
+                      原模型连接已失效
+                    </option>
+                  )}
+                {modelProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+              <small id="role-model-profile-help">
+                继承默认模型会随默认连接变化；指定连接仅用于单个角色。
+              </small>
+              {!selectedModelProfileAvailable && (
+                <small
+                  className="field-error"
+                  id="role-model-profile-fallback"
+                  role="status"
+                >
+                  指定的模型连接已失效，运行时将回退到
+                  {defaultModelProfile
+                    ? `默认模型“${defaultModelProfile.name}”`
+                    : '当前默认模型'}
+                  。请选择可用连接或继承默认模型。
+                </small>
+              )}
             </label>
             <label className="field">
               <span>路由关键词</span>

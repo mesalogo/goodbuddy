@@ -1,0 +1,112 @@
+import { isAgentRuntimeModelProtocol } from '../../shared/contracts'
+import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
+import type {
+  ResolvedModelProfile,
+  ResolvedRuntimeSettings
+} from '../runtime-settings-store'
+
+export type SelectedRuntimeTarget = 'model' | 'opencode' | 'continue'
+
+function requireProfile(
+  settings: ResolvedRuntimeSettings,
+  profileId: string
+): ResolvedModelProfile {
+  const profile = settings.modelProfiles.find(
+    (candidate) => candidate.id === profileId
+  )
+  if (!profile) {
+    throw new Error('所选模型连接不存在或已被删除')
+  }
+  return profile
+}
+
+export function getConfiguredRuntimeTarget(
+  settings: ResolvedRuntimeSettings
+): SelectedRuntimeTarget {
+  if (settings.provider === 'continue') {
+    return 'continue'
+  }
+  if (
+    settings.provider === 'opencode' ||
+    settings.provider === 'auto'
+  ) {
+    return 'opencode'
+  }
+  return 'model'
+}
+
+export function applyRuntimeSelection(
+  settings: ResolvedRuntimeSettings,
+  selection: AgentRuntimeSelection
+): {
+  settings: ResolvedRuntimeSettings
+  target: SelectedRuntimeTarget
+} {
+  if (selection.provider === 'auto') {
+    return {
+      settings,
+      target: getConfiguredRuntimeTarget(settings)
+    }
+  }
+
+  if (selection.provider === 'model') {
+    const profile = requireProfile(settings, selection.profileId)
+    return {
+      target: 'model',
+      settings: {
+        ...settings,
+        provider: 'model',
+        modelBaseUrl: profile.baseUrl,
+        modelName: profile.modelName,
+        modelProtocol: profile.protocol,
+        modelAuthentication: profile.authentication,
+        imageGenerationQuality:
+          profile.imageGenerationQuality ?? settings.imageGenerationQuality,
+        apiKey: profile.apiKey,
+        defaultModelProfileId: profile.id
+      }
+    }
+  }
+
+  const profile = selection.profileId
+    ? requireProfile(settings, selection.profileId)
+    : undefined
+  if (selection.provider === 'opencode') {
+    if (profile && !isAgentRuntimeModelProtocol(profile.protocol)) {
+      throw new Error(
+        'OpenCode 独立模型连接仅支持文本对话协议，不支持图像生成协议'
+      )
+    }
+    if (profile && settings.opencodeBaseUrl) {
+      throw new Error(
+        'OpenCode 独立模型连接需要启用由 GoodBuddy 自动启动的本机 OpenCode'
+      )
+    }
+    return {
+      target: 'opencode',
+      settings: {
+        ...settings,
+        provider: 'opencode',
+        opencodeEmbedded: !settings.opencodeBaseUrl,
+        opencodeModelProfile: profile
+      }
+    }
+  }
+
+  if (
+    profile &&
+    !isAgentRuntimeModelProtocol(profile.protocol)
+  ) {
+    throw new Error(
+      'Continue 独立模型连接仅支持文本对话协议，不支持图像生成协议'
+    )
+  }
+  return {
+    target: 'continue',
+    settings: {
+      ...settings,
+      provider: 'continue',
+      continueModelProfile: profile
+    }
+  }
+}

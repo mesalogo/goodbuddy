@@ -107,4 +107,57 @@ describe('SubagentService', () => {
     )
     await service.dispose()
   })
+
+  it('uses an expert model profile and falls back to the default runtime', async () => {
+    const calls: string[] = []
+    const createRuntime = (label: string): AgentRuntime =>
+      ({
+        run: async function* (request: AgentExecutionRequest) {
+          calls.push(label)
+          yield {
+            requestId: request.requestId,
+            type: 'text',
+            delta: label
+          } as const
+          yield { requestId: request.requestId, type: 'done' } as const
+        },
+        releaseConversation: vi.fn(async () => undefined),
+        dispose: vi.fn(async () => undefined)
+      }) as unknown as AgentRuntime
+    const defaultRuntime = createRuntime('default')
+    const profileRuntime = createRuntime('profile')
+    const profileId = '00000000-0000-4000-8000-000000000002'
+    const service = new SubagentService(
+      defaultRuntime,
+      database() as never,
+      new SubagentScheduler({ timeoutMs: 1_000 }),
+      new Map([[profileId, profileRuntime]])
+    )
+
+    const selected = await service.run({
+      parentRequest,
+      expert: { ...expert, modelProfileId: profileId },
+      routingMode: 'manual',
+      signal: new AbortController().signal,
+      onEvent: vi.fn()
+    })
+    const fallback = await service.run({
+      parentRequest: {
+        ...parentRequest,
+        requestId: '00000000-0000-4000-8000-000000000011'
+      },
+      expert: {
+        ...expert,
+        modelProfileId: '00000000-0000-4000-8000-000000000099'
+      },
+      routingMode: 'manual',
+      signal: new AbortController().signal,
+      onEvent: vi.fn()
+    })
+
+    expect(selected.output).toBe('profile')
+    expect(fallback.output).toBe('default')
+    expect(calls).toEqual(['profile', 'default'])
+    await service.dispose()
+  })
 })

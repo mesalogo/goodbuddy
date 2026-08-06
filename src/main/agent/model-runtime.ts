@@ -7,6 +7,7 @@ import type {
 } from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { createAnthropicMessagesUrl } from './anthropic-endpoint'
 import {
   ModelToolProvider,
@@ -83,7 +84,7 @@ type ModelToolResponse = {
   text: string
   toolCalls: ModelToolCall[]
   assistantMessage?: Record<string, unknown>
-  responseId?: string
+  responsesOutput?: Array<Record<string, unknown>>
   usage: ModelUsageUpdate
 }
 
@@ -108,6 +109,7 @@ export type ModelRuntimeOptions = {
   defaultWorkspace?: string
   mcpServers?: ResolvedMcpServer[]
   browserService?: BrowserToolService
+  knowledgeGateway?: KnowledgeMcpGateway
   toolProvider?: ModelToolProviderLike
   fetcher?: typeof fetch
 }
@@ -724,7 +726,10 @@ function parseModelToolResponse(
     return {
       text: text.join(''),
       toolCalls,
-      responseId: payload.id,
+      responsesOutput: payload.output.flatMap((item) => {
+        const output = getRecord(item)
+        return output ? [output] : []
+      }),
       usage: getUsageUpdate(payload, 'openai')
     }
   }
@@ -865,7 +870,8 @@ export class ModelAgentRuntime implements AgentRuntime {
       new ModelToolProvider(
         options.defaultWorkspace ?? process.cwd(),
         options.mcpServers,
-        options.browserService
+        options.browserService,
+        options.knowledgeGateway
       )
   }
 
@@ -949,6 +955,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     }
     const response = await this.fetcher(this.getEndpoint(), {
       method: 'POST',
+      signal: AbortSignal.timeout(30_000),
       headers: this.getHeaders(),
       body: JSON.stringify(
         this.options.protocol === 'openai-responses'
@@ -1205,8 +1212,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     tools: ModelToolDefinition[],
     system: string,
     anthropic: boolean,
-    signal: AbortSignal,
-    previousResponseId?: string
+    signal: AbortSignal
   ): Promise<ModelToolResponse> {
     const responses = this.options.protocol === 'openai-responses'
     const providerTools = responses
@@ -1239,10 +1245,7 @@ export class ModelAgentRuntime implements AgentRuntime {
             stream: false,
             instructions: system,
             input: messages,
-            tools: providerTools,
-            ...(previousResponseId
-              ? { previous_response_id: previousResponseId }
-              : {})
+            tools: providerTools
           }
         : anthropic
           ? {
@@ -1312,7 +1315,8 @@ export class ModelAgentRuntime implements AgentRuntime {
     const responses = this.options.protocol === 'openai-responses'
     const toolContext: ModelToolCallContext = {
       conversationId: request.conversationId,
-      workMode: 'execute'
+      workMode: request.workMode ?? 'ask',
+      knowledgeCapabilityToken: request.knowledgeCapabilityToken
     }
     const tools = await this.toolProvider.listTools(toolContext, signal)
     if (tools.length === 0 || tools.length > 100) {
@@ -1350,7 +1354,6 @@ export class ModelAgentRuntime implements AgentRuntime {
     let totalToolCalls = 0
     let toolContextBytes = 0
     let answer = ''
-    let previousResponseId: string | undefined
     const identicalCallCounts = new Map<string, number>()
     let previousRoundSignature: string | undefined
     let identicalRoundsWithoutProgress = 0
@@ -1362,8 +1365,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         tools,
         system,
         anthropic,
-        signal,
-        previousResponseId
+        signal
       )
       const usage = {
         reported: false
@@ -1426,10 +1428,10 @@ export class ModelAgentRuntime implements AgentRuntime {
         throw new Error('直连模型单次运行的工具调用超过 40 个')
       }
       if (responses) {
-        if (!response.responseId) {
-          throw new Error('OpenAI Responses 工具调用缺少 response ID')
+        if (!response.responsesOutput) {
+          throw new Error('OpenAI Responses 工具调用缺少 output')
         }
-        previousResponseId = response.responseId
+        messages.push(...response.responsesOutput)
       } else if (response.assistantMessage) {
         messages.push(response.assistantMessage)
       } else {
@@ -1475,17 +1477,24 @@ export class ModelAgentRuntime implements AgentRuntime {
 
         let decision: ApprovalDecision
         try {
-          if (!authorize) {
-            throw new Error('直连模型工具审批器不可用')
-          }
-          decision = await authorize(
-            this.toolProvider.getApproval(
-              tool,
-              call.arguments,
-              safeToolArgumentSummary(call.arguments),
-              toolContext
+          if (
+            tool.name === 'knowledge_search' &&
+            Boolean(request.knowledgeCapabilityToken)
+          ) {
+            decision = 'once'
+          } else {
+            if (!authorize) {
+              throw new Error('直连模型工具审批器不可用')
+            }
+            decision = await authorize(
+              this.toolProvider.getApproval(
+                tool,
+                call.arguments,
+                safeToolArgumentSummary(call.arguments),
+                toolContext
+              )
             )
-          )
+          }
         } catch (error) {
           yield {
             requestId: request.requestId,
@@ -1601,7 +1610,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           content: anthropicResults
         })
       } else if (responses) {
-        messages.splice(0, messages.length, ...responsesResults)
+        messages.push(...responsesResults)
       } else if (chatImageCarrierContent.length > 0) {
         messages.push({
           role: 'user',
@@ -1640,7 +1649,11 @@ export class ModelAgentRuntime implements AgentRuntime {
     ]
       .filter(Boolean)
       .join('\n\n')
-    if (request.workMode === 'execute') {
+    if (
+      request.workMode === 'execute' ||
+      (request.workMode === 'ask' &&
+        Boolean(request.knowledgeCapabilityToken))
+    ) {
       yield* this.runToolExecution(request, signal, authorize, system)
       return
     }

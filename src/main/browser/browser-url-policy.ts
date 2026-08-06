@@ -1,5 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
+import { isIntranetCompatibilityEnabled } from '../intranet-compatibility-policy'
 
 export type BrowserResolvedAddress = {
   address: string
@@ -20,12 +21,10 @@ export type ValidatedBrowserUrl = {
 const LOCAL_HOST_SUFFIXES = [
   '.home',
   '.internal',
-  '.invalid',
   '.lan',
   '.local',
   '.localdomain',
-  '.localhost',
-  '.test'
+  '.localhost'
 ]
 
 const BLOCKED_HOSTS = new Set([
@@ -35,6 +34,8 @@ const BLOCKED_HOSTS = new Set([
   'metadata.aws.internal',
   'metadata.google.internal'
 ])
+
+const ALWAYS_BLOCKED_HOST_SUFFIXES = ['.invalid', '.test']
 
 function ipv4Number(address: string): number | undefined {
   if (isIP(address) !== 4) {
@@ -191,6 +192,67 @@ export function isPublicBrowserAddress(address: string): boolean {
       : false
 }
 
+function isIntranetBrowserIpv4(address: string): boolean {
+  const value = ipv4Number(address)
+  if (value === undefined || address === '100.100.100.200') {
+    return false
+  }
+  return [
+    [0x0a000000, 8],
+    [0x64400000, 10],
+    [0x7f000000, 8],
+    [0xac100000, 12],
+    [0xc0a80000, 16]
+  ].some(([base, prefix]) =>
+    inIpv4Range(value, base ?? 0, prefix ?? 0)
+  )
+}
+
+function isIntranetBrowserIpv6(address: string): boolean {
+  const groups = expandIpv6(address)
+  if (!groups) {
+    return false
+  }
+  if (groups.slice(0, 5).every((group) => group === 0)) {
+    const sixth = groups[5] ?? 0
+    if (sixth === 0xffff) {
+      const mapped = `${(groups[6] ?? 0) >>> 8}.${(groups[6] ?? 0) & 0xff}.${(groups[7] ?? 0) >>> 8}.${(groups[7] ?? 0) & 0xff}`
+      return isIntranetBrowserIpv4(mapped)
+    }
+    if (
+      sixth === 0 &&
+      groups[6] === 0 &&
+      groups[7] === 1
+    ) {
+      return true
+    }
+  }
+  const awsMetadata = [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254]
+  return (
+    ipv6Prefix(groups, [0xfc00, 0, 0, 0, 0, 0, 0, 0], 7) &&
+    !ipv6Prefix(groups, awsMetadata, 128)
+  )
+}
+
+export function isIntranetBrowserAddress(address: string): boolean {
+  const normalized = address.split('%', 1)[0] ?? ''
+  const family = isIP(normalized)
+  return family === 4
+    ? isIntranetBrowserIpv4(normalized)
+    : family === 6
+      ? isIntranetBrowserIpv6(normalized)
+      : false
+}
+
+function browserAddressClass(
+  address: string
+): 'public' | 'intranet' | 'blocked' {
+  if (isPublicBrowserAddress(address)) {
+    return 'public'
+  }
+  return isIntranetBrowserAddress(address) ? 'intranet' : 'blocked'
+}
+
 export function canonicalizeBrowserUrl(input: string): URL {
   if (input !== input.trim() || input.length === 0 || input.length > 8_192) {
     throw new Error('浏览器 URL 无效')
@@ -219,15 +281,33 @@ export function canonicalizeBrowserUrl(input: string): URL {
         ? rawHostname.slice(1, -1)
         : rawHostname
     ) ||
-    (!hostname.includes('.') && isIP(hostname) === 0) ||
     BLOCKED_HOSTS.has(hostname) ||
-    LOCAL_HOST_SUFFIXES.some(
+    ALWAYS_BLOCKED_HOST_SUFFIXES.some(
       (suffix) => hostname === suffix.slice(1) || hostname.endsWith(suffix)
+    ) ||
+    (
+      !isIntranetCompatibilityEnabled() &&
+      (
+        (!hostname.includes('.') && isIP(hostname) === 0) ||
+        LOCAL_HOST_SUFFIXES.some(
+          (suffix) =>
+            hostname === suffix.slice(1) || hostname.endsWith(suffix)
+        )
+      )
     )
   ) {
     throw new Error('浏览器 URL 不允许访问本机或内部名称')
   }
-  if (isIP(hostname) !== 0 && !isPublicBrowserAddress(hostname)) {
+  if (
+    isIP(hostname) !== 0 &&
+    (
+      browserAddressClass(hostname) === 'blocked' ||
+      (
+        !isIntranetCompatibilityEnabled() &&
+        !isPublicBrowserAddress(hostname)
+      )
+    )
+  ) {
     throw new Error('浏览器 URL 不允许访问私有或保留地址')
   }
   url.hash = ''
@@ -319,12 +399,18 @@ export class BrowserUrlPolicy {
           } as const]
         : await this.resolve(url.hostname, signal)
     signal.throwIfAborted()
+    const addressClasses = addresses.map((entry) =>
+      entry.family === isIP(entry.address)
+        ? browserAddressClass(entry.address)
+        : 'blocked'
+    )
     if (
       addresses.length === 0 ||
-      addresses.some(
-        (entry) =>
-          entry.family !== isIP(entry.address) ||
-          !isPublicBrowserAddress(entry.address)
+      addressClasses.includes('blocked') ||
+      new Set(addressClasses).size !== 1 ||
+      (
+        !isIntranetCompatibilityEnabled() &&
+        addressClasses.some((addressClass) => addressClass !== 'public')
       )
     ) {
       throw new Error('浏览器目标解析到私有、保留或混合地址')

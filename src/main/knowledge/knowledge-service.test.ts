@@ -194,7 +194,10 @@ describe('KnowledgeService', () => {
       provider: 'failing-provider',
       model: 'failing-model',
       embed: async () => {
-        throw new Error('synthetic provider outage')
+        throw Object.assign(
+          new Error('Bearer sk-private failed with private payload'),
+          { status: 503 }
+        )
       }
     }
     const { directory, service } = await createService(undefined, provider)
@@ -211,6 +214,8 @@ describe('KnowledgeService', () => {
     if (!document) {
       throw new Error('Indexed document missing')
     }
+    expect(document.status).toBe('ready')
+    expect(service.snapshot(library.id).sources[0]?.status).toBe('ready')
     expect(service.search(library.id, 'fallback')).toHaveLength(1)
     expect(
       service.database.getEmbeddingIndexState(
@@ -220,13 +225,22 @@ describe('KnowledgeService', () => {
       )
     ).toMatchObject({
       status: 'error',
-      lastError: 'synthetic provider outage'
+      lastError: '向量服务暂时不可用。'
     })
+    expect(
+      JSON.stringify(
+        service.database.getEmbeddingIndexState(
+          document.id,
+          provider.provider,
+          provider.model
+        )
+      )
+    ).not.toContain('sk-private')
     const results = await service.searchHybrid(library.id, 'fallback')
     expect(results[0]?.retrieval.channels).toContain('fts')
   })
 
-  it('reindexes existing documents when an embedding provider is enabled', async () => {
+  it('defers existing-document rebuilds when an embedding provider is enabled', async () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'existing.txt')
     await writeFile(sourcePath, 'existing semantic content', 'utf8')
@@ -251,7 +265,7 @@ describe('KnowledgeService', () => {
         provider.provider,
         provider.model
       )
-    ).toMatchObject({ status: 'ready', dimensions: 2 })
+    ).toBeUndefined()
   })
 
   it('embeds a hybrid query once across multiple libraries', async () => {

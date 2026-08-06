@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
@@ -17,7 +17,10 @@ const electronMocks = vi.hoisted(() => {
     }),
     removeHandler: vi.fn((channel: string) => {
       handlers.delete(channel)
-    })
+    }),
+    openPath: vi.fn(async () => ''),
+    showItemInFolder: vi.fn(),
+    openExternal: vi.fn(async () => undefined)
   }
 })
 
@@ -42,6 +45,10 @@ const channelMocks = vi.hoisted(() => ({
       }>)
     | undefined,
   stop: vi.fn(async () => undefined)
+}))
+
+const runtimeFactoryMocks = vi.hoisted(() => ({
+  createModelProfileRuntime: vi.fn()
 }))
 
 describe('registerIpcHandlers computer capabilities', () => {
@@ -185,6 +192,11 @@ vi.mock('electron', () => ({
     static isSupported(): boolean {
       return false
     }
+  },
+  shell: {
+    openPath: electronMocks.openPath,
+    showItemInFolder: electronMocks.showItemInFolder,
+    openExternal: electronMocks.openExternal
   }
 }))
 
@@ -193,6 +205,8 @@ vi.mock('./assistant/heartbeat-service', () => ({
     async processDue(): Promise<void> {}
   }
 }))
+
+vi.mock('./agent/create-runtime', () => runtimeFactoryMocks)
 
 vi.mock('./channels/channel-env', () => ({
   isReadOnlyChannelMessage: (message: { workMode: string }) =>
@@ -209,6 +223,372 @@ vi.mock('./channels/channel-env', () => ({
     }
   )
 }))
+
+describe('registerIpcHandlers connection tests', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('tests a resolved model profile without invoking the selected Continue Runtime', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000001'
+    const profile = {
+      id: profileId,
+      name: '默认模型',
+      baseUrl: 'https://models.example',
+      modelName: 'good-model',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      imageGenerationQuality: 'auto',
+      apiKey: 'main-only-secret' as string | undefined
+    }
+    const resolvedSettings = {
+      provider: 'continue',
+      workspacePath: 'C:\\Workspace',
+      modelProfiles: [profile],
+      defaultModelProfileId: profileId
+    }
+    const modelRuntime = {
+      testConnection: vi.fn(async () => ({
+        id: 'model',
+        label: 'good-model',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      })),
+      getStatus: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    runtimeFactoryMocks.createModelProfileRuntime.mockReturnValue(
+      modelRuntime
+    )
+    const continueRuntime = {
+      testConnection: vi.fn(async () => {
+        throw new Error('Continue 配置不可用')
+      }),
+      getStatus: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const getResolvedSettings = vi.fn(async () => resolvedSettings)
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const contextManager = { clear: vi.fn() }
+    const approvalBroker = { clear: vi.fn() }
+    const dispose = registerIpcHandlers(
+      window as never,
+      continueRuntime as never,
+      'CommandOrControl+Shift+Space',
+      { getResolvedSettings } as never,
+      {} as never,
+      contextManager as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      approvalBroker as never,
+      {} as never,
+      vi.fn(async () => {})
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsTestModel
+      )?.(event, profileId)
+    ).resolves.toMatchObject({
+      id: 'model',
+      label: 'good-model',
+      available: true
+    })
+    expect(getResolvedSettings).toHaveBeenCalledOnce()
+    expect(
+      runtimeFactoryMocks.createModelProfileRuntime
+    ).toHaveBeenCalledWith('C:\\Workspace', resolvedSettings, profile)
+    expect(modelRuntime.testConnection).toHaveBeenCalledOnce()
+    expect(modelRuntime.dispose).toHaveBeenCalledOnce()
+    expect(continueRuntime.testConnection).not.toHaveBeenCalled()
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsTestModel
+      )?.(event, 'not-a-profile-id')
+    ).rejects.toThrow()
+    expect(getResolvedSettings).toHaveBeenCalledOnce()
+
+    getResolvedSettings.mockResolvedValueOnce({
+      ...resolvedSettings,
+      modelProfiles: [{ ...profile, apiKey: undefined }]
+    })
+    runtimeFactoryMocks.createModelProfileRuntime.mockClear()
+    modelRuntime.testConnection.mockClear()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsTestModel
+      )?.(event, profileId)
+    ).rejects.toThrow('模型连接“默认模型”未配置 API Key')
+    expect(getResolvedSettings).toHaveBeenCalledTimes(2)
+    expect(
+      runtimeFactoryMocks.createModelProfileRuntime
+    ).not.toHaveBeenCalled()
+    expect(modelRuntime.testConnection).not.toHaveBeenCalled()
+
+    const noAuthProfile = {
+      ...profile,
+      authentication: 'none',
+      apiKey: undefined
+    }
+    const noAuthSettings = {
+      ...resolvedSettings,
+      modelProfiles: [noAuthProfile]
+    }
+    getResolvedSettings.mockResolvedValueOnce(noAuthSettings)
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsTestModel
+      )?.(event, profileId)
+    ).resolves.toMatchObject({ available: true })
+    expect(
+      runtimeFactoryMocks.createModelProfileRuntime
+    ).toHaveBeenCalledWith(
+      'C:\\Workspace',
+      noAuthSettings,
+      noAuthProfile
+    )
+    expect(modelRuntime.testConnection).toHaveBeenCalledOnce()
+
+    await dispose()
+  })
+
+  it('validates and tests the selected OpenCode or Continue Runtime', async () => {
+    const selectedRuntimes = {
+      getRuntime: vi.fn(),
+      getStatus: vi.fn(),
+      testStatus: vi.fn(async () => ({
+        id: 'opencode',
+        label: 'OpenCode',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      })),
+      releaseConversation: vi.fn(async () => undefined)
+    }
+    const fallbackRuntime = {
+      testConnection: vi.fn(async () => {
+        throw new Error('不应测试旧的全局 Runtime')
+      }),
+      getStatus: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      fallbackRuntime as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => {}),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      selectedRuntimes as never
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const selection = {
+      provider: 'opencode' as const,
+      profileId: '00000000-0000-4000-8000-000000000001'
+    }
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.runtimeSettingsTest)?.(
+        event,
+        selection
+      )
+    ).resolves.toMatchObject({ id: 'opencode', available: true })
+    expect(selectedRuntimes.testStatus).toHaveBeenCalledWith(selection)
+    expect(fallbackRuntime.testConnection).not.toHaveBeenCalled()
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.runtimeSettingsTest)?.(
+        event,
+        { provider: 'opencode', profileId: 'not-a-uuid' }
+      )
+    ).rejects.toThrow()
+    expect(selectedRuntimes.testStatus).toHaveBeenCalledOnce()
+
+    await dispose()
+  })
+})
+
+describe('registerIpcHandlers Runtime config actions', () => {
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+    await Promise.all(
+      temporaryDirectories.splice(0).map((directory) =>
+        rm(directory, { recursive: true, force: true })
+      )
+    )
+  })
+
+  it('opens only configured files or the fixed Runtime config directory', async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-runtime-config-')
+    )
+    temporaryDirectories.push(temporaryDirectory)
+    const configPath = join(temporaryDirectory, 'config.yaml')
+    await writeFile(configPath, 'name: Test', 'utf8')
+    const getPublicSettings = vi.fn(async () => ({
+      opencodeConfigPath: '',
+      continueConfigPath: configPath
+    }))
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      { getPublicSettings } as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => {})
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const canonicalConfigPath = await realpath(configPath)
+
+    await electronMocks.handlers.get(
+      ipcChannels.runtimeSettingsOpenConfig
+    )?.(event, {
+      runtime: 'continue',
+      action: 'open-file'
+    })
+    expect(electronMocks.openPath).toHaveBeenCalledWith(
+      canonicalConfigPath
+    )
+
+    await electronMocks.handlers.get(
+      ipcChannels.runtimeSettingsOpenConfig
+    )?.(event, {
+      runtime: 'continue',
+      action: 'show-file'
+    })
+    expect(electronMocks.showItemInFolder).toHaveBeenCalledWith(
+      canonicalConfigPath
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsOpenConfig
+      )?.(event, {
+        runtime: 'continue',
+        action: 'open-file',
+        path: join(temporaryDirectory, 'attacker-controlled.yaml')
+      })
+    ).rejects.toThrow()
+    expect(getPublicSettings).toHaveBeenCalledTimes(2)
+
+    getPublicSettings.mockResolvedValueOnce({
+      opencodeConfigPath: '',
+      continueConfigPath: process.execPath
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsOpenConfig
+      )?.(event, {
+        runtime: 'continue',
+        action: 'open-file'
+      })
+    ).rejects.toThrow('Runtime 配置文件类型不支持直接打开')
+    expect(electronMocks.openPath).toHaveBeenCalledTimes(1)
+
+    const previousXdgConfigHome = process.env.XDG_CONFIG_HOME
+    process.env.XDG_CONFIG_HOME = temporaryDirectory
+    try {
+      await electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsOpenConfig
+      )?.(event, {
+        runtime: 'opencode',
+        action: 'open-directory'
+      })
+      expect(electronMocks.openPath).toHaveBeenLastCalledWith(
+        await realpath(join(temporaryDirectory, 'opencode'))
+      )
+    } finally {
+      if (previousXdgConfigHome === undefined) {
+        delete process.env.XDG_CONFIG_HOME
+      } else {
+        process.env.XDG_CONFIG_HOME = previousXdgConfigHome
+      }
+    }
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeSettingsOpenConfig
+      )?.(
+        {
+          sender: {},
+          senderFrame: webContents.mainFrame
+        },
+        {
+          runtime: 'continue',
+          action: 'open-directory'
+        }
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await dispose()
+  })
+})
 
 describe('registerIpcHandlers window controls', () => {
   afterEach(() => {
@@ -444,7 +824,10 @@ describe('registerIpcHandlers agent terminal state', () => {
     onBeforeClearLocalData?: () => Promise<void>,
     toolApproval: 'always' | 'policy' = 'always',
     subagentService?: Record<string, unknown>,
-    smartRoutingEnabled = false
+    smartRoutingEnabled = false,
+    selectedRuntimes?: Record<string, unknown>,
+    knowledgeServiceOverride?: Record<string, unknown>,
+    knowledgeGateway?: Record<string, unknown>
   ) {
     const assistantDatabase = {
       claimDueSchedules: vi.fn(() => []),
@@ -490,14 +873,24 @@ describe('registerIpcHandlers agent terminal state', () => {
       } as never,
       {} as never,
       contextManager as never,
-      {} as never,
+      (knowledgeServiceOverride ?? {
+        database: { listKnowledgeBases: vi.fn(() => []) }
+      }) as never,
       assistantDatabase as never,
       approvalBroker as never,
       {} as never,
       vi.fn(async () => {}),
       onBeforeClearLocalData,
       undefined,
-      subagentService as never
+      subagentService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      selectedRuntimes as never,
+      undefined,
+      knowledgeGateway as never
     )
     return {
       approvalBroker,
@@ -508,7 +901,11 @@ describe('registerIpcHandlers agent terminal state', () => {
         ipcChannels.appClearLocalData
       ),
       handler: electronMocks.handlers.get(ipcChannels.agentRun),
+      statusHandler: electronMocks.handlers.get(ipcChannels.agentStatus),
       cancelHandler: electronMocks.handlers.get(ipcChannels.agentCancel),
+      knowledgeSearchHandler: electronMocks.handlers.get(
+        ipcChannels.knowledgeSearch
+      ),
       webContents
     }
   }
@@ -518,6 +915,355 @@ describe('registerIpcHandlers agent terminal state', () => {
   }) => ({
     sender: webContents,
     senderFrame: webContents.mainFrame
+  })
+
+  it('rejects unknown knowledge scope and creates no capability for empty scope', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'capability'),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      {
+        database: {
+          listKnowledgeBases: vi.fn(() => [
+            { id: libraryId, name: 'Known' }
+          ])
+        }
+      },
+      knowledgeGateway
+    )
+    const event = trustedEvent(harness.webContents)
+
+    await expect(
+      harness.handler?.(event, {
+        requestId: '00000000-0000-4000-8000-000000000021',
+        conversationId: 'unknown-scope',
+        prompt: 'test',
+        workMode: 'ask',
+        knowledgeLibraryIds: [
+          '22222222-2222-4222-8222-222222222222'
+        ]
+      })
+    ).rejects.toThrow('不存在的知识库')
+    expect(knowledgeGateway.grant).not.toHaveBeenCalled()
+
+    await harness.handler?.(event, {
+      requestId: '00000000-0000-4000-8000-000000000022',
+      conversationId: 'empty-scope',
+      prompt: 'test',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        '00000000-0000-4000-8000-000000000022',
+        'completed'
+      )
+    )
+    expect(knowledgeGateway.grant).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
+  it('accepts an authorized knowledge library after the first 100 entries', async () => {
+    const libraries = Array.from({ length: 101 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${index
+        .toString(16)
+        .padStart(12, '0')}`,
+      name: `Library ${index}`
+    }))
+    const listKnowledgeBases = vi.fn(() => libraries)
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'capability'),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      { database: { listKnowledgeBases } },
+      knowledgeGateway
+    )
+    const requestId = '00000000-0000-4000-8000-000000000024'
+    await expect(
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId,
+        conversationId: 'later-library',
+        prompt: 'search',
+        workMode: 'ask',
+        knowledgeLibraryIds: [libraries[100]!.id]
+      })
+    ).resolves.toBeUndefined()
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+    expect(listKnowledgeBases).toHaveBeenCalledWith(500)
+    expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+      requestId,
+      [libraries[100]!.id],
+      expect.any(AbortSignal)
+    )
+    await harness.dispose()
+  })
+
+  it('emits drained knowledge references immediately before done', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const reference = {
+      libraryId,
+      libraryName: 'Known',
+      documentId: '33333333-3333-4333-8333-333333333333',
+      documentName: 'Doc',
+      sourceName: 'Source',
+      snippet: 'Evidence',
+      rank: 1
+    }
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: {
+        requestId: string
+        knowledgeCapabilityToken?: string
+      }) {
+        expect(request.knowledgeCapabilityToken).toBe('capability')
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'capability'),
+      drainReferences: vi.fn(() => [reference]),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      {
+        database: {
+          listKnowledgeBases: vi.fn(() => [
+            { id: libraryId, name: 'Known' }
+          ])
+        }
+      },
+      knowledgeGateway
+    )
+    const requestId = '00000000-0000-4000-8000-000000000023'
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'scoped',
+      prompt: 'search',
+      workMode: 'ask',
+      knowledgeLibraryIds: [libraryId, libraryId]
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+    expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+      requestId,
+      [libraryId],
+      expect.any(AbortSignal)
+    )
+    const publicEvents = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, payload]) => payload)
+    expect(publicEvents.slice(-2)).toEqual([
+      {
+        requestId,
+        type: 'source-references',
+        references: [reference]
+      },
+      { requestId, type: 'done' }
+    ])
+    expect(knowledgeGateway.revoke).toHaveBeenCalledWith('capability')
+    await harness.dispose()
+  })
+
+  it('returns no results for an explicitly empty knowledge search scope', async () => {
+    const searchHybridMany = vi.fn(() => {
+      throw new Error('must not search')
+    })
+    const harness = createHarness(
+      {
+        capability: 'chat',
+        supportsToolExecution: true
+      },
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      {
+        database: { listKnowledgeBases: vi.fn(() => []) },
+        searchHybridMany
+      }
+    )
+    await expect(
+      harness.knowledgeSearchHandler?.(
+        trustedEvent(harness.webContents),
+        { libraryIds: [], query: 'anything' }
+      )
+    ).resolves.toEqual([])
+    expect(searchHybridMany).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
+  it('routes status and concurrent conversations to their selected runtimes', async () => {
+    const firstProfileId = '00000000-0000-4000-8000-000000000001'
+    const secondProfileId = '00000000-0000-4000-8000-000000000002'
+    const firstSelection = {
+      provider: 'model' as const,
+      profileId: firstProfileId
+    }
+    const secondSelection = {
+      provider: 'model' as const,
+      profileId: secondProfileId
+    }
+    const firstRun = vi.fn()
+    const secondRun = vi.fn()
+    const createRuntime = (
+      label: string,
+      run: typeof firstRun
+    ): Record<string, unknown> => ({
+      runtimeId: 'model',
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(async () => ({
+        id: 'model',
+        label,
+        available: true,
+        supportsToolExecution: true
+      })),
+      dispose: vi.fn(async () => undefined),
+      async *run(request: { requestId: string; conversationId: string }) {
+        run(request)
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    })
+    const firstRuntime = createRuntime('model-one', firstRun)
+    const secondRuntime = createRuntime('model-two', secondRun)
+    const selectedRuntimes = {
+      getStatus: vi.fn(async () => ({
+        id: 'model',
+        label: 'model-two',
+        available: true,
+        supportsToolExecution: true
+      })),
+      getRuntime: vi.fn(async (selection: typeof firstSelection) =>
+        selection.profileId === firstProfileId
+          ? firstRuntime
+          : secondRuntime
+      ),
+      releaseConversation: vi.fn(async () => undefined)
+    }
+    const fallbackRuntime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(async () => ({
+        id: 'model',
+        label: 'fallback',
+        available: true,
+        supportsToolExecution: true
+      })),
+      run: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const harness = createHarness(
+      fallbackRuntime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    const event = trustedEvent(harness.webContents)
+
+    await expect(
+      harness.statusHandler?.(event, secondSelection)
+    ).resolves.toEqual(
+      expect.objectContaining({ label: 'model-two' })
+    )
+    expect(selectedRuntimes.getStatus).toHaveBeenCalledWith(
+      secondSelection
+    )
+
+    await Promise.all([
+      harness.handler?.(event, {
+        requestId: '00000000-0000-4000-8000-000000000011',
+        conversationId: 'conversation-one',
+        prompt: 'first request',
+        workMode: 'ask',
+        runtimeSelection: firstSelection
+      }),
+      harness.handler?.(event, {
+        requestId: '00000000-0000-4000-8000-000000000012',
+        conversationId: 'conversation-two',
+        prompt: 'second request',
+        workMode: 'ask',
+        runtimeSelection: secondSelection
+      })
+    ])
+
+    await vi.waitFor(() => {
+      expect(firstRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: 'conversation-one',
+          runtimeSelection: firstSelection
+        })
+      )
+      expect(secondRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: 'conversation-two',
+          runtimeSelection: secondSelection
+        })
+      )
+    })
+    expect(fallbackRuntime.run).not.toHaveBeenCalled()
+    expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
+      firstSelection
+    )
+    expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
+      secondSelection
+    )
+    await harness.dispose()
   })
 
   it('aborts active work and clears browser sessions before assistant data', async () => {
@@ -674,7 +1420,7 @@ describe('registerIpcHandlers agent terminal state', () => {
   })
 
   it.each(['opencode', 'continue'] as const)(
-    'normalizes interactive %s requests to Execute without GoodBuddy approval',
+    'preserves read-only Ask mode at the %s Runtime boundary',
     async (runtimeId) => {
       let received:
         | {
@@ -713,13 +1459,13 @@ describe('registerIpcHandlers agent terminal state', () => {
           harness.assistantDatabase.updateTaskStatus
         ).toHaveBeenCalledWith(requestId, 'completed')
       )
-      expect(received?.request.workMode).toBe('execute')
+      expect(received?.request.workMode).toBe('ask')
       expect(received?.authorize).toBeUndefined()
       expect(harness.approvalBroker.request).not.toHaveBeenCalled()
       expect(
         harness.assistantDatabase.createTask
       ).toHaveBeenCalledWith(
-        expect.objectContaining({ id: requestId, workMode: 'execute' })
+        expect.objectContaining({ id: requestId, workMode: 'ask' })
       )
       await harness.dispose()
     }
@@ -997,14 +1743,14 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const harness = createHarness(runtime)
 
-    expect(() =>
+    await expect(
       harness.handler?.(trustedEvent(harness.webContents), {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'write a file',
         workMode: 'execute'
       })
-    ).toThrow('当前 Runtime 不支持工具执行')
+    ).rejects.toThrow('当前 Runtime 不支持工具执行')
     expect(harness.assistantDatabase.createTask).not.toHaveBeenCalled()
     await harness.dispose()
   })

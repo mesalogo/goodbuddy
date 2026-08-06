@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 
 const mocks = vi.hoisted(() => {
   const tasks = {
@@ -186,6 +187,118 @@ describe('ModelToolProvider', () => {
     await expect(
       readFile(join(workspace, 'docs', 'output.txt'), 'utf8')
     ).resolves.toBe('saved')
+  })
+
+  it('exposes only scoped knowledge search in Ask and never lets the model select library IDs', async () => {
+    const workspace = await createWorkspace()
+    const search = vi.fn(async () => [])
+    const gateway = { search } as unknown as KnowledgeMcpGateway
+    const provider = new ModelToolProvider(
+      workspace,
+      [],
+      undefined,
+      gateway
+    )
+    const signal = new AbortController().signal
+    const askContext = {
+      conversationId: 'knowledge-ask',
+      workMode: 'ask',
+      knowledgeCapabilityToken: 'main-only-token'
+    } satisfies ModelToolCallContext
+
+    const askTools = await provider.listTools(askContext, signal)
+    expect(askTools.map((tool) => tool.name)).toEqual([
+      'knowledge_search'
+    ])
+    expect(
+      JSON.stringify(askTools[0]?.inputSchema)
+    ).not.toContain('library')
+    await provider.callTool(
+      'knowledge_search',
+      { query: 'scope query', limit: 4 },
+      signal,
+      askContext
+    )
+    expect(search).toHaveBeenCalledWith(
+      'main-only-token',
+      { query: 'scope query', limit: 4 },
+      signal
+    )
+
+    await expect(
+      provider.listTools(
+        {
+          conversationId: 'knowledge-empty',
+          workMode: 'ask'
+        },
+        signal
+      )
+    ).resolves.toEqual([])
+    const executeTools = await provider.listTools(
+      { ...askContext, workMode: 'execute' },
+      signal
+    )
+    expect(executeTools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        'workspace_read_text',
+        'workspace_list_directory',
+        'workspace_write_text',
+        'knowledge_search'
+      ])
+    )
+  })
+
+  it('reserves the 100th Execute tool slot for scoped knowledge search', async () => {
+    const workspace = await createWorkspace()
+    const gateway = {
+      search: vi.fn(async () => [])
+    } as unknown as KnowledgeMcpGateway
+    const context = {
+      conversationId: 'knowledge-capacity',
+      workMode: 'execute',
+      knowledgeCapabilityToken: 'main-only-token'
+    } satisfies ModelToolCallContext
+    const createTools = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        name: `remote_tool_${index}`,
+        description: 'Remote tool',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false
+        }
+      }))
+
+    mocks.client.listTools.mockResolvedValueOnce({
+      tools: createTools(96)
+    })
+    const validProvider = new ModelToolProvider(
+      workspace,
+      [createMcpServer()],
+      undefined,
+      gateway
+    )
+    await expect(
+      validProvider.listTools(context, new AbortController().signal)
+    ).resolves.toHaveLength(100)
+    await validProvider.dispose()
+
+    mocks.client.listTools.mockResolvedValueOnce({
+      tools: createTools(97)
+    })
+    const overflowingProvider = new ModelToolProvider(
+      workspace,
+      [createMcpServer()],
+      undefined,
+      gateway
+    )
+    await expect(
+      overflowingProvider.listTools(
+        context,
+        new AbortController().signal
+      )
+    ).rejects.toThrow('无法加载 MCP Server')
+    await overflowingProvider.dispose()
   })
 
   it('rejects workspace traversal before accessing the filesystem', async () => {

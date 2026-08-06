@@ -4,32 +4,42 @@ import type { WeComSdkTransport } from './wecom-driver'
 
 type MessageListener = (frame: unknown) => void
 type ErrorListener = (error: Error) => void
+type AuthenticatedListener = () => void
 
 class FakeTransport implements WeComSdkTransport {
-  readonly connect = vi.fn()
+  readonly connect = vi.fn(() => {
+    this.authenticatedListener?.()
+  })
   readonly disconnect = vi.fn()
   readonly replyStream = vi.fn<WeComSdkTransport['replyStream']>(
     async () => ({})
   )
   private messageListener?: MessageListener
+  private authenticatedListener?: AuthenticatedListener
 
   on(event: 'message', listener: MessageListener): unknown
   on(event: 'error', listener: ErrorListener): unknown
+  on(event: 'authenticated', listener: AuthenticatedListener): unknown
   on(
-    event: 'message' | 'error',
-    listener: MessageListener | ErrorListener
+    event: 'message' | 'error' | 'authenticated',
+    listener: MessageListener | ErrorListener | AuthenticatedListener
   ): unknown {
     if (event === 'message') {
       this.messageListener = listener as MessageListener
+    } else if (event === 'authenticated') {
+      this.authenticatedListener = listener as AuthenticatedListener
     }
     return this
   }
 
   off(event: 'message', listener: MessageListener): unknown
   off(event: 'error', listener: ErrorListener): unknown
-  off(event: 'message' | 'error'): unknown {
+  off(event: 'authenticated', listener: AuthenticatedListener): unknown
+  off(event: 'message' | 'error' | 'authenticated'): unknown {
     if (event === 'message') {
       this.messageListener = undefined
+    } else if (event === 'authenticated') {
+      this.authenticatedListener = undefined
     }
     return this
   }

@@ -2,6 +2,11 @@ import { lookup as dnsLookup } from 'node:dns/promises'
 import { request as httpRequest } from 'node:http'
 import { isIP } from 'node:net'
 import { request as httpsRequest } from 'node:https'
+import { isIntranetCompatibilityEnabled } from '../intranet-compatibility-policy'
+import {
+  isIntranetBrowserAddress,
+  isPublicBrowserAddress
+} from '../browser/browser-url-policy'
 import { parseDocument, type ParsedDocument } from './document-parser'
 
 type ResolvedAddress = {
@@ -38,52 +43,28 @@ export type UrlImporterOptions = {
 }
 
 const blockedHostnames = new Set([
-  'localhost',
-  'localhost.localdomain',
+  'instance-data',
+  'instance-data.ec2.internal',
+  'metadata',
+  'metadata.aws.internal',
   'metadata.google.internal'
 ])
 
-function isPrivateIpv4(address: string): boolean {
-  const parts = address.split('.').map(Number)
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) {
-    return true
-  }
-  const [first = 0, second = 0] = parts
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168) ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    first >= 224
-  )
-}
-
-function isPrivateIpv6(address: string): boolean {
-  const normalized = address.toLowerCase().split('%')[0] ?? ''
-  if (
-    normalized === '::' ||
-    normalized === '::1' ||
-    normalized.startsWith('fc') ||
-    normalized.startsWith('fd') ||
-    /^fe[89ab]/.test(normalized) ||
-    normalized.startsWith('ff')
-  ) {
-    return true
-  }
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-  return mapped ? isPrivateIpv4(mapped[1] ?? '') : false
-}
-
 export function isPublicAddress(address: string): boolean {
-  const family = isIP(address)
-  return family === 4
-    ? !isPrivateIpv4(address)
-    : family === 6
-      ? !isPrivateIpv6(address)
-      : false
+  return isPublicBrowserAddress(address)
+}
+
+export function isIntranetAddress(address: string): boolean {
+  return isIntranetBrowserAddress(address)
+}
+
+function addressClass(
+  address: string
+): 'public' | 'intranet' | 'blocked' {
+  if (isPublicAddress(address)) {
+    return 'public'
+  }
+  return isIntranetAddress(address) ? 'intranet' : 'blocked'
 }
 
 export function normalizeSourceUrl(input: string): URL {
@@ -96,11 +77,19 @@ export function normalizeSourceUrl(input: string): URL {
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw new Error('网页来源仅支持 HTTP(S)')
   }
+  const hostname = url.hostname.toLowerCase().replace(/\.$/u, '')
   if (
     url.username ||
     url.password ||
-    blockedHostnames.has(url.hostname.toLowerCase()) ||
-    url.hostname.toLowerCase().endsWith('.localhost')
+    blockedHostnames.has(hostname) ||
+    (
+      !isIntranetCompatibilityEnabled() &&
+      (
+        hostname === 'localhost' ||
+        hostname === 'localhost.localdomain' ||
+        hostname.endsWith('.localhost')
+      )
+    )
   ) {
     throw new Error('该网页地址不允许导入')
   }
@@ -211,15 +200,23 @@ export class UrlImporter {
     this.maximumRedirects = options.maximumRedirects ?? 5
   }
 
-  private async resolvePublic(url: URL): Promise<ResolvedAddress> {
+  private async resolveAddress(url: URL): Promise<ResolvedAddress> {
     const addresses = await this.lookup(url.hostname)
-    const address = addresses.find((candidate) =>
-      isPublicAddress(candidate.address)
+    const classes = addresses.map((candidate) =>
+      candidate.family === isIP(candidate.address)
+        ? addressClass(candidate.address)
+        : 'blocked'
     )
+    const address = addresses[0]
     if (
       addresses.length === 0 ||
-      addresses.some((candidate) => !isPublicAddress(candidate.address)) ||
-      !address
+      !address ||
+      classes.includes('blocked') ||
+      new Set(classes).size !== 1 ||
+      (
+        !isIntranetCompatibilityEnabled() &&
+        classes.some((addressType) => addressType !== 'public')
+      )
     ) {
       throw new Error('网页地址解析到本机、私网或不可用地址')
     }
@@ -232,7 +229,7 @@ export class UrlImporter {
 
     for (let redirect = 0; redirect <= this.maximumRedirects; redirect += 1) {
       signal.throwIfAborted()
-      const address = await this.resolvePublic(url)
+      const address = await this.resolveAddress(url)
       response = await this.transport(
         url,
         address,

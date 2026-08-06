@@ -14,6 +14,7 @@ import {
   type KnowledgeSnapshot,
   type RuntimeSettings,
   type RuntimeSettingsInput,
+  type RuntimeConfigActionInput,
   type RuntimeFileSelectionKind,
   type WindowCaptureOption
 } from '../shared/contracts'
@@ -49,6 +50,29 @@ import type {
   ExpertCreateInput,
   ExpertUpdateInput
 } from '../shared/assistant-contracts'
+import type {
+  ChannelConnectionTestResult,
+  ChannelSettingsApply,
+  ChannelSettingsSnapshot,
+  DingTalkChannelSettingsInput,
+  ManagedChannel,
+  WeComChannelSettingsInput
+} from '../shared/channel-settings-contracts'
+import type {
+  ApplicationSettings,
+  VersionCheckResult
+} from '../shared/application-settings-contracts'
+import type {
+  SpeechModelSnapshot,
+  SpeechTranscriptionInput,
+  SpeechTranscriptionResult
+} from '../shared/speech-model-contracts'
+import type {
+  EmbeddingDiagnosticResult,
+  EmbeddingIndexStatus,
+  EmbeddingSettingsSnapshot
+} from '../shared/embedding-contracts'
+import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -97,9 +121,10 @@ const desktopApi: DesktopApi = {
     }
   },
   agent: {
-    getStatus: () =>
+    getStatus: (selection) =>
       ipcRenderer.invoke(
-        ipcChannels.agentStatus
+        ipcChannels.agentStatus,
+        selection
       ) as Promise<AgentRuntimeStatus>,
     run: async (request: AgentRequest) => {
       await ipcRenderer.invoke(ipcChannels.agentRun, request)
@@ -163,10 +188,151 @@ const desktopApi: DesktopApi = {
         ipcChannels.runtimeSettingsSelectFile,
         kind
       ) as Promise<string | undefined>,
-    testRuntime: () =>
+    openRuntimeConfig: async (input: RuntimeConfigActionInput) => {
+      await ipcRenderer.invoke(
+        ipcChannels.runtimeSettingsOpenConfig,
+        input
+      )
+    },
+    testModelConnection: (profileId: string) =>
       ipcRenderer.invoke(
-        ipcChannels.runtimeSettingsTest
+        ipcChannels.runtimeSettingsTestModel,
+        profileId
+      ) as Promise<AgentRuntimeStatus>,
+    testRuntime: (selection: AgentRuntimeSelection) =>
+      ipcRenderer.invoke(
+        ipcChannels.runtimeSettingsTest,
+        selection
       ) as Promise<AgentRuntimeStatus>
+  },
+  channels: {
+    getSnapshot: () =>
+      ipcRenderer.invoke(
+        ipcChannels.channelSettingsGet
+      ) as Promise<ChannelSettingsSnapshot>,
+    apply: (input: ChannelSettingsApply) =>
+      ipcRenderer.invoke(
+        ipcChannels.channelSettingsApply,
+        input
+      ) as Promise<ChannelSettingsSnapshot>,
+    testConnection: (
+      channel: ManagedChannel,
+      settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
+    ) =>
+      ipcRenderer.invoke(ipcChannels.channelSettingsTest, {
+        channel,
+        settings
+      }) as Promise<ChannelConnectionTestResult>
+  },
+  updates: {
+    getSettings: () =>
+      ipcRenderer.invoke(
+        ipcChannels.applicationSettingsGet
+      ) as Promise<ApplicationSettings>,
+    updateSettings: (input: ApplicationSettings) =>
+      ipcRenderer.invoke(
+        ipcChannels.applicationSettingsUpdate,
+        input
+      ) as Promise<ApplicationSettings>,
+    check: () =>
+      ipcRenderer.invoke(
+        ipcChannels.versionCheck
+      ) as Promise<VersionCheckResult>,
+    openReleasePage: async () => {
+      await ipcRenderer.invoke(ipcChannels.versionOpenReleasePage)
+    },
+    onResult: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        result: VersionCheckResult
+      ): void => listener(result)
+      ipcRenderer.on(ipcChannels.versionCheckResult, handler)
+      return () =>
+        ipcRenderer.removeListener(ipcChannels.versionCheckResult, handler)
+    }
+  },
+  speechModels: {
+    getSnapshot: () =>
+      ipcRenderer.invoke(
+        ipcChannels.speechModelsGet
+      ) as Promise<SpeechModelSnapshot>,
+    install: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechModelsInstall,
+        { modelId }
+      ) as Promise<SpeechModelSnapshot>,
+    cancel: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechModelsCancel,
+        { modelId }
+      ) as Promise<boolean>,
+    remove: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechModelsRemove,
+        { modelId }
+      ) as Promise<SpeechModelSnapshot>,
+    select: (modelId: string | null) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechModelsSelect,
+        { modelId }
+      ) as Promise<SpeechModelSnapshot>,
+    importLocalDirectory: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechModelsImportLocal,
+        { modelId }
+      ) as Promise<SpeechModelSnapshot | undefined>,
+    openRepository: async (modelId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.speechModelsOpenRepository,
+        { modelId }
+      )
+    },
+    openModelsDirectory: async () => {
+      await ipcRenderer.invoke(ipcChannels.speechModelsOpenDirectory)
+    }
+  },
+  speech: {
+    transcribe: (input: SpeechTranscriptionInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechTranscribe,
+        input
+      ) as Promise<SpeechTranscriptionResult>,
+    cancel: (requestId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechTranscriptionCancel,
+        requestId
+      ) as Promise<boolean>
+  },
+  embeddings: {
+    getSnapshot: () =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingSettingsGet
+      ) as Promise<EmbeddingSettingsSnapshot>,
+    diagnose: () =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingDiagnose
+      ) as Promise<EmbeddingDiagnosticResult>,
+    rebuild: () =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingIndexRebuild
+      ) as Promise<EmbeddingIndexStatus>,
+    cancel: (jobId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingIndexCancel,
+        { jobId }
+      ) as Promise<boolean>,
+    onStatus: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        status: EmbeddingIndexStatus
+      ): void => listener(status)
+      ipcRenderer.on(ipcChannels.embeddingIndexStatusChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.embeddingIndexStatusChanged,
+          handler
+        )
+    }
   },
   projects: {
     list: (includeArchived = false) =>

@@ -1,5 +1,6 @@
 import {
   CircleAlert,
+  Database,
   FlaskConical,
   Globe2,
   MonitorCog,
@@ -11,7 +12,9 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelTools } from '../../shared/builtin-model-tools'
 import type {
   CapabilityDiagnosticReport,
@@ -24,6 +27,7 @@ import type {
   McpTransport,
   RuntimeTarget
 } from '../../shared/capability-contracts'
+import { trapTabFocus } from './dialog-focus'
 
 const runtimeLabels: Record<RuntimeTarget, string> = {
   model: '模型',
@@ -101,6 +105,12 @@ export function McpSettingsSection(): React.JSX.Element {
   const [profileNames, setProfileNames] = useState<Record<string, string>>(
     {}
   )
+  const editorDialogRef = useRef<HTMLDivElement>(null)
+  const editorNameRef = useRef<HTMLInputElement>(null)
+  const editorTriggerRef = useRef<HTMLButtonElement | undefined>(
+    undefined
+  )
+  const editorOpen = Boolean(editor)
 
   useEffect(() => {
     void window.goodbuddy.capabilities
@@ -110,6 +120,16 @@ export function McpSettingsSection(): React.JSX.Element {
         setError(reason instanceof Error ? reason.message : '读取 MCP 设置失败')
       })
   }, [])
+
+  useEffect(() => {
+    if (!editorOpen) {
+      return
+    }
+    const frame = requestAnimationFrame(() =>
+      editorNameRef.current?.focus()
+    )
+    return () => cancelAnimationFrame(frame)
+  }, [editorOpen])
 
   const run = async (
     key: string,
@@ -173,7 +193,7 @@ export function McpSettingsSection(): React.JSX.Element {
     const secret: McpServerInput['secret'] = editor.clearToken
       ? { action: 'clear' }
       : editor.token.trim()
-        ? { action: 'replace', value: editor.token.trim() }
+        ? { action: 'replace', value: editor.token }
         : { action: 'keep' }
     const common = {
       name: editor.name,
@@ -202,7 +222,7 @@ export function McpSettingsSection(): React.JSX.Element {
       window.goodbuddy.capabilities.saveMcpServer(editor.id, input)
     )
     if (saved) {
-      setEditor(undefined)
+      closeEditor()
     }
   }
 
@@ -240,6 +260,37 @@ export function McpSettingsSection(): React.JSX.Element {
     })
   }
 
+  const openEditor = (
+    nextEditor: McpEditor,
+    trigger: HTMLButtonElement
+  ): void => {
+    editorTriggerRef.current = trigger
+    setError(undefined)
+    setEditor(nextEditor)
+  }
+
+  const closeEditor = (): void => {
+    if (busy === 'save') {
+      return
+    }
+    const trigger = editorTriggerRef.current
+    editorTriggerRef.current = undefined
+    setError(undefined)
+    setEditor(undefined)
+    requestAnimationFrame(() => trigger?.focus())
+  }
+
+  const handleEditorKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>
+  ): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeEditor()
+      return
+    }
+    trapTabFocus(event, editorDialogRef.current)
+  }
+
   const computerCapabilities = snapshot?.computerCapabilities ?? []
   const browserProfiles = snapshot?.browserProfiles ?? {
     profiles: [],
@@ -252,12 +303,14 @@ export function McpSettingsSection(): React.JSX.Element {
         <Network size={17} />
         <div>
           <strong>工具与 MCP</strong>
-          <small>查看直连模型内置工具并管理外部 MCP Server</small>
+          <small>查看内置工具、内置 MCP 并管理外部 MCP Server</small>
         </div>
         <button
           className="secondary-button"
           disabled={Boolean(busy) || Boolean(editor)}
-          onClick={() => setEditor({ ...emptyEditor })}
+          onClick={(event) =>
+            openEditor({ ...emptyEditor }, event.currentTarget)
+          }
           type="button"
         >
           <Plus size={14} />
@@ -271,7 +324,7 @@ export function McpSettingsSection(): React.JSX.Element {
         当前版本仅由直连模型在 Execute 模式加载这些工具，并在每次调用前请求
         GoodBuddy 审批。
       </p>
-      {error && <p className="settings-warning">{error}</p>}
+      {error && !editor && <p className="settings-warning">{error}</p>}
 
       <section
         aria-labelledby="computer-capabilities-heading"
@@ -513,6 +566,45 @@ export function McpSettingsSection(): React.JSX.Element {
         </div>
       </section>
 
+      <section
+        aria-labelledby="builtin-mcp-heading"
+        className="mcp-tool-section"
+      >
+        <div className="mcp-subsection-heading">
+          <div>
+            <Database size={15} />
+            <strong id="builtin-mcp-heading">GoodBuddy 内置 MCP</strong>
+          </div>
+          <small>{builtinMcpServers.length} 个</small>
+        </div>
+        <p className="settings-notice">
+          内置 MCP 由 GoodBuddy 在主进程按当前对话签发短期权限，不公开服务地址或凭据。
+        </p>
+        <div className="capability-list capability-list--tools">
+          {builtinMcpServers.map((server) => (
+            <article className="capability-card" key={server.id}>
+              <div className="capability-card__header">
+                <div>
+                  <strong>{server.name}</strong>
+                  <small>只读 · 按对话授权</small>
+                </div>
+                <span className="builtin-tool-badge">内置 MCP</span>
+              </div>
+              <p>{server.description}</p>
+              <code>{server.tools.join('、')}</code>
+              <div className="runtime-assignments">
+                <small>可用于：</small>
+                <span>
+                  {server.assignments
+                    .map((target) => runtimeLabels[target])
+                    .join('、')}
+                </span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <div className="mcp-tool-section">
         <div className="mcp-subsection-heading">
           <div>
@@ -541,25 +633,50 @@ export function McpSettingsSection(): React.JSX.Element {
         </div>
       </div>
 
-      {editor && (
-        <div className="mcp-editor">
-          <div className="mcp-editor__header">
-            <strong>{editor.id ? '编辑 MCP Server' : '添加 MCP Server'}</strong>
+      {editor &&
+        createPortal(
+          <div
+            className="mcp-editor-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                closeEditor()
+              }
+            }}
+          >
+            <div
+              aria-labelledby="mcp-editor-title"
+              aria-modal="true"
+              className="mcp-editor"
+              onKeyDown={handleEditorKeyDown}
+              ref={editorDialogRef}
+              role="dialog"
+            >
+            <div className="mcp-editor__header">
+            <strong id="mcp-editor-title">
+              {editor.id ? '编辑 MCP Server' : '添加 MCP Server'}
+            </strong>
             <button
               aria-label="关闭 MCP 编辑器"
               className="icon-button"
-              onClick={() => setEditor(undefined)}
+              disabled={busy === 'save'}
+              onClick={closeEditor}
               type="button"
             >
               <X size={16} />
             </button>
           </div>
+          {error && (
+            <p className="settings-warning" role="alert">
+              {error}
+            </p>
+          )}
           <label className="field">
             <span>名称</span>
             <input
               onChange={(event) =>
                 setEditor({ ...editor, name: event.target.value })
               }
+              ref={editorNameRef}
               value={editor.name}
             />
           </label>
@@ -702,7 +819,8 @@ export function McpSettingsSection(): React.JSX.Element {
           <div className="mcp-editor__actions">
             <button
               className="secondary-button"
-              onClick={() => setEditor(undefined)}
+              disabled={busy === 'save'}
+              onClick={closeEditor}
               type="button"
             >
               取消
@@ -716,8 +834,10 @@ export function McpSettingsSection(): React.JSX.Element {
               {busy === 'save' ? '保存中…' : '保存 MCP Server'}
             </button>
           </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body
+        )}
 
       <div className="mcp-subsection-heading">
         <div>
@@ -759,7 +879,12 @@ export function McpSettingsSection(): React.JSX.Element {
                   <button
                     aria-label={`编辑 ${server.name}`}
                     disabled={Boolean(busy) || Boolean(editor)}
-                    onClick={() => setEditor(editorFromServer(server))}
+                    onClick={(event) =>
+                      openEditor(
+                        editorFromServer(server),
+                        event.currentTarget
+                      )
+                    }
                     type="button"
                   >
                     <Pencil size={13} />

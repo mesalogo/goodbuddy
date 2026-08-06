@@ -13,6 +13,18 @@ import type {
   BrowserLiveState,
   DesktopApi
 } from '../../shared/contracts'
+
+const speechRecognitionMocks = vi.hoisted(() => ({
+  startPcmRecording: vi.fn()
+}))
+
+vi.mock('./speech-recognition', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('./speech-recognition')
+  >()),
+  startPcmRecording: speechRecognitionMocks.startPcmRecording
+}))
+
 import App from './App'
 
 let agentListener: ((event: AgentEvent) => void) | undefined
@@ -41,7 +53,7 @@ const api: DesktopApi = {
       version: '0.1.0',
       platform: 'win32',
       arch: 'x64',
-      shortcut: 'CommandOrControl+Shift+Space'
+      shortcut: 'Ctrl+Shift+Space'
     })),
     show: vi.fn(async () => {}),
     hide: vi.fn(async () => {}),
@@ -89,6 +101,10 @@ const api: DesktopApi = {
       }
     })
   },
+  speech: {
+    transcribe: vi.fn(async () => ({ text: '本地语音结果' })),
+    cancel: vi.fn(async () => true)
+  },
   settings: {
     getRuntime: vi.fn<DesktopApi['settings']['getRuntime']>(async () => ({
       provider: 'auto',
@@ -106,6 +122,7 @@ const api: DesktopApi = {
       continueMode: 'chat',
       runtimeSandboxMode: 'auto',
       subagentSmartRoutingEnabled: false,
+      intranetCompatibilityEnabled: true,
       knowledgeEmbeddingEnabled: false,
       knowledgeEmbeddingBaseUrl:
         'http://127.0.0.1:11434/v1/embeddings',
@@ -129,8 +146,14 @@ const api: DesktopApi = {
         }
       ],
       defaultModelProfileId: modelProfileId,
-      opencodeModelSource: { kind: 'platform' },
-      continueModelSource: { kind: 'platform' },
+      opencodeModelSource: {
+        kind: 'profile',
+        profileId: modelProfileId
+      },
+      continueModelSource: {
+        kind: 'profile',
+        profileId: modelProfileId
+      },
       secureStorageAvailable: true,
       toolApproval: 'always'
     })),
@@ -152,6 +175,8 @@ const api: DesktopApi = {
         runtimeSandboxMode: input.runtimeSandboxMode,
         subagentSmartRoutingEnabled:
           input.subagentSmartRoutingEnabled ?? false,
+        intranetCompatibilityEnabled:
+          input.intranetCompatibilityEnabled ?? true,
         knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,
         knowledgeEmbeddingBaseUrl: input.knowledgeEmbeddingBaseUrl,
         knowledgeEmbeddingModel: input.knowledgeEmbeddingModel,
@@ -211,6 +236,16 @@ const api: DesktopApi = {
       }
     })),
     selectRuntimeFile: vi.fn(async () => undefined),
+    openRuntimeConfig: vi.fn(async () => {}),
+    testModelConnection: vi.fn<
+      DesktopApi['settings']['testModelConnection']
+    >(async () => ({
+      id: 'model',
+      label: 'sonnet-5',
+      available: true,
+      supportsToolExecution: true,
+      detail: 'Ready'
+    })),
     testRuntime: vi.fn<DesktopApi['settings']['testRuntime']>(
       async () => ({
         id: 'model',
@@ -455,6 +490,26 @@ describe('App', () => {
     newConversationListener = undefined
     browserListener = undefined
     maximizedChangedListener = undefined
+    speechRecognitionMocks.startPcmRecording.mockResolvedValue({
+      result: Promise.resolve({
+        audio: new Float32Array([0, 0.25, -0.25]).buffer,
+        sampleRate: 16_000
+      }),
+      stop: vi.fn(),
+      cancel: vi.fn()
+    })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn() }
+    })
+    Object.defineProperty(window, 'AudioContext', {
+      configurable: true,
+      value: class AudioContextMock {}
+    })
+    vi.mocked(api.speech!.transcribe).mockResolvedValue({
+      text: '本地语音结果'
+    })
+    vi.mocked(api.speech!.cancel).mockResolvedValue(true)
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: 'model',
       label: 'sonnet-5',
@@ -510,7 +565,42 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('uses local transcription when Electron has no Web Speech API', async () => {
+    Object.defineProperty(window, 'SpeechRecognition', {
+      configurable: true,
+      value: undefined
+    })
+    Object.defineProperty(window, 'webkitSpeechRecognition', {
+      configurable: true,
+      value: undefined
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByLabelText('语音输入'))
+
+    await waitFor(() =>
+      expect(api.speech?.transcribe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sampleRate: 16_000,
+          audio: expect.any(ArrayBuffer)
+        })
+      )
+    )
+    expect(await screen.findByDisplayValue('本地语音结果')).toBeInTheDocument()
+    expect(
+      screen.getByText(/快捷唤起：Ctrl\+Shift\+Space/)
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/CommandOrControl/)
+    ).not.toBeInTheDocument()
+  })
+
   it('keeps conversation actions in the conversation list', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
     const { container } = render(<App />)
     const topbar = container.querySelector<HTMLElement>('.topbar')
     const conversationList =
@@ -586,6 +676,7 @@ describe('App', () => {
         name: '复制完整会话'
       })
     )
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce())
     expect(await screen.findByRole('status')).toBeVisible()
   })
 
@@ -601,6 +692,10 @@ describe('App', () => {
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
     const request = run.mock.calls[0]?.[0]
     expect(request?.prompt).toBe('帮我分析项目')
+    expect(request?.runtimeSelection).toEqual({
+      provider: 'model',
+      profileId: modelProfileId
+    })
     const userMessage = screen
       .getAllByText('帮我分析项目')
       .map((element) => element.closest('article'))
@@ -631,6 +726,95 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
+  it('submits knowledge scope without eager search or prompt injection and merges runtime references', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
+      libraries: [
+        {
+          id: libraryId,
+          name: '产品知识',
+          description: '',
+          storageMode: 'managed',
+          graphEnabled: false,
+          graphStrategy: 'rules',
+          sourceCount: 1,
+          documentCount: 1,
+          indexedDocumentCount: 1
+        }
+      ],
+      sources: [],
+      documents: [],
+      graphNodes: [],
+      graphRelations: [],
+      evidence: []
+    })
+    render(<App />)
+    await screen.findByText('知识库 1')
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '发布流程是什么？' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    expect(request).toMatchObject({
+      prompt: '发布流程是什么？',
+      knowledgeLibraryIds: [libraryId]
+    })
+    expect(api.knowledge.search).not.toHaveBeenCalled()
+    expect(
+      screen.queryByText(/查看 \d+ 条证据引用/u)
+    ).not.toBeInTheDocument()
+
+    act(() => {
+      if (!request) {
+        throw new Error('Missing request')
+      }
+      for (let batch = 0; batch < 5; batch += 1) {
+        agentListener?.({
+          requestId: request.requestId,
+          type: 'source-references',
+          references: Array.from({ length: 25 }, (_, index) => ({
+            libraryId,
+            libraryName: '产品知识',
+            documentId: crypto.randomUUID(),
+            documentName: `发布手册 ${batch}-${index}`,
+            sourceName: `release-${batch}-${index}.md`,
+            locator: `第 ${batch}-${index} 节`,
+            snippet: `证据 ${batch}-${index}`,
+            rank: index + 1
+          }))
+        })
+      }
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+    expect(
+      await screen.findByText('查看 20 条证据引用')
+    ).toBeInTheDocument()
+    await waitFor(
+      () => {
+        const persistedMessages = vi
+          .mocked(api.conversations.replace)
+          .mock.calls.flatMap(([conversations]) =>
+            conversations.flatMap((conversation) => conversation.messages)
+          )
+        const persisted = persistedMessages
+          .filter((message) => message.role === 'assistant')
+          .slice()
+          .reverse()
+          .find(
+            (message) => message.sourceReferences?.length === 20
+          )
+        expect(persisted?.sourceReferences).toHaveLength(20)
+        expect(persisted?.sources).toHaveLength(100)
+      },
+      { timeout: 2_000 }
+    )
+  })
+
   it('keeps a running response visible when cancellation fails', async () => {
     vi.mocked(api.agent.cancel).mockRejectedValueOnce(
       new Error('cancel failed')
@@ -652,6 +836,23 @@ describe('App', () => {
       await screen.findByText(/停止生成失败，请重试/u)
     ).toBeInTheDocument()
     expect(screen.getByLabelText('停止生成')).toBeInTheDocument()
+    vi.useFakeTimers()
+    try {
+      act(() => vi.advanceTimersByTime(10_000))
+      expect(
+        screen.getByText(/停止生成失败，请重试/u)
+      ).toBeInTheDocument()
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: '关闭通知'
+        })
+      )
+      expect(
+        screen.queryByText(/停止生成失败，请重试/u)
+      ).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps sent documents and images in conversation history', async () => {
@@ -1256,7 +1457,7 @@ describe('App', () => {
     ['opencode', 'OpenCode'],
     ['continue', 'Continue CLI']
   ] as const)(
-    'locks %s to Execute and submits without a mode choice',
+    'lets %s select Ask or Execute',
     async (runtimeId, label) => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: runtimeId,
@@ -1268,14 +1469,15 @@ describe('App', () => {
     render(<App />)
 
     const mode = await screen.findByLabelText('工作模式')
-    expect(mode).toHaveValue('execute')
-    expect(mode).toBeDisabled()
+    expect(mode).toHaveValue('ask')
+    expect(mode).toBeEnabled()
     expect(mode.closest('.composer')).not.toBeNull()
     expect(
       await screen.findByText(
-        new RegExp(`${label} 固定为 Execute.*不会弹出 GoodBuddy 审批`)
+        new RegExp(`${label} Ask 模式.*只允许搜索当前启用的知识库`)
       )
     ).toBeInTheDocument()
+    fireEvent.change(mode, { target: { value: 'execute' } })
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '执行任务' }
@@ -1294,6 +1496,13 @@ describe('App', () => {
   )
 
   it('restores the direct-model mode after leaving an Agent Runtime', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'opencode',
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: 'platform' }
+    })
     vi.mocked(api.agent.getStatus)
       .mockResolvedValueOnce({
         id: 'opencode',
@@ -1312,12 +1521,16 @@ describe('App', () => {
     render(<App />)
 
     const mode = await screen.findByLabelText('工作模式')
+    expect(mode).toHaveValue('ask')
+    expect(mode).toBeEnabled()
+    fireEvent.change(mode, { target: { value: 'execute' } })
     expect(mode).toHaveValue('execute')
-    expect(mode).toBeDisabled()
 
     fireEvent.click(await screen.findByRole('button', { name: /OpenCode/u }))
     fireEvent.click(
-      screen.getByRole('menuitemradio', { name: /默认模型/u })
+      screen.getByRole('menuitemradio', {
+        name: /^默认模型.*sonnet-5$/u
+      })
     )
 
     await waitFor(() => {
@@ -1428,24 +1641,598 @@ describe('App', () => {
     expect(
       await screen.findByRole('menu', { name: 'Runtime 和模型' })
     ).toBeInTheDocument()
-
+    expect(
+      screen.queryByText('自动选择')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitemradio', {
+        name: /^默认模型.*sonnet-5$/u
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitemradio', {
+        name: /^OpenCode · 默认模型.*sonnet-5$/u
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitemradio', {
+        name: /^Continue · 默认模型.*sonnet-5$/u
+      })
+    ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('menuitemradio', {
-        name: /默认模型.*sonnet-5/u
+        name: /^默认模型.*sonnet-5$/u
       })
     )
 
     await waitFor(() =>
-      expect(api.settings.updateRuntime).toHaveBeenCalledWith(
-        expect.objectContaining({
-          provider: 'model',
-          defaultModelProfileId: modelProfileId
-        })
-      )
+      expect(api.agent.getStatus).toHaveBeenLastCalledWith({
+        provider: 'model',
+        profileId: modelProfileId
+      })
     )
+    expect(api.settings.updateRuntime).not.toHaveBeenCalled()
     expect(
       screen.queryByRole('heading', { name: '设置中心' })
     ).not.toBeInTheDocument()
+  })
+
+  it('shows Runtime switches globally without replacing composer guidance', async () => {
+    render(<App />)
+    const runtimeButton = await screen.findByRole('button', {
+      name: /sonnet-5/u
+    })
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(runtimeButton)
+      fireEvent.click(
+        screen.getByRole('menuitemradio', {
+          name: /^OpenCode · 默认模型.*sonnet-5$/u
+        })
+      )
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const notification = screen.getByRole('status')
+      expect(notification).toHaveTextContent(
+        '当前对话已切换到 OpenCode · 默认模型'
+      )
+      expect(screen.getByText(/Ask 模式：只读问答/)).toBeInTheDocument()
+
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: /OpenCode · 默认模型/u
+        })
+      )
+      fireEvent.click(
+        screen.getByRole('menuitemradio', {
+          name: /^Continue · 默认模型.*sonnet-5$/u
+        })
+      )
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(screen.getAllByRole('status')).toHaveLength(1)
+      expect(screen.getByRole('status')).toHaveTextContent(
+        '当前对话已切换到 Continue · 默认模型'
+      )
+
+      act(() => vi.advanceTimersByTime(4_500))
+      expect(
+        screen.queryByText(
+          '当前对话已切换到 Continue · 默认模型'
+        )
+      ).not.toBeInTheDocument()
+      expect(screen.getByText(/Ask 模式：只读问答/)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows one configured choice per Agent Runtime in a flat keyboard menu', async () => {
+    const settings = await api.settings.getRuntime()
+    const secondProfileId =
+      '00000000-0000-4000-8000-000000000002'
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'model',
+      modelProfiles: [
+        ...settings.modelProfiles,
+        {
+          id: secondProfileId,
+          name: '第二模型',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          protocol: 'openai-chat-completions',
+          authentication: 'none',
+          imageGenerationQuality: 'auto',
+          apiKeyConfigured: false,
+          credentialSource: 'none'
+        }
+      ]
+    })
+    render(<App />)
+
+    const runtimeButton = await screen.findByRole('button', {
+      name: /sonnet-5/u
+    })
+    fireEvent.click(runtimeButton)
+    const runtimeMenu = screen.getByRole('menu', {
+      name: 'Runtime 和模型'
+    })
+    const directModel = screen.getByRole('menuitemradio', {
+      name: /^默认模型.*sonnet-5$/u
+    })
+    const secondDirectModel = screen.getByRole('menuitemradio', {
+      name: /^第二模型.*qwen3$/u
+    })
+    const openCodeModel = screen.getByRole('menuitemradio', {
+      name: /^OpenCode · 默认模型.*sonnet-5$/u
+    })
+    const continueModel = screen.getByRole('menuitemradio', {
+      name: /^Continue · 默认模型.*sonnet-5$/u
+    })
+    expect(directModel).toBeEnabled()
+    expect(secondDirectModel).toBeEnabled()
+    expect(openCodeModel).toBeEnabled()
+    expect(continueModel).toBeEnabled()
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(4)
+    expect(within(runtimeMenu).getAllByRole('separator')).toHaveLength(3)
+    expect(within(runtimeMenu).queryByRole('menu')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitemradio', {
+        name: /^OpenCode · 第二模型/u
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitemradio', {
+        name: /^Continue · 第二模型/u
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitem', { name: /Agent Runtime/u })
+    ).not.toBeInTheDocument()
+
+    await waitFor(() => expect(directModel).toHaveFocus())
+    expect(directModel).toHaveAttribute('tabindex', '0')
+    expect(secondDirectModel).toHaveAttribute('tabindex', '-1')
+    fireEvent.keyDown(directModel, { key: 'ArrowDown' })
+    expect(secondDirectModel).toHaveFocus()
+    expect(directModel).toHaveAttribute('tabindex', '-1')
+    expect(secondDirectModel).toHaveAttribute('tabindex', '0')
+    fireEvent.keyDown(secondDirectModel, { key: 'ArrowDown' })
+    expect(openCodeModel).toHaveFocus()
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(runtimeButton).toHaveFocus()
+    expect(
+      screen.queryByRole('menu', { name: 'Runtime 和模型' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(runtimeButton)
+    fireEvent.click(
+      screen.getByRole('menuitemradio', {
+        name: /^OpenCode · 默认模型.*sonnet-5$/u
+      })
+    )
+    expect(runtimeButton).toHaveFocus()
+    await waitFor(() =>
+      expect(api.agent.getStatus).toHaveBeenLastCalledWith({
+        provider: 'opencode',
+        profileId: modelProfileId
+      })
+    )
+
+    const selectedRuntimeButton = await screen.findByRole('button', {
+      name: /OpenCode · 默认模型/u
+    })
+    fireEvent.click(selectedRuntimeButton)
+    const selectedOpenCodeModel = screen.getByRole('menuitemradio', {
+      name: /^OpenCode · 默认模型.*sonnet-5$/u
+    })
+    await waitFor(() => expect(selectedOpenCodeModel).toHaveFocus())
+    expect(selectedOpenCodeModel).toHaveAttribute('aria-checked', 'true')
+    expect(selectedOpenCodeModel).toHaveAttribute('tabindex', '0')
+    fireEvent.click(
+      screen.getByRole('menuitemradio', {
+        name: /^Continue · 默认模型.*sonnet-5$/u
+      })
+    )
+    await waitFor(() =>
+      expect(api.agent.getStatus).toHaveBeenLastCalledWith({
+        provider: 'continue',
+        profileId: modelProfileId
+      })
+    )
+  })
+
+  it('dismisses the Runtime menu on outside pointer and focus changes', async () => {
+    render(<App />)
+
+    const runtimeButton = await screen.findByRole('button', {
+      name: /sonnet-5/u
+    })
+    const composer = screen.getByLabelText('向 GoodBuddy 提问')
+
+    fireEvent.click(runtimeButton)
+    expect(
+      screen.getByRole('menu', { name: 'Runtime 和模型' })
+    ).toBeInTheDocument()
+    fireEvent.pointerDown(composer)
+    expect(
+      screen.queryByRole('menu', { name: 'Runtime 和模型' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(runtimeButton)
+    const selectedModel = screen.getByRole('menuitemradio', {
+      name: /^默认模型.*sonnet-5$/u
+    })
+    await waitFor(() => expect(selectedModel).toHaveFocus())
+    fireEvent.keyDown(selectedModel, { key: 'Tab' })
+    composer.focus()
+    expect(composer).toHaveFocus()
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('menu', { name: 'Runtime 和模型' })
+      ).not.toBeInTheDocument()
+    )
+  })
+
+  it('labels explicitly configured Runtime-owned model sources', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'model',
+      opencodeModelSource: { kind: 'platform' },
+      continueModelSource: { kind: 'platform' }
+    })
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /sonnet-5/u })
+    )
+    expect(
+      screen.getByRole('menuitemradio', {
+        name: /^OpenCode · 自身配置.*使用 OpenCode 自身配置$/u
+      })
+    ).toBeInTheDocument()
+    const continueChoice = screen.getByRole('menuitemradio', {
+      name: /^Continue · 自身配置.*使用 Continue 自身配置$/u
+    })
+    fireEvent.click(continueChoice)
+    await waitFor(() =>
+      expect(api.agent.getStatus).toHaveBeenLastCalledWith({
+        provider: 'continue'
+      })
+    )
+  })
+
+  it('normalizes a legacy Auto conversation to the explicit default Runtime', async () => {
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000020',
+        runtimeSelection: { provider: 'auto' },
+        title: '旧自动对话',
+        updatedAt: 1,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000021',
+            role: 'assistant',
+            content: '旧消息',
+            createdAt: 1,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    render(<App />)
+
+    expect(
+      await screen.findByRole('button', { name: /默认模型.*sonnet-5/u })
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.conversations.replace).toHaveBeenLastCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: '00000000-0000-4000-8000-000000000020',
+            runtimeSelection: {
+              provider: 'model',
+              profileId: modelProfileId
+            }
+          })
+        ])
+      )
+    )
+  })
+
+  it('rebinds a loaded conversation when its model profile was removed', async () => {
+    const removedProfileId =
+      '00000000-0000-4000-8000-000000000099'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000022',
+        runtimeSelection: {
+          provider: 'model',
+          profileId: removedProfileId
+        },
+        title: '旧模型对话',
+        updatedAt: 1,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000023',
+            role: 'assistant',
+            content: '旧消息',
+            createdAt: 1,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    render(<App />)
+
+    expect(
+      await screen.findByRole('button', { name: /默认模型.*sonnet-5/u })
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.conversations.replace).toHaveBeenLastCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: '00000000-0000-4000-8000-000000000022',
+            runtimeSelection: {
+              provider: 'model',
+              profileId: modelProfileId
+            }
+          })
+        ])
+      )
+    )
+  })
+
+  it('keeps model Runtime selection scoped to its conversation', async () => {
+    const secondProfileId =
+      '00000000-0000-4000-8000-000000000002'
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      modelProfiles: [
+        ...settings.modelProfiles,
+        {
+          id: secondProfileId,
+          name: '第二模型',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          protocol: 'openai-chat-completions',
+          authentication: 'none',
+          imageGenerationQuality: 'auto',
+          apiKeyConfigured: false,
+          credentialSource: 'none'
+        }
+      ]
+    })
+    vi.mocked(api.agent.getStatus).mockImplementation(
+      async (selection) => ({
+        id: 'model',
+        label:
+          selection?.provider === 'model' &&
+          selection.profileId === secondProfileId
+            ? 'qwen3'
+            : 'sonnet-5',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      })
+    )
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /sonnet-5/u })
+    )
+    fireEvent.click(
+      screen.getByRole('menuitemradio', {
+        name: /^第二模型.*qwen3$/u
+      })
+    )
+    expect(
+      await screen.findByRole('button', { name: /第二模型/u })
+    ).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '第二模型对话' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    expect(request?.runtimeSelection).toEqual({
+      provider: 'model',
+      profileId: secondProfileId
+    })
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /新建对话/u })
+    )
+    expect(
+      await screen.findByRole('button', { name: /默认模型/u })
+    ).toBeInTheDocument()
+    const previousConversation = screen
+      .getAllByText('第二模型对话')
+      .map((element) => element.closest('button'))
+      .find((button) => button?.classList.contains('conversation-item'))
+    if (!previousConversation) {
+      throw new Error('Missing previous conversation')
+    }
+    fireEvent.click(previousConversation)
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /第二模型/u })
+          .find((button) => button.classList.contains('model-button'))
+      ).toBeInTheDocument()
+    )
+
+    await waitFor(
+      () =>
+        expect(api.conversations.replace).toHaveBeenLastCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({
+              title: '第二模型对话',
+              runtimeSelection: {
+                provider: 'model',
+                profileId: secondProfileId
+              }
+            })
+          ])
+        ),
+      { timeout: 2_000 }
+    )
+  })
+
+  it('ignores a stale picker status after rapidly changing conversations', async () => {
+    const secondProfileId =
+      '00000000-0000-4000-8000-000000000002'
+    const thirdProfileId =
+      '00000000-0000-4000-8000-000000000003'
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      modelProfiles: [
+        ...settings.modelProfiles,
+        {
+          id: secondProfileId,
+          name: '第二模型',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          protocol: 'openai-chat-completions',
+          authentication: 'none',
+          imageGenerationQuality: 'auto',
+          apiKeyConfigured: false,
+          credentialSource: 'none'
+        },
+        {
+          id: thirdProfileId,
+          name: '第三模型',
+          baseUrl: 'http://127.0.0.1:11435/v1',
+          modelName: 'llama3',
+          protocol: 'openai-chat-completions',
+          authentication: 'none',
+          imageGenerationQuality: 'auto',
+          apiKeyConfigured: false,
+          credentialSource: 'none'
+        }
+      ]
+    })
+    let resolveThird!: (status: {
+      id: 'model'
+      label: string
+      available: boolean
+      supportsToolExecution: boolean
+      detail: string
+    }) => void
+    const thirdStatus = new Promise<{
+      id: 'model'
+      label: string
+      available: boolean
+      supportsToolExecution: boolean
+      detail: string
+    }>((resolve) => {
+      resolveThird = resolve
+    })
+    vi.mocked(api.agent.getStatus).mockImplementation(async (selection) => {
+      if (
+        selection?.provider === 'model' &&
+        selection.profileId === thirdProfileId
+      ) {
+        return thirdStatus
+      }
+      return {
+        id: 'model',
+        label:
+          selection?.provider === 'model' &&
+          selection.profileId === secondProfileId
+            ? 'qwen3'
+            : 'sonnet-5',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      }
+    })
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /sonnet-5/u })
+    )
+    fireEvent.click(
+      screen.getByRole('menuitemradio', {
+        name: /^第二模型.*qwen3$/u
+      })
+    )
+    await screen.findByRole('button', { name: /第二模型/u })
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '保留第二模型会话' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({ requestId: request.requestId, type: 'done' })
+    })
+
+    const secondModelButton = screen
+      .getAllByRole('button', { name: /第二模型/u })
+      .find((button) => button.classList.contains('model-button'))
+    if (!secondModelButton) {
+      throw new Error('Missing second model picker')
+    }
+    fireEvent.click(secondModelButton)
+    fireEvent.click(
+      screen.getByRole('menuitemradio', {
+        name: /^第三模型.*llama3$/u
+      })
+    )
+    await waitFor(() =>
+      expect(api.agent.getStatus).toHaveBeenCalledWith({
+        provider: 'model',
+        profileId: thirdProfileId
+      })
+    )
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '状态未完成时不能发送' }
+    })
+    expect(screen.getByLabelText('发送')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: /新建对话/u }))
+    await screen.findByRole('button', { name: /默认模型/u })
+
+    await act(async () => {
+      resolveThird({
+        id: 'model',
+        label: 'llama3',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      })
+      await thirdStatus
+    })
+    expect(
+      screen.getByRole('button', { name: /默认模型/u })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /第三模型/u })
+    ).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '新对话仍可发送' }
+    })
+    await waitFor(() => expect(screen.getByLabelText('发送')).toBeEnabled())
   })
 
   it('opens project creation as an unobscured dialog', async () => {

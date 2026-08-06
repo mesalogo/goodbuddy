@@ -14,9 +14,18 @@ import { dirname, join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
 import {
   createAgentRuntime,
-  createDefaultModelRuntime
+  createDefaultModelRuntime,
+  createModelProfileRuntime
 } from './agent/create-runtime'
 import { AgentRuntimeController } from './agent/runtime-controller'
+import type { AgentRuntime } from './agent/runtime'
+import { SelectedRuntimeManager } from './agent/selected-runtime-manager'
+import { KnowledgeMcpGateway } from './agent/knowledge-mcp-gateway'
+import {
+  applyRuntimeSelection,
+  getConfiguredRuntimeTarget,
+  type SelectedRuntimeTarget
+} from './agent/runtime-selection'
 import { CapabilityService } from './capabilities/capability-service'
 import { ContextManager } from './context-manager'
 import { registerIpcHandlers } from './ipc'
@@ -42,6 +51,16 @@ import type {
 import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
 import { SubagentService } from './assistant/subagent-service'
+import { ChannelSettingsStore } from './channels/channel-settings-store'
+import { ApplicationSettingsStore } from './application-settings-store'
+import { VersionChecker } from './version-checker'
+import { SpeechModelManager } from './speech/speech-model-manager'
+import { SpeechTranscriptionService } from './speech/speech-transcription-service'
+import { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinator'
+import { KnowledgeEmbeddingIndexRepository } from './knowledge/knowledge-embedding-index-repository'
+import { GlobalTlsPolicy } from './global-tls-policy'
+import { setIntranetCompatibilityReader } from './intranet-compatibility-policy'
+import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const portableUserDataPath = resolvePortableUserDataPath({
@@ -66,9 +85,15 @@ let tray: Tray | undefined
 let isQuitting = false
 let removeIpcHandlers: (() => Promise<void>) | undefined
 let runtime: AgentRuntimeController | undefined
+let selectedRuntimeManager: SelectedRuntimeManager | undefined
 let knowledgeService: KnowledgeService | undefined
+let knowledgeGateway: KnowledgeMcpGateway | undefined
 let assistantDatabase: AssistantDatabase | undefined
 let browserService: BrowserService | undefined
+let globalTlsPolicy: GlobalTlsPolicy | undefined
+let intranetCompatibilityEnabled = true
+
+setIntranetCompatibilityReader(() => intranetCompatibilityEnabled)
 
 function createEmbeddingProvider(
   settings: ResolvedRuntimeSettings
@@ -80,6 +105,31 @@ function createEmbeddingProvider(
         apiKey: settings.knowledgeEmbeddingApiKey
       })
     : undefined
+}
+
+function createSubagentProfileRuntimes(
+  defaultWorkspace: string,
+  settings: ResolvedRuntimeSettings
+): ReadonlyMap<string, AgentRuntime> {
+  return new Map(
+    settings.modelProfiles
+      .filter(
+        (profile) =>
+          profile.id !== settings.defaultModelProfileId &&
+          profile.protocol !== 'openai-images-generations'
+      )
+      .map(
+        (profile) =>
+          [
+            profile.id,
+            createModelProfileRuntime(
+              defaultWorkspace,
+              settings,
+              profile
+            )
+          ] as const
+      )
+  )
 }
 
 const launchContinueHost: ContinueHostLauncher = (
@@ -226,6 +276,11 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'runtime-settings.json'),
       secureCipher
     )
+    const initialSettings = await settingsStore.getResolvedSettings()
+    intranetCompatibilityEnabled =
+      initialSettings.intranetCompatibilityEnabled
+    globalTlsPolicy = new GlobalTlsPolicy(app)
+    globalTlsPolicy.apply(intranetCompatibilityEnabled)
     const capabilityService = new CapabilityService(
       join(app.getPath('userData'), 'capabilities.json'),
       app.isPackaged
@@ -233,6 +288,26 @@ if (hasSingleInstanceLock) {
         : join(app.getAppPath(), 'resources', 'skills'),
       join(app.getPath('userData'), 'skills', 'imported'),
       secureCipher
+    )
+    const channelSettingsStore = new ChannelSettingsStore(
+      join(app.getPath('userData'), 'channel-settings.json'),
+      secureCipher
+    )
+    const applicationSettingsStore = new ApplicationSettingsStore(
+      join(app.getPath('userData'), 'application-settings.json')
+    )
+    const versionChecker = new VersionChecker({
+      fetch: globalThis.fetch,
+      currentVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch
+    })
+    const speechModelManager = new SpeechModelManager({
+      userDataDirectory: app.getPath('userData'),
+      fetch: globalThis.fetch
+    })
+    const speechTranscriptionService = new SpeechTranscriptionService(
+      speechModelManager
     )
     browserService = new BrowserService()
     const bundledRuntimePaths = resolveBundledRuntimePaths({
@@ -246,6 +321,12 @@ if (hasSingleInstanceLock) {
       extractStructured: createModelGraphExtractor(settingsStore)
     })
     await knowledgeService.initialize()
+    knowledgeGateway = new KnowledgeMcpGateway(knowledgeService)
+    await knowledgeGateway.start()
+    const embeddingIndexCoordinator = new EmbeddingIndexCoordinator(
+      new KnowledgeEmbeddingIndexRepository(knowledgeService.database)
+    )
+    await embeddingIndexCoordinator.initialize()
     void knowledgeService
       .setEmbeddingProvider(
         createEmbeddingProvider(await settingsStore.getResolvedSettings())
@@ -256,26 +337,18 @@ if (hasSingleInstanceLock) {
     )
     assistantDatabase.initialize(defaultWorkspace)
     const subagentService = new SubagentService(
-      createDefaultModelRuntime(
+      createDefaultModelRuntime(defaultWorkspace, initialSettings),
+      assistantDatabase,
+      undefined,
+      createSubagentProfileRuntimes(
         defaultWorkspace,
-        await settingsStore.getResolvedSettings()
-      ),
-      assistantDatabase
+        initialSettings
+      )
     )
-    const createConfiguredRuntime = async () => {
-      const settings = await settingsStore.getResolvedSettings()
-      const useOpenCode =
-        settings.provider === 'opencode' ||
-        (settings.provider === 'auto' &&
-          Boolean(
-            settings.opencodeBaseUrl || settings.opencodeEmbedded
-          ))
-      const target =
-        settings.provider === 'continue'
-          ? ('continue' as const)
-          : useOpenCode
-            ? ('opencode' as const)
-            : ('model' as const)
+    const createRuntimeWithCapabilities = async (
+      settings: ResolvedRuntimeSettings,
+      target: SelectedRuntimeTarget
+    ): Promise<AgentRuntime> => {
       const [skillInstructions, mcpServers, browserCapability] =
         await Promise.all([
           capabilityService.getSkillInstructions(
@@ -303,11 +376,34 @@ if (hasSingleInstanceLock) {
         browserService:
           browserCapability?.enabled && browserCapability.supported
             ? browserService
-            : undefined
+            : undefined,
+        knowledgeGateway
       })
+    }
+    const createConfiguredRuntime = async (): Promise<AgentRuntime> => {
+      const settings = await settingsStore.getResolvedSettings()
+      return createRuntimeWithCapabilities(
+        settings,
+        getConfiguredRuntimeTarget(settings)
+      )
+    }
+    const createSelectedRuntime = async (
+      selection: AgentRuntimeSelection
+    ): Promise<AgentRuntime> => {
+      const resolved = applyRuntimeSelection(
+        await settingsStore.getResolvedSettings(),
+        selection
+      )
+      return createRuntimeWithCapabilities(
+        resolved.settings,
+        resolved.target
+      )
     }
     runtime = new AgentRuntimeController(
       await createConfiguredRuntime()
+    )
+    selectedRuntimeManager = new SelectedRuntimeManager(
+      createSelectedRuntime
     )
     const contextManager = new ContextManager()
     const approvalBroker = new ToolApprovalBroker()
@@ -331,6 +427,10 @@ if (hasSingleInstanceLock) {
       bundledRuntimePaths,
       async () => {
         const settings = await settingsStore.getResolvedSettings()
+        intranetCompatibilityEnabled =
+          settings.intranetCompatibilityEnabled
+        globalTlsPolicy?.apply(intranetCompatibilityEnabled)
+        await capabilityService.quarantineIncompatibleMcpServers()
         if (knowledgeService) {
           void knowledgeService
             .setEmbeddingProvider(createEmbeddingProvider(settings))
@@ -341,15 +441,25 @@ if (hasSingleInstanceLock) {
             await createConfiguredRuntime()
           )
         }
-        await subagentService.replaceRuntime(
-          createDefaultModelRuntime(defaultWorkspace, settings)
+        await selectedRuntimeManager?.reset()
+        await subagentService.replaceRuntimes(
+          createDefaultModelRuntime(defaultWorkspace, settings),
+          createSubagentProfileRuntimes(defaultWorkspace, settings)
         )
       },
       async () => {
         await browserService?.clearSessions()
       },
       browserService,
-      subagentService
+      subagentService,
+      channelSettingsStore,
+      applicationSettingsStore,
+      versionChecker,
+      speechModelManager,
+      embeddingIndexCoordinator,
+      selectedRuntimeManager,
+      speechTranscriptionService,
+      knowledgeGateway
     )
     loadMainWindow(mainWindow)
 
@@ -387,8 +497,11 @@ app.on('before-quit', (event) => {
       tray?.destroy()
       await Promise.allSettled([
         runtime?.dispose(),
+        selectedRuntimeManager?.dispose(),
+        knowledgeGateway?.dispose(),
         knowledgeService?.dispose(),
-        browserService?.dispose()
+        browserService?.dispose(),
+        globalTlsPolicy?.dispose()
       ])
     } finally {
       assistantDatabase?.close()

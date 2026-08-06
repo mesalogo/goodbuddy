@@ -9,6 +9,7 @@ coverage/
 .env
 .env.*
 !.env.example
+TEST-KEY.md
 .DS_Store
 Thumbs.db
 *-smoke.png

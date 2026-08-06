@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeEvent } from './runtime'
 import { ContinueHostRunError } from './continue-host-adapter'
+import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 
 const mocks = vi.hoisted(() => ({
   detectRuntimeBinary: vi.fn(),
@@ -149,6 +150,53 @@ describe('ContinueAgentRuntime', () => {
   it('does not require whole-run approval', () => {
     const runtime = createRuntime()
     expect(runtime.requiresToolApproval).toBe(false)
+  })
+
+  it('passes scoped MCP configuration for Ask and denies every other Ask tool', async () => {
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      knowledgeGateway: {
+        getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+      } as unknown as KnowledgeMcpGateway,
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+    for await (const _event of runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'search',
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'main-only-token'
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    expect(mocks.runHost).toHaveBeenCalledWith(
+      'search',
+      expect.any(AbortSignal),
+      expect.any(Function),
+      {
+        workMode: 'ask',
+        knowledgeCapability: {
+          endpoint: 'http://127.0.0.1:4567/mcp',
+          token: 'main-only-token'
+        }
+      }
+    )
+    const authorize = mocks.runHost.mock.calls[0]?.[2]
+    await expect(
+      authorize?.({ toolName: 'knowledge_search' })
+    ).resolves.toBe('once')
+    await expect(authorize?.({ toolName: 'Bash' })).resolves.toBe('deny')
   })
 
   it('adds assigned Skill instructions to the Continue prompt', async () => {

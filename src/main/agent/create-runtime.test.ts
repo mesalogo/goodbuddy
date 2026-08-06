@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
 import type { BrowserToolService } from '../browser/browser-model-tools'
-import { createAgentRuntime } from './create-runtime'
+import {
+  createAgentRuntime,
+  createModelProfileRuntime
+} from './create-runtime'
 import { AgentRuntimeController } from './runtime-controller'
 
 function createBrowserService(): BrowserToolService & {
@@ -24,6 +27,8 @@ function createBrowserService(): BrowserToolService & {
 function settings(
   overrides: Partial<ResolvedRuntimeSettings> = {}
 ): ResolvedRuntimeSettings {
+  const defaultModelProfileId =
+    '00000000-0000-4000-8000-000000000001'
   return {
     provider: 'model',
     modelBaseUrl: 'http://127.0.0.1:11434/v1',
@@ -31,6 +36,18 @@ function settings(
     modelProtocol: 'openai-chat-completions',
     modelAuthentication: 'none',
     imageGenerationQuality: 'auto',
+    modelProfiles: [
+      {
+        id: defaultModelProfileId,
+        name: '默认模型',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none',
+        imageGenerationQuality: 'auto'
+      }
+    ],
+    defaultModelProfileId,
     opencodeBaseUrl: '',
     opencodeEmbedded: false,
     opencodeBinaryPath: '',
@@ -40,6 +57,7 @@ function settings(
     continueMode: 'chat',
     runtimeSandboxMode: 'off',
     subagentSmartRoutingEnabled: false,
+    intranetCompatibilityEnabled: true,
     knowledgeEmbeddingEnabled: false,
     knowledgeEmbeddingBaseUrl:
       'http://127.0.0.1:11434/v1/embeddings',
@@ -107,9 +125,29 @@ describe('createAgentRuntime model compatibility', () => {
     expect(browserService.dispose).not.toHaveBeenCalled()
   })
 
-  it('keeps OpenCode independent profiles Anthropic API-key only', () => {
-    expect(() =>
-      createAgentRuntime(
+  it('treats a blank OpenCode Server as bundled local mode even for legacy false settings', async () => {
+    const runtime = createAgentRuntime(
+      process.cwd(),
+      settings({
+        provider: 'opencode',
+        opencodeBaseUrl: '',
+        opencodeEmbedded: false
+      })
+    )
+
+    await expect(runtime.getStatus()).resolves.not.toMatchObject({
+      detail: '未配置 OpenCode Server'
+    })
+    await runtime.dispose()
+  })
+
+  it.each([
+    ['openai-chat-completions', 'none'],
+    ['openai-responses', 'api-key']
+  ] as const)(
+    'accepts an OpenCode %s independent profile',
+    async (protocol, authentication) => {
+      const runtime = createAgentRuntime(
         process.cwd(),
         settings({
           provider: 'opencode',
@@ -118,17 +156,22 @@ describe('createAgentRuntime model compatibility', () => {
             name: 'OpenAI profile',
             baseUrl: 'https://api.example/v1',
             modelName: 'model',
-            protocol: 'openai-chat-completions',
-            authentication: 'api-key',
+            protocol,
+            authentication,
             imageGenerationQuality: 'auto',
-            apiKey: 'secret'
+            ...(authentication === 'api-key'
+              ? { apiKey: 'secret' }
+              : {})
           }
         })
       )
-    ).toThrow('OpenCode 独立模型连接仅支持')
-  })
 
-  it('marks direct image runtimes and rejects them for Continue', async () => {
+      expect(runtime.requiresToolApproval).toBe(false)
+      await runtime.dispose()
+    }
+  )
+
+  it('marks direct image runtimes and rejects them for Agent Runtimes', async () => {
     const imageSettings = settings({
       modelBaseUrl: 'https://bigtoken.ai/v1',
       modelName: 'gpt-image-2',
@@ -165,19 +208,66 @@ describe('createAgentRuntime model compatibility', () => {
       createAgentRuntime(
         process.cwd(),
         settings({
-          provider: 'continue',
-          continueModelProfile: {
+          provider: 'opencode',
+          opencodeModelProfile: {
             id: '00000000-0000-4000-8000-000000000033',
-            name: 'Responses profile',
+            name: 'Image profile',
             baseUrl: 'https://api.openai.com/v1',
-            modelName: 'gpt-5',
-            protocol: 'openai-responses',
+            modelName: 'gpt-image-2',
+            protocol: 'openai-images-generations',
             authentication: 'api-key',
             imageGenerationQuality: 'auto',
             apiKey: 'secret'
           }
         })
       )
-    ).toThrow('Continue 独立模型连接仅支持')
+    ).toThrow('OpenCode 独立模型连接仅支持')
+  })
+
+  it('accepts a Continue Responses independent profile', async () => {
+    const runtime = createAgentRuntime(
+      process.cwd(),
+      settings({
+        provider: 'continue',
+        continueModelProfile: {
+          id: '00000000-0000-4000-8000-000000000035',
+          name: 'Responses profile',
+          baseUrl: 'https://api.example/v1',
+          modelName: 'gpt-compatible',
+          protocol: 'openai-responses',
+          authentication: 'api-key',
+          imageGenerationQuality: 'auto',
+          apiKey: 'secret'
+        }
+      })
+    )
+
+    expect(runtime.requiresToolApproval).toBe(false)
+    await runtime.dispose()
+  })
+
+  it('creates a testable runtime for an image model profile', async () => {
+    const resolved = settings()
+    const runtime = createModelProfileRuntime(
+      process.cwd(),
+      resolved,
+      {
+        id: '00000000-0000-4000-8000-000000000034',
+        name: 'Image profile',
+        baseUrl: 'https://bigtoken.ai/v1',
+        modelName: 'gpt-image-2',
+        protocol: 'openai-images-generations',
+        authentication: 'api-key',
+        imageGenerationQuality: 'high',
+        apiKey: 'secret'
+      }
+    )
+
+    await expect(runtime.getStatus()).resolves.toMatchObject({
+      id: 'model',
+      capability: 'image-generation',
+      available: true
+    })
+    await runtime.dispose()
   })
 })

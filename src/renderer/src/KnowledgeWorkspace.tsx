@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ArrowLeft,
   ArrowRight,
   BookOpen,
   Check,
@@ -36,6 +37,7 @@ import {
   PageTabs,
   type PageTab
 } from './WorkspacePrimitives'
+import { trapTabFocus } from './dialog-focus'
 
 export type KnowledgeStorageMode = 'reference' | 'managed'
 export type KnowledgeGraphStrategy =
@@ -254,12 +256,6 @@ const styles = {
     color: 'var(--text-primary)',
     boxShadow: 'var(--shadow-card)'
   },
-  sidebar: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 16,
-    background: 'var(--surface-subtle)'
-  },
   surface: {
     border: '1px solid var(--border-default)',
     borderRadius: 'var(--radius-control)',
@@ -447,7 +443,7 @@ function CreateLibraryWizard({
     >
       <div>
         <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800 }}>
-          NEW KNOWLEDGE BASE
+          新建知识库
         </span>
         <h2 style={{ margin: '5px 0 0', fontSize: 22 }}>创建知识库</h2>
       </div>
@@ -605,6 +601,12 @@ function DeleteLibraryDialog({
 }): React.JSX.Element {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string>()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    cancelRef.current?.focus()
+  }, [])
 
   const confirm = async (): Promise<void> => {
     setDeleting(true)
@@ -623,6 +625,15 @@ function DeleteLibraryDialog({
     <div
       aria-label="删除知识库确认"
       aria-modal="true"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !deleting) {
+          event.preventDefault()
+          onCancel()
+          return
+        }
+        trapTabFocus(event, dialogRef.current)
+      }}
+      ref={dialogRef}
       role="dialog"
       style={{
         position: 'fixed',
@@ -670,7 +681,9 @@ function DeleteLibraryDialog({
             className="secondary-button"
             disabled={deleting}
             onClick={onCancel}
+            ref={cancelRef}
             style={styles.button}
+            type="button"
           >
             取消
           </button>
@@ -679,6 +692,7 @@ function DeleteLibraryDialog({
             disabled={deleting}
             onClick={() => void confirm()}
             style={styles.button}
+            type="button"
           >
             <Trash2 aria-hidden="true" size={15} />
             {deleting ? '删除中…' : '确认删除'}
@@ -2217,9 +2231,11 @@ export function KnowledgeWorkspace({
   onOpenEvidence
 }: KnowledgeWorkspaceProps): React.JSX.Element {
   const [creating, setCreating] = useState(false)
+  const [mobileListOpen, setMobileListOpen] = useState(false)
   const [tab, setTab] = useState<WorkspaceTab>('documents')
   const [deletingLibrary, setDeletingLibrary] =
     useState<KnowledgeLibrary>()
+  const deleteLibraryTriggerRef = useRef<HTMLButtonElement>(null)
   const selectedLibrary =
     libraries.find((library) => library.id === selectedLibraryId) ??
     libraries[0]
@@ -2258,19 +2274,27 @@ export function KnowledgeWorkspace({
         ]
       : [])
   ]
+  const closeDeleteDialog = (): void => {
+    setDeletingLibrary(undefined)
+    requestAnimationFrame(() =>
+      deleteLibraryTriggerRef.current?.focus()
+    )
+  }
 
   return (
     <section
       aria-busy={loading}
       aria-label="知识工作区"
-      className="knowledge-workspace"
+      className={`knowledge-workspace${
+        mobileListOpen ? ' knowledge-workspace--mobile-list' : ''
+      }`}
       style={styles.workspace}
     >
-      <aside className="knowledge-workspace__sidebar" style={styles.sidebar}>
+      <aside className="knowledge-workspace__sidebar">
         <PageHeader
           compact
           description={`${libraries.length} 个知识库 · 跨项目共享`}
-          eyebrow="KNOWLEDGE"
+          eyebrow="知识库"
           headingId="knowledge-workspace-title"
           icon={<Database size={18} />}
           scope={{ kind: 'global' }}
@@ -2279,7 +2303,10 @@ export function KnowledgeWorkspace({
         <button
           className="primary-button"
           disabled={loading}
-          onClick={() => setCreating(true)}
+          onClick={() => {
+            setCreating(true)
+            setMobileListOpen(false)
+          }}
           style={{ ...styles.button, width: '100%' }}
           type="button"
         >
@@ -2322,6 +2349,7 @@ export function KnowledgeWorkspace({
                       onClick={() => {
                         onSelectLibrary(library.id)
                         setTab('documents')
+                        setMobileListOpen(false)
                       }}
                       style={{
                         width: '100%',
@@ -2384,6 +2412,16 @@ export function KnowledgeWorkspace({
         className="knowledge-workspace__main"
         style={{ minWidth: 0, background: 'var(--surface-raised)' }}
       >
+        {selectedLibrary && !creating && !loading && (
+          <button
+            className="knowledge-workspace__mobile-back secondary-button"
+            onClick={() => setMobileListOpen(true)}
+            type="button"
+          >
+            <ArrowLeft aria-hidden="true" size={15} />
+            返回知识库列表
+          </button>
+        )}
         {loading ? (
           <EmptyState
             description="正在读取知识库、来源和索引状态。"
@@ -2431,7 +2469,7 @@ export function KnowledgeWorkspace({
                   }}
                 >
                   <Database aria-hidden="true" size={13} />
-                  {storageModeLabels[selectedLibrary.storageMode]}
+                  全局 · {storageModeLabels[selectedLibrary.storageMode]}
                   {selectedLibrary.graphEnabled &&
                     ` · ${strategyLabels[selectedLibrary.graphStrategy]}`}
                 </span>
@@ -2493,6 +2531,7 @@ export function KnowledgeWorkspace({
                   aria-label={`删除知识库 ${selectedLibrary.name}`}
                   className="danger-button danger-button--quiet"
                   onClick={() => setDeletingLibrary(selectedLibrary)}
+                  ref={deleteLibraryTriggerRef}
                   style={styles.button}
                   type="button"
                 >
@@ -2552,7 +2591,7 @@ export function KnowledgeWorkspace({
       {deletingLibrary && (
         <DeleteLibraryDialog
           library={deletingLibrary}
-          onCancel={() => setDeletingLibrary(undefined)}
+          onCancel={closeDeleteDialog}
           onConfirm={() => onDeleteLibrary(deletingLibrary.id)}
         />
       )}
