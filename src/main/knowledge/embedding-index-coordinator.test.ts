@@ -181,6 +181,89 @@ describe('EmbeddingIndexCoordinator', () => {
     expect(JSON.stringify(result)).not.toContain('private payload')
   })
 
+  it('preserves a provider timeout when the diagnostic signal aborts later', async () => {
+    const repository = new MemoryRepository()
+    const coordinator = new EmbeddingIndexCoordinator(repository)
+    const controller = new AbortController()
+    let rejectProvider:
+      | ((reason?: unknown) => void)
+      | undefined
+    const diagnostic = coordinator.diagnose(
+      provider(
+        () =>
+          new Promise<number[][]>((_resolve, reject) => {
+            rejectProvider = reject
+          })
+      ),
+      { signal: controller.signal }
+    )
+    await vi.waitFor(() => {
+      expect(rejectProvider).toBeDefined()
+    })
+
+    const timeout = new Error('Embedding request timed out')
+    timeout.name = 'TimeoutError'
+    controller.abort()
+    rejectProvider?.(timeout)
+
+    await expect(diagnostic).resolves.toMatchObject({
+      status: 'unavailable',
+      error: {
+        code: 'timeout'
+      }
+    })
+  })
+
+  it('keeps diagnostics independent from an active rebuild cancellation', async () => {
+    const repository = new MemoryRepository()
+    let rebuildSignal: AbortSignal | undefined
+    let resolveDiagnostic: ((vectors: number[][]) => void) | undefined
+    const embed = vi.fn<EmbeddingIndexProvider['embed']>(
+      (input, signal) => {
+        if (input[0] === 'GoodBuddy 向量模型连接测试') {
+          return new Promise<number[][]>((resolve) => {
+            resolveDiagnostic = resolve
+          })
+        }
+        return new Promise<number[][]>((_resolve, reject) => {
+          rebuildSignal = signal
+          signal?.addEventListener(
+            'abort',
+            () => reject(signal.reason),
+            { once: true }
+          )
+        })
+      }
+    )
+    const sharedProvider = provider(embed)
+    const coordinator = new EmbeddingIndexCoordinator(repository, {
+      createId: () => 'job-concurrent'
+    })
+    coordinator.startRebuild(sharedProvider)
+    await vi.waitFor(() => {
+      expect(rebuildSignal).toBeDefined()
+    })
+
+    const diagnostic = coordinator.diagnose(sharedProvider)
+    await vi.waitFor(() => {
+      expect(resolveDiagnostic).toBeDefined()
+    })
+    expect(coordinator.cancel('job-concurrent')).toBe(true)
+    resolveDiagnostic?.([[0.25, 0.5, 0.75]])
+
+    await expect(diagnostic).resolves.toMatchObject({
+      status: 'available',
+      dimensions: 3
+    })
+    await expect(coordinator.waitForCompletion()).resolves.toMatchObject({
+      status: 'cancelled'
+    })
+    expect(embed.mock.calls).toContainEqual([
+      ['GoodBuddy 向量模型连接测试'],
+      undefined
+    ])
+  })
+
   it('replaces each document atomically and persists completed progress', async () => {
     const repository = new MemoryRepository()
     const coordinator = new EmbeddingIndexCoordinator(repository, {
@@ -318,6 +401,42 @@ describe('EmbeddingIndexCoordinator', () => {
     expect(repository.errors.has('document-2')).toBe(false)
     expect(repository.pendingRecords.size).toBe(0)
     expect(repository.lastJob).toEqual(cancelled)
+  })
+
+  it('preserves a provider timeout when rebuild cancellation arrives later', async () => {
+    const repository = new MemoryRepository()
+    const coordinator = new EmbeddingIndexCoordinator(repository, {
+      createId: () => 'job-timeout'
+    })
+    let rejectProvider:
+      | ((reason?: unknown) => void)
+      | undefined
+    coordinator.startRebuild(
+      provider(
+        () =>
+          new Promise<number[][]>((_resolve, reject) => {
+            rejectProvider = reject
+          })
+      )
+    )
+    await vi.waitFor(() => {
+      expect(rejectProvider).toBeDefined()
+    })
+
+    const timeout = new Error('Embedding request timed out')
+    timeout.name = 'TimeoutError'
+    expect(coordinator.cancel('job-timeout')).toBe(true)
+    rejectProvider?.(timeout)
+
+    await expect(coordinator.waitForCompletion()).resolves.toMatchObject({
+      status: 'failed',
+      error: {
+        code: 'timeout'
+      }
+    })
+    expect(repository.errors.get('document-1')).toBe(
+      '向量服务响应超时。'
+    )
   })
 
   it('marks an interrupted persisted job cancelled during initialization', async () => {

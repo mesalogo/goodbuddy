@@ -56,7 +56,7 @@ const embeddingDiagnosticBase = {
   provider: boundedLabelSchema,
   model: boundedLabelSchema,
   checkedAt: timestampSchema,
-  latencyMs: countSchema.max(120_000)
+  latencyMs: countSchema
 }
 
 export const embeddingDiagnosticResultSchema = z.discriminatedUnion('status', [

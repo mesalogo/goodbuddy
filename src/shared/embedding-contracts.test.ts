@@ -23,6 +23,16 @@ describe('embedding contracts', () => {
       latencyMs: 184,
       dimensions: 1_536
     })
+    expect(
+      embeddingDiagnosticResultSchema.safeParse({
+        status: 'available',
+        provider: 'provider',
+        model: 'slow-local-model',
+        checkedAt: 1_700_000_000_000,
+        latencyMs: 120_001,
+        dimensions: 4_096
+      }).success
+    ).toBe(true)
 
     expect(
       embeddingDiagnosticResultSchema.safeParse({

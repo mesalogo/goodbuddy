@@ -68,6 +68,94 @@ describe('OpenAIEmbeddingClient', () => {
     )
   })
 
+  it('distinguishes its request timeout from caller cancellation', async () => {
+    const waitForAbort = vi.fn<typeof fetch>(
+      async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(init.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const timedClient = new OpenAIEmbeddingClient({
+      endpoint: 'http://127.0.0.1:11434/v1/embeddings',
+      model: 'nomic-embed-text',
+      timeoutMs: 100,
+      fetch: waitForAbort
+    })
+
+    await expect(
+      timedClient.embed(['safe synthetic input'])
+    ).rejects.toMatchObject({
+      name: 'TimeoutError',
+      message: 'Embedding request timed out'
+    })
+
+    const caller = new AbortController()
+    const cancelled = timedClient.embed(
+      ['safe synthetic input'],
+      caller.signal
+    )
+    caller.abort(new Error('caller cancelled'))
+    await expect(cancelled).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Embedding request was cancelled'
+    })
+
+    let rejectTransport:
+      | ((reason?: unknown) => void)
+      | undefined
+    let transportSignal: AbortSignal | null | undefined
+    const delayedTransport = vi.fn<typeof fetch>(
+      async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          transportSignal = init?.signal
+          rejectTransport = reject
+        })
+    )
+    const delayedClient = new OpenAIEmbeddingClient({
+      endpoint: 'http://127.0.0.1:11434/v1/embeddings',
+      model: 'nomic-embed-text',
+      timeoutMs: 100,
+      fetch: delayedTransport
+    })
+    const lateCaller = new AbortController()
+    const timeoutThenCancellation = delayedClient.embed(
+      ['safe synthetic input'],
+      lateCaller.signal
+    )
+    await vi.waitFor(
+      () => {
+        expect(transportSignal?.aborted).toBe(true)
+        expect(transportSignal?.reason).toMatchObject({
+          name: 'TimeoutError'
+        })
+      },
+      { interval: 5, timeout: 500 }
+    )
+    lateCaller.abort()
+    rejectTransport?.(transportSignal?.reason)
+    await expect(timeoutThenCancellation).rejects.toMatchObject({
+      name: 'TimeoutError',
+      message: 'Embedding request timed out'
+    })
+
+    const preCancelled = new AbortController()
+    preCancelled.abort(new Error('caller cancelled before request'))
+    await expect(
+      delayedClient.embed(
+        ['safe synthetic input'],
+        preCancelled.signal
+      )
+    ).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Embedding request was cancelled'
+    })
+    expect(delayedTransport).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects unsafe endpoints and malformed vectors', async () => {
     expect(
       () =>

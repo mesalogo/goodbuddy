@@ -9,7 +9,8 @@ const MAX_URL_LENGTH = 2_048
 const MAX_DIMENSIONS = 8_192
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 const MIN_TIMEOUT_MS = 100
-const MAX_TIMEOUT_MS = 120_000
+const DEFAULT_TIMEOUT_MS = 120_000
+const MAX_TIMEOUT_MS = DEFAULT_TIMEOUT_MS
 
 export interface OpenAIEmbeddingClientOptions {
   endpoint: string
@@ -62,6 +63,18 @@ function normalizedEndpoint(input: string): string {
     )
   }
   return url.toString()
+}
+
+function embeddingAbortError(
+  requestSignal: AbortSignal,
+  timeoutError: Error
+): Error {
+  if (requestSignal.reason === timeoutError) {
+    return timeoutError
+  }
+  const error = new Error('Embedding request was cancelled')
+  error.name = 'AbortError'
+  return error
 }
 
 async function readBoundedJson(response: Response): Promise<unknown> {
@@ -187,7 +200,7 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
       MAX_BATCH_SIZE
     )
     this.timeoutMs = boundedInteger(
-      options.timeoutMs ?? 15_000,
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       'timeoutMs',
       MIN_TIMEOUT_MS,
       MAX_TIMEOUT_MS
@@ -255,11 +268,19 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
     input: readonly string[],
     signal?: AbortSignal
   ): Promise<number[][]> {
-    if (signal?.aborted) {
-      throw signal.reason
+    const timeoutError = new Error('Embedding request timed out')
+    timeoutError.name = 'TimeoutError'
+    const timeoutController = new AbortController()
+    const timeoutId = setTimeout(() => {
+      timeoutController.abort(timeoutError)
+    }, this.timeoutMs)
+    const requestSignal = signal
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : timeoutController.signal
+    if (requestSignal.aborted) {
+      clearTimeout(timeoutId)
+      throw embeddingAbortError(requestSignal, timeoutError)
     }
-    const timeout = AbortSignal.timeout(this.timeoutMs)
-    const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
     const headers: Record<string, string> = {
       accept: 'application/json',
       'content-type': 'application/json'
@@ -267,7 +288,7 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
     if (this.apiKey) {
       headers.authorization = `Bearer ${this.apiKey}`
     }
-    let response: Response
+    let response: Response | undefined
     try {
       response = await this.transport(this.endpoint, {
         method: 'POST',
@@ -276,17 +297,25 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
         redirect: 'error',
         signal: requestSignal
       })
+      if (!response.ok) {
+        throw new Error(
+          `Embedding request failed with HTTP ${response.status}`
+        )
+      }
+      return validateEmbeddings(
+        await readBoundedJson(response),
+        input.length
+      )
     } catch (error) {
       if (requestSignal.aborted) {
-        const abortError = new Error('Embedding request was cancelled')
-        abortError.name = 'AbortError'
-        throw abortError
+        throw embeddingAbortError(requestSignal, timeoutError)
+      }
+      if (response) {
+        throw error
       }
       throw new Error('Embedding request failed', { cause: error })
+    } finally {
+      clearTimeout(timeoutId)
     }
-    if (!response.ok) {
-      throw new Error(`Embedding request failed with HTTP ${response.status}`)
-    }
-    return validateEmbeddings(await readBoundedJson(response), input.length)
   }
 }

@@ -31,6 +31,11 @@ describe('embedding error classification', () => {
         timedOut: true
       }).code
     ).toBe('timeout')
+    const timeout = new Error('Embedding request timed out')
+    timeout.name = 'TimeoutError'
+    expect(
+      classifyEmbeddingError(timeout, { cancelled: true }).code
+    ).toBe('timeout')
   })
 
   it('never returns provider bodies, credentials, endpoints or nested causes', () => {

@@ -431,13 +431,15 @@ export class EmbeddingIndexCoordinator {
           await this.repository
             .discardDocumentReplacement(replacementId)
             .catch(() => undefined)
-          if (signal.aborted) {
-            throw error
-          }
           const safeError =
             error instanceof EmbeddingOperationError
               ? error.toSafeError()
-              : classifyEmbeddingError(error)
+              : classifyEmbeddingError(error, {
+                  cancelled: signal.aborted
+                })
+          if (safeError.code === 'cancelled') {
+            throw error
+          }
           await this.repository.recordDocumentError(
             document.id,
             provider.provider,
@@ -467,9 +469,13 @@ export class EmbeddingIndexCoordinator {
         }
       })
     } catch (error) {
-      const cancelled =
-        signal.aborted ||
-        classifyEmbeddingError(error).code === 'cancelled'
+      const safeError =
+        error instanceof EmbeddingOperationError
+          ? error.toSafeError()
+          : classifyEmbeddingError(error, {
+              cancelled: signal.aborted
+            })
+      const cancelled = safeError.code === 'cancelled'
       this.updateJob(
         cancelled
           ? {
@@ -479,10 +485,7 @@ export class EmbeddingIndexCoordinator {
           : {
               status: 'failed',
               completedAt: this.now(),
-              error:
-                error instanceof EmbeddingOperationError
-                  ? error.toSafeError()
-                  : classifyEmbeddingError(error)
+              error: safeError
             }
       )
     }

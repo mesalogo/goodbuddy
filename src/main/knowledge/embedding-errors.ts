@@ -105,16 +105,22 @@ function classifyCode(
   const text = errorText(error)
   const status = numericStatus(error) ?? statusFromText(text)
 
+  if (error instanceof Error && error.name === 'TimeoutError') {
+    return 'timeout'
+  }
+  if (error instanceof Error && error.name === 'AbortError') {
+    return 'cancelled'
+  }
+  if (options.timedOut) {
+    return 'timeout'
+  }
   if (
     options.cancelled ||
     hasAny(text, ['aborterror', 'aborted', 'cancelled', 'canceled'])
   ) {
     return 'cancelled'
   }
-  if (
-    options.timedOut ||
-    hasAny(text, ['timeout', 'timed out', 'etimedout'])
-  ) {
+  if (hasAny(text, ['timeout', 'timed out', 'etimedout'])) {
     return 'timeout'
   }
   if (

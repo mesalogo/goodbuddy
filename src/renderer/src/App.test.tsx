@@ -552,7 +552,7 @@ describe('App', () => {
   it('checks for updates silently on startup and only reports a new version', async () => {
     const check = vi.fn(async () => ({
       updateAvailable: true,
-      currentVersion: '0.8.3',
+      currentVersion: '0.8.4',
       latestVersion: '0.9.0',
       releaseUrl:
         'https://github.com/mesalogo/goodbuddy/releases/tag/v0.9.0',
@@ -595,10 +595,10 @@ describe('App', () => {
   it('does not disturb startup when updates are current or offline', async () => {
     const currentResult = {
       updateAvailable: false,
-      currentVersion: '0.8.3',
-      latestVersion: '0.8.3',
+      currentVersion: '0.8.4',
+      latestVersion: '0.8.4',
       releaseUrl:
-        'https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.3',
+        'https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.4',
       target: {
         platform: 'windows' as const,
         arch: 'x64' as const,
