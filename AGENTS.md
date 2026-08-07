@@ -87,6 +87,13 @@ Keep Electron security boundaries intact:
   CommonJS macOS icon tool.
 - Tag builds must use `v${package.version}`. The workflow also supports manual
   dispatch and main-branch changes to release tooling.
+- Every push that updates the `github` remote is a release push. Before pushing,
+  verify that `package.json` and `package-lock.json` contain the same release
+  version, create `v${package.version}` at the exact commit being pushed, and
+  push that tag so the native package matrix and GitHub Release run.
+- Never move or reuse an existing release tag. If `v${package.version}` already
+  exists locally or on a remote at another commit, increment the package
+  version and create a new matching tag before pushing.
 - Verified baseline on 2026-08-04: commit `2f54938`, GitHub Actions run
   `30893805567` succeeded for validation and all six package targets, producing
   six release artifacts plus the shared production bundle.
@@ -111,5 +118,6 @@ credentials, or private user artifacts.
 
 This repository has two synchronized remotes, `origin` and `github`. Unless the
 user explicitly names a remote, every requested push must update the current
-branch on both remotes, plus any tags explicitly included in the request.
-Verify both remote refs after pushing.
+branch on both remotes. Any push that includes `github` must also push the
+required `v${package.version}` release tag to every remote receiving the branch
+update. Verify all updated branch and tag refs after pushing.
