@@ -1,0 +1,80 @@
+{
+  "title": "示例产品介绍",
+  "subtitle": "面向目标受众的产品说明",
+  "author": "产品团队",
+  "footer": "示例产品",
+  "theme": {
+    "primary": "1F3864",
+    "accent": "C00000",
+    "background": "FFFFFF",
+    "text": "1A1A1A",
+    "font_zh": "Microsoft YaHei",
+    "font_en": "Arial"
+  },
+  "slides": [
+    {
+      "type": "title",
+      "title": "示例产品介绍",
+      "subtitle": "面向目标受众的产品说明",
+      "notes": "说明本次交流目标和议程。"
+    },
+    {
+      "type": "bullets",
+      "title": "目标场景与问题",
+      "bullets": [
+        "说明目标角色当前需要完成的任务",
+        "说明现有流程中的可验证问题",
+        "说明本次介绍覆盖和不覆盖的范围"
+      ],
+      "notes": "不要使用宏大行业背景替代具体问题。",
+      "evidence_ids": [
+        "CLM-001"
+      ]
+    },
+    {
+      "type": "two-column",
+      "title": "产品工作方式",
+      "left": {
+        "title": "输入与条件",
+        "bullets": [
+          "部署环境",
+          "数据与接口条件"
+        ]
+      },
+      "right": {
+        "title": "动作与结果",
+        "bullets": [
+          "用户触发的具体动作",
+          "系统产生的可观察结果"
+        ]
+      },
+      "notes": "结合当前版本说明工作流。"
+    },
+    {
+      "type": "metrics",
+      "title": "已核验指标",
+      "metrics": [
+        {
+          "value": "参数值",
+          "label": "指标名称",
+          "detail": "版本、条件和统计口径"
+        },
+        {
+          "value": "参数值",
+          "label": "指标名称",
+          "detail": "版本、条件和统计口径"
+        }
+      ],
+      "notes": "只使用事实清单中有证据的指标。"
+    },
+    {
+      "type": "closing",
+      "title": "下一步",
+      "bullets": [
+        "确认适用场景和边界",
+        "确定验证材料与责任人"
+      ],
+      "notes": "给出明确、可执行的后续动作。"
+    }
+  ]
+}

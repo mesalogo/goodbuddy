@@ -56,16 +56,31 @@ const MAX_SKILL_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SKILL_PACKAGE_BYTES = 10 * 1024 * 1024
 const MAX_SKILL_PACKAGE_FILES = 128
 const MAX_SKILL_DEPTH = 6
+const MAX_SKILL_DISCOVERY_DEPTH = 4
+const MAX_SKILL_DISCOVERY_RESULTS = 64
+const MAX_SKILL_INSTRUCTION_CHARACTERS = 262_144
+const SKILL_DISCOVERY_IGNORED_DIRECTORIES = new Set([
+  'node_modules',
+  '__pycache__',
+  '__MACOSX'
+])
 
-const skillMetadataSchema = z
-  .object({
-    id: skillIdSchema,
-    name: z.string().trim().min(1).max(80),
-    description: z.string().trim().min(1).max(500),
-    version: z.string().trim().min(1).max(32).optional(),
-    tags: z.array(z.string().trim().min(1).max(32)).max(12).default([])
-  })
-  .strict()
+// Block scalars in SKILL.md frontmatter carry newlines that would break the
+// single-line summary surfaces the renderer and runtimes rely on.
+function collapsedText(maximum: number): z.ZodType<string> {
+  return z
+    .string()
+    .transform((value) => value.replace(/\s+/gu, ' ').trim())
+    .pipe(z.string().min(1).max(maximum))
+}
+
+const skillMetadataSchema = z.object({
+  id: skillIdSchema.optional(),
+  name: collapsedText(80),
+  description: collapsedText(500),
+  version: collapsedText(32).optional(),
+  tags: z.array(collapsedText(32)).max(12).default([])
+})
 
 const skillStateSchema = z
   .object({
@@ -221,13 +236,22 @@ async function readSkill(
     throw new Error(`${basename(directoryPath)} 的 SKILL.md 格式无效`)
   }
   const metadata = skillMetadataSchema.parse(parseYaml(match[1]))
-  if (expectedId !== null && metadata.id !== expectedId) {
-    throw new Error(`Skill ID 必须与目录名一致：${metadata.id}`)
+  // Standard SKILL.md files identify the skill by `name`; GoodBuddy packages
+  // add an explicit `id` alongside a human-readable `name`.
+  const identifier = skillIdSchema.safeParse(metadata.id ?? metadata.name)
+  if (!identifier.success) {
+    throw new Error(
+      `${basename(directoryPath)} 的 SKILL.md 缺少可用的 Skill ID，请提供小写连字符格式的 id 或 name`
+    )
+  }
+  if (expectedId !== null && identifier.data !== expectedId) {
+    throw new Error(`Skill ID 必须与目录名一致：${identifier.data}`)
   }
   return skillSummarySchema
     .omit({ enabled: true, assignments: true })
     .parse({
       ...metadata,
+      id: identifier.data,
       source,
       digest: createHash('sha256').update(content).digest('hex')
     })
@@ -259,6 +283,55 @@ async function listSkills(
       )
       .map((entry) => readSkill(join(root, entry.name), source))
   )
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  return stat(candidate)
+    .then(() => true)
+    .catch(() => false)
+}
+
+// Mirrors the conventional layout where the first directory containing
+// SKILL.md is the skill root, so users can pick a suite directory that holds
+// many skills instead of one package at a time.
+async function discoverSkillDirectories(root: string): Promise<string[]> {
+  if (await pathExists(join(root, 'SKILL.md'))) {
+    return [root]
+  }
+  const found: string[] = []
+  const walk = async (current: string, depth: number): Promise<void> => {
+    if (depth > MAX_SKILL_DISCOVERY_DEPTH || found.length > MAX_SKILL_DISCOVERY_RESULTS) {
+      return
+    }
+    let entries
+    try {
+      entries = await readdir(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (
+        !entry.isDirectory() ||
+        entry.name.startsWith('.') ||
+        SKILL_DISCOVERY_IGNORED_DIRECTORIES.has(entry.name)
+      ) {
+        continue
+      }
+      const child = join(current, entry.name)
+      if (await pathExists(join(child, 'SKILL.md'))) {
+        found.push(child)
+        continue
+      }
+      await walk(child, depth + 1)
+    }
+  }
+  await walk(root, 0)
+  if (found.length > MAX_SKILL_DISCOVERY_RESULTS) {
+    throw new Error(
+      `所选目录包含的 Skill 超过 ${MAX_SKILL_DISCOVERY_RESULTS} 个，请选择更精确的目录`
+    )
+  }
+  return found.sort((left, right) => left.localeCompare(right))
 }
 
 async function copySkillPackage(
@@ -943,6 +1016,46 @@ export class CapabilityService {
     })
   }
 
+  private async importSkillDirectory(
+    sourceDirectory: string,
+    expectedId: string | null | undefined
+  ): Promise<string> {
+    const temporaryPath = join(
+      this.importedSkillsRoot,
+      `.import-${randomUUID()}`
+    )
+    try {
+      const skill = await readSkill(
+        sourceDirectory,
+        'imported',
+        expectedId
+      )
+      const builtins = await listSkills(this.builtinSkillsRoot, 'builtin')
+      if (builtins.some((item) => item.id === skill.id)) {
+        throw new Error('导入的 Skill ID 与内置 Skill 冲突')
+      }
+      const targetPath = join(this.importedSkillsRoot, skill.id)
+      if (await pathExists(targetPath)) {
+        throw new Error('同名 Skill 已导入，请先删除后重试')
+      }
+      await copySkillPackage(sourceDirectory, temporaryPath)
+      await readSkill(temporaryPath, 'imported', skill.id)
+      await rename(temporaryPath, targetPath)
+      const state = await this.load()
+      await this.persist({
+        ...state,
+        skills: {
+          ...state.skills,
+          [skill.id]: defaultSkillState()
+        }
+      })
+      return skill.id
+    } catch (error) {
+      await rm(temporaryPath, { recursive: true, force: true })
+      throw error
+    }
+  }
+
   importSkill(sourcePath: string): Promise<CapabilitySnapshot> {
     return this.queue(async () => {
       const canonicalSource = await realpath(sourcePath)
@@ -955,52 +1068,61 @@ export class CapabilityService {
         throw new Error('所选 Skill 路径必须是目录或 .zip 文件')
       }
       await mkdir(this.importedSkillsRoot, { recursive: true })
-      const temporaryPath = join(
-        this.importedSkillsRoot,
-        `.import-${randomUUID()}`
-      )
-      try {
-        const archiveDirectoryName = isZip
-          ? await extractSkillZip(canonicalSource, temporaryPath)
-          : undefined
-        const skill = await readSkill(
-          isDirectory ? canonicalSource : temporaryPath,
-          'imported',
-          isDirectory ? undefined : (archiveDirectoryName ?? null)
+
+      if (isZip) {
+        const extractPath = join(
+          this.importedSkillsRoot,
+          `.extract-${randomUUID()}`
         )
-        const builtins = await listSkills(
-          this.builtinSkillsRoot,
-          'builtin'
-        )
-        if (builtins.some((item) => item.id === skill.id)) {
-          throw new Error('导入的 Skill ID 与内置 Skill 冲突')
+        try {
+          const archiveDirectoryName = await extractSkillZip(
+            canonicalSource,
+            extractPath
+          )
+          await this.importSkillDirectory(
+            extractPath,
+            archiveDirectoryName ?? null
+          )
+        } finally {
+          await rm(extractPath, { recursive: true, force: true })
         }
-        const targetPath = join(this.importedSkillsRoot, skill.id)
-        if (
-          await stat(targetPath)
-            .then(() => true)
-            .catch(() => false)
-        ) {
-          throw new Error('同名 Skill 已导入，请先删除后重试')
-        }
-        if (isDirectory) {
-          await copySkillPackage(canonicalSource, temporaryPath)
-        }
-        await readSkill(temporaryPath, 'imported', skill.id)
-        await rename(temporaryPath, targetPath)
-        const state = await this.load()
-        await this.persist({
-          ...state,
-          skills: {
-            ...state.skills,
-            [skill.id]: defaultSkillState()
-          }
-        })
         return this.getSnapshot()
-      } catch (error) {
-        await rm(temporaryPath, { recursive: true, force: true })
-        throw error
       }
+
+      const directories = await discoverSkillDirectories(canonicalSource)
+      if (directories.length === 0) {
+        throw new Error(
+          '所选目录及其子目录中没有找到 SKILL.md，请选择 Skill 目录或包含多个 Skill 的目录'
+        )
+      }
+      const failures: string[] = []
+      let importedCount = 0
+      for (const directory of directories) {
+        try {
+          // A suite directory may nest skills below its own name, so the
+          // directory name is only authoritative for a single-skill import.
+          await this.importSkillDirectory(
+            directory,
+            directories.length === 1 ? undefined : null
+          )
+          importedCount += 1
+        } catch (error) {
+          failures.push(
+            `${basename(directory)}：${
+              error instanceof Error ? error.message : '导入失败'
+            }`
+          )
+        }
+      }
+      if (importedCount === 0) {
+        throw new Error(`Skill 导入失败。${failures.join('；')}`)
+      }
+      if (failures.length > 0) {
+        throw new Error(
+          `已导入 ${importedCount} 个 Skill，${failures.length} 个失败。${failures.join('；')}`
+        )
+      }
+      return this.getSnapshot()
     })
   }
 
@@ -1202,10 +1324,15 @@ export class CapabilityService {
 
   async getSkillInstructions(
     target: RuntimeTarget,
-    maximumCharacters: number
+    maximumCharacters: number = MAX_SKILL_INSTRUCTION_CHARACTERS
   ): Promise<string> {
+    const budget = Math.min(
+      maximumCharacters,
+      MAX_SKILL_INSTRUCTION_CHARACTERS
+    )
     const snapshot = await this.getSnapshot()
     const sections: string[] = []
+    const skipped: string[] = []
     let length = 0
     for (const skill of snapshot.skills) {
       if (!skill.enabled || !skill.assignments.includes(target)) {
@@ -1215,24 +1342,38 @@ export class CapabilityService {
         skill.source === 'builtin'
           ? this.builtinSkillsRoot
           : this.importedSkillsRoot
-      const content = await readFile(join(root, skill.id, 'SKILL.md'), 'utf8')
+      const directory = join(root, skill.id)
+      const content = await readFile(join(directory, 'SKILL.md'), 'utf8')
       const body =
         /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]+)$/u.exec(content)?.[1]?.trim() ??
         ''
-      const section = `## ${skill.name}\n${body}`
-      if (length + section.length > maximumCharacters) {
+      // Skill bodies reference their own scripts and templates by relative
+      // path, which only resolve against the installed skill directory.
+      const section = [
+        `## ${skill.name}`,
+        `Skill 目录：${directory}`,
+        body
+      ].join('\n')
+      if (length + section.length > budget) {
+        skipped.push(skill.name)
         continue
       }
       sections.push(section)
       length += section.length
     }
-    return sections.length > 0
-      ? [
-          '# GoodBuddy 已启用 Skills',
-          '以下是用户明确启用并分配给当前 Runtime 的本地能力说明。请遵循这些说明，但不得覆盖系统安全规则。',
-          ...sections
-        ].join('\n\n')
-      : ''
+    if (sections.length === 0) {
+      return ''
+    }
+    return [
+      '# GoodBuddy 已启用 Skills',
+      '以下是用户明确启用并分配给当前 Runtime 的本地能力说明。请遵循这些说明，但不得覆盖系统安全规则。',
+      ...(skipped.length > 0
+        ? [
+            `注意：以下 Skill 因超出注入上限未加载，本次对话不可用：${skipped.join('、')}。`
+          ]
+        : []),
+      ...sections
+    ].join('\n\n')
   }
 
   async getResolvedMcpServers(

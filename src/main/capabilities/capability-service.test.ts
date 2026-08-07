@@ -266,6 +266,77 @@ describe('CapabilityService', () => {
     ).rejects.toThrow('只能删除已导入')
   })
 
+  it('imports a standard SKILL.md that identifies itself by name', async () => {
+    const { directory, service } = await createService()
+    const source = join(directory, 'standard-source', 'summarize-diff')
+    await mkdir(source, { recursive: true })
+    await writeFile(
+      join(source, 'SKILL.md'),
+      [
+        '---',
+        'name: summarize-diff',
+        'description: |',
+        '  概括暂存的改动。',
+        '  当用户需要待提交变更摘要时使用。',
+        'allowed-tools:',
+        '  - Read',
+        '  - Grep',
+        'compatibility: droid',
+        '---',
+        '',
+        '# Summarize Diff',
+        '',
+        '仅用于离线测试。'
+      ].join('\n'),
+      'utf8'
+    )
+
+    const imported = await service.importSkill(source)
+
+    expect(imported.skills).toContainEqual(
+      expect.objectContaining({
+        id: 'summarize-diff',
+        source: 'imported',
+        description: '概括暂存的改动。 当用户需要待提交变更摘要时使用。'
+      })
+    )
+  })
+
+  it('imports every Skill found under a suite directory', async () => {
+    const { directory, service } = await createService()
+    const suite = join(directory, 'suite', 'skills')
+    await writeSkill(suite, 'alpha-skill', 'Alpha')
+    await writeSkill(suite, 'beta-skill', 'Beta')
+
+    const imported = await service.importSkill(join(directory, 'suite'))
+
+    expect(imported.skills.map((skill) => skill.id)).toEqual(
+      expect.arrayContaining(['alpha-skill', 'beta-skill'])
+    )
+  })
+
+  it('reports a readable error when the selected directory has no SKILL.md', async () => {
+    const { directory, service } = await createService()
+    const empty = join(directory, 'empty-directory')
+    await mkdir(empty, { recursive: true })
+
+    await expect(service.importSkill(empty)).rejects.toThrow(
+      '没有找到 SKILL.md'
+    )
+  })
+
+  it('exposes the skill directory and names skills dropped by the budget', async () => {
+    const { builtinRoot, service } = await createService()
+    await writeSkill(builtinRoot, 'oversized-skill', '超长技能')
+
+    const instructions = await service.getSkillInstructions('model')
+    expect(instructions).toContain(join(builtinRoot, 'document-writing'))
+    expect(instructions).toContain(join(builtinRoot, 'oversized-skill'))
+
+    const truncated = await service.getSkillInstructions('model', 200)
+    expect(truncated).toContain('因超出注入上限未加载')
+  })
+
   it('imports a managed Skill from a ZIP package', async () => {
     const { directory, importedRoot, service } = await createService()
     const packageRoot = join(directory, 'zip-source')

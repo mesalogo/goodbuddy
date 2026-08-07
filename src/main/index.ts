@@ -346,10 +346,7 @@ if (hasSingleInstanceLock) {
     ): Promise<AgentRuntime> => {
       const [skillInstructions, mcpServers, browserCapability] =
         await Promise.all([
-          capabilityService.getSkillInstructions(
-            target,
-            target === 'continue' ? 12_000 : 48_000
-          ),
+          capabilityService.getSkillInstructions(target),
           target === 'model'
             ? capabilityService.getResolvedMcpServers('model')
             : Promise.resolve([]),

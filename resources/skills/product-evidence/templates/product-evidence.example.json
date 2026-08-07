@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "product": {
+    "name": "示例产品",
+    "version": "1.0",
+    "category": "产品类别",
+    "summary": "用一句可验证的话说明产品面向谁、解决什么问题。",
+    "maturity": "released",
+    "audiences": [
+      "技术负责人",
+      "业务负责人"
+    ],
+    "deployment_modes": [
+      "私有化部署"
+    ]
+  },
+  "terminology": [
+    {
+      "term": "标准术语",
+      "definition": "术语在所有材料中的统一定义。",
+      "avoid": [
+        "不再使用的旧称谓"
+      ]
+    }
+  ],
+  "features": [
+    {
+      "id": "FEAT-001",
+      "name": "示例功能",
+      "summary": "说明用户可执行的动作和可观察结果。",
+      "status": "released",
+      "availability": "标准版本",
+      "evidence_ids": [
+        "EVD-001"
+      ],
+      "use_case_ids": [
+        "CASE-001"
+      ]
+    }
+  ],
+  "parameters": [
+    {
+      "id": "PAR-001",
+      "name": "示例技术参数",
+      "value": "已核验值",
+      "unit": "",
+      "conditions": "说明测试条件、版本和统计口径。",
+      "scope": "标准版本",
+      "disclosure": "public",
+      "evidence_ids": [
+        "EVD-001"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "CLM-001",
+      "text": "产品在指定版本和条件下提供示例功能。",
+      "type": "fact",
+      "status": "approved",
+      "allowed_outputs": [
+        "feature-catalog",
+        "technical-proposal",
+        "presentation"
+      ],
+      "evidence_ids": [
+        "EVD-001"
+      ]
+    }
+  ],
+  "use_cases": [
+    {
+      "id": "CASE-001",
+      "name": "示例场景",
+      "audience": "技术负责人",
+      "problem": "说明现有工作中的具体问题。",
+      "workflow": "说明产品参与的步骤和人工复核点。",
+      "outcome": "只写已有证据支持的结果。",
+      "evidence_ids": [
+        "EVD-001"
+      ]
+    }
+  ],
+  "differentiators": [
+    {
+      "id": "DIF-001",
+      "statement": "说明可验证的产品差异。",
+      "comparison_scope": "明确比较对象和版本范围。",
+      "evidence_ids": [
+        "EVD-001"
+      ]
+    }
+  ],
+  "limitations": [
+    {
+      "id": "LIM-001",
+      "text": "说明适用边界、依赖条件或人工复核要求。",
+      "applies_to": [
+        "FEAT-001"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "EVD-001",
+      "type": "product-documentation",
+      "title": "产品说明书",
+      "source": "docs/product.md",
+      "locator": "功能章节",
+      "verified_on": "2026-01-01",
+      "owner": "产品负责人",
+      "disclosure": "public",
+      "notes": "发布前重新核验版本。"
+    }
+  ],
+  "prohibited_claims": [
+    "绝对领先",
+    "百分之百准确"
+  ]
+}

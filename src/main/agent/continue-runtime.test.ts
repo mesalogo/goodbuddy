@@ -225,6 +225,45 @@ describe('ContinueAgentRuntime', () => {
     expect(prompt).toContain('test')
   })
 
+  it('keeps a full bundled Skill payload on every platform', async () => {
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      skillInstructions: `# Skills\n${'技'.repeat(30_000)}`.slice(0, 30_000),
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+
+    await collectEvents(runtime)
+
+    const prompt = String(mocks.runHost.mock.calls[0]?.[0])
+    expect(prompt).toContain('SYSTEM CAPABILITY INSTRUCTIONS')
+    expect(prompt.length).toBeGreaterThan(24_000)
+  })
+
+  it('reports oversized Skill payloads instead of dropping them silently', async () => {
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      skillInstructions: '巨'.repeat(130_000),
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+
+    await expect(collectEvents(runtime)).rejects.toThrow('超过 Continue')
+    expect(mocks.runHost).not.toHaveBeenCalled()
+  })
+
   it('blocks anonymous platform fallback without an explicit model configuration', async () => {
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',

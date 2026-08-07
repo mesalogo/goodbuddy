@@ -1,0 +1,18 @@
+{
+  "title": "项目名称",
+  "subtitle": "技术方案",
+  "author": "编制单位：____________________",
+  "date": "编制日期：____________________",
+  "output": "../dist/document.docx",
+  "toc_depth": 3,
+  "chapters": [
+    {
+      "path": "chapters/01-overview.md",
+      "page_break_before": false
+    },
+    {
+      "path": "chapters/02-design.md",
+      "page_break_before": true
+    }
+  ]
+}

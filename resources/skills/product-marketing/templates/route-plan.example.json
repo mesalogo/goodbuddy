@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "request": {
+    "id": "PM-001",
+    "objective": "为目标客户准备产品介绍与技术方案",
+    "audiences": [
+      "技术负责人",
+      "业务负责人"
+    ],
+    "channel": "受控客户交流",
+    "confidentiality": "restricted",
+    "evidence_ref": "product-evidence.json",
+    "product_version": "1.0"
+  },
+  "nodes": [
+    {
+      "id": "evidence",
+      "skill": "product-evidence",
+      "artifact_type": "evidence",
+      "depends_on": [],
+      "required": true,
+      "status": "pending",
+      "outputs": [
+        "product-evidence.json"
+      ],
+      "reason": "所有产物共享同一事实版本"
+    },
+    {
+      "id": "catalog",
+      "skill": "product-feature-catalog",
+      "artifact_type": "feature-catalog",
+      "depends_on": [
+        "evidence"
+      ],
+      "required": true,
+      "status": "pending",
+      "outputs": [
+        "feature-catalog.md"
+      ],
+      "reason": "先固定产品能力范围"
+    },
+    {
+      "id": "proposal",
+      "skill": "technical-proposal",
+      "artifact_type": "technical-proposal",
+      "depends_on": [
+        "catalog"
+      ],
+      "required": true,
+      "status": "pending",
+      "outputs": [
+        "technical-proposal.md"
+      ],
+      "reason": "客户方案依赖已核验能力目录"
+    },
+    {
+      "id": "presentation",
+      "skill": "product-presentation",
+      "artifact_type": "presentation",
+      "depends_on": [
+        "proposal"
+      ],
+      "required": true,
+      "status": "pending",
+      "outputs": [
+        "product-presentation.pptx"
+      ],
+      "reason": "PPT 从已批准方案摘要派生"
+    }
+  ],
+  "final_gates": [
+    { "name": "evidence-validation", "status": "pending" },
+    { "name": "cross-artifact-consistency", "status": "pending" },
+    { "name": "confidentiality-review", "status": "pending" },
+    { "name": "human-approval", "status": "pending" }
+  ]
+}

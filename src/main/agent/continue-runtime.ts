@@ -43,8 +43,9 @@ export type ContinueRuntimeOptions = {
   >
 }
 
-const MAX_CONTINUE_PROMPT_CHARACTERS =
-  process.platform === 'win32' ? 24_000 : 128_000
+// The prompt reaches the Continue host through a local HTTP POST body, so no
+// platform command-line limit applies to it.
+const MAX_CONTINUE_PROMPT_CHARACTERS = 128_000
 
 function continueToolFailureMessage(tool: ContinueHostTool): string {
   const callId = tool.callId.slice(0, 128)
@@ -260,12 +261,19 @@ export class ContinueAgentRuntime implements AgentRuntime {
           'CURRENT CONVERSATION:'
         ].join('\n')
       : ''
-    const conversationContext =
+    if (
       skillPrefix &&
-      skillPrefix.length + prompt.length <=
-        MAX_CONTINUE_PROMPT_CHARACTERS
-        ? `${skillPrefix}\n${prompt}`
-        : prompt
+      skillPrefix.length + prompt.length > MAX_CONTINUE_PROMPT_CHARACTERS
+    ) {
+      throw new Error(
+        `已启用的 Skill 说明与当前请求合计 ${(
+          skillPrefix.length + prompt.length
+        ).toLocaleString()} 字符，超过 Continue ${MAX_CONTINUE_PROMPT_CHARACTERS.toLocaleString()} 字符上限。请在设置中减少分配给 Continue 的 Skill。`
+      )
+    }
+    const conversationContext = skillPrefix
+      ? `${skillPrefix}\n${prompt}`
+      : prompt
     const detection = await this.getDetection()
     signal.throwIfAborted()
     if (!detection.available || !detection.path) {
