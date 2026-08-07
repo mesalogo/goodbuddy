@@ -2,11 +2,14 @@ export function createAnthropicApiBaseUrl(baseUrl: string): string {
   const url = new URL(baseUrl)
   const path = url.pathname.replace(/\/+$/, '')
   url.pathname = path.endsWith('/v1') ? path : `${path}/v1`
-  url.search = ''
   url.hash = ''
-  return url.toString().replace(/\/$/, '')
+  return url.toString()
 }
 
 export function createAnthropicMessagesUrl(baseUrl: string): URL {
-  return new URL(`${createAnthropicApiBaseUrl(baseUrl)}/messages`)
+  const url = new URL(baseUrl)
+  const path = url.pathname.replace(/\/+$/u, '')
+  url.pathname = `${path.endsWith('/v1') ? path : `${path}/v1`}/messages`
+  url.hash = ''
+  return url
 }

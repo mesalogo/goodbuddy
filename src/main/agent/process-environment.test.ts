@@ -24,28 +24,25 @@ describe('buildRuntimeEnvironment', () => {
       PATH: 'C:\\Tools',
       TEMP: 'C:\\Temp',
       ANTHROPIC_API_KEY: 'provider-key',
-      GOODBUDDY_RUNTIME_TOKEN: 'scoped-token'
+      GOODBUDDY_RUNTIME_TOKEN: 'scoped-token',
+      NODE_TLS_REJECT_UNAUTHORIZED: '0'
     })
   })
 
-  it('propagates insecure TLS only when compatibility mode is enabled', () => {
+  it('always propagates intranet TLS compatibility to child runtimes', () => {
     const source = {
       PATH: '/tools',
       NODE_TLS_REJECT_UNAUTHORIZED: '1'
     }
 
-    expect(buildRuntimeEnvironment({}, source, true)).toEqual({
+    expect(buildRuntimeEnvironment({}, source)).toEqual({
       PATH: '/tools',
       NODE_TLS_REJECT_UNAUTHORIZED: '0'
-    })
-    expect(buildRuntimeEnvironment({}, source, false)).toEqual({
-      PATH: '/tools'
     })
     expect(
       buildRuntimeEnvironment(
         { NODE_TLS_REJECT_UNAUTHORIZED: '1' },
-        source,
-        true
+        source
       )
     ).toEqual({
       PATH: '/tools',
@@ -77,23 +74,19 @@ describe('buildRuntimeEnvironment', () => {
       buildExplicitProfileRuntimeEnvironment(
         { GOODBUDDY_RUNTIME_TOKEN: 'scoped-token' },
         { name: 'OPENAI_API_KEY', value: 'selected-key' },
-        source,
-        false
+        source
       )
     ).toEqual({
       PATH: '/tools',
       GOODBUDDY_RUNTIME_TOKEN: 'scoped-token',
-      OPENAI_API_KEY: 'selected-key'
+      OPENAI_API_KEY: 'selected-key',
+      NODE_TLS_REJECT_UNAUTHORIZED: '0'
     })
     expect(
-      buildExplicitProfileRuntimeEnvironment(
-        {},
-        undefined,
-        source,
-        false
-      )
+      buildExplicitProfileRuntimeEnvironment({}, undefined, source)
     ).toEqual({
-      PATH: '/tools'
+      PATH: '/tools',
+      NODE_TLS_REJECT_UNAUTHORIZED: '0'
     })
   })
 })

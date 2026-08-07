@@ -43,7 +43,6 @@ import type {
   ManagedChannel,
   WeComChannelSettingsInput
 } from './channel-settings-contracts'
-import { isIntranetHostname } from './intranet-hostname'
 import type {
   ApplicationSettings,
   VersionCheckResult
@@ -203,7 +202,6 @@ export const defaultRuntimeSettings = {
   continueMode: 'chat',
   runtimeSandboxMode: 'auto',
   subagentSmartRoutingEnabled: false,
-  intranetCompatibilityEnabled: false,
   knowledgeEmbeddingEnabled: false,
   knowledgeEmbeddingBaseUrl:
     'http://127.0.0.1:11434/v1/embeddings',
@@ -324,7 +322,6 @@ export const runtimeSettingsInputSchema = z
     continueMode: continueModeSchema,
     runtimeSandboxMode: runtimeSandboxModeSchema,
     subagentSmartRoutingEnabled: z.boolean().optional(),
-    intranetCompatibilityEnabled: z.boolean().default(false),
     knowledgeEmbeddingEnabled: z.boolean(),
     knowledgeEmbeddingBaseUrl: z.string().url().max(2_048),
     knowledgeEmbeddingModel: z
@@ -359,32 +356,11 @@ export const runtimeSettingsInputSchema = z
       value: profile.baseUrl
     })) ?? [{ path: ['modelBaseUrl'], value: settings.modelBaseUrl }]
     for (const endpoint of endpoints) {
-      const url = new URL(endpoint.value)
-      const hostname = url.hostname.toLowerCase()
-      const loopback =
-        hostname === 'localhost' ||
-        hostname === '::1' ||
-        hostname === '[::1]' ||
-        /^127(?:\.\d{1,3}){3}$/u.test(hostname)
-      if (
-        !(
-          url.protocol === 'https:' ||
-          (url.protocol === 'http:' &&
-            (loopback ||
-              (settings.intranetCompatibilityEnabled &&
-                isIntranetHostname(hostname))))
-        ) ||
-        url.username ||
-        url.password ||
-        url.search ||
-        url.hash
-      ) {
+      if (!['http:', 'https:'].includes(new URL(endpoint.value).protocol)) {
         context.addIssue({
           code: 'custom',
           path: endpoint.path,
-          message: settings.intranetCompatibilityEnabled
-            ? '模型服务地址必须使用 HTTP(S)，且不得包含凭据、查询参数或片段'
-            : '模型服务地址必须使用 HTTPS；仅本机回环地址可使用 HTTP，且不得包含凭据、查询参数或片段'
+          message: '模型服务地址必须使用 HTTP 或 HTTPS'
         })
       }
     }
@@ -473,58 +449,27 @@ export const runtimeSettingsInputSchema = z
         })
       }
     }
-    if (settings.opencodeBaseUrl) {
-      const opencodeUrl = new URL(settings.opencodeBaseUrl)
-      if (
-        !['http:', 'https:'].includes(opencodeUrl.protocol) ||
-        opencodeUrl.username ||
-        opencodeUrl.password ||
-        opencodeUrl.search ||
-        opencodeUrl.hash ||
-        (opencodeUrl.pathname !== '/' && opencodeUrl.pathname !== '')
-      ) {
-        context.addIssue({
-          code: 'custom',
-          path: ['opencodeBaseUrl'],
-          message: 'OpenCode 地址必须是无凭据和路径的 HTTP(S) origin'
-        })
-      }
-    }
-    const embeddingUrl = new URL(settings.knowledgeEmbeddingBaseUrl)
-    const embeddingHost = embeddingUrl.hostname.toLowerCase()
-    const privateIpv4 =
-      /^10(?:\.\d{1,3}){3}$/u.test(embeddingHost) ||
-      /^192\.168(?:\.\d{1,3}){2}$/u.test(embeddingHost) ||
-      /^172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/u.test(
-        embeddingHost
-      )
-    const loopback =
-      embeddingHost === 'localhost' ||
-      embeddingHost === '::1' ||
-      embeddingHost === '[::1]' ||
-      /^127(?:\.\d{1,3}){3}$/u.test(embeddingHost)
     if (
-      !(
-        embeddingUrl.protocol === 'https:' ||
-        (embeddingUrl.protocol === 'http:' &&
-          ((settings.intranetCompatibilityEnabled &&
-            isIntranetHostname(embeddingHost)) ||
-            loopback ||
-            privateIpv4))
-      ) ||
-      embeddingUrl.username ||
-      embeddingUrl.password ||
-      embeddingUrl.search ||
-      embeddingUrl.hash ||
-      embeddingUrl.pathname === '/' ||
-      embeddingUrl.pathname === ''
+      settings.opencodeBaseUrl &&
+      !['http:', 'https:'].includes(
+        new URL(settings.opencodeBaseUrl).protocol
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['opencodeBaseUrl'],
+        message: 'OpenCode 地址必须使用 HTTP 或 HTTPS'
+      })
+    }
+    if (
+      !['http:', 'https:'].includes(
+        new URL(settings.knowledgeEmbeddingBaseUrl).protocol
+      )
     ) {
       context.addIssue({
         code: 'custom',
         path: ['knowledgeEmbeddingBaseUrl'],
-        message: settings.intranetCompatibilityEnabled
-          ? '向量接口 URL 必须是完整的 HTTP(S) 端点，且不得包含凭据、查询参数或片段'
-          : '向量接口 URL 必须是完整的 HTTPS 端点；本机或私有网络可使用 HTTP，且不得包含凭据、查询参数或片段'
+        message: '向量接口 URL 必须使用 HTTP 或 HTTPS'
       })
     }
   })
@@ -561,7 +506,6 @@ export type RuntimeSettings = {
   continueMode: RuntimeSettingsInput['continueMode']
   runtimeSandboxMode: RuntimeSettingsInput['runtimeSandboxMode']
   subagentSmartRoutingEnabled: boolean
-  intranetCompatibilityEnabled: boolean
   knowledgeEmbeddingEnabled: boolean
   knowledgeEmbeddingBaseUrl: string
   knowledgeEmbeddingModel: string
@@ -673,6 +617,11 @@ export type AgentEvent =
   | {
       requestId: string
       type: 'text'
+      delta: string
+    }
+  | {
+      requestId: string
+      type: 'reasoning'
       delta: string
     }
   | {

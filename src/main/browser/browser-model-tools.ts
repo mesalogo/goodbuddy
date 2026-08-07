@@ -252,7 +252,7 @@ export class BrowserModelTools {
       const input = browserNavigateInputSchema.parse(argumentsValue)
       const target = canonicalizeBrowserUrl(input.url)
       const label = navigationLabel(target)
-      description = `将在隔离浏览器中访问 ${label}。仅允许公开 HTTP(S) 地址。`
+      description = `将在隔离浏览器中访问 ${label}。支持可由当前设备连接的 HTTP(S) 地址。`
       argumentSummary = label
       scopeKey = `model:browser:navigate:${target.origin}`
     } else if (name === 'browser_snapshot') {
@@ -279,7 +279,7 @@ export class BrowserModelTools {
       scopeKey = `model:browser:select:${randomUUID()}`
     } else if (name === 'browser_back') {
       browserBackInputSchema.parse(argumentsValue)
-      description = `从 ${currentOrigin} 返回浏览器历史记录中的上一页。目标仍需通过 URL 安全策略。`
+      description = `从 ${currentOrigin} 返回浏览器历史记录中的上一页。`
       argumentSummary = `当前来源：${currentOrigin}`
       scopeKey = `model:browser:back:${randomUUID()}`
     } else {

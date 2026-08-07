@@ -161,11 +161,17 @@ export function createAgentRuntime(
     })
   }
 
+  const defaultModelProfile =
+    settings?.modelProfiles.find(
+      (profile) => profile.id === settings.defaultModelProfileId
+    ) ?? settings?.modelProfiles[0]
   const modelApiKey =
+    defaultModelProfile?.apiKey ||
     settings?.apiKey ||
     process.env.GOODBUDDY_MODEL_API_KEY?.trim() ||
     process.env.GOODBUDDY_BIGTOKEN_API_KEY?.trim()
   const modelAuthentication =
+    defaultModelProfile?.authentication ??
     settings?.modelAuthentication ??
     defaultRuntimeSettings.modelAuthentication
   if (
@@ -176,20 +182,24 @@ export function createAgentRuntime(
     return new ModelAgentRuntime({
       apiKey: modelApiKey ?? '',
       baseUrl:
+        defaultModelProfile?.baseUrl ||
         settings?.modelBaseUrl ||
         process.env.GOODBUDDY_MODEL_BASE_URL?.trim() ||
         process.env.GOODBUDDY_BIGTOKEN_BASE_URL?.trim() ||
         defaultRuntimeSettings.modelBaseUrl,
       model:
+        defaultModelProfile?.modelName ||
         settings?.modelName ||
         process.env.GOODBUDDY_MODEL_NAME?.trim() ||
         process.env.GOODBUDDY_BIGTOKEN_MODEL?.trim() ||
         defaultRuntimeSettings.modelName,
       protocol:
+        defaultModelProfile?.protocol ??
         settings?.modelProtocol ??
         defaultRuntimeSettings.modelProtocol,
       authentication: modelAuthentication,
       imageGenerationQuality:
+        defaultModelProfile?.imageGenerationQuality ??
         settings?.imageGenerationQuality ??
         defaultRuntimeSettings.imageGenerationQuality,
       skillInstructions: capabilities.skillInstructions,

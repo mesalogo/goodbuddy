@@ -1,5 +1,4 @@
 import type { App, Certificate, Event, WebContents } from 'electron'
-import { globalAgent as nodeHttpsGlobalAgent } from 'node:https'
 import {
   Agent,
   getGlobalDispatcher,
@@ -24,7 +23,6 @@ type GlobalTlsPolicyDependencies = {
   getDispatcher: () => Dispatcher
   setDispatcher: (dispatcher: Dispatcher) => void
   createInsecureDispatcher: () => Dispatcher
-  resetNodeHttpsConnections?: () => void
 }
 
 const defaultDependencies: GlobalTlsPolicyDependencies = {
@@ -36,28 +34,20 @@ const defaultDependencies: GlobalTlsPolicyDependencies = {
       connect: {
         rejectUnauthorized: false
       }
-    }),
-  resetNodeHttpsConnections: () => nodeHttpsGlobalAgent.destroy()
-}
-
-let controlledChildTlsCompatibilityEnabled = false
-
-export function isControlledChildTlsCompatibilityEnabled(): boolean {
-  return controlledChildTlsCompatibilityEnabled
+    })
 }
 
 /**
- * Applies invalid-certificate compatibility to network traffic owned by this
- * Electron process. URLs opened with an external OS browser are outside the
- * process and continue to use that browser's certificate policy.
+ * GoodBuddy targets intranet deployments where model, vector, and MCP
+ * endpoints commonly use self-signed or expired certificates, so certificate
+ * validation is disabled for traffic this Electron process owns. URLs handed
+ * to an external OS browser are outside the process and keep that browser's
+ * own certificate policy.
  */
 export class GlobalTlsPolicy {
   private readonly originalDispatcher: Dispatcher
-  private readonly originalNodeTlsValue: string | undefined
-  private readonly hadOriginalNodeTlsValue: boolean
   private insecureDispatcher?: Dispatcher
-  private enabled = false
-  private certificateErrorListenerInstalled = false
+  private installed = false
 
   private readonly certificateErrorListener: CertificateErrorListener = (
     event,
@@ -74,68 +64,30 @@ export class GlobalTlsPolicy {
       defaultDependencies
   ) {
     this.originalDispatcher = dependencies.getDispatcher()
-    this.hadOriginalNodeTlsValue = Object.prototype.hasOwnProperty.call(
-      dependencies.environment,
-      'NODE_TLS_REJECT_UNAUTHORIZED'
-    )
-    this.originalNodeTlsValue =
-      dependencies.environment.NODE_TLS_REJECT_UNAUTHORIZED
   }
 
-  apply(enabled: boolean): void {
-    if (enabled) {
-      this.enable()
-      return
-    }
-    this.disable()
-  }
-
-  async dispose(): Promise<void> {
-    this.disable()
-    await this.insecureDispatcher?.close()
-    this.insecureDispatcher = undefined
-  }
-
-  private enable(): void {
-    if (this.enabled) {
+  install(): void {
+    if (this.installed) {
       return
     }
     this.insecureDispatcher ??=
       this.dependencies.createInsecureDispatcher()
     this.dependencies.environment.NODE_TLS_REJECT_UNAUTHORIZED = '0'
     this.dependencies.setDispatcher(this.insecureDispatcher)
-    if (!this.certificateErrorListenerInstalled) {
-      this.app.on(
-        'certificate-error',
-        this.certificateErrorListener
-      )
-      this.certificateErrorListenerInstalled = true
-    }
-    controlledChildTlsCompatibilityEnabled = true
-    this.enabled = true
+    this.app.on('certificate-error', this.certificateErrorListener)
+    this.installed = true
   }
 
-  private disable(): void {
-    const wasEnabled = this.enabled
-    if (this.hadOriginalNodeTlsValue) {
-      this.dependencies.environment.NODE_TLS_REJECT_UNAUTHORIZED =
-        this.originalNodeTlsValue
-    } else {
-      delete this.dependencies.environment
-        .NODE_TLS_REJECT_UNAUTHORIZED
-    }
-    this.dependencies.setDispatcher(this.originalDispatcher)
-    if (this.certificateErrorListenerInstalled) {
+  async dispose(): Promise<void> {
+    if (this.installed) {
+      this.dependencies.setDispatcher(this.originalDispatcher)
       this.app.removeListener(
         'certificate-error',
         this.certificateErrorListener
       )
-      this.certificateErrorListenerInstalled = false
+      this.installed = false
     }
-    if (wasEnabled) {
-      this.dependencies.resetNodeHttpsConnections?.()
-    }
-    controlledChildTlsCompatibilityEnabled = false
-    this.enabled = false
+    await this.insecureDispatcher?.close()
+    this.insecureDispatcher = undefined
   }
 }

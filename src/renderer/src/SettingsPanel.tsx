@@ -313,12 +313,6 @@ export function SettingsPanel({
     subagentSmartRoutingEnabled,
     setSubagentSmartRoutingEnabled
   ] = useState(false)
-  const [
-    intranetCompatibilityEnabled,
-    setIntranetCompatibilityEnabled
-  ] = useState<boolean>(
-    defaultRuntimeSettings.intranetCompatibilityEnabled
-  )
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [embeddingSnapshot, setEmbeddingSnapshot] =
@@ -418,9 +412,6 @@ export function SettingsPanel({
         )
         setSubagentSmartRoutingEnabled(
           value.subagentSmartRoutingEnabled
-        )
-        setIntranetCompatibilityEnabled(
-          value.intranetCompatibilityEnabled
         )
       })
       .catch((reason: unknown) => {
@@ -555,8 +546,7 @@ export function SettingsPanel({
         opencodeModelSource,
         continueModelSource,
         toolApproval,
-        subagentSmartRoutingEnabled,
-        intranetCompatibilityEnabled
+        subagentSmartRoutingEnabled
       })
       setSettings(value)
       setModelProfiles(toModelProfileDrafts(value))
@@ -585,9 +575,6 @@ export function SettingsPanel({
       )
       setSubagentSmartRoutingEnabled(
         value.subagentSmartRoutingEnabled
-      )
-      setIntranetCompatibilityEnabled(
-        value.intranetCompatibilityEnabled
       )
       const embeddings = window.goodbuddy.embeddings
       if (embeddings) {
@@ -1850,14 +1837,14 @@ export function SettingsPanel({
                       }
                       value={profile.protocol}
                     >
-                      <option value="anthropic-messages">
-                        Anthropic Messages
+                      <option value="openai-chat-completions">
+                        OpenAI 兼容 Chat Completions
                       </option>
                       <option value="openai-responses">
                         OpenAI Responses
                       </option>
-                      <option value="openai-chat-completions">
-                        OpenAI 兼容 Chat Completions
+                      <option value="anthropic-messages">
+                        Anthropic Messages
                       </option>
                       <option value="openai-images-generations">
                         OpenAI Images Generations（图像生成）
@@ -2115,33 +2102,6 @@ export function SettingsPanel({
 
           {activeTab === 'security' && (
             <>
-          <div className="settings-section">
-            <div className="settings-section__title">
-              <div>
-                <strong>内网兼容模式</strong>
-                <small>统一控制全应用的内网连接兼容性</small>
-              </div>
-            </div>
-            <label className="check-field">
-              <input
-                aria-describedby="intranet-compatibility-warning"
-                checked={intranetCompatibilityEnabled}
-                onChange={(event) =>
-                  setIntranetCompatibilityEnabled(event.target.checked)
-                }
-                type="checkbox"
-              />
-              <span>内网兼容模式</span>
-            </label>
-            <p
-              className="settings-warning"
-              id="intranet-compatibility-warning"
-            >
-              {
-                'HTTP 传输未加密。启用后，整个应用允许 HTTP 内网地址，并接受无效、自签名或已过期的 HTTPS 证书；关闭后恢复严格的地址与证书校验。'
-              }
-            </p>
-          </div>
           <label className="field">
             <span>Runtime OS 沙箱</span>
             <select

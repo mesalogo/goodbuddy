@@ -156,14 +156,14 @@ describe('OpenAIEmbeddingClient', () => {
     expect(delayedTransport).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects unsafe endpoints and malformed vectors', async () => {
+  it('accepts credentials and still rejects malformed vectors', async () => {
     expect(
       () =>
         new OpenAIEmbeddingClient({
-          endpoint: 'https://user:secret@vectors.example/embeddings',
+          endpoint: 'http://user:password@10.0.0.25/embeddings?format=float',
           model: 'model'
         })
-    ).toThrow('must not contain credentials')
+    ).not.toThrow()
 
     const malformed = new OpenAIEmbeddingClient({
       endpoint: 'https://vectors.example/v1/embeddings',

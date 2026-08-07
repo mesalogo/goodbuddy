@@ -1,13 +1,7 @@
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { isIP } from 'node:net'
 import { z } from 'zod'
-import { isIntranetCompatibilityEnabled } from '../intranet-compatibility-policy'
-import {
-  isIntranetAddress,
-  isPublicAddress
-} from '../knowledge/url-importer'
 
 const remoteTaskSchema = z
   .object({
@@ -58,41 +52,25 @@ type RemoteDelegationOptions = {
   }
 }
 
-const BLOCKED_REMOTE_HOSTS = new Set([
-  'instance-data',
-  'instance-data.ec2.internal',
-  'metadata',
-  'metadata.aws.internal',
-  'metadata.google.internal'
-])
-
 function normalizeEndpoint(input: string): URL {
   const url = new URL(input.trim())
-  if (
-    (
-      url.protocol !== 'https:' &&
-      (
-        url.protocol !== 'http:' ||
-        !isIntranetCompatibilityEnabled()
-      )
-    ) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.pathname !== '' && url.pathname !== '/')
-  ) {
-    throw new Error(
-      isIntranetCompatibilityEnabled()
-        ? '远程委派地址必须是无凭据和路径的 HTTP(S) origin'
-        : '远程委派地址必须是无凭据和路径的 HTTPS origin'
-    )
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('远程委派地址必须使用 HTTP 或 HTTPS')
   }
-  const hostname = url.hostname.toLowerCase().replace(/\.$/u, '')
-  if (BLOCKED_REMOTE_HOSTS.has(hostname)) {
-    throw new Error('远程委派地址不允许访问云元数据服务')
-  }
+  url.hash = ''
+  url.pathname = url.pathname.replace(/\/+$/u, '')
   return url
+}
+
+/** Keeps any reverse-proxy path prefix carried by the configured endpoint. */
+function endpointUrl(endpoint: URL, path: string): URL {
+  const target = new URL(endpoint.toString())
+  const prefix =
+    endpoint.pathname === '/'
+      ? ''
+      : endpoint.pathname.replace(/\/+$/u, '')
+  target.pathname = `${prefix}${path}`
+  return target
 }
 
 async function defaultLookup(hostname: string): Promise<ResolvedAddress[]> {
@@ -232,7 +210,7 @@ export class RemoteDelegationService {
         )
         this.markDelivered(pending[0])
       }
-      const nextUrl = new URL('/goodbuddy/tasks/next', this.endpoint)
+      const nextUrl = endpointUrl(this.endpoint, '/goodbuddy/tasks/next')
       const response = await this.transport(
         nextUrl,
         address,
@@ -292,9 +270,9 @@ export class RemoteDelegationService {
     address: ResolvedAddress,
     signal: AbortSignal
   ): Promise<void> {
-    const resultUrl = new URL(
-      `/goodbuddy/tasks/${encodeURIComponent(taskId)}/result`,
-      this.endpoint
+    const resultUrl = endpointUrl(
+      this.endpoint,
+      `/goodbuddy/tasks/${encodeURIComponent(taskId)}/result`
     )
     const response = await this.transport(
       resultUrl,
@@ -326,45 +304,9 @@ export class RemoteDelegationService {
   }
 
   private async resolveAddress(): Promise<ResolvedAddress> {
-    if (
-      this.endpoint.protocol === 'http:' &&
-      !isIntranetCompatibilityEnabled()
-    ) {
-      throw new Error('远程委派地址必须使用 HTTPS')
-    }
-    const addresses = await this.lookup(this.endpoint.hostname)
-    const addressTypes = addresses.map((candidate) =>
-      candidate.family !== isIP(candidate.address)
-        ? 'blocked'
-        : isPublicAddress(candidate.address)
-        ? 'public'
-        : isIntranetAddress(candidate.address)
-          ? 'intranet'
-          : 'blocked'
-    )
-    const address = addresses[0]
-    const compatibilityEnabled = isIntranetCompatibilityEnabled()
-    const plaintextOutsideIntranet =
-      this.endpoint.protocol === 'http:' &&
-      addressTypes.some((addressType) => addressType !== 'intranet')
-    if (
-      !address ||
-      addressTypes.includes('blocked') ||
-      new Set(addressTypes).size !== 1 ||
-      plaintextOutsideIntranet ||
-      (
-        !compatibilityEnabled &&
-        addressTypes.some((addressType) => addressType !== 'public')
-      )
-    ) {
-      if (
-        plaintextOutsideIntranet &&
-        !addressTypes.includes('blocked') &&
-        new Set(addressTypes).size === 1
-      ) {
-        throw new Error('HTTP 远程委派仅允许解析到内网地址')
-      }
-      throw new Error('远程委派地址解析到私有或不安全网络')
+    const address = (await this.lookup(this.endpoint.hostname))[0]
+    if (!address) {
+      throw new Error('远程委派地址无法解析到任何 IP')
     }
     return address
   }

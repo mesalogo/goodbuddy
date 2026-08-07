@@ -903,6 +903,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         error?: string
       }
     >()
+    const reasoningPartIds = new Set<string>()
     try {
       const promptText =
         session.created && request.history?.length
@@ -953,13 +954,22 @@ export class OpenCodeRuntime implements AgentRuntime {
         if (
           event.type === 'message.part.delta' &&
           event.properties.sessionID === sessionId &&
-          event.properties.field === 'text' &&
           event.properties.delta
         ) {
-          yield {
-            requestId: request.requestId,
-            type: 'text',
-            delta: event.properties.delta
+          const reasoning =
+            reasoningPartIds.has(event.properties.partID) ||
+            [
+              'reasoning',
+              'reasoning_content',
+              'reasoning_details',
+              'thinking'
+            ].includes(event.properties.field)
+          if (reasoning || event.properties.field === 'text') {
+            yield {
+              requestId: request.requestId,
+              type: reasoning ? 'reasoning' : 'text',
+              delta: event.properties.delta
+            }
           }
         }
 
@@ -968,7 +978,9 @@ export class OpenCodeRuntime implements AgentRuntime {
           event.properties.sessionID === sessionId
         ) {
           const { part } = event.properties
-          if (part.type === 'tool') {
+          if (part.type === 'reasoning') {
+            reasoningPartIds.add(part.id)
+          } else if (part.type === 'tool') {
             const callId = part.callID || part.id
             if (!callId || callId.length > 256) {
               throw new Error('OpenCode 工具调用 ID 格式无效')
@@ -1000,6 +1012,18 @@ export class OpenCodeRuntime implements AgentRuntime {
               summary: `OpenCode 工具：${toolName}`,
               ...(error ? { error } : {})
             }
+          }
+        }
+
+        if (
+          event.type === 'session.next.reasoning.delta' &&
+          event.properties.sessionID === sessionId &&
+          event.properties.delta
+        ) {
+          yield {
+            requestId: request.requestId,
+            type: 'reasoning',
+            delta: event.properties.delta
           }
         }
 

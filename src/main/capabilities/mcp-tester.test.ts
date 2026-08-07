@@ -122,7 +122,7 @@ describe('testMcpServer', () => {
       },
       reconnectionOptions: { maxRetries: 0 }
     })
-    expect(options).toHaveProperty('fetch')
+    expect(options).not.toHaveProperty('fetch')
   })
 
   it('closes the client and returns a controlled error on failure', async () => {

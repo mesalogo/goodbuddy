@@ -297,6 +297,7 @@ type Message = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  reasoning?: string
   createdAt: number
   state: 'streaming' | 'complete' | 'error'
   status?: string
@@ -489,6 +490,8 @@ function isConversation(value: unknown): value is Conversation {
         (entry.role === 'user' || entry.role === 'assistant') &&
         typeof entry.content === 'string' &&
         entry.content.length <= 1_000_000 &&
+        (entry.reasoning === undefined ||
+          typeof entry.reasoning === 'string') &&
         typeof entry.createdAt === 'number' &&
         (entry.state === 'streaming' ||
           entry.state === 'complete' ||
@@ -521,6 +524,7 @@ function toConversationSnapshots(
       id: message.id,
       role: message.role,
       content: message.content,
+      reasoning: message.reasoning,
       createdAt: message.createdAt,
       state: message.state,
       status: message.status,
@@ -1676,6 +1680,11 @@ function App(): React.JSX.Element {
             message.content.length + event.delta.length > 1_000_000
               ? '回答过长，已在本地截断显示'
               : undefined
+        }))
+      } else if (event.type === 'reasoning') {
+        updateMessage(run.conversationId, run.messageId, (message) => ({
+          ...message,
+          reasoning: `${message.reasoning ?? ''}${event.delta}`
         }))
       } else if (event.type === 'status') {
         updateMessage(run.conversationId, run.messageId, (message) => ({
@@ -3892,6 +3901,24 @@ function App(): React.JSX.Element {
                         })}
                       </div>
                     )}
+                  {message.reasoning && (
+                    <details
+                      className="message-reasoning"
+                      key={`${message.id}-${message.state}`}
+                      open={message.state === 'streaming'}
+                    >
+                      <summary>
+                        {message.state === 'streaming'
+                          ? '正在推理'
+                          : '推理过程'}
+                      </summary>
+                      <div className="markdown-content message-reasoning__content">
+                        <MarkdownRenderer>
+                          {message.reasoning}
+                        </MarkdownRenderer>
+                      </div>
+                    </details>
+                  )}
                   {message.content && (
                     <div className="markdown-content message__content">
                       <MarkdownRenderer>

@@ -1813,6 +1813,46 @@ textarea:focus-visible {
   background: #e6f4ff;
 }
 
+.message-reasoning {
+  max-width: 100%;
+  margin: 0 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+
+.message-reasoning > summary {
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: var(--font-body);
+  font-weight: 600;
+  list-style-position: inside;
+}
+
+.message-reasoning > summary:hover {
+  background: var(--surface-muted);
+}
+
+.message-reasoning > summary:focus-visible {
+  border-radius: var(--radius-control);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.message-reasoning__content {
+  max-height: 320px;
+  padding: 0 var(--space-3) var(--space-3);
+  overflow-y: auto;
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+}
+
+.message-reasoning[open] > summary {
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
 .markdown-content > :first-child {
   margin-top: 0;
 }

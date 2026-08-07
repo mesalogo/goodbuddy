@@ -34,7 +34,7 @@ function createMultimodalToolResult(): ModelToolResult {
   }
 }
 
-function createEventStream(text: string): string {
+function createEventStream(text: string, thinking?: string): string {
   return [
     'event: message_start',
     `data: ${JSON.stringify({
@@ -50,6 +50,16 @@ function createEventStream(text: string): string {
       }
     })}`,
     '',
+    ...(thinking
+      ? [
+          'event: content_block_delta',
+          `data: ${JSON.stringify({
+            type: 'content_block_delta',
+            delta: { type: 'thinking_delta', thinking }
+          })}`,
+          ''
+        ]
+      : []),
     'event: content_block_delta',
     `data: ${JSON.stringify({
       type: 'content_block_delta',
@@ -69,8 +79,21 @@ function createEventStream(text: string): string {
   ].join('\n')
 }
 
-function createResponsesEventStream(text: string): string {
+function createResponsesEventStream(
+  text: string,
+  reasoning?: string
+): string {
   return [
+    ...(reasoning
+      ? [
+          'event: response.reasoning_summary_text.delta',
+          `data: ${JSON.stringify({
+            type: 'response.reasoning_summary_text.delta',
+            delta: reasoning
+          })}`,
+          ''
+        ]
+      : []),
     'event: response.output_text.delta',
     `data: ${JSON.stringify({
       type: 'response.output_text.delta',
@@ -154,7 +177,7 @@ describe('ModelAgentRuntime', () => {
 
   it('uses the Anthropic messages endpoint and streams text deltas', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => {
-      return new Response(createEventStream('真实模型回答'), {
+      return new Response(createEventStream('真实模型回答', '先分析问题'), {
         status: 200,
         headers: { 'content-type': 'text/event-stream' }
       })
@@ -198,6 +221,12 @@ describe('ModelAgentRuntime', () => {
     })
     expect(body.system).toContain('# 文档写作')
     expect(body.system).toContain('Trusted specialist system instruction.')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'reasoning',
+        delta: '先分析问题'
+      })
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'text',
@@ -427,10 +456,13 @@ describe('ModelAgentRuntime', () => {
 
   it('uses the OpenAI Responses endpoint and streams output text', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
-      new Response(createResponsesEventStream('Responses 回答'), {
+      new Response(
+        createResponsesEventStream('Responses 回答', 'Responses 推理'),
+        {
         status: 200,
         headers: { 'content-type': 'text/event-stream' }
-      })
+        }
+      )
     )
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',
@@ -468,6 +500,12 @@ describe('ModelAgentRuntime', () => {
         expect.objectContaining({ role: 'user', content: '你好' })
       ]
     })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'reasoning',
+        delta: 'Responses 推理'
+      })
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'text',

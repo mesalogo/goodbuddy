@@ -122,7 +122,6 @@ const api: DesktopApi = {
       continueMode: 'chat',
       runtimeSandboxMode: 'auto',
       subagentSmartRoutingEnabled: false,
-      intranetCompatibilityEnabled: true,
       knowledgeEmbeddingEnabled: false,
       knowledgeEmbeddingBaseUrl:
         'http://127.0.0.1:11434/v1/embeddings',
@@ -175,8 +174,6 @@ const api: DesktopApi = {
         runtimeSandboxMode: input.runtimeSandboxMode,
         subagentSmartRoutingEnabled:
           input.subagentSmartRoutingEnabled ?? false,
-        intranetCompatibilityEnabled:
-          input.intranetCompatibilityEnabled ?? true,
         knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,
         knowledgeEmbeddingBaseUrl: input.knowledgeEmbeddingBaseUrl,
         knowledgeEmbeddingModel: input.knowledgeEmbeddingModel,
@@ -806,11 +803,30 @@ describe('App', () => {
       })
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
+        type: 'reasoning',
+        delta: '先检查项目结构'
       })
     })
 
     expect(await screen.findByText('这是回答内容')).toBeInTheDocument()
+    const streamingReasoning = screen
+      .getByText('正在推理')
+      .closest('details')
+    expect(streamingReasoning).toHaveAttribute('open')
+    expect(screen.getByText('先检查项目结构')).toBeInTheDocument()
+
+    act(() => {
+      if (!request) {
+        throw new Error('Missing request')
+      }
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+
+    const completedReasoning = await screen.findByText('推理过程')
+    expect(completedReasoning.closest('details')).not.toHaveAttribute('open')
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 

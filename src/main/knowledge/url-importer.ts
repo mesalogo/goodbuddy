@@ -1,12 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { request as httpRequest } from 'node:http'
-import { isIP } from 'node:net'
 import { request as httpsRequest } from 'node:https'
-import { isIntranetCompatibilityEnabled } from '../intranet-compatibility-policy'
-import {
-  isIntranetBrowserAddress,
-  isPublicBrowserAddress
-} from '../browser/browser-url-policy'
 import { parseDocument, type ParsedDocument } from './document-parser'
 
 type ResolvedAddress = {
@@ -42,31 +36,6 @@ export type UrlImporterOptions = {
   maximumRedirects?: number
 }
 
-const blockedHostnames = new Set([
-  'instance-data',
-  'instance-data.ec2.internal',
-  'metadata',
-  'metadata.aws.internal',
-  'metadata.google.internal'
-])
-
-export function isPublicAddress(address: string): boolean {
-  return isPublicBrowserAddress(address)
-}
-
-export function isIntranetAddress(address: string): boolean {
-  return isIntranetBrowserAddress(address)
-}
-
-function addressClass(
-  address: string
-): 'public' | 'intranet' | 'blocked' {
-  if (isPublicAddress(address)) {
-    return 'public'
-  }
-  return isIntranetAddress(address) ? 'intranet' : 'blocked'
-}
-
 export function normalizeSourceUrl(input: string): URL {
   let url: URL
   try {
@@ -76,22 +45,6 @@ export function normalizeSourceUrl(input: string): URL {
   }
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw new Error('网页来源仅支持 HTTP(S)')
-  }
-  const hostname = url.hostname.toLowerCase().replace(/\.$/u, '')
-  if (
-    url.username ||
-    url.password ||
-    blockedHostnames.has(hostname) ||
-    (
-      !isIntranetCompatibilityEnabled() &&
-      (
-        hostname === 'localhost' ||
-        hostname === 'localhost.localdomain' ||
-        hostname.endsWith('.localhost')
-      )
-    )
-  ) {
-    throw new Error('该网页地址不允许导入')
   }
   url.hash = ''
   return url
@@ -201,24 +154,9 @@ export class UrlImporter {
   }
 
   private async resolveAddress(url: URL): Promise<ResolvedAddress> {
-    const addresses = await this.lookup(url.hostname)
-    const classes = addresses.map((candidate) =>
-      candidate.family === isIP(candidate.address)
-        ? addressClass(candidate.address)
-        : 'blocked'
-    )
-    const address = addresses[0]
-    if (
-      addresses.length === 0 ||
-      !address ||
-      classes.includes('blocked') ||
-      new Set(classes).size !== 1 ||
-      (
-        !isIntranetCompatibilityEnabled() &&
-        classes.some((addressType) => addressType !== 'public')
-      )
-    ) {
-      throw new Error('网页地址解析到本机、私网或不可用地址')
+    const address = (await this.lookup(url.hostname))[0]
+    if (!address) {
+      throw new Error('网页地址无法解析到任何 IP')
     }
     return address
   }

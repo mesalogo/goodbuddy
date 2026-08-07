@@ -386,13 +386,13 @@ export class ElectronBrowserSession {
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     this.listen(contents, 'will-navigate', (event: { preventDefault(): void }, details: { url?: string } | string) => {
       const url = typeof details === 'string' ? details : details.url
-      if (!url || !this.isApprovedUrl(url)) {
+      if (!url || !this.updateOriginFromUrl(url)) {
         event.preventDefault()
       }
     })
     this.listen(contents, 'will-redirect', (event: { preventDefault(): void }, details: { url?: string } | string) => {
       const url = typeof details === 'string' ? details : details.url
-      if (!url || !this.isApprovedUrl(url)) {
+      if (!url || !this.updateOriginFromUrl(url)) {
         event.preventDefault()
       }
     })
@@ -415,7 +415,7 @@ export class ElectronBrowserSession {
       callback()
     })
     this.listen(contents, 'did-navigate', (_event: unknown, url: string) => {
-      if (url && !this.isApprovedUrl(url)) {
+      if (url && !this.updateOriginFromUrl(url)) {
         contents.stop()
       }
     })
@@ -455,12 +455,10 @@ export class ElectronBrowserSession {
     }
   }
 
-  private isApprovedUrl(input: string): boolean {
+  private updateOriginFromUrl(input: string): boolean {
     try {
-      return (
-        this.approvedOrigin !== undefined &&
-        canonicalizeBrowserUrl(input).origin === this.approvedOrigin
-      )
+      this.approvedOrigin = canonicalizeBrowserUrl(input).origin
+      return true
     } catch {
       return false
     }
@@ -483,8 +481,7 @@ export class ElectronBrowserSession {
       return undefined
     }
     try {
-      const origin = canonicalizeBrowserUrl(current).origin
-      return origin === this.approvedOrigin ? origin : undefined
+      return canonicalizeBrowserUrl(current).origin
     } catch {
       return undefined
     }
@@ -512,10 +509,8 @@ export class ElectronBrowserSession {
   }
 
   async validateRedirect(url: string, signal: AbortSignal): Promise<void> {
-    if (!this.approvedOrigin) {
-      throw new Error('浏览器没有已批准来源')
-    }
-    await this.policy.validateRedirect(url, this.approvedOrigin, signal)
+    const target = await this.policy.validateRedirect(url, signal)
+    this.approvedOrigin = target.origin
   }
 
   async dispose(): Promise<void> {

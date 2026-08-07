@@ -59,7 +59,6 @@ import { SpeechTranscriptionService } from './speech/speech-transcription-servic
 import { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinator'
 import { KnowledgeEmbeddingIndexRepository } from './knowledge/knowledge-embedding-index-repository'
 import { GlobalTlsPolicy } from './global-tls-policy'
-import { setIntranetCompatibilityReader } from './intranet-compatibility-policy'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 
 const shortcut = 'CommandOrControl+Shift+Space'
@@ -91,9 +90,6 @@ let knowledgeGateway: KnowledgeMcpGateway | undefined
 let assistantDatabase: AssistantDatabase | undefined
 let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
-let intranetCompatibilityEnabled = true
-
-setIntranetCompatibilityReader(() => intranetCompatibilityEnabled)
 
 function createEmbeddingProvider(
   settings: ResolvedRuntimeSettings
@@ -277,10 +273,8 @@ if (hasSingleInstanceLock) {
       secureCipher
     )
     const initialSettings = await settingsStore.getResolvedSettings()
-    intranetCompatibilityEnabled =
-      initialSettings.intranetCompatibilityEnabled
     globalTlsPolicy = new GlobalTlsPolicy(app)
-    globalTlsPolicy.apply(intranetCompatibilityEnabled)
+    globalTlsPolicy.install()
     const capabilityService = new CapabilityService(
       join(app.getPath('userData'), 'capabilities.json'),
       app.isPackaged
@@ -427,10 +421,6 @@ if (hasSingleInstanceLock) {
       bundledRuntimePaths,
       async () => {
         const settings = await settingsStore.getResolvedSettings()
-        intranetCompatibilityEnabled =
-          settings.intranetCompatibilityEnabled
-        globalTlsPolicy?.apply(intranetCompatibilityEnabled)
-        await capabilityService.quarantineIncompatibleMcpServers()
         if (knowledgeService) {
           void knowledgeService
             .setEmbeddingProvider(createEmbeddingProvider(settings))

@@ -3,13 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   afterEach,
-  beforeEach,
   describe,
   expect,
   it,
   vi
 } from 'vitest'
-import { setIntranetCompatibilityReader } from '../intranet-compatibility-policy'
 import {
   CapabilityService,
   type CapabilityCipher,
@@ -22,10 +20,6 @@ import {
 import { CapabilityDiagnostics } from './capability-diagnostics'
 
 const temporaryDirectories: string[] = []
-
-beforeEach(() => {
-  setIntranetCompatibilityReader(() => false)
-})
 
 const cipher: CapabilityCipher = {
   isAvailable: () => true,
@@ -125,7 +119,6 @@ async function createService(
 }
 
 afterEach(async () => {
-  setIntranetCompatibilityReader(() => true)
   delete process.env.GOODBUDDY_CAPABILITY_SERVICE_SECRET
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -323,21 +316,6 @@ describe('CapabilityService', () => {
     })
   })
 
-  it('never sends a bearer token over non-loopback HTTP', async () => {
-    const { service } = await createService()
-    await expect(
-      service.saveMcpServer(undefined, {
-        name: 'Unsafe remote',
-        description: '',
-        enabled: true,
-        assignments: ['model'],
-        secret: { action: 'replace', value: 'secret-token-value' },
-        transport: 'http',
-        url: 'http://mcp.example.com/mcp'
-      })
-    ).rejects.toThrow('只能通过 HTTPS')
-  })
-
   it('allows bearer tokens over the full IPv4 loopback range', async () => {
     const { service } = await createService()
 
@@ -361,8 +339,7 @@ describe('CapabilityService', () => {
     })
   })
 
-  it('allows bearer tokens over HTTP in intranet compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
+  it('allows bearer tokens over HTTP on any configured host', async () => {
     const { service } = await createService()
 
     const snapshot = await service.saveMcpServer(undefined, {
@@ -390,27 +367,9 @@ describe('CapabilityService', () => {
     await expect(
       service.getResolvedMcpServer(server.id)
     ).resolves.toMatchObject({ secret: 'secret-token-value' })
-
-    setIntranetCompatibilityReader(() => false)
-    await expect(
-      service.getResolvedMcpServer(server.id)
-    ).rejects.toThrow('只能通过 HTTPS')
-    await expect(
-      service.getResolvedMcpServers('model')
-    ).resolves.toEqual([])
-    await expect(service.getSnapshot()).resolves.toMatchObject({
-      mcpServers: [
-        expect.objectContaining({
-          id: server.id,
-          enabled: false,
-          secretConfigured: true
-        })
-      ]
-    })
   })
 
-  it('rejects bearer tokens over public HTTP in intranet compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
+  it('allows public HTTP MCP servers with or without bearer tokens', async () => {
     const { service } = await createService()
 
     await expect(
@@ -423,24 +382,33 @@ describe('CapabilityService', () => {
         transport: 'http',
         url: 'http://mcp.example.com/mcp'
       })
-    ).rejects.toThrow('只能通过 HTTPS')
-  })
-
-  it('rejects public HTTP MCP servers without bearer tokens', async () => {
-    setIntranetCompatibilityReader(() => true)
-    const { service } = await createService()
+    ).resolves.toMatchObject({
+      mcpServers: [
+        expect.objectContaining({
+          url: 'http://mcp.example.com/mcp',
+          secretConfigured: true
+        })
+      ]
+    })
 
     await expect(
       service.saveMcpServer(undefined, {
-        name: 'Public plaintext MCP',
+        name: 'Public MCP without token',
         description: '',
         enabled: true,
         assignments: ['model'],
         secret: { action: 'clear' },
         transport: 'http',
-        url: 'http://mcp.example.com/mcp'
+        url: 'http://mcp.example.com/no-token'
       })
-    ).rejects.toThrow('只能通过 HTTPS')
+    ).resolves.toMatchObject({
+      mcpServers: expect.arrayContaining([
+        expect.objectContaining({
+          url: 'http://mcp.example.com/no-token',
+          secretConfigured: false
+        })
+      ])
+    })
   })
 
   it('rejects MCP assignments to Agent Runtimes', async () => {

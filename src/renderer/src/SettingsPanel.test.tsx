@@ -41,7 +41,6 @@ const runtimeSettings: RuntimeSettings = {
   continueMode: 'chat',
   runtimeSandboxMode: 'auto',
   subagentSmartRoutingEnabled: false,
-  intranetCompatibilityEnabled: true,
   knowledgeEmbeddingEnabled: false,
   knowledgeEmbeddingBaseUrl:
     'http://127.0.0.1:11434/v1/embeddings',
@@ -563,43 +562,6 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
-  it('shows and saves the global intranet compatibility mode', async () => {
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
-    const intranetCompatibility = await screen.findByRole('checkbox', {
-      name: '内网兼容模式'
-    })
-    expect(intranetCompatibility).toBeChecked()
-    const warning = screen.getByText(/HTTP 传输未加密/)
-    expect(warning).toHaveTextContent(
-      '无效、自签名或已过期的 HTTPS 证书'
-    )
-    expect(warning).toHaveTextContent('整个应用')
-    expect(warning).toHaveTextContent(
-      '关闭后恢复严格的地址与证书校验'
-    )
-
-    fireEvent.click(intranetCompatibility)
-    expect(intranetCompatibility).not.toBeChecked()
-    expect(warning).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
-    await waitFor(() =>
-      expect(updateRuntime).toHaveBeenCalledWith(
-        expect.objectContaining({
-          intranetCompatibilityEnabled: false
-        })
-      )
-    )
-  })
 
   it('automatically detects runtimes and displays path, version, and detail', async () => {
     render(
@@ -925,6 +887,31 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
+  it('orders model protocols by the preferred connection flow', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    const protocol = await screen.findByLabelText('接口协议 默认模型')
+    expect(
+      within(protocol)
+        .getAllByRole('option')
+        .map((option) => (option as HTMLOptionElement).value)
+    ).toEqual([
+      'openai-chat-completions',
+      'openai-responses',
+      'anthropic-messages',
+      'openai-images-generations'
+    ])
+  })
+
   it('assigns an OpenAI Responses connection to both Agent Runtimes', async () => {
     render(
       <SettingsPanel
@@ -1196,7 +1183,7 @@ describe('SettingsPanel runtime files', () => {
   it('shows the first settings validation issue without IPC wrappers', async () => {
     updateRuntime.mockRejectedValueOnce(
       new Error(
-        "Error invoking remote method 'settings:runtime:update': [ { \"code\": \"custom\", \"path\": [ \"modelProfiles\", 0, \"baseUrl\" ], \"message\": \"模型服务地址必须使用 HTTPS\" } ]"
+        "Error invoking remote method 'settings:runtime:update': [ { \"code\": \"custom\", \"path\": [ \"modelProfiles\", 0, \"baseUrl\" ], \"message\": \"模型服务地址必须使用 HTTP 或 HTTPS\" } ]"
       )
     )
     render(
@@ -1213,7 +1200,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
     expect(
-      await screen.findByText('模型服务地址必须使用 HTTPS')
+      await screen.findByText('模型服务地址必须使用 HTTP 或 HTTPS')
     ).toBeInTheDocument()
     expect(screen.queryByText(/Error invoking remote method/u))
       .not.toBeInTheDocument()

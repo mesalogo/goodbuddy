@@ -7,14 +7,10 @@ const safeEndpointSchema = z
   .url()
   .trim()
   .max(2_048)
-  .refine((value) => {
-    const url = new URL(value)
-    return (
-      ['http:', 'https:'].includes(url.protocol) &&
-      !url.username &&
-      !url.password
-    )
-  }, 'endpoint must be an HTTP URL without credentials')
+  .refine(
+    (value) => ['http:', 'https:'].includes(new URL(value).protocol),
+    'endpoint must be an HTTP or HTTPS URL'
+  )
 
 export const embeddingErrorCodeSchema = z.enum([
   'model_not_found',

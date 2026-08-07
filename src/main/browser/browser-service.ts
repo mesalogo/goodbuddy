@@ -542,7 +542,6 @@ export class BrowserService {
           )
           const finalTarget = await this.policy.validateRedirect(
             result.url,
-            target.origin,
             effectiveSignal
           )
           if (slot.session.getCurrentOrigin() !== finalTarget.origin) {
@@ -681,7 +680,6 @@ export class BrowserService {
           )
           const finalTarget = await this.policy.validateRedirect(
             result.url,
-            target.origin,
             effectiveSignal
           )
           if (slot.session.getCurrentOrigin() !== finalTarget.origin) {

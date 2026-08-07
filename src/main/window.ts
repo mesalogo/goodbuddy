@@ -37,7 +37,7 @@ export function resolveWindowIcon(
 
 function isAllowedExternalUrl(url: string): boolean {
   try {
-    return new URL(url).protocol === 'https:'
+    return ['http:', 'https:'].includes(new URL(url).protocol)
   } catch {
     return false
   }

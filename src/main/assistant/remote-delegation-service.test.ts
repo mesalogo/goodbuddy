@@ -1,14 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setIntranetCompatibilityReader } from '../intranet-compatibility-policy'
+import { describe, expect, it, vi } from 'vitest'
 import { RemoteDelegationService } from './remote-delegation-service'
-
-beforeEach(() => {
-  setIntranetCompatibilityReader(() => false)
-})
-
-afterEach(() => {
-  setIntranetCompatibilityReader(() => true)
-})
 
 describe('RemoteDelegationService', () => {
   it('polls a public HTTPS endpoint and posts a bounded result', async () => {
@@ -172,23 +163,24 @@ describe('RemoteDelegationService', () => {
     expect(observedSignal?.aborted).toBe(true)
   })
 
-  it('rejects endpoints resolving to private networks', async () => {
+  it('allows endpoints resolving to private networks', async () => {
+    const transport = vi.fn(async () => ({ status: 204, body: '' }))
     const service = new RemoteDelegationService({
       endpoint: 'https://delegate.example',
       token: 'test-token',
       lookup: async () => [{ address: '127.0.0.1', family: 4 }],
-      transport: vi.fn(),
+      transport,
       onTask: vi.fn()
     })
 
-    await expect(service.pollOnce()).rejects.toThrow('私有或不安全网络')
+    await expect(service.pollOnce()).resolves.toBeUndefined()
+    expect(transport).toHaveBeenCalled()
   })
 
-  it('allows pinned HTTP private endpoints in compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
+  it('allows pinned HTTP private endpoints and preserves path prefixes', async () => {
     const transport = vi.fn(async () => ({ status: 204, body: '' }))
     const service = new RemoteDelegationService({
-      endpoint: 'http://delegate.internal',
+      endpoint: 'http://delegate.internal/reverse-proxy',
       token: 'test-token',
       lookup: async () => [{ address: '10.20.30.40', family: 4 }],
       transport,
@@ -200,7 +192,7 @@ describe('RemoteDelegationService', () => {
     expect(transport).toHaveBeenCalledWith(
       expect.objectContaining({
         protocol: 'http:',
-        pathname: '/goodbuddy/tasks/next'
+        pathname: '/reverse-proxy/goodbuddy/tasks/next'
       }),
       { address: '10.20.30.40', family: 4 },
       'test-token',
@@ -209,9 +201,8 @@ describe('RemoteDelegationService', () => {
     )
   })
 
-  it('requires HTTPS for public endpoints even in compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
-    const transport = vi.fn()
+  it('allows public HTTP endpoints', async () => {
+    const transport = vi.fn(async () => ({ status: 204, body: '' }))
     const service = new RemoteDelegationService({
       endpoint: 'http://delegate.example',
       token: 'test-token',
@@ -220,31 +211,38 @@ describe('RemoteDelegationService', () => {
       onTask: vi.fn()
     })
 
-    await expect(service.pollOnce()).rejects.toThrow(
-      'HTTP 远程委派仅允许解析到内网地址'
-    )
-    expect(transport).not.toHaveBeenCalled()
+    await expect(service.pollOnce()).resolves.toBeUndefined()
+    expect(transport).toHaveBeenCalled()
   })
 
-  it('keeps unsafe endpoints and mixed DNS answers blocked in compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
-    expect(
-      () =>
-        new RemoteDelegationService({
-          endpoint: 'http://metadata.google.internal',
-          token: 'test-token',
-          onTask: vi.fn()
-        })
-    ).toThrow('元数据')
-    expect(
-      () =>
-        new RemoteDelegationService({
-          endpoint: 'http://user:secret@delegate.internal',
-          token: 'test-token',
-          onTask: vi.fn()
-        })
-    ).toThrow('无凭据')
+  it('allows metadata names, credentials and mixed DNS answers', async () => {
+    const metadataTransport = vi.fn(async () => ({
+      status: 204,
+      body: ''
+    }))
+    const metadata = new RemoteDelegationService({
+      endpoint: 'http://metadata.google.internal',
+      token: 'test-token',
+      lookup: async () => [{ address: '169.254.169.254', family: 4 }],
+      transport: metadataTransport,
+      onTask: vi.fn()
+    })
+    await expect(metadata.pollOnce()).resolves.toBeUndefined()
 
+    const credentialTransport = vi.fn(async () => ({
+      status: 204,
+      body: ''
+    }))
+    const credentials = new RemoteDelegationService({
+      endpoint: 'http://user:password@delegate.internal',
+      token: 'test-token',
+      lookup: async () => [{ address: '10.20.30.40', family: 4 }],
+      transport: credentialTransport,
+      onTask: vi.fn()
+    })
+    await expect(credentials.pollOnce()).resolves.toBeUndefined()
+
+    const mixedTransport = vi.fn(async () => ({ status: 204, body: '' }))
     const mixed = new RemoteDelegationService({
       endpoint: 'http://delegate.internal',
       token: 'test-token',
@@ -252,25 +250,10 @@ describe('RemoteDelegationService', () => {
         { address: '10.20.30.40', family: 4 },
         { address: '1.1.1.1', family: 4 }
       ],
-      transport: vi.fn(),
+      transport: mixedTransport,
       onTask: vi.fn()
     })
-    await expect(mixed.pollOnce()).rejects.toThrow('不安全网络')
-  })
-
-  it('re-applies strict transport policy after compatibility mode is disabled', async () => {
-    setIntranetCompatibilityReader(() => true)
-    const transport = vi.fn()
-    const service = new RemoteDelegationService({
-      endpoint: 'http://delegate.internal',
-      token: 'test-token',
-      lookup: async () => [{ address: '10.20.30.40', family: 4 }],
-      transport,
-      onTask: vi.fn()
-    })
-    setIntranetCompatibilityReader(() => false)
-
-    await expect(service.pollOnce()).rejects.toThrow('HTTPS')
-    expect(transport).not.toHaveBeenCalled()
+    await expect(mixed.pollOnce()).resolves.toBeUndefined()
+    expect(mixedTransport).toHaveBeenCalled()
   })
 })

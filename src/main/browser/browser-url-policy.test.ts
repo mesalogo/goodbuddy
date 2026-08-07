@@ -1,63 +1,36 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setIntranetCompatibilityReader } from '../intranet-compatibility-policy'
+import { describe, expect, it, vi } from 'vitest'
 import {
   BrowserUrlPolicy,
-  canonicalizeBrowserUrl,
-  isPublicBrowserAddress
+  canonicalizeBrowserUrl
 } from './browser-url-policy'
 
 const signal = new AbortController().signal
-
-beforeEach(() => {
-  setIntranetCompatibilityReader(() => false)
-})
-
-afterEach(() => {
-  setIntranetCompatibilityReader(() => true)
-})
 
 describe('BrowserUrlPolicy', () => {
   it.each([
     'file:///etc/passwd',
     'data:text/html,hello',
     'javascript:alert(1)',
-    'ssh://example.com',
-    'https://user:secret@example.com/',
-    'http://localhost/',
-    'http://printer/',
-    'http://service.local/',
-    'http://metadata.google.internal/',
-    'http://169.254.169.254/latest/meta-data/',
-    'http://[::1]/'
-  ])('rejects unsafe URL %s', (url) => {
+    'ssh://example.com'
+  ])('rejects non-HTTP URL %s', (url) => {
     expect(() => canonicalizeBrowserUrl(url)).toThrow()
   })
 
   it.each([
-    '0.0.0.0',
-    '10.0.0.1',
-    '100.64.0.1',
-    '127.0.0.1',
-    '169.254.169.254',
-    '172.20.1.1',
-    '192.168.1.1',
-    '192.0.2.1',
-    '224.0.0.1',
-    '::',
-    '::1',
-    '::ffff:127.0.0.1',
-    'fc00::1',
-    'fe80::1',
-    'ff02::1',
-    '2001:db8::1'
-  ])('classifies %s as non-public', (address) => {
-    expect(isPublicBrowserAddress(address)).toBe(false)
+    'http://localhost:8080/admin',
+    'http://printer/status',
+    'http://service.local/health',
+    'http://10.0.0.1/api',
+    'http://192.168.1.20/status',
+    'http://[::1]:3000/',
+    'https://example.com/'
+  ])('accepts intranet and public target %s', (url) => {
+    expect(() => canonicalizeBrowserUrl(url)).not.toThrow()
   })
 
-  it('accepts canonical public HTTP(S) URLs and strips fragments', async () => {
+  it('accepts canonical HTTP(S) URLs and strips fragments', async () => {
     const resolver = vi.fn(async () => [
-      { address: '93.184.216.34', family: 4 as const },
-      { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 as const }
+      { address: '93.184.216.34', family: 4 as const }
     ])
     const policy = new BrowserUrlPolicy(resolver)
 
@@ -75,33 +48,7 @@ describe('BrowserUrlPolicy', () => {
     )
   })
 
-  it('rejects empty, private, malformed, and mixed DNS answers', async () => {
-    for (const answers of [
-      [],
-      [{ address: '10.0.0.2', family: 4 as const }],
-      [
-        { address: '93.184.216.34', family: 4 as const },
-        { address: '127.0.0.1', family: 4 as const }
-      ],
-      [{ address: 'not-an-address', family: 4 as const }]
-    ]) {
-      const policy = new BrowserUrlPolicy(async () => answers)
-      await expect(policy.validate('https://example.com', signal)).rejects.toThrow(
-        '混合地址'
-      )
-    }
-  })
-
-  it('allows intranet names and private addresses only in compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
-    expect(() => canonicalizeBrowserUrl('http://printer/status')).not.toThrow()
-    expect(() =>
-      canonicalizeBrowserUrl('https://service.internal/health')
-    ).not.toThrow()
-    expect(() =>
-      canonicalizeBrowserUrl('http://192.168.1.20/status')
-    ).not.toThrow()
-
+  it('resolves intranet hostnames to their private addresses', async () => {
     const policy = new BrowserUrlPolicy(async () => [
       { address: '10.20.30.40', family: 4 }
     ])
@@ -113,52 +60,29 @@ describe('BrowserUrlPolicy', () => {
     })
   })
 
-  it('keeps metadata, link-local and mixed DNS answers blocked in compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
-    expect(() =>
-      canonicalizeBrowserUrl('http://metadata.google.internal/latest')
-    ).toThrow()
-    expect(() =>
-      canonicalizeBrowserUrl('http://169.254.169.254/latest/meta-data')
-    ).toThrow()
-    expect(() =>
-      canonicalizeBrowserUrl('http://user:secret@printer/status')
-    ).toThrow()
-
-    const mixedPolicy = new BrowserUrlPolicy(async () => [
-      { address: '10.20.30.40', family: 4 },
-      { address: '93.184.216.34', family: 4 }
-    ])
+  it('rejects a host that resolves to no address', async () => {
+    const policy = new BrowserUrlPolicy(async () => [])
     await expect(
-      mixedPolicy.validate('http://printer/status', signal)
-    ).rejects.toThrow('混合地址')
-
-    const linkLocalPolicy = new BrowserUrlPolicy(async () => [
-      { address: '169.254.10.20', family: 4 }
-    ])
-    await expect(
-      linkLocalPolicy.validate('http://printer/status', signal)
-    ).rejects.toThrow('混合地址')
+      policy.validate('https://example.com', signal)
+    ).rejects.toThrow('无法解析')
   })
 
-  it('validates redirects and keeps them on the approved origin', async () => {
+  it('validates redirects without restricting their destination origin', async () => {
     const policy = new BrowserUrlPolicy(async () => [
       { address: '93.184.216.34', family: 4 }
     ])
     await expect(
       policy.validateRedirect(
         'https://example.com/next',
-        'https://example.com',
         signal
       )
     ).resolves.toMatchObject({ origin: 'https://example.com' })
     await expect(
       policy.validateRedirect(
         'https://other.example/next',
-        'https://example.com',
         signal
       )
-    ).rejects.toThrow('超出已批准来源')
+    ).resolves.toMatchObject({ origin: 'https://other.example' })
   })
 
   it('honors cancellation before and after DNS resolution', async () => {

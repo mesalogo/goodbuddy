@@ -217,16 +217,10 @@ const mcpRemoteUrlSchema = z
   .url()
   .max(2_048)
   .superRefine((value, context) => {
-    const url = new URL(value)
-    if (
-      !['http:', 'https:'].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.hash
-    ) {
+    if (!['http:', 'https:'].includes(new URL(value).protocol)) {
       context.addIssue({
         code: 'custom',
-        message: 'MCP URL 必须是无凭据和片段的 HTTP(S) 地址'
+        message: 'MCP URL 必须使用 HTTP 或 HTTPS'
       })
     }
   })

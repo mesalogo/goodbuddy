@@ -57,7 +57,6 @@ function settings(
     continueMode: 'chat',
     runtimeSandboxMode: 'off',
     subagentSmartRoutingEnabled: false,
-    intranetCompatibilityEnabled: true,
     knowledgeEmbeddingEnabled: false,
     knowledgeEmbeddingBaseUrl:
       'http://127.0.0.1:11434/v1/embeddings',
@@ -178,7 +177,19 @@ describe('createAgentRuntime model compatibility', () => {
       modelProtocol: 'openai-images-generations',
       modelAuthentication: 'api-key',
       imageGenerationQuality: 'high',
-      apiKey: 'secret'
+      apiKey: 'secret',
+      modelProfiles: [
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          name: '默认图像模型',
+          baseUrl: 'https://bigtoken.ai/v1',
+          modelName: 'gpt-image-2',
+          protocol: 'openai-images-generations',
+          authentication: 'api-key',
+          imageGenerationQuality: 'high',
+          apiKey: 'secret'
+        }
+      ]
     })
     const runtime = createAgentRuntime(process.cwd(), imageSettings)
     await expect(runtime.getStatus()).resolves.toMatchObject({

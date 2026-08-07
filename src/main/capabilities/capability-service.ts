@@ -51,32 +51,10 @@ import {
   isComputerCapabilitySupported,
   type ComputerCapabilityImplementationKind
 } from './computer-capability-catalog'
-import { isIntranetCompatibilityEnabled } from '../intranet-compatibility-policy'
-import {
-  isIntranetHostname,
-  isLoopbackHostname
-} from '../../shared/intranet-hostname'
-
 const MAX_SKILL_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SKILL_PACKAGE_BYTES = 10 * 1024 * 1024
 const MAX_SKILL_PACKAGE_FILES = 128
 const MAX_SKILL_DEPTH = 6
-
-function canUseRemoteMcpUrl(url: string): boolean {
-  const parsed = new URL(url)
-  const hostname = parsed.hostname.toLowerCase()
-  return (
-    parsed.protocol === 'https:' ||
-    (
-      parsed.protocol === 'http:' &&
-      (
-        isLoopbackHostname(hostname) ||
-        (isIntranetCompatibilityEnabled() &&
-          isIntranetHostname(hostname))
-      )
-    )
-  )
-}
 
 const skillMetadataSchema = z
   .object({
@@ -998,15 +976,6 @@ export class CapabilityService {
             .toString('base64')
         }
       }
-      if (
-        value.transport !== 'stdio' &&
-        !canUseRemoteMcpUrl(value.url)
-      ) {
-        throw new Error(
-          '远程 MCP 只能通过 HTTPS、本机回环或已启用兼容模式的内网 HTTP 地址连接'
-        )
-      }
-
       const stored: StoredMcpServer =
         value.transport === 'stdio'
           ? {
@@ -1081,14 +1050,6 @@ export class CapabilityService {
         throw new Error('MCP 访问令牌无法解密，请重新配置')
       }
     }
-    if (
-      server.transport !== 'stdio' &&
-      !canUseRemoteMcpUrl(server.url)
-    ) {
-      throw new Error(
-        '远程 MCP 只能通过 HTTPS、本机回环或已启用兼容模式的内网 HTTP 地址连接'
-      )
-    }
     return {
       ...this.toMcpSummary(server),
       secret
@@ -1130,40 +1091,12 @@ export class CapabilityService {
       : ''
   }
 
-  quarantineIncompatibleMcpServers(): Promise<string[]> {
-    return this.queue(async () => {
-      const state = await this.load()
-      const incompatibleIds = state.mcpServers
-        .filter(
-          (server) =>
-            server.enabled &&
-            server.transport !== 'stdio' &&
-            !canUseRemoteMcpUrl(server.url)
-        )
-        .map((server) => server.id)
-      if (incompatibleIds.length === 0) {
-        return []
-      }
-      const incompatible = new Set(incompatibleIds)
-      await this.persist({
-        ...state,
-        mcpServers: state.mcpServers.map((server) =>
-          incompatible.has(server.id)
-            ? { ...server, enabled: false }
-            : server
-        )
-      })
-      return incompatibleIds
-    })
-  }
-
   async getResolvedMcpServers(
     target: RuntimeTarget
   ): Promise<ResolvedMcpServer[]> {
     if (target !== 'model') {
       return []
     }
-    await this.quarantineIncompatibleMcpServers()
     const state = await this.load()
     const assigned = state.mcpServers.filter(
       (server) => server.enabled && server.assignments.includes(target)

@@ -52,16 +52,7 @@ function normalizedEndpoint(input: string): string {
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw new RangeError('endpoint must use HTTP or HTTPS')
   }
-  if (
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
-  ) {
-    throw new RangeError(
-      'endpoint must not contain credentials, a query, or a fragment'
-    )
-  }
+  url.hash = ''
   return url.toString()
 }
 

@@ -82,6 +82,7 @@ type ModelToolCall = {
 
 type ModelToolResponse = {
   text: string
+  reasoning: string
   toolCalls: ModelToolCall[]
   assistantMessage?: Record<string, unknown>
   responsesOutput?: Array<Record<string, unknown>>
@@ -162,6 +163,25 @@ function getAnthropicTextDelta(value: unknown): string | undefined {
   return undefined
 }
 
+function getAnthropicReasoningDelta(value: unknown): string | undefined {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('type' in value) ||
+    value.type !== 'content_block_delta' ||
+    !('delta' in value) ||
+    !value.delta ||
+    typeof value.delta !== 'object' ||
+    !('type' in value.delta) ||
+    value.delta.type !== 'thinking_delta' ||
+    !('thinking' in value.delta) ||
+    typeof value.delta.thinking !== 'string'
+  ) {
+    return undefined
+  }
+  return value.delta.thinking
+}
+
 function getOpenAITextDelta(value: unknown): string | undefined {
   if (
     !value ||
@@ -186,6 +206,22 @@ function getOpenAITextDelta(value: unknown): string | undefined {
   return first.delta.content
 }
 
+function getOpenAIReasoningDelta(value: unknown): string | undefined {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('choices' in value) ||
+    !Array.isArray(value.choices)
+  ) {
+    return undefined
+  }
+  const first = getRecord(value.choices[0])
+  const delta = getRecord(first?.delta)
+  const reasoning =
+    delta?.reasoning_content ?? delta?.reasoning ?? delta?.thinking
+  return typeof reasoning === 'string' ? reasoning : undefined
+}
+
 function getOpenAIResponsesTextDelta(
   value: unknown
 ): string | undefined {
@@ -200,6 +236,19 @@ function getOpenAIResponsesTextDelta(
     return undefined
   }
   return value.delta
+}
+
+function getOpenAIResponsesReasoningDelta(
+  value: unknown
+): string | undefined {
+  const event = getRecord(value)
+  if (
+    event?.type !== 'response.reasoning_summary_text.delta' &&
+    event?.type !== 'response.reasoning_text.delta'
+  ) {
+    return undefined
+  }
+  return typeof event.delta === 'string' ? event.delta : undefined
 }
 
 function getRecord(
@@ -647,6 +696,7 @@ function parseModelToolResponse(
       throw new Error('Anthropic 模型接口未返回 content')
     }
     const text: string[] = []
+    const reasoning: string[] = []
     const toolCalls: ModelToolCall[] = []
     for (const block of payload.content) {
       const record = getRecord(block)
@@ -655,6 +705,11 @@ function parseModelToolResponse(
       }
       if (record.type === 'text' && typeof record.text === 'string') {
         text.push(record.text)
+      } else if (
+        record.type === 'thinking' &&
+        typeof record.thinking === 'string'
+      ) {
+        reasoning.push(record.thinking)
       } else if (record.type === 'tool_use') {
         const identity = parseToolCallIdentity(record.id, record.name)
         toolCalls.push({
@@ -665,6 +720,7 @@ function parseModelToolResponse(
     }
     return {
       text: text.join(''),
+      reasoning: reasoning.join(''),
       toolCalls,
       assistantMessage: {
         role: 'assistant',
@@ -696,6 +752,7 @@ function parseModelToolResponse(
       throw new Error('OpenAI Responses 接口返回格式无效')
     }
     const text: string[] = []
+    const reasoning: string[] = []
     const toolCalls: ModelToolCall[] = []
     for (const item of payload.output) {
       const output = getRecord(item)
@@ -712,6 +769,20 @@ function parseModelToolResponse(
             text.push(content.text)
           }
         }
+      } else if (output.type === 'reasoning') {
+        for (const part of [
+          ...(Array.isArray(output.summary) ? output.summary : []),
+          ...(Array.isArray(output.content) ? output.content : [])
+        ]) {
+          const content = getRecord(part)
+          if (
+            (content?.type === 'summary_text' ||
+              content?.type === 'reasoning_text') &&
+            typeof content.text === 'string'
+          ) {
+            reasoning.push(content.text)
+          }
+        }
       } else if (output.type === 'function_call') {
         const identity = parseToolCallIdentity(
           output.call_id,
@@ -725,6 +796,7 @@ function parseModelToolResponse(
     }
     return {
       text: text.join(''),
+      reasoning: reasoning.join(''),
       toolCalls,
       responsesOutput: payload.output.flatMap((item) => {
         const output = getRecord(item)
@@ -743,6 +815,10 @@ function parseModelToolResponse(
     throw new Error('OpenAI 模型接口未返回 assistant message')
   }
   const text = typeof message.content === 'string' ? message.content : ''
+  const reasoningValue =
+    message.reasoning_content ?? message.reasoning ?? message.thinking
+  const reasoning =
+    typeof reasoningValue === 'string' ? reasoningValue : ''
   const toolCalls: ModelToolCall[] = []
   if (message.tool_calls !== undefined) {
     if (!Array.isArray(message.tool_calls)) {
@@ -766,6 +842,7 @@ function parseModelToolResponse(
   }
   return {
     text,
+    reasoning,
     toolCalls,
     assistantMessage: {
       role: 'assistant',
@@ -783,6 +860,7 @@ function parseStreamBlock(
   protocol: ModelProtocol
 ): {
   delta?: string
+  reasoningDelta?: string
   stopped: boolean
   usage?: ModelUsageUpdate
 } {
@@ -840,6 +918,12 @@ function parseStreamBlock(
         : protocol === 'openai-responses'
           ? getOpenAIResponsesTextDelta(event)
           : getOpenAITextDelta(event),
+    reasoningDelta:
+      protocol === 'anthropic-messages'
+        ? getAnthropicReasoningDelta(event)
+        : protocol === 'openai-responses'
+          ? getOpenAIResponsesReasoningDelta(event)
+          : getOpenAIReasoningDelta(event),
     usage: getUsageUpdate(
       event,
       protocol === 'anthropic-messages' ? 'anthropic' : 'openai'
@@ -1380,6 +1464,13 @@ export class ModelAgentRuntime implements AgentRuntime {
       if (usageEvent) {
         yield usageEvent
       }
+      if (response.reasoning) {
+        yield {
+          requestId: request.requestId,
+          type: 'reasoning',
+          delta: response.reasoning
+        }
+      }
       if (response.text) {
         answer += response.text
         if (Buffer.byteLength(answer) > 1024 * 1024) {
@@ -1747,6 +1838,13 @@ export class ModelAgentRuntime implements AgentRuntime {
           const parsed = parseStreamBlock(block, this.options.protocol)
           if (parsed.usage) {
             applyUsageUpdate(usage, parsed.usage)
+          }
+          if (parsed.reasoningDelta) {
+            yield {
+              requestId: request.requestId,
+              type: 'reasoning',
+              delta: parsed.reasoningDelta
+            }
           }
           const { delta } = parsed
           if (delta) {

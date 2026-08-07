@@ -132,10 +132,16 @@ const version10StoredSettingsSchema = version9StoredSettingsSchema
     intranetCompatibilityEnabled: z.boolean()
   })
 
-const storedSettingsSchema = version10StoredSettingsSchema
+const version11StoredSettingsSchema = version10StoredSettingsSchema
   .omit({ version: true })
   .extend({
     version: z.literal(11)
+  })
+
+const storedSettingsSchema = version11StoredSettingsSchema
+  .omit({ version: true, intranetCompatibilityEnabled: true })
+  .extend({
+    version: z.literal(12)
   })
 
 class UnsupportedRuntimeSettingsVersionError extends Error {}
@@ -143,6 +149,9 @@ class UnsupportedRuntimeSettingsVersionError extends Error {}
 type StoredSettings = z.infer<typeof storedSettingsSchema>
 type Version10StoredSettings = z.infer<
   typeof version10StoredSettingsSchema
+>
+type Version11StoredSettings = z.infer<
+  typeof version11StoredSettingsSchema
 >
 
 const version3StoredSettingsSchema = version4StoredSettingsSchema
@@ -214,7 +223,6 @@ export type ResolvedRuntimeSettings = {
   continueMode: RuntimeSettings['continueMode']
   runtimeSandboxMode: RuntimeSettings['runtimeSandboxMode']
   subagentSmartRoutingEnabled: boolean
-  intranetCompatibilityEnabled: boolean
   knowledgeEmbeddingEnabled: boolean
   knowledgeEmbeddingBaseUrl: string
   knowledgeEmbeddingModel: string
@@ -235,7 +243,7 @@ export type ResolvedModelProfile = {
 }
 
 const defaultSettings: StoredSettings = {
-  version: 11,
+  version: 12,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -268,8 +276,6 @@ const defaultSettings: StoredSettings = {
   runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
   subagentSmartRoutingEnabled:
     defaultRuntimeSettings.subagentSmartRoutingEnabled,
-  intranetCompatibilityEnabled:
-    defaultRuntimeSettings.intranetCompatibilityEnabled,
   knowledgeEmbeddingEnabled:
     defaultRuntimeSettings.knowledgeEmbeddingEnabled,
   knowledgeEmbeddingBaseUrl:
@@ -305,6 +311,20 @@ function compatibleTextProfileId(
   )?.id
 }
 
+function migrateVersion11(
+  settings: Version11StoredSettings
+): StoredSettings {
+  const {
+    intranetCompatibilityEnabled: _obsolete,
+    ...current
+  } = settings
+  void _obsolete
+  return {
+    ...current,
+    version: 12
+  }
+}
+
 function migrateVersion10(
   settings: Version10StoredSettings
 ): StoredSettings {
@@ -319,7 +339,7 @@ function migrateVersion10(
     (settings.provider === 'continue' ||
       Boolean(settings.continueConfigPath.trim()))
 
-  return {
+  return migrateVersion11({
     ...settings,
     version: 11,
     provider: settings.provider === 'auto' ? 'model' : settings.provider,
@@ -336,7 +356,7 @@ function migrateVersion10(
         ? settings.continueModelSource
         : { kind: 'profile', profileId },
     opencodeEmbedded: !settings.opencodeBaseUrl.trim()
-  }
+  })
 }
 
 function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
@@ -412,8 +432,7 @@ function migrateVersion4(
     runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
     subagentSmartRoutingEnabled:
       defaultRuntimeSettings.subagentSmartRoutingEnabled,
-    intranetCompatibilityEnabled:
-      defaultRuntimeSettings.intranetCompatibilityEnabled,
+    intranetCompatibilityEnabled: true,
     knowledgeEmbeddingEnabled:
       defaultRuntimeSettings.knowledgeEmbeddingEnabled,
     knowledgeEmbeddingBaseUrl:
@@ -434,8 +453,7 @@ function migrateVersion5(
     runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
     subagentSmartRoutingEnabled:
       defaultRuntimeSettings.subagentSmartRoutingEnabled,
-    intranetCompatibilityEnabled:
-      defaultRuntimeSettings.intranetCompatibilityEnabled,
+    intranetCompatibilityEnabled: true,
     knowledgeEmbeddingEnabled:
       defaultRuntimeSettings.knowledgeEmbeddingEnabled,
     knowledgeEmbeddingBaseUrl:
@@ -462,8 +480,7 @@ function migrateVersion6(
     version: 10,
     subagentSmartRoutingEnabled:
       defaultRuntimeSettings.subagentSmartRoutingEnabled,
-    intranetCompatibilityEnabled:
-      defaultRuntimeSettings.intranetCompatibilityEnabled,
+    intranetCompatibilityEnabled: true,
     knowledgeEmbeddingBaseUrl: endpoint.toString(),
     modelProfiles: settings.modelProfiles.map((profile) => ({
       ...profile,
@@ -481,8 +498,7 @@ function migrateVersion7(
     version: 10,
     subagentSmartRoutingEnabled:
       defaultRuntimeSettings.subagentSmartRoutingEnabled,
-    intranetCompatibilityEnabled:
-      defaultRuntimeSettings.intranetCompatibilityEnabled,
+    intranetCompatibilityEnabled: true,
     modelProfiles: settings.modelProfiles.map((profile) => ({
       ...profile,
       imageGenerationQuality:
@@ -498,8 +514,7 @@ function migrateVersion8(
     ...settings,
     version: 10,
     subagentSmartRoutingEnabled: false,
-    intranetCompatibilityEnabled:
-      defaultRuntimeSettings.intranetCompatibilityEnabled
+    intranetCompatibilityEnabled: true
   })
 }
 
@@ -509,8 +524,7 @@ function migrateVersion9(
   return migrateVersion10({
     ...settings,
     version: 10,
-    intranetCompatibilityEnabled:
-      defaultRuntimeSettings.intranetCompatibilityEnabled
+    intranetCompatibilityEnabled: true
   })
 }
 
@@ -544,7 +558,7 @@ export class RuntimeSettingsStore {
         typeof parsed === 'object' &&
         'version' in parsed &&
         typeof parsed.version === 'number' &&
-        parsed.version > 11
+        parsed.version > 12
       ) {
         throw new UnsupportedRuntimeSettingsVersionError(
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${parsed.version}，请升级应用后重试`
@@ -554,92 +568,101 @@ export class RuntimeSettingsStore {
       if (current.success) {
         this.settings = current.data
       } else {
-        const version10 =
-          version10StoredSettingsSchema.safeParse(parsed)
-        if (version10.success) {
-          this.settings = migrateVersion10(version10.data)
+        const version11 =
+          version11StoredSettingsSchema.safeParse(parsed)
+        if (version11.success) {
+          this.settings = migrateVersion11(version11.data)
         } else {
-          const version9 = version9StoredSettingsSchema.safeParse(parsed)
-          if (version9.success) {
-            this.settings = migrateVersion9(version9.data)
+          const version10 =
+            version10StoredSettingsSchema.safeParse(parsed)
+          if (version10.success) {
+            this.settings = migrateVersion10(version10.data)
           } else {
-            const version8 = version8StoredSettingsSchema.safeParse(parsed)
-            if (version8.success) {
-              this.settings = migrateVersion8(version8.data)
+            const version9 =
+              version9StoredSettingsSchema.safeParse(parsed)
+            if (version9.success) {
+              this.settings = migrateVersion9(version9.data)
             } else {
-              const version7 = version7StoredSettingsSchema.safeParse(parsed)
-              if (version7.success) {
-                this.settings = migrateVersion7(version7.data)
+              const version8 =
+                version8StoredSettingsSchema.safeParse(parsed)
+              if (version8.success) {
+                this.settings = migrateVersion8(version8.data)
               } else {
-                const version6 =
-                  version6StoredSettingsSchema.safeParse(parsed)
-                if (version6.success) {
-                  this.settings = migrateVersion6(version6.data)
+                const version7 =
+                  version7StoredSettingsSchema.safeParse(parsed)
+                if (version7.success) {
+                  this.settings = migrateVersion7(version7.data)
                 } else {
-                  const version5 =
-                    version5StoredSettingsSchema.safeParse(parsed)
-                  if (version5.success) {
-                    this.settings = migrateVersion5(version5.data)
+                  const version6 =
+                    version6StoredSettingsSchema.safeParse(parsed)
+                  if (version6.success) {
+                    this.settings = migrateVersion6(version6.data)
                   } else {
-                    const version4 =
-                      version4StoredSettingsSchema.safeParse(parsed)
-                    if (version4.success) {
-                      this.settings = migrateVersion4(version4.data)
+                    const version5 =
+                      version5StoredSettingsSchema.safeParse(parsed)
+                    if (version5.success) {
+                      this.settings = migrateVersion5(version5.data)
                     } else {
-                      const version3 =
-                        version3StoredSettingsSchema.safeParse(parsed)
-                      if (version3.success) {
-                        this.settings = migrateVersion4({
-                          ...version3.data,
-                          version: 4,
-                          continueMode: 'chat',
-                        })
+                      const version4 =
+                        version4StoredSettingsSchema.safeParse(parsed)
+                      if (version4.success) {
+                        this.settings = migrateVersion4(version4.data)
                       } else {
-                        const version2 =
-                          version2StoredSettingsSchema.safeParse(parsed)
-                        if (version2.success) {
+                        const version3 =
+                          version3StoredSettingsSchema.safeParse(parsed)
+                        if (version3.success) {
                           this.settings = migrateVersion4({
+                            ...version3.data,
                             version: 4,
-                            provider: version2.data.provider,
-                            modelBaseUrl: version2.data.modelBaseUrl,
-                            modelName: version2.data.modelName,
-                            opencodeBaseUrl: version2.data.opencodeBaseUrl,
-                            opencodeEmbedded: version2.data.opencodeEmbedded,
-                            opencodeBinaryPath: '',
-                            opencodeConfigPath: '',
-                            continueBinaryPath: migrateContinueCommand(
-                              version2.data.continueCommand
-                            ),
-                            continueConfigPath: '',
                             continueMode: 'chat',
-                            workspacePath: version2.data.workspacePath,
-                            credential: version2.data.credential,
-                            toolApproval: version2.data.toolApproval
                           })
                         } else {
-                          const legacy =
-                            legacyStoredSettingsSchema.parse(parsed)
-                          this.settings = migrateVersion4({
-                            version: 4,
-                            provider:
-                              legacy.provider === 'bigtoken'
-                                ? 'model'
-                                : legacy.provider,
-                            modelBaseUrl: legacy.bigtokenBaseUrl,
-                            modelName: legacy.bigtokenModel,
-                            opencodeBaseUrl: legacy.opencodeBaseUrl,
-                            opencodeEmbedded: legacy.opencodeEmbedded,
-                            opencodeBinaryPath: '',
-                            opencodeConfigPath: '',
-                            continueBinaryPath: migrateContinueCommand(
-                              legacy.continueCommand
-                            ),
-                            continueConfigPath: '',
-                            continueMode: 'chat',
-                            workspacePath: legacy.workspacePath,
-                            credential: legacy.credential,
-                            toolApproval: legacy.toolApproval
-                          })
+                          const version2 =
+                            version2StoredSettingsSchema.safeParse(parsed)
+                          if (version2.success) {
+                            this.settings = migrateVersion4({
+                              version: 4,
+                              provider: version2.data.provider,
+                              modelBaseUrl: version2.data.modelBaseUrl,
+                              modelName: version2.data.modelName,
+                              opencodeBaseUrl: version2.data.opencodeBaseUrl,
+                              opencodeEmbedded: version2.data.opencodeEmbedded,
+                              opencodeBinaryPath: '',
+                              opencodeConfigPath: '',
+                              continueBinaryPath: migrateContinueCommand(
+                                version2.data.continueCommand
+                              ),
+                              continueConfigPath: '',
+                              continueMode: 'chat',
+                              workspacePath: version2.data.workspacePath,
+                              credential: version2.data.credential,
+                              toolApproval: version2.data.toolApproval
+                            })
+                          } else {
+                            const legacy =
+                              legacyStoredSettingsSchema.parse(parsed)
+                            this.settings = migrateVersion4({
+                              version: 4,
+                              provider:
+                                legacy.provider === 'bigtoken'
+                                  ? 'model'
+                                  : legacy.provider,
+                              modelBaseUrl: legacy.bigtokenBaseUrl,
+                              modelName: legacy.bigtokenModel,
+                              opencodeBaseUrl: legacy.opencodeBaseUrl,
+                              opencodeEmbedded: legacy.opencodeEmbedded,
+                              opencodeBinaryPath: '',
+                              opencodeConfigPath: '',
+                              continueBinaryPath: migrateContinueCommand(
+                                legacy.continueCommand
+                              ),
+                              continueConfigPath: '',
+                              continueMode: 'chat',
+                              workspacePath: legacy.workspacePath,
+                              credential: legacy.credential,
+                              toolApproval: legacy.toolApproval
+                            })
+                          }
                         }
                       }
                     }
@@ -689,9 +712,12 @@ export class RuntimeSettingsStore {
           )
         )
       )
-      return payload.origin === new URL(profile.baseUrl).origin
-        ? payload.apiKey
-        : undefined
+      if (payload.origin !== new URL(profile.baseUrl).origin) {
+        this.loadWarning =
+          `模型连接“${profile.name}”的服务地址与已保存 API Key 不匹配，请重新输入或清除 API Key`
+        return undefined
+      }
+      return payload.apiKey
     } catch {
       return undefined
     }
@@ -923,8 +949,6 @@ export class RuntimeSettingsStore {
       runtimeSandboxMode: agent.runtimeSandboxMode,
       subagentSmartRoutingEnabled:
         settings.subagentSmartRoutingEnabled,
-      intranetCompatibilityEnabled:
-        settings.intranetCompatibilityEnabled,
       knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
       knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
       knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
@@ -995,8 +1019,6 @@ export class RuntimeSettingsStore {
       ...agent,
       subagentSmartRoutingEnabled:
         settings.subagentSmartRoutingEnabled,
-      intranetCompatibilityEnabled:
-        settings.intranetCompatibilityEnabled,
       knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
       knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
       knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
@@ -1213,7 +1235,7 @@ export class RuntimeSettingsStore {
       }
     }
     const opencodeBaseUrl = input.opencodeBaseUrl
-      ? new URL(input.opencodeBaseUrl).origin
+      ? normalizeModelBaseUrl(input.opencodeBaseUrl)
       : ''
     const fallbackRuntimeProfileId = modelProfiles.find(
       (profile) => isAgentRuntimeModelProtocol(profile.protocol)
@@ -1248,7 +1270,7 @@ export class RuntimeSettingsStore {
 
     const next: StoredSettings = {
       ...current,
-      version: 11,
+      version: 12,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId,
@@ -1265,9 +1287,6 @@ export class RuntimeSettingsStore {
       subagentSmartRoutingEnabled:
         input.subagentSmartRoutingEnabled ??
         current.subagentSmartRoutingEnabled,
-      intranetCompatibilityEnabled:
-        input.intranetCompatibilityEnabled ??
-        current.intranetCompatibilityEnabled,
       knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,
       knowledgeEmbeddingBaseUrl: embeddingEndpoint,
       knowledgeEmbeddingModel: input.knowledgeEmbeddingModel,

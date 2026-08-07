@@ -91,6 +91,7 @@ import type {
 import { detectAgentRuntimes } from './agent/runtime-discovery'
 import { createModelProfileRuntime } from './agent/create-runtime'
 import { safeToolErrorDetail } from './agent/approval-summary'
+import { ReasoningTagStreamParser } from './agent/reasoning-stream'
 import type { BundledRuntimePaths } from './agent/bundled-runtimes'
 import type { SelectedRuntimeResolver } from './agent/selected-runtime-manager'
 import type { KnowledgeMcpGateway } from './agent/knowledge-mcp-gateway'
@@ -189,6 +190,34 @@ function isAgentRuntime(runtime: AgentRuntime): boolean {
 
 function safeRuntimeError(error: unknown, fallback: string): string {
   return safeToolErrorDetail(error, 2_000) ?? fallback
+}
+
+async function* splitTaggedReasoning(
+  events: AsyncGenerator<RuntimeEvent, void, void>
+): AsyncGenerator<RuntimeEvent, void, void> {
+  const parser = new ReasoningTagStreamParser()
+  for await (const event of events) {
+    if (event.type === 'text') {
+      for (const segment of parser.push(event.delta)) {
+        yield {
+          requestId: event.requestId,
+          type: segment.type,
+          delta: segment.delta
+        }
+      }
+      continue
+    }
+    if (event.type === 'done') {
+      for (const segment of parser.finish()) {
+        yield {
+          requestId: event.requestId,
+          type: segment.type,
+          delta: segment.delta
+        }
+      }
+    }
+    yield event
+  }
 }
 
 const approvalResponseSchema = z
@@ -1325,7 +1354,7 @@ export function registerIpcHandlers(
                 controller.signal
               )
             : runSmartRoute()
-        for await (const agentEvent of eventStream) {
+        for await (const agentEvent of splitTaggedReasoning(eventStream)) {
           if (agentEvent.type === 'model-usage') {
             persistModelUsage(agentEvent)
             continue

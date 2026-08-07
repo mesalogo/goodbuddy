@@ -1,10 +1,7 @@
 import type { App } from 'electron'
 import type { Dispatcher } from 'undici'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  GlobalTlsPolicy,
-  isControlledChildTlsCompatibilityEnabled
-} from './global-tls-policy'
+import { GlobalTlsPolicy } from './global-tls-policy'
 
 type CertificateListener = (
   event: { preventDefault(): void },
@@ -45,32 +42,24 @@ function certificateApp() {
 }
 
 describe('GlobalTlsPolicy', () => {
-  it('enables all in-process TLS compatibility paths and restores originals', () => {
-    const originalDispatcher = dispatcher()
+  it('accepts self-signed certificates on every in-process TLS path', () => {
     const insecureDispatcher = dispatcher()
     const environment: NodeJS.ProcessEnv = {
       NODE_TLS_REJECT_UNAUTHORIZED: '1'
     }
     const setDispatcher = vi.fn()
-    const resetNodeHttpsConnections = vi.fn()
     const electron = certificateApp()
     const policy = new GlobalTlsPolicy(electron.app, {
       environment,
-      getDispatcher: () => originalDispatcher,
+      getDispatcher: dispatcher,
       setDispatcher,
-      createInsecureDispatcher: () => insecureDispatcher,
-      resetNodeHttpsConnections
+      createInsecureDispatcher: () => insecureDispatcher
     })
 
-    policy.apply(true)
+    policy.install()
 
     expect(environment.NODE_TLS_REJECT_UNAUTHORIZED).toBe('0')
-    expect(setDispatcher).toHaveBeenLastCalledWith(
-      insecureDispatcher
-    )
-    expect(
-      isControlledChildTlsCompatibilityEnabled()
-    ).toBe(true)
+    expect(setDispatcher).toHaveBeenLastCalledWith(insecureDispatcher)
 
     const preventDefault = vi.fn()
     const callback = vi.fn()
@@ -85,64 +74,28 @@ describe('GlobalTlsPolicy', () => {
     )
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(callback).toHaveBeenCalledWith(true)
-
-    policy.apply(false)
-
-    expect(environment.NODE_TLS_REJECT_UNAUTHORIZED).toBe('1')
-    expect(setDispatcher).toHaveBeenLastCalledWith(
-      originalDispatcher
-    )
-    expect(electron.getListener()).toBeUndefined()
-    expect(resetNodeHttpsConnections).toHaveBeenCalledOnce()
-    expect(
-      isControlledChildTlsCompatibilityEnabled()
-    ).toBe(false)
   })
 
-  it('restores an originally absent Node TLS environment value', async () => {
+  it('installs the certificate listener once and releases it on dispose', async () => {
     const originalDispatcher = dispatcher()
     const insecureDispatcher = dispatcher()
-    const environment: NodeJS.ProcessEnv = {}
     const setDispatcher = vi.fn()
     const electron = certificateApp()
     const policy = new GlobalTlsPolicy(electron.app, {
-      environment,
+      environment: {},
       getDispatcher: () => originalDispatcher,
       setDispatcher,
       createInsecureDispatcher: () => insecureDispatcher
     })
 
-    policy.apply(true)
-    policy.apply(true)
+    policy.install()
+    policy.install()
     expect(electron.app.on).toHaveBeenCalledOnce()
 
     await policy.dispose()
 
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        environment,
-        'NODE_TLS_REJECT_UNAUTHORIZED'
-      )
-    ).toBe(false)
+    expect(setDispatcher).toHaveBeenLastCalledWith(originalDispatcher)
+    expect(electron.getListener()).toBeUndefined()
     expect(insecureDispatcher.close).toHaveBeenCalledOnce()
-  })
-
-  it('only owns Electron traffic; external OS browsers retain their own TLS policy', () => {
-    const originalDispatcher = dispatcher()
-    const electron = certificateApp()
-    const policy = new GlobalTlsPolicy(electron.app, {
-      environment: {},
-      getDispatcher: () => originalDispatcher,
-      setDispatcher: vi.fn(),
-      createInsecureDispatcher: dispatcher
-    })
-
-    policy.apply(true)
-
-    expect(electron.app.on).toHaveBeenCalledWith(
-      'certificate-error',
-      expect.any(Function)
-    )
-    policy.apply(false)
   })
 })

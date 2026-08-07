@@ -1334,6 +1334,32 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       permissionEvent(),
       completedToolEvent(),
       {
+        id: 'event-reasoning-part',
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'session-1',
+          part: {
+            id: 'part-reasoning',
+            sessionID: 'session-1',
+            messageID: 'message-1',
+            type: 'reasoning',
+            text: '',
+            time: { start: 1 }
+          }
+        }
+      },
+      {
+        id: 'event-reasoning',
+        type: 'message.part.delta',
+        properties: {
+          sessionID: 'session-1',
+          messageID: 'message-1',
+          partID: 'part-reasoning',
+          field: 'text',
+          delta: 'reasoning output'
+        }
+      },
+      {
         id: 'event-text',
         type: 'message.part.delta',
         properties: {
@@ -1368,6 +1394,12 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       directory: process.cwd(),
       reply: 'once'
     })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'reasoning',
+        delta: 'reasoning output'
+      })
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool',

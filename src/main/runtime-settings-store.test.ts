@@ -43,7 +43,6 @@ function settings(
     continueConfigPath: '',
     continueMode: 'chat',
     runtimeSandboxMode: 'auto',
-    intranetCompatibilityEnabled: true,
     knowledgeEmbeddingEnabled: false,
     knowledgeEmbeddingBaseUrl:
       'http://127.0.0.1:11434/v1/embeddings',
@@ -76,11 +75,10 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
-  it('keeps global intranet TLS compatibility opt-in', async () => {
+  it('configures bundled runtimes from the default model profile', async () => {
     const { store } = await createStore()
 
     await expect(store.getPublicSettings()).resolves.toMatchObject({
-      intranetCompatibilityEnabled: false,
       opencodeEmbedded: true,
       opencodeModelSource: {
         kind: 'profile',
@@ -92,7 +90,6 @@ describe('RuntimeSettingsStore', () => {
       }
     })
     await expect(store.getResolvedSettings()).resolves.toMatchObject({
-      intranetCompatibilityEnabled: false,
       opencodeEmbedded: true,
       opencodeModelProfile: {
         id: '00000000-0000-4000-8000-000000000001'
@@ -101,12 +98,6 @@ describe('RuntimeSettingsStore', () => {
         id: '00000000-0000-4000-8000-000000000001'
       }
     })
-    expect(
-      runtimeSettingsInputSchema.parse({
-        ...settings(),
-        intranetCompatibilityEnabled: undefined
-      }).intranetCompatibilityEnabled
-    ).toBe(false)
   })
 
   it('always enables bundled OpenCode when the Server address is blank', async () => {
@@ -220,8 +211,10 @@ describe('RuntimeSettingsStore', () => {
     )
     const versionTen = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
+      intranetCompatibilityEnabled?: boolean
     }
     versionTen.version = 10
+    versionTen.intranetCompatibilityEnabled = false
     await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
 
     const migrated = new RuntimeSettingsStore(filePath, cipher, {})
@@ -263,9 +256,11 @@ describe('RuntimeSettingsStore', () => {
     const versionTen = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
       continueConfigPath: string
+      intranetCompatibilityEnabled?: boolean
     }
     versionTen.version = 10
     versionTen.continueConfigPath = 'C:\\Users\\test\\.continue\\config.yaml'
+    versionTen.intranetCompatibilityEnabled = false
     await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
 
     const migrated = new RuntimeSettingsStore(filePath, cipher, {})
@@ -300,8 +295,10 @@ describe('RuntimeSettingsStore', () => {
     )
     const versionTen = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
+      intranetCompatibilityEnabled?: boolean
     }
     versionTen.version = 10
+    versionTen.intranetCompatibilityEnabled = false
     await writeFile(filePath, JSON.stringify(versionTen), 'utf8')
 
     const migrated = new RuntimeSettingsStore(filePath, cipher, {})
@@ -309,34 +306,6 @@ describe('RuntimeSettingsStore', () => {
       opencodeEmbedded: true,
       opencodeModelSource: { kind: 'platform' },
       continueModelSource: { kind: 'platform' }
-    })
-  })
-
-  it('migrates version 9 settings with intranet compatibility disabled', async () => {
-    const { filePath, store } = await createStore()
-    await store.update(settings({ intranetCompatibilityEnabled: false }))
-    const versionNine = JSON.parse(await readFile(filePath, 'utf8')) as {
-      version: number
-      intranetCompatibilityEnabled?: boolean
-    }
-    versionNine.version = 9
-    delete versionNine.intranetCompatibilityEnabled
-    await writeFile(filePath, JSON.stringify(versionNine), 'utf8')
-
-    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
-    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
-      intranetCompatibilityEnabled: false
-    })
-    await migrated.update(
-      settings({ intranetCompatibilityEnabled: false })
-    )
-    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
-      version: number
-      intranetCompatibilityEnabled: boolean
-    }
-    expect(persisted).toMatchObject({
-      version: 11,
-      intranetCompatibilityEnabled: false
     })
   })
 
@@ -359,7 +328,28 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(11)
+    expect(persisted.version).toBe(12)
+  })
+
+  it('migrates version 11 and removes the obsolete intranet toggle', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const versionEleven = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      intranetCompatibilityEnabled?: boolean
+    }
+    versionEleven.version = 11
+    versionEleven.intranetCompatibilityEnabled = false
+    await writeFile(filePath, JSON.stringify(versionEleven), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await migrated.update(settings())
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      intranetCompatibilityEnabled?: boolean
+    }
+    expect(persisted.version).toBe(12)
+    expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
   it('accepts only supported image quality values', () => {
@@ -383,12 +373,11 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(false)
   })
 
-  it('preserves strict embedding HTTP validation when intranet compatibility is disabled', () => {
+  it('allows HTTP embedding endpoints on any host', () => {
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
           knowledgeEmbeddingEnabled: true,
-          intranetCompatibilityEnabled: false,
           knowledgeEmbeddingBaseUrl:
             'http://10.7.0.23:11434/v1/embeddings',
           knowledgeEmbeddingModel: 'bge-m3'
@@ -399,12 +388,11 @@ describe('RuntimeSettingsStore', () => {
       runtimeSettingsInputSchema.safeParse(
         settings({
           knowledgeEmbeddingEnabled: true,
-          intranetCompatibilityEnabled: false,
           knowledgeEmbeddingBaseUrl:
             'http://example.com:11434/v1/embeddings'
         })
       ).success
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('encrypts an OpenAI-compatible embedding API key and binds it to the full endpoint', async () => {
@@ -612,7 +600,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(11)
+    expect(persisted.version).toBe(12)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -786,7 +774,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 11,
+      version: 12,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -919,43 +907,15 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(true)
   })
 
-  it('preserves strict model HTTP validation when intranet compatibility is disabled', () => {
+  it('allows HTTP, IP literals, credentials, paths and queries', () => {
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
-          intranetCompatibilityEnabled: false,
-          modelBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-        })
-      ).success
-    ).toBe(true)
-    expect(
-      runtimeSettingsInputSchema.safeParse(
-        settings({
-          intranetCompatibilityEnabled: false,
-          modelBaseUrl: 'http://127.0.0.1:11434/v1',
-          modelProtocol: 'openai-chat-completions',
-          modelAuthentication: 'none'
-        })
-      ).success
-    ).toBe(true)
-    expect(
-      runtimeSettingsInputSchema.safeParse(
-        settings({
-          intranetCompatibilityEnabled: false,
-          modelBaseUrl: 'http://models.example/v1'
-        })
-      ).success
-    ).toBe(false)
-  })
-
-  it('allows HTTP hostnames for model and embedding endpoints in intranet compatibility mode', () => {
-    expect(
-      runtimeSettingsInputSchema.safeParse(
-        settings({
-          modelBaseUrl: 'http://models.intranet/v1',
+          modelBaseUrl:
+            'http://user@10.0.0.25:8000/models/v1?api-version=2024-02-01',
           knowledgeEmbeddingEnabled: true,
           knowledgeEmbeddingBaseUrl:
-            'http://vectors.intranet/v1/embeddings'
+            'http://vectors.example.com/v1/embeddings?format=float'
         })
       ).success
     ).toBe(true)
@@ -967,7 +927,7 @@ describe('RuntimeSettingsStore', () => {
             {
               id: crypto.randomUUID(),
               name: '内网模型',
-              baseUrl: 'http://models.corp.local/api',
+              baseUrl: 'http://[fd00::25]:8000/api',
               modelName: 'corp-model',
               protocol: 'openai-chat-completions',
               authentication: 'none',
@@ -980,11 +940,11 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(true)
   })
 
-  it('rejects public HTTP endpoints in intranet compatibility mode', () => {
+  it('still rejects endpoint protocols the clients cannot transport', () => {
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
-          modelBaseUrl: 'http://models.example.com/v1'
+          modelBaseUrl: 'ftp://models.example.com/v1'
         })
       ).success
     ).toBe(false)
@@ -993,30 +953,7 @@ describe('RuntimeSettingsStore', () => {
         settings({
           knowledgeEmbeddingEnabled: true,
           knowledgeEmbeddingBaseUrl:
-            'http://vectors.example.com/v1/embeddings'
-        })
-      ).success
-    ).toBe(false)
-  })
-
-  it('keeps endpoint structure checks enabled in intranet compatibility mode', () => {
-    expect(
-      runtimeSettingsInputSchema.safeParse(
-        settings({ modelBaseUrl: 'http://user@models.intranet/v1' })
-      ).success
-    ).toBe(false)
-    expect(
-      runtimeSettingsInputSchema.safeParse(
-        settings({
-          knowledgeEmbeddingBaseUrl:
-            'http://vectors.intranet/v1/embeddings?format=float'
-        })
-      ).success
-    ).toBe(false)
-    expect(
-      runtimeSettingsInputSchema.safeParse(
-        settings({
-          knowledgeEmbeddingBaseUrl: 'http://vectors.intranet'
+            'file:///tmp/embeddings'
         })
       ).success
     ).toBe(false)
@@ -1116,7 +1053,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(11)
+    expect(persisted.version).toBe(12)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

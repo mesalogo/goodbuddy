@@ -1,62 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setIntranetCompatibilityReader } from '../intranet-compatibility-policy'
-import {
-  isPublicAddress,
-  normalizeSourceUrl,
-  UrlImporter
-} from './url-importer'
+import { describe, expect, it, vi } from 'vitest'
+import { normalizeSourceUrl, UrlImporter } from './url-importer'
 
 const publicAddress = [{ address: '93.184.216.34', family: 4 }]
 
-beforeEach(() => {
-  setIntranetCompatibilityReader(() => false)
-})
-
-afterEach(() => {
-  setIntranetCompatibilityReader(() => true)
-})
-
 describe('URL importer', () => {
-  it('rejects local protocols, hosts and private address ranges', async () => {
+  it('accepts HTTP(S) sources and rejects other protocols', () => {
     expect(() => normalizeSourceUrl('file:///etc/passwd')).toThrow('HTTP')
-    expect(() => normalizeSourceUrl('http://localhost/admin')).toThrow(
-      '不允许'
+    expect(() => normalizeSourceUrl('不是 URL')).toThrow('有效')
+    expect(normalizeSourceUrl('http://localhost/admin').href).toBe(
+      'http://localhost/admin'
     )
-    expect(isPublicAddress('127.0.0.1')).toBe(false)
-    expect(isPublicAddress('10.0.0.1')).toBe(false)
-    expect(isPublicAddress('169.254.169.254')).toBe(false)
-    expect(isPublicAddress('192.0.2.1')).toBe(false)
-    expect(isPublicAddress('198.18.0.1')).toBe(false)
-    expect(isPublicAddress('198.51.100.1')).toBe(false)
-    expect(isPublicAddress('203.0.113.1')).toBe(false)
-    expect(isPublicAddress('::1')).toBe(false)
-    expect(isPublicAddress('fc00::1')).toBe(false)
-    expect(isPublicAddress('93.184.216.34')).toBe(true)
-
-    const importer = new UrlImporter({
-      lookup: async () => [{ address: '192.168.1.2', family: 4 }],
-      transport: vi.fn()
-    })
-    await expect(
-      importer.import('https://example.com', new AbortController().signal)
-    ).rejects.toThrow('私网')
+    expect(normalizeSourceUrl('https://example.com/docs#top').href).toBe(
+      'https://example.com/docs'
+    )
   })
 
-  it('rejects mixed public and private DNS answers', async () => {
-    const importer = new UrlImporter({
-      lookup: async () => [
-        ...publicAddress,
-        { address: '127.0.0.1', family: 4 }
-      ],
-      transport: vi.fn()
-    })
-    await expect(
-      importer.import('https://example.com', new AbortController().signal)
-    ).rejects.toThrow('私网')
-  })
-
-  it('imports private intranet URLs in compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
+  it('imports intranet URLs that resolve to private addresses', async () => {
     const transport = vi.fn(async () => ({
       status: 200,
       headers: { 'content-type': 'text/plain' },
@@ -84,33 +43,14 @@ describe('URL importer', () => {
     )
   })
 
-  it('keeps metadata, link-local and mixed answers blocked in compatibility mode', async () => {
-    setIntranetCompatibilityReader(() => true)
-    expect(() =>
-      normalizeSourceUrl('http://metadata.google.internal/latest')
-    ).toThrow('不允许')
-    expect(() =>
-      normalizeSourceUrl('http://user:secret@knowledge.internal')
-    ).toThrow('不允许')
-
-    for (const addresses of [
-      [{ address: '169.254.169.254', family: 4 }],
-      [
-        { address: '10.0.0.2', family: 4 },
-        { address: '93.184.216.34', family: 4 }
-      ]
-    ]) {
-      const importer = new UrlImporter({
-        lookup: async () => addresses,
-        transport: vi.fn()
-      })
-      await expect(
-        importer.import(
-          'http://knowledge.internal',
-          new AbortController().signal
-        )
-      ).rejects.toThrow('私网')
-    }
+  it('fails when a hostname resolves to no address', async () => {
+    const importer = new UrlImporter({
+      lookup: async () => [],
+      transport: vi.fn()
+    })
+    await expect(
+      importer.import('https://example.com', new AbortController().signal)
+    ).rejects.toThrow('无法解析')
   })
 
   it('imports HTML and discovers only same-origin links', async () => {
@@ -142,13 +82,18 @@ describe('URL importer', () => {
     expect(result.etag).toBe('"v1"')
   })
 
-  it('validates every redirect and response content type', async () => {
+  it('follows redirects across hosts and validates content type', async () => {
     const transport = vi
       .fn()
       .mockResolvedValueOnce({
         status: 302,
-        headers: { location: 'http://internal.example/secret' },
+        headers: { location: 'http://internal.example/guide' },
         body: Buffer.alloc(0)
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+        body: Buffer.from('内部文档')
       })
     const importer = new UrlImporter({
       lookup: async (hostname) =>
@@ -159,7 +104,9 @@ describe('URL importer', () => {
     })
     await expect(
       importer.import('https://example.com', new AbortController().signal)
-    ).rejects.toThrow('私网')
+    ).resolves.toMatchObject({
+      url: 'http://internal.example/guide'
+    })
 
     const binaryImporter = new UrlImporter({
       lookup: async () => publicAddress,

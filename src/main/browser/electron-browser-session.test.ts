@@ -227,7 +227,7 @@ describe('ElectronBrowserSession', () => {
     await session.dispose()
   })
 
-  it('allows only the explicitly approved top-level origin', async () => {
+  it('allows HTTP(S) top-level navigation and cross-origin redirects', async () => {
     const harness = createHarness()
     const session = await ElectronBrowserSession.create({
       policy: harness.policy,
@@ -256,7 +256,7 @@ describe('ElectronBrowserSession', () => {
       foreignEvent,
       'https://attacker.example/'
     )
-    expect(foreignEvent.preventDefault).toHaveBeenCalled()
+    expect(foreignEvent.preventDefault).not.toHaveBeenCalled()
 
     harness.setCurrentUrl('https://attacker.example/')
     harness.contentEvents.emit(
@@ -264,14 +264,15 @@ describe('ElectronBrowserSession', () => {
       {},
       'https://attacker.example/'
     )
-    expect(harness.webContents.stop).toHaveBeenCalled()
-    expect(session.getCurrentOrigin()).toBeUndefined()
+    expect(harness.webContents.stop).not.toHaveBeenCalled()
+    expect(session.getCurrentOrigin()).toBe('https://attacker.example')
     await expect(
       session.validateRedirect(
-        'https://attacker.example/',
+        'http://10.0.0.25/admin',
         new AbortController().signal
       )
-    ).rejects.toThrow('超出已批准来源')
+    ).resolves.toBeUndefined()
+    expect(session.getApprovedOrigin()).toBe('http://10.0.0.25')
     await session.dispose()
   })
 

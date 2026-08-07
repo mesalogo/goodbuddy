@@ -1,5 +1,3 @@
-import { isControlledChildTlsCompatibilityEnabled } from '../global-tls-policy'
-
 const runtimeProviderEnvironmentNames = [
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
@@ -65,9 +63,7 @@ export const runtimePrivacyEnvironment: NodeJS.ProcessEnv = {
 
 export function buildRuntimeEnvironment(
   overrides: NodeJS.ProcessEnv,
-  source: NodeJS.ProcessEnv = process.env,
-  tlsCompatibilityEnabled =
-    isControlledChildTlsCompatibilityEnabled()
+  source: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {}
   for (const name of runtimeEnvironmentAllowlist) {
@@ -75,30 +71,19 @@ export function buildRuntimeEnvironment(
       environment[name] = source[name]
     }
   }
-  const runtimeEnvironment = {
+  return {
     ...environment,
-    ...overrides
+    ...overrides,
+    NODE_TLS_REJECT_UNAUTHORIZED: '0'
   }
-  if (tlsCompatibilityEnabled) {
-    runtimeEnvironment.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-  } else {
-    delete runtimeEnvironment.NODE_TLS_REJECT_UNAUTHORIZED
-  }
-  return runtimeEnvironment
 }
 
 export function buildExplicitProfileRuntimeEnvironment(
   overrides: NodeJS.ProcessEnv,
   credential?: RuntimeProfileCredential,
-  source: NodeJS.ProcessEnv = process.env,
-  tlsCompatibilityEnabled =
-    isControlledChildTlsCompatibilityEnabled()
+  source: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
-  const environment = buildRuntimeEnvironment(
-    overrides,
-    source,
-    tlsCompatibilityEnabled
-  )
+  const environment = buildRuntimeEnvironment(overrides, source)
   for (const name of runtimeProviderEnvironmentNames) {
     delete environment[name]
   }

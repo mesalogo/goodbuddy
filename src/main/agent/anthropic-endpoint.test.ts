@@ -19,4 +19,14 @@ describe('Anthropic endpoint normalization', () => {
       createAnthropicMessagesUrl('https://model.example/v1').toString()
     ).toBe('https://model.example/v1/messages')
   })
+
+  it('keeps a gateway query and intranet path prefix on the request URL', () => {
+    expect(
+      createAnthropicMessagesUrl(
+        'http://10.0.0.5:8000/gateway?api-version=2024-02-01'
+      ).toString()
+    ).toBe(
+      'http://10.0.0.5:8000/gateway/v1/messages?api-version=2024-02-01'
+    )
+  })
 })

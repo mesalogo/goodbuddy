@@ -75,6 +75,7 @@ export const conversationSnapshotSchema = z
             id: assistantIdSchema,
             role: z.enum(['user', 'assistant']),
             content: z.string().max(1_000_000),
+            reasoning: z.string().optional(),
             createdAt: z.number().int().nonnegative(),
             state: z.enum(['streaming', 'complete', 'error']),
             status: z.string().max(4_000).optional(),
