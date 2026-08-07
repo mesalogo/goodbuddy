@@ -352,6 +352,8 @@ const emptyTokenUsage: TokenUsageSummary = {
 
 const storageKey = 'goodbuddy.conversations.v1'
 
+const activeProjectStorageKey = 'goodbuddy.active-project.v1'
+
 const quickActions = [
   {
     title: '总结一段内容',
@@ -641,6 +643,14 @@ function loadConversations(): Conversation[] {
     return conversations.length > 0 ? conversations : [createConversation()]
   } catch {
     return [createConversation()]
+  }
+}
+
+function loadActiveProjectId(): string | undefined {
+  try {
+    return localStorage.getItem(activeProjectStorageKey) || undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -2200,6 +2210,13 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId
+    if (activeProjectId) {
+      try {
+        localStorage.setItem(activeProjectStorageKey, activeProjectId)
+      } catch {
+        // The project selection still works when persistence is unavailable.
+      }
+    }
   }, [activeProjectId])
 
   useEffect(() => {
@@ -2238,7 +2255,11 @@ function App(): React.JSX.Element {
         if (!active || value.length === 0) {
           return
         }
-        const project = value[0]!
+        const lastActiveProjectId = loadActiveProjectId()
+        const project =
+          value.find(
+            (candidate) => candidate.id === lastActiveProjectId
+          ) ?? value[0]!
         setProjects(value)
         setActiveProjectId(project.id)
         setWorkMode(

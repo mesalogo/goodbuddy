@@ -2941,12 +2941,11 @@ export function registerIpcHandlers(
 
   return async () => {
     shuttingDown = true
-    await Promise.allSettled(
-      [
-        ...channelServices.map((service) => service.stop()),
-        channelManager?.stopAll()
-      ]
-    )
+    const channelCleanup = Promise.allSettled([
+      ...channelServices.map((service) => service.stop()),
+      channelManager?.stopAll()
+    ])
+    const subagentCleanup = subagentService?.dispose()
     removeBrowserStateListener?.()
     removeEmbeddingStatusListener?.()
     clearInterval(scheduleInterval)
@@ -2957,21 +2956,26 @@ export function registerIpcHandlers(
     }
     heartbeatControllers.clear()
     speechTranscriptionService?.dispose()
-    if (speechModelManager) {
-      for (const operation of (await speechModelManager.getSnapshot()).operations) {
-        speechModelManager.cancel(operation.modelId)
-      }
-    }
+    const speechModelCleanup = speechModelManager
+      ?.getSnapshot()
+      .then((snapshot) => {
+        for (const operation of snapshot.operations) {
+          speechModelManager.cancel(operation.modelId)
+        }
+      })
     embeddingIndexCoordinator?.cancel()
     approvalBroker.clear()
     contextManager.clear()
-    subagentService?.cancelAll('应用正在退出')
-    await Promise.allSettled([...activeExecutions])
-    await subagentService?.dispose()
     window.removeListener('maximize', notifyMaximizedChanged)
     window.removeListener('unmaximize', notifyMaximizedChanged)
     for (const channel of channels) {
       ipcMain.removeHandler(channel)
     }
+    await Promise.allSettled([
+      channelCleanup,
+      speechModelCleanup,
+      subagentCleanup,
+      ...activeExecutions
+    ])
   }
 }

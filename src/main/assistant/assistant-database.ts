@@ -806,10 +806,11 @@ export class AssistantDatabase {
     const rows = database
       .prepare(
         includeArchived
-          ? 'SELECT * FROM projects ORDER BY updated_at DESC'
+          ? `SELECT * FROM projects
+             ORDER BY created_at ASC, rowid ASC`
           : `SELECT * FROM projects
              WHERE status = 'active'
-             ORDER BY updated_at DESC`
+             ORDER BY created_at ASC, rowid ASC`
       )
       .all() as ProjectRow[]
     return rows.map(toProject)

@@ -22,7 +22,10 @@ export class AgentRuntimeController implements AgentRuntime {
   private replacementQueue: Promise<void> = Promise.resolve()
   private closing = false
 
-  constructor(runtime: AgentRuntime) {
+  constructor(
+    runtime: AgentRuntime,
+    private readonly shutdownGraceMs = 2_000
+  ) {
     this.current = {
       runtime,
       activeRequests: 0,
@@ -212,9 +215,21 @@ export class AgentRuntimeController implements AgentRuntime {
 
   async dispose(): Promise<void> {
     this.closing = true
-    const operation = this.replacementQueue.then(() =>
-      this.retire(this.current)
-    )
+    const operation = this.replacementQueue.then(async () => {
+      const slot = this.current
+      const disposal = this.retire(slot)
+      if (slot.activeRequests === 0) {
+        return disposal
+      }
+      await Promise.race([
+        disposal,
+        new Promise<void>((resolve) =>
+          setTimeout(resolve, this.shutdownGraceMs)
+        )
+      ])
+      await this.disposeSlot(slot)
+      return disposal
+    })
     this.replacementQueue = operation.catch(() => undefined)
     await operation
   }

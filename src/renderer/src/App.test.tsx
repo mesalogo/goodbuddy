@@ -1723,6 +1723,58 @@ describe('App', () => {
     )
   })
 
+  it('restores and persists the last active project', async () => {
+    const secondProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000102',
+      name: '第二项目',
+      rootPath: 'C:\\Second',
+      defaultWorkMode: 'execute' as const
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      secondProject
+    ])
+    localStorage.setItem(
+      'goodbuddy.active-project.v1',
+      secondProject.id
+    )
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('当前项目')).toHaveValue(
+      secondProject.id
+    )
+    expect(screen.getByLabelText('工作模式')).toHaveValue('execute')
+
+    fireEvent.change(screen.getByLabelText('当前项目'), {
+      target: { value: project.id }
+    })
+    await waitFor(() =>
+      expect(
+        localStorage.getItem('goodbuddy.active-project.v1')
+      ).toBe(project.id)
+    )
+  })
+
+  it('falls back when the last active project is no longer available', async () => {
+    localStorage.setItem(
+      'goodbuddy.active-project.v1',
+      '00000000-0000-4000-8000-000000000999'
+    )
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('当前项目')).toHaveValue(
+      project.id
+    )
+    await waitFor(() =>
+      expect(
+        localStorage.getItem('goodbuddy.active-project.v1')
+      ).toBe(project.id)
+    )
+  })
+
   it.each([
     ['opencode', 'OpenCode'],
     ['continue', 'Continue CLI']

@@ -135,6 +135,31 @@ describe('AgentRuntimeController', () => {
     await controller.dispose()
   })
 
+  it('forces runtime disposal when active work does not stop during shutdown', async () => {
+    const runtime = new TestRuntime(true)
+    const controller = new AgentRuntimeController(runtime, 1)
+    const stream = controller.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b12',
+        conversationId: 'conversation-shutdown',
+        prompt: 'test',
+        workMode: 'ask'
+      },
+      new AbortController().signal
+    )
+    const pendingEvent = stream.next()
+    await runtime.started
+
+    await controller.dispose()
+    expect(runtime.dispose).toHaveBeenCalledOnce()
+
+    runtime.finish()
+    await expect(pendingEvent).resolves.toMatchObject({
+      value: { type: 'text' }
+    })
+    await stream.return()
+  })
+
   it.each(['ask', 'plan'] as const)(
     'denies tool authorization in %s mode without prompting the user',
     async (workMode) => {

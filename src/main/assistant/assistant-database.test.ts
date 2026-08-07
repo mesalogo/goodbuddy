@@ -2,12 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
 
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
+  vi.useRealTimers()
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true })
@@ -50,6 +51,49 @@ describe('AssistantDatabase', () => {
       ).user_version
     ).toBe(99)
     unchanged.close()
+  })
+
+  it('lists projects by creation time with newer projects last', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-07T00:00:00.000Z'))
+    const database = await createDatabase()
+    const defaultProject = database.listProjects()[0]!
+
+    vi.setSystemTime(new Date('2026-08-07T00:01:00.000Z'))
+    const secondProject = database.createProject({
+      name: '第二项目',
+      description: '',
+      rootPath: 'C:\\Second',
+      defaultWorkMode: 'ask'
+    })
+    vi.setSystemTime(new Date('2026-08-07T00:02:00.000Z'))
+    const thirdProject = database.createProject({
+      name: '第三项目',
+      description: '',
+      rootPath: 'C:\\Third',
+      defaultWorkMode: 'execute'
+    })
+
+    database.updateProject(secondProject.id, {
+      name: '第二项目（已更新）',
+      description: '',
+      rootPath: 'C:\\Second',
+      defaultWorkMode: 'ask'
+    })
+
+    expect(database.listProjects().map((project) => project.id)).toEqual([
+      defaultProject.id,
+      secondProject.id,
+      thirdProject.id
+    ])
+    expect(
+      database.listProjects(true).map((project) => project.id)
+    ).toEqual([
+      defaultProject.id,
+      secondProject.id,
+      thirdProject.id
+    ])
+    database.close()
   })
 
   it('migrates existing databases to schema version 8', async () => {

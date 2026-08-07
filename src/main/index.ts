@@ -60,6 +60,7 @@ import { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinat
 import { KnowledgeEmbeddingIndexRepository } from './knowledge/knowledge-embedding-index-repository'
 import { GlobalTlsPolicy } from './global-tls-policy'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
+import { waitForCleanup } from './shutdown'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const portableUserDataPath = resolvePortableUserDataPath({
@@ -485,21 +486,25 @@ app.on('before-quit', (event) => {
   cleanupStarted = true
   void (async () => {
     try {
-      await Promise.allSettled([removeIpcHandlers?.()])
+      const cleanup = Promise.allSettled([
+        Promise.resolve().then(() => removeIpcHandlers?.()),
+        Promise.resolve().then(() => runtime?.dispose()),
+        Promise.resolve().then(() => selectedRuntimeManager?.dispose()),
+        Promise.resolve().then(() => knowledgeGateway?.dispose()),
+        Promise.resolve().then(() => knowledgeService?.dispose()),
+        Promise.resolve().then(() => browserService?.dispose()),
+        Promise.resolve().then(() => globalTlsPolicy?.dispose())
+      ])
       globalShortcut.unregisterAll()
       tray?.destroy()
-      await Promise.allSettled([
-        runtime?.dispose(),
-        selectedRuntimeManager?.dispose(),
-        knowledgeGateway?.dispose(),
-        knowledgeService?.dispose(),
-        browserService?.dispose(),
-        globalTlsPolicy?.dispose()
-      ])
+      await waitForCleanup(cleanup, 8_000)
     } finally {
-      assistantDatabase?.close()
-      cleanupComplete = true
-      app.quit()
+      try {
+        assistantDatabase?.close()
+      } finally {
+        cleanupComplete = true
+        app.exit(0)
+      }
     }
   })()
 })
