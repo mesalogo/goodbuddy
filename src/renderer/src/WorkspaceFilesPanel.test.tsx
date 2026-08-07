@@ -37,25 +37,39 @@ describe('WorkspaceFilesPanel', () => {
           }
     )
     const onOpenFile = vi.fn()
+    const onOpenEntry = vi.fn(async () => undefined)
 
     render(
       <WorkspaceFilesPanel
         changedFiles={[{ path: 'notes.txt', status: ' M' }]}
         onListDirectory={onListDirectory}
+        onOpenEntry={onOpenEntry}
         onOpenFile={onOpenFile}
         projectId="00000000-0000-4000-8000-000000000101"
       />
     )
 
     expect(await screen.findByText('当前工作区')).toBeInTheDocument()
-    fireEvent.click(await screen.findByRole('button', { name: /docs/u }))
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }))
     fireEvent.click(
-      await screen.findByRole('button', { name: /guide\.md/u })
+      await screen.findByRole('button', { name: 'guide.md' })
     )
 
     expect(onListDirectory).toHaveBeenCalledWith('')
     expect(onListDirectory).toHaveBeenCalledWith('docs')
     expect(onOpenFile).toHaveBeenCalledWith('docs/guide.md')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '使用默认应用打开文件 guide.md'
+      })
+    )
+    expect(onOpenEntry).toHaveBeenCalledWith('docs/guide.md', 'file')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '在系统资源管理器中打开文件夹 docs'
+      })
+    )
+    expect(onOpenEntry).toHaveBeenCalledWith('docs', 'directory')
     expect(screen.getAllByText('修改')).not.toHaveLength(0)
   })
 
@@ -84,6 +98,7 @@ describe('WorkspaceFilesPanel', () => {
       <WorkspaceFilesPanel
         changedFiles={[]}
         onListDirectory={onListDirectory}
+        onOpenEntry={vi.fn(async () => undefined)}
         onOpenFile={vi.fn()}
         projectId="00000000-0000-4000-8000-000000000101"
       />
@@ -94,6 +109,7 @@ describe('WorkspaceFilesPanel', () => {
       <WorkspaceFilesPanel
         changedFiles={[]}
         onListDirectory={onListDirectory}
+        onOpenEntry={vi.fn(async () => undefined)}
         onOpenFile={vi.fn()}
         projectId="00000000-0000-4000-8000-000000000102"
       />

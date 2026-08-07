@@ -3,7 +3,6 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
-  Notification,
   shell
 } from 'electron'
 import { mkdir, readFile, realpath, stat } from 'node:fs/promises'
@@ -14,6 +13,7 @@ import { z } from 'zod'
 import { formatShortcutForDisplay } from '../shared/shortcut'
 import {
   approvalDecisionSchema,
+  agentQuestionResponseSchema,
   agentRequestSchema,
   browserStopRequestSchema,
   knowledgeCreateSchema,
@@ -30,8 +30,10 @@ import {
   windowCaptureRequestSchema,
   workspaceDirectoryRequestSchema,
   workspaceFileRequestSchema,
+  workspaceOpenPathRequestSchema,
   type AgentRuntimeDetection,
   type AgentEvent,
+  type AgentRequest,
   type AppInfo,
   type BrowserLiveState,
   type KnowledgeSnapshot,
@@ -49,6 +51,7 @@ import {
   mcpServerInputSchema,
   skillAssignmentsInputSchema,
   skillIdSchema,
+  skillImportKindSchema,
   skillToggleInputSchema,
   type CapabilitySnapshot,
   type CapabilityDiagnosticReport,
@@ -111,9 +114,11 @@ import { RemoteDelegationService } from './assistant/remote-delegation-service'
 import {
   getWorkspaceChanges,
   listWorkspaceDirectory,
-  readWorkspaceFile
+  readWorkspaceFile,
+  resolveWorkspaceEntryPath
 } from './assistant/workspace-changes-service'
 import { HeartbeatService } from './assistant/heartbeat-service'
+import { showDesktopNotificationWhenUnfocused } from './desktop-notification'
 import {
   SubagentRunError,
   type SubagentService
@@ -236,6 +241,12 @@ const projectArchiveRequestSchema = z
   .object({
     projectId: assistantIdSchema,
     archived: z.boolean()
+  })
+  .strict()
+const projectDeleteRequestSchema = z
+  .object({
+    projectId: assistantIdSchema,
+    confirmation: z.string().max(120)
   })
   .strict()
 const memoryStatusRequestSchema = z
@@ -494,6 +505,10 @@ export function registerIpcHandlers(
   knowledgeGateway?: KnowledgeMcpGateway
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
+  const pendingAgentQuestions = new Map<
+    string,
+    { requestId: string; runtime: AgentRuntime }
+  >()
   const heartbeatControllers = new Set<AbortController>()
   let shuttingDown = false
   let executionPaused = false
@@ -505,6 +520,21 @@ export function registerIpcHandlers(
       () => activeExecutions.delete(execution)
     )
     return execution
+  }
+  const resolveRequestRuntime = async (
+    request: Pick<AgentRequest, 'projectId' | 'runtimeSelection'>
+  ): Promise<AgentRuntime> => {
+    const projectWorkspace = request.projectId
+      ? assistantDatabase.getProject(request.projectId).rootPath.trim()
+      : ''
+    if (!selectedRuntimes || (!request.runtimeSelection && !projectWorkspace)) {
+      return runtime
+    }
+    const selection =
+      request.runtimeSelection ?? ({ provider: 'auto' } as const)
+    return projectWorkspace
+      ? selectedRuntimes.getRuntime(selection, projectWorkspace)
+      : selectedRuntimes.getRuntime(selection)
   }
   const channels = Object.values(ipcChannels).filter(
     (channel) =>
@@ -618,7 +648,10 @@ export function registerIpcHandlers(
     assistantDatabase,
     {
       summarize: async (request) => {
-        if (runtime.capability === 'image-generation') {
+        const requestRuntime = await resolveRequestRuntime({
+          projectId: request.projectId
+        })
+        if (requestRuntime.capability === 'image-generation') {
           throw new Error('智能心跳需要文本模型，当前默认连接仅支持图像生成')
         }
         const controller = new AbortController()
@@ -644,10 +677,11 @@ export function registerIpcHandlers(
         let output = ''
         let completed = false
         try {
-          for await (const event of runtime.run(
+          for await (const event of requestRuntime.run(
             {
               requestId,
               conversationId,
+              projectId: request.projectId,
               workMode: 'ask',
               prompt: [
                 request.systemInstruction,
@@ -704,7 +738,7 @@ export function registerIpcHandlers(
         } finally {
           clearTimeout(timeout)
           heartbeatControllers.delete(controller)
-          await runtime.releaseConversation?.(conversationId)
+          await requestRuntime.releaseConversation?.(conversationId)
         }
       }
     },
@@ -755,7 +789,10 @@ export function registerIpcHandlers(
     let output = ''
     let completed = false
     try {
-      for await (const agentEvent of runtime.run(
+      const requestRuntime = await resolveRequestRuntime({
+        projectId: schedule.projectId
+      })
+      for await (const agentEvent of requestRuntime.run(
         {
           requestId,
           conversationId: `${origin}:${schedule.id}`,
@@ -841,12 +878,10 @@ export function registerIpcHandlers(
         })
       }
       assistantDatabase.updateTaskStatus(requestId, 'completed')
-      if (Notification.isSupported()) {
-        new Notification({
-          title: `定时任务完成：${schedule.title}`,
-          body: '结果已保存到 GoodBuddy 成果工作栏。'
-        }).show()
-      }
+      showDesktopNotificationWhenUnfocused(window, {
+        title: `定时任务完成：${schedule.title}`,
+        body: '结果已保存到 GoodBuddy 成果工作栏。'
+      })
       return { status: 'completed', output }
     } catch (error) {
       const message = safeRuntimeError(error, '定时任务执行失败')
@@ -855,12 +890,10 @@ export function registerIpcHandlers(
         controller.signal.aborted ? 'cancelled' : 'failed',
         message
       )
-      if (Notification.isSupported()) {
-        new Notification({
-          title: `定时任务失败：${schedule.title}`,
-          body: '打开 GoodBuddy 任务工作栏查看详情。'
-        }).show()
-      }
+      showDesktopNotificationWhenUnfocused(window, {
+        title: `定时任务失败：${schedule.title}`,
+        body: '打开 GoodBuddy 任务工作栏查看详情。'
+      })
       return { status: 'failed', error: message }
     } finally {
       externalSignal?.removeEventListener(
@@ -1182,12 +1215,7 @@ export function registerIpcHandlers(
         throw new Error('请求包含不存在的知识库')
       }
     }
-    const selectedRuntime =
-      parsedInput.runtimeSelection && selectedRuntimes
-        ? await selectedRuntimes.getRuntime(
-            parsedInput.runtimeSelection
-          )
-        : runtime
+    const selectedRuntime = await resolveRequestRuntime(parsedInput)
     const normalizedWorkMode = normalizeInteractiveWorkMode(
       parsedInput.workMode
     )
@@ -1381,6 +1409,12 @@ export function registerIpcHandlers(
           if (publicEvent.type === 'tool') {
             toolStates.set(publicEvent.callId, publicEvent)
           }
+          if (publicEvent.type === 'question') {
+            pendingAgentQuestions.set(publicEvent.questionId, {
+              requestId: request.requestId,
+              runtime: selectedRuntime
+            })
+          }
           if (publicEvent.type === 'error') {
             assistantDatabase.appendTaskEvent(
               request.requestId,
@@ -1446,12 +1480,10 @@ export function registerIpcHandlers(
               request.requestId,
               'completed'
             )
-            if (!window.isFocused() && Notification.isSupported()) {
-              new Notification({
-                title: 'GoodBuddy 任务已完成',
-                body: '任务结果已保存到成果工作栏。'
-              }).show()
-            }
+            showDesktopNotificationWhenUnfocused(window, {
+              title: 'GoodBuddy 任务已完成',
+              body: '任务结果已保存到成果工作栏。'
+            })
           }
           if (!window.isDestroyed()) {
             window.webContents.send(ipcChannels.agentEvent, publicEvent)
@@ -1485,18 +1517,21 @@ export function registerIpcHandlers(
             agentEvent
           )
         }
-        if (!window.isFocused() && Notification.isSupported()) {
-          new Notification({
-            title: controller.signal.aborted
-              ? 'GoodBuddy 任务已取消'
-              : 'GoodBuddy 任务失败',
-            body: '打开任务工作栏查看详情。'
-          }).show()
-        }
+        showDesktopNotificationWhenUnfocused(window, {
+          title: controller.signal.aborted
+            ? 'GoodBuddy 任务已取消'
+            : 'GoodBuddy 任务失败',
+          body: '打开任务工作栏查看详情。'
+        })
         if (!window.isDestroyed()) {
           window.webContents.send(ipcChannels.agentEvent, agentEvent)
         }
       } finally {
+        for (const [questionId, pending] of pendingAgentQuestions) {
+          if (pending.requestId === request.requestId) {
+            pendingAgentQuestions.delete(questionId)
+          }
+        }
         knowledgeGateway?.revoke(request.knowledgeCapabilityToken)
         activeRequests.delete(request.requestId)
       }
@@ -1515,6 +1550,22 @@ export function registerIpcHandlers(
     const response = approvalResponseSchema.parse(input)
     approvalBroker.respond(response.approvalId, response.decision)
   })
+  ipcMain.handle(
+    ipcChannels.agentQuestionRespond,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const response = agentQuestionResponseSchema.parse(input)
+      const pending = pendingAgentQuestions.get(response.questionId)
+      if (!pending?.runtime.respondToQuestion) {
+        throw new Error('OpenCode 提问已失效或不存在')
+      }
+      await pending.runtime.respondToQuestion(
+        response.questionId,
+        response.answers.length > 0 ? response.answers : undefined
+      )
+      pendingAgentQuestions.delete(response.questionId)
+    }
+  )
 
   ipcMain.handle(
     ipcChannels.runtimeSettingsGet,
@@ -2016,10 +2067,15 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     ipcChannels.projectsUpdate,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = projectUpdateRequestSchema.parse(input)
-      return assistantDatabase.updateProject(value.projectId, value.input)
+      const project = assistantDatabase.updateProject(
+        value.projectId,
+        value.input
+      )
+      await selectedRuntimes?.reset?.()
+      return project
     }
   )
 
@@ -2032,6 +2088,18 @@ export function registerIpcHandlers(
         value.projectId,
         value.archived
       )
+    }
+  )
+  ipcMain.handle(
+    ipcChannels.projectsDelete,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const value = projectDeleteRequestSchema.parse(input)
+      assistantDatabase.deleteProject(
+        value.projectId,
+        value.confirmation
+      )
+      await selectedRuntimes?.reset?.()
     }
   )
 
@@ -2076,6 +2144,27 @@ export function registerIpcHandlers(
       const value = workspaceFileRequestSchema.parse(input)
       const project = assistantDatabase.getProject(value.projectId)
       return readWorkspaceFile(project.rootPath, value.path)
+    }
+  )
+  ipcMain.handle(
+    ipcChannels.workspacePathOpen,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const value = workspaceOpenPathRequestSchema.parse(input)
+      const project = assistantDatabase.getProject(value.projectId)
+      const targetPath = await resolveWorkspaceEntryPath(
+        project.rootPath,
+        value.path,
+        value.type
+      )
+      const error = await shell.openPath(targetPath)
+      if (error) {
+        throw new Error(
+          value.type === 'directory'
+            ? '无法在系统资源管理器中打开文件夹'
+            : '无法使用系统默认应用打开文件'
+        )
+      }
     }
   )
 
@@ -2337,12 +2426,22 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     ipcChannels.capabilitiesImportSkill,
-    async (event): Promise<CapabilitySnapshot> => {
+    async (event, input: unknown): Promise<CapabilitySnapshot> => {
       assertTrustedSender(event, window)
-      const result = await dialog.showOpenDialog(window, {
-        title: '选择包含 SKILL.md 的目录',
-        properties: ['openDirectory']
-      })
+      const kind = skillImportKindSchema.parse(input)
+      const result = await dialog.showOpenDialog(
+        window,
+        kind === 'zip'
+          ? {
+              title: '选择 Skill ZIP 文件',
+              properties: ['openFile'],
+              filters: [{ name: 'Skill ZIP', extensions: ['zip'] }]
+            }
+          : {
+              title: '选择包含 SKILL.md 的目录',
+              properties: ['openDirectory']
+            }
+      )
       if (result.canceled || !result.filePaths[0]) {
         return capabilityService.getSnapshot()
       }

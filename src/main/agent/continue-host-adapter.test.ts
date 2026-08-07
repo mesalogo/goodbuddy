@@ -77,7 +77,18 @@ async function createDistribution(version = '1.5.47'): Promise<{
     'listen(i,async()=>{console.log(Ht.green(`Server started on http://localhost:${i}`))',
     'async function SCt(e){return n5e||',
     'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}',
-    'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}'
+    'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}',
+    'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-ExecutionPolicy","Bypass","-Command",e]}',
+    'a={onContent:u=>{},onContentComplete:u=>{},onToolStart:(u,l)=>{},onToolResult:(u,l,c)=>{},onToolError:(u,l)=>{},onToolPermissionRequest:',
+    'pendingPermission:null},B=',
+    'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission);Te.json(ue)})',
+    'n?.onToolStart?.(i.name,i.arguments);',
+    'n?.onToolError?.(l,i.name)',
+    't?.onToolStart?.(c.name,c.arguments);',
+    't?.onToolResult?.(String(y.content),c.name,"canceled")',
+    't?.onToolResult?.(f,c.name,"done")',
+    't?.onToolError?.(g,c.name)',
+    't?.onToolError?.(p,c.name)'
   ].join(';')
   await writeFile(join(distribution, 'index.js'), sourceBundle, 'utf8')
   return {
@@ -138,6 +149,12 @@ describe('ContinueHostAdapter', () => {
     expect(bundle).toContain(
       'useResponsesApi:e.useResponsesApi'
     )
+    expect(bundle).toContain('"-NoProfile"')
+    expect(bundle).toContain('[Console]::OutputEncoding')
+    expect(bundle).toContain('goodbuddyEvents:[]')
+    expect(bundle).toContain('goodbuddyEvents:ce')
+    expect(bundle).toContain('type:"text",delta:u')
+    expect(bundle).toContain('onToolStart?.(c.name,c.arguments,c.id)')
     expect(bundle).toContain(
       'function ZZo(e){let t=[];if(e.allow)'
     )
@@ -394,7 +411,7 @@ describe('ContinueHostAdapter', () => {
         cacheWriteTokens: 0
       }
     })
-    expect(launch?.entryPath).toContain('host-v4')
+    expect(launch?.entryPath).toContain('host-v6')
     expect(launch?.args).toEqual([
       '--config',
       expect.stringContaining('model-config-'),
@@ -870,6 +887,7 @@ describe('ContinueHostAdapter', () => {
     const distribution = await createDistribution()
     let launchArgs: string[] = []
     const permissionBodies: unknown[] = []
+    const streamEvents: unknown[] = []
     const launchHost: ContinueHostLauncher = (
       _entryPath,
       args
@@ -915,7 +933,16 @@ describe('ContinueHostAdapter', () => {
                   toolName: 'Bash',
                   toolArgs: { command: 'npm test' },
                   requestId: 'permission-1'
-                }
+                },
+                goodbuddyEvents: [
+                  { type: 'text', delta: '先检查命令。' },
+                  {
+                    type: 'tool',
+                    callId: 'call-1',
+                    name: 'Bash',
+                    state: 'running'
+                  }
+                ]
               })
             }
             return Response.json({
@@ -940,7 +967,16 @@ describe('ContinueHostAdapter', () => {
               },
               isProcessing: false,
               messageQueueLength: 0,
-              pendingPermission: null
+              pendingPermission: null,
+              goodbuddyEvents: [
+                {
+                  type: 'tool',
+                  callId: 'call-1',
+                  name: 'Bash',
+                  state: 'completed'
+                },
+                { type: 'text', delta: 'TOOLS_OK' }
+              ]
             })
           }
           return Response.json({})
@@ -959,9 +995,19 @@ describe('ContinueHostAdapter', () => {
     const authorize = vi.fn(async () => 'once' as const)
 
     await expect(
-      adapter.run('hello', new AbortController().signal, authorize)
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        authorize,
+        {
+          onEvent: (event) => {
+            streamEvents.push(event)
+          }
+        }
+      )
     ).resolves.toEqual({
       text: 'TOOLS_OK',
+      streamedText: true,
       tools: [
         {
           callId: 'call-1',
@@ -970,6 +1016,26 @@ describe('ContinueHostAdapter', () => {
         }
       ]
     })
+    expect(streamEvents).toEqual([
+      { type: 'text', delta: '先检查命令。' },
+      {
+        type: 'tool',
+        tool: {
+          callId: 'call-1',
+          name: 'Bash',
+          state: 'running'
+        }
+      },
+      {
+        type: 'tool',
+        tool: {
+          callId: 'call-1',
+          name: 'Bash',
+          state: 'completed'
+        }
+      },
+      { type: 'text', delta: 'TOOLS_OK' }
+    ])
     expect(launchArgs).not.toContain('--readonly')
     expect(authorize).toHaveBeenCalledWith(
       expect.objectContaining({ toolName: 'Bash' })

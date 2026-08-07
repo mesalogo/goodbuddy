@@ -193,6 +193,9 @@ const capabilitySnapshot = {
   }
 } satisfies CapabilitySnapshot
 const getCapabilitySnapshot = vi.fn(async () => capabilitySnapshot)
+const importSkill = vi.fn<DesktopApi['capabilities']['importSkill']>(
+  async () => capabilitySnapshot
+)
 const saveMcpServer = vi.fn(async () => capabilitySnapshot)
 const setSkillEnabled = vi.fn(async (_skillId: string, enabled: boolean) => ({
   ...capabilitySnapshot,
@@ -342,7 +345,7 @@ describe('SettingsPanel runtime files', () => {
         },
         capabilities: {
           getSnapshot: getCapabilitySnapshot,
-          importSkill: vi.fn(async () => capabilitySnapshot),
+          importSkill,
           removeSkill: vi.fn(async () => capabilitySnapshot),
           setSkillEnabled,
           setSkillAssignments: vi.fn(async () => capabilitySnapshot),
@@ -1654,6 +1657,16 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(await screen.findByText('文档写作')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: '导入 Skill 目录' })
+    )
+    await waitFor(() =>
+      expect(importSkill).toHaveBeenCalledWith('directory')
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '导入 Skill ZIP' })
+    )
+    await waitFor(() => expect(importSkill).toHaveBeenCalledWith('zip'))
     fireEvent.click(screen.getByLabelText('启用 文档写作'))
     await waitFor(() =>
       expect(setSkillEnabled).toHaveBeenCalledWith(

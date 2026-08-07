@@ -104,6 +104,10 @@ type RightAssistantSidebarProps = {
     path: string
   ) => Promise<WorkspaceDirectoryListing>
   onLoadWorkspaceFile: (path: string) => Promise<WorkspaceFilePreview>
+  onOpenWorkspaceEntry: (
+    path: string,
+    type: 'file' | 'directory'
+  ) => Promise<void>
   onRemoveMemory: (memoryId: string) => Promise<void>
   onSetMemoryStatus: (
     memoryId: string,
@@ -139,7 +143,7 @@ const tabs: Array<{
   {
     id: 'changes',
     label: '工作区',
-    description: '浏览项目文件、Git 变更与工具活动'
+    description: '浏览项目文件与工具活动'
   },
   {
     id: 'browser',
@@ -262,6 +266,7 @@ export function RightAssistantSidebar({
   onRefreshChanges,
   onListWorkspaceDirectory,
   onLoadWorkspaceFile,
+  onOpenWorkspaceEntry,
   onRemoveMemory,
   onSetMemoryStatus,
   onRespondApproval,
@@ -1079,8 +1084,8 @@ export function RightAssistantSidebar({
           <>
             <section className="assistant-sidebar__section">
               <p className="assistant-sidebar__section-description">
-                浏览当前项目文件、检查未提交 Git 变更，并查看 Agent
-                的工具活动。
+                浏览当前项目文件，并查看 Agent 的工具活动。Git
+                项目还会显示未提交更改。
               </p>
               <h3>
                 <FolderTree size={15} />
@@ -1088,6 +1093,7 @@ export function RightAssistantSidebar({
                 <button
                   aria-label="刷新工作区文件"
                   className="icon-button"
+                  disabled={!workspaceProjectId}
                   onClick={() => {
                     setWorkspaceRefreshVersion((current) => current + 1)
                     runAction(
@@ -1095,6 +1101,7 @@ export function RightAssistantSidebar({
                       '刷新工作区文件失败'
                     )
                   }}
+                  title="刷新"
                   type="button"
                 >
                   <RefreshCw size={14} />
@@ -1104,6 +1111,7 @@ export function RightAssistantSidebar({
                 changedFiles={workspaceChanges?.files ?? emptyChangedFiles}
                 key={`${workspaceProjectId ?? 'none'}:${workspaceRefreshVersion}`}
                 onListDirectory={onListWorkspaceDirectory}
+                onOpenEntry={onOpenWorkspaceEntry}
                 onOpenFile={openWorkspaceFile}
                 projectId={workspaceProjectId}
               />

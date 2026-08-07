@@ -45,6 +45,7 @@ const maximumBundleBytes = 32 * 1024 * 1024
 const maximumStateBytes = 8 * 1024 * 1024
 const maximumConfigBytes = 1024 * 1024
 const maximumConfiguredMcpServers = 100
+const maximumStreamEvents = 5_000
 const knowledgeMcpName = 'goodbuddy-knowledge'
 export const continueConfigurationRequiredMessage =
   'Continue 尚未配置模型连接，请在设置中选择 GoodBuddy 模型连接或指定 Continue 配置文件'
@@ -74,6 +75,24 @@ const sessionUsageSchema = z.object({
     .optional()
 })
 
+const continueHostStreamEventSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('text'),
+      delta: z.string().min(1).max(100_000)
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('tool'),
+      callId: z.string().min(1).max(256),
+      name: z.string().min(1).max(200),
+      state: z.enum(['running', 'completed', 'failed']),
+      error: z.string().max(1_000).optional()
+    })
+    .strict()
+])
+
 const stateSchema = z.object({
   session: z.object({
     history: z.array(z.unknown()).max(5_000),
@@ -88,7 +107,11 @@ const stateSchema = z.object({
       requestId: z.string().min(1).max(256),
       toolCallPreview: z.array(z.unknown()).max(100).optional()
     })
-    .nullable()
+    .nullable(),
+  goodbuddyEvents: z
+    .array(continueHostStreamEventSchema)
+    .max(maximumStreamEvents)
+    .optional()
 })
 
 type ContinueHostState = z.infer<typeof stateSchema>
@@ -124,9 +147,14 @@ export type ContinueHostTool = {
 
 export type ContinueHostRunResult = {
   text: string
+  streamedText?: true
   usage?: ContinueHostUsage
   tools?: ContinueHostTool[]
 }
+
+export type ContinueHostStreamEvent =
+  | { type: 'text'; delta: string }
+  | { type: 'tool'; tool: ContinueHostTool }
 
 export class ContinueHostRunError extends Error {
   constructor(
@@ -158,6 +186,7 @@ export type ContinueHostRunOptions = {
     endpoint: string
     token: string
   }
+  onEvent?: (event: ContinueHostStreamEvent) => void | Promise<void>
 }
 
 type KnowledgeCapability = NonNullable<
@@ -434,7 +463,7 @@ function extractContinueTools(
               : 'failed'
       const error =
         normalizedState === 'failed'
-          ? safeToolErrorDetail(state.output)
+          ? normalizeContinueToolError(state.output)
           : undefined
       tools.set(callId, {
         callId,
@@ -445,6 +474,28 @@ function extractContinueTools(
     }
   }
   return [...tools.values()]
+}
+
+function mergeContinueTools(
+  current: ContinueHostTool[],
+  updates: ContinueHostTool[]
+): ContinueHostTool[] {
+  const tools = new Map(current.map((tool) => [tool.callId, tool]))
+  for (const tool of updates) {
+    tools.set(tool.callId, tool)
+  }
+  return [...tools.values()]
+}
+
+function normalizeContinueToolError(value: unknown): string | undefined {
+  const detail = safeToolErrorDetail(value)
+  if (!detail) {
+    return undefined
+  }
+  const replacementCharacters = detail.match(/\uFFFD/gu)?.length ?? 0
+  return replacementCharacters >= 3
+    ? 'PowerShell 输出编码异常，原始错误无法安全显示；请重试该命令'
+    : detail
 }
 
 function subtractTokenCount(completed: number, initial: number): number {
@@ -538,6 +589,25 @@ export class ContinueHostAdapter {
       'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}'
     const modelConfigurationMarker =
       'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}'
+    const windowsShellMarker =
+      'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-ExecutionPolicy","Bypass","-Command",e]}'
+    const streamCallbacksMarker =
+      'a={onContent:u=>{},onContentComplete:u=>{},onToolStart:(u,l)=>{},onToolResult:(u,l,c)=>{},onToolError:(u,l)=>{},onToolPermissionRequest:'
+    const serverStateMarker = 'pendingPermission:null},B='
+    const serverStateEndpointMarker =
+      'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission);Te.json(ue)})'
+    const preprocessToolStartMarker =
+      'n?.onToolStart?.(i.name,i.arguments);'
+    const preprocessToolErrorMarker =
+      'n?.onToolError?.(l,i.name)'
+    const executeToolStartMarker =
+      't?.onToolStart?.(c.name,c.arguments);'
+    const cancelledToolResultMarker =
+      't?.onToolResult?.(String(y.content),c.name,"canceled")'
+    const completedToolResultMarker =
+      't?.onToolResult?.(f,c.name,"done")'
+    const failedToolResultMarker = 't?.onToolError?.(g,c.name)'
+    const permissionToolErrorMarker = 't?.onToolError?.(p,c.name)'
     let patched = replaceExactly(
       sourceBundle,
       serveInitializationMarker,
@@ -583,11 +653,66 @@ export class ContinueHostAdapter {
       modelConfigurationMarker,
       'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env,useResponsesApi:e.useResponsesApi};return CGn(n)??null}'
     )
+    patched = replaceExactly(
+      patched,
+      windowsShellMarker,
+      'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-Command",\'[Console]::InputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$OutputEncoding=[Console]::OutputEncoding;\'+e]}'
+    )
+    patched = replaceExactly(
+      patched,
+      streamCallbacksMarker,
+      'a={onContent:u=>{u&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"text",delta:u})},onContentComplete:u=>{},onToolStart:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:u,state:"running"})},onToolResult:(u,l,c,d)=>{d&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:d,name:l,state:c==="done"?"completed":"failed"})},onToolError:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:l??"unknown",state:"failed",error:String(u).slice(0,1e3)})},onToolPermissionRequest:'
+    )
+    patched = replaceExactly(
+      patched,
+      serverStateMarker,
+      'pendingPermission:null,goodbuddyEvents:[]},B='
+    )
+    patched = replaceExactly(
+      patched,
+      serverStateEndpointMarker,
+      'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission),ce=M.goodbuddyEvents.splice(0);Te.json({...ue,goodbuddyEvents:ce})})'
+    )
+    patched = replaceExactly(
+      patched,
+      preprocessToolStartMarker,
+      'n?.onToolStart?.(i.name,i.arguments,i.id);'
+    )
+    patched = replaceExactly(
+      patched,
+      preprocessToolErrorMarker,
+      'n?.onToolError?.(l,i.name,i.id)'
+    )
+    patched = replaceExactly(
+      patched,
+      executeToolStartMarker,
+      't?.onToolStart?.(c.name,c.arguments,c.id);'
+    )
+    patched = replaceExactly(
+      patched,
+      cancelledToolResultMarker,
+      't?.onToolResult?.(String(y.content),c.name,"canceled",c.id)'
+    )
+    patched = replaceExactly(
+      patched,
+      completedToolResultMarker,
+      't?.onToolResult?.(f,c.name,"done",c.id)'
+    )
+    patched = replaceExactly(
+      patched,
+      failedToolResultMarker,
+      't?.onToolError?.(g,c.name,c.id)'
+    )
+    patched = replaceExactly(
+      patched,
+      permissionToolErrorMarker,
+      't?.onToolError?.(p,c.name,c.id)'
+    )
     const patchedHash = hashContents(patched)
     const digest = sourceHash.slice(0, 16)
     const targetRoot = join(
       this.options.cacheRoot,
-      `host-v4-${supportedVersion}-${digest}`
+      `host-v6-${supportedVersion}-${digest}`
     )
     const targetDist = join(targetRoot, 'dist')
     const targetBundle = join(targetDist, 'index.js')
@@ -942,6 +1067,7 @@ export class ContinueHostAdapter {
     signal.addEventListener('abort', abort, { once: true })
 
     let observedTools: ContinueHostTool[] = []
+    let streamedText = false
     try {
       const initialState = await this.waitForStartup(
         child,
@@ -972,10 +1098,27 @@ export class ContinueHostAdapter {
         const state = stateSchema.parse(
           await this.request(origin, token, '/state', { signal })
         )
-        observedTools = extractContinueTools(
-          state.session.history,
-          startIndex
+        observedTools = mergeContinueTools(
+          observedTools,
+          extractContinueTools(state.session.history, startIndex)
         )
+        for (const event of state.goodbuddyEvents ?? []) {
+          if (event.type === 'text') {
+            streamedText = true
+            await runOptions.onEvent?.(event)
+            continue
+          }
+          const tool: ContinueHostTool = {
+            callId: event.callId,
+            name: event.name,
+            state: event.state,
+            ...(event.error
+              ? { error: normalizeContinueToolError(event.error) }
+              : {})
+          }
+          observedTools = mergeContinueTools(observedTools, [tool])
+          await runOptions.onEvent?.({ type: 'tool', tool })
+        }
         const pending = state.pendingPermission
         if (pending && !handledPermissionIds.has(pending.requestId)) {
           if (handledPermissionIds.size >= 100) {
@@ -1053,6 +1196,7 @@ export class ContinueHostAdapter {
           )
           return {
             text,
+            ...(streamedText ? { streamedText: true as const } : {}),
             ...(usage ? { usage } : {}),
             ...(observedTools.length > 0
               ? { tools: observedTools }

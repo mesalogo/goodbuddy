@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronRight,
+  FileSearch,
   FileText,
   Folder,
   FolderOpen
@@ -23,6 +24,10 @@ type WorkspaceFilesPanelProps = {
   changedFiles: WorkspaceChangedFile[]
   onListDirectory: (path: string) => Promise<WorkspaceDirectoryListing>
   onOpenFile: (path: string) => void
+  onOpenEntry: (
+    path: string,
+    type: WorkspaceDirectoryEntry['type']
+  ) => Promise<void>
 }
 
 function statusLabel(status: string): string {
@@ -46,7 +51,8 @@ export function WorkspaceFilesPanel({
   projectId,
   changedFiles,
   onListDirectory,
-  onOpenFile
+  onOpenFile,
+  onOpenEntry
 }: WorkspaceFilesPanelProps): React.JSX.Element {
   const [listingState, setListingState] = useState<{
     projectId?: string
@@ -174,6 +180,21 @@ export function WorkspaceFilesPanel({
     }
   }
 
+  const openEntry = (entry: WorkspaceDirectoryEntry): void => {
+    setErrorState({ projectId })
+    void onOpenEntry(entry.path, entry.type).catch((reason: unknown) => {
+      setErrorState({
+        projectId,
+        value:
+          reason instanceof Error
+            ? reason.message
+            : entry.type === 'directory'
+              ? '打开文件夹失败'
+              : '打开文件失败'
+      })
+    })
+  }
+
   const renderEntry = (
     entry: WorkspaceDirectoryEntry
   ): React.JSX.Element => {
@@ -183,20 +204,31 @@ export function WorkspaceFilesPanel({
     if (entry.type === 'directory') {
       return (
         <div key={entry.path}>
-          <button
-            aria-expanded={expanded}
-            className="workspace-files__row"
-            onClick={() => toggleDirectory(entry.path)}
-            type="button"
-          >
-            {expanded ? (
-              <ChevronDown size={13} />
-            ) : (
-              <ChevronRight size={13} />
-            )}
-            {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
-            <span title={entry.path}>{entry.name}</span>
-          </button>
+          <div className="workspace-files__entry">
+            <button
+              aria-expanded={expanded}
+              className="workspace-files__row"
+              onClick={() => toggleDirectory(entry.path)}
+              type="button"
+            >
+              {expanded ? (
+                <ChevronDown size={13} />
+              ) : (
+                <ChevronRight size={13} />
+              )}
+              {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
+              <span title={entry.path}>{entry.name}</span>
+            </button>
+            <button
+              aria-label={`在系统资源管理器中打开文件夹 ${entry.name}`}
+              className="workspace-files__open-entry"
+              onClick={() => openEntry(entry)}
+              title="打开文件夹"
+              type="button"
+            >
+              <FolderOpen size={14} />
+            </button>
+          </div>
           {expanded && (
             <div className="workspace-files__children">
               {listing?.entries.map((child) =>
@@ -216,22 +248,32 @@ export function WorkspaceFilesPanel({
       )
     }
     return (
-      <button
-        className="workspace-files__row"
-        key={entry.path}
-        onClick={() => onOpenFile(entry.path)}
-        title={entry.path}
-        type="button"
-      >
-        <span className="workspace-files__indent" />
-        <FileText size={15} />
-        <span>{entry.name}</span>
-        {changed && (
-          <small className="workspace-files__change">
-            {statusLabel(changed.status)}
-          </small>
-        )}
-      </button>
+      <div className="workspace-files__entry" key={entry.path}>
+        <button
+          className="workspace-files__row"
+          onClick={() => onOpenFile(entry.path)}
+          title={entry.path}
+          type="button"
+        >
+          <span className="workspace-files__indent" />
+          <FileText size={15} />
+          <span>{entry.name}</span>
+          {changed && (
+            <small className="workspace-files__change">
+              {statusLabel(changed.status)}
+            </small>
+          )}
+        </button>
+        <button
+          aria-label={`使用默认应用打开文件 ${entry.name}`}
+          className="workspace-files__open-entry"
+          onClick={() => openEntry(entry)}
+          title="打开文件"
+          type="button"
+        >
+          <FileSearch size={14} />
+        </button>
+      </div>
     )
   }
 

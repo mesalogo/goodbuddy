@@ -7,7 +7,10 @@ import type { AgentRuntime } from './runtime'
 import { AgentRuntimeController } from './runtime-controller'
 
 export type SelectedRuntimeResolver = {
-  getRuntime(selection: AgentRuntimeSelection): Promise<AgentRuntime>
+  getRuntime(
+    selection: AgentRuntimeSelection,
+    workspacePath?: string
+  ): Promise<AgentRuntime>
   getStatus(
     selection: AgentRuntimeSelection
   ): Promise<AgentRuntimeStatus>
@@ -15,6 +18,7 @@ export type SelectedRuntimeResolver = {
     selection: AgentRuntimeSelection
   ): Promise<AgentRuntimeStatus>
   releaseConversation(conversationId: string): Promise<void>
+  reset?(): Promise<void>
 }
 
 export class SelectedRuntimeManager implements SelectedRuntimeResolver {
@@ -28,28 +32,35 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
 
   constructor(
     private readonly createRuntime: (
-      selection: AgentRuntimeSelection
+      selection: AgentRuntimeSelection,
+      workspacePath?: string
     ) => Promise<AgentRuntime>
   ) {}
 
   async getRuntime(
-    selection: AgentRuntimeSelection
+    selection: AgentRuntimeSelection,
+    workspacePath?: string
   ): Promise<AgentRuntime> {
     if (this.disposed) {
       throw new Error('Agent Runtime 正在关闭')
     }
-    const key = agentRuntimeSelectionKey(selection)
+    const key = JSON.stringify([
+      agentRuntimeSelectionKey(selection),
+      workspacePath ?? ''
+    ])
     const existing = this.entries.get(key)
     if (existing) {
       return existing
     }
-    const operation = this.createRuntime(selection).then(async (runtime) => {
-      if (this.disposed || this.entries.get(key) !== operation) {
-        await runtime.dispose()
-        throw new Error('Runtime 设置已更改，请重新选择')
+    const operation = this.createRuntime(selection, workspacePath).then(
+      async (runtime) => {
+        if (this.disposed || this.entries.get(key) !== operation) {
+          await runtime.dispose()
+          throw new Error('Runtime 设置已更改，请重新选择')
+        }
+        return new AgentRuntimeController(runtime)
       }
-      return new AgentRuntimeController(runtime)
-    })
+    )
     this.entries.set(key, operation)
     try {
       return await operation

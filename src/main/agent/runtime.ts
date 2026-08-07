@@ -1,6 +1,7 @@
 import type {
   ApprovalDecision,
   AgentEvent,
+  AgentQuestionAnswer,
   AgentRequest,
   AgentRuntimeStatus
 } from '../../shared/contracts'
@@ -57,6 +58,10 @@ export interface AgentRuntime {
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void>
+  respondToQuestion?(
+    questionId: string,
+    answers?: AgentQuestionAnswer[]
+  ): Promise<void>
   releaseConversation?(conversationId: string): Promise<void>
   dispose(): Promise<void>
 }

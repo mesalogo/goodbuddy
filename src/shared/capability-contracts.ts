@@ -51,6 +51,9 @@ export const skillIdSchema = z
   .max(128)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 
+export const skillImportKindSchema = z.enum(['directory', 'zip'])
+export type SkillImportKind = z.infer<typeof skillImportKindSchema>
+
 export const skillToggleInputSchema = z
   .object({
     skillId: skillIdSchema,

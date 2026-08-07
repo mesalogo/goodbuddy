@@ -234,6 +234,97 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it('safely deletes a confirmed project and its scoped data', async () => {
+    const database = await createDatabase()
+    const project = database.createProject({
+      name: '待删除项目',
+      description: '删除测试',
+      rootPath: 'C:\\Delete',
+      defaultWorkMode: 'execute'
+    })
+    const conversationId = '00000000-0000-4000-8000-000000000111'
+    const taskId = '00000000-0000-4000-8000-000000000211'
+    database.replaceConversations([
+      {
+        id: conversationId,
+        projectId: project.id,
+        title: '项目对话',
+        updatedAt: Date.now(),
+        messages: []
+      }
+    ])
+    database.createTask({
+      id: taskId,
+      projectId: project.id,
+      conversationId,
+      title: '项目任务',
+      instructions: '执行任务',
+      workMode: 'execute'
+    })
+    database.createTextArtifact({
+      projectId: project.id,
+      taskId,
+      title: '项目成果',
+      content: '内容'
+    })
+    database.createMemory({
+      scope: 'project',
+      scopeId: project.id,
+      type: 'fact',
+      content: '项目记忆'
+    })
+    database.createSchedule({
+      projectId: project.id,
+      title: '项目计划',
+      prompt: '执行计划',
+      workMode: 'ask',
+      recurrence: 'daily',
+      nextRunAt: '2026-08-08T00:00:00.000Z'
+    })
+
+    expect(() =>
+      database.deleteProject(project.id, project.name)
+    ).toThrow('项目仍有进行中的任务')
+    database.updateTaskStatus(taskId, 'completed')
+    expect(() =>
+      database.deleteProject(project.id, '错误名称')
+    ).toThrow('项目名称确认不匹配')
+
+    database.deleteProject(project.id, project.name)
+
+    expect(
+      database.listProjects(true).some((item) => item.id === project.id)
+    ).toBe(false)
+    expect(
+      database.listConversations().some(
+        (conversation) => conversation.projectId === project.id
+      )
+    ).toBe(false)
+    expect(
+      database.listTasks().some((task) => task.projectId === project.id)
+    ).toBe(false)
+    expect(database.listArtifacts(project.id)).toEqual([])
+    expect(database.listSchedules(project.id)).toEqual([])
+    expect(
+      database
+        .listMemories(project.id)
+        .some((memory) => memory.scopeId === project.id)
+    ).toBe(false)
+    expect(database.listProjects()).toHaveLength(1)
+    database.close()
+  })
+
+  it('does not delete the final active project', async () => {
+    const database = await createDatabase()
+    const project = database.listProjects()[0]!
+
+    expect(() =>
+      database.deleteProject(project.id, project.name)
+    ).toThrow('至少需要保留一个可用项目')
+    expect(database.listProjects()).toHaveLength(1)
+    database.close()
+  })
+
   it('creates, updates, and soft-deletes expert roles', async () => {
     const database = await createDatabase()
     const expert = database.createExpert({
@@ -613,6 +704,29 @@ describe('AssistantDatabase', () => {
             id: '00000000-0000-4000-8000-000000000213',
             role: 'assistant',
             content: '处理中',
+            reasoning: '先分析发布范围',
+            blocks: [
+              {
+                id: '00000000-0000-4000-8000-000000000217',
+                type: 'reasoning',
+                content: '先分析发布范围'
+              },
+              {
+                id: '00000000-0000-4000-8000-000000000218',
+                type: 'tool',
+                tool: {
+                  callId: 'call-1',
+                  name: 'read',
+                  state: 'running',
+                  summary: 'OpenCode 工具：read'
+                }
+              },
+              {
+                id: '00000000-0000-4000-8000-000000000219',
+                type: 'text',
+                content: '处理中'
+              }
+            ],
             createdAt: 1_775_000_001_000,
             state: 'streaming',
             artifactIds: [
@@ -665,6 +779,24 @@ describe('AssistantDatabase', () => {
             role: 'assistant',
             state: 'error',
             status: expect.stringContaining('意外中断'),
+            reasoning: '先分析发布范围',
+            blocks: [
+              expect.objectContaining({
+                type: 'reasoning',
+                content: '先分析发布范围'
+              }),
+              expect.objectContaining({
+                type: 'tool',
+                tool: expect.objectContaining({
+                  callId: 'call-1',
+                  state: 'interrupted'
+                })
+              }),
+              expect.objectContaining({
+                type: 'text',
+                content: '处理中'
+              })
+            ],
             artifactIds: [
               '00000000-0000-4000-8000-000000000216'
             ],

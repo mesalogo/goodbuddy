@@ -68,13 +68,26 @@ export function SkillsSettingsSection(): React.JSX.Element {
           disabled={Boolean(busy)}
           onClick={() =>
             void run('import', () =>
-              window.goodbuddy.capabilities.importSkill()
+              window.goodbuddy.capabilities.importSkill('directory')
             )
           }
           type="button"
         >
           <Download size={14} />
-          导入 SKILL.md
+          导入 Skill 目录
+        </button>
+        <button
+          className="secondary-button"
+          disabled={Boolean(busy)}
+          onClick={() =>
+            void run('import', () =>
+              window.goodbuddy.capabilities.importSkill('zip')
+            )
+          }
+          type="button"
+        >
+          <Download size={14} />
+          导入 Skill ZIP
         </button>
       </div>
 

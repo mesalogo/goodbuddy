@@ -61,6 +61,59 @@ export type ConversationAttachment = z.infer<
   typeof conversationAttachmentSchema
 >
 
+export const conversationToolActivitySchema = z
+  .object({
+    callId: z.string().max(256).optional(),
+    name: z.string().max(200),
+    state: z.enum([
+      'pending',
+      'running',
+      'completed',
+      'failed',
+      'recoverable',
+      'cancelled',
+      'interrupted'
+    ]),
+    summary: z.string().max(2_000),
+    error: z.string().max(2_000).optional()
+  })
+  .strict()
+
+export const conversationMessageBlockSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      id: assistantIdSchema,
+      type: z.literal('text'),
+      content: z.string().min(1).max(1_000_000)
+    })
+    .strict(),
+  z
+    .object({
+      id: assistantIdSchema,
+      type: z.literal('reasoning'),
+      content: z.string().min(1).max(1_000_000)
+    })
+    .strict(),
+  z
+    .object({
+      id: assistantIdSchema,
+      type: z.literal('tool'),
+      tool: conversationToolActivitySchema
+    })
+    .strict()
+])
+
+export const conversationMessageBlocksSchema = z
+  .array(conversationMessageBlockSchema)
+  .max(500)
+
+export type ConversationToolActivity = z.infer<
+  typeof conversationToolActivitySchema
+>
+export type ConversationMessageBlock = z.infer<
+  typeof conversationMessageBlockSchema
+>
+
 export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
@@ -76,31 +129,11 @@ export const conversationSnapshotSchema = z
             role: z.enum(['user', 'assistant']),
             content: z.string().max(1_000_000),
             reasoning: z.string().optional(),
+            blocks: conversationMessageBlocksSchema.optional(),
             createdAt: z.number().int().nonnegative(),
             state: z.enum(['streaming', 'complete', 'error']),
             status: z.string().max(4_000).optional(),
-            tools: z
-              .array(
-                z
-                  .object({
-                    callId: z.string().max(256).optional(),
-                    name: z.string().max(200),
-                    state: z.enum([
-                      'pending',
-                      'running',
-                      'completed',
-                      'failed',
-                      'recoverable',
-                      'cancelled',
-                      'interrupted'
-                    ]),
-                    summary: z.string().max(2_000),
-                    error: z.string().max(2_000).optional()
-                  })
-                  .strict()
-              )
-              .max(100)
-              .optional(),
+            tools: z.array(conversationToolActivitySchema).max(100).optional(),
             sources: z.array(z.string().max(8_192)).max(100).optional(),
             sourceReferences: z
               .array(

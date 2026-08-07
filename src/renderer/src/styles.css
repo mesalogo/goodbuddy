@@ -171,7 +171,7 @@ textarea:focus-visible {
   display: grid;
   align-items: center;
   gap: 5px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .project-switcher select {
@@ -270,6 +270,56 @@ textarea:focus-visible {
   margin: 0;
   color: #ff4d4f;
   font-size: 9px;
+}
+
+.project-danger-zone {
+  display: flex;
+  padding: var(--space-3);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-control);
+  background: var(--danger-subtle);
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.project-danger-zone > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.project-danger-zone strong {
+  color: var(--danger);
+  font-size: var(--font-body);
+}
+
+.project-danger-zone p,
+.project-danger-zone small {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+
+.project-danger-zone > .danger-button {
+  align-self: flex-start;
+}
+
+.project-delete-confirmation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.project-delete-confirmation > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.project-delete-confirmation .danger-button,
+.project-delete-confirmation .secondary-button {
+  align-self: auto;
 }
 
 .new-chat {
@@ -798,7 +848,47 @@ textarea:focus-visible {
 
 .workspace-files__row {
   padding: var(--space-2);
+  padding-right: 38px;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
+}
+
+.workspace-files__entry {
+  position: relative;
+}
+
+.workspace-files__open-entry {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  display: grid;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    opacity var(--motion-fast) ease-out,
+    background var(--motion-fast) ease-out,
+    color var(--motion-fast) ease-out;
+}
+
+.workspace-files__entry:hover .workspace-files__open-entry,
+.workspace-files__entry:focus-within .workspace-files__open-entry {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workspace-files__open-entry:hover {
+  background: var(--accent-selected);
+  color: var(--accent);
 }
 
 .workspace-files__changed-row:hover:not(:disabled),
@@ -1853,6 +1943,16 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.message-blocks {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.message-blocks .message-reasoning,
+.message-blocks .tool-activity {
+  margin: 0;
+}
+
 .markdown-content > :first-child {
   margin-top: 0;
 }
@@ -2150,6 +2250,102 @@ textarea:focus-visible {
 .approval-card__allow {
   background: #1677ff;
   color: #fff;
+}
+
+.agent-question-card {
+  display: flex;
+  padding: var(--space-4);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-card);
+  margin-top: var(--space-3);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-question-card > header,
+.agent-question-card > footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.agent-question-card > header {
+  color: var(--accent);
+}
+
+.agent-question-card > footer {
+  justify-content: flex-end;
+}
+
+.agent-question-card fieldset {
+  display: flex;
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  margin: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.agent-question-card legend {
+  padding: 0 var(--space-1);
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  line-height: 1.5;
+}
+
+.agent-question-card legend span {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 650;
+}
+
+.agent-question-card fieldset > label {
+  display: flex;
+  align-items: flex-start;
+  color: var(--text-secondary);
+  cursor: pointer;
+  gap: var(--space-2);
+}
+
+.agent-question-card fieldset > label > span {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.agent-question-card fieldset > label strong {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+}
+
+.agent-question-card fieldset > label small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.agent-question-card__custom {
+  flex-direction: column;
+}
+
+.agent-question-card__custom input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.agent-question-card__error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--font-caption);
 }
 
 .composer-wrap {

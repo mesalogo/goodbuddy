@@ -1,5 +1,6 @@
 import spawn from 'cross-spawn'
-import { basename, extname } from 'node:path'
+import { basename, extname, join } from 'node:path'
+import { stat } from 'node:fs/promises'
 import type {
   WorkspaceChangedFile,
   WorkspaceChanges,
@@ -164,6 +165,15 @@ async function resolveWorkspacePath(
   }
 }
 
+export async function resolveWorkspaceEntryPath(
+  rootPath: string,
+  inputPath: string,
+  expected: 'file' | 'directory'
+): Promise<string> {
+  return (await resolveWorkspacePath(rootPath, inputPath, expected))
+    .canonicalPath
+}
+
 function parseChangedFiles(status: string): {
   files: WorkspaceChangedFile[]
   truncated: boolean
@@ -221,6 +231,19 @@ export async function getWorkspaceChanges(
       files: [],
       truncated: false,
       error: '项目尚未配置工作区目录'
+    }
+  }
+  const gitMetadata = await stat(join(rootPath, '.git')).catch(
+    () => undefined
+  )
+  if (!gitMetadata) {
+    return {
+      rootPath,
+      available: false,
+      status: '',
+      patch: '',
+      files: [],
+      truncated: false
     }
   }
   try {

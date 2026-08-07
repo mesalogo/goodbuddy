@@ -85,6 +85,7 @@ const api: DesktopApi = {
     run,
     cancel: vi.fn(async () => {}),
     respondApproval: vi.fn(async () => {}),
+    respondQuestion: vi.fn(async () => {}),
     onEvent: vi.fn((listener) => {
       agentListener = listener
       return () => {
@@ -265,7 +266,8 @@ const api: DesktopApi = {
       ...input,
       id: _projectId
     })),
-    setArchived: vi.fn(async () => {})
+    setArchived: vi.fn(async () => {}),
+    delete: vi.fn(async () => {})
   },
   conversations: {
     list: vi.fn(async () => []),
@@ -291,7 +293,8 @@ const api: DesktopApi = {
       content: '',
       mimeType: 'text/plain' as const,
       size: 0
-    }))
+    })),
+    openPath: vi.fn(async () => {})
   },
   tasks: {
     list: vi.fn(async () => []),
@@ -765,7 +768,7 @@ describe('App', () => {
     expect(await screen.findByRole('status')).toBeVisible()
   })
 
-  it('sends a prompt and renders streamed agent content', async () => {
+  it('renders streamed reasoning, text, and tools in event order', async () => {
     render(<App />)
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
@@ -821,12 +824,64 @@ describe('App', () => {
       }
       agentListener?.({
         requestId: request.requestId,
+        type: 'tool',
+        callId: 'call-1',
+        name: 'read',
+        state: 'running',
+        summary: 'OpenCode 工具：read'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'reasoning',
+        delta: '再检查关键文件'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: '最终结论'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'tool',
+        callId: 'call-1',
+        name: 'read',
+        state: 'completed',
+        summary: 'OpenCode 工具：read'
+      })
+    })
+
+    const assistantArticle = screen
+      .getByText('最终结论')
+      .closest('article')
+    const orderedBlocks = [
+      ...assistantArticle!.querySelectorAll('.message-blocks > *')
+    ].map((element) => element.textContent)
+    expect(orderedBlocks).toEqual([
+      expect.stringContaining('这是回答内容'),
+      expect.stringContaining('先检查项目结构'),
+      expect.stringContaining('OpenCode 工具：read'),
+      expect.stringContaining('再检查关键文件'),
+      expect.stringContaining('最终结论')
+    ])
+    expect(
+      screen.getAllByText('OpenCode 工具：read')
+    ).toHaveLength(1)
+
+    act(() => {
+      if (!request) {
+        throw new Error('Missing request')
+      }
+      agentListener?.({
+        requestId: request.requestId,
         type: 'done'
       })
     })
 
-    const completedReasoning = await screen.findByText('推理过程')
-    expect(completedReasoning.closest('details')).not.toHaveAttribute('open')
+    const completedReasoning = await screen.findAllByText('推理过程')
+    expect(completedReasoning).toHaveLength(2)
+    for (const reasoning of completedReasoning) {
+      expect(reasoning.closest('details')).not.toHaveAttribute('open')
+    }
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
@@ -1274,7 +1329,7 @@ describe('App', () => {
     fireEvent.click(screen.getByLabelText('切换助手工作栏'))
     fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
     fireEvent.click(
-      await screen.findByRole('button', { name: /README\.md/u })
+      await screen.findByRole('button', { name: 'README.md' })
     )
 
     expect(
@@ -1283,6 +1338,43 @@ describe('App', () => {
     expect(api.workspace.readFile).toHaveBeenCalledWith(
       projectId,
       'README.md'
+    )
+  })
+
+  it('opens workspace entries from their row actions', async () => {
+    vi.mocked(api.workspace.listDirectory).mockResolvedValue({
+      path: '',
+      entries: [
+        { name: 'docs', path: 'docs', type: 'directory' },
+        { name: 'README.md', path: 'README.md', type: 'file' }
+      ],
+      truncated: false
+    })
+    render(<App />)
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '在系统资源管理器中打开文件夹 docs'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '使用默认应用打开文件 README.md'
+      })
+    )
+    await waitFor(() =>
+      expect(api.workspace.openPath).toHaveBeenCalledWith(
+        projectId,
+        'docs',
+        'directory'
+      )
+    )
+    expect(api.workspace.openPath).toHaveBeenCalledWith(
+      projectId,
+      'README.md',
+      'file'
     )
   })
 
@@ -2399,6 +2491,87 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('edits and safely deletes the current project from project settings', async () => {
+    const secondProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000102',
+      name: '第二项目',
+      rootPath: 'C:\\Second'
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      secondProject
+    ])
+    render(<App />)
+
+    fireEvent.click(await screen.findByLabelText('项目设置'))
+    let dialog = screen.getByRole('dialog', { name: '项目设置' })
+    expect(within(dialog).getByLabelText('名称')).toHaveValue(
+      project.name
+    )
+    expect(within(dialog).getByLabelText('根目录')).toHaveValue(
+      project.rootPath
+    )
+    fireEvent.change(within(dialog).getByLabelText('说明'), {
+      target: { value: '更新后的说明' }
+    })
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '保存项目' })
+    )
+    await waitFor(() =>
+      expect(api.projects.update).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({
+          description: '更新后的说明',
+          rootPath: project.rootPath
+        })
+      )
+    )
+
+    fireEvent.click(screen.getByLabelText('项目设置'))
+    dialog = screen.getByRole('dialog', { name: '项目设置' })
+    expect(dialog).toHaveTextContent('不会删除磁盘上的项目目录或文件')
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '删除项目' })
+    )
+    const confirmation = within(dialog).getByLabelText(
+      `输入“${project.name}”确认删除`
+    )
+    const deleteButton = within(dialog).getByRole('button', {
+      name: '永久删除项目'
+    })
+    expect(deleteButton).toBeDisabled()
+    fireEvent.change(confirmation, {
+      target: { value: project.name }
+    })
+    expect(deleteButton).toBeEnabled()
+    fireEvent.click(deleteButton)
+
+    await waitFor(() =>
+      expect(api.projects.delete).toHaveBeenCalledWith(
+        project.id,
+        project.name
+      )
+    )
+    expect(screen.getByLabelText('当前项目')).toHaveValue(
+      secondProject.id
+    )
+  })
+
+  it('uses a message icon for conversation navigation', async () => {
+    render(<App />)
+
+    const conversationNavigation = await screen.findByRole('button', {
+      name: '对话'
+    })
+    expect(
+      conversationNavigation.querySelector('.lucide-message-square')
+    ).not.toBeNull()
+    expect(
+      conversationNavigation.querySelector('.lucide-history')
+    ).toBeNull()
+  })
+
   it('marks an image model and renders its generated artifact', async () => {
     const anchorClick = vi
       .spyOn(HTMLAnchorElement.prototype, 'click')
@@ -2709,6 +2882,60 @@ describe('App', () => {
         'session'
       )
     )
+  })
+
+  it('renders and answers an OpenCode question request', async () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '需要确认的任务' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'question',
+        questionId: 'question-1',
+        questions: [
+          {
+            header: '实现方式',
+            question: '请选择实现方式',
+            options: [
+              {
+                label: '直接修改',
+                description: '立即更新现有实现'
+              },
+              {
+                label: '先写测试',
+                description: '先增加回归测试'
+              }
+            ],
+            multiple: false,
+            custom: true
+          }
+        ]
+      })
+    })
+
+    expect(
+      await screen.findByText('OpenCode 需要补充信息')
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText(/先写测试/u))
+    fireEvent.click(screen.getByRole('button', { name: '提交回答' }))
+    await waitFor(() =>
+      expect(api.agent.respondQuestion).toHaveBeenCalledWith(
+        'question-1',
+        [['先写测试']]
+      )
+    )
+    expect(
+      screen.queryByText('OpenCode 需要补充信息')
+    ).not.toBeInTheDocument()
   })
 
   it('configures a runtime without reading an existing API key', async () => {

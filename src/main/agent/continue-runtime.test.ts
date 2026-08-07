@@ -101,7 +101,10 @@ describe('ContinueAgentRuntime', () => {
     expect(mocks.runHost).toHaveBeenCalledWith(
       'test',
       expect.any(AbortSignal),
-      expect.any(Function)
+      expect.any(Function),
+      expect.objectContaining({
+        onEvent: expect.any(Function)
+      })
     )
     expect(events).toContainEqual({
       requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
@@ -189,7 +192,8 @@ describe('ContinueAgentRuntime', () => {
         knowledgeCapability: {
           endpoint: 'http://127.0.0.1:4567/mcp',
           token: 'main-only-token'
-        }
+        },
+        onEvent: expect.any(Function)
       }
     )
     const authorize = mocks.runHost.mock.calls[0]?.[2]
@@ -403,6 +407,74 @@ describe('ContinueAgentRuntime', () => {
     ])
   })
 
+  it('forwards streamed text and tool events in host order', async () => {
+    mocks.runHost.mockImplementation(
+      async (
+        _prompt,
+        _signal,
+        _authorize,
+        options
+      ) => {
+        await options?.onEvent?.({
+          type: 'text',
+          delta: '先分析'
+        })
+        await options?.onEvent?.({
+          type: 'tool',
+          tool: {
+            callId: 'call-1',
+            name: 'Read',
+            state: 'running'
+          }
+        })
+        await options?.onEvent?.({
+          type: 'tool',
+          tool: {
+            callId: 'call-1',
+            name: 'Read',
+            state: 'completed'
+          }
+        })
+        await options?.onEvent?.({
+          type: 'text',
+          delta: '再回答'
+        })
+        return {
+          text: '再回答',
+          streamedText: true,
+          tools: [
+            {
+              callId: 'call-1',
+              name: 'Read',
+              state: 'completed'
+            }
+          ]
+        }
+      }
+    )
+
+    const events = await collectEvents(createRuntime(), 'execute')
+
+    expect(
+      events.filter(
+        (event) => event.type === 'text' || event.type === 'tool'
+      )
+    ).toEqual([
+      expect.objectContaining({ type: 'text', delta: '先分析' }),
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-1',
+        state: 'running'
+      }),
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-1',
+        state: 'completed'
+      }),
+      expect.objectContaining({ type: 'text', delta: '再回答' })
+    ])
+  })
+
   it('emits terminal tool audits before a failed Continue run', async () => {
     mocks.runHost.mockRejectedValue(
       new ContinueHostRunError('Continue failed', {
@@ -441,7 +513,7 @@ describe('ContinueAgentRuntime', () => {
     await expect(stream.next()).rejects.toThrow('Continue failed')
   })
 
-  it('returns a failed Continue tool detail through AgentRuntime', async () => {
+  it('keeps a completed Continue response when an earlier tool attempt failed', async () => {
     mocks.runHost.mockResolvedValue({
       text: 'Continue response',
       tools: [
@@ -466,17 +538,25 @@ describe('ContinueAgentRuntime', () => {
     await expect(stream.next()).resolves.toMatchObject({
       value: { type: 'status' }
     })
-    await expect(stream.next()).resolves.toMatchObject({
-      value: {
+    const events: RuntimeEvent[] = []
+    for await (const event of stream) {
+      events.push(event)
+    }
+    expect(events).toContainEqual(
+      expect.objectContaining({
         type: 'tool',
         callId: 'call-1',
-        state: 'failed',
+        state: 'recoverable',
         error: 'PowerShell EmptyPipeElement'
-      }
-    })
-    await expect(stream.next()).rejects.toThrow(
-      'PowerShell EmptyPipeElement'
+      })
     )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: 'Continue response'
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
   it('fails a run that returns a nonterminal tool state', async () => {

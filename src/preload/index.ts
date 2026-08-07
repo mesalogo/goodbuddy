@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   type ApprovalDecision,
   type AgentEvent,
+  type AgentQuestionAnswer,
   type AgentRequest,
   type AgentRuntimeDetection,
   type AgentRuntimeStatus,
@@ -139,6 +140,15 @@ const desktopApi: DesktopApi = {
       await ipcRenderer.invoke(ipcChannels.agentApprovalRespond, {
         approvalId,
         decision
+      })
+    },
+    respondQuestion: async (
+      questionId: string,
+      answers?: AgentQuestionAnswer[]
+    ) => {
+      await ipcRenderer.invoke(ipcChannels.agentQuestionRespond, {
+        questionId,
+        answers: answers ?? []
       })
     },
     onEvent: (listener) => {
@@ -355,6 +365,12 @@ const desktopApi: DesktopApi = {
         projectId,
         archived
       })
+    },
+    delete: async (projectId: string, confirmation: string) => {
+      await ipcRenderer.invoke(ipcChannels.projectsDelete, {
+        projectId,
+        confirmation
+      })
     }
   },
   conversations: {
@@ -384,7 +400,18 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.workspaceFileRead, {
         projectId,
         path
-      }) as Promise<WorkspaceFilePreview>
+      }) as Promise<WorkspaceFilePreview>,
+    openPath: async (
+      projectId: string,
+      path: string,
+      type: 'file' | 'directory'
+    ) => {
+      await ipcRenderer.invoke(ipcChannels.workspacePathOpen, {
+        projectId,
+        path,
+        type
+      })
+    }
   },
   tasks: {
     list: () =>
@@ -534,9 +561,10 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.capabilitiesSnapshot
       ) as Promise<CapabilitySnapshot>,
-    importSkill: () =>
+    importSkill: (kind) =>
       ipcRenderer.invoke(
-        ipcChannels.capabilitiesImportSkill
+        ipcChannels.capabilitiesImportSkill,
+        kind
       ) as Promise<CapabilitySnapshot>,
     removeSkill: (skillId) =>
       ipcRenderer.invoke(

@@ -71,6 +71,44 @@ describe('SelectedRuntimeManager', () => {
     await manager.dispose()
   })
 
+  it('isolates cached runtimes by effective project workspace', async () => {
+    const first = runtime()
+    const second = runtime()
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(first.value)
+      .mockResolvedValueOnce(second.value)
+    const manager = new SelectedRuntimeManager(create)
+    const selection = { provider: 'opencode' as const }
+
+    const projectOne = await manager.getRuntime(
+      selection,
+      'C:\\Projects\\One'
+    )
+    const projectOneAgain = await manager.getRuntime(
+      selection,
+      'C:\\Projects\\One'
+    )
+    const projectTwo = await manager.getRuntime(
+      selection,
+      'C:\\Projects\\Two'
+    )
+
+    expect(projectOneAgain).toBe(projectOne)
+    expect(projectTwo).not.toBe(projectOne)
+    expect(create).toHaveBeenNthCalledWith(
+      1,
+      selection,
+      'C:\\Projects\\One'
+    )
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      selection,
+      'C:\\Projects\\Two'
+    )
+    await manager.dispose()
+  })
+
   it('retires cached runtimes when settings change', async () => {
     const first = runtime()
     const second = runtime()

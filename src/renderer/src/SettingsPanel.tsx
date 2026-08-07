@@ -1194,15 +1194,17 @@ export function SettingsPanel({
             <div className="settings-section__title">
               <FolderOpen size={17} />
               <div>
-                <strong>工作区</strong>
-                <small>Agent 工具只能以此目录作为默认工作位置</small>
+                <strong>默认工作区</strong>
+                <small>
+                  当前项目未设置根目录时，Agent 才使用此默认位置
+                </small>
               </div>
             </div>
             <label className="field">
-              <span>工作区目录</span>
+              <span>默认工作区目录</span>
               <div className="workspace-picker">
                 <input
-                  aria-label="工作区目录"
+                  aria-label="默认工作区目录"
                   onChange={(event) => setWorkspacePath(event.target.value)}
                   value={workspacePath}
                 />

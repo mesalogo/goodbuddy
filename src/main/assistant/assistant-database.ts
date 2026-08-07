@@ -89,6 +89,8 @@ type MessageRow = {
 type MessageMetadata = {
   createdAt?: number
   status?: string
+  reasoning?: ConversationSnapshot['messages'][number]['reasoning']
+  blocks?: ConversationSnapshot['messages'][number]['blocks']
   tools?: ConversationSnapshot['messages'][number]['tools']
   sources?: string[]
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
@@ -579,6 +581,20 @@ function interruptActiveTools(
   )
 }
 
+function interruptActiveToolBlocks(
+  blocks: MessageMetadata['blocks']
+): MessageMetadata['blocks'] {
+  return blocks?.map((block) =>
+    block.type === 'tool' &&
+    (block.tool.state === 'pending' || block.tool.state === 'running')
+      ? {
+          ...block,
+          tool: { ...block.tool, state: 'interrupted' as const }
+        }
+      : block
+  )
+}
+
 export class AssistantDatabase {
   private database?: DatabaseSync
 
@@ -714,7 +730,13 @@ export class AssistantDatabase {
             metadata.tools?.some(
               (tool) =>
                 tool.state === 'pending' || tool.state === 'running'
-            )
+            ) ||
+              metadata.blocks?.some(
+                (block) =>
+                  block.type === 'tool' &&
+                  (block.tool.state === 'pending' ||
+                    block.tool.state === 'running')
+              )
           )
           if (message.state !== 'streaming' && !hasActiveTool) {
             continue
@@ -727,7 +749,8 @@ export class AssistantDatabase {
                 message.state === 'streaming'
                   ? interruptedMessageStatus
                   : metadata.status,
-              tools: interruptActiveTools(metadata.tools)
+              tools: interruptActiveTools(metadata.tools),
+              blocks: interruptActiveToolBlocks(metadata.blocks)
             }),
             message.id
           )
@@ -859,6 +882,96 @@ export class AssistantDatabase {
     }
   }
 
+  deleteProject(projectId: string, confirmation: string): void {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const project = database
+        .prepare('SELECT name, status FROM projects WHERE id = ?')
+        .get(projectId) as
+        | { name: string; status: AssistantProject['status'] }
+        | undefined
+      if (!project) {
+        throw new Error('项目不存在')
+      }
+      if (confirmation !== project.name) {
+        throw new Error('项目名称确认不匹配')
+      }
+      const activeProjectCount = database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM projects
+           WHERE status = 'active'`
+        )
+        .get() as { count: number }
+      if (project.status === 'active' && activeProjectCount.count <= 1) {
+        throw new Error('至少需要保留一个可用项目')
+      }
+      const activeTaskCount = database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM tasks
+           WHERE project_id = ?
+             AND status IN ('queued', 'running', 'waiting_approval', 'paused')`
+        )
+        .get(projectId) as { count: number }
+      if (activeTaskCount.count > 0) {
+        throw new Error('项目仍有进行中的任务，请先停止任务')
+      }
+
+      database
+        .prepare(
+          `DELETE FROM notifications
+           WHERE task_id IN (
+             SELECT id FROM tasks WHERE project_id = ?
+           ) OR schedule_id IN (
+             SELECT id FROM schedules WHERE project_id = ?
+           )`
+        )
+        .run(projectId, projectId)
+      database
+        .prepare(
+          `DELETE FROM delegation_outbox
+           WHERE task_id IN (
+             SELECT id FROM tasks WHERE project_id = ?
+           )`
+        )
+        .run(projectId)
+      database
+        .prepare(
+          `DELETE FROM memory_items
+           WHERE (scope = 'project' AND scope_id = ?)
+              OR (scope = 'conversation' AND scope_id IN (
+                SELECT id FROM conversations WHERE project_id = ?
+              ))`
+        )
+        .run(projectId, projectId)
+      database
+        .prepare('DELETE FROM heartbeat_configs WHERE project_id = ?')
+        .run(projectId)
+      database
+        .prepare('DELETE FROM artifacts WHERE project_id = ?')
+        .run(projectId)
+      database
+        .prepare('DELETE FROM tasks WHERE project_id = ?')
+        .run(projectId)
+      database
+        .prepare('DELETE FROM conversations WHERE project_id = ?')
+        .run(projectId)
+      database
+        .prepare('DELETE FROM schedules WHERE project_id = ?')
+        .run(projectId)
+      const result = database
+        .prepare('DELETE FROM projects WHERE id = ?')
+        .run(projectId)
+      if (result.changes !== 1) {
+        throw new Error('项目不存在')
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   listConversations(): ConversationSnapshot[] {
     const database = this.requireDatabase()
     const conversations = database
@@ -897,6 +1010,10 @@ export class AssistantDatabase {
           id: message.id,
           role: message.role,
           content: message.content,
+          reasoning: metadata.reasoning,
+          blocks: interrupted
+            ? interruptActiveToolBlocks(metadata.blocks)
+            : metadata.blocks,
           createdAt:
             metadata.createdAt ?? Date.parse(message.created_at),
           state: interrupted ? ('error' as const) : message.state,
@@ -1006,6 +1123,8 @@ export class AssistantDatabase {
             JSON.stringify({
               createdAt: message.createdAt,
               status: message.status,
+              reasoning: message.reasoning,
+              blocks: message.blocks,
               tools: message.tools,
               sources: message.sources,
               sourceReferences: message.sourceReferences,

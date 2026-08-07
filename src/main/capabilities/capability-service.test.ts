@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { strToU8, zipSync } from 'fflate'
 import {
   afterEach,
   describe,
@@ -263,6 +264,62 @@ describe('CapabilityService', () => {
     await expect(
       service.removeSkill('document-writing')
     ).rejects.toThrow('只能删除已导入')
+  })
+
+  it('imports a managed Skill from a ZIP package', async () => {
+    const { directory, importedRoot, service } = await createService()
+    const packageRoot = join(directory, 'zip-source')
+    await writeSkill(packageRoot, 'meeting-helper', '会议助手')
+    const skillMarkdown = await readFile(
+      join(packageRoot, 'meeting-helper', 'SKILL.md')
+    )
+    const archivePath = join(directory, 'meeting-helper.zip')
+    await writeFile(
+      archivePath,
+      zipSync({
+        'meeting-helper/SKILL.md': skillMarkdown,
+        'meeting-helper/template.txt': strToU8('template')
+      })
+    )
+
+    const imported = await service.importSkill(archivePath)
+
+    expect(imported.skills).toContainEqual(
+      expect.objectContaining({
+        id: 'meeting-helper',
+        source: 'imported'
+      })
+    )
+    await expect(
+      readFile(
+        join(importedRoot, 'meeting-helper', 'template.txt'),
+        'utf8'
+      )
+    ).resolves.toBe('template')
+  })
+
+  it('rejects unsafe paths in a Skill ZIP package', async () => {
+    const { directory, importedRoot, service } = await createService()
+    const packageRoot = join(directory, 'unsafe-source')
+    await writeSkill(packageRoot, 'unsafe-skill', '不安全 Skill')
+    const skillMarkdown = await readFile(
+      join(packageRoot, 'unsafe-skill', 'SKILL.md')
+    )
+    const archivePath = join(directory, 'unsafe-skill.zip')
+    await writeFile(
+      archivePath,
+      zipSync({
+        '../escape.txt': strToU8('escape'),
+        'unsafe-skill/SKILL.md': skillMarkdown
+      })
+    )
+
+    await expect(service.importSkill(archivePath)).rejects.toThrow(
+      'Skill ZIP 包含不安全路径'
+    )
+    await expect(
+      readFile(join(importedRoot, 'escape.txt'), 'utf8')
+    ).rejects.toThrow()
   })
 
   it('encrypts remote MCP secrets and never returns them publicly', async () => {

@@ -49,6 +49,7 @@ function renderSidebar({
       }))}
       onLoadArtifact={vi.fn(async () => undefined)}
       onLoadWorkspaceFile={vi.fn()}
+      onOpenWorkspaceEntry={vi.fn(async () => undefined)}
       onOpenConversation={vi.fn()}
       onOpenHeartbeat={vi.fn()}
       onRefreshChanges={vi.fn(async () => undefined)}

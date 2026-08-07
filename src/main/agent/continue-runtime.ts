@@ -20,6 +20,7 @@ import {
   type ContinueHostAdapterOptions,
   type ContinueHostLauncher,
   type ContinueHostRunResult,
+  type ContinueHostStreamEvent,
   type ContinueHostTool
 } from './continue-host-adapter'
 
@@ -56,7 +57,8 @@ function continueToolFailureMessage(tool: ContinueHostTool): string {
 function toContinueToolEvent(
   requestId: string,
   tool: ContinueHostTool,
-  terminalize: boolean
+  terminalize: boolean,
+  recoverFailure = false
 ): Extract<AgentEvent, { type: 'tool' }> {
   return {
     requestId,
@@ -64,7 +66,9 @@ function toContinueToolEvent(
     callId: tool.callId,
     name: tool.name,
     state:
-      terminalize && tool.state !== 'completed'
+      recoverFailure && tool.state === 'failed'
+        ? 'recoverable'
+        : terminalize && tool.state !== 'completed'
         ? 'failed'
         : tool.state,
     summary: `Continue 工具：${tool.name}`,
@@ -283,6 +287,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
           }
         : undefined
     let result: ContinueHostRunResult
+    const emittedTools = new Map<string, ContinueHostTool>()
     try {
       const host = this.getHostAdapter(
         binaryPath,
@@ -299,17 +304,72 @@ export class ContinueAgentRuntime implements AgentRuntime {
           approval.toolName === 'knowledge_search')
           ? 'once' as const
           : 'deny' as const
-      result = knowledgeCapability
-        ? await host.run(
-            conversationContext,
-            signal,
-            authorize,
-            {
-              workMode: request.workMode,
-              knowledgeCapability
+      const queuedEvents: ContinueHostStreamEvent[] = []
+      let wakeStream: (() => void) | undefined
+      let streamFinished = false
+      let streamResult: ContinueHostRunResult | undefined
+      let streamError: unknown
+      const onEvent = (event: ContinueHostStreamEvent): void => {
+        queuedEvents.push(event)
+        wakeStream?.()
+        wakeStream = undefined
+      }
+      const hostRun = host
+        .run(
+          conversationContext,
+          signal,
+          authorize,
+          {
+            workMode: request.workMode,
+            ...(knowledgeCapability ? { knowledgeCapability } : {}),
+            onEvent
+          }
+        )
+        .then(
+          (value) => {
+            streamResult = value
+          },
+          (error: unknown) => {
+            streamError = error
+          }
+        )
+        .finally(() => {
+          streamFinished = true
+          wakeStream?.()
+          wakeStream = undefined
+        })
+
+      while (!streamFinished || queuedEvents.length > 0) {
+        if (queuedEvents.length === 0) {
+          await new Promise<void>((resolve) => {
+            wakeStream = resolve
+          })
+          continue
+        }
+        const event = queuedEvents.shift()!
+        if (event.type === 'tool') {
+          emittedTools.set(event.tool.callId, event.tool)
+        }
+        yield event.type === 'text'
+          ? {
+              requestId: request.requestId,
+              type: 'text',
+              delta: event.delta
             }
-          )
-        : await host.run(conversationContext, signal, authorize)
+          : toContinueToolEvent(
+              request.requestId,
+              event.tool,
+              false
+            )
+      }
+      await hostRun
+      if (streamError) {
+        throw streamError
+      }
+      if (!streamResult) {
+        throw new Error('Continue 宿主未返回运行结果')
+      }
+      result = streamResult
     } catch (error) {
       if (error instanceof ContinueHostRunError) {
         for (const tool of error.tools) {
@@ -323,23 +383,50 @@ export class ContinueAgentRuntime implements AgentRuntime {
     }
 
     const tools = result.tools ?? []
-    const unsuccessfulTool = tools.find(
-      (tool) => tool.state !== 'completed'
+    const incompleteTool = tools.find(
+      (tool) => tool.state === 'pending' || tool.state === 'running'
     )
-    if (unsuccessfulTool) {
+    if (incompleteTool) {
       for (const tool of tools) {
-        yield toContinueToolEvent(request.requestId, tool, true)
+        const terminalEvent = toContinueToolEvent(
+          request.requestId,
+          tool,
+          true
+        )
+        const previous = emittedTools.get(tool.callId)
+        if (
+          !previous ||
+          previous.state !== terminalEvent.state ||
+          previous.error !== terminalEvent.error
+        ) {
+          yield terminalEvent
+        }
       }
-      throw new Error(continueToolFailureMessage(unsuccessfulTool))
+      throw new Error(continueToolFailureMessage(incompleteTool))
     }
 
     for (const tool of tools) {
-      yield toContinueToolEvent(request.requestId, tool, false)
+      const finalEvent = toContinueToolEvent(
+        request.requestId,
+        tool,
+        false,
+        true
+      )
+      const previous = emittedTools.get(tool.callId)
+      if (
+        !previous ||
+        previous.state !== finalEvent.state ||
+        previous.error !== finalEvent.error
+      ) {
+        yield finalEvent
+      }
     }
-    yield {
-      requestId: request.requestId,
-      type: 'text',
-      delta: result.text
+    if (!result.streamedText) {
+      yield {
+        requestId: request.requestId,
+        type: 'text',
+        delta: result.text
+      }
     }
     if (result.usage) {
       const usage = result.usage

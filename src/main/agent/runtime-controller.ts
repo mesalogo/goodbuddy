@@ -1,4 +1,5 @@
 import type {
+  AgentQuestionAnswer,
   AgentRequest,
   AgentRuntimeStatus
 } from '../../shared/contracts'
@@ -165,6 +166,20 @@ export class AgentRuntimeController implements AgentRuntime {
 
   async releaseConversation(conversationId: string): Promise<void> {
     await this.current.runtime.releaseConversation?.(conversationId)
+  }
+
+  async respondToQuestion(
+    questionId: string,
+    answers?: AgentQuestionAnswer[]
+  ): Promise<void> {
+    if (this.closing) {
+      throw new Error('Agent Runtime 正在关闭')
+    }
+    const runtime = this.current.runtime
+    if (!runtime.respondToQuestion) {
+      throw new Error('当前 Runtime 不支持回答交互式问题')
+    }
+    await runtime.respondToQuestion(questionId, answers)
   }
 
   private retire(slot: RuntimeSlot): Promise<void> {

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { unzipSync } from 'fflate'
 import {
   lstat,
   mkdir,
@@ -10,7 +11,7 @@ import {
   stat,
   writeFile
 } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import {
@@ -207,7 +208,7 @@ function defaultSkillState(): z.infer<typeof skillStateSchema> {
 async function readSkill(
   directoryPath: string,
   source: SkillSummary['source'],
-  expectedId = basename(directoryPath)
+  expectedId: string | null = basename(directoryPath)
 ): Promise<Omit<SkillSummary, 'enabled' | 'assignments'>> {
   const filePath = join(directoryPath, 'SKILL.md')
   const file = await stat(filePath)
@@ -220,7 +221,7 @@ async function readSkill(
     throw new Error(`${basename(directoryPath)} 的 SKILL.md 格式无效`)
   }
   const metadata = skillMetadataSchema.parse(parseYaml(match[1]))
-  if (metadata.id !== expectedId) {
+  if (expectedId !== null && metadata.id !== expectedId) {
     throw new Error(`Skill ID 必须与目录名一致：${metadata.id}`)
   }
   return skillSummarySchema
@@ -307,6 +308,132 @@ async function copySkillPackage(
   }
 
   await copyDirectory(sourceRoot, targetRoot, 0)
+}
+
+function parseSkillZipPath(path: string): string[] {
+  const normalized = path.replaceAll('\\', '/')
+  const withoutTrailingSlash = normalized.replace(/\/+$/u, '')
+  if (
+    !withoutTrailingSlash ||
+    normalized.startsWith('/') ||
+    /^[a-z]:/iu.test(normalized)
+  ) {
+    throw new Error('Skill ZIP 包含不安全路径')
+  }
+  const segments = withoutTrailingSlash.split('/')
+  if (
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === '.' ||
+        segment === '..' ||
+        segment.length > 255 ||
+        [...segment].some((character) => {
+          const code = character.charCodeAt(0)
+          return code <= 31 || code === 127
+        })
+    ) ||
+    normalized.length > 512
+  ) {
+    throw new Error('Skill ZIP 包含不安全路径')
+  }
+  return segments
+}
+
+function isIgnoredSkillZipPath(segments: readonly string[]): boolean {
+  return (
+    segments[0] === '__MACOSX' ||
+    segments.at(-1) === '.DS_Store'
+  )
+}
+
+async function extractSkillZip(
+  archivePath: string,
+  targetRoot: string
+): Promise<string | undefined> {
+  const archiveDetails = await stat(archivePath)
+  if (
+    !archiveDetails.isFile() ||
+    archiveDetails.size > MAX_SKILL_PACKAGE_BYTES
+  ) {
+    throw new Error('Skill ZIP 文件无效或过大')
+  }
+  const archiveBytes = await readFile(archivePath)
+  const selectedPaths = new Map<string, string[]>()
+  const normalizedPaths = new Set<string>()
+  let fileCount = 0
+  let totalBytes = 0
+  let files: Record<string, Uint8Array>
+  try {
+    files = unzipSync(archiveBytes, {
+      filter: (file) => {
+        const segments = parseSkillZipPath(file.name)
+        if (
+          file.name.endsWith('/') ||
+          isIgnoredSkillZipPath(segments)
+        ) {
+          return false
+        }
+        const normalizedPath = segments.join('/').toLowerCase()
+        if (normalizedPaths.has(normalizedPath)) {
+          throw new Error('Skill ZIP 包含重复文件路径')
+        }
+        normalizedPaths.add(normalizedPath)
+        fileCount += 1
+        totalBytes += file.originalSize
+        if (
+          fileCount > MAX_SKILL_PACKAGE_FILES ||
+          file.originalSize > MAX_SKILL_FILE_BYTES ||
+          totalBytes > MAX_SKILL_PACKAGE_BYTES
+        ) {
+          throw new Error('Skill ZIP 大小或文件数量超过安全限制')
+        }
+        selectedPaths.set(file.name, segments)
+        return true
+      }
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Skill ZIP')) {
+      throw error
+    }
+    throw new Error('Skill ZIP 文件无效或不受支持', {
+      cause: error
+    })
+  }
+
+  const skillEntries = [...selectedPaths.entries()].filter(
+    ([, segments]) => segments.at(-1) === 'SKILL.md'
+  )
+  if (skillEntries.length !== 1) {
+    throw new Error('Skill ZIP 必须且只能包含一个 SKILL.md')
+  }
+  const packageRoot = skillEntries[0]![1].slice(0, -1)
+  const packageRootKey = packageRoot
+    .map((segment) => segment.toLowerCase())
+  for (const segments of selectedPaths.values()) {
+    const belongsToPackage = packageRootKey.every(
+      (segment, index) => segments[index]?.toLowerCase() === segment
+    )
+    if (!belongsToPackage || segments.length <= packageRoot.length) {
+      throw new Error('Skill ZIP 只能包含一个 Skill 包')
+    }
+    if (segments.length - packageRoot.length - 1 > MAX_SKILL_DEPTH) {
+      throw new Error('Skill ZIP 目录层级超过安全限制')
+    }
+  }
+
+  await mkdir(targetRoot, { recursive: true })
+  for (const [archiveName, contents] of Object.entries(files)) {
+    const segments = selectedPaths.get(archiveName)
+    if (!segments) {
+      continue
+    }
+    const relativeSegments = segments.slice(packageRoot.length)
+    const targetPath = join(targetRoot, ...relativeSegments)
+    await mkdir(dirname(targetPath), { recursive: true })
+    await writeFile(targetPath, contents, { mode: 0o600 })
+  }
+  return packageRoot.at(-1)
 }
 
 export class CapabilityService {
@@ -819,21 +946,13 @@ export class CapabilityService {
   importSkill(sourcePath: string): Promise<CapabilitySnapshot> {
     return this.queue(async () => {
       const canonicalSource = await realpath(sourcePath)
-      if (!(await stat(canonicalSource)).isDirectory()) {
-        throw new Error('所选 Skill 路径不是目录')
-      }
-      const skill = await readSkill(canonicalSource, 'imported')
-      const builtins = await listSkills(this.builtinSkillsRoot, 'builtin')
-      if (builtins.some((item) => item.id === skill.id)) {
-        throw new Error('导入的 Skill ID 与内置 Skill 冲突')
-      }
-      const targetPath = join(this.importedSkillsRoot, skill.id)
-      if (
-        await stat(targetPath)
-          .then(() => true)
-          .catch(() => false)
-      ) {
-        throw new Error('同名 Skill 已导入，请先删除后重试')
+      const sourceDetails = await stat(canonicalSource)
+      const isDirectory = sourceDetails.isDirectory()
+      const isZip =
+        sourceDetails.isFile() &&
+        extname(canonicalSource).toLowerCase() === '.zip'
+      if (!isDirectory && !isZip) {
+        throw new Error('所选 Skill 路径必须是目录或 .zip 文件')
       }
       await mkdir(this.importedSkillsRoot, { recursive: true })
       const temporaryPath = join(
@@ -841,22 +960,47 @@ export class CapabilityService {
         `.import-${randomUUID()}`
       )
       try {
-        await copySkillPackage(canonicalSource, temporaryPath)
+        const archiveDirectoryName = isZip
+          ? await extractSkillZip(canonicalSource, temporaryPath)
+          : undefined
+        const skill = await readSkill(
+          isDirectory ? canonicalSource : temporaryPath,
+          'imported',
+          isDirectory ? undefined : (archiveDirectoryName ?? null)
+        )
+        const builtins = await listSkills(
+          this.builtinSkillsRoot,
+          'builtin'
+        )
+        if (builtins.some((item) => item.id === skill.id)) {
+          throw new Error('导入的 Skill ID 与内置 Skill 冲突')
+        }
+        const targetPath = join(this.importedSkillsRoot, skill.id)
+        if (
+          await stat(targetPath)
+            .then(() => true)
+            .catch(() => false)
+        ) {
+          throw new Error('同名 Skill 已导入，请先删除后重试')
+        }
+        if (isDirectory) {
+          await copySkillPackage(canonicalSource, temporaryPath)
+        }
         await readSkill(temporaryPath, 'imported', skill.id)
         await rename(temporaryPath, targetPath)
+        const state = await this.load()
+        await this.persist({
+          ...state,
+          skills: {
+            ...state.skills,
+            [skill.id]: defaultSkillState()
+          }
+        })
+        return this.getSnapshot()
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true })
         throw error
       }
-      const state = await this.load()
-      await this.persist({
-        ...state,
-        skills: {
-          ...state.skills,
-          [skill.id]: defaultSkillState()
-        }
-      })
-      return this.getSnapshot()
     })
   }
 

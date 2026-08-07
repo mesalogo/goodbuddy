@@ -18,6 +18,10 @@ const electronMocks = vi.hoisted(() => {
     removeHandler: vi.fn((channel: string) => {
       handlers.delete(channel)
     }),
+    showOpenDialog: vi.fn(async () => ({
+      canceled: true,
+      filePaths: [] as string[]
+    })),
     openPath: vi.fn(async () => ''),
     showItemInFolder: vi.fn(),
     openExternal: vi.fn(async () => undefined)
@@ -78,6 +82,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       browserProfiles: { profiles: [], defaultProfileId: null }
     }
     const capabilityService = {
+      importSkill: vi.fn(async () => snapshot),
       setComputerCapabilityEnabled: vi.fn(async () => snapshot),
       createBrowserProfile: vi.fn(async () => snapshot),
       diagnoseComputerCapability: vi.fn(async () => ({
@@ -131,6 +136,31 @@ describe('registerIpcHandlers computer capabilities', () => {
     ).toHaveBeenCalledWith('host-browser-control', true)
     expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
 
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['C:\\meeting-helper.zip']
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesImportSkill
+      )?.(event, 'zip')
+    ).resolves.toEqual(snapshot)
+    expect(electronMocks.showOpenDialog).toHaveBeenCalledWith(
+      window,
+      expect.objectContaining({
+        properties: ['openFile'],
+        filters: [{ name: 'Skill ZIP', extensions: ['zip'] }]
+      })
+    )
+    expect(capabilityService.importSkill).toHaveBeenCalledWith(
+      'C:\\meeting-helper.zip'
+    )
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesImportSkill
+      )?.(event, 'unsupported')
+    ).rejects.toThrow()
+
     browserStateListener?.({
       conversationId: 'browser-conversation',
       status: 'ready',
@@ -183,7 +213,9 @@ vi.mock('electron', () => ({
     getVersion: vi.fn(() => '0.1.0')
   },
   BrowserWindow: class {},
-  dialog: {},
+  dialog: {
+    showOpenDialog: electronMocks.showOpenDialog
+  },
   ipcMain: {
     handle: electronMocks.handle,
     removeHandler: electronMocks.removeHandler
@@ -838,7 +870,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       upsertModelUsageCall: vi.fn(),
       clearAssistantData: vi.fn(),
       listExperts: vi.fn<() => Array<Record<string, unknown>>>(() => []),
-      getExpert: vi.fn()
+      getExpert: vi.fn(),
+      getProject: vi.fn((projectId: string) => ({
+        id: projectId,
+        rootPath: 'C:\\ProjectWorkspace'
+      }))
     }
     const webContents = {
       mainFrame: { url: 'file:///goodbuddy/index.html' },
@@ -1229,6 +1265,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.handler?.(event, {
         requestId: '00000000-0000-4000-8000-000000000011',
         conversationId: 'conversation-one',
+        projectId: '00000000-0000-4000-8000-000000000101',
         prompt: 'first request',
         workMode: 'ask',
         runtimeSelection: firstSelection
@@ -1258,7 +1295,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     expect(fallbackRuntime.run).not.toHaveBeenCalled()
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
-      firstSelection
+      firstSelection,
+      'C:\\ProjectWorkspace'
     )
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
       secondSelection

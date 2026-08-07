@@ -7,7 +7,8 @@ import type {
   CapabilitySnapshot,
   ComputerCapabilityId,
   McpServerInput,
-  McpServerTestResult
+  McpServerTestResult,
+  SkillImportKind
 } from './capability-contracts'
 import {
   assistantIdSchema,
@@ -92,6 +93,29 @@ export const workspaceFileRequestSchema = z
     path: workspaceRelativePathSchema
   })
   .strict()
+
+export const workspaceOpenPathRequestSchema = z
+  .object({
+    projectId: assistantIdSchema,
+    path: workspaceRelativePathSchema,
+    type: z.enum(['file', 'directory'])
+  })
+  .strict()
+
+export const agentQuestionAnswerSchema = z
+  .array(z.string().trim().min(1).max(2_000))
+  .max(20)
+
+export const agentQuestionResponseSchema = z
+  .object({
+    questionId: z.string().trim().min(1).max(128),
+    answers: z.array(agentQuestionAnswerSchema).max(4)
+  })
+  .strict()
+
+export type AgentQuestionAnswer = z.infer<
+  typeof agentQuestionAnswerSchema
+>
 
 export const conversationIdSchema = z.string().min(1).max(128)
 
@@ -650,6 +674,21 @@ export type AgentEvent =
     }
   | {
       requestId: string
+      type: 'question'
+      questionId: string
+      questions: Array<{
+        header: string
+        question: string
+        options: Array<{
+          label: string
+          description: string
+        }>
+        multiple: boolean
+        custom: boolean
+      }>
+    }
+  | {
+      requestId: string
       type: 'artifact'
       artifactId: string
       kind: 'image'
@@ -873,6 +912,10 @@ export type DesktopApi = {
       approvalId: string,
       decision: ApprovalDecision
     ) => Promise<void>
+    respondQuestion: (
+      questionId: string,
+      answers?: AgentQuestionAnswer[]
+    ) => Promise<void>
     onEvent: (listener: (event: AgentEvent) => void) => () => void
   }
   browser: {
@@ -949,6 +992,7 @@ export type DesktopApi = {
       input: ProjectCreateInput
     ) => Promise<AssistantProject>
     setArchived: (projectId: string, archived: boolean) => Promise<void>
+    delete: (projectId: string, confirmation: string) => Promise<void>
   }
   conversations: {
     list: () => Promise<ConversationSnapshot[]>
@@ -964,6 +1008,11 @@ export type DesktopApi = {
       projectId: string,
       path: string
     ) => Promise<WorkspaceFilePreview>
+    openPath: (
+      projectId: string,
+      path: string,
+      type: 'file' | 'directory'
+    ) => Promise<void>
   }
   tasks: {
     list: () => Promise<AssistantTask[]>
@@ -1026,7 +1075,7 @@ export type DesktopApi = {
   }
   capabilities: {
     getSnapshot: () => Promise<CapabilitySnapshot>
-    importSkill: () => Promise<CapabilitySnapshot>
+    importSkill: (kind: SkillImportKind) => Promise<CapabilitySnapshot>
     removeSkill: (skillId: string) => Promise<CapabilitySnapshot>
     setSkillEnabled: (
       skillId: string,

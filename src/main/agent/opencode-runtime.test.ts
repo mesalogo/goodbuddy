@@ -153,6 +153,14 @@ function runClient(events: Record<string, unknown>[]) {
     data: true,
     error: undefined
   })
+  const questionReply = vi.fn().mockResolvedValue({
+    data: true,
+    error: undefined
+  })
+  const questionReject = vi.fn().mockResolvedValue({
+    data: true,
+    error: undefined
+  })
   const client = {
     session: {
       list: vi.fn().mockResolvedValue({ data: [], error: undefined }),
@@ -192,6 +200,10 @@ function runClient(events: Record<string, unknown>[]) {
     permission: {
       reply: permissionReply
     },
+    question: {
+      reply: questionReply,
+      reject: questionReject
+    },
     mcp: {
       add: vi
         .fn()
@@ -218,6 +230,8 @@ function runClient(events: Record<string, unknown>[]) {
     client,
     callOrder,
     permissionReply,
+    questionReply,
+    questionReject,
     session: client.session,
     event: client.event,
     tool: client.tool
@@ -978,6 +992,84 @@ describe('OpenCodeRuntime embedded launcher', () => {
 })
 
 describe('OpenCodeRuntime embedded permission mediation', () => {
+  it('parses OpenCode questions and sends the selected answers back', async () => {
+    const setup = runClient([
+      {
+        id: 'question-event',
+        type: 'question.asked',
+        properties: {
+          id: 'question-1',
+          sessionID: 'session-1',
+          questions: [
+            {
+              header: '实现方式',
+              question: '请选择实现方式',
+              options: [
+                {
+                  label: '直接修改',
+                  description: '立即更新现有实现'
+                },
+                {
+                  label: '先写测试',
+                  description: '先增加回归测试'
+                }
+              ],
+              multiple: false,
+              custom: true
+            }
+          ],
+          tool: {
+            messageID: 'message-1',
+            callID: 'call-question-1'
+          }
+        }
+      },
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(setup.client)
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'question',
+        questionId: 'question-1',
+        questions: [
+          {
+            header: '实现方式',
+            question: '请选择实现方式',
+            multiple: false,
+            custom: true
+          }
+        ]
+      }
+    })
+    await runtime.respondToQuestion('question-1', [['先写测试']])
+    expect(setup.questionReply).toHaveBeenCalledWith({
+      requestID: 'question-1',
+      directory: process.cwd(),
+      answers: [['先写测试']]
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'done' }
+    })
+    await runtime.dispose()
+  })
+
   it('adds only the request-scoped knowledge MCP tool for Ask and disconnects it', async () => {
     const setup = runClient([
       {
@@ -1420,6 +1512,33 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         delta: 'approved output'
       })
     )
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'reasoning' ||
+          event.type === 'text' ||
+          event.type === 'tool'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-1',
+        state: 'pending'
+      }),
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-1',
+        state: 'completed'
+      }),
+      expect.objectContaining({
+        type: 'reasoning',
+        delta: 'reasoning output'
+      }),
+      expect.objectContaining({
+        type: 'text',
+        delta: 'approved output'
+      })
+    ])
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
   })

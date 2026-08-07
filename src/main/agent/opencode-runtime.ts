@@ -3,12 +3,16 @@ import {
   type AssistantMessage,
   type OpencodeClient,
   type PermissionRequest,
-  type PermissionRuleset
+  type PermissionRuleset,
+  type QuestionRequest
 } from '@opencode-ai/sdk/v2'
 import spawn from 'cross-spawn'
 import { createHash, randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
-import type { AgentRuntimeStatus } from '../../shared/contracts'
+import type {
+  AgentQuestionAnswer,
+  AgentRuntimeStatus
+} from '../../shared/contracts'
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import { createOpenAIApiBaseUrl } from './openai-endpoint'
 import type {
@@ -42,6 +46,9 @@ const MAX_PERMISSION_PATTERN_LENGTH = 1_024
 const MAX_PERMISSION_PATTERNS_BYTES = 8 * 1_024
 const MAX_PERMISSION_METADATA_BYTES = 8 * 1_024
 const MAX_TOOL_CALLS_PER_RUN = 100
+const MAX_QUESTION_REQUEST_BYTES = 32 * 1_024
+const MAX_QUESTIONS_PER_REQUEST = 4
+const MAX_QUESTION_OPTIONS = 20
 const EMBEDDED_SERVER_USERNAME = 'goodbuddy'
 
 type SpawnedProcess = ReturnType<typeof spawn>
@@ -230,6 +237,69 @@ function parsePermissionRequest(
   return properties as PermissionRequest
 }
 
+function parseQuestionRequest(
+  properties: unknown,
+  sessionId: string
+): QuestionRequest | undefined {
+  if (!isRecord(properties) || properties.sessionID !== sessionId) {
+    return undefined
+  }
+  const { id, questions, tool } = properties
+  if (
+    typeof id !== 'string' ||
+    id.length === 0 ||
+    id.length > MAX_PERMISSION_NAME_LENGTH ||
+    !Array.isArray(questions) ||
+    questions.length === 0 ||
+    questions.length > MAX_QUESTIONS_PER_REQUEST ||
+    !questions.every(
+      (question) =>
+        isRecord(question) &&
+        typeof question.question === 'string' &&
+        question.question.trim().length > 0 &&
+        question.question.length <= 2_000 &&
+        typeof question.header === 'string' &&
+        question.header.trim().length > 0 &&
+        question.header.length <= 120 &&
+        Array.isArray(question.options) &&
+        question.options.length <= MAX_QUESTION_OPTIONS &&
+        question.options.every(
+          (option) =>
+            isRecord(option) &&
+            typeof option.label === 'string' &&
+            option.label.trim().length > 0 &&
+            option.label.length <= 200 &&
+            typeof option.description === 'string' &&
+            option.description.length <= 1_000
+        ) &&
+        (question.multiple === undefined ||
+          typeof question.multiple === 'boolean') &&
+        (question.custom === undefined ||
+          typeof question.custom === 'boolean')
+    ) ||
+    (tool !== undefined &&
+      (!isRecord(tool) ||
+        typeof tool.messageID !== 'string' ||
+        tool.messageID.length === 0 ||
+        tool.messageID.length > 256 ||
+        typeof tool.callID !== 'string' ||
+        tool.callID.length === 0 ||
+        tool.callID.length > 256))
+  ) {
+    throw new Error('OpenCode 提问请求格式无效')
+  }
+  let serialized: string
+  try {
+    serialized = JSON.stringify(properties)
+  } catch {
+    throw new Error('OpenCode 提问请求无法序列化')
+  }
+  if (!byteLengthWithin(serialized, MAX_QUESTION_REQUEST_BYTES)) {
+    throw new Error('OpenCode 提问请求超过安全限制')
+  }
+  return properties as QuestionRequest
+}
+
 function isSafeTokenCount(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0
 }
@@ -354,6 +424,14 @@ export class OpenCodeRuntime implements AgentRuntime {
   private readonly sessionInitializations = new Map<
     string,
     Promise<string>
+  >()
+  private readonly pendingQuestions = new Map<
+    string,
+    {
+      client: OpencodeClient
+      directory: string
+      questionCount: number
+    }
   >()
   private embeddedRunTail: Promise<void> = Promise.resolve()
   private readonly dependencies: OpenCodeRuntimeDependencies
@@ -904,6 +982,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       }
     >()
     const reasoningPartIds = new Set<string>()
+    const reportedQuestionIds = new Set<string>()
     try {
       const promptText =
         session.created && request.history?.length
@@ -1025,6 +1104,50 @@ export class OpenCodeRuntime implements AgentRuntime {
             type: 'reasoning',
             delta: event.properties.delta
           }
+        }
+
+        if (
+          event.type === 'question.asked' &&
+          event.properties.sessionID === sessionId
+        ) {
+          const questionRequest = parseQuestionRequest(
+            event.properties,
+            sessionId
+          )
+          if (
+            questionRequest &&
+            !reportedQuestionIds.has(questionRequest.id)
+          ) {
+            reportedQuestionIds.add(questionRequest.id)
+            this.pendingQuestions.set(questionRequest.id, {
+              client,
+              directory,
+              questionCount: questionRequest.questions.length
+            })
+            yield {
+              requestId: request.requestId,
+              type: 'question',
+              questionId: questionRequest.id,
+              questions: questionRequest.questions.map((question) => ({
+                header: question.header,
+                question: question.question,
+                options: question.options.map((option) => ({
+                  label: option.label,
+                  description: option.description
+                })),
+                multiple: question.multiple ?? false,
+                custom: question.custom ?? true
+              }))
+            }
+          }
+        }
+
+        if (
+          (event.type === 'question.replied' ||
+            event.type === 'question.rejected') &&
+          event.properties.sessionID === sessionId
+        ) {
+          this.pendingQuestions.delete(event.properties.requestID)
         }
 
         if (
@@ -1193,6 +1316,9 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw error
     } finally {
       signal.removeEventListener('abort', abortSession)
+      for (const questionId of reportedQuestionIds) {
+        this.pendingQuestions.delete(questionId)
+      }
     }
     } finally {
       if (knowledgeMcpName) {
@@ -1203,7 +1329,39 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
   }
 
+  async respondToQuestion(
+    questionId: string,
+    answers?: AgentQuestionAnswer[]
+  ): Promise<void> {
+    const pending = this.pendingQuestions.get(questionId)
+    if (!pending) {
+      throw new Error('OpenCode 提问已失效或不存在')
+    }
+    const response = answers
+      ? answers.length === pending.questionCount
+        ? await pending.client.question.reply({
+            requestID: questionId,
+            directory: pending.directory,
+            answers
+          })
+        : undefined
+      : await pending.client.question.reject({
+          requestID: questionId,
+          directory: pending.directory
+        })
+    if (!response) {
+      throw new Error('OpenCode 提问回答数量不匹配')
+    }
+    if (response.error || response.data !== true) {
+      throw new Error(
+        answers ? 'OpenCode 提交回答失败' : 'OpenCode 取消提问失败'
+      )
+    }
+    this.pendingQuestions.delete(questionId)
+  }
+
   async dispose(): Promise<void> {
+    this.pendingQuestions.clear()
     const startingChild = this.startingChild
     this.startingChild = undefined
     if (startingChild) {

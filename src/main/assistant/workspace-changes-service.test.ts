@@ -62,7 +62,7 @@ describe('getWorkspaceChanges', () => {
     expect(changes.patch).toContain('+after')
   })
 
-  it('fails safely for a non-Git directory', async () => {
+  it('keeps file browsing available without reporting Git errors', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-changes-'))
     temporaryDirectories.push(directory)
 
@@ -70,7 +70,7 @@ describe('getWorkspaceChanges', () => {
 
     expect(changes.available).toBe(false)
     expect(changes.files).toEqual([])
-    expect(changes.error).toBeTruthy()
+    expect(changes.error).toBeUndefined()
   })
 })
 

@@ -382,14 +382,17 @@ if (hasSingleInstanceLock) {
       )
     }
     const createSelectedRuntime = async (
-      selection: AgentRuntimeSelection
+      selection: AgentRuntimeSelection,
+      workspacePath?: string
     ): Promise<AgentRuntime> => {
       const resolved = applyRuntimeSelection(
         await settingsStore.getResolvedSettings(),
         selection
       )
       return createRuntimeWithCapabilities(
-        resolved.settings,
+        workspacePath
+          ? { ...resolved.settings, workspacePath }
+          : resolved.settings,
         resolved.target
       )
     }

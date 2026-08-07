@@ -11,11 +11,11 @@ import {
   Edit3,
   FileText,
   HeartPulse,
-  History,
   Info,
   Library,
   Maximize2,
   MessageSquarePlus,
+  MessageSquare,
   Mic,
   MicOff,
   Minimize2,
@@ -48,6 +48,7 @@ import {
 import type {
   ApprovalDecision,
   AgentEvent,
+  AgentQuestionAnswer,
   AgentRuntimeStatus,
   AppInfo,
   BrowserLiveState,
@@ -77,16 +78,20 @@ import type {
   TokenUsageSummary,
   ConversationSnapshot,
   ConversationAttachment,
+  ConversationMessageBlock,
+  ConversationToolActivity,
   ProjectCreateInput,
   InteractiveWorkMode,
   WorkspaceChanges
 } from '../../shared/assistant-contracts'
 import {
   conversationAttachmentSchema,
+  conversationMessageBlocksSchema,
   interactiveWorkModes,
   normalizeInteractiveWorkMode
 } from '../../shared/assistant-contracts'
 import { ActivityPanel } from './ActivityPanel'
+import { AgentQuestionCard } from './AgentQuestionCard'
 import {
   loadActivityRecords,
   reconcileActivityRecords,
@@ -268,20 +273,7 @@ function supportsSubagentSmartRouting(
   return workMode === 'ask' || ['plan'].includes(workMode)
 }
 
-type ToolActivity = {
-  callId?: string
-  name: string
-  state:
-    | 'pending'
-    | 'running'
-    | 'completed'
-    | 'failed'
-    | 'recoverable'
-    | 'cancelled'
-    | 'interrupted'
-  summary: string
-  error?: string
-}
+type ToolActivity = ConversationToolActivity
 
 type SubagentActivity = {
   childTaskId: string
@@ -298,6 +290,7 @@ type Message = {
   role: 'user' | 'assistant'
   content: string
   reasoning?: string
+  blocks?: ConversationMessageBlock[]
   createdAt: number
   state: 'streaming' | 'complete' | 'error'
   status?: string
@@ -311,6 +304,7 @@ type Message = {
     argumentSummary?: string
     allowPermanent?: boolean
   }
+  question?: Extract<AgentEvent, { type: 'question' }>
   sources?: string[]
   sourceReferences?: KnowledgeSearchReference[]
   artifactIds?: string[]
@@ -392,6 +386,89 @@ const subagentStateLabels: Record<SubagentActivity['state'], string> = {
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消'
+}
+
+const maxMessageContentLength = 1_000_000
+const maxMessageBlocks = 500
+
+function appendMessageContentBlock(
+  blocks: ConversationMessageBlock[] | undefined,
+  type: 'text' | 'reasoning',
+  delta: string
+): ConversationMessageBlock[] | undefined {
+  if (!blocks || !delta) {
+    return blocks
+  }
+  const current = [...blocks]
+  const previous = current.at(-1)
+  if (previous?.type === type) {
+    previous.content = `${previous.content}${delta}`.slice(
+      0,
+      maxMessageContentLength
+    )
+    return current
+  }
+  if (current.length >= maxMessageBlocks) {
+    return current
+  }
+  current.push({
+    id: crypto.randomUUID(),
+    type,
+    content: delta.slice(0, maxMessageContentLength)
+  })
+  return current
+}
+
+function upsertMessageToolBlock(
+  blocks: ConversationMessageBlock[] | undefined,
+  tool: ToolActivity
+): ConversationMessageBlock[] | undefined {
+  if (!blocks) {
+    return blocks
+  }
+  const callId = tool.callId
+  const index = callId
+    ? blocks.findIndex(
+        (block) =>
+          block.type === 'tool' && block.tool.callId === callId
+      )
+    : -1
+  if (index >= 0) {
+    return blocks.map((block, blockIndex) =>
+      blockIndex === index && block.type === 'tool'
+        ? { ...block, tool }
+        : block
+    )
+  }
+  if (blocks.length >= maxMessageBlocks) {
+    return blocks
+  }
+  return [
+    ...blocks,
+    {
+      id: crypto.randomUUID(),
+      type: 'tool',
+      tool
+    }
+  ]
+}
+
+function terminalizeMessageToolBlocks(
+  blocks: ConversationMessageBlock[] | undefined,
+  state: 'failed' | 'cancelled'
+): ConversationMessageBlock[] | undefined {
+  return blocks?.map((block) =>
+    block.type === 'tool' &&
+    (block.tool.state === 'pending' || block.tool.state === 'running')
+      ? {
+          ...block,
+          tool: {
+            ...block.tool,
+            state
+          }
+        }
+      : block
+  )
 }
 
 function createConversation(
@@ -492,6 +569,9 @@ function isConversation(value: unknown): value is Conversation {
         entry.content.length <= 1_000_000 &&
         (entry.reasoning === undefined ||
           typeof entry.reasoning === 'string') &&
+        (entry.blocks === undefined ||
+          conversationMessageBlocksSchema.safeParse(entry.blocks)
+            .success) &&
         typeof entry.createdAt === 'number' &&
         (entry.state === 'streaming' ||
           entry.state === 'complete' ||
@@ -525,6 +605,7 @@ function toConversationSnapshots(
       role: message.role,
       content: message.content,
       reasoning: message.reasoning,
+      blocks: message.blocks,
       createdAt: message.createdAt,
       state: message.state,
       status: message.status,
@@ -1608,7 +1689,7 @@ function App(): React.JSX.Element {
             ? {
                 ...task,
                 status:
-                  event.type === 'approval'
+                  event.type === 'approval' || event.type === 'question'
                     ? 'waiting_approval'
                     : event.type === 'done'
                       ? 'completed'
@@ -1673,19 +1754,46 @@ function App(): React.JSX.Element {
       }
 
       if (event.type === 'text') {
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          content: `${message.content}${event.delta}`.slice(0, 1_000_000),
-          status:
-            message.content.length + event.delta.length > 1_000_000
-              ? '回答过长，已在本地截断显示'
-              : undefined
-        }))
+        updateMessage(run.conversationId, run.messageId, (message) => {
+          const remaining = Math.max(
+            0,
+            maxMessageContentLength - message.content.length
+          )
+          const acceptedDelta = event.delta.slice(0, remaining)
+          return {
+            ...message,
+            content: `${message.content}${acceptedDelta}`,
+            blocks: appendMessageContentBlock(
+              message.blocks,
+              'text',
+              acceptedDelta
+            ),
+            status:
+              event.delta.length > remaining
+                ? '回答过长，已在本地截断显示'
+                : undefined
+          }
+        })
       } else if (event.type === 'reasoning') {
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          reasoning: `${message.reasoning ?? ''}${event.delta}`
-        }))
+        updateMessage(run.conversationId, run.messageId, (message) => {
+          const currentReasoning = message.reasoning ?? ''
+          const acceptedDelta = event.delta.slice(
+            0,
+            Math.max(
+              0,
+              maxMessageContentLength - currentReasoning.length
+            )
+          )
+          return {
+            ...message,
+            reasoning: `${currentReasoning}${acceptedDelta}`,
+            blocks: appendMessageContentBlock(
+              message.blocks,
+              'reasoning',
+              acceptedDelta
+            )
+          }
+        })
       } else if (event.type === 'status') {
         updateMessage(run.conversationId, run.messageId, (message) => ({
           ...message,
@@ -1728,7 +1836,11 @@ function App(): React.JSX.Element {
           } else {
             tools.push(tool)
           }
-          return { ...message, tools }
+          return {
+            ...message,
+            tools,
+            blocks: upsertMessageToolBlock(message.blocks, tool)
+          }
         })
       } else if (event.type === 'subagent') {
         const childStatus = event.state
@@ -1831,6 +1943,12 @@ function App(): React.JSX.Element {
             allowPermanent: event.allowPermanent
           }
         }))
+      } else if (event.type === 'question') {
+        updateMessage(run.conversationId, run.messageId, (message) => ({
+          ...message,
+          status: undefined,
+          question: event
+        }))
       } else if (event.type === 'artifact') {
         updateMessage(run.conversationId, run.messageId, (message) => ({
           ...message,
@@ -1924,30 +2042,47 @@ function App(): React.JSX.Element {
               : 'Agent Runtime 已完成响应',
           status: terminalStatus
         })
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          state: event.type === 'error' ? 'error' : 'complete',
-          status: event.type === 'error' ? event.message : undefined,
-          approval: undefined,
-          tools:
+        updateMessage(run.conversationId, run.messageId, (message) => {
+          const toolTerminalState =
             event.type === 'error'
+              ? event.status === 'cancelled'
+                ? ('cancelled' as const)
+                : ('failed' as const)
+              : undefined
+          const fallbackError =
+            event.type === 'error' && !message.content
+              ? event.message.slice(0, maxMessageContentLength)
+              : ''
+          return {
+            ...message,
+            state: event.type === 'error' ? 'error' : 'complete',
+            status: event.type === 'error' ? event.message : undefined,
+            approval: undefined,
+            question: undefined,
+            tools: toolTerminalState
               ? message.tools?.map((tool) =>
                   tool.state === 'pending' || tool.state === 'running'
-                    ? {
-                        ...tool,
-                        state:
-                          event.status === 'cancelled'
-                            ? ('cancelled' as const)
-                            : ('failed' as const)
-                      }
+                    ? { ...tool, state: toolTerminalState }
                     : tool
                 )
               : message.tools,
-          content:
-            event.type === 'error' && !message.content
-              ? event.message
-              : message.content
-        }))
+            blocks: toolTerminalState
+              ? terminalizeMessageToolBlocks(
+                  appendMessageContentBlock(
+                    message.blocks,
+                    'text',
+                    fallbackError
+                  ),
+                  toolTerminalState
+                )
+              : appendMessageContentBlock(
+                  message.blocks,
+                  'text',
+                  fallbackError
+                ),
+            content: fallbackError || message.content
+          }
+        })
         activeRuns.current.delete(event.requestId)
       }
     },
@@ -2085,6 +2220,22 @@ function App(): React.JSX.Element {
         throw new Error('请先选择项目')
       }
       return window.goodbuddy.workspace.readFile(activeProjectId, path)
+    },
+    [activeProjectId]
+  )
+  const openWorkspaceEntry = useCallback(
+    async (
+      path: string,
+      type: 'file' | 'directory'
+    ): Promise<void> => {
+      if (!activeProjectId) {
+        throw new Error('请先选择项目')
+      }
+      await window.goodbuddy.workspace.openPath(
+        activeProjectId,
+        path,
+        type
+      )
     },
     [activeProjectId]
   )
@@ -2510,6 +2661,27 @@ function App(): React.JSX.Element {
     return project
   }
 
+  const updateProject = async (
+    projectId: string,
+    input: ProjectCreateInput
+  ): Promise<AssistantProject> => {
+    const project = await window.goodbuddy.projects.update(
+      projectId,
+      input
+    )
+    setProjects((current) =>
+      current.map((candidate) =>
+        candidate.id === project.id ? project : candidate
+      )
+    )
+    if (project.id === activeProjectId) {
+      setWorkMode(
+        normalizeInteractiveWorkMode(project.defaultWorkMode)
+      )
+    }
+    return project
+  }
+
   const archiveProject = async (projectId: string): Promise<void> => {
     await window.goodbuddy.projects.setArchived(projectId, true)
     const remaining = projects.filter((project) => project.id !== projectId)
@@ -2518,6 +2690,65 @@ function App(): React.JSX.Element {
     if (next) {
       selectProject(next.id)
     }
+  }
+
+  const deleteProject = async (
+    projectId: string,
+    confirmation: string
+  ): Promise<void> => {
+    await window.goodbuddy.projects.delete(projectId, confirmation)
+    const remainingProjects = projects.filter(
+      (project) => project.id !== projectId
+    )
+    const remainingConversations = conversations.filter(
+      (conversation) => conversation.projectId !== projectId
+    )
+    setProjects(remainingProjects)
+    setConversations(remainingConversations)
+    setAssistantTasks((current) =>
+      current.filter((task) => task.projectId !== projectId)
+    )
+    setAssistantArtifacts((current) =>
+      current.filter((artifact) => artifact.projectId !== projectId)
+    )
+    setAssistantMemories((current) =>
+      current.filter(
+        (memory) =>
+          !(
+            memory.scope === 'project' &&
+            memory.scopeId === projectId
+          )
+      )
+    )
+    setAssistantSchedules((current) =>
+      current.filter((schedule) => schedule.projectId !== projectId)
+    )
+    setAssistantHeartbeats((current) =>
+      current.filter((heartbeat) => heartbeat.projectId !== projectId)
+    )
+    const next = remainingProjects[0]
+    if (next) {
+      setActiveProjectId(next.id)
+      setWorkMode(
+        normalizeInteractiveWorkMode(next.defaultWorkMode)
+      )
+      const nextConversation = remainingConversations.find(
+        (conversation) => conversation.projectId === next.id
+      )
+      if (nextConversation) {
+        setActiveId(nextConversation.id)
+      } else {
+        const created = createConversation(
+          next.id,
+          runtimeSettings
+            ? getDefaultRuntimeSelection(runtimeSettings)
+            : undefined
+        )
+        setConversations((current) => [created, ...current])
+        setActiveId(created.id)
+      }
+    }
+    setView('chat')
   }
 
   const newConversation = (): void => {
@@ -2818,6 +3049,7 @@ function App(): React.JSX.Element {
       id: crypto.randomUUID(),
       role: 'assistant',
       content: '',
+      blocks: [],
       createdAt: Date.now(),
       state: 'streaming',
       status: '正在连接 Agent Runtime'
@@ -2980,6 +3212,20 @@ function App(): React.JSX.Element {
         status: '审批响应失败，请重试'
       }))
     }
+  }
+
+  const respondToQuestion = async (
+    conversationId: string,
+    messageId: string,
+    questionId: string,
+    answers?: AgentQuestionAnswer[]
+  ): Promise<void> => {
+    await window.goodbuddy.agent.respondQuestion(questionId, answers)
+    updateMessage(conversationId, messageId, (message) => ({
+      ...message,
+      question: undefined,
+      status: answers ? '回答已提交，OpenCode 正在继续执行' : '已跳过问题'
+    }))
   }
 
   const addContext = async (
@@ -3383,10 +3629,12 @@ function App(): React.JSX.Element {
           activeProjectId={activeProjectId}
           onArchive={archiveProject}
           onCreate={createProject}
+          onDelete={deleteProject}
           onSelect={selectProject}
           onSelectRoot={() =>
             window.goodbuddy.settings.selectWorkspace()
           }
+          onUpdate={updateProject}
           projects={projects}
         />
 
@@ -3414,7 +3662,7 @@ function App(): React.JSX.Element {
             onClick={() => setView('chat')}
             type="button"
           >
-            <History size={17} />
+            <MessageSquare size={17} />
             <span>对话</span>
           </button>
           <button
@@ -3901,30 +4149,85 @@ function App(): React.JSX.Element {
                         })}
                       </div>
                     )}
-                  {message.reasoning && (
-                    <details
-                      className="message-reasoning"
-                      key={`${message.id}-${message.state}`}
-                      open={message.state === 'streaming'}
-                    >
-                      <summary>
-                        {message.state === 'streaming'
-                          ? '正在推理'
-                          : '推理过程'}
-                      </summary>
-                      <div className="markdown-content message-reasoning__content">
-                        <MarkdownRenderer>
-                          {message.reasoning}
-                        </MarkdownRenderer>
-                      </div>
-                    </details>
-                  )}
-                  {message.content && (
-                    <div className="markdown-content message__content">
-                      <MarkdownRenderer>
-                        {message.content}
-                      </MarkdownRenderer>
+                  {message.blocks && message.blocks.length > 0 ? (
+                    <div className="message-blocks">
+                      {message.blocks.map((block) =>
+                        block.type === 'reasoning' ? (
+                          <details
+                            className="message-reasoning"
+                            key={block.id}
+                            open={
+                              message.state === 'streaming' &&
+                              message.blocks?.at(-1)?.id === block.id
+                            }
+                          >
+                            <summary>
+                              {message.state === 'streaming'
+                                ? '正在推理'
+                                : '推理过程'}
+                            </summary>
+                            <div className="markdown-content message-reasoning__content">
+                              <MarkdownRenderer>
+                                {block.content}
+                              </MarkdownRenderer>
+                            </div>
+                          </details>
+                        ) : block.type === 'text' ? (
+                          <div
+                            className="markdown-content message__content"
+                            key={block.id}
+                          >
+                            <MarkdownRenderer>
+                              {block.content}
+                            </MarkdownRenderer>
+                          </div>
+                        ) : (
+                          <div
+                            className="tool-activity"
+                            key={block.id}
+                          >
+                            <TerminalSquare size={15} />
+                            <div className="tool-activity__content">
+                              <span>{block.tool.summary}</span>
+                              {block.tool.error && (
+                                <code>{block.tool.error}</code>
+                              )}
+                            </div>
+                            <small>
+                              {toolStateLabels[block.tool.state]}
+                            </small>
+                          </div>
+                        )
+                      )}
                     </div>
+                  ) : (
+                    <>
+                      {message.reasoning && (
+                        <details
+                          className="message-reasoning"
+                          key={`${message.id}-${message.state}`}
+                          open={message.state === 'streaming'}
+                        >
+                          <summary>
+                            {message.state === 'streaming'
+                              ? '正在推理'
+                              : '推理过程'}
+                          </summary>
+                          <div className="markdown-content message-reasoning__content">
+                            <MarkdownRenderer>
+                              {message.reasoning}
+                            </MarkdownRenderer>
+                          </div>
+                        </details>
+                      )}
+                      {message.content && (
+                        <div className="markdown-content message__content">
+                          <MarkdownRenderer>
+                            {message.content}
+                          </MarkdownRenderer>
+                        </div>
+                      )}
+                    </>
                   )}
                   {message.artifactIds?.map((artifactId) => {
                     const candidate =
@@ -4043,19 +4346,20 @@ function App(): React.JSX.Element {
                         </ol>
                       </details>
                     )}
-                  {message.tools?.map((tool) => (
-                    <div
-                      className="tool-activity"
-                      key={tool.callId ?? tool.name}
-                    >
-                      <TerminalSquare size={15} />
-                      <div className="tool-activity__content">
-                        <span>{tool.summary}</span>
-                        {tool.error && <code>{tool.error}</code>}
+                  {(!message.blocks || message.blocks.length === 0) &&
+                    message.tools?.map((tool) => (
+                      <div
+                        className="tool-activity"
+                        key={tool.callId ?? tool.name}
+                      >
+                        <TerminalSquare size={15} />
+                        <div className="tool-activity__content">
+                          <span>{tool.summary}</span>
+                          {tool.error && <code>{tool.error}</code>}
+                        </div>
+                        <small>{toolStateLabels[tool.state]}</small>
                       </div>
-                      <small>{toolStateLabels[tool.state]}</small>
-                    </div>
-                  ))}
+                    ))}
                   {message.subagents && message.subagents.length > 0 && (
                     <section
                       aria-label="子专家状态"
@@ -4158,6 +4462,27 @@ function App(): React.JSX.Element {
                         </button>
                       )}
                     </div>
+                  )}
+                  {message.question && (
+                    <AgentQuestionCard
+                      key={message.question.questionId}
+                      onReject={() =>
+                        respondToQuestion(
+                          activeConversation.id,
+                          message.id,
+                          message.question!.questionId
+                        )
+                      }
+                      onSubmit={(answers) =>
+                        respondToQuestion(
+                          activeConversation.id,
+                          message.id,
+                          message.question!.questionId,
+                          answers
+                        )
+                      }
+                      value={message.question}
+                    />
                   )}
                   {message.status && (
                     <div
@@ -5064,6 +5389,7 @@ function App(): React.JSX.Element {
         onSetHeartbeatPaused={setHeartbeatPaused}
         onListWorkspaceDirectory={listWorkspaceDirectory}
         onLoadWorkspaceFile={loadWorkspaceFile}
+        onOpenWorkspaceEntry={openWorkspaceEntry}
         onRefreshChanges={refreshWorkspaceChanges}
         onRespondApproval={(approval, decision) => {
           void respondToApproval(
