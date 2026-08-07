@@ -15,6 +15,7 @@ import {
   approvalDecisionSchema,
   agentQuestionResponseSchema,
   agentRequestSchema,
+  browserInteractRequestSchema,
   browserStopRequestSchema,
   knowledgeCreateSchema,
   knowledgeEntityUpdateSchema,
@@ -491,6 +492,10 @@ export function registerIpcHandlers(
   onRuntimeSettingsChanged: () => Promise<void>,
   onBeforeClearLocalData?: () => Promise<void>,
   browserControl?: {
+    interact(
+      conversationId: string,
+      signal: AbortSignal
+    ): Promise<void>
     releaseConversation(conversationId: string): Promise<void>
     onState(listener: (state: BrowserLiveState) => void): () => void
   },
@@ -1192,6 +1197,18 @@ export function registerIpcHandlers(
         : runtime.releaseConversation?.(request.conversationId)
     ])
   })
+
+  ipcMain.handle(
+    ipcChannels.browserInteract,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserInteractRequestSchema.parse(input)
+      await browserControl?.interact(
+        request.conversationId,
+        new AbortController().signal
+      )
+    }
+  )
 
   ipcMain.handle(ipcChannels.agentRun, async (event, input: unknown) => {
     assertTrustedSender(event, window)

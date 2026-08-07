@@ -28,7 +28,7 @@ export const builtinModelTools = [
   {
     name: 'browser_navigate',
     displayName: '浏览器导航',
-    description: '在隔离浏览器中打开公开的 HTTP(S) 页面。',
+    description: '在隔离浏览器中打开当前设备可连接的 HTTP 或 HTTPS 页面。',
     access: 'write'
   },
   {
@@ -40,13 +40,13 @@ export const builtinModelTools = [
   {
     name: 'browser_click',
     displayName: '点击浏览器元素',
-    description: '点击最近一次浏览器快照中的可见且未受保护元素。',
+    description: '点击最近一次浏览器快照中的可见元素。',
     access: 'write'
   },
   {
     name: 'browser_type',
     displayName: '输入浏览器文本',
-    description: '向可编辑且未受保护的页面元素输入文本；不支持上传文件。',
+    description: '向可编辑页面元素（包括密码框）输入文本；不支持上传文件。',
     access: 'write'
   },
   {

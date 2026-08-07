@@ -159,6 +159,12 @@ const desktopApi: DesktopApi = {
     }
   },
   browser: {
+    interact: async (conversationId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.browserInteract,
+        { conversationId }
+      )
+    },
     stop: async (conversationId: string) => {
       await ipcRenderer.invoke(
         ipcChannels.browserStop,

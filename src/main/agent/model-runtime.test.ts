@@ -286,7 +286,7 @@ describe('ModelAgentRuntime', () => {
     await expect(consume()).rejects.toThrow('意外中断')
   })
 
-  it('redacts credentials from provider error messages', async () => {
+  it('preserves bounded provider error messages', async () => {
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
@@ -319,7 +319,7 @@ describe('ModelAgentRuntime', () => {
     }
 
     await expect(consume()).rejects.toThrow(
-      'upstream failed Authorization: [REDACTED]'
+      'upstream failed Authorization: Bearer secret-token'
     )
   })
 
@@ -702,6 +702,15 @@ describe('ModelAgentRuntime', () => {
         .filter((event) => event.type === 'tool')
         .map((event) => event.state)
     ).toEqual(['pending', 'running', 'completed'])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool',
+        state: 'completed',
+        input: '{\n  "path": "README.md"\n}',
+        output:
+          'tool result\n\n[图片结果 1：image/png]'
+      })
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'text',
@@ -1693,7 +1702,7 @@ describe('ModelAgentRuntime', () => {
         'x-request-id': 'image-request-502'
       },
       expected:
-        'upstream unavailable Authorization: [REDACTED]（HTTP 502，请求 ID image-request-502）'
+        'upstream unavailable Authorization: Bearer secret-token（HTTP 502，请求 ID image-request-502）'
     },
     {
       body: '<html>Bad Gateway</html>',

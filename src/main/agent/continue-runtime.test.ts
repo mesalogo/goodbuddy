@@ -384,7 +384,13 @@ describe('ContinueAgentRuntime', () => {
     mocks.runHost.mockResolvedValue({
       text: 'Continue response',
       tools: [
-        { callId: 'call-1', name: 'Bash', state: 'completed' },
+        {
+          callId: 'call-1',
+          name: 'Bash',
+          state: 'completed',
+          input: '{"command":"npm test"}',
+          output: 'Tests passed'
+        },
         { callId: 'call-2', name: 'Write', state: 'completed' }
       ]
     })
@@ -396,7 +402,9 @@ describe('ContinueAgentRuntime', () => {
         type: 'tool',
         name: 'Bash',
         state: 'completed',
-        summary: 'Continue 工具：Bash'
+        summary: 'Continue 工具：Bash',
+        input: '{"command":"npm test"}',
+        output: 'Tests passed'
       }),
       expect.objectContaining({
         type: 'tool',

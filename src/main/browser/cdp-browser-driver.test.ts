@@ -536,7 +536,7 @@ describe('CdpBrowserDriver', () => {
     driver.dispose()
   })
 
-  it('rejects password, file, hidden, and stale typing targets', async () => {
+  it('allows password typing while keeping the password value redacted', async () => {
     const harness = createHarness(standardCommand)
     const driver = new CdpBrowserDriver(harness.webContents)
     const snapshot = await driver.snapshot(new AbortController().signal)
@@ -545,15 +545,16 @@ describe('CdpBrowserDriver', () => {
       throw new Error('password missing')
     }
     await expect(
-      driver.type(password.ref, 'never-send', new AbortController().signal)
-    ).rejects.toThrow('受保护')
+      driver.type(password.ref, 'login-secret', new AbortController().signal)
+    ).resolves.toBeUndefined()
     expect(
       harness.sendCommand.mock.calls.some(
         ([method, parameters]) =>
           method === 'Input.insertText' &&
-          parameters?.text === 'never-send'
+          parameters?.text === 'login-secret'
       )
-    ).toBe(false)
+    ).toBe(true)
+    expect(JSON.stringify(snapshot)).not.toContain('secret')
     driver.dispose()
   })
 

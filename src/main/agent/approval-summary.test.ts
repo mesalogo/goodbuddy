@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  boundedToolDetail,
   safeToolArgumentSummary,
   safeToolErrorDetail
 } from './approval-summary'
@@ -30,8 +31,29 @@ describe('safeToolArgumentSummary', () => {
   })
 })
 
+describe('boundedToolDetail', () => {
+  it('preserves conversation details verbatim while bounding output', () => {
+    expect(
+      boundedToolDetail(
+        {
+          command: 'npm test',
+          token: 'secret-token',
+          output: 'Authorization: Bearer inline-secret'
+        },
+        1_000
+      )
+    ).toBe(
+      '{\n  "command": "npm test",\n  "token": "secret-token",\n  "output": "Authorization: Bearer inline-secret"\n}'
+    )
+    expect(
+      boundedToolDetail('  exact output\r\n', 1_000)
+    ).toBe('  exact output\r\n')
+    expect(boundedToolDetail('x'.repeat(100), 20)).toHaveLength(20)
+  })
+})
+
 describe('safeToolErrorDetail', () => {
-  it('extracts nested runtime errors while redacting secrets', () => {
+  it('extracts nested runtime errors without rewriting their contents', () => {
     expect(
       safeToolErrorDetail([
         {
@@ -39,14 +61,14 @@ describe('safeToolErrorDetail', () => {
             'exit code 1\nAuthorization: Bearer secret-token'
         }
       ])
-    ).toBe('exit code 1\nAuthorization: [REDACTED]')
+    ).toBe('exit code 1\nAuthorization: Bearer secret-token')
     expect(
       safeToolErrorDetail({
         message:
           '{"token":"json-secret","authorization":"Basic abc123"}'
       })
     ).toBe(
-      '{"token":"[REDACTED]","authorization":"[REDACTED]"}'
+      '{"token":"json-secret","authorization":"Basic abc123"}'
     )
   })
 
@@ -65,5 +87,32 @@ describe('safeToolErrorDetail', () => {
         privateDocument: 'must not be returned'
       })
     ).toBeUndefined()
+  })
+
+  it('includes nested fetch causes and network diagnostics', () => {
+    const cause = Object.assign(
+      new Error('connect ECONNREFUSED 127.0.0.1:11434'),
+      {
+        code: 'ECONNREFUSED',
+        errno: -4078,
+        syscall: 'connect',
+        address: '127.0.0.1',
+        port: 11434
+      }
+    )
+    const error = new TypeError('fetch failed', { cause })
+
+    expect(safeToolErrorDetail(error)).toBe(
+      [
+        'fetch failed',
+        'cause:',
+        'connect ECONNREFUSED 127.0.0.1:11434',
+        'code: ECONNREFUSED',
+        'errno: -4078',
+        'syscall: connect',
+        'address: 127.0.0.1',
+        'port: 11434'
+      ].join('\n')
+    )
   })
 })

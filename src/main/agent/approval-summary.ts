@@ -8,6 +8,9 @@ function redactValue(
   if (depth > 8) {
     return '[TRUNCATED]'
   }
+  if (typeof value === 'string') {
+    return redactSensitiveText(value)
+  }
   if (!value || typeof value !== 'object') {
     return value
   }
@@ -64,6 +67,32 @@ export function safeToolErrorDetail(
   let remaining = maximum
   const seen = new WeakSet<object>()
 
+  const append = (value: string): void => {
+    const text = [...value]
+      .filter((character) => {
+        const code = character.charCodeAt(0)
+        return (
+          code === 9 ||
+          code === 10 ||
+          code === 13 ||
+          (code > 31 && code !== 127)
+        )
+      })
+      .join('')
+      .trim()
+    if (!text || remaining <= 0) {
+      return
+    }
+    const separator = parts.length > 0 ? '\n' : ''
+    const available = Math.max(0, remaining - separator.length)
+    if (available === 0) {
+      return
+    }
+    const bounded = text.slice(0, available)
+    parts.push(`${separator}${bounded}`)
+    remaining -= separator.length + bounded.length
+  }
+
   const collect = (candidate: unknown, depth = 0): void => {
     if (remaining <= 0 || depth > 4 || candidate === undefined) {
       return
@@ -73,30 +102,7 @@ export function safeToolErrorDetail(
         0,
         Math.min(candidate.length, remaining * 4)
       )
-      const text = redactSensitiveText(
-        [...boundedCandidate]
-          .filter((character) => {
-            const code = character.charCodeAt(0)
-            return (
-              code === 9 ||
-              code === 10 ||
-              code === 13 ||
-              (code > 31 && code !== 127)
-            )
-          })
-          .join('')
-      ).trim()
-      if (!text) {
-        return
-      }
-      const separator = parts.length > 0 ? '\n' : ''
-      const available = Math.max(0, remaining - separator.length)
-      if (available === 0) {
-        return
-      }
-      const bounded = text.slice(0, available)
-      parts.push(`${separator}${bounded}`)
-      remaining -= separator.length + bounded.length
+      append(boundedCandidate)
       return
     }
     if (!candidate || typeof candidate !== 'object') {
@@ -113,10 +119,33 @@ export function safeToolErrorDetail(
       return
     }
     const record = candidate as Record<string, unknown>
+    collect(record.message, depth + 1)
+    for (const key of [
+      'code',
+      'errno',
+      'syscall',
+      'hostname',
+      'address',
+      'port',
+      'status',
+      'statusCode'
+    ]) {
+      const metadata = record[key]
+      if (
+        typeof metadata === 'string' ||
+        typeof metadata === 'number'
+      ) {
+        append(`${key}: ${metadata}`)
+      }
+    }
+    if (record.cause !== undefined) {
+      append('cause:')
+      collect(record.cause, depth + 1)
+    }
     for (const key of [
       'content',
-      'message',
       'error',
+      'errors',
       'stderr',
       'detail',
       'data'
@@ -151,4 +180,24 @@ export function safeToolArgumentSummary(
   return JSON.stringify(
     redactValue(toolArguments, new WeakSet())
   ).slice(0, maximum)
+}
+
+export function boundedToolDetail(
+  value: unknown,
+  maximum: number
+): string | undefined {
+  if (!Number.isSafeInteger(maximum) || maximum < 1 || value === undefined) {
+    return undefined
+  }
+  let text: string | undefined
+  if (typeof value === 'string') {
+    text = value
+  } else {
+    try {
+      text = JSON.stringify(value, null, 2)
+    } catch {
+      return undefined
+    }
+  }
+  return text ? text.slice(0, maximum) : undefined
 }

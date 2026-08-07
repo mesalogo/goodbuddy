@@ -660,6 +660,8 @@ export type AgentEvent =
         | 'failed'
         | 'recoverable'
       summary: string
+      input?: string
+      output?: string
       error?: string
     }
   | {
@@ -728,6 +730,7 @@ export const browserLiveStateSchema = z
       'loading',
       'ready',
       'acting',
+      'interactive',
       'failed',
       'stopped'
     ]),
@@ -752,6 +755,8 @@ export const browserStopRequestSchema = z
     conversationId: conversationIdSchema
   })
   .strict()
+
+export const browserInteractRequestSchema = browserStopRequestSchema
 
 export const knowledgeIdSchema = z.string().uuid()
 export const knowledgeCreateSchema = z
@@ -919,6 +924,7 @@ export type DesktopApi = {
     onEvent: (listener: (event: AgentEvent) => void) => () => void
   }
   browser: {
+    interact: (conversationId: string) => Promise<void>
     stop: (conversationId: string) => Promise<void>
     onState: (listener: (state: BrowserLiveState) => void) => () => void
   }

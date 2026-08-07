@@ -13,7 +13,6 @@ primarily Simplified Chinese.
 - `src/main`: privileged Electron main process, runtimes, persistence, IPC,
   knowledge, automation, and OS integration.
 - `src/preload`: the narrow, typed bridge exposed to the renderer.
-- `src/renderer`: React UI. It must not receive secrets or direct Node access.
 - `src/shared`: schemas, contracts, presets, and IPC channel definitions shared
   across process boundaries.
 - `resources/skills`: bundled skills.
@@ -27,8 +26,6 @@ Keep Electron security boundaries intact:
 - Validate IPC input with shared Zod schemas and verify trusted senders.
 - Expose only explicit preload methods. Do not pass raw Electron APIs.
 - Keep API keys in the main process and encrypted settings store.
-- Never log or return credentials, authorization headers, private documents, or
-  unredacted provider payloads.
 
 ## Runtime Behavior
 
@@ -57,7 +54,7 @@ Keep Electron security boundaries intact:
 - Keep changes focused. Do not add unrelated refactors or documentation.
 - Add or update focused tests for behavioral changes and regressions.
 - Avoid broad catches that erase HTTP status, cancellation, or provider error
-  context. Bound and redact any surfaced error details.
+  context.
 - Keep UI accessible with labels, keyboard behavior, semantic roles, and visible
   focus states.
 

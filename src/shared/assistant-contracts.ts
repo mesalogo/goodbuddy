@@ -75,6 +75,8 @@ export const conversationToolActivitySchema = z
       'interrupted'
     ]),
     summary: z.string().max(2_000),
+    input: z.string().max(4_000).optional(),
+    output: z.string().max(16_000).optional(),
     error: z.string().max(2_000).optional()
   })
   .strict()

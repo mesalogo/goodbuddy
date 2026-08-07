@@ -141,7 +141,14 @@ function completedToolEvent(
         callID: callId,
         type: 'tool',
         tool,
-        state: { status: 'completed' }
+        state: {
+          status: 'completed',
+          input: {
+            command: 'npm test',
+            token: 'visible-token'
+          },
+          output: 'Tests passed\nAuthorization: Bearer secret-token'
+        }
       }
     }
   }
@@ -1503,7 +1510,11 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       expect.objectContaining({
         type: 'tool',
         callId: 'call-1',
-        state: 'completed'
+        state: 'completed',
+        input:
+          '{\n  "command": "npm test",\n  "token": "visible-token"\n}',
+        output:
+          'Tests passed\nAuthorization: Bearer secret-token'
       })
     )
     expect(events).toContainEqual(
@@ -1631,11 +1642,12 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         type: 'tool',
         callId: 'call-1',
         state: 'failed',
-        error: 'write failed Authorization: [REDACTED]'
+        error:
+          'write failed Authorization: Bearer secret-token'
       }
     })
     await expect(stream.next()).rejects.toThrow(
-      'write failed Authorization: [REDACTED]'
+      'write failed Authorization: Bearer secret-token'
     )
     expect(session.abort).toHaveBeenCalledOnce()
     await runtime.dispose()
@@ -1661,7 +1673,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     const runtime = embeddedRuntime(client)
 
     await expect(collectRun(runtime)).rejects.toThrow(
-      'prompt rejected Authorization: [REDACTED]'
+      'prompt rejected Authorization: Bearer secret-token'
     )
     await runtime.dispose()
   })

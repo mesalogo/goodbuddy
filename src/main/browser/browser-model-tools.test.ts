@@ -127,6 +127,7 @@ describe('BrowserModelTools', () => {
     })
     expect(first.scopeKey).not.toBe(second.scopeKey)
     expect(first.allowPermanent).toBe(false)
+    expect(first.description).toContain('包括密码字段')
     expect(JSON.stringify(first)).not.toContain('top-secret')
 
     const result = await tools.callTool(

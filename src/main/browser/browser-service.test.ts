@@ -6,6 +6,7 @@ import {
   type BrowserSessionLike
 } from './browser-service'
 import type { BrowserWebContents } from './electron-browser-session'
+import type { BrowserLiveState } from '../../shared/contracts'
 
 type HarnessSlot = {
   currentOrigin?: string
@@ -30,19 +31,33 @@ function createHarness(options: {
   cleanupTimeoutMs?: number
   dispose?: () => Promise<void>
   sessionGate?: Promise<void>
+  captureScreenshot?: (
+    signal: AbortSignal
+  ) => Promise<{
+    type: 'image'
+    mimeType: 'image/jpeg'
+    data: string
+  }>
+  driverScreenshot?: BrowserDriverLike['screenshot']
 } = {}) {
   const slots: HarnessSlot[] = []
   const byContents = new Map<BrowserWebContents, HarnessSlot>()
   const createSession = vi.fn(async (): Promise<BrowserSessionLike> => {
     await options.sessionGate
-    const webContents = {} as BrowserWebContents
     const slot = {} as HarnessSlot
+    const webContents = {
+      getURL: () => `${slot.currentOrigin}/page`
+    } as BrowserWebContents
     const session: BrowserSessionLike = {
       webContents,
       approveNavigation: vi.fn((target) => {
         slot.approvedOrigin = target.origin
       }),
       getCurrentOrigin: vi.fn(() => slot.currentOrigin),
+      openInteraction: vi.fn(async () => undefined),
+      ...(options.captureScreenshot
+        ? { captureScreenshot: vi.fn(options.captureScreenshot) }
+        : {}),
       dispose: vi.fn(options.dispose ?? (async () => undefined))
     }
     const driver: BrowserDriverLike = {
@@ -67,11 +82,14 @@ function createHarness(options: {
         slot.currentOrigin = canonicalizeBrowserUrl(target.url).origin
         return { url: target.url }
       }),
-      screenshot: vi.fn(async () => ({
-        type: 'image' as const,
-        mimeType: 'image/jpeg' as const,
-        data: '/9j/2Q=='
-      })),
+      screenshot: vi.fn(
+        options.driverScreenshot ??
+          (async () => ({
+            type: 'image' as const,
+            mimeType: 'image/jpeg' as const,
+            data: '/9j/2Q=='
+          }))
+      ),
       dispose: vi.fn()
     }
     Object.assign(slot, { session, driver })
@@ -148,8 +166,8 @@ describe('BrowserService', () => {
   it('does not publish ready after a session is stopped during frame capture', async () => {
     const harness = createHarness()
     const signal = new AbortController().signal
-    const states: string[] = []
-    harness.service.onState((state) => states.push(state.status))
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
     await harness.service.navigate(
       'conversation',
       'https://example.com/',
@@ -181,7 +199,128 @@ describe('BrowserService', () => {
     await harness.service.releaseConversation('conversation')
 
     await expect(click).rejects.toThrow('浏览器会话已释放')
-    expect(states.at(-1)).toBe('stopped')
+    expect(states.at(-1)?.status).toBe('stopped')
+  })
+
+  it('falls back to CDP when native capture cannot produce the live frame', async () => {
+    const nativeCapture = vi.fn(async () => {
+      throw new Error('native capture unavailable while hidden')
+    })
+    const harness = createHarness({
+      captureScreenshot: nativeCapture
+    })
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      new AbortController().signal
+    )
+
+    expect(nativeCapture).toHaveBeenCalledOnce()
+    expect(harness.slots[0]?.driver.screenshot).toHaveBeenCalledOnce()
+    expect(states.at(-1)).toMatchObject({
+      status: 'ready',
+      frameDataUrl: 'data:image/jpeg;base64,/9j/2Q=='
+    })
+    await harness.service.dispose()
+  })
+
+  it('retries live capture while a newly committed page starts painting', async () => {
+    let attempts = 0
+    const harness = createHarness({
+      captureScreenshot: async () => {
+        attempts += 1
+        if (attempts === 1) {
+          throw new Error('page has not painted yet')
+        }
+        return {
+          type: 'image',
+          mimeType: 'image/jpeg',
+          data: '/9j/2Q=='
+        }
+      },
+      driverScreenshot: async () => {
+        throw new Error('CDP frame not ready')
+      }
+    })
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      new AbortController().signal
+    )
+
+    expect(attempts).toBe(2)
+    expect(states.at(-1)).toMatchObject({
+      status: 'ready',
+      frameDataUrl: 'data:image/jpeg;base64,/9j/2Q=='
+    })
+    await harness.service.dispose()
+  })
+
+  it('reports a live-frame failure instead of waiting indefinitely', async () => {
+    const harness = createHarness({
+      captureScreenshot: async () => {
+        throw new Error('native capture failed')
+      },
+      driverScreenshot: async () => {
+        throw new Error('CDP capture failed')
+      }
+    })
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      new AbortController().signal
+    )
+
+    expect(states.at(-1)).toMatchObject({
+      status: 'failed',
+      error: '页面已就绪，但实时画面捕获失败，请重试浏览器操作'
+    })
+    await harness.service.dispose()
+  })
+
+  it('keeps the last frame when a later refresh cannot capture a minimized window', async () => {
+    let nativeAttempts = 0
+    const harness = createHarness({
+      captureScreenshot: async () => {
+        nativeAttempts += 1
+        if (nativeAttempts === 1) {
+          return {
+            type: 'image',
+            mimeType: 'image/jpeg',
+            data: '/9j/2Q=='
+          }
+        }
+        throw new Error('minimized native capture unavailable')
+      },
+      driverScreenshot: async () => {
+        throw new Error('minimized CDP capture unavailable')
+      }
+    })
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    const signal = new AbortController().signal
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      signal
+    )
+
+    await harness.service.click('conversation', 'button_ref', signal)
+
+    expect(states.at(-1)).toMatchObject({
+      status: 'ready',
+      frameDataUrl: 'data:image/jpeg;base64,/9j/2Q=='
+    })
+    await harness.service.dispose()
   })
 
   it('isolates browser state and drivers by conversation', async () => {
@@ -241,6 +380,58 @@ describe('BrowserService', () => {
     expect(slot.driver.snapshot).not.toHaveBeenCalled()
     clickGate.resolve()
     await click
+    await harness.service.dispose()
+  })
+
+  it('pauses agent operations while the user interacts with the same session', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    await harness.service.navigate(
+      'conversation',
+      'https://a.example/',
+      signal
+    )
+    const interactionGate = deferred<
+      Awaited<ReturnType<BrowserSessionLike['openInteraction']>>
+    >()
+    const slot = harness.slots[0]
+    if (!slot) {
+      throw new Error('slot missing')
+    }
+    vi.mocked(slot.session.openInteraction).mockReturnValueOnce(
+      interactionGate.promise
+    )
+
+    const interaction = harness.service.interact(
+      'conversation',
+      signal
+    )
+    await vi.waitFor(() =>
+      expect(slot.session.openInteraction).toHaveBeenCalledOnce()
+    )
+    const snapshot = harness.service.snapshot('conversation', signal)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(slot.driver.snapshot).not.toHaveBeenCalled()
+
+    interactionGate.resolve({
+      type: 'image',
+      mimeType: 'image/jpeg',
+      data: 'closing-frame'
+    })
+    await interaction
+    expect(states.slice(-2).map((state) => state.status)).toEqual([
+      'interactive',
+      'ready'
+    ])
+    expect(states.at(-1)?.frameDataUrl).toBe(
+      'data:image/jpeg;base64,closing-frame'
+    )
+    expect(harness.service.getSessionCount()).toBe(1)
+    expect(slot.session.dispose).not.toHaveBeenCalled()
+    await snapshot
+    expect(slot.driver.snapshot).toHaveBeenCalledOnce()
     await harness.service.dispose()
   })
 

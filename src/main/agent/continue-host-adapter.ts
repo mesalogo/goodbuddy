@@ -33,7 +33,7 @@ import {
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import { createOpenAIApiBaseUrl } from './openai-endpoint'
 import {
-  redactSensitiveText,
+  boundedToolDetail,
   safeToolErrorDetail
 } from './approval-summary'
 
@@ -88,6 +88,8 @@ const continueHostStreamEventSchema = z.discriminatedUnion('type', [
       callId: z.string().min(1).max(256),
       name: z.string().min(1).max(200),
       state: z.enum(['running', 'completed', 'failed']),
+      input: z.string().max(4_000).optional(),
+      output: z.string().max(16_000).optional(),
       error: z.string().max(1_000).optional()
     })
     .strict()
@@ -142,6 +144,8 @@ export type ContinueHostTool = {
   callId: string
   name: string
   state: 'pending' | 'running' | 'completed' | 'failed'
+  input?: string
+  output?: string
   error?: string
 }
 
@@ -383,7 +387,7 @@ function parseContinueFailure(text: string): string | undefined {
           : record.message
     const detail =
       typeof message === 'string' && message.trim()
-        ? `：${redactSensitiveText(message.trim()).slice(0, 500)}`
+        ? `：${message.trim().slice(0, 500)}`
         : ''
     return `Continue 模型请求失败${detail}`
   } catch {
@@ -465,10 +469,23 @@ function extractContinueTools(
         normalizedState === 'failed'
           ? normalizeContinueToolError(state.output)
           : undefined
+      const input =
+        toolFunction && typeof toolFunction === 'object'
+          ? boundedToolDetail(
+              (toolFunction as Record<string, unknown>).arguments,
+              4_000
+            )
+          : undefined
+      const output =
+        normalizedState === 'completed'
+          ? boundedToolDetail(state.output, 16_000)
+          : undefined
       tools.set(callId, {
         callId,
         name: name.trim().slice(0, 200),
         state: normalizedState,
+        ...(input ? { input } : {}),
+        ...(output ? { output } : {}),
         ...(error ? { error } : {})
       })
     }
@@ -482,7 +499,14 @@ function mergeContinueTools(
 ): ContinueHostTool[] {
   const tools = new Map(current.map((tool) => [tool.callId, tool]))
   for (const tool of updates) {
-    tools.set(tool.callId, tool)
+    const previous = tools.get(tool.callId)
+    tools.set(tool.callId, {
+      ...previous,
+      ...tool,
+      input: tool.input ?? previous?.input,
+      output: tool.output ?? previous?.output,
+      error: tool.error ?? previous?.error
+    })
   }
   return [...tools.values()]
 }
@@ -661,7 +685,7 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       streamCallbacksMarker,
-      'a={onContent:u=>{u&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"text",delta:u})},onContentComplete:u=>{},onToolStart:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:u,state:"running"})},onToolResult:(u,l,c,d)=>{d&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:d,name:l,state:c==="done"?"completed":"failed"})},onToolError:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:l??"unknown",state:"failed",error:String(u).slice(0,1e3)})},onToolPermissionRequest:'
+      'a={onContent:u=>{u&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"text",delta:u})},onContentComplete:u=>{},onToolStart:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:u,state:"running",input:(()=>{try{return JSON.stringify(l).slice(0,4e3)}catch{return"[无法序列化]"}})()})},onToolResult:(u,l,c,d)=>{d&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:d,name:l,state:c==="done"?"completed":"failed",output:String(u).slice(0,16e3)})},onToolError:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:l??"unknown",state:"failed",error:String(u).slice(0,1e3)})},onToolPermissionRequest:'
     )
     patched = replaceExactly(
       patched,
@@ -1112,6 +1136,12 @@ export class ContinueHostAdapter {
             callId: event.callId,
             name: event.name,
             state: event.state,
+            ...(event.input
+              ? { input: boundedToolDetail(event.input, 4_000) }
+              : {}),
+            ...(event.output
+              ? { output: boundedToolDetail(event.output, 16_000) }
+              : {}),
             ...(event.error
               ? { error: normalizeContinueToolError(event.error) }
               : {})
@@ -1143,7 +1173,8 @@ export class ContinueHostAdapter {
               {
                 callId: pendingCallId,
                 name: pending.toolName,
-                state: 'pending'
+                state: 'pending',
+                input: boundedToolDetail(pending.toolArgs, 4_000)
               }
             ]
           }

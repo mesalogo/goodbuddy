@@ -94,6 +94,7 @@ const api: DesktopApi = {
     })
   },
   browser: {
+    interact: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     onState: vi.fn((listener) => {
       browserListener = listener
@@ -828,7 +829,18 @@ describe('App', () => {
         callId: 'call-1',
         name: 'read',
         state: 'running',
-        summary: 'OpenCode 工具：read'
+        summary: 'OpenCode 工具：read',
+        input: '{"path":"README.md"}'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'tool',
+        callId: 'call-2',
+        name: 'grep',
+        state: 'completed',
+        summary: 'OpenCode 工具：grep',
+        input: '{"pattern":"runtime"}',
+        output: 'src/main/agent/runtime.ts'
       })
       agentListener?.({
         requestId: request.requestId,
@@ -846,7 +858,10 @@ describe('App', () => {
         callId: 'call-1',
         name: 'read',
         state: 'completed',
-        summary: 'OpenCode 工具：read'
+        summary: 'OpenCode 工具：read',
+        input: '{"path":"README.md"}',
+        output:
+          'README contents\nAuthorization: Bearer visible-token'
       })
     })
 
@@ -866,6 +881,26 @@ describe('App', () => {
     expect(
       screen.getAllByText('OpenCode 工具：read')
     ).toHaveLength(1)
+    expect(
+      screen.getByRole('region', { name: '工具执行，共 2 项' })
+    ).toBeInTheDocument()
+    const readTool = screen.getByText('read').closest('details')
+    const rawToolOutput =
+      'README contents\nAuthorization: Bearer visible-token'
+    expect(readTool).not.toHaveAttribute('open')
+    expect(
+      screen.getByText(
+        (_, element) => element?.textContent === rawToolOutput
+      )
+    ).not.toBeVisible()
+    fireEvent.click(screen.getByText('read').closest('summary')!)
+    expect(readTool).toHaveAttribute('open')
+    expect(within(readTool!).getByText('调用参数')).toBeVisible()
+    expect(
+      within(readTool!).getByText(
+        (_, element) => element?.textContent === rawToolOutput
+      )
+    ).toBeVisible()
 
     act(() => {
       if (!request) {
@@ -1040,8 +1075,19 @@ describe('App', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByLabelText('添加附件'))
-    expect(await screen.findByText('需求说明.md')).toBeInTheDocument()
-    expect(screen.getByText('页面截图.png')).toBeInTheDocument()
+    const composer = screen
+      .getByLabelText('向 GoodBuddy 提问')
+      .closest<HTMLElement>('.composer')
+    expect(composer).not.toBeNull()
+    if (!composer) {
+      return
+    }
+    expect(
+      await within(composer).findByText('需求说明.md')
+    ).toBeInTheDocument()
+    expect(
+      within(composer).getByText('页面截图.png')
+    ).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '分析这些附件' }
     })
@@ -1130,8 +1176,17 @@ describe('App', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByLabelText('添加附件'))
+    const composer = screen
+      .getByLabelText('向 GoodBuddy 提问')
+      .closest<HTMLElement>('.composer')
+    expect(composer).not.toBeNull()
+    if (!composer) {
+      return
+    }
     await waitFor(() =>
-      expect(screen.getAllByText(/^参考图-\d\.png$/u)).toHaveLength(5)
+      expect(
+        within(composer).getAllByText(/^参考图-\d\.png$/u)
+      ).toHaveLength(5)
     )
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '比较这五张图片' }
@@ -1188,8 +1243,15 @@ describe('App', () => {
     await waitFor(() =>
       expect(api.context.captureWindow).toHaveBeenCalledWith('window-2')
     )
+    const composer = screen
+      .getByLabelText('向 GoodBuddy 提问')
+      .closest<HTMLElement>('.composer')
+    expect(composer).not.toBeNull()
+    if (!composer) {
+      return
+    }
     expect(
-      await screen.findByText('窗口-Browser.jpg')
+      await within(composer).findByText('窗口-Browser.jpg')
     ).toBeInTheDocument()
   })
 
@@ -1335,10 +1397,22 @@ describe('App', () => {
     expect(
       await screen.findByRole('heading', { name: '工作区说明' })
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: '工作区' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.queryByRole('tab', { name: '预览' })
+    ).not.toBeInTheDocument()
     expect(api.workspace.readFile).toHaveBeenCalledWith(
       projectId,
       'README.md'
     )
+    fireEvent.click(
+      screen.getByRole('button', { name: '返回工作区' })
+    )
+    expect(
+      await screen.findByRole('button', { name: 'README.md' })
+    ).toBeInTheDocument()
   })
 
   it('opens workspace entries from their row actions', async () => {
@@ -2986,19 +3060,31 @@ describe('App', () => {
     fireEvent.click(screen.getByLabelText('切换助手工作栏'))
     expect(sidebar).toHaveClass('assistant-sidebar--open')
 
+    expect(
+      screen.getByRole('tab', { name: '任务中心' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('自动化')).toBeInTheDocument()
+    expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '上下文' }))
     expect(
       screen.getByText('尚未添加文件、截图或剪贴板内容。')
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '任务中心' }))
+    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
     expect(
-      screen.getByText(/查看当前和最近请求的运行状态/)
+      screen.getByText(/选择文件后在当前工作区内预览/)
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '成果库' }))
+    fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
+    expect(
+      screen.getByText(/Agent 打开网页后/)
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '成果' }))
     expect(screen.getByText('对话与导入成果')).toBeInTheDocument()
     expect(
-      screen.getByText(/保存并预览由对话生成或手动导入/)
+      screen.getByText(/查看并预览由对话生成或手动导入/)
     ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('tab', { name: '预览' })
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
   })
@@ -3035,6 +3121,12 @@ describe('App', () => {
     ).toHaveAttribute(
       'src',
       'data:image/jpeg;base64,/9j/2Q=='
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '交互' })
+    )
+    await waitFor(() =>
+      expect(api.browser.interact).toHaveBeenCalledWith(conversationId)
     )
     fireEvent.click(
       screen.getByRole('button', { name: '停止浏览器' })

@@ -84,7 +84,7 @@ const definitions = [
           type: 'string',
           minLength: 1,
           maxLength: 8_192,
-          description: '完整的公开 HTTP(S) URL'
+          description: '当前设备可连接的完整 HTTP 或 HTTPS URL'
         }
       },
       required: ['url'],
@@ -267,7 +267,7 @@ export class BrowserModelTools {
       scopeKey = `model:browser:click:${currentOrigin}:${input.ref}`
     } else if (name === 'browser_type') {
       const input = browserTypeInputSchema.parse(argumentsValue)
-      description = `向 ${currentOrigin} 页面中的元素 ${input.ref} 输入已隐藏的文本。密码、文件和隐藏字段会被拒绝。`
+      description = `向 ${currentOrigin} 页面中的元素 ${input.ref} 输入已隐藏的文本，包括密码字段；文件、隐藏、禁用和只读字段不支持输入。`
       argumentSummary = `元素：${input.ref}；内容：[已隐藏，${input.text.length} 个字符]`
       // A session approval must never authorize a later value, even for the
       // same element. The nonce intentionally makes this invocation-only.

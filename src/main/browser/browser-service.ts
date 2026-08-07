@@ -7,6 +7,7 @@ import {
 import type { BrowserScreenshot } from './browser-screenshot'
 import {
   ElectronBrowserSession,
+  type BrowserParentWindowHandle,
   type BrowserWebContents
 } from './electron-browser-session'
 import type { BrowserLiveState } from '../../shared/contracts'
@@ -20,6 +21,7 @@ export type BrowserSessionLike = {
     target: Awaited<ReturnType<BrowserUrlPolicy['validate']>>
   ): void
   getCurrentOrigin(): string | undefined
+  openInteraction(): Promise<BrowserScreenshot | undefined>
   captureScreenshot?(signal: AbortSignal): Promise<BrowserScreenshot>
   dispose(): Promise<void>
 }
@@ -45,6 +47,7 @@ export type BrowserServiceOptions = {
   idleTimeoutMs?: number
   cleanupTimeoutMs?: number
   liveFrameDelayMs?: number
+  parentWindow?: BrowserParentWindowHandle
   createSession?: (
     policy: BrowserUrlPolicy,
     signal: AbortSignal
@@ -112,9 +115,16 @@ async function boundedCleanup(
 
 async function defaultCreateSession(
   policy: BrowserUrlPolicy,
-  signal: AbortSignal
+  signal: AbortSignal,
+  parentWindow?: BrowserParentWindowHandle
 ): Promise<BrowserSessionLike> {
-  return ElectronBrowserSession.create({ policy }, signal)
+  return ElectronBrowserSession.create(
+    {
+      policy,
+      ...(parentWindow ? { parentWindow } : {})
+    },
+    signal
+  )
 }
 
 function defaultCreateDriver(webContents: BrowserWebContents): BrowserDriverLike {
@@ -152,7 +162,10 @@ export class BrowserService {
     this.cleanupTimeoutMs =
       options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS
     this.liveFrameDelayMs = options.liveFrameDelayMs ?? 100
-    this.createSession = options.createSession ?? defaultCreateSession
+    this.createSession =
+      options.createSession ??
+      ((policy, signal) =>
+        defaultCreateSession(policy, signal, options.parentWindow))
     this.createDriver = options.createDriver ?? defaultCreateDriver
     if (
       !Number.isSafeInteger(this.maximumSessions) ||
@@ -198,6 +211,9 @@ export class BrowserService {
       conversationId,
       status,
       ...(previous?.url ? { url: previous.url } : {}),
+      ...(status !== 'stopped' && previous?.frameDataUrl
+        ? { frameDataUrl: previous.frameDataUrl }
+        : {}),
       ...update,
       updatedAt: Date.now()
     }
@@ -235,40 +251,73 @@ export class BrowserService {
           signal
         )
       }
-      const previewController = new AbortController()
-      const timeout = setTimeout(
-        () =>
-          previewController.abort(
-            new Error('浏览器实时画面捕获超时')
-          ),
-        2_000
-      )
-      try {
-        const previewSignal = AbortSignal.any([
-          signal,
-          previewController.signal
-        ])
-        frame = slot.session.captureScreenshot
-          ? await slot.session.captureScreenshot(previewSignal)
-          : await slot.driver.screenshot(previewSignal)
-      } catch {
-        signal.throwIfAborted()
-        // Browser control succeeds even when the optional live frame fails.
-      } finally {
-        clearTimeout(timeout)
+      const captureDeadline = AbortSignal.any([
+        signal,
+        AbortSignal.timeout(6_000)
+      ])
+      for (let attempt = 0; attempt < 3 && !frame; attempt += 1) {
+        if (attempt > 0) {
+          try {
+            await waitFor(
+              new Promise<void>((resolve) =>
+                setTimeout(resolve, attempt * 150)
+              ),
+              captureDeadline
+            )
+          } catch {
+            signal.throwIfAborted()
+            break
+          }
+        }
+        if (slot.session.captureScreenshot) {
+          try {
+            frame = await slot.session.captureScreenshot(
+              AbortSignal.any([
+                captureDeadline,
+                AbortSignal.timeout(1_500)
+              ])
+            )
+          } catch {
+            signal.throwIfAborted()
+          }
+        }
+        if (!frame && !captureDeadline.aborted) {
+          try {
+            frame = await slot.driver.screenshot(
+              AbortSignal.any([
+                captureDeadline,
+                AbortSignal.timeout(1_500)
+              ])
+            )
+          } catch {
+            signal.throwIfAborted()
+          }
+        }
       }
     }
     signal.throwIfAborted()
     if (slot.released || this.slots.get(conversationId) !== slot) {
       return
     }
+    if (!frame) {
+      const previousFrame =
+        this.liveStates.get(conversationId)?.frameDataUrl
+      if (previousFrame) {
+        this.emitState(conversationId, 'ready', {
+          ...(url ? { url } : {}),
+          frameDataUrl: previousFrame
+        })
+        return
+      }
+      this.emitState(conversationId, 'failed', {
+        ...(url ? { url } : {}),
+        error: '页面已就绪，但实时画面捕获失败，请重试浏览器操作'
+      })
+      return
+    }
     this.emitState(conversationId, 'ready', {
       ...(url ? { url } : {}),
-      ...(frame
-        ? {
-            frameDataUrl: `data:${frame.mimeType};base64,${frame.data}`
-          }
-        : {})
+      frameDataUrl: `data:${frame.mimeType};base64,${frame.data}`
     })
   }
 
@@ -429,7 +478,7 @@ export class BrowserService {
     slot: BrowserSlot,
     signal: AbortSignal,
     operation: (effectiveSignal: AbortSignal) => Promise<T>,
-    status?: 'loading' | 'acting'
+    status?: 'loading' | 'acting' | 'interactive'
   ): Promise<T> {
     signal.throwIfAborted()
     if (slot.released || this.disposed) {
@@ -496,7 +545,7 @@ export class BrowserService {
   private async runInSession<T>(
     conversationId: string,
     signal: AbortSignal,
-    status: 'loading' | 'acting',
+    status: 'loading' | 'acting' | 'interactive',
     failureStage: string,
     operation: (
       slot: BrowserSlot,
@@ -715,10 +764,17 @@ export class BrowserService {
       '浏览器截图',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
-        const screenshot =
-          slot.session.captureScreenshot
-            ? await slot.session.captureScreenshot(effectiveSignal)
-            : await slot.driver.screenshot(effectiveSignal)
+        let screenshot: BrowserScreenshot | undefined
+        if (slot.session.captureScreenshot) {
+          try {
+            screenshot = await slot.session.captureScreenshot(
+              effectiveSignal
+            )
+          } catch {
+            effectiveSignal.throwIfAborted()
+          }
+        }
+        screenshot ??= await slot.driver.screenshot(effectiveSignal)
         await this.captureFrame(
           conversationId,
           slot,
@@ -727,6 +783,36 @@ export class BrowserService {
           screenshot
         )
         return screenshot
+      }
+    )
+  }
+
+  async interact(
+    conversationId: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    await this.runInSession(
+      conversationId,
+      signal,
+      'interactive',
+      '浏览器交互',
+      async (slot, effectiveSignal) => {
+        await this.verifyCurrentOriginOrRelease(slot)
+        const closingFrame = await waitFor(
+          slot.session.openInteraction(),
+          effectiveSignal
+        )
+        const currentUrl = canonicalizeBrowserUrl(
+          slot.session.webContents.getURL()
+        )
+        slot.origin = currentUrl.origin
+        await this.captureFrame(
+          conversationId,
+          slot,
+          effectiveSignal,
+          currentUrl.href,
+          closingFrame
+        )
       }
     )
   }

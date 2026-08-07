@@ -21,6 +21,7 @@ function createHarness() {
   const debuggerEvents = new EventEmitter()
   const contentEvents = new EventEmitter()
   const partitionEvents = new EventEmitter()
+  const windowEvents = new EventEmitter()
   let currentUrl = ''
   let openHandler: ((details: { url: string }) => { action: 'deny' }) | undefined
   const sendCommand = vi.fn(async () => ({}))
@@ -71,6 +72,21 @@ function createHarness() {
     loadURL: vi.fn(async (url: string) => {
       currentUrl = url
     }),
+    show: vi.fn(),
+    minimize: vi.fn(),
+    restore: vi.fn(),
+    isMinimized: vi.fn(() => false),
+    focus: vi.fn(),
+    on: (event, listener) =>
+      windowEvents.on(
+        event,
+        listener as (...argumentsValue: unknown[]) => void
+      ),
+    off: (event, listener) =>
+      windowEvents.off(
+        event,
+        listener as (...argumentsValue: unknown[]) => void
+      ),
     destroy: vi.fn(),
     isDestroyed: vi.fn(() => false)
   }
@@ -125,6 +141,7 @@ function createHarness() {
     contentEvents,
     debuggerEvents,
     partitionEvents,
+    windowEvents,
     partition,
     proxy,
     policy,
@@ -274,6 +291,74 @@ describe('ElectronBrowserSession', () => {
     ).resolves.toBeUndefined()
     expect(session.getApprovedOrigin()).toBe('http://10.0.0.25')
     await session.dispose()
+  })
+
+  it('restores the browser for interaction and minimizes it on close', async () => {
+    const harness = createHarness()
+    const parentWindow = {
+      setEnabled: vi.fn(),
+      focus: vi.fn(),
+      isDestroyed: vi.fn(() => false)
+    }
+    let createdWindowOptions: Record<string, unknown> | undefined
+    const createWindow = vi.fn(
+      async (options: Record<string, unknown>) => {
+        createdWindowOptions = options
+        return harness.window
+      }
+    )
+    const session = await ElectronBrowserSession.create({
+      policy: harness.policy,
+      parentWindow,
+      createPartition: async () => harness.partition,
+      createWindow,
+      createProxy: () => harness.proxy
+    })
+
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parent: parentWindow,
+        show: false,
+        title: 'GoodBuddy 浏览器交互'
+      })
+    )
+    expect(createdWindowOptions?.modal).toBeUndefined()
+    const interaction = session.openInteraction()
+    expect(parentWindow.setEnabled).toHaveBeenCalledWith(false)
+    expect(harness.window.show).toHaveBeenCalledOnce()
+    expect(harness.window.focus).toHaveBeenCalledOnce()
+    const closeEvent = { preventDefault: vi.fn() }
+    harness.windowEvents.emit('close', closeEvent)
+
+    await expect(interaction).resolves.toEqual({
+      type: 'image',
+      mimeType: 'image/jpeg',
+      data: '/9j/2Q=='
+    })
+    expect(closeEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(harness.webContents.capturePage).toHaveBeenCalledOnce()
+    expect(harness.window.minimize).toHaveBeenCalledOnce()
+    expect(parentWindow.setEnabled).toHaveBeenLastCalledWith(true)
+    expect(parentWindow.focus).toHaveBeenCalledOnce()
+    expect(
+      vi.mocked(harness.webContents.capturePage!).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(harness.window.minimize).mock.invocationCallOrder[0] ??
+        Number.POSITIVE_INFINITY
+    )
+    const repeatedCloseEvent = { preventDefault: vi.fn() }
+    harness.windowEvents.emit('close', repeatedCloseEvent)
+    expect(repeatedCloseEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(harness.window.minimize).toHaveBeenCalledTimes(2)
+    expect(harness.window.destroy).not.toHaveBeenCalled()
+    vi.mocked(harness.window.isMinimized).mockReturnValue(true)
+    const reopenedInteraction = session.openInteraction()
+    expect(harness.window.restore).toHaveBeenCalledOnce()
+    harness.windowEvents.emit('close', { preventDefault: vi.fn() })
+    await reopenedInteraction
+    await session.dispose()
+    expect(harness.window.destroy).toHaveBeenCalledOnce()
   })
 
   it('detaches listeners and clears isolated data on idempotent disposal', async () => {

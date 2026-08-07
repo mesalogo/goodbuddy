@@ -1,29 +1,25 @@
 import {
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
-  FileDiff,
+  ExternalLink,
   FileText,
   FolderTree,
   Hourglass,
   Monitor,
   PanelRightClose,
-  PlayCircle,
   RefreshCw,
   ShieldAlert,
   Upload,
-  X,
-  XCircle
+  X
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
+  AssistantHeartbeatConfig,
   AssistantMemory,
   AssistantSchedule,
-  AssistantHeartbeatConfig,
-  AssistantHeartbeatEntry,
-  AssistantExpert,
   HeartbeatCreateInput,
   ScheduleCreateInput,
-  AssistantTask,
   WorkspaceChanges,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview
@@ -35,17 +31,15 @@ import type {
   ContextAttachment,
   KnowledgeLibrary
 } from '../../shared/contracts'
-import type { ActivityRecord } from './activity-store'
 import { HeartbeatSettings } from './HeartbeatSettings'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 
 export type AssistantSidebarTab =
   | 'tasks'
   | 'context'
-  | 'artifacts'
-  | 'changes'
+  | 'workspace'
   | 'browser'
-  | 'preview'
+  | 'results'
 
 export type SidebarArtifact = {
   id: string
@@ -67,38 +61,24 @@ export type PendingSidebarApproval = {
 type RightAssistantSidebarProps = {
   open: boolean
   tab: AssistantSidebarTab
-  activities: ActivityRecord[]
-  tasks: AssistantTask[]
-  experts?: AssistantExpert[]
+  approvals: PendingSidebarApproval[]
   artifacts: SidebarArtifact[]
   attachments: ContextAttachment[]
   enabledLibraries: KnowledgeLibrary[]
-  approvals: PendingSidebarApproval[]
+  heartbeats: AssistantHeartbeatConfig[]
   memories: AssistantMemory[]
   schedules: AssistantSchedule[]
-  heartbeats: AssistantHeartbeatConfig[]
-  heartbeatEntries: AssistantHeartbeatEntry[]
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
   browserState?: BrowserLiveState
   onClose: () => void
+  onInteractBrowser: () => Promise<void>
   onStopBrowser: () => Promise<void>
-  onOpenHeartbeat: () => void
-  onOpenConversation: (conversationId: string) => void
+  onCreateHeartbeat: (input: HeartbeatCreateInput) => Promise<void>
+  onCreateSchedule: (input: ScheduleCreateInput) => Promise<void>
   onImportArtifacts: () => Promise<void>
   onLoadArtifact: (artifactId: string) => Promise<void>
   onRemoveAttachment: (attachmentId: string) => void
-  onCreateMemory: (content: string) => Promise<void>
-  onCreateSchedule: (input: ScheduleCreateInput) => Promise<void>
-  onCreateHeartbeat: (input: HeartbeatCreateInput) => Promise<void>
-  onSetHeartbeatPaused: (
-    heartbeatId: string,
-    paused: boolean
-  ) => Promise<void>
-  onRemoveHeartbeat: (heartbeatId: string) => Promise<void>
-  onRunHeartbeat: (heartbeatId: string) => Promise<void>
-  onRemoveSchedule: (scheduleId: string) => Promise<void>
-  onRunSchedule: (scheduleId: string) => Promise<void>
   onRefreshChanges: () => Promise<void>
   onListWorkspaceDirectory: (
     path: string
@@ -108,15 +88,18 @@ type RightAssistantSidebarProps = {
     path: string,
     type: 'file' | 'directory'
   ) => Promise<void>
-  onRemoveMemory: (memoryId: string) => Promise<void>
-  onSetMemoryStatus: (
-    memoryId: string,
-    status: AssistantMemory['status']
-  ) => Promise<void>
+  onRemoveHeartbeat: (heartbeatId: string) => Promise<void>
+  onRemoveSchedule: (scheduleId: string) => Promise<void>
   onRespondApproval: (
     approval: PendingSidebarApproval,
     decision: ApprovalDecision
   ) => void
+  onRunHeartbeat: (heartbeatId: string) => Promise<void>
+  onRunSchedule: (scheduleId: string) => Promise<void>
+  onSetHeartbeatPaused: (
+    heartbeatId: string,
+    paused: boolean
+  ) => Promise<void>
   onTabChange: (tab: AssistantSidebarTab) => void
 }
 
@@ -128,22 +111,17 @@ const tabs: Array<{
   {
     id: 'tasks',
     label: '任务中心',
-    description: '查看运行状态、处理审批并安排自动化'
+    description: '处理待审批操作并管理自动化'
   },
   {
     id: 'context',
     label: '上下文',
-    description: '管理本次对话的附件、知识库与长期记忆'
+    description: '查看本次对话使用的附件、知识库与记忆'
   },
   {
-    id: 'artifacts',
-    label: '成果库',
-    description: '集中保存和打开对话生成或手动导入的内容'
-  },
-  {
-    id: 'changes',
+    id: 'workspace',
     label: '工作区',
-    description: '浏览项目文件与工具活动'
+    description: '浏览项目文件、Git 变更与文件内容'
   },
   {
     id: 'browser',
@@ -151,9 +129,9 @@ const tabs: Array<{
     description: '查看 Agent 操作网页时的实时画面'
   },
   {
-    id: 'preview',
-    label: '预览',
-    description: '预览选中的成果或工作区文件'
+    id: 'results',
+    label: '成果',
+    description: '查看对话生成或手动导入的内容'
   }
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
@@ -189,87 +167,37 @@ function clampSidebarWidth(width: number, viewportWidth: number): number {
   return Math.min(limits.maximum, Math.max(limits.minimum, width))
 }
 
-function formatTime(timestamp: number | string): string {
-  return sidebarTimeFormatter.format(new Date(timestamp))
-}
-
-export function orderTasksWithChildren(
-  tasks: readonly AssistantTask[]
-): AssistantTask[] {
-  const childIds = new Set(
-    tasks.flatMap((task) => (task.parentTaskId ? [task.id] : []))
-  )
-  const childrenByParent = new Map<string, AssistantTask[]>()
-  for (const task of tasks) {
-    if (!task.parentTaskId) {
-      continue
-    }
-    const children = childrenByParent.get(task.parentTaskId) ?? []
-    children.push(task)
-    childrenByParent.set(task.parentTaskId, children)
-  }
-  const ordered: AssistantTask[] = []
-  const included = new Set<string>()
-  const append = (task: AssistantTask): void => {
-    if (included.has(task.id)) {
-      return
-    }
-    included.add(task.id)
-    ordered.push(task)
-    for (const child of childrenByParent.get(task.id) ?? []) {
-      append(child)
-    }
-  }
-  for (const task of tasks) {
-    if (!childIds.has(task.id)) {
-      append(task)
-    }
-  }
-  for (const task of tasks) {
-    append(task)
-  }
-  return ordered
-}
-
 export function RightAssistantSidebar({
   open,
   tab,
-  activities,
-  tasks,
-  experts = [],
+  approvals,
   artifacts,
   attachments,
   enabledLibraries,
-  approvals,
+  heartbeats,
   memories,
   schedules,
-  heartbeats,
-  heartbeatEntries,
   workspaceChanges,
   workspaceProjectId,
   browserState,
   onClose,
+  onInteractBrowser,
   onStopBrowser,
-  onOpenHeartbeat,
-  onOpenConversation,
+  onCreateHeartbeat,
+  onCreateSchedule,
   onImportArtifacts,
   onLoadArtifact,
   onRemoveAttachment,
-  onCreateMemory,
-  onCreateSchedule,
-  onCreateHeartbeat,
-  onSetHeartbeatPaused,
-  onRemoveHeartbeat,
-  onRunHeartbeat,
-  onRemoveSchedule,
-  onRunSchedule,
   onRefreshChanges,
   onListWorkspaceDirectory,
   onLoadWorkspaceFile,
   onOpenWorkspaceEntry,
-  onRemoveMemory,
-  onSetMemoryStatus,
+  onRemoveHeartbeat,
+  onRemoveSchedule,
   onRespondApproval,
+  onRunHeartbeat,
+  onRunSchedule,
+  onSetHeartbeatPaused,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
@@ -303,7 +231,6 @@ export function RightAssistantSidebar({
       }
   >()
   const workspacePreviewRequest = useRef(0)
-  const [memoryDraft, setMemoryDraft] = useState('')
   const [workspaceRefreshVersion, setWorkspaceRefreshVersion] = useState(0)
   const [scheduleTitle, setScheduleTitle] = useState('')
   const [schedulePrompt, setSchedulePrompt] = useState('')
@@ -312,31 +239,11 @@ export function RightAssistantSidebar({
     ScheduleCreateInput['recurrence']
   >('once')
   const [actionError, setActionError] = useState('')
-  const recentTasks = useMemo(
-    () =>
-      activities
-        .filter((activity) => activity.kind === 'request')
-        .slice(0, 20),
-    [activities]
-  )
-  const orderedTasks = useMemo(
-    () => orderTasksWithChildren(tasks),
-    [tasks]
-  )
-  const expertNames = useMemo(
-    () => new Map(experts.map((expert) => [expert.id, expert.name])),
-    [experts]
-  )
-  const changes = useMemo(
-    () =>
-      activities
-        .filter((activity) => activity.kind === 'tool')
-        .slice(0, 30),
-    [activities]
+  const activeMemories = memories.filter(
+    (memory) => memory.status === 'confirmed'
   )
   const artifactPreview =
-    artifacts.find((artifact) => artifact.id === selectedArtifactId) ??
-    artifacts[0]
+    artifacts.find((artifact) => artifact.id === selectedArtifactId)
   const currentWorkspacePreview =
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
@@ -428,7 +335,6 @@ export function RightAssistantSidebar({
     const projectId = workspaceProjectId
     setWorkspacePreview({ projectId, path, state: 'loading' })
     setActionError('')
-    onTabChange('preview')
     void onLoadWorkspaceFile(path)
       .then((file) => {
         if (workspacePreviewRequest.current === requestId) {
@@ -624,103 +530,49 @@ export function RightAssistantSidebar({
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
             <p className="assistant-sidebar__section-description">
-              查看当前和最近请求的运行状态、处理待审批操作，并安排定时任务与智能心跳。
+              处理当前待审批操作，并创建和管理自动化任务。
             </p>
-            {approvals.length > 0 && (
-              <>
-                <h3>
-                  <ShieldAlert size={15} />
-                  等待审批
-                </h3>
-                {approvals.map((approval) => (
-                  <article
-                    className="assistant-sidebar__approval"
-                    key={approval.approvalId}
-                  >
-                    <strong>{approval.title}</strong>
-                    <p>{approval.description}</p>
-                    {approval.toolName && <code>{approval.toolName}</code>}
-                    <div className="assistant-sidebar__approval-actions">
-                      <button
-                        className="secondary-button"
-                        onClick={() =>
-                          onRespondApproval(approval, 'deny')
-                        }
-                        type="button"
-                      >
-                        拒绝
-                      </button>
-                      <button
-                        className="primary-button"
-                        onClick={() =>
-                          onRespondApproval(approval, 'once')
-                        }
-                        type="button"
-                      >
-                        仅此次允许
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </>
-            )}
-
             <h3>
-              <PlayCircle size={15} />
-              最近任务
+              <ShieldAlert size={15} />
+              等待审批
             </h3>
-            {tasks.length === 0 && recentTasks.length === 0 ? (
+            {approvals.length === 0 ? (
               <p className="assistant-sidebar__empty">
-                发送请求后，任务状态会显示在这里。
+                当前没有等待审批的操作。
               </p>
             ) : (
-              (orderedTasks.length > 0 ? orderedTasks : recentTasks).map((task) => (
-                <button
-                  className={
-                    'parentTaskId' in task && task.parentTaskId
-                      ? 'assistant-sidebar__row assistant-sidebar__row--subtask'
-                      : 'assistant-sidebar__row'
-                  }
-                  key={task.id}
-                  onClick={() => {
-                    if (task.conversationId) {
-                      onOpenConversation(task.conversationId)
-                    }
-                  }}
-                  type="button"
+              approvals.map((approval) => (
+                <article
+                  className="assistant-sidebar__approval"
+                  key={approval.approvalId}
                 >
-                  {task.status === 'running' ||
-                  task.status === 'pending' ? (
-                    <Hourglass size={15} />
-                  ) : task.status === 'failed' ||
-                    task.status === 'denied' ? (
-                    <XCircle size={15} />
-                  ) : (
-                    <CheckCircle2 size={15} />
-                  )}
-                  <span>
-                    <strong>{task.title}</strong>
-                    <small>
-                      {formatTime(task.createdAt)} · {task.status}
-                    </small>
-                    {'parentTaskId' in task && task.parentTaskId && (
-                      <small className="assistant-sidebar__subtask-meta">
-                        子专家：
-                        {task.expertId
-                          ? expertNames.get(task.expertId) ??
-                            task.title
-                          : task.title}
-                        {' · '}
-                        {task.routingMode === 'smart'
-                          ? '智能路由'
-                          : '手动指定'}
-                      </small>
-                    )}
-                  </span>
-                  <ChevronRight size={14} />
-                </button>
+                  <strong>{approval.title}</strong>
+                  <p>{approval.description}</p>
+                  {approval.toolName && <code>{approval.toolName}</code>}
+                  <div className="assistant-sidebar__approval-actions">
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        onRespondApproval(approval, 'deny')
+                      }
+                      type="button"
+                    >
+                      拒绝
+                    </button>
+                    <button
+                      className="primary-button"
+                      onClick={() =>
+                        onRespondApproval(approval, 'once')
+                      }
+                      type="button"
+                    >
+                      仅此次允许
+                    </button>
+                  </div>
+                </article>
               ))
             )}
+
             <h3>
               <Hourglass size={15} />
               自动化
@@ -775,9 +627,7 @@ export function RightAssistantSidebar({
                         prompt: schedulePrompt.trim(),
                         workMode: 'ask',
                         recurrence: scheduleRecurrence,
-                        nextRunAt: new Date(
-                          scheduleTime
-                        ).toISOString()
+                        nextRunAt: new Date(scheduleTime).toISOString()
                       }),
                     '添加定时任务失败',
                     () => {
@@ -843,6 +693,9 @@ export function RightAssistantSidebar({
 
         {tab === 'context' && (
           <section className="assistant-sidebar__section">
+            <p className="assistant-sidebar__section-description">
+              查看当前对话实际使用的附件、知识库与已确认记忆。
+            </p>
             <h3>
               <FileText size={15} />
               本次附件
@@ -892,200 +745,76 @@ export function RightAssistantSidebar({
             )}
             <h3>
               <CheckCircle2 size={15} />
-              长期记忆
+              已确认记忆
             </h3>
-            <div className="assistant-sidebar__memory-form">
-              <input
-                aria-label="新增长期记忆"
-                maxLength={8_000}
-                onChange={(event) => setMemoryDraft(event.target.value)}
-                placeholder="例如：我偏好简洁的中文回复"
-                value={memoryDraft}
-              />
-              <button
-                className="primary-button"
-                disabled={!memoryDraft.trim()}
-                onClick={() => {
-                  const content = memoryDraft.trim()
-                  runAction(
-                    () => onCreateMemory(content),
-                    '保存长期记忆失败',
-                    () => setMemoryDraft('')
-                  )
-                }}
-                type="button"
-              >
-                记住
-              </button>
-            </div>
-            {memories.length === 0 ? (
+            {activeMemories.length === 0 ? (
               <p className="assistant-sidebar__empty">
-                尚无已确认的长期记忆。
+                当前范围没有已确认的长期记忆。
               </p>
             ) : (
-              memories.map((memory) => (
+              activeMemories.map((memory) => (
                 <article
                   className="assistant-sidebar__memory"
                   key={memory.id}
                 >
-                  <span>
-                    {memory.content}
-                    {memory.status === 'proposed' && (
-                      <small>智能心跳建议，等待确认</small>
-                    )}
-                  </span>
-                  <div>
-                    {memory.status === 'proposed' && (
-                      <>
-                        <button
-                          onClick={() =>
-                            runAction(
-                              () =>
-                                onSetMemoryStatus(
-                                  memory.id,
-                                  'confirmed'
-                                ),
-                              '确认长期记忆失败'
-                            )
-                          }
-                          type="button"
-                        >
-                          确认
-                        </button>
-                        <button
-                          onClick={() =>
-                            runAction(
-                              () =>
-                                onSetMemoryStatus(
-                                  memory.id,
-                                  'rejected'
-                                ),
-                              '忽略长期记忆失败'
-                            )
-                          }
-                          type="button"
-                        >
-                          忽略
-                        </button>
-                      </>
-                    )}
-                    <button
-                      aria-label={`删除记忆 ${memory.content.slice(0, 24)}`}
-                      className="icon-button"
-                      onClick={() =>
-                        runAction(
-                          () => onRemoveMemory(memory.id),
-                          '删除长期记忆失败'
-                        )
-                      }
-                      type="button"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                </article>
-              ))
-            )}
-            <h3>
-              <RefreshCw size={15} />
-              智能心跳
-              <button
-                aria-label="打开智能心跳中心"
-                className="icon-button"
-                onClick={onOpenHeartbeat}
-                type="button"
-              >
-                <ChevronRight size={14} />
-              </button>
-            </h3>
-            {heartbeatEntries.length === 0 ? (
-              <p className="assistant-sidebar__empty">
-                完成智能心跳后，最近的成长摘要会显示在这里。
-              </p>
-            ) : (
-              heartbeatEntries.slice(0, 10).map((entry) => (
-                <article
-                  className="assistant-sidebar__schedule"
-                  key={entry.id}
-                >
-                  <span>
-                    <strong>
-                      {new Date(entry.createdAt).toLocaleString('zh-CN')}
-                    </strong>
-                    <small>
-                      {entry.proposedMemoryIds.length} 条记忆建议 ·{' '}
-                      {entry.followUpTaskIds.length} 个后续任务
-                    </small>
-                  </span>
-                  <p>{entry.summary}</p>
+                  <span>{memory.content}</span>
                 </article>
               ))
             )}
           </section>
         )}
 
-        {tab === 'artifacts' && (
-          <section className="assistant-sidebar__section">
-            <p className="assistant-sidebar__section-description">
-              保存并预览由对话生成或手动导入的文本、图片、PDF 与网页内容。
-            </p>
-            <h3>
-              <FileText size={15} />
-              对话与导入成果
-            </h3>
-            <button
-              className="secondary-button assistant-sidebar__import"
-              onClick={() =>
-                runAction(
-                  onImportArtifacts,
-                  '导入成果失败'
-                )
-              }
-              type="button"
-            >
-              <Upload size={13} />
-              导入 PDF、图片或网页
-            </button>
-            {artifacts.length === 0 ? (
-              <p className="assistant-sidebar__empty">
-                完成的回复会作为可预览成果显示在这里。
-              </p>
-            ) : (
-              artifacts.map((artifact) => (
+        {tab === 'workspace' && (
+          currentWorkspacePreview ? (
+            <section className="assistant-sidebar__preview">
+              <header>
                 <button
-                  className="assistant-sidebar__row"
-                  key={artifact.id}
+                  aria-label="返回工作区"
+                  className="assistant-sidebar__back"
                   onClick={() => {
                     workspacePreviewRequest.current += 1
                     setWorkspacePreview(undefined)
-                    setSelectedArtifactId(artifact.id)
                     setActionError('')
-                    onTabChange('preview')
-                    runAction(
-                      () => onLoadArtifact(artifact.id),
-                      '加载成果失败'
-                    )
                   }}
                   type="button"
                 >
-                  <FileText size={15} />
-                  <span>
-                    <strong>{artifact.title}</strong>
-                    <small>{formatTime(artifact.createdAt)}</small>
-                  </span>
-                  <ChevronRight size={14} />
+                  <ChevronLeft size={14} />
+                  工作区
                 </button>
-              ))
-            )}
-          </section>
-        )}
-
-        {tab === 'changes' && (
-          <>
+                <span>
+                  <strong>{currentWorkspacePreview.path}</strong>
+                  <small>
+                    {currentWorkspacePreview.state === 'ready'
+                      ? `${currentWorkspacePreview.file.size.toLocaleString('zh-CN')} 字节`
+                      : '项目工作区文件'}
+                  </small>
+                </span>
+              </header>
+              {currentWorkspacePreview.state === 'loading' ? (
+                <p className="assistant-sidebar__empty">
+                  正在读取文件…
+                </p>
+              ) : currentWorkspacePreview.state === 'error' ? (
+                <p className="assistant-sidebar__empty" role="alert">
+                  {currentWorkspacePreview.error}
+                </p>
+              ) : (
+                <div className="markdown-body markdown-content">
+                  {currentWorkspacePreview.file.mimeType ===
+                  'text/markdown' ? (
+                    <MarkdownRenderer>
+                      {currentWorkspacePreview.file.content}
+                    </MarkdownRenderer>
+                  ) : (
+                    <pre>{currentWorkspacePreview.file.content}</pre>
+                  )}
+                </div>
+              )}
+            </section>
+          ) : (
             <section className="assistant-sidebar__section">
               <p className="assistant-sidebar__section-description">
-                浏览当前项目文件，并查看 Agent 的工具活动。Git
-                项目还会显示未提交更改。
+                浏览当前项目文件与 Git 变更；选择文件后在当前工作区内预览。
               </p>
               <h3>
                 <FolderTree size={15} />
@@ -1132,33 +861,119 @@ export function RightAssistantSidebar({
                 </details>
               )}
             </section>
+          )
+        )}
+
+        {tab === 'results' && (
+          artifactPreview ? (
+            <section className="assistant-sidebar__preview">
+              <header>
+                <button
+                  aria-label="返回成果列表"
+                  className="assistant-sidebar__back"
+                  onClick={() => {
+                    setSelectedArtifactId(undefined)
+                    setActionError('')
+                  }}
+                  type="button"
+                >
+                  <ChevronLeft size={14} />
+                  成果
+                </button>
+                <span>
+                  <strong>{artifactPreview.title}</strong>
+                  <small>
+                    {sidebarTimeFormatter.format(
+                      new Date(artifactPreview.createdAt)
+                    )}
+                  </small>
+                </span>
+              </header>
+              <div className="markdown-body markdown-content">
+                {artifactPreview.mimeType.startsWith('image/') ? (
+                  artifactPreview.content ? (
+                    <img
+                      alt={artifactPreview.title}
+                      className="assistant-sidebar__image-preview"
+                      src={artifactPreview.content}
+                    />
+                  ) : (
+                    <p className="assistant-sidebar__empty">
+                      正在加载图片…
+                    </p>
+                  )
+                ) : artifactPreview.mimeType === 'text/html' ? (
+                  <iframe
+                    className="assistant-sidebar__web-preview"
+                    sandbox=""
+                    srcDoc={artifactPreview.content}
+                    title={artifactPreview.title}
+                  />
+                ) : artifactPreview.mimeType === 'application/json' ? (
+                  <pre>{artifactPreview.content}</pre>
+                ) : (
+                  <MarkdownRenderer>
+                    {artifactPreview.content}
+                  </MarkdownRenderer>
+                )}
+              </div>
+            </section>
+          ) : (
             <section className="assistant-sidebar__section">
-              <h3>工具活动</h3>
-              {changes.length === 0 ? (
+              <p className="assistant-sidebar__section-description">
+                查看并预览由对话生成或手动导入的文本、图片、PDF 与网页内容。
+              </p>
+              <h3>
+                <FileText size={15} />
+                对话与导入成果
+              </h3>
+              <button
+                className="secondary-button assistant-sidebar__import"
+                onClick={() =>
+                  runAction(
+                    onImportArtifacts,
+                    '导入成果失败'
+                  )
+                }
+                type="button"
+              >
+                <Upload size={13} />
+                导入 PDF、图片或网页
+              </button>
+              {artifacts.length === 0 ? (
                 <p className="assistant-sidebar__empty">
-                  Agent 调用工具后，相关记录会显示在这里。
+                  完成的回复会作为可预览成果显示在这里。
                 </p>
               ) : (
-                changes.map((change) => (
+                artifacts.map((artifact) => (
                   <button
                     className="assistant-sidebar__row"
-                    key={change.id}
-                    onClick={() =>
-                      onOpenConversation(change.conversationId)
-                    }
+                    key={artifact.id}
+                    onClick={() => {
+                      setSelectedArtifactId(artifact.id)
+                      setActionError('')
+                      runAction(
+                        () => onLoadArtifact(artifact.id),
+                        '加载成果失败'
+                      )
+                    }}
                     type="button"
                   >
-                    <FileDiff size={15} />
+                    <FileText size={15} />
                     <span>
-                      <strong>{change.title}</strong>
-                      <small>{change.detail || change.status}</small>
+                      <strong>{artifact.title}</strong>
+                      <small>
+                        {sidebarTimeFormatter.format(
+                          new Date(artifact.createdAt)
+                        )}
+                      </small>
                     </span>
                     <ChevronRight size={14} />
                   </button>
                 ))
               )}
             </section>
-          </>
+          )
         )}
 
         {tab === 'browser' && (
@@ -1170,18 +985,39 @@ export function RightAssistantSidebar({
               </span>
               {browserState &&
                 browserState.status !== 'stopped' && (
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      runAction(
-                        onStopBrowser,
-                        '停止浏览器失败'
-                      )
-                    }
-                    type="button"
-                  >
-                    停止浏览器
-                  </button>
+                  <div className="assistant-sidebar__browser-actions">
+                    <button
+                      className="secondary-button"
+                      disabled={
+                        browserState.status === 'creating' ||
+                        browserState.status === 'interactive'
+                      }
+                      onClick={() =>
+                        runAction(
+                          onInteractBrowser,
+                          '打开浏览器交互窗口失败'
+                        )
+                      }
+                      type="button"
+                    >
+                      <ExternalLink aria-hidden="true" size={12} />
+                      {browserState.status === 'interactive'
+                        ? '交互中'
+                        : '交互'}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        runAction(
+                          onStopBrowser,
+                          '停止浏览器失败'
+                        )
+                      }
+                      type="button"
+                    >
+                      停止浏览器
+                    </button>
+                  </div>
                 )}
             </header>
             {!browserState ? (
@@ -1201,6 +1037,8 @@ export function RightAssistantSidebar({
                       ? '正在加载页面…'
                       : browserState.status === 'acting'
                         ? 'Agent 正在操作页面…'
+                        : browserState.status === 'interactive'
+                          ? '用户正在辅助操作页面…'
                         : browserState.status === 'ready'
                           ? '浏览器已就绪'
                           : browserState.status === 'failed'
@@ -1232,82 +1070,6 @@ export function RightAssistantSidebar({
                   </div>
                 )}
               </>
-            )}
-          </section>
-        )}
-
-        {tab === 'preview' && (
-          <section className="assistant-sidebar__preview">
-            {currentWorkspacePreview ? (
-              <>
-                <header>
-                  <strong>{currentWorkspacePreview.path}</strong>
-                  <small>
-                    {currentWorkspacePreview.state === 'ready'
-                      ? `${currentWorkspacePreview.file.size.toLocaleString('zh-CN')} 字节`
-                      : '项目工作区文件'}
-                  </small>
-                </header>
-                {currentWorkspacePreview.state === 'loading' ? (
-                  <p className="assistant-sidebar__empty">
-                    正在读取文件…
-                  </p>
-                ) : currentWorkspacePreview.state === 'error' ? (
-                  <p className="assistant-sidebar__empty" role="alert">
-                    {currentWorkspacePreview.error}
-                  </p>
-                ) : (
-                  <div className="markdown-body markdown-content">
-                    {currentWorkspacePreview.file.mimeType ===
-                    'text/markdown' ? (
-                      <MarkdownRenderer>
-                        {currentWorkspacePreview.file.content}
-                      </MarkdownRenderer>
-                    ) : (
-                      <pre>{currentWorkspacePreview.file.content}</pre>
-                    )}
-                  </div>
-                )}
-              </>
-            ) : artifactPreview ? (
-              <>
-                <header>
-                  <strong>{artifactPreview.title}</strong>
-                  <small>{formatTime(artifactPreview.createdAt)}</small>
-                </header>
-                <div className="markdown-body markdown-content">
-                  {artifactPreview.mimeType.startsWith('image/') ? (
-                    artifactPreview.content ? (
-                      <img
-                        alt={artifactPreview.title}
-                        className="assistant-sidebar__image-preview"
-                        src={artifactPreview.content}
-                      />
-                    ) : (
-                      <p className="assistant-sidebar__empty">
-                        正在加载图片…
-                      </p>
-                    )
-                  ) : artifactPreview.mimeType === 'text/html' ? (
-                    <iframe
-                      className="assistant-sidebar__web-preview"
-                      sandbox=""
-                      srcDoc={artifactPreview.content}
-                      title={artifactPreview.title}
-                    />
-                  ) : artifactPreview.mimeType === 'application/json' ? (
-                    <pre>{artifactPreview.content}</pre>
-                  ) : (
-                    <MarkdownRenderer>
-                      {artifactPreview.content}
-                    </MarkdownRenderer>
-                  )}
-                </div>
-              </>
-            ) : (
-              <p className="assistant-sidebar__empty">
-                选择成果后可在这里预览。
-              </p>
             )}
           </section>
         )}

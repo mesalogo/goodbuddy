@@ -16,6 +16,7 @@ export const ipcChannels = {
   agentApprovalRespond: 'agent:approval:respond',
   agentQuestionRespond: 'agent:question:respond',
   agentEvent: 'agent:event',
+  browserInteract: 'browser:interact',
   browserStop: 'browser:stop',
   browserState: 'browser:state',
   runtimeSettingsGet: 'settings:runtime:get',

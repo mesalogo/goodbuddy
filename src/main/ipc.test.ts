@@ -93,6 +93,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       }))
     }
     const onRuntimeSettingsChanged = vi.fn(async () => {})
+    const interact = vi.fn(async () => {})
     const releaseConversation = vi.fn(async () => {})
     let browserStateListener:
       | ((state: BrowserLiveState) => void)
@@ -111,6 +112,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       onRuntimeSettingsChanged,
       undefined,
       {
+        interact,
         releaseConversation,
         onState: (listener) => {
           browserStateListener = listener
@@ -180,6 +182,15 @@ describe('registerIpcHandlers computer capabilities', () => {
     ).resolves.toBeUndefined()
     expect(releaseConversation).toHaveBeenCalledWith(
       'browser-conversation'
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserInteract)?.(event, {
+        conversationId: 'browser-conversation'
+      })
+    ).resolves.toBeUndefined()
+    expect(interact).toHaveBeenCalledWith(
+      'browser-conversation',
+      expect.any(AbortSignal)
     )
 
     expect(() =>
@@ -2019,7 +2030,25 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('redacts runtime errors before persistence and renderer delivery', async () => {
+  it('preserves bounded runtime errors for persistence and renderer delivery', async () => {
+    const fetchCause = Object.assign(
+      new Error('connect ECONNREFUSED 127.0.0.1:11434'),
+      {
+        code: 'ECONNREFUSED',
+        syscall: 'connect',
+        address: '127.0.0.1',
+        port: 11434
+      }
+    )
+    const expectedError = [
+      'fetch failed',
+      'cause:',
+      'connect ECONNREFUSED 127.0.0.1:11434',
+      'code: ECONNREFUSED',
+      'syscall: connect',
+      'address: 127.0.0.1',
+      'port: 11434'
+    ].join('\n')
     const runtime = {
       capability: 'chat',
       requiresToolApproval: false,
@@ -2028,9 +2057,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       dispose: vi.fn(),
       async *run() {
         yield* []
-        throw new Error(
-          'gateway failed Authorization: Bearer secret-token'
-        )
+        throw new TypeError('fetch failed', { cause: fetchCause })
       }
     }
     const harness = createHarness(runtime)
@@ -2047,13 +2074,13 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
         requestId,
         'failed',
-        'gateway failed Authorization: [REDACTED]'
+        expectedError
       )
     )
     expect(harness.webContents.send).toHaveBeenCalledWith(
       ipcChannels.agentEvent,
       expect.objectContaining({
-        message: 'gateway failed Authorization: [REDACTED]'
+        message: expectedError
       })
     )
     await harness.dispose()

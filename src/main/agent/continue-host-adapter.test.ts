@@ -876,7 +876,7 @@ describe('ContinueHostAdapter', () => {
           name: 'Bash',
           state: 'failed',
           error:
-            'PowerShell parser failed Authorization: [REDACTED]'
+            'PowerShell parser failed Authorization: Bearer secret-token'
         }
       ]
     })
@@ -940,7 +940,9 @@ describe('ContinueHostAdapter', () => {
                     type: 'tool',
                     callId: 'call-1',
                     name: 'Bash',
-                    state: 'running'
+                    state: 'running',
+                    input:
+                      '{"command":"npm test","token":"secret-token"}'
                   }
                 ]
               })
@@ -973,7 +975,9 @@ describe('ContinueHostAdapter', () => {
                   type: 'tool',
                   callId: 'call-1',
                   name: 'Bash',
-                  state: 'completed'
+                  state: 'completed',
+                  output:
+                    'Tests passed\nAuthorization: Bearer secret-token'
                 },
                 { type: 'text', delta: 'TOOLS_OK' }
               ]
@@ -1012,7 +1016,11 @@ describe('ContinueHostAdapter', () => {
         {
           callId: 'call-1',
           name: 'Bash',
-          state: 'completed'
+          state: 'completed',
+          input:
+            '{"command":"npm test","token":"secret-token"}',
+          output:
+            'Tests passed\nAuthorization: Bearer secret-token'
         }
       ]
     })
@@ -1023,7 +1031,9 @@ describe('ContinueHostAdapter', () => {
         tool: {
           callId: 'call-1',
           name: 'Bash',
-          state: 'running'
+          state: 'running',
+          input:
+            '{"command":"npm test","token":"secret-token"}'
         }
       },
       {
@@ -1031,7 +1041,9 @@ describe('ContinueHostAdapter', () => {
         tool: {
           callId: 'call-1',
           name: 'Bash',
-          state: 'completed'
+          state: 'completed',
+          output:
+            'Tests passed\nAuthorization: Bearer secret-token'
         }
       },
       { type: 'text', delta: 'TOOLS_OK' }

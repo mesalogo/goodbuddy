@@ -303,7 +303,7 @@ if (hasSingleInstanceLock) {
     const speechTranscriptionService = new SpeechTranscriptionService(
       speechModelManager
     )
-    browserService = new BrowserService()
+    browserService = new BrowserService({ parentWindow: mainWindow })
     const bundledRuntimePaths = resolveBundledRuntimePaths({
       appPath: app.getAppPath(),
       resourcesPath: process.resourcesPath,

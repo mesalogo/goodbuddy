@@ -61,7 +61,7 @@ export function SkillsSettingsSection(): React.JSX.Element {
         <BookOpen size={17} />
         <div>
           <strong>Skills</strong>
-          <small>离线能力说明，可独立分配给各 Agent Runtime</small>
+          <small>支持直连模型、OpenCode 和 Continue</small>
         </div>
         <button
           className="secondary-button"
@@ -91,6 +91,10 @@ export function SkillsSettingsSection(): React.JSX.Element {
         </button>
       </div>
 
+      <p className="settings-notice">
+        Skill 以本地能力说明注入所选目标，不会写入 Runtime
+        自有配置。新导入的 Skill 默认启用，并分配给直连模型、OpenCode 和 Continue。
+      </p>
       {error && <p className="settings-warning">{error}</p>}
       {!snapshot && !error && <p className="settings-empty">正在读取 Skills…</p>}
       <div className="capability-list">

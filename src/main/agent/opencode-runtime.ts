@@ -35,6 +35,7 @@ import {
   type RuntimeSandboxResolution
 } from './runtime-sandbox'
 import {
+  boundedToolDetail,
   safeToolErrorDetail
 } from './approval-summary'
 
@@ -978,6 +979,8 @@ export class OpenCodeRuntime implements AgentRuntime {
       {
         name: string
         state: 'pending' | 'running' | 'completed' | 'failed'
+        input?: string
+        output?: string
         error?: string
       }
     >()
@@ -1077,9 +1080,19 @@ export class OpenCodeRuntime implements AgentRuntime {
               part.state.status === 'error'
                 ? safeToolErrorDetail(part.state.error)
                 : undefined
+            const input = isRecord(part.state.input)
+              ? boundedToolDetail(part.state.input, 4_000)
+              : undefined
+            const output =
+              part.state.status === 'completed' &&
+              typeof part.state.output === 'string'
+                ? part.state.output.slice(0, 16_000)
+                : undefined
             toolStates.set(callId, {
               name: toolName,
               state,
+              ...(input ? { input } : {}),
+              ...(output ? { output } : {}),
               ...(error ? { error } : {})
             })
             yield {
@@ -1089,6 +1102,8 @@ export class OpenCodeRuntime implements AgentRuntime {
               name: toolName,
               state,
               summary: `OpenCode 工具：${toolName}`,
+              ...(input ? { input } : {}),
+              ...(output ? { output } : {}),
               ...(error ? { error } : {})
             }
           }
@@ -1309,6 +1324,8 @@ export class OpenCodeRuntime implements AgentRuntime {
             name: tool.name,
             state: 'failed',
             summary: `OpenCode 工具：${tool.name}`,
+            ...(tool.input ? { input: tool.input } : {}),
+            ...(tool.output ? { output: tool.output } : {}),
             ...(tool.error ? { error: tool.error } : {})
           }
         }

@@ -49,8 +49,21 @@ export type BrowserWebContents = {
 export type BrowserWindowHandle = {
   webContents: BrowserWebContents
   loadURL(url: string): Promise<unknown>
+  show(): void
+  minimize(): void
+  restore(): void
+  isMinimized(): boolean
+  focus(): void
+  on(event: string, listener: BrowserEventListener): unknown
+  off(event: string, listener: BrowserEventListener): unknown
   destroy(): void
   isDestroyed(): boolean
+}
+
+export type BrowserParentWindowHandle = {
+  setEnabled?(enabled: boolean): void
+  focus?(): void
+  isDestroyed?(): boolean
 }
 
 export type BrowserPartitionSession = {
@@ -100,6 +113,7 @@ export type ElectronBrowserSessionOptions = {
     options: Record<string, unknown>
   ) => Promise<BrowserWindowHandle>
   createProxy?: (policy: BrowserUrlPolicy) => FilteringProxyLike
+  parentWindow?: BrowserParentWindowHandle
 }
 
 type Listener = {
@@ -211,6 +225,11 @@ export class ElectronBrowserSession {
   readonly webContents: BrowserWebContents
   private approvedOrigin?: string
   private readonly listeners: Listener[] = []
+  private interaction?: {
+    promise: Promise<BrowserScreenshot | undefined>
+    resolve(frame?: BrowserScreenshot): void
+  }
+  private interactionClosing?: Promise<void>
   private disposed = false
 
   private constructor(
@@ -219,7 +238,8 @@ export class ElectronBrowserSession {
     private readonly window: BrowserWindowHandle,
     private readonly proxy: FilteringProxyLike,
     partition: string,
-    private readonly cleanupTimeoutMs: number
+    private readonly cleanupTimeoutMs: number,
+    private readonly parentWindow?: BrowserParentWindowHandle
   ) {
     this.partition = partition
     this.webContents = window.webContents
@@ -301,6 +321,13 @@ export class ElectronBrowserSession {
           show: false,
           width: 1280,
           height: 900,
+          title: 'GoodBuddy 浏览器交互',
+          autoHideMenuBar: true,
+          ...(options.parentWindow
+            ? {
+                parent: options.parentWindow
+              }
+            : {}),
           webPreferences: {
             partition,
             sandbox: true,
@@ -308,6 +335,7 @@ export class ElectronBrowserSession {
             nodeIntegration: false,
             nodeIntegrationInSubFrames: false,
             nodeIntegrationInWorker: false,
+            backgroundThrottling: false,
             webSecurity: true,
             allowRunningInsecureContent: false,
             plugins: false,
@@ -337,7 +365,8 @@ export class ElectronBrowserSession {
         window,
         managedProxy,
         partition,
-        cleanupTimeoutMs
+        cleanupTimeoutMs,
+        options.parentWindow
       )
       setupStage = '初始化浏览器协议'
       await boundedSetup(result.initialize(), signal, setupTimeoutMs)
@@ -383,6 +412,21 @@ export class ElectronBrowserSession {
 
   private async initialize(): Promise<void> {
     const contents = this.webContents
+    this.listen(
+      this.window,
+      'close',
+      (event: { preventDefault(): void }) => {
+        if (this.disposed) {
+          return
+        }
+        event.preventDefault()
+        if (this.interaction) {
+          void this.captureAndFinishInteraction()
+        } else {
+          this.window.minimize()
+        }
+      }
+    )
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     this.listen(contents, 'will-navigate', (event: { preventDefault(): void }, details: { url?: string } | string) => {
       const url = typeof details === 'string' ? details : details.url
@@ -513,12 +557,98 @@ export class ElectronBrowserSession {
     this.approvedOrigin = target.origin
   }
 
+  openInteraction(): Promise<BrowserScreenshot | undefined> {
+    this.assertOpen()
+    if (this.interaction) {
+      this.setParentEnabled(false)
+      if (this.window.isMinimized()) {
+        this.window.restore()
+      }
+      this.window.show()
+      this.window.focus()
+      return this.interaction.promise
+    }
+    let resolve!: (frame?: BrowserScreenshot) => void
+    const promise = new Promise<BrowserScreenshot | undefined>(
+      (resolvePromise) => {
+        resolve = resolvePromise
+      }
+    )
+    this.interaction = { promise, resolve }
+    this.setParentEnabled(false)
+    try {
+      if (this.window.isMinimized()) {
+        this.window.restore()
+      }
+      this.window.show()
+      this.window.focus()
+    } catch (error) {
+      this.finishInteraction()
+      throw error
+    }
+    return promise
+  }
+
+  private captureAndFinishInteraction(): Promise<void> {
+    if (this.interactionClosing) {
+      return this.interactionClosing
+    }
+    const operation = (async (): Promise<void> => {
+      let frame: BrowserScreenshot | undefined
+      try {
+        frame = await this.captureScreenshot(AbortSignal.timeout(2_000))
+      } catch {
+        // The session remains usable even if the final visible frame fails.
+      }
+      try {
+        if (!this.disposed && !this.window.isDestroyed()) {
+          this.window.minimize()
+        }
+      } catch {
+        // Resolving interaction must not depend on native minimize success.
+      }
+      this.finishInteraction(frame)
+    })()
+    this.interactionClosing = operation
+    void operation.finally(() => {
+      if (this.interactionClosing === operation) {
+        this.interactionClosing = undefined
+      }
+    })
+    return operation
+  }
+
+  private finishInteraction(frame?: BrowserScreenshot): void {
+    const interaction = this.interaction
+    this.interaction = undefined
+    this.setParentEnabled(true)
+    interaction?.resolve(frame)
+  }
+
+  private setParentEnabled(enabled: boolean): void {
+    try {
+      if (
+        !this.parentWindow ||
+        this.parentWindow.isDestroyed?.() === true
+      ) {
+        return
+      }
+      this.parentWindow.setEnabled?.(enabled)
+      if (enabled) {
+        this.parentWindow.focus?.()
+      }
+    } catch {
+      // Parent-window state must not break browser-session cleanup.
+    }
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) {
       return
     }
     this.disposed = true
     this.approvedOrigin = undefined
+    this.finishInteraction()
     for (const { target, event, listener } of this.listeners.splice(0)) {
       target.off(event, listener)
     }

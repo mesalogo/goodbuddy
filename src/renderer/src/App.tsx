@@ -471,6 +471,107 @@ function terminalizeMessageToolBlocks(
   )
 }
 
+type MessageBlockRenderItem =
+  | {
+      kind: 'block'
+      block: Exclude<ConversationMessageBlock, { type: 'tool' }>
+    }
+  | {
+      kind: 'tools'
+      id: string
+      tools: ToolActivity[]
+    }
+
+function groupMessageBlocks(
+  blocks: ConversationMessageBlock[]
+): MessageBlockRenderItem[] {
+  const items: MessageBlockRenderItem[] = []
+  for (const block of blocks) {
+    if (block.type !== 'tool') {
+      items.push({ kind: 'block', block })
+      continue
+    }
+    const previous = items.at(-1)
+    if (previous?.kind === 'tools') {
+      previous.tools.push(block.tool)
+    } else {
+      items.push({
+        kind: 'tools',
+        id: block.id,
+        tools: [block.tool]
+      })
+    }
+  }
+  return items
+}
+
+function ToolExecutionList({
+  tools
+}: {
+  tools: ToolActivity[]
+}): React.JSX.Element {
+  return (
+    <section
+      aria-label={`工具执行，共 ${tools.length} 项`}
+      className="tool-execution-list"
+    >
+      <header className="tool-execution-list__header">
+        <TerminalSquare aria-hidden="true" size={15} />
+        <strong>工具执行</strong>
+        <small>{tools.length} 项</small>
+      </header>
+      <ol>
+        {tools.map((tool) => {
+          const hasDetails = Boolean(
+            tool.input || tool.output || tool.error
+          )
+          return (
+            <li key={tool.callId ?? tool.name}>
+              <details
+                className={`tool-execution tool-execution--${tool.state}`}
+                open={
+                  tool.state === 'pending' || tool.state === 'running'
+                    ? true
+                    : undefined
+                }
+              >
+                <summary>
+                  <span className="tool-execution__identity">
+                    <strong>{tool.name}</strong>
+                    <span>{tool.summary}</span>
+                  </span>
+                  <small>{toolStateLabels[tool.state]}</small>
+                </summary>
+                <div className="tool-execution__details">
+                  {tool.input && (
+                    <section>
+                      <strong>调用参数</strong>
+                      <pre>{tool.input}</pre>
+                    </section>
+                  )}
+                  {tool.output && (
+                    <section>
+                      <strong>执行结果</strong>
+                      <pre>{tool.output}</pre>
+                    </section>
+                  )}
+                  {tool.error && (
+                    <section className="tool-execution__error">
+                      <strong>错误详情</strong>
+                      <pre>{tool.error}</pre>
+                    </section>
+                  )}
+                  {!hasDetails && <p>暂时没有可显示的执行详情。</p>}
+                </div>
+              </details>
+            </li>
+          )
+        })}
+      </ol>
+    </section>
+  )
+}
+
 function createConversation(
   projectId?: string,
   runtimeSelection?: AgentRuntimeSelection
@@ -1829,6 +1930,8 @@ function App(): React.JSX.Element {
             name: event.name,
             state: event.state,
             summary: event.summary,
+            input: event.input,
+            output: event.output,
             error: event.error
           }
           if (index >= 0) {
@@ -2241,7 +2344,7 @@ function App(): React.JSX.Element {
   )
 
   useEffect(() => {
-    if (assistantSidebarTab !== 'changes') {
+    if (assistantSidebarTab !== 'workspace') {
       return
     }
     const timeout = setTimeout(() => {
@@ -4151,14 +4254,20 @@ function App(): React.JSX.Element {
                     )}
                   {message.blocks && message.blocks.length > 0 ? (
                     <div className="message-blocks">
-                      {message.blocks.map((block) =>
-                        block.type === 'reasoning' ? (
+                      {groupMessageBlocks(message.blocks).map((item) =>
+                        item.kind === 'tools' ? (
+                          <ToolExecutionList
+                            key={item.id}
+                            tools={item.tools}
+                          />
+                        ) : item.block.type === 'reasoning' ? (
                           <details
                             className="message-reasoning"
-                            key={block.id}
+                            key={item.block.id}
                             open={
                               message.state === 'streaming' &&
-                              message.blocks?.at(-1)?.id === block.id
+                              message.blocks?.at(-1)?.id ===
+                                item.block.id
                             }
                           >
                             <summary>
@@ -4168,34 +4277,18 @@ function App(): React.JSX.Element {
                             </summary>
                             <div className="markdown-content message-reasoning__content">
                               <MarkdownRenderer>
-                                {block.content}
+                                {item.block.content}
                               </MarkdownRenderer>
                             </div>
                           </details>
-                        ) : block.type === 'text' ? (
-                          <div
-                            className="markdown-content message__content"
-                            key={block.id}
-                          >
-                            <MarkdownRenderer>
-                              {block.content}
-                            </MarkdownRenderer>
-                          </div>
                         ) : (
                           <div
-                            className="tool-activity"
-                            key={block.id}
+                            className="markdown-content message__content"
+                            key={item.block.id}
                           >
-                            <TerminalSquare size={15} />
-                            <div className="tool-activity__content">
-                              <span>{block.tool.summary}</span>
-                              {block.tool.error && (
-                                <code>{block.tool.error}</code>
-                              )}
-                            </div>
-                            <small>
-                              {toolStateLabels[block.tool.state]}
-                            </small>
+                            <MarkdownRenderer>
+                              {item.block.content}
+                            </MarkdownRenderer>
                           </div>
                         )
                       )}
@@ -4347,19 +4440,10 @@ function App(): React.JSX.Element {
                       </details>
                     )}
                   {(!message.blocks || message.blocks.length === 0) &&
-                    message.tools?.map((tool) => (
-                      <div
-                        className="tool-activity"
-                        key={tool.callId ?? tool.name}
-                      >
-                        <TerminalSquare size={15} />
-                        <div className="tool-activity__content">
-                          <span>{tool.summary}</span>
-                          {tool.error && <code>{tool.error}</code>}
-                        </div>
-                        <small>{toolStateLabels[tool.state]}</small>
-                      </div>
-                    ))}
+                    message.tools &&
+                    message.tools.length > 0 && (
+                      <ToolExecutionList tools={message.tools} />
+                    )}
                   {message.subagents && message.subagents.length > 0 && (
                     <section
                       aria-label="子专家状态"
@@ -5292,17 +5376,29 @@ function App(): React.JSX.Element {
         </div>
       )}
       <RightAssistantSidebar
-        activities={activityRecords}
         approvals={pendingSidebarApprovals}
         artifacts={sidebarArtifacts}
         attachments={attachments}
         browserState={browserStates[activeId]}
         enabledLibraries={enabledSidebarLibraries}
-        experts={assistantExperts}
-        heartbeatEntries={heartbeatEntries}
         heartbeats={assistantHeartbeats}
         memories={assistantMemories}
+        schedules={assistantSchedules}
         onClose={() => setAssistantSidebarOpen(false)}
+        onInteractBrowser={async () => {
+          if (!activeId) {
+            return
+          }
+          const browserApi = window.goodbuddy.browser
+          if (!browserApi) {
+            notify({
+              tone: 'error',
+              message: '浏览器控制组件尚未加载，请重启 GoodBuddy'
+            })
+            return
+          }
+          await browserApi.interact(activeId)
+        }}
         onStopBrowser={async () => {
           if (!activeId) {
             return
@@ -5324,16 +5420,6 @@ function App(): React.JSX.Element {
             })
           }
         }}
-        onOpenHeartbeat={() => setView('heartbeat')}
-        onCreateMemory={async (content) => {
-          const memory = await window.goodbuddy.memory.create({
-            scope: activeProjectId ? 'project' : 'global',
-            scopeId: activeProjectId || undefined,
-            type: 'preference',
-            content
-          })
-          setAssistantMemories((current) => [memory, ...current])
-        }}
         onCreateHeartbeat={createHeartbeat}
         onCreateSchedule={async (input) => {
           const schedule = await window.goodbuddy.schedules.create({
@@ -5342,7 +5428,6 @@ function App(): React.JSX.Element {
           })
           setAssistantSchedules((current) => [schedule, ...current])
         }}
-        onOpenConversation={openActivityConversation}
         onImportArtifacts={async () => {
           const imported = await window.goodbuddy.artifacts.importFiles(
             activeProjectId || undefined
@@ -5352,7 +5437,7 @@ function App(): React.JSX.Element {
               ...imported,
               ...current
             ])
-            setAssistantSidebarTab('artifacts')
+            setAssistantSidebarTab('results')
           }
         }}
         onLoadArtifact={async (artifactId) => {
@@ -5367,13 +5452,6 @@ function App(): React.JSX.Element {
           )
         }}
         onRemoveAttachment={removeAttachment}
-        onRemoveMemory={async (memoryId) => {
-          await window.goodbuddy.memory.remove(memoryId)
-          setAssistantMemories((current) =>
-            current.filter((memory) => memory.id !== memoryId)
-          )
-        }}
-        onSetMemoryStatus={setMemoryStatus}
         onRemoveHeartbeat={removeHeartbeat}
         onRemoveSchedule={async (scheduleId) => {
           await window.goodbuddy.schedules.remove(scheduleId)
@@ -5381,16 +5459,6 @@ function App(): React.JSX.Element {
             current.filter((schedule) => schedule.id !== scheduleId)
           )
         }}
-        onRunSchedule={async (scheduleId) => {
-          await window.goodbuddy.schedules.runNow(scheduleId)
-          notify({ tone: 'success', message: '定时任务已开始执行' })
-        }}
-        onRunHeartbeat={runHeartbeat}
-        onSetHeartbeatPaused={setHeartbeatPaused}
-        onListWorkspaceDirectory={listWorkspaceDirectory}
-        onLoadWorkspaceFile={loadWorkspaceFile}
-        onOpenWorkspaceEntry={openWorkspaceEntry}
-        onRefreshChanges={refreshWorkspaceChanges}
         onRespondApproval={(approval, decision) => {
           void respondToApproval(
             approval.conversationId,
@@ -5399,13 +5467,21 @@ function App(): React.JSX.Element {
             decision
           )
         }}
+        onRunHeartbeat={runHeartbeat}
+        onRunSchedule={async (scheduleId) => {
+          await window.goodbuddy.schedules.runNow(scheduleId)
+          notify({ tone: 'success', message: '定时任务已开始执行' })
+        }}
+        onSetHeartbeatPaused={setHeartbeatPaused}
+        onListWorkspaceDirectory={listWorkspaceDirectory}
+        onLoadWorkspaceFile={loadWorkspaceFile}
+        onOpenWorkspaceEntry={openWorkspaceEntry}
+        onRefreshChanges={refreshWorkspaceChanges}
         onTabChange={setAssistantSidebarTab}
         open={
           assistantSidebarOpen && view === 'chat'
         }
-        schedules={assistantSchedules}
         tab={assistantSidebarTab}
-        tasks={assistantTasks}
         workspaceChanges={workspaceChanges}
         workspaceProjectId={activeProjectId || undefined}
       />

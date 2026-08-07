@@ -31,8 +31,8 @@ import type {
   RuntimeModelUsageEvent
 } from './runtime'
 import {
-  redactSensitiveText,
-  safeToolArgumentSummary
+  boundedToolDetail,
+  safeToolErrorDetail
 } from './approval-summary'
 
 type ConversationMessage = {
@@ -121,7 +121,7 @@ function getErrorMessage(value: unknown): string | undefined {
   }
   const error = 'error' in value ? value.error : undefined
   if (typeof error === 'string') {
-    return redactSensitiveText(error).slice(0, 1_000)
+    return error.slice(0, 1_000)
   }
   if (
     error &&
@@ -129,13 +129,13 @@ function getErrorMessage(value: unknown): string | undefined {
     'message' in error &&
     typeof error.message === 'string'
   ) {
-    return redactSensitiveText(error.message).slice(0, 1_000)
+    return error.message.slice(0, 1_000)
   }
   if (
     'message' in value &&
     typeof value.message === 'string'
   ) {
-    return redactSensitiveText(value.message).slice(0, 1_000)
+    return value.message.slice(0, 1_000)
   }
   return undefined
 }
@@ -624,14 +624,29 @@ function getChatToolResultText(parts: ModelToolResultPart[]): string {
     .join('\n\n')
 }
 
+function getToolResultPreview(parts: ModelToolResultPart[]): string {
+  let imageNumber = 0
+  return parts
+    .map((part) => {
+      if (part.type === 'text') {
+        return part.text
+      }
+      imageNumber += 1
+      return `[图片结果 ${imageNumber}：${part.mimeType}]`
+    })
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 16_000)
+}
+
 function createRecoverableToolErrorResult(
   error: RecoverableModelToolError
 ): ModelToolResult {
   const text = JSON.stringify({
     ok: false,
     recoverable: true,
-    error: redactSensitiveText(error.message).slice(0, 1_000),
-    nextAction: redactSensitiveText(error.nextAction).slice(0, 1_000)
+    error: error.message.slice(0, 1_000),
+    nextAction: error.nextAction.slice(0, 1_000)
   })
   return {
     parts: [{ type: 'text', text }],
@@ -1250,7 +1265,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         providerMessage?.includes('模型接口请求失败')
           ? '上游图像服务暂时不可用，请稍后重试或联系服务商'
           : providerMessage
-            ? redactSensitiveText(providerMessage).slice(0, 1_000)
+            ? providerMessage.slice(0, 1_000)
             : '图像生成请求失败'
       throw new Error(
         `${publicMessage}（HTTP ${response.status}${
@@ -1546,13 +1561,15 @@ export class ModelAgentRuntime implements AgentRuntime {
         seenCallIds.add(call.id)
         const tool = toolsByName.get(call.name)
         const displayName = tool?.displayName ?? call.name.slice(0, 128)
+        const input = boundedToolDetail(call.arguments, 4_000)
         yield {
           requestId: request.requestId,
           type: 'tool',
           callId: call.id,
           name: displayName,
           state: 'pending',
-          summary: `直连模型工具：${displayName}`
+          summary: `直连模型工具：${displayName}`,
+          input
         }
         if (!tool) {
           yield {
@@ -1561,7 +1578,8 @@ export class ModelAgentRuntime implements AgentRuntime {
             callId: call.id,
             name: displayName,
             state: 'failed',
-            summary: `直连模型请求了未知工具：${displayName}`
+            summary: `直连模型请求了未知工具：${displayName}`,
+            input
           }
           throw new Error(`模型请求了未知工具「${displayName}」`)
         }
@@ -1581,19 +1599,22 @@ export class ModelAgentRuntime implements AgentRuntime {
               this.toolProvider.getApproval(
                 tool,
                 call.arguments,
-                safeToolArgumentSummary(call.arguments),
+                boundedToolDetail(call.arguments, 1_000) ?? '',
                 toolContext
               )
             )
           }
         } catch (error) {
+          const detail = safeToolErrorDetail(error)
           yield {
             requestId: request.requestId,
             type: 'tool',
             callId: call.id,
             name: displayName,
             state: 'failed',
-            summary: `直连模型工具审批失败：${displayName}`
+            summary: `直连模型工具审批失败：${displayName}`,
+            input,
+            ...(detail ? { error: detail } : {})
           }
           throw error
         }
@@ -1604,7 +1625,8 @@ export class ModelAgentRuntime implements AgentRuntime {
             callId: call.id,
             name: displayName,
             state: 'failed',
-            summary: `用户拒绝了直连模型工具：${displayName}`
+            summary: `用户拒绝了直连模型工具：${displayName}`,
+            input
           }
           throw new Error(`用户拒绝了工具「${displayName}」`)
         }
@@ -1615,7 +1637,8 @@ export class ModelAgentRuntime implements AgentRuntime {
           callId: call.id,
           name: displayName,
           state: 'running',
-          summary: `正在执行直连模型工具：${displayName}`
+          summary: `正在执行直连模型工具：${displayName}`,
+          input
         }
 
         let result: ModelToolResult
@@ -1629,6 +1652,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           )
         } catch (error) {
           const recoverable = error instanceof RecoverableModelToolError
+          const detail = safeToolErrorDetail(error)
           yield {
             requestId: request.requestId,
             type: 'tool',
@@ -1638,7 +1662,9 @@ export class ModelAgentRuntime implements AgentRuntime {
             summary:
               recoverable
                 ? `直连模型工具需要刷新后重试：${displayName}`
-                : `直连模型工具执行失败：${displayName}`
+                : `直连模型工具执行失败：${displayName}`,
+            input,
+            ...(detail ? { error: detail } : {})
           }
           if (recoverable) {
             result = createRecoverableToolErrorResult(error)
@@ -1657,7 +1683,8 @@ export class ModelAgentRuntime implements AgentRuntime {
             callId: call.id,
             name: displayName,
             state: 'failed',
-            summary: `直连模型工具结果超过限制：${displayName}`
+            summary: `直连模型工具结果超过限制：${displayName}`,
+            input
           }
           throw new Error('直连模型工具结果总量超过 1MB 安全限制')
         }
@@ -1691,7 +1718,9 @@ export class ModelAgentRuntime implements AgentRuntime {
             callId: call.id,
             name: displayName,
             state: 'completed',
-            summary: `直连模型工具已完成：${displayName}`
+            summary: `直连模型工具已完成：${displayName}`,
+            input,
+            output: getToolResultPreview(result.parts)
           }
         }
       }

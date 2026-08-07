@@ -1657,6 +1657,14 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(await screen.findByText('文档写作')).toBeInTheDocument()
+    expect(
+      screen.getByText('支持直连模型、OpenCode 和 Continue')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/新导入的 Skill 默认启用/)
+    ).toHaveTextContent(
+      '分配给直连模型、OpenCode 和 Continue'
+    )
     fireEvent.click(
       screen.getByRole('button', { name: '导入 Skill 目录' })
     )
@@ -1677,6 +1685,15 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
     expect(await screen.findByText('电脑控制能力')).toBeInTheDocument()
+    expect(
+      screen.getByText(/自定义 MCP 当前仅用于直连模型/)
+    ).toHaveTextContent('新建时默认分配给直连模型')
+    expect(
+      screen.getByText(/内置共享 MCP 当前仅有知识库搜索/)
+    ).toHaveTextContent('直连模型、OpenCode 和 Continue')
+    expect(
+      screen.getByText(/Runtime 自有 MCP 配置不在此处管理/)
+    ).toBeInTheDocument()
     expect(screen.getAllByText('托管浏览器配置').length).toBeGreaterThan(0)
     expect(screen.getByLabelText('启用 Linux 桌面控制')).toBeDisabled()
     fireEvent.click(screen.getByLabelText('启用 浏览器控制'))

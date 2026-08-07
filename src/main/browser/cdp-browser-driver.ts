@@ -88,7 +88,6 @@ type RefBinding = {
   backendNodeId: number
   generation: number
   role: string
-  protected: boolean
 }
 
 export type CdpBrowserDriverOptions = {
@@ -591,8 +590,7 @@ export class CdpBrowserDriver {
       this.refs.set(ref, {
         backendNodeId: node.backendDOMNodeId,
         generation: this.generation,
-        role,
-        protected: protectedNode
+        role
       })
       output.push(item)
     }
@@ -648,7 +646,6 @@ export class CdpBrowserDriver {
       typeof node.nodeName === 'string' ? node.nodeName.toLowerCase() : ''
     const inputType = (attributeMap.get('type') ?? '').toLowerCase()
     const blocked =
-      binding.protected ||
       attributeMap.has('hidden') ||
       attributeMap.has('disabled') ||
       attributeMap.has('inert') ||
@@ -656,10 +653,9 @@ export class CdpBrowserDriver {
       attributeMap.get('aria-hidden') === 'true' ||
       attributeMap.get('aria-disabled') === 'true' ||
       inputType === 'hidden' ||
-      inputType === 'password' ||
       inputType === 'file'
     if (blocked) {
-      throw new Error('浏览器拒绝操作受保护、隐藏或禁用字段')
+      throw new Error('浏览器拒绝操作隐藏、禁用、只读或文件字段')
     }
     if (
       action === 'type' &&

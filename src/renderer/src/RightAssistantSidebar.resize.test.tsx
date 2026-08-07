@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  AssistantExpert,
-  AssistantTask
-} from '../../shared/assistant-contracts'
-import { RightAssistantSidebar } from './RightAssistantSidebar'
+import {
+  RightAssistantSidebar,
+  type AssistantSidebarTab,
+  type SidebarArtifact
+} from './RightAssistantSidebar'
 
 afterEach(cleanup)
 
@@ -16,58 +16,48 @@ beforeEach(() => {
 })
 
 function renderSidebar({
-  tasks = [],
-  experts = [],
   tab = 'context',
-  onCreateSchedule = vi.fn(async () => undefined)
+  artifacts = [],
+  onLoadArtifact = vi.fn(async () => undefined)
 }: {
-  tasks?: AssistantTask[]
-  experts?: AssistantExpert[]
-  tab?: 'tasks' | 'context'
-  onCreateSchedule?: () => Promise<void>
+  tab?: AssistantSidebarTab
+  artifacts?: SidebarArtifact[]
+  onLoadArtifact?: (artifactId: string) => Promise<void>
 } = {}): HTMLElement {
   render(
     <RightAssistantSidebar
-      activities={[]}
       approvals={[]}
-      artifacts={[]}
+      artifacts={artifacts}
       attachments={[]}
       enabledLibraries={[]}
-      experts={experts}
-      heartbeatEntries={[]}
       heartbeats={[]}
       memories={[]}
+      schedules={[]}
       onClose={vi.fn()}
       onCreateHeartbeat={vi.fn(async () => undefined)}
-      onCreateMemory={vi.fn(async () => undefined)}
-      onCreateSchedule={onCreateSchedule}
+      onCreateSchedule={vi.fn(async () => undefined)}
       onImportArtifacts={vi.fn(async () => undefined)}
       onListWorkspaceDirectory={vi.fn(async (path: string) => ({
         path,
         entries: [],
         truncated: false
       }))}
-      onLoadArtifact={vi.fn(async () => undefined)}
+      onLoadArtifact={onLoadArtifact}
       onLoadWorkspaceFile={vi.fn()}
       onOpenWorkspaceEntry={vi.fn(async () => undefined)}
-      onOpenConversation={vi.fn()}
-      onOpenHeartbeat={vi.fn()}
+      onInteractBrowser={vi.fn(async () => undefined)}
       onRefreshChanges={vi.fn(async () => undefined)}
       onRemoveAttachment={vi.fn()}
       onRemoveHeartbeat={vi.fn(async () => undefined)}
-      onRemoveMemory={vi.fn(async () => undefined)}
       onRemoveSchedule={vi.fn(async () => undefined)}
       onRespondApproval={vi.fn()}
       onRunHeartbeat={vi.fn(async () => undefined)}
       onRunSchedule={vi.fn(async () => undefined)}
       onSetHeartbeatPaused={vi.fn(async () => undefined)}
-      onSetMemoryStatus={vi.fn(async () => undefined)}
       onStopBrowser={vi.fn(async () => undefined)}
       onTabChange={vi.fn()}
       open
-      schedules={[]}
       tab={tab}
-      tasks={tasks}
     />
   )
 
@@ -165,80 +155,55 @@ describe('RightAssistantSidebar resizing', () => {
     ).toBe('424px')
   })
 
-  it('indents child tasks and names their expert and routing mode', () => {
-    const parentTask: AssistantTask = {
-      id: 'parent-task',
-      conversationId: 'conversation-1',
-      title: '分析发布计划',
-      instructions: '分析发布计划',
-      origin: 'user',
-      status: 'running',
-      createdAt: '2026-08-01T00:00:00.000Z'
-    }
-    const childTask: AssistantTask = {
-      id: 'child-task',
-      conversationId: 'conversation-1',
-      parentTaskId: parentTask.id,
-      expertId: 'expert-1',
-      routingMode: 'smart',
-      title: '研究子任务',
-      instructions: '收集资料',
-      origin: 'subagent',
-      status: 'completed',
-      createdAt: '2026-08-01T00:01:00.000Z'
-    }
-    renderSidebar({
-      tab: 'tasks',
-      tasks: [childTask, parentTask],
-      experts: [
-        {
-          id: 'expert-1',
-          name: '研究专家',
-          description: '分析证据',
-          systemInstructions: 'Analyze evidence.',
-          routingKeywords: ['研究'],
-          enabled: true,
-          createdAt: '2026-08-01T00:00:00.000Z',
-          updatedAt: '2026-08-01T00:00:00.000Z'
-        }
-      ]
-    })
+  it('exposes the task center and four reusable work surfaces', () => {
+    renderSidebar()
 
-    const taskButtons = screen.getAllByRole('button', {
-      name: /分析发布计划|研究子任务/u
-    })
-    expect(taskButtons[0]).toHaveTextContent('分析发布计划')
-    expect(taskButtons[1]).toHaveClass('assistant-sidebar__row--subtask')
-    expect(taskButtons[1]).toHaveTextContent('子专家：研究专家 · 智能路由')
+    expect(
+      screen.getAllByRole('tab').map((tab) => tab.textContent)
+    ).toEqual(['任务中心', '上下文', '工作区', '浏览器', '成果'])
+    expect(
+      screen.queryByRole('tab', { name: '预览' })
+    ).not.toBeInTheDocument()
   })
 
-  it('preserves schedule input and reports a failed action', async () => {
-    const onCreateSchedule = vi.fn(async () => {
-      throw new Error('定时服务不可用')
-    })
-    renderSidebar({ tab: 'tasks', onCreateSchedule })
+  it('keeps automation in the task center without recent tasks', () => {
+    renderSidebar({ tab: 'tasks' })
 
-    fireEvent.change(screen.getByLabelText('定时任务标题'), {
-      target: { value: '每日摘要' }
-    })
-    fireEvent.change(screen.getByLabelText('定时任务内容'), {
-      target: { value: '总结今天的工作' }
-    })
-    fireEvent.change(screen.getByLabelText('定时任务时间'), {
-      target: { value: '2026-08-06T09:00' }
-    })
-    fireEvent.click(
-      screen.getByRole('button', { name: '添加定时任务' })
-    )
+    expect(screen.getByText('等待审批')).toBeInTheDocument()
+    expect(screen.getByText('自动化')).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('定时任务标题')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
+  })
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      '定时服务不可用'
-    )
-    expect(screen.getByLabelText('定时任务标题')).toHaveValue(
-      '每日摘要'
-    )
-    expect(screen.getByLabelText('定时任务内容')).toHaveValue(
-      '总结今天的工作'
-    )
+  it('previews a result without switching to a separate tab', () => {
+    const onLoadArtifact = vi.fn(async () => undefined)
+    renderSidebar({
+      tab: 'results',
+      artifacts: [
+        {
+          id: 'artifact-1',
+          title: '发布说明',
+          content: '# 发布说明',
+          createdAt: Date.now(),
+          mimeType: 'text/markdown'
+        }
+      ],
+      onLoadArtifact
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /发布说明/u }))
+
+    expect(onLoadArtifact).toHaveBeenCalledWith('artifact-1')
+    expect(
+      screen.getByRole('tab', { name: '成果' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByRole('button', { name: '返回成果列表' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('tab', { name: '预览' })
+    ).not.toBeInTheDocument()
   })
 })

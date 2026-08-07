@@ -72,6 +72,8 @@ function toContinueToolEvent(
         ? 'failed'
         : tool.state,
     summary: `Continue 工具：${tool.name}`,
+    ...(tool.input ? { input: tool.input } : {}),
+    ...(tool.output ? { output: tool.output } : {}),
     ...(tool.error ? { error: tool.error } : {})
   }
 }
