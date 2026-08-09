@@ -239,15 +239,7 @@ function runtimeSelectionDescription(
   }
   const runtimeLabel =
     selection.provider === 'opencode' ? 'OpenCode' : 'Continue'
-  const profile =
-    'profileId' in selection
-      ? settings.modelProfiles.find(
-          (candidate) => candidate.id === selection.profileId
-        )
-      : undefined
-  return profile
-    ? `通过 ${runtimeLabel} Agent Runtime 运行，并使用 ${profile.name}。`
-    : `通过 ${runtimeLabel} Agent Runtime 及其当前模型配置运行。`
+  return `通过 ${runtimeLabel} Agent Runtime 运行，并跟随“Agent Runtime”设置中的全局 ${runtimeLabel} 配置。`
 }
 
 function ChannelProjectControls({
@@ -887,7 +879,7 @@ function WeixinChannelEditor({
           </button>
           {settings.bindingConfigured && (
             <button
-              className="danger-ghost"
+              className="danger-button danger-button--quiet"
               disabled={busy}
               onClick={onDisconnect}
               type="button"

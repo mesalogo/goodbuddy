@@ -1185,8 +1185,8 @@ describe('AssistantDatabase', () => {
       rootPath: channelProject.rootPath,
       defaultWorkMode: channelProject.defaultWorkMode,
       runtimeSelection: {
-        provider: 'model',
-        profileId: removedProfileId
+        provider: 'opencode',
+        profileId: runtimeProfileId
       }
     })
     const imageChannelProject = database.ensureChannelProjects(
@@ -1257,8 +1257,7 @@ describe('AssistantDatabase', () => {
       { provider: 'model', profileId: runtimeProfileId }
     ])
     expect(database.getProject(channelProject.id).runtimeSelection).toEqual({
-      provider: 'model',
-      profileId: defaultProfileId
+      provider: 'opencode'
     })
     expect(
       database.getProject(imageChannelProject.id).runtimeSelection

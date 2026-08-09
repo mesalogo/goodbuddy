@@ -863,6 +863,11 @@ describe('App', () => {
       provider: 'model',
       profileId: modelProfileId
     })
+    expect(
+      screen
+        .getByText('正在连接 Agent Runtime')
+        .querySelector('.message__status-dot')
+    ).toHaveClass('message__status-dot--active')
     const userMessage = screen
       .getAllByText('帮我分析项目')
       .map((element) => element.closest('article'))
@@ -2179,12 +2184,52 @@ describe('App', () => {
     })
 
     expect(await screen.findByText('已取消')).toBeInTheDocument()
+    const cancelledStatus = screen
+      .getAllByText('请求已取消')
+      .find((element) => element.classList.contains('message__status'))
+    expect(cancelledStatus).toBeDefined()
+    const cancelledDot = cancelledStatus?.querySelector(
+      '.message__status-dot'
+    )
+    expect(cancelledDot).toHaveClass('message__status-dot')
+    expect(cancelledDot).not.toHaveClass('message__status-dot--active')
     fireEvent.click(screen.getByText('任务与活动'))
     expect((await screen.findAllByText('已取消')).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByRole('button', { name: '进行中' }))
     expect(
       screen.getByText('当前没有等待中或正在运行的活动。')
     ).toBeInTheDocument()
+  })
+
+  it('keeps persisted completed message statuses static', async () => {
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000210',
+        projectId,
+        title: '已完成会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000211',
+            role: 'assistant',
+            content: '任务结果',
+            createdAt: 1_775_000_000_000,
+            state: 'complete',
+            status: '任务已完成'
+          }
+        ]
+      }
+    ])
+
+    render(<App />)
+
+    const completedStatus = await screen.findByText('任务已完成')
+    expect(
+      completedStatus.querySelector('.message__status-dot')
+    ).toHaveClass('message__status-dot')
+    expect(
+      completedStatus.querySelector('.message__status-dot')
+    ).not.toHaveClass('message__status-dot--active')
   })
 
   it('switches runtime profiles from the composer dropdown', async () => {

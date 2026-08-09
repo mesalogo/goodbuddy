@@ -973,15 +973,18 @@ describe('registerIpcHandlers agent terminal state', () => {
       respond: vi.fn(),
       clear: vi.fn()
     }
+    const getResolvedSettings = vi.fn(
+      async (): Promise<Record<string, unknown>> => ({
+        toolApproval,
+        subagentSmartRoutingEnabled: smartRoutingEnabled
+      })
+    )
     const dispose = registerIpcHandlers(
       window as never,
       runtime as never,
       'CommandOrControl+Shift+Space',
       {
-        getResolvedSettings: vi.fn(async () => ({
-          toolApproval,
-          subagentSmartRoutingEnabled: smartRoutingEnabled
-        }))
+        getResolvedSettings
       } as never,
       {} as never,
       contextManager as never,
@@ -1009,6 +1012,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       assistantDatabase,
       contextManager,
       dispose,
+      getResolvedSettings,
       clearHandler: electronMocks.handlers.get(
         ipcChannels.appClearLocalData
       ),
@@ -2240,6 +2244,8 @@ describe('registerIpcHandlers agent terminal state', () => {
 
   it('routes remote Execute to a configured Agent Runtime without a GoodBuddy approval callback', async () => {
     let receivedAuthorize: unknown = 'not-called'
+    const configuredProfileId =
+      '00000000-0000-4000-8000-000000000019'
     const selectedRuntime = {
       runtimeId: 'continue',
       capability: 'chat',
@@ -2282,6 +2288,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       false,
       selectedRuntimes
     )
+    harness.getResolvedSettings.mockResolvedValue({
+      toolApproval: 'always',
+      subagentSmartRoutingEnabled: false,
+      continueModelProfile: { id: configuredProfileId }
+    })
     vi.mocked(
       harness.assistantDatabase.listProjects
     ).mockReturnValue([
@@ -2323,8 +2334,15 @@ describe('registerIpcHandlers agent terminal state', () => {
       output: 'Continue 已执行'
     })
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
-      { provider: 'continue' },
+      { provider: 'continue', profileId: configuredProfileId },
       'C:\\ProjectWorkspace'
+    )
+    expect(
+      harness.assistantDatabase.getOrCreateRemoteConversation
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeSelection: { provider: 'continue' }
+      })
     )
     expect(receivedAuthorize).toBeUndefined()
     expect(harness.approvalBroker.request).not.toHaveBeenCalled()

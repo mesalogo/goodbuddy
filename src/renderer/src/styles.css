@@ -2816,14 +2816,18 @@ textarea:focus-visible {
   color: #ff4d4f;
 }
 
-.thinking-dot {
+.message__status-dot {
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
   margin-top: 4px;
   border-radius: 50%;
+  background: currentColor;
+}
+
+.message__status-dot--active {
   animation: pulse 1.1s ease-in-out infinite;
-  background: #1677ff;
+  background: var(--accent-solid);
 }
 
 .tool-execution-list {
@@ -4189,6 +4193,10 @@ details.settings-section[open] > summary {
 details.settings-section > :not(summary) {
   margin-right: var(--space-4);
   margin-left: var(--space-4);
+}
+
+details.settings-section > :not(summary) + :not(summary) {
+  margin-top: var(--space-3);
 }
 
 .model-connection-manager {

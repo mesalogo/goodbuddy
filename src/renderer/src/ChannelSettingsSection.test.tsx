@@ -339,6 +339,50 @@ describe('ChannelSettingsSection', () => {
     expect(trigger).toHaveFocus()
   })
 
+  it('renders disconnecting a configured Weixin binding as a danger action', async () => {
+    const configuredSnapshot: ChannelSettingsSnapshot = {
+      ...snapshot,
+      weixin: {
+        enabled: true,
+        bindingConfigured: true,
+        accountDisplay: '微信用户',
+        source: 'encrypted',
+        status: { state: 'running' }
+      }
+    }
+    const api = bindingApi()
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...api,
+          getSnapshot: vi.fn(async () => configuredSnapshot),
+          apply: vi.fn(),
+          testConnection: vi.fn()
+        },
+        projects: {
+          list: vi.fn(async () => projects),
+          update: vi.fn()
+        },
+        settings: settingsApi()
+      } as unknown as DesktopApi
+    })
+
+    render(<ChannelSettingsSection />)
+    const disconnect = await screen.findByRole('button', {
+      name: '断开本机绑定'
+    })
+    expect(disconnect).toHaveClass(
+      'danger-button',
+      'danger-button--quiet'
+    )
+
+    fireEvent.click(disconnect)
+    await waitFor(() =>
+      expect(api.disconnectWeixin).toHaveBeenCalledOnce()
+    )
+  })
+
   it('shows Weixin verification failures inside the QR dialog', async () => {
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
@@ -451,6 +495,11 @@ describe('ChannelSettingsSection', () => {
         value: agentRuntimeSelectionKey({ provider: 'opencode' })
       }
     })
+    expect(
+      screen.getByText(
+        '通过 OpenCode Agent Runtime 运行，并跟随“Agent Runtime”设置中的全局 OpenCode 配置。'
+      )
+    ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', { name: '保存通道设置' })
     )

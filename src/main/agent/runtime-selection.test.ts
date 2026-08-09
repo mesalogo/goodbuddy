@@ -2,7 +2,8 @@ import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
 import { describe, expect, it } from 'vitest'
 import {
   applyRuntimeSelection,
-  getConfiguredRuntimeTarget
+  getConfiguredRuntimeTarget,
+  resolveConfiguredAgentRuntimeSelection
 } from './runtime-selection'
 
 const defaultProfileId = '00000000-0000-4000-8000-000000000001'
@@ -146,6 +147,41 @@ describe('runtime selection', () => {
         }
       )
     ).toThrow('自动启动')
+  })
+
+  it('resolves Agent Runtime backends from the global Runtime configuration', () => {
+    const base = settings()
+    const configured = settings({
+      opencodeModelProfile: base.modelProfiles[1],
+      continueModelProfile: base.modelProfiles[2]
+    })
+
+    expect(
+      resolveConfiguredAgentRuntimeSelection(configured, {
+        provider: 'opencode',
+        profileId: defaultProfileId
+      })
+    ).toEqual({
+      provider: 'opencode',
+      profileId: secondProfileId
+    })
+    expect(
+      resolveConfiguredAgentRuntimeSelection(configured, {
+        provider: 'continue'
+      })
+    ).toEqual({
+      provider: 'continue',
+      profileId: responsesProfileId
+    })
+    expect(
+      resolveConfiguredAgentRuntimeSelection(configured, {
+        provider: 'model',
+        profileId: defaultProfileId
+      })
+    ).toEqual({
+      provider: 'model',
+      profileId: defaultProfileId
+    })
   })
 
   it('routes legacy automatic settings through local OpenCode when the Server is blank', () => {

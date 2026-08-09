@@ -80,6 +80,12 @@ export function repairChannelRuntimeSelection(
   if (selection.provider === 'auto') {
     return defaultDirectSelection
   }
+  if (
+    selection.provider === 'opencode' ||
+    selection.provider === 'continue'
+  ) {
+    return { provider: selection.provider }
+  }
   const repaired = repairAgentRuntimeSelection(selection, settings)
   if (repaired.provider !== 'model') {
     return repaired

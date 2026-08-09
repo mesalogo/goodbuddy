@@ -2,7 +2,7 @@
 
 面向专业工作与国产化环境的安全桌面智能助手。
 
-GoodBuddy 将模型连接、Agent Runtime、本地知识库、知识图谱、任务协作和持续成长能力组织在同一个桌面工作空间中。它不是简单的聊天窗口，而是一套可审计、可控制、可长期使用的个人智能工作环境。
+GoodBuddy 将模型连接、Agent Runtime、本地知识库、知识图谱、远程消息通道、任务协作和持续成长能力组织在同一个桌面工作空间中。它不是简单的聊天窗口，而是一套可审计、可控制、可长期使用的个人智能工作环境。
 
 ![GoodBuddy 工作空间](docs/screenshots/workspace-overview.png)
 
@@ -10,7 +10,7 @@ GoodBuddy 将模型连接、Agent Runtime、本地知识库、知识图谱、任
 
 ### 安全可控的 Agent 执行
 
-GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode 和 Continue。工具不会被直接暴露给界面，所有执行都受到工作模式、权限审批和运行边界约束。
+GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode 和 Continue。工具不会被直接暴露给界面，所有执行都受到工作模式、权限策略和运行边界约束。
 
 - `Ask`：只读问答，不调用工具。
 - `Execute`：选择该模式即授权当前交互运行使用已启用的受控工具。
@@ -45,6 +45,19 @@ GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode �
 - 显示真实 Git 工作区变更。
 - 支持远程任务委派与持久化结果发件箱。
 - Skills 与 MCP 能力按需接入。
+
+### 远程消息通道与微信 ClawBot
+
+微信 ClawBot、企业微信和钉钉分别使用系统管理的通道项目。远程发送者拥有独立会话，任务、活动和成果持续归属于对应通道与项目。
+
+- 微信 ClawBot 使用本机扫码绑定，支持个人微信私聊文字、图片和文件。
+- 单条微信消息最多 4 个附件，解密后合计不超过 12MB；图片和支持的文档进入现有受控上下文。
+- 通道可选择直连文本模型、OpenCode 或 Continue。OpenCode/Continue 始终跟随“Agent Runtime”中的全局配置，不在通道中维护第二套 Runtime 配置。
+- 远程消息支持 Ask 与 Execute。Execute 不显示通道专属逐次审批，但仍受发送者范围、项目目录、Runtime、沙箱、能力开关和活动审计约束。
+- 当前任务生成的图片可以返回微信；明确要求文件时可将本次最终文本生成为 Markdown 附件，不自动发送已有工作区文件。
+- “断开本机绑定”只停止本机收发并清除本地凭据，不会删除通道项目、远程会话或历史，也不承诺解除微信服务端授权。
+
+完整设计、安全边界和联调状态见[远程消息通道项目与微信 ClawBot 集成 PRD](docs/features/wechat-clawbot-channel-project-prd.md)。
 
 ### 本地知识库与知识图谱
 
@@ -82,6 +95,8 @@ GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode �
 | OpenCode | 完整编码与工作区任务 | Execute 不弹 GoodBuddy 审批，保留 Runtime 自身权限、取消和活动记录 |
 | Continue | Agent 编码与工作区任务 | Execute 不弹 GoodBuddy 审批，使用独立宿主、取消和活动记录 |
 
+消息通道选择 OpenCode 或 Continue 时只选择 Runtime 类型，具体模型来源、自有配置、可执行文件和服务地址统一复用“Agent Runtime”设置，并在每次远程请求开始时解析当前全局配置。
+
 ## 功能矩阵与路线图
 
 以下为仓库首页的简要路线图；完整能力说明、状态和重大规划统一记录在 [FEATURES.md](FEATURES.md)。
@@ -90,8 +105,9 @@ GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode �
 - [x] [多 Runtime、模型连接、Skills 与 MCP](FEATURES.md#agent-runtime-与模型连接)
 - [x] [本地知识库、向量检索与知识图谱](FEATURES.md#skillsmcp-与知识库)
 - [x] [任务、成果、记忆与智能心跳](FEATURES.md#工作管理长期协作与工作流)
-- [ ] [本地录音与离线转写](FEATURES.md#浏览器通信语音与应用维护)
-- [ ] [魔法笔记 / Magic Notes](FEATURES.md#知识工作空间与魔法笔记)：本地优先的结构化笔记、可追溯摘录与受控 AI 整理。
+- [x] [微信 ClawBot、企业微信与钉钉消息通道](FEATURES.md#浏览器通信语音与应用维护)
+- [x] [本地录音与离线转写](FEATURES.md#浏览器通信语音与应用维护)
+- [x] [魔法笔记 / Magic Notes](FEATURES.md#知识工作空间与魔法笔记)：本地优先的笔记与待办工作台，支持受控 AI 评论。
 - [ ] [Agent 框架、受控工作流与团队协作](FEATURES.md#agent-框架与协作能力)
 - [ ] [多云远程沙盒 Agent](FEATURES.md#多云远程沙盒-agent)
 
@@ -99,4 +115,4 @@ GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode �
 
 ## 隐私说明
 
-模型请求只会发送到用户选择的模型连接。本地数据保存在当前系统的应用数据目录中；远程委派仅在用户显式配置端点和令牌后启用。面向纯内网部署的“内网兼容模式”默认开启，允许 HTTP 并接受无效、自签名或过期的 HTTPS 证书；可在“安全与数据”中关闭并恢复严格校验。
+模型请求只会发送到用户选择的模型连接。本地数据保存在当前系统的应用数据目录中；远程委派仅在用户显式配置端点和令牌后启用。面向纯内网部署的“内网兼容模式”默认开启，允许 HTTP 并接受无效、自签名或过期的 HTTPS 证书；可在“安全与数据”中关闭并恢复严格校验。微信凭据和媒体端点不受该兼容模式放宽，始终只允许经过校验的腾讯微信 HTTPS 主机与重定向。

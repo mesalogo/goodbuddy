@@ -121,6 +121,7 @@ import {
   createDefaultModelRuntime,
   createModelProfileRuntime
 } from './agent/create-runtime'
+import { resolveConfiguredAgentRuntimeSelection } from './agent/runtime-selection'
 import { safeToolErrorDetail } from './agent/approval-summary'
 import { ReasoningTagStreamParser } from './agent/reasoning-stream'
 import type { BundledRuntimePaths } from './agent/bundled-runtimes'
@@ -576,6 +577,7 @@ export function registerIpcHandlers(
   const resolveRequestRuntime = async (
     request: Pick<AgentRequest, 'projectId' | 'runtimeSelection'> & {
       workspaceOverride?: string
+      followConfiguredAgentRuntime?: boolean
     }
   ): Promise<AgentRuntime> => {
     const projectWorkspace =
@@ -586,8 +588,14 @@ export function registerIpcHandlers(
     if (!selectedRuntimes || (!request.runtimeSelection && !projectWorkspace)) {
       return runtime
     }
-    const selection =
+    let selection =
       request.runtimeSelection ?? ({ provider: 'auto' } as const)
+    if (request.followConfiguredAgentRuntime) {
+      selection = resolveConfiguredAgentRuntimeSelection(
+        await settingsStore.getResolvedSettings(),
+        selection
+      )
+    }
     return projectWorkspace
       ? selectedRuntimes.getRuntime(selection, projectWorkspace)
       : selectedRuntimes.getRuntime(selection)
@@ -830,6 +838,7 @@ export function registerIpcHandlers(
       rootPath: string
       conversationId: string
       runtimeSelection: AgentRuntimeSelection
+      followConfiguredAgentRuntime?: boolean
       runtime?: AgentRuntime
       taskId?: string
       contextIds?: string[]
@@ -888,7 +897,9 @@ export function registerIpcHandlers(
         (await resolveRequestRuntime({
           projectId: schedule.projectId,
           runtimeSelection: remoteContext?.runtimeSelection,
-          workspaceOverride: remoteContext?.rootPath
+          workspaceOverride: remoteContext?.rootPath,
+          followConfiguredAgentRuntime:
+            remoteContext?.followConfiguredAgentRuntime
         }))
       const agentRuntimeSelected = isAgentRuntime(requestRuntime)
       const channelToolPolicy =
@@ -1455,7 +1466,8 @@ export function registerIpcHandlers(
         executionRuntime = await resolveRequestRuntime({
           projectId: project.id,
           runtimeSelection,
-          workspaceOverride: project.rootPath
+          workspaceOverride: project.rootPath,
+          followConfiguredAgentRuntime: true
         })
         executionStatus = await executionRuntime.getStatus()
       } catch (error) {
@@ -1546,6 +1558,7 @@ export function registerIpcHandlers(
           rootPath: project.rootPath,
           conversationId: remoteConversation.id,
           runtimeSelection,
+          followConfiguredAgentRuntime: true,
           runtime: executionRuntime,
           taskId: remoteTaskId,
           contextIds,

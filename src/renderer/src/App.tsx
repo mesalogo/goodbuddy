@@ -4925,7 +4925,14 @@ function App(): React.JSX.Element {
                           : 'message__status'
                       }
                     >
-                      <span className="thinking-dot" />
+                      <span
+                        aria-hidden="true"
+                        className={
+                          message.state === 'streaming'
+                            ? 'message__status-dot message__status-dot--active'
+                            : 'message__status-dot'
+                        }
+                      />
                       {message.status}
                     </div>
                   )}

@@ -35,6 +35,26 @@ export function getConfiguredRuntimeTarget(
   return 'model'
 }
 
+export function resolveConfiguredAgentRuntimeSelection(
+  settings: ResolvedRuntimeSettings,
+  selection: AgentRuntimeSelection
+): AgentRuntimeSelection {
+  if (
+    selection.provider !== 'opencode' &&
+    selection.provider !== 'continue'
+  ) {
+    return selection
+  }
+  const profile =
+    selection.provider === 'opencode'
+      ? settings.opencodeModelProfile
+      : settings.continueModelProfile
+  return {
+    provider: selection.provider,
+    ...(profile ? { profileId: profile.id } : {})
+  }
+}
+
 export function applyRuntimeSelection(
   settings: ResolvedRuntimeSettings,
   selection: AgentRuntimeSelection
