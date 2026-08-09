@@ -15,6 +15,7 @@ function makeRecord(index: number): ActivityRecord {
     id: `activity-${index}`,
     conversationId: 'conversation-1',
     requestId: 'request-1',
+    scope: { kind: 'global' },
     kind: 'tool',
     title: `工具调用 ${index}`,
     detail: '读取文件',
@@ -53,6 +54,41 @@ describe('activity-store', () => {
     )
 
     expect(loadActivityRecords()).toEqual([validRecord])
+  })
+
+  it('loads legacy records with an explicit unavailable scope', () => {
+    const { scope, ...legacyRecord } = makeRecord(1)
+    void scope
+    localStorage.setItem(
+      ACTIVITY_STORAGE_KEY,
+      JSON.stringify([legacyRecord])
+    )
+
+    expect(loadActivityRecords()).toEqual([
+      expect.objectContaining({
+        id: legacyRecord.id,
+        scope: { kind: 'unavailable' }
+      })
+    ])
+  })
+
+  it('rejects malformed project snapshots from untrusted storage', () => {
+    const record = makeRecord(1)
+    localStorage.setItem(
+      ACTIVITY_STORAGE_KEY,
+      JSON.stringify([
+        {
+          ...record,
+          scope: {
+            kind: 'project',
+            projectId: 'project-1',
+            projectName: 'x'.repeat(121)
+          }
+        }
+      ])
+    )
+
+    expect(loadActivityRecords()).toEqual([])
   })
 
   it('persists no more than the record limit', () => {
@@ -102,8 +138,30 @@ describe('activity-store', () => {
       .toMatchObject({
         id: first.id,
         createdAt: first.createdAt,
+        scope: first.scope,
         status: 'failed'
       })
+  })
+
+  it('keeps the original scope snapshot when a call is updated', () => {
+    const first: ActivityRecord = {
+      ...makeRecord(1),
+      callId: 'call-1',
+      scope: {
+        kind: 'project',
+        projectId: 'project-1',
+        projectName: '原项目名称'
+      },
+      status: 'running'
+    }
+
+    expect(
+      upsertActivityRecord([first], {
+        ...first,
+        scope: { kind: 'global' },
+        status: 'completed'
+      })[0]?.scope
+    ).toEqual(first.scope)
   })
 
   it('persists and upserts Subagent state transitions', () => {

@@ -98,6 +98,34 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('keeps shared controls keyboard and pointer accessible at narrow widths', () => {
+    expect(stylesheet).toMatch(
+      /\.window-control\s*>\s*svg,\s*\.icon-button\s*>\s*svg\s*\{[^}]*pointer-events:\s*none;/u
+    )
+    expect(stylesheet).toMatch(
+      /button:focus-visible,\s*input:focus-visible,\s*select:focus-visible,\s*textarea:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.page-tabs\s*\{[^}]*overflow-x:\s*auto;[^}]*flex-wrap:\s*nowrap;/u
+    )
+    expect(stylesheet).not.toContain(
+      '.heartbeat-center > .page-tabs {\n    display: grid;'
+    )
+  })
+
+  it('uses the design-system page gutters at each window width', () => {
+    expect(stylesheet).toMatch(/--page-gutter:\s*32px;/u)
+    expect(stylesheet).toMatch(
+      /@media \(max-width: 1199px\)\s*\{\s*:root\s*\{\s*--page-gutter:\s*24px;/u
+    )
+    expect(stylesheet).toMatch(
+      /@media \(max-width: 959px\)\s*\{\s*:root\s*\{\s*--page-gutter:\s*16px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.page-shell--master-detail\s*\{[^}]*padding:\s*var\(--page-gutter\);/u
+    )
+  })
+
   it('renders a consistent page shell and scoped header', () => {
     render(
       <PageShell variant="dashboard">
@@ -188,8 +216,10 @@ describe('WorkspacePrimitives', () => {
     const onCancel = vi.fn()
     const { rerender } = render(
       <DestructiveConfirmActions
+        confirmAriaLabel="永久删除对象"
         confirmLabel="确认删除"
         confirming={false}
+        icon={<span data-testid="delete-icon">×</span>}
         onCancel={onCancel}
         onConfirm={onConfirm}
         onRequestConfirm={onRequestConfirm}
@@ -197,11 +227,16 @@ describe('WorkspacePrimitives', () => {
       />
     )
 
+    expect(screen.getByTestId('delete-icon').parentElement).toHaveAttribute(
+      'aria-hidden',
+      'true'
+    )
     fireEvent.click(screen.getByRole('button', { name: '删除' }))
     expect(onRequestConfirm).toHaveBeenCalledOnce()
 
     rerender(
       <DestructiveConfirmActions
+        confirmAriaLabel="永久删除对象"
         confirmLabel="确认删除"
         confirming
         message="删除此对象？"
@@ -211,11 +246,74 @@ describe('WorkspacePrimitives', () => {
         triggerLabel="删除"
       />
     )
-    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
-    fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
-    fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(onConfirm).toHaveBeenCalledOnce()
+    const dialog = screen.getByRole('alertdialog', {
+      name: '永久删除对象'
+    })
+    const cancelButton = screen.getByRole('button', { name: '取消' })
+    const confirmButton = screen.getByRole('button', {
+      name: '永久删除对象'
+    })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAccessibleDescription('删除此对象？')
+    expect(cancelButton).toHaveFocus()
+
+    fireEvent.keyDown(cancelButton, { key: 'Tab', shiftKey: true })
+    expect(confirmButton).toHaveFocus()
+    fireEvent.keyDown(confirmButton, { key: 'Tab' })
+    expect(cancelButton).toHaveFocus()
+
+    fireEvent.keyDown(cancelButton, { key: 'Escape' })
     expect(onCancel).toHaveBeenCalledOnce()
+    fireEvent.click(confirmButton)
+    expect(onConfirm).toHaveBeenCalledOnce()
+
+    rerender(
+      <DestructiveConfirmActions
+        confirmAriaLabel="永久删除对象"
+        confirmLabel="确认删除"
+        confirming={false}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        onRequestConfirm={onRequestConfirm}
+        triggerLabel="删除"
+      />
+    )
+    expect(screen.getByRole('button', { name: '删除' })).toHaveFocus()
+  })
+
+  it('keeps focus on the dialog while destructive actions are disabled', () => {
+    const onCancel = vi.fn()
+    const { rerender } = render(
+      <DestructiveConfirmActions
+        confirmLabel="确认删除"
+        confirming={false}
+        onCancel={onCancel}
+        onConfirm={vi.fn()}
+        onRequestConfirm={vi.fn()}
+        triggerLabel="删除"
+      />
+    )
+
+    rerender(
+      <DestructiveConfirmActions
+        confirmLabel="正在删除"
+        confirming
+        disabled
+        onCancel={onCancel}
+        onConfirm={vi.fn()}
+        onRequestConfirm={vi.fn()}
+        triggerLabel="删除"
+      />
+    )
+
+    const dialog = screen.getByRole('alertdialog', {
+      name: '正在删除'
+    })
+    expect(dialog).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(dialog).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(onCancel).not.toHaveBeenCalled()
   })
 
   it.each([

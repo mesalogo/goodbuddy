@@ -325,10 +325,30 @@ const onEmbeddingStatus = vi.fn(
     }
   }
 )
+let applicationSettings = {
+  checkUpdatesOnStartup: true,
+  magicNotesEnabled: false
+}
+const getApplicationSettings = vi.fn(async () => ({
+  ...applicationSettings
+}))
+const updateApplicationSettings = vi.fn<
+  NonNullable<DesktopApi['updates']>['updateSettings']
+>(async (input) => {
+  applicationSettings = {
+    ...applicationSettings,
+    ...input
+  }
+  return { ...applicationSettings }
+})
 
 describe('SettingsPanel runtime files', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    applicationSettings = {
+      checkUpdatesOnStartup: true,
+      magicNotesEnabled: false
+    }
     embeddingStatusListeners.splice(0)
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
@@ -377,6 +397,13 @@ describe('SettingsPanel runtime files', () => {
           rebuild: rebuildEmbeddingIndex,
           cancel: cancelEmbeddingIndex,
           onStatus: onEmbeddingStatus
+        },
+        updates: {
+          getSettings: getApplicationSettings,
+          updateSettings: updateApplicationSettings,
+          check: vi.fn(),
+          openReleasePage: vi.fn(),
+          onResult: vi.fn(() => () => {})
         }
       } as unknown as DesktopApi
     })
@@ -408,6 +435,35 @@ describe('SettingsPanel runtime files', () => {
     expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
   })
 
+  it('toggles the Magic Notes platform entry setting', async () => {
+    const onMagicNotesEnabledChange = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onMagicNotesEnabledChange={onMagicNotesEnabledChange}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const toggle = await screen.findByRole('switch', {
+      name: '显示魔法笔记入口'
+    })
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByText(/默认关闭/)).toBeInTheDocument()
+    fireEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        magicNotesEnabled: true
+      })
+    )
+    expect(onMagicNotesEnabledChange).toHaveBeenCalledWith(true)
+  })
+
   it('keeps page navigation beside an independently scrollable panel', () => {
     render(
       <SettingsPanel
@@ -427,6 +483,63 @@ describe('SettingsPanel runtime files', () => {
     expect(navigation.parentElement).toHaveClass('settings-panel__body')
     expect(content.parentElement).toBe(navigation.parentElement)
     expect(content).toHaveClass('settings-panel__content')
+  })
+
+  it('uses one first-level heading for the settings page', () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        presentation="page"
+      />
+    )
+
+    expect(
+      screen.getAllByRole('heading', { level: 1 })
+    ).toHaveLength(1)
+    expect(
+      screen.getByRole('heading', { level: 1, name: '设置中心' })
+    ).toBeInTheDocument()
+  })
+
+  it('keeps local progress but does not duplicate clear-data success', async () => {
+    let finishClear: (() => void) | undefined
+    const onClearLocalData = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClear = resolve
+        })
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={onClearLocalData}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: '清除本地数据' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '清除本地数据' })
+    )
+
+    expect(
+      screen.getByRole('button', { name: '正在清除…' })
+    ).toBeDisabled()
+    await act(async () => finishClear?.())
+    await waitFor(() =>
+      expect(
+        screen.queryByText('本地数据已清除')
+      ).not.toBeInTheDocument()
+    )
   })
 
   it('supports keyboard navigation between settings tabs', () => {

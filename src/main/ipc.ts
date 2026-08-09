@@ -63,7 +63,7 @@ import {
   dingTalkChannelSettingsInputSchema,
   weComChannelSettingsInputSchema
 } from '../shared/channel-settings-contracts'
-import { applicationSettingsSchema } from '../shared/application-settings-contracts'
+import { applicationSettingsUpdateSchema } from '../shared/application-settings-contracts'
 import {
   speechModelActionInputSchema,
   speechModelSelectionInputSchema
@@ -834,6 +834,7 @@ export function registerIpcHandlers(
       channel: keyof typeof projectChannelLabels
       channelLabel: string
       senderDisplay: string
+      projectId: string
       projectName: string
       rootPath: string
       conversationId: string
@@ -1027,6 +1028,8 @@ export function registerIpcHandlers(
           publishRemoteActivity({
             requestId,
             conversationId: remoteContext.conversationId,
+            projectId: remoteContext.projectId,
+            projectName: remoteContext.projectName,
             channel: remoteContext.channel,
             kind: 'tool',
             callId: taskEvent.callId,
@@ -1450,6 +1453,8 @@ export function registerIpcHandlers(
     publishRemoteActivity({
       requestId: remoteTaskId,
       conversationId: remoteConversation.id,
+      projectId: project.id,
+      projectName: project.name,
       channel,
       kind: 'request',
       title: `${channelLabel} · ${senderDisplay}`,
@@ -1490,6 +1495,8 @@ export function registerIpcHandlers(
         publishRemoteActivity({
           requestId: remoteTaskId,
           conversationId: remoteConversation.id,
+          projectId: project.id,
+          projectName: project.name,
           channel,
           kind: 'result',
           title: `${channelLabel}远程执行不可用`,
@@ -1522,6 +1529,8 @@ export function registerIpcHandlers(
         publishRemoteActivity({
           requestId: remoteTaskId,
           conversationId: remoteConversation.id,
+          projectId: project.id,
+          projectName: project.name,
           channel,
           kind: 'result',
           title: `${channelLabel}远程执行不可用`,
@@ -1554,6 +1563,7 @@ export function registerIpcHandlers(
           channel,
           channelLabel,
           senderDisplay,
+          projectId: project.id,
           projectName: project.name,
           rootPath: project.rootPath,
           conversationId: remoteConversation.id,
@@ -1604,6 +1614,8 @@ export function registerIpcHandlers(
     publishRemoteActivity({
       requestId: remoteTaskId,
       conversationId: remoteConversation.id,
+      projectId: project.id,
+      projectName: project.name,
       channel,
       kind: 'result',
       title:
@@ -2409,7 +2421,7 @@ export function registerIpcHandlers(
         throw new Error('应用设置服务不可用')
       }
       return applicationSettingsStore.update(
-        applicationSettingsSchema.parse(input)
+        applicationSettingsUpdateSchema.parse(input)
       )
     }
   )

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import {
   useEffect,
+  useId,
   useRef,
   type KeyboardEvent,
   type ReactNode
@@ -326,30 +327,97 @@ export function DestructiveConfirmActions({
   triggerLabel: string
 }): React.JSX.Element {
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const confirmRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const wasConfirming = useRef(confirming)
+  const shouldRestoreTrigger = useRef(false)
+  const titleId = useId()
+  const descriptionId = useId()
 
   useEffect(() => {
     if (confirming && !wasConfirming.current) {
-      cancelRef.current?.focus()
+      if (disabled) {
+        dialogRef.current?.focus()
+      } else {
+        cancelRef.current?.focus()
+      }
+    } else if (confirming && disabled) {
+      dialogRef.current?.focus()
     } else if (
+      confirming &&
+      !disabled &&
+      document.activeElement === dialogRef.current
+    ) {
+      cancelRef.current?.focus()
+    } else if (!confirming && wasConfirming.current) {
+      shouldRestoreTrigger.current = true
+    }
+
+    if (
       !confirming &&
-      wasConfirming.current &&
+      shouldRestoreTrigger.current &&
       !triggerRef.current?.disabled
     ) {
       triggerRef.current?.focus()
+      shouldRestoreTrigger.current = false
     }
     wasConfirming.current = confirming
-  }, [confirming])
+  }, [confirming, disabled])
 
   return confirming ? (
     <div
-      aria-label={confirmAriaLabel}
+      aria-describedby={descriptionId}
+      aria-labelledby={titleId}
       aria-live="assertive"
+      aria-modal="true"
       className="danger-confirm"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !disabled) {
+          event.preventDefault()
+          onCancel()
+          return
+        }
+        if (event.key !== 'Tab') {
+          return
+        }
+        if (disabled) {
+          event.preventDefault()
+          dialogRef.current?.focus()
+          return
+        }
+
+        const cancelButton = cancelRef.current
+        const confirmButton = confirmRef.current
+        if (
+          !cancelButton ||
+          !confirmButton ||
+          cancelButton.disabled ||
+          confirmButton.disabled
+        ) {
+          return
+        }
+
+        event.preventDefault()
+        const nextButton = event.shiftKey
+          ? document.activeElement === cancelButton
+            ? confirmButton
+            : cancelButton
+          : document.activeElement === confirmButton
+            ? cancelButton
+            : confirmButton
+        nextButton.focus()
+      }}
+      ref={dialogRef}
       role="alertdialog"
+      tabIndex={-1}
     >
-      {message && <span>{message}</span>}
+      <span className="sr-only" id={titleId}>
+        {confirmAriaLabel ?? confirmLabel}
+      </span>
+      <span className={message ? undefined : 'sr-only'} id={descriptionId}>
+        {message ?? `确认${triggerLabel}操作。`}
+      </span>
       <button
         aria-label={cancelAriaLabel}
         className="secondary-button"
@@ -365,6 +433,7 @@ export function DestructiveConfirmActions({
         className="danger-button"
         disabled={disabled}
         onClick={onConfirm}
+        ref={confirmRef}
         type="button"
       >
         {confirmLabel}
@@ -379,7 +448,7 @@ export function DestructiveConfirmActions({
       ref={triggerRef}
       type="button"
     >
-      {icon}
+      {icon && <span aria-hidden="true">{icon}</span>}
       {triggerLabel}
     </button>
   )

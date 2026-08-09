@@ -18,7 +18,11 @@ describe('UpdateSettingsSection', () => {
   it('checks the official release manifest and updates the startup preference', async () => {
     const updateSettings = vi.fn<
       NonNullable<DesktopApi['updates']>['updateSettings']
-    >(async (input) => input)
+    >(async (input) => ({
+      checkUpdatesOnStartup:
+        input.checkUpdatesOnStartup ?? true,
+      magicNotesEnabled: input.magicNotesEnabled ?? true
+    }))
     const check = vi.fn<
       NonNullable<DesktopApi['updates']>['check']
     >(async () => ({
@@ -54,7 +58,8 @@ describe('UpdateSettingsSection', () => {
         },
         updates: {
           getSettings: vi.fn(async () => ({
-            checkUpdatesOnStartup: true
+            checkUpdatesOnStartup: true,
+            magicNotesEnabled: true
           })),
           updateSettings,
           check,
@@ -101,9 +106,13 @@ describe('UpdateSettingsSection', () => {
         },
         updates: {
           getSettings: vi.fn(async () => ({
-            checkUpdatesOnStartup: true
+            checkUpdatesOnStartup: true,
+            magicNotesEnabled: true
           })),
-          updateSettings: vi.fn(async (input) => input),
+          updateSettings: vi.fn(async () => ({
+            checkUpdatesOnStartup: true,
+            magicNotesEnabled: true
+          })),
           check: vi.fn(async () => {
             throw new Error(
               "Error invoking remote method 'application:update:check': TypeError: fetch failed"

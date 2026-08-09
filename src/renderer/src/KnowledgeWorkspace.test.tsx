@@ -4,7 +4,8 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor
+  waitFor,
+  within
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -143,6 +144,7 @@ function createProps(
     onCreateRelation: vi.fn(),
     onUpdateRelation: vi.fn(),
     onDeleteRelation: vi.fn(),
+    onRetryLoad: vi.fn(),
     ...overrides
   }
 }
@@ -283,10 +285,11 @@ describe('KnowledgeWorkspace', () => {
       'knowledge-workspace__sidebar'
     )
     expect(workspace.querySelector('aside')).not.toHaveAttribute('style')
-    expect(workspace.querySelector('main')).toHaveClass(
-      'knowledge-workspace__main'
-    )
-    expect(workspace.querySelector('main')).toHaveStyle({
+    const detailRegion = within(workspace).getByRole('region', {
+      name: '知识库详情'
+    })
+    expect(detailRegion).toHaveClass('knowledge-workspace__main')
+    expect(detailRegion).toHaveStyle({
       background: 'var(--surface-raised)'
     })
     expect(screen.getByText('全局')).toHaveClass('scope-badge')
@@ -308,6 +311,9 @@ describe('KnowledgeWorkspace', () => {
     expect(screen.getByLabelText('搜索文档').closest('label')).toHaveClass(
       'knowledge-documents__search'
     )
+    expect(screen.getByLabelText('搜索文档')).not.toHaveStyle({
+      outline: 'none'
+    })
     expect(screen.getByText('本地文件 · 架构说明.md')).toBeInTheDocument()
     expect(screen.queryByText('D:\\Private\\架构说明.md')).not
       .toBeInTheDocument()
@@ -607,6 +613,44 @@ describe('KnowledgeWorkspace', () => {
     expect(
       screen.getByRole('button', { name: '新建知识库' })
     ).toBeDisabled()
+  })
+
+  it('shows a retryable load error instead of the first-library empty state', () => {
+    const onRetryLoad = vi.fn()
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          libraries: [],
+          loadError: '数据库暂时不可用',
+          onRetryLoad,
+          selectedLibraryId: undefined
+        })}
+      />
+    )
+
+    expect(screen.getByText('知识库加载失败')).toBeInTheDocument()
+    expect(screen.getByText('数据库暂时不可用')).toBeInTheDocument()
+    expect(
+      screen.queryByText('建立第一个知识库')
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(onRetryLoad).toHaveBeenCalledOnce()
+  })
+
+  it('keeps existing data and selection visible when refresh fails', () => {
+    render(
+      <KnowledgeWorkspace
+        {...createProps({ loadError: '刷新连接失败' })}
+      />
+    )
+
+    expect(screen.getByText('知识库刷新失败')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: library.name }))
+      .toBeInTheDocument()
+    expect(screen.getByText('架构说明.md')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /^产品知识 1 个文档/u })
+    ).toHaveAttribute('aria-current', 'page')
   })
 
   it('confirms that deleting a managed library removes managed copies', async () => {

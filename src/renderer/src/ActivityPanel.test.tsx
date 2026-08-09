@@ -21,6 +21,7 @@ function makeRecord(
     id: `activity-${index}`,
     conversationId: `conversation-${index}`,
     requestId: `request-${index}`,
+    scope: { kind: 'global' },
     kind: 'tool',
     title: `活动 ${index}`,
     detail: `详情 ${index}`,
@@ -150,6 +151,26 @@ describe('ActivityPanel', () => {
     ).toBeDisabled()
   })
 
+  it('clears a filter that has no matching activity', () => {
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[makeRecord(1)]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    expect(screen.getByText('没有匹配的活动')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
+
+    expect(
+      screen.getByRole('button', { name: '全部' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('对话：活动 1')).toBeInTheDocument()
+  })
+
   it('labels Subagent activity as child expert work', () => {
     render(
       <ActivityPanel
@@ -206,6 +227,32 @@ describe('ActivityPanel', () => {
     fireEvent.click(within(groups[0]!).getByText('对话：活动 1'))
     expect(groups[0]).toHaveAttribute('open')
     expect(groups[0]!.querySelectorAll('article')).toHaveLength(2)
+  })
+
+  it('shows immutable scope snapshots on groups and records', () => {
+    const projectRecord: ActivityRecord = {
+      ...makeRecord(1),
+      scope: {
+        kind: 'project',
+        projectId: 'project-1',
+        projectName: '项目甲'
+      }
+    }
+    const unavailableRecord: ActivityRecord = {
+      ...makeRecord(2),
+      scope: { kind: 'unavailable' }
+    }
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[projectRecord, unavailableRecord]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    expect(screen.getAllByText('项目：项目甲')).toHaveLength(2)
+    expect(screen.getAllByText('范围不可用')).toHaveLength(2)
   })
 
   it('uses the shared page hierarchy and explicit global scope', () => {

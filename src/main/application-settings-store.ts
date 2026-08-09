@@ -10,12 +10,23 @@ import { dirname } from 'node:path'
 import { z } from 'zod'
 import {
   applicationSettingsSchema,
+  applicationSettingsUpdateSchema,
   type ApplicationSettings
 } from '../shared/application-settings-contracts'
-export { applicationSettingsSchema } from '../shared/application-settings-contracts'
+export {
+  applicationSettingsSchema,
+  applicationSettingsUpdateSchema
+} from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 1
+const CURRENT_SETTINGS_VERSION = 2
+
+const legacyStoredApplicationSettingsSchema = z
+  .object({
+    version: z.union([z.literal(1), z.literal(2)]),
+    checkUpdatesOnStartup: z.boolean()
+  })
+  .strict()
 
 const storedApplicationSettingsSchema = applicationSettingsSchema
   .extend({
@@ -28,7 +39,8 @@ type StoredApplicationSettings = z.infer<
 >
 
 export const defaultApplicationSettings: ApplicationSettings = {
-  checkUpdatesOnStartup: true
+  checkUpdatesOnStartup: true,
+  magicNotesEnabled: false
 }
 
 function isMissingFile(error: unknown): boolean {
@@ -81,6 +93,17 @@ export class ApplicationSettingsStore {
       }
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const legacyResult =
+          legacyStoredApplicationSettingsSchema.safeParse(parsed)
+        if (legacyResult.success) {
+          this.settings = {
+            version: CURRENT_SETTINGS_VERSION,
+            checkUpdatesOnStartup:
+              legacyResult.data.checkUpdatesOnStartup,
+            magicNotesEnabled: false
+          }
+          return this.settings
+        }
         await this.isolateCorruptFile()
         this.settings = {
           version: CURRENT_SETTINGS_VERSION,
@@ -106,16 +129,19 @@ export class ApplicationSettingsStore {
   async get(): Promise<ApplicationSettings> {
     const stored = await this.loadStored()
     return {
-      checkUpdatesOnStartup: stored.checkUpdatesOnStartup
+      checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
+      magicNotesEnabled: stored.magicNotesEnabled
     }
   }
 
   update(input: unknown): Promise<ApplicationSettings> {
     const operation = this.updateQueue.then(async () => {
-      const settings = applicationSettingsSchema.parse(input)
+      const updates = applicationSettingsUpdateSchema.parse(input)
+      const current = await this.loadStored()
       const next: StoredApplicationSettings = {
-        version: CURRENT_SETTINGS_VERSION,
-        ...settings
+        ...current,
+        ...updates,
+        version: CURRENT_SETTINGS_VERSION
       }
       await mkdir(dirname(this.filePath), { recursive: true })
       const temporaryPath =
@@ -137,7 +163,8 @@ export class ApplicationSettingsStore {
       }
       this.settings = next
       return {
-        checkUpdatesOnStartup: next.checkUpdatesOnStartup
+        checkUpdatesOnStartup: next.checkUpdatesOnStartup,
+        magicNotesEnabled: next.magicNotesEnabled
       }
     })
     this.updateQueue = operation.then(

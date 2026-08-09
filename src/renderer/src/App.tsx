@@ -104,6 +104,7 @@ import { HeartbeatCenter } from './HeartbeatCenter'
 import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import {
+  DestructiveConfirmActions,
   EmptyState,
   PageShell,
   ScopeBadge
@@ -609,6 +610,19 @@ function createConversation(
   }
 }
 
+function displayErrorMessage(reason: unknown, fallback: string): string {
+  if (
+    typeof reason === 'object' &&
+    reason !== null &&
+    'message' in reason &&
+    typeof reason.message === 'string' &&
+    reason.message
+  ) {
+    return reason.message
+  }
+  return fallback
+}
+
 function isUnusedConversation(conversation: Conversation): boolean {
   return (
     conversation.title === '新对话' &&
@@ -1030,6 +1044,7 @@ function App(): React.JSX.Element {
     useState(false)
   const migrationConversations = useRef(conversations)
   const [projects, setProjects] = useState<AssistantProject[]>([])
+  const projectsRef = useRef(projects)
   const [assistantTasks, setAssistantTasks] = useState<AssistantTask[]>([])
   const [tokenUsage, setTokenUsage] =
     useState<TokenUsageSummary>(emptyTokenUsage)
@@ -1060,6 +1075,8 @@ function App(): React.JSX.Element {
   const [heartbeatRuns, setHeartbeatRuns] = useState<
     AssistantHeartbeatRun[]
   >([])
+  const [heartbeatLoading, setHeartbeatLoading] = useState(true)
+  const [heartbeatLoadError, setHeartbeatLoadError] = useState<string>()
   const [assistantExperts, setAssistantExperts] = useState<
     AssistantExpert[]
   >([])
@@ -1110,7 +1127,12 @@ function App(): React.JSX.Element {
       ? 'ask'
       : workMode
   const [appInfo, setAppInfo] = useState<AppInfo>()
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [narrowWindow, setNarrowWindow] = useState(
+    () => window.innerWidth < 900
+  )
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => window.innerWidth >= 900
+  )
   const [assistantSidebarOpen, setAssistantSidebarOpen] = useState(
     () => window.innerWidth >= 1280
   )
@@ -1120,8 +1142,13 @@ function App(): React.JSX.Element {
     Record<string, BrowserLiveState>
   >({})
   const [view, setView] = useState<WorkspaceView>('chat')
+  const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [conversationActionsId, setConversationActionsId] = useState('')
+  const [confirmingConversationId, setConfirmingConversationId] =
+    useState('')
+  const [deletingConversationId, setDeletingConversationId] =
+    useState('')
   const [renamingConversationId, setRenamingConversationId] = useState('')
   const [notifications, notify] = useReducer(
     appNotificationReducer,
@@ -1169,6 +1196,11 @@ function App(): React.JSX.Element {
     evidence: []
   })
   const [knowledgeLoading, setKnowledgeLoading] = useState(true)
+  const [knowledgeLoadError, setKnowledgeLoadError] = useState<string>()
+  const knowledgeLoadRequestRef = useRef(0)
+  const failedKnowledgeLibraryIdRef = useRef<string | undefined>(
+    undefined
+  )
   const [enabledKnowledgeLibraryIds, setEnabledKnowledgeLibraryIds] = useState<
     string[]
   >([])
@@ -1182,19 +1214,66 @@ function App(): React.JSX.Element {
   const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null)
   const topbarMenuRef = useRef<HTMLDivElement>(null)
   const topbarMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
   )
+  const closeNarrowSidebar = useCallback((): void => {
+    setSidebarOpen(false)
+    requestAnimationFrame(() => sidebarToggleRef.current?.focus())
+  }, [])
 
   useEffect(() => {
     activeConversationIdRef.current = activeId
   }, [activeId])
 
   useEffect(() => {
+    const collapseSidebarAtNarrowWidth = (): void => {
+      const narrow = window.innerWidth < 900
+      setNarrowWindow(narrow)
+      if (narrow) {
+        setSidebarOpen(false)
+      }
+    }
+    window.addEventListener('resize', collapseSidebarAtNarrowWidth)
+    return () =>
+      window.removeEventListener('resize', collapseSidebarAtNarrowWidth)
+  }, [])
+
+  useEffect(() => {
+    if (!narrowWindow || !sidebarOpen) {
+      return
+    }
+    const focusFrame = requestAnimationFrame(() => {
+      sidebarRef.current
+        ?.querySelector<HTMLButtonElement>(
+          '.primary-nav button[aria-current="page"], .primary-nav button'
+        )
+        ?.focus()
+    })
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeNarrowSidebar()
+      }
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [closeNarrowSidebar, narrowWindow, sidebarOpen])
+
+  useEffect(() => {
     conversationsRef.current = conversations
   }, [conversations])
+
+  useEffect(() => {
+    projectsRef.current = projects
+  }, [projects])
 
   useEffect(() => {
     resizeComposerTextarea(inputRef.current)
@@ -1272,6 +1351,10 @@ function App(): React.JSX.Element {
     void updates
       .getSettings()
       .then(async (settings) => {
+        setMagicNotesEnabled(settings.magicNotesEnabled)
+        if (!settings.magicNotesEnabled) {
+          setView('chat')
+        }
         if (!settings.checkUpdatesOnStartup) {
           return
         }
@@ -1712,10 +1795,35 @@ function App(): React.JSX.Element {
   )
 
   const recordActivity = useCallback(
-    (record: Omit<ActivityRecord, 'id' | 'createdAt'>): void => {
+    (
+      record: Omit<ActivityRecord, 'id' | 'createdAt' | 'scope'>,
+      scopeOverride?: ActivityRecord['scope']
+    ): void => {
+      const conversation = conversationsRef.current.find(
+        (candidate) => candidate.id === record.conversationId
+      )
+      const project = conversation?.projectId
+        ? projectsRef.current.find(
+            (candidate) => candidate.id === conversation.projectId
+          )
+        : undefined
+      const scope: ActivityRecord['scope'] =
+        scopeOverride ??
+        (!conversation
+          ? { kind: 'unavailable' }
+          : !conversation.projectId
+            ? { kind: 'global' }
+            : project?.id && project.name
+              ? {
+                  kind: 'project',
+                  projectId: project.id.slice(0, 256),
+                  projectName: project.name.slice(0, 120)
+                }
+              : { kind: 'unavailable' })
       setActivityRecords((current) =>
         upsertActivityRecord(current, {
           ...record,
+          scope,
           id: crypto.randomUUID(),
           createdAt: Date.now()
         })
@@ -1758,38 +1866,75 @@ function App(): React.JSX.Element {
           activity.detail
         )
       }
-      recordActivity({
-        requestId: activity.requestId,
-        conversationId: activity.conversationId,
-        callId: activity.callId,
-        kind: activity.kind,
-        title: activity.title,
-        detail: activity.detail,
-        status: activity.status
-      })
+      recordActivity(
+        {
+          requestId: activity.requestId,
+          conversationId: activity.conversationId,
+          callId: activity.callId,
+          kind: activity.kind,
+          title: activity.title,
+          detail: activity.detail,
+          status: activity.status
+        },
+        {
+          kind: 'project',
+          projectId: activity.projectId.slice(0, 256),
+          projectName: activity.projectName.slice(0, 120)
+        }
+      )
     })
   }, [recordActivity, updateRequestActivity])
 
   const refreshKnowledge = useCallback(
     async (libraryId?: string): Promise<KnowledgeSnapshot> => {
-      const snapshot = await window.goodbuddy.knowledge.getSnapshot(libraryId)
-      setKnowledgeSnapshot(snapshot)
-      if (!knowledgeScopeInitialized.current) {
-        knowledgeScopeInitialized.current = true
-        setEnabledKnowledgeLibraryIds(
-          snapshot.libraries.map((library) => library.id)
-        )
-      } else {
-        setEnabledKnowledgeLibraryIds((current) =>
-          current.filter((id) =>
-            snapshot.libraries.some((library) => library.id === id)
+      const requestId = ++knowledgeLoadRequestRef.current
+      try {
+        const snapshot =
+          await window.goodbuddy.knowledge.getSnapshot(libraryId)
+        if (requestId !== knowledgeLoadRequestRef.current) {
+          return snapshot
+        }
+        failedKnowledgeLibraryIdRef.current = undefined
+        setKnowledgeSnapshot(snapshot)
+        setKnowledgeLoadError(undefined)
+        if (!knowledgeScopeInitialized.current) {
+          knowledgeScopeInitialized.current = true
+          setEnabledKnowledgeLibraryIds(
+            snapshot.libraries.map((library) => library.id)
           )
+        } else {
+          setEnabledKnowledgeLibraryIds((current) =>
+            current.filter((id) =>
+              snapshot.libraries.some((library) => library.id === id)
+            )
+          )
+        }
+        return snapshot
+      } catch (reason) {
+        if (requestId !== knowledgeLoadRequestRef.current) {
+          throw reason
+        }
+        failedKnowledgeLibraryIdRef.current = libraryId
+        setKnowledgeLoadError(
+          displayErrorMessage(reason, '本地知识库读取失败')
         )
+        throw reason
       }
-      return snapshot
     },
     []
   )
+
+  const retryKnowledgeLoad = useCallback(async (): Promise<void> => {
+    setKnowledgeLoading(true)
+    setKnowledgeLoadError(undefined)
+    try {
+      await refreshKnowledge(failedKnowledgeLibraryIdRef.current)
+    } catch {
+      // The recoverable page state is set by refreshKnowledge.
+    } finally {
+      setKnowledgeLoading(false)
+    }
+  }, [refreshKnowledge])
 
   const switchRuntime = useCallback(
     async (selection: AgentRuntimeSelection): Promise<void> => {
@@ -2610,19 +2755,41 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const requestId = ++heartbeatLoadRequestRef.current
-    void loadHeartbeats()
-      .then((result) => {
-        if (requestId !== heartbeatLoadRequestRef.current) {
-          return
-        }
-        setAssistantHeartbeats(result.configs)
-        setHeartbeatRuns(result.runs)
-        setHeartbeatEntries(result.entries)
-      })
-      .catch(() =>
-        notify({ tone: 'error', message: '智能心跳读取失败' })
-      )
+    const timeout = setTimeout(() => {
+      if (requestId !== heartbeatLoadRequestRef.current) {
+        return
+      }
+      setHeartbeatLoading(true)
+      setHeartbeatLoadError(undefined)
+      setAssistantHeartbeats([])
+      setHeartbeatRuns([])
+      setHeartbeatEntries([])
+      void loadHeartbeats()
+        .then((result) => {
+          if (requestId !== heartbeatLoadRequestRef.current) {
+            return
+          }
+          setAssistantHeartbeats(result.configs)
+          setHeartbeatRuns(result.runs)
+          setHeartbeatEntries(result.entries)
+          setHeartbeatLoadError(undefined)
+        })
+        .catch((reason: unknown) => {
+          if (requestId !== heartbeatLoadRequestRef.current) {
+            return
+          }
+          setHeartbeatLoadError(
+            displayErrorMessage(reason, '智能心跳读取失败')
+          )
+        })
+        .finally(() => {
+          if (requestId === heartbeatLoadRequestRef.current) {
+            setHeartbeatLoading(false)
+          }
+        })
+    }, 0)
     return () => {
+      clearTimeout(timeout)
       if (requestId === heartbeatLoadRequestRef.current) {
         heartbeatLoadRequestRef.current += 1
       }
@@ -2646,6 +2813,21 @@ function App(): React.JSX.Element {
       mergeArtifacts(current, artifacts)
     )
   }, [activeProjectId, refreshHeartbeats])
+
+  const retryHeartbeatLoad = useCallback(async (): Promise<void> => {
+    setHeartbeatLoading(true)
+    setHeartbeatLoadError(undefined)
+    try {
+      await refreshHeartbeatCenter()
+      setHeartbeatLoadError(undefined)
+    } catch (reason) {
+      setHeartbeatLoadError(
+        displayErrorMessage(reason, '智能心跳读取失败')
+      )
+    } finally {
+      setHeartbeatLoading(false)
+    }
+  }, [refreshHeartbeatCenter])
 
   const createHeartbeat = useCallback(
     async (input: HeartbeatCreateInput): Promise<void> => {
@@ -2706,8 +2888,11 @@ function App(): React.JSX.Element {
       }
       refreshing = true
       void refreshHeartbeatCenter()
-        .catch(() =>
-          notify({ tone: 'error', message: '智能心跳刷新失败' })
+        .then(() => setHeartbeatLoadError(undefined))
+        .catch((reason: unknown) =>
+          setHeartbeatLoadError(
+            displayErrorMessage(reason, '智能心跳刷新失败')
+          )
         )
         .finally(() => {
           refreshing = false
@@ -2806,14 +2991,8 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const timeout = setTimeout(() => {
       void refreshKnowledge()
-        .catch((reason: unknown) => {
-          notify({
-            tone: 'error',
-            message:
-              reason instanceof Error
-                ? reason.message
-                : '本地知识库读取失败'
-          })
+        .catch(() => {
+          // refreshKnowledge exposes a recoverable page-local error.
         })
         .finally(() => setKnowledgeLoading(false))
     }, 0)
@@ -3137,18 +3316,37 @@ function App(): React.JSX.Element {
     )
   }
 
-  const deleteConversation = (conversationId: string): void => {
+  const deleteConversation = async (
+    conversationId: string
+  ): Promise<void> => {
+    if (deletingConversationId) {
+      return
+    }
+    setDeletingConversationId(conversationId)
+    const activeRequests = [...activeRuns.current.entries()]
+      .filter(([, run]) => run.conversationId === conversationId)
+      .map(([requestId]) => requestId)
+    try {
+      await Promise.all(
+        activeRequests.map((requestId) =>
+          window.goodbuddy.agent.cancel(requestId)
+        )
+      )
+    } catch {
+      notify({
+        tone: 'error',
+        message: '停止会话中的运行任务失败，尚未删除对话'
+      })
+      setDeletingConversationId('')
+      return
+    }
+    setConfirmingConversationId('')
+    setDeletingConversationId('')
     if (conversationActionsId === conversationId) {
       setConversationActionsId('')
     }
     if (renamingConversationId === conversationId) {
       setRenamingConversationId('')
-    }
-    const activeRequest = [...activeRuns.current.entries()].find(
-      ([, run]) => run.conversationId === conversationId
-    )?.[0]
-    if (activeRequest) {
-      void window.goodbuddy.agent.cancel(activeRequest)
     }
     const browserStop = window.goodbuddy.browser?.stop(conversationId)
     if (browserStop) {
@@ -3972,7 +4170,15 @@ function App(): React.JSX.Element {
 
   return (
     <div className="app-shell">
-      <aside className={sidebarOpen ? 'sidebar' : 'sidebar sidebar--closed'}>
+      <aside
+        aria-label={narrowWindow && sidebarOpen ? '主侧栏' : undefined}
+        aria-hidden={!sidebarOpen}
+        aria-modal={narrowWindow && sidebarOpen ? 'true' : undefined}
+        className={sidebarOpen ? 'sidebar' : 'sidebar sidebar--closed'}
+        inert={!sidebarOpen}
+        ref={sidebarRef}
+        role={narrowWindow && sidebarOpen ? 'dialog' : undefined}
+      >
         <div className="brand">
           <div className="brand__mark">
             <img
@@ -4028,28 +4234,33 @@ function App(): React.JSX.Element {
 
         <nav className="primary-nav" aria-label="主导航">
           <button
+            aria-current={view === 'chat' ? 'page' : undefined}
             className={
               view === 'chat' ? 'nav-item nav-item--active' : 'nav-item'
             }
             onClick={() => setView('chat')}
             type="button"
           >
-            <MessageSquare size={17} />
+            <MessageSquare aria-hidden="true" size={17} />
             <span>对话</span>
           </button>
+          {magicNotesEnabled && (
+            <button
+              aria-current={view === 'magic-notes' ? 'page' : undefined}
+              className={
+                view === 'magic-notes'
+                  ? 'nav-item nav-item--active'
+                  : 'nav-item'
+              }
+              onClick={() => setView('magic-notes')}
+              type="button"
+            >
+              <Sparkles aria-hidden="true" size={17} />
+              <span>魔法笔记</span>
+            </button>
+          )}
           <button
-            className={
-              view === 'magic-notes'
-                ? 'nav-item nav-item--active'
-                : 'nav-item'
-            }
-            onClick={() => setView('magic-notes')}
-            type="button"
-          >
-            <Sparkles size={17} />
-            <span>魔法笔记</span>
-          </button>
-          <button
+            aria-current={view === 'knowledge' ? 'page' : undefined}
             className={
               view === 'knowledge'
                 ? 'nav-item nav-item--active'
@@ -4058,10 +4269,11 @@ function App(): React.JSX.Element {
             onClick={() => setView('knowledge')}
             type="button"
           >
-            <Library size={17} />
+            <Library aria-hidden="true" size={17} />
             <span>知识库</span>
           </button>
           <button
+            aria-current={view === 'heartbeat' ? 'page' : undefined}
             className={
               view === 'heartbeat'
                 ? 'nav-item nav-item--active'
@@ -4070,7 +4282,7 @@ function App(): React.JSX.Element {
             onClick={() => setView('heartbeat')}
             type="button"
           >
-            <HeartPulse size={17} />
+            <HeartPulse aria-hidden="true" size={17} />
             <span>智能心跳</span>
             {pendingHeartbeatSuggestionCount > 0 && (
               <span
@@ -4082,6 +4294,7 @@ function App(): React.JSX.Element {
             )}
           </button>
           <button
+            aria-current={view === 'activity' ? 'page' : undefined}
             className={
               view === 'activity'
                 ? 'nav-item nav-item--active'
@@ -4090,7 +4303,7 @@ function App(): React.JSX.Element {
             onClick={() => setView('activity')}
             type="button"
           >
-            <TerminalSquare size={17} />
+            <TerminalSquare aria-hidden="true" size={17} />
             <span>任务与活动</span>
           </button>
         </nav>
@@ -4157,6 +4370,7 @@ function App(): React.JSX.Element {
                   className="conversation-more"
                   onClick={() => {
                     setRenamingConversationId('')
+                    setConfirmingConversationId('')
                     setConversationActionsId((current) =>
                       current === conversation.id ? '' : conversation.id
                     )
@@ -4177,16 +4391,6 @@ function App(): React.JSX.Element {
                 >
                   <MoreHorizontal size={14} />
                 </button>
-                {!conversation.remote && (
-                  <button
-                    aria-label={`删除对话 ${conversation.title}`}
-                    className="conversation-delete"
-                    onClick={() => deleteConversation(conversation.id)}
-                    type="button"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
               </div>
               {conversationActionsId === conversation.id && (
                 <div
@@ -4229,6 +4433,30 @@ function App(): React.JSX.Element {
                     <Download size={14} />
                     导出 Markdown
                   </button>
+                  {!conversation.remote && (
+                    <DestructiveConfirmActions
+                      cancelAriaLabel={`取消删除对话 ${conversation.title}`}
+                      confirmAriaLabel={`确认永久删除对话 ${conversation.title}`}
+                      confirmLabel="永久删除对话"
+                      confirming={
+                        confirmingConversationId === conversation.id
+                      }
+                      disabled={
+                        deletingConversationId === conversation.id
+                      }
+                      icon={<Trash2 aria-hidden="true" size={14} />}
+                      message="将永久删除此会话的全部内容；如果此会话有正在运行的任务，也会同时停止。此操作不可恢复。"
+                      onCancel={() => setConfirmingConversationId('')}
+                      onConfirm={() =>
+                        void deleteConversation(conversation.id)
+                      }
+                      onRequestConfirm={() =>
+                        setConfirmingConversationId(conversation.id)
+                      }
+                      triggerAriaLabel={`删除对话 ${conversation.title}`}
+                      triggerLabel="删除对话"
+                    />
+                  )}
                 </div>
               )}
               {!conversation.remote &&
@@ -4304,16 +4532,29 @@ function App(): React.JSX.Element {
           </button>
         </div>
       </aside>
+      {sidebarOpen && (
+        <button
+          aria-label="关闭侧栏"
+          className="sidebar-backdrop"
+          onClick={closeNarrowSidebar}
+          type="button"
+        />
+      )}
 
-      <main className="workspace">
+      <main
+        aria-hidden={narrowWindow && sidebarOpen ? 'true' : undefined}
+        className="workspace"
+        inert={narrowWindow && sidebarOpen}
+      >
         <header className="topbar">
           <button
             className="icon-button sidebar-toggle"
             type="button"
             aria-label="切换侧栏"
             onClick={() => setSidebarOpen((open) => !open)}
+            ref={sidebarToggleRef}
           >
-            <PanelLeft size={18} />
+            <PanelLeft aria-hidden="true" size={18} />
           </button>
           {view === 'chat' && (
             <>
@@ -5496,7 +5737,7 @@ function App(): React.JSX.Element {
           )}
             </footer>
           </PageShell>
-        ) : view === 'magic-notes' ? (
+        ) : view === 'magic-notes' && magicNotesEnabled ? (
           <PageShell variant="master-detail">
             <MagicNotesWorkspace
               key={activeProject?.id ?? 'global'}
@@ -5513,6 +5754,7 @@ function App(): React.JSX.Element {
               graphNodes={knowledgeSnapshot.graphNodes}
               graphRelations={knowledgeSnapshot.graphRelations}
               libraries={knowledgeSnapshot.libraries}
+              loadError={knowledgeLoadError}
               loading={knowledgeLoading}
               onCreateLibrary={createKnowledgeLibrary}
               onCreateEntity={async (input) => {
@@ -5629,8 +5871,11 @@ function App(): React.JSX.Element {
                   window.goodbuddy.knowledge.retrySource(sourceId)
                 )
               }
+              onRetryLoad={retryKnowledgeLoad}
               onSelectLibrary={(libraryId) => {
-                void refreshKnowledge(libraryId)
+                void refreshKnowledge(libraryId).catch(() => {
+                  // KnowledgeWorkspace renders the recoverable load error.
+                })
               }}
               onSyncSource={(sourceId) =>
                 runKnowledgeSourceAction(() =>
@@ -5660,9 +5905,12 @@ function App(): React.JSX.Element {
               configs={assistantHeartbeats}
               currentProjectName={activeProject?.name}
               entries={heartbeatEntries}
+              loadError={heartbeatLoadError}
+              loading={heartbeatLoading}
               memories={assistantMemories}
               onCreate={createHeartbeat}
-              onRefresh={refreshHeartbeatCenter}
+              onRefresh={retryHeartbeatLoad}
+              onRetryLoad={retryHeartbeatLoad}
               onRemove={removeHeartbeat}
               onRunNow={runHeartbeat}
               onSetMemoryStatus={setMemoryStatus}
@@ -5693,6 +5941,9 @@ function App(): React.JSX.Element {
               ) {
                 setSelectedExpertId('')
               }
+            }}
+            onMagicNotesEnabledChange={(enabled) => {
+              setMagicNotesEnabled(enabled)
             }}
             onRemoveHeartbeat={removeHeartbeat}
             onRunHeartbeat={runHeartbeat}

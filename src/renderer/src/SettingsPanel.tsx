@@ -34,9 +34,10 @@ import { SkillsSettingsSection } from './SkillsSettingsSection'
 import { HeartbeatSettings } from './HeartbeatSettings'
 import { ChannelSettingsSection } from './ChannelSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
+import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
-import { SegmentedControl } from './WorkspacePrimitives'
+import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
 import type { AppearanceTheme } from './theme'
 import type { AppNotificationInput } from './notifications'
 import type {
@@ -46,6 +47,7 @@ import type {
 
 type SettingsTab =
   | 'appearance'
+  | 'platform-features'
   | 'model'
   | 'runtime'
   | 'security'
@@ -64,6 +66,7 @@ type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
 
 const settingsTabs: readonly SettingsTab[] = [
   'appearance',
+  'platform-features',
   'model',
   'runtime',
   'security',
@@ -93,6 +96,7 @@ type SettingsPanelProps = {
   onRunHeartbeat: (heartbeatId: string) => Promise<void>
   appearanceTheme?: AppearanceTheme
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
+  onMagicNotesEnabledChange?: (enabled: boolean) => void
 }
 
 const credentialLabels: Record<
@@ -255,7 +259,8 @@ export function SettingsPanel({
   onRunHeartbeat,
   onExpertsChanged = () => {},
   appearanceTheme = 'system',
-  onAppearanceThemeChange = () => {}
+  onAppearanceThemeChange = () => {},
+  onMagicNotesEnabledChange = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
   const [settings, setSettings] = useState<RuntimeSettings>()
   const [provider, setProvider] =
@@ -328,6 +333,7 @@ export function SettingsPanel({
   const [saved, setSaved] = useState(false)
   const [connectionResult, setConnectionResult] = useState<string>()
   const [confirmingClear, setConfirmingClear] = useState(false)
+  const [clearingLocalData, setClearingLocalData] = useState(false)
   const [detection, setDetection] = useState<AgentRuntimeDetection>()
   const [detecting, setDetecting] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('runtime')
@@ -382,6 +388,7 @@ export function SettingsPanel({
         setSaved(false)
         setConnectionResult(undefined)
         setConfirmingClear(false)
+        setClearingLocalData(false)
         setModelType('llm')
         setAgentRuntimeType('opencode')
         setSettings(value)
@@ -951,23 +958,26 @@ export function SettingsPanel({
         className="settings-panel"
         role={presentation === 'modal' ? 'dialog' : 'region'}
       >
-        <header className="settings-panel__header">
+        <div className="settings-panel__header">
           <div>
-            <p className="eyebrow">SETTINGS</p>
-            <h2 id="settings-title">设置中心</h2>
-            <p className="settings-panel__description">
-              管理模型连接、Agent Runtime、自动化、扩展能力和本地数据。
-            </p>
+            <PageHeader
+              actions={
+                <button
+                  aria-label="关闭设置"
+                  className="icon-button"
+                  onClick={close}
+                  type="button"
+                >
+                  <X aria-hidden="true" size={19} />
+                </button>
+              }
+              description="管理模型连接、Agent Runtime、自动化、扩展能力和本地数据。"
+              eyebrow="SETTINGS"
+              headingId="settings-title"
+              title="设置中心"
+            />
           </div>
-          <button
-            aria-label="关闭设置"
-            className="icon-button"
-            onClick={close}
-            type="button"
-          >
-            <X size={19} />
-          </button>
-        </header>
+        </div>
 
         <div className="settings-panel__body">
           <nav
@@ -991,6 +1001,22 @@ export function SettingsPanel({
             >
               <strong>外观</strong>
               <small>亮色、暗色与系统主题</small>
+            </button>
+            <button
+              aria-controls="settings-panel-platform-features"
+              aria-label="平台功能"
+              aria-selected={activeTab === 'platform-features'}
+              id="settings-tab-platform-features"
+              onClick={() => setActiveTab('platform-features')}
+              onKeyDown={(event) =>
+                handleTabKeyDown(event, 'platform-features')
+              }
+              role="tab"
+              tabIndex={activeTab === 'platform-features' ? 0 : -1}
+              type="button"
+            >
+              <strong>平台功能</strong>
+              <small>功能入口与工作区能力</small>
             </button>
             <button
               aria-controls="settings-panel-model"
@@ -1188,6 +1214,11 @@ export function SettingsPanel({
                 ))}
               </div>
             </div>
+          )}
+          {activeTab === 'platform-features' && (
+            <PlatformFeaturesSettingsSection
+              onMagicNotesEnabledChange={onMagicNotesEnabledChange}
+            />
           )}
           {activeTab === 'runtime' && (
             <>
@@ -2165,6 +2196,7 @@ export function SettingsPanel({
               <div className="danger-actions">
                 <button
                   className="secondary-button"
+                  disabled={clearingLocalData}
                   onClick={() => setConfirmingClear(false)}
                   type="button"
                 >
@@ -2172,12 +2204,15 @@ export function SettingsPanel({
                 </button>
                 <button
                   className="danger-button"
+                  disabled={clearingLocalData}
                   onClick={() => {
+                    setClearingLocalData(true)
+                    setError(undefined)
+                    setSaved(false)
+                    setConnectionResult(undefined)
                     void onClearLocalData()
                       .then(() => {
                         setConfirmingClear(false)
-                        setConnectionResult('本地数据已清除')
-                        setSaved(true)
                       })
                       .catch((reason: unknown) => {
                         setError(
@@ -2187,10 +2222,13 @@ export function SettingsPanel({
                           )
                         )
                       })
+                      .finally(() => setClearingLocalData(false))
                   }}
                   type="button"
                 >
-                  确认清除
+                  {clearingLocalData
+                    ? '正在清除…'
+                    : '清除本地数据'}
                 </button>
               </div>
             ) : (

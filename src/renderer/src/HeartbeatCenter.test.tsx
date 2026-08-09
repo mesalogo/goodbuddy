@@ -110,6 +110,7 @@ function createProps(
     onRemove: vi.fn(async () => {}),
     onRunNow: vi.fn(async () => {}),
     onRefresh: vi.fn(async () => {}),
+    onRetryLoad: vi.fn(async () => {}),
     onSetMemoryStatus: vi.fn(async () => {}),
     onSetTaskStatus: vi.fn(async () => {}),
     onUseFollowUpTask: vi.fn(),
@@ -262,6 +263,58 @@ describe('HeartbeatCenter', () => {
     ).toHaveAttribute('aria-selected', 'true')
     expect(
       screen.getByRole('button', { name: '启用智能心跳' })
+    ).toBeInTheDocument()
+  })
+
+  it('keeps loading and load failure distinct from first-time empty state', () => {
+    const emptyProps = {
+      configs: [],
+      runs: [],
+      entries: [],
+      memories: [],
+      tasks: []
+    }
+    const { rerender } = render(
+      <HeartbeatCenter
+        {...createProps({
+          ...emptyProps,
+          loading: true
+        })}
+      />
+    )
+
+    expect(screen.getByText('正在加载智能心跳')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '配置智能心跳' })
+    ).not.toBeInTheDocument()
+
+    rerender(
+      <HeartbeatCenter
+        {...createProps({
+          ...emptyProps,
+          loadError: '数据库暂时不可用'
+        })}
+      />
+    )
+    expect(screen.getByText('智能心跳加载失败')).toBeInTheDocument()
+    expect(screen.getByText('数据库暂时不可用')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '配置智能心跳' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+  })
+
+  it('keeps existing heartbeat data visible when refresh fails', () => {
+    render(
+      <HeartbeatCenter
+        {...createProps({ loadError: '刷新连接失败' })}
+      />
+    )
+
+    expect(screen.getByText('智能心跳刷新失败')).toBeInTheDocument()
+    expect(screen.getByText(config.name)).toBeInTheDocument()
+    expect(
+      screen.getByText(entry.summary)
     ).toBeInTheDocument()
   })
 })

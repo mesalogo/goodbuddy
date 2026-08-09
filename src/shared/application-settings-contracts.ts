@@ -2,12 +2,23 @@ import { z } from 'zod'
 
 export const applicationSettingsSchema = z
   .object({
-    checkUpdatesOnStartup: z.boolean()
+    checkUpdatesOnStartup: z.boolean(),
+    magicNotesEnabled: z.boolean()
   })
   .strict()
 
+export const applicationSettingsUpdateSchema = applicationSettingsSchema
+  .partial()
+  .refine((input) => Object.keys(input).length > 0, {
+    message: 'At least one application setting is required'
+  })
+
 export type ApplicationSettings = z.infer<
   typeof applicationSettingsSchema
+>
+
+export type ApplicationSettingsUpdate = z.infer<
+  typeof applicationSettingsUpdateSchema
 >
 
 export type VersionCheckFile = {

@@ -14,7 +14,9 @@ import {
   DestructiveConfirmActions,
   EmptyState,
   PageHeader,
-  SegmentedControl
+  ScopeBadge,
+  SegmentedControl,
+  type WorkspaceScope
 } from './WorkspacePrimitives'
 
 type ActivityFilter = 'all' | 'active' | 'failed'
@@ -136,8 +138,24 @@ type ActivityGroup = {
   conversationId: string
   title: string
   records: ActivityRecord[]
+  scope: ActivityRecord['scope']
   latestAt: number
   status: ActivityRecord['status']
+}
+
+function activityWorkspaceScope(
+  scope: ActivityRecord['scope']
+): WorkspaceScope {
+  if (scope.kind === 'project') {
+    return { kind: 'project', projectName: scope.projectName }
+  }
+  if (scope.kind === 'global') {
+    return { kind: 'global' }
+  }
+  return {
+    kind: 'unavailable',
+    explanation: '创建此活动记录时未能确定其归属范围。'
+  }
 }
 
 function groupActivityRecords(
@@ -171,6 +189,7 @@ function groupActivityRecords(
         request?.title ??
         items[0]!.title,
       records: items,
+      scope: items[0]!.scope,
       latestAt: Math.max(...items.map((record) => record.createdAt)),
       status
     }
@@ -361,6 +380,17 @@ export function ActivityPanel({
 
       {filteredRecords.length === 0 ? (
         <EmptyState
+          action={
+            filter === 'all' ? undefined : (
+              <button
+                className="secondary-button"
+                onClick={() => setFilter('all')}
+                type="button"
+              >
+                清除筛选
+              </button>
+            )
+          }
           description={emptyMessage(filter)}
           icon={<Activity size={24} />}
           level="section"
@@ -379,6 +409,9 @@ export function ActivityPanel({
                   <span>
                     <strong>对话：{group.title}</strong>
                     <small>{group.records.length} 条活动</small>
+                    <ScopeBadge
+                      scope={activityWorkspaceScope(group.scope)}
+                    />
                   </span>
                   <span
                     className={`status-badge activity-item__status activity-item__status--${group.status}`}
@@ -413,6 +446,9 @@ export function ActivityPanel({
                               {time.display}
                             </time>
                           </header>
+                          <ScopeBadge
+                            scope={activityWorkspaceScope(record.scope)}
+                          />
                           <h3>{record.title}</h3>
                           {record.detail.length > 0 && <p>{record.detail}</p>}
                           <button

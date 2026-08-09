@@ -5,6 +5,8 @@ export const remoteChannelActivitySchema = z
   .object({
     requestId: z.string().uuid(),
     conversationId: z.string().uuid(),
+    projectId: z.string().uuid(),
+    projectName: z.string().trim().min(1).max(120),
     channel: projectChannelSchema,
     kind: z.enum(['request', 'tool', 'result']),
     title: z.string().trim().min(1).max(240),

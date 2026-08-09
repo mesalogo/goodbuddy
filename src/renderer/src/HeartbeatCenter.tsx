@@ -54,6 +54,9 @@ export type HeartbeatCenterProps = {
   ) => Promise<void>
   onUseFollowUpTask: (task: AssistantTask) => void
   currentProjectName?: string
+  loading?: boolean
+  loadError?: string
+  onRetryLoad: () => void | Promise<void>
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -143,7 +146,10 @@ export function HeartbeatCenter({
   onSetMemoryStatus,
   onSetTaskStatus,
   onUseFollowUpTask,
-  currentProjectName = '当前项目'
+  currentProjectName = '当前项目',
+  loading = false,
+  loadError,
+  onRetryLoad
 }: HeartbeatCenterProps): React.JSX.Element {
   const [tab, setTab] = useState<HeartbeatCenterTab>('overview')
   const [pendingAction, setPendingAction] = useState<string>()
@@ -226,6 +232,10 @@ export function HeartbeatCenter({
         entry.followUpTaskIds.length
     )
   )
+  const hasHeartbeatData =
+    configs.length > 0 || runs.length > 0 || entries.length > 0
+  const initialLoadBlocked =
+    !hasHeartbeatData && (loading || loadError !== undefined)
 
   const runAction = async (
     actionId: string,
@@ -269,11 +279,12 @@ export function HeartbeatCenter({
     >
       <PageHeader
         actions={
-          <>
+          initialLoadBlocked ? undefined : (
+            <>
             <button
               aria-label="刷新智能心跳"
               className="secondary-button"
-              disabled={pendingAction !== undefined}
+              disabled={loading || pendingAction !== undefined}
               onClick={() => void runAction('refresh', onRefresh)}
               type="button"
             >
@@ -283,7 +294,7 @@ export function HeartbeatCenter({
             {primaryConfig ? (
               <button
                 className="primary-button"
-                disabled={pendingAction !== undefined}
+                disabled={loading || pendingAction !== undefined}
                 onClick={() =>
                   void runAction(`run:${primaryConfig.id}`, () =>
                     onRunNow(primaryConfig.id)
@@ -299,13 +310,15 @@ export function HeartbeatCenter({
             ) : (
               <button
                 className="primary-button"
+                disabled={loading}
                 onClick={() => setTab('plans')}
                 type="button"
               >
                 配置智能心跳
               </button>
             )}
-          </>
+            </>
+          )
         }
         description="定期回顾经历、沉淀记忆、发现问题，并把每次变化转化为可处理的成长建议。"
         eyebrow="SMART HEARTBEAT"
@@ -321,6 +334,49 @@ export function HeartbeatCenter({
         </p>
       )}
 
+      {loading && !hasHeartbeatData ? (
+        <EmptyState
+          description="正在读取心跳计划、运行记录和成长报告。"
+          icon={<RefreshCw size={24} />}
+          level="page"
+          title="正在加载智能心跳"
+        />
+      ) : loadError && !hasHeartbeatData ? (
+        <EmptyState
+          action={
+            <button
+              className="secondary-button"
+              onClick={() => void onRetryLoad()}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={14} />
+              重试
+            </button>
+          }
+          description={loadError}
+          icon={<XCircle size={24} />}
+          level="page"
+          title="智能心跳加载失败"
+        />
+      ) : null}
+
+      {loadError && hasHeartbeatData && (
+        <div className="heartbeat-center__error" role="alert">
+          <strong>智能心跳刷新失败</strong>
+          <p>{loadError}</p>
+          <button
+            className="secondary-button"
+            onClick={() => void onRetryLoad()}
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" size={14} />
+            重试
+          </button>
+        </div>
+      )}
+
+      {!initialLoadBlocked && (
+        <>
       <PageTabs
         ariaLabel="智能心跳视图"
         idPrefix="heartbeat"
@@ -1033,6 +1089,8 @@ export function HeartbeatCenter({
             onSetPaused={onSetPaused}
           />
         </div>
+      )}
+        </>
       )}
     </section>
   )

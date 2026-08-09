@@ -58,6 +58,7 @@ import type {
 } from './channel-settings-contracts'
 import type {
   ApplicationSettings,
+  ApplicationSettingsUpdate,
   VersionCheckResult
 } from './application-settings-contracts'
 import type {
@@ -981,7 +982,7 @@ export type DesktopApi = {
   updates?: {
     getSettings: () => Promise<ApplicationSettings>
     updateSettings: (
-      input: ApplicationSettings
+      input: ApplicationSettingsUpdate
     ) => Promise<ApplicationSettings>
     check: () => Promise<VersionCheckResult>
     openReleasePage: () => Promise<void>

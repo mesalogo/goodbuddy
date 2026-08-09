@@ -61,6 +61,7 @@ import type {
 } from '../shared/channel-settings-contracts'
 import type {
   ApplicationSettings,
+  ApplicationSettingsUpdate,
   VersionCheckResult
 } from '../shared/application-settings-contracts'
 import type {
@@ -294,7 +295,7 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.applicationSettingsGet
       ) as Promise<ApplicationSettings>,
-    updateSettings: (input: ApplicationSettings) =>
+    updateSettings: (input: ApplicationSettingsUpdate) =>
       ipcRenderer.invoke(
         ipcChannels.applicationSettingsUpdate,
         input

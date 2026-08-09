@@ -49,6 +49,7 @@ export type MagicNotesWorkspaceProps = {
 
 type LibraryView = 'notes' | 'todos'
 type TodoFilter = 'active' | 'completed' | 'all'
+type LoadStatus = 'loading' | 'ready' | 'error'
 type ValidationTarget =
   | 'create-note'
   | 'create-todo'
@@ -150,7 +151,13 @@ export function MagicNotesWorkspace({
   const [selectedNoteId, setSelectedNoteId] = useState('')
   const [selectedTodoId, setSelectedTodoId] = useState('')
   const [detail, setDetail] = useState<MagicNoteDetail>()
-  const [loading, setLoading] = useState(true)
+  const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading')
+  const [loadError, setLoadError] = useState('')
+  const [refreshError, setRefreshError] = useState('')
+  const [detailLoadError, setDetailLoadError] = useState<{
+    message: string
+    noteId: string
+  }>()
   const [busy, setBusy] = useState('')
   const [search, setSearch] = useState('')
   const [creating, setCreating] = useState(false)
@@ -172,7 +179,9 @@ export function MagicNotesWorkspace({
     message: string
   }>()
   const detailRequestRef = useRef(0)
+  const requestedNoteIdRef = useRef('')
   const refreshRequestRef = useRef(0)
+  const hasLoadedRef = useRef(false)
   const busyRef = useRef('')
   const composerContentRef = useRef<MagicNoteRichContent | undefined>(
     undefined
@@ -258,28 +267,40 @@ export function MagicNotesWorkspace({
   const loadDetail = useCallback(
     async (noteId: string): Promise<void> => {
       const requestId = ++detailRequestRef.current
+      requestedNoteIdRef.current = noteId
+      setDetailLoadError(undefined)
       try {
         const nextDetail = await window.goodbuddy.magicNotes.get(noteId)
         if (detailRequestRef.current === requestId) {
+          setSelectedNoteId(noteId)
           applyDetail(nextDetail)
         }
       } catch (loadError) {
         if (detailRequestRef.current === requestId) {
-          notifyError(loadError)
+          setDetailLoadError({
+            message: errorMessage(loadError),
+            noteId
+          })
         }
       }
     },
-    [applyDetail, notifyError]
+    [applyDetail]
   )
 
   const refreshNotes = useCallback(
     async (preferredId?: string): Promise<void> => {
       const requestId = ++refreshRequestRef.current
+      const detailRequestAtStart = detailRequestRef.current
       await Promise.resolve()
       if (refreshRequestRef.current !== requestId) {
         return
       }
-      setLoading(true)
+      const isInitialLoad = !hasLoadedRef.current
+      if (isInitialLoad) {
+        setLoadStatus('loading')
+        setLoadError('')
+      }
+      setRefreshError('')
       try {
         const [snapshot, todoSnapshot] = await Promise.all([
           window.goodbuddy.magicNotes.list(projectId),
@@ -295,23 +316,37 @@ export function MagicNotesWorkspace({
         if (refreshRequestRef.current !== requestId) {
           return
         }
+        const requestedNoteId = requestedNoteIdRef.current
+        const preserveNewerSelection =
+          detailRequestRef.current !== detailRequestAtStart &&
+          snapshot.notes.some((note) => note.id === requestedNoteId)
         setNotes(snapshot.notes)
         setTodos(todoSnapshot.todos)
-        setSelectedNoteId(nextId)
         setSelectedTodoId(todoSnapshot.todos[0]?.id ?? '')
+        hasLoadedRef.current = true
+        setLoadStatus('ready')
+        if (preserveNewerSelection) {
+          return
+        }
+        detailRequestRef.current += 1
+        requestedNoteIdRef.current = nextId
+        setSelectedNoteId(nextId)
         setDetail(nextDetail)
         setTitleDraft(nextDetail?.title ?? '')
+        setDetailLoadError(undefined)
       } catch (loadError) {
         if (refreshRequestRef.current === requestId) {
-          notifyError(loadError)
-        }
-      } finally {
-        if (refreshRequestRef.current === requestId) {
-          setLoading(false)
+          const message = errorMessage(loadError)
+          if (hasLoadedRef.current) {
+            setRefreshError(message)
+          } else {
+            setLoadError(message)
+            setLoadStatus('error')
+          }
         }
       }
     },
-    [notifyError, projectId]
+    [projectId]
   )
 
   useEffect(() => {
@@ -321,6 +356,7 @@ export function MagicNotesWorkspace({
     return () => {
       window.clearTimeout(timeout)
       refreshRequestRef.current += 1
+      detailRequestRef.current += 1
     }
   }, [refreshNotes])
 
@@ -391,6 +427,7 @@ export function MagicNotesWorkspace({
         title
       })
       applyDetail(created)
+      requestedNoteIdRef.current = created.id
       setSelectedNoteId(created.id)
       setNewTitle('')
       setCreating(false)
@@ -649,7 +686,7 @@ export function MagicNotesWorkspace({
                 setCreating(true)
               }}
             >
-              <Plus size={15} />
+              <Plus aria-hidden="true" size={15} />
               {libraryView === 'notes' ? '新建笔记' : '新建待办'}
             </button>
           </>
@@ -666,6 +703,36 @@ export function MagicNotesWorkspace({
         title="魔法笔记"
       />
 
+      {loadStatus === 'error' ? (
+        <EmptyState
+          action={
+            <button
+              className="secondary-button"
+              onClick={() => void refreshNotes()}
+              type="button"
+            >
+              重试
+            </button>
+          }
+          description={`无法加载魔法笔记：${loadError}`}
+          icon={<CircleAlert size={24} />}
+          level="page"
+          title="魔法笔记加载失败"
+        />
+      ) : (
+        <>
+          {refreshError && (
+            <div className="magic-note-delete-confirmation" role="alert">
+              <span>刷新失败，已保留当前内容：{refreshError}</span>
+              <button
+                className="secondary-button"
+                onClick={() => void refreshNotes(selectedNoteId)}
+                type="button"
+              >
+                重试
+              </button>
+            </div>
+          )}
       <div
         aria-busy={Boolean(busy)}
         className={`magic-notes-layout${
@@ -760,18 +827,31 @@ export function MagicNotesWorkspace({
                   disabled={busy === 'create-note'}
                   type="submit"
                 >
-                  创建
+                  创建笔记
                 </button>
               </div>
             </form>
           )}
           <div className="magic-notes-list">
-            {loading ? (
+            {loadStatus === 'loading' ? (
               <p className="magic-notes-muted">正在加载笔记…</p>
             ) : visibleNotes.length === 0 ? (
-              <p className="magic-notes-muted">
-                {search ? '没有符合条件的笔记' : '还没有笔记'}
-              </p>
+              <>
+                <p className="magic-notes-muted">
+                  {search.trim()
+                    ? '没有符合条件的笔记'
+                    : '还没有笔记'}
+                </p>
+                {search.trim() && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => setSearch('')}
+                    type="button"
+                  >
+                    清除筛选
+                  </button>
+                )}
+              </>
             ) : (
               visibleNotes.map((note) => (
                 <button
@@ -785,7 +865,6 @@ export function MagicNotesWorkspace({
                   type="button"
                   onClick={() => {
                     setValidation(undefined)
-                    setSelectedNoteId(note.id)
                     setDeletingNote(false)
                     setEditingEntry(undefined)
                     editingContentRef.current = undefined
@@ -895,22 +974,38 @@ export function MagicNotesWorkspace({
                       disabled={busy === 'create-todo'}
                       type="submit"
                     >
-                      创建
+                      创建待办
                     </button>
                   </div>
                 </form>
               )}
               <div className="magic-notes-list">
-                {loading ? (
+                {loadStatus === 'loading' ? (
                   <p className="magic-notes-muted">正在加载待办…</p>
                 ) : visibleTodos.length === 0 ? (
-                  <p className="magic-notes-muted">
-                    {todos.length === 0
-                      ? '还没有待办'
-                      : search || todoFilter !== 'all'
-                      ? '没有符合条件的待办'
-                      : '还没有待办'}
-                  </p>
+                  <>
+                    <p className="magic-notes-muted">
+                      {todos.length === 0
+                        ? '还没有待办'
+                        : search.trim() || todoFilter !== 'all'
+                          ? '没有符合条件的待办'
+                          : '还没有待办'}
+                    </p>
+                    {todos.length > 0 &&
+                      (Boolean(search.trim()) ||
+                        todoFilter !== 'all') && (
+                        <button
+                          className="secondary-button"
+                          onClick={() => {
+                            setSearch('')
+                            setTodoFilter('all')
+                          }}
+                          type="button"
+                        >
+                          清除筛选
+                        </button>
+                      )}
+                  </>
                 ) : (
                   visibleTodos.map((todo) => (
                     <button
@@ -955,7 +1050,7 @@ export function MagicNotesWorkspace({
           )}
         </aside>
 
-        <main
+        <section
           aria-label={libraryView === 'notes' ? '笔记记录' : '待办详情'}
           className="magic-notes-stream-pane"
         >
@@ -964,10 +1059,27 @@ export function MagicNotesWorkspace({
             <EmptyState
               description="从左侧选择笔记，或新建一篇笔记开始记录。"
               icon={<FileText size={24} />}
-              title={loading ? '正在加载' : '还没有选择笔记'}
+              title={
+                loadStatus === 'loading' ? '正在加载' : '还没有选择笔记'
+              }
             />
           ) : (
             <>
+              {detailLoadError && (
+                <div className="magic-note-delete-confirmation" role="alert">
+                  <span>
+                    笔记加载失败，已保留当前内容：
+                    {detailLoadError.message}
+                  </span>
+                  <button
+                    className="secondary-button"
+                    onClick={() => void loadDetail(detailLoadError.noteId)}
+                    type="button"
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
               <header className="magic-note-detail-header">
                 <input
                   aria-describedby={
@@ -1278,7 +1390,9 @@ export function MagicNotesWorkspace({
             <EmptyState
               description="从左侧选择待办，或新建一个手动待办。"
               icon={<ListTodo size={24} />}
-              title={loading ? '正在加载' : '还没有选择待办'}
+              title={
+                loadStatus === 'loading' ? '正在加载' : '还没有选择待办'
+              }
             />
           ) : (
             <section className="magic-todo-detail">
@@ -1451,7 +1565,6 @@ export function MagicNotesWorkspace({
                         className="secondary-button"
                         onClick={() => {
                           setLibraryView('notes')
-                          setSelectedNoteId(selectedTodo.noteId!)
                           void loadDetail(selectedTodo.noteId!).then(() => {
                             requestAnimationFrame(() =>
                               document
@@ -1472,7 +1585,7 @@ export function MagicNotesWorkspace({
               )}
             </section>
           )}
-        </main>
+        </section>
 
         <aside
           aria-label="AI 评论"
@@ -1533,6 +1646,8 @@ export function MagicNotesWorkspace({
           )}
         </aside>
       </div>
+        </>
+      )}
     </div>
   )
 }

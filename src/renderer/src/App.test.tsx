@@ -26,6 +26,7 @@ vi.mock('./speech-recognition', async (importOriginal) => ({
 }))
 
 import App from './App'
+import { loadActivityRecords } from './activity-store'
 
 let agentListener: ((event: AgentEvent) => void) | undefined
 let browserListener: ((state: BrowserLiveState) => void) | undefined
@@ -610,9 +611,13 @@ describe('App', () => {
     }))
     api.updates = {
       getSettings: vi.fn(async () => ({
-        checkUpdatesOnStartup: true
+        checkUpdatesOnStartup: true,
+        magicNotesEnabled: true
       })),
-      updateSettings: vi.fn(async (input) => input),
+      updateSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: true,
+        magicNotesEnabled: true
+      })),
       check,
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {})
@@ -651,9 +656,13 @@ describe('App', () => {
       .mockRejectedValueOnce(new Error('offline'))
     api.updates = {
       getSettings: vi.fn(async () => ({
-        checkUpdatesOnStartup: true
+        checkUpdatesOnStartup: true,
+        magicNotesEnabled: true
       })),
-      updateSettings: vi.fn(async (input) => input),
+      updateSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: true,
+        magicNotesEnabled: true
+      })),
       check,
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {})
@@ -845,6 +854,114 @@ describe('App', () => {
     )
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce())
     expect(await screen.findByRole('status')).toBeVisible()
+  })
+
+  it('requires an accessible confirmation before permanently deleting a conversation', async () => {
+    render(<App />)
+    const menuTrigger = screen.getByLabelText(
+      '更多会话操作 新对话'
+    )
+    fireEvent.click(menuTrigger)
+    const deleteTrigger = screen.getByRole('button', {
+      name: '删除对话 新对话'
+    })
+    fireEvent.click(deleteTrigger)
+
+    const dialog = screen.getByRole('alertdialog', {
+      name: '确认永久删除对话 新对话'
+    })
+    expect(dialog).toHaveTextContent('将永久删除此会话的全部内容')
+    expect(dialog).toHaveTextContent(
+      '如果此会话有正在运行的任务，也会同时停止'
+    )
+    expect(dialog).toHaveTextContent('此操作不可恢复')
+    const cancel = screen.getByRole('button', {
+      name: '取消删除对话 新对话'
+    })
+    const confirm = screen.getByRole('button', {
+      name: '确认永久删除对话 新对话'
+    })
+    expect(cancel).toHaveFocus()
+
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(confirm).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(cancel).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: '删除对话 新对话' })
+      ).toHaveFocus()
+    )
+    expect(
+      screen.queryByRole('alertdialog', {
+        name: '确认永久删除对话 新对话'
+      })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除对话 新对话' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '确认永久删除对话 新对话'
+      })
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('alertdialog', {
+          name: '确认永久删除对话 新对话'
+        })
+      ).not.toBeInTheDocument()
+    )
+  })
+
+  it('keeps a conversation when cancelling its active task fails', async () => {
+    vi.mocked(api.agent.cancel).mockRejectedValueOnce(
+      new Error('cancel failed')
+    )
+    render(<App />)
+    const title = '取消失败时保留会话'
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: title }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+    fireEvent.click(
+      await screen.findByLabelText(`更多会话操作 ${title}`)
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: `删除对话 ${title}` })
+    )
+    const confirm = screen.getByRole('button', {
+      name: `确认永久删除对话 ${title}`
+    })
+    fireEvent.click(confirm)
+
+    await waitFor(() =>
+      expect(api.agent.cancel).toHaveBeenCalledOnce()
+    )
+    expect(
+      await screen.findByText('停止会话中的运行任务失败，尚未删除对话')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('alertdialog', {
+        name: `确认永久删除对话 ${title}`
+      })
+    ).toBeInTheDocument()
+    await waitFor(() => expect(confirm).toBeEnabled())
+
+    vi.mocked(api.agent.cancel).mockResolvedValueOnce()
+    fireEvent.click(confirm)
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('alertdialog', {
+          name: `确认永久删除对话 ${title}`
+        })
+      ).not.toBeInTheDocument()
+    )
   })
 
   it('renders streamed reasoning, text, and tools in event order', async () => {
@@ -1426,7 +1543,9 @@ describe('App', () => {
 
     expect(composer).toHaveValue('尚未发送的草稿')
     expect(
-      screen.getAllByRole('button', { name: '删除对话 新对话' })
+      screen.getAllByRole('button', {
+        name: '更多会话操作 新对话'
+      })
     ).toHaveLength(1)
   })
 
@@ -1448,7 +1567,9 @@ describe('App', () => {
     })
 
     expect(
-      screen.getAllByRole('button', { name: /^删除对话/u })
+      screen.getAllByRole('button', {
+        name: /^更多会话操作/u
+      })
     ).toHaveLength(2)
   })
 
@@ -3478,7 +3599,7 @@ describe('App', () => {
       await screen.findByRole('heading', { name: '智能心跳' })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('tab', { name: '成长概览' })
+      await screen.findByRole('tab', { name: '成长概览' })
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: '配置智能心跳' })
@@ -3488,25 +3609,398 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('opens Magic Notes as a scoped first-class workspace', async () => {
+  it('shows retryable page-local knowledge errors without an empty-state flash', async () => {
+    vi.mocked(api.knowledge.getSnapshot).mockRejectedValueOnce(
+      new Error('知识数据库暂时不可用')
+    )
     render(<App />)
-    await screen.findByText('项目：默认项目')
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    expect(
+      await screen.findByText('知识库加载失败')
+    ).toBeInTheDocument()
+    expect(screen.getAllByText('知识数据库暂时不可用')).toHaveLength(1)
+    expect(screen.queryByText('建立第一个知识库')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(
+      await screen.findByText('建立第一个知识库')
+    ).toBeInTheDocument()
+  })
+
+  it('retries the knowledge library whose selection failed', async () => {
+    const firstLibraryId = '11111111-1111-4111-8111-111111111111'
+    const secondLibraryId = '22222222-2222-4222-8222-222222222222'
+    const libraries = [
+      {
+        id: firstLibraryId,
+        name: '产品知识',
+        description: '',
+        storageMode: 'managed' as const,
+        graphEnabled: false,
+        graphStrategy: 'rules' as const,
+        sourceCount: 0,
+        documentCount: 0,
+        indexedDocumentCount: 0
+      },
+      {
+        id: secondLibraryId,
+        name: '工程知识',
+        description: '',
+        storageMode: 'managed' as const,
+        graphEnabled: false,
+        graphStrategy: 'rules' as const,
+        sourceCount: 0,
+        documentCount: 0,
+        indexedDocumentCount: 0
+      }
+    ]
+    const snapshot = {
+      libraries,
+      sources: [],
+      documents: [],
+      graphNodes: [],
+      graphRelations: [],
+      evidence: []
+    }
+    vi.mocked(api.knowledge.getSnapshot)
+      .mockResolvedValueOnce({
+        ...snapshot,
+        selectedLibraryId: firstLibraryId
+      })
+      .mockRejectedValueOnce(new Error('工程知识暂时不可用'))
+      .mockResolvedValueOnce({
+        ...snapshot,
+        selectedLibraryId: secondLibraryId
+      })
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /^工程知识 0 个文档/u
+      })
+    )
+    expect(
+      await screen.findByText('知识库刷新失败')
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() =>
+      expect(api.knowledge.getSnapshot).toHaveBeenLastCalledWith(
+        secondLibraryId
+      )
+    )
+    expect(
+      screen.getByRole('button', {
+        name: /^工程知识 0 个文档/u
+      })
+    ).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('shows retryable page-local heartbeat errors without first-time guidance', async () => {
+    vi.mocked(api.heartbeats.list).mockRejectedValue(
+      new Error('心跳数据库暂时不可用')
+    )
+    render(<App />)
 
     fireEvent.click(
-      screen.getByRole('button', { name: '魔法笔记' })
+      screen.getByRole('button', { name: '智能心跳' })
+    )
+    expect(
+      await screen.findByText('智能心跳加载失败')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '配置智能心跳' })
+    ).not.toBeInTheDocument()
+
+    const retry = await screen.findByRole('button', { name: '重试' })
+    vi.mocked(api.heartbeats.list).mockResolvedValue([])
+    fireEvent.click(retry)
+    expect(
+      await screen.findByRole('button', { name: '配置智能心跳' })
+    ).toBeInTheDocument()
+  })
+
+  it('does not expose the previous project heartbeat after a switch fails', async () => {
+    const secondProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000102',
+      name: '第二项目',
+      rootPath: 'C:\\Second'
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      secondProject
+    ])
+    vi.mocked(api.heartbeats.list).mockResolvedValue([
+      {
+        id: '00000000-0000-4000-8000-000000000701',
+        projectId,
+        name: '旧项目心跳',
+        timezone: 'Asia/Shanghai',
+        recurrence: { type: 'daily', localTime: '09:00' },
+        enabled: true,
+        lookbackHours: 24,
+        retentionDays: 30,
+        nextRunAt: '2026-08-05T01:00:00.000Z',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z'
+      }
+    ])
+    render(<App />)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '智能心跳' })
+    )
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '心跳计划' })
+    )
+    expect(await screen.findAllByText('旧项目心跳')).not.toHaveLength(0)
+    vi.mocked(api.heartbeats.list).mockRejectedValue(
+      new Error('第二项目心跳读取失败')
+    )
+    fireEvent.change(screen.getByLabelText('当前项目'), {
+      target: { value: secondProject.id }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '智能心跳' })
     )
 
     expect(
-      await screen.findByRole('heading', { name: '魔法笔记' })
+      await screen.findByText('智能心跳加载失败')
     ).toBeInTheDocument()
-    expect(screen.getByText('项目：默认项目')).toBeInTheDocument()
+    expect(screen.queryAllByText('旧项目心跳')).toHaveLength(0)
     expect(
-      screen.getByRole('button', { name: '新建笔记' })
-    ).toBeInTheDocument()
-    expect(api.magicNotes.list).toHaveBeenCalled()
-    expect(
-      screen.queryByLabelText('切换助手工作栏')
+      screen.queryByRole('button', { name: '立即运行旧项目心跳' })
     ).not.toBeInTheDocument()
+  })
+
+  it('automatically snapshots the conversation project on new activity', async () => {
+    render(<App />)
+    await screen.findByText('项目：默认项目')
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '记录项目范围' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() =>
+      expect(
+        loadActivityRecords().find(
+          (record) =>
+            record.kind === 'request' &&
+            record.title === '记录项目范围'
+        )?.scope
+      ).toEqual({
+        kind: 'project',
+        projectId,
+        projectName: project.name
+      })
+    )
+  })
+
+  it('marks the current primary navigation page and hides decorative icons', async () => {
+    render(<App />)
+
+    const navigation = screen.getByRole('navigation', {
+      name: '主导航'
+    })
+    const chat = within(navigation).getByRole('button', { name: '对话' })
+    const knowledge = within(navigation).getByRole('button', {
+      name: '知识库'
+    })
+
+    expect(chat).toHaveAttribute('aria-current', 'page')
+    expect(knowledge).not.toHaveAttribute('aria-current')
+    for (const button of within(navigation).getAllByRole('button')) {
+      expect(button.querySelector('svg')).toHaveAttribute(
+        'aria-hidden',
+        'true'
+      )
+    }
+
+    fireEvent.click(knowledge)
+    expect(knowledge).toHaveAttribute('aria-current', 'page')
+    expect(chat).not.toHaveAttribute('aria-current')
+  })
+
+  it('collapses the primary sidebar into an inert narrow-window overlay', async () => {
+    const originalWidth = window.innerWidth
+    const { container } = render(<App />)
+    const sidebar = container.querySelector<HTMLElement>('.sidebar')
+    const workspace = container.querySelector<HTMLElement>('.workspace')
+    expect(sidebar).not.toBeNull()
+    expect(workspace).not.toBeNull()
+    if (!sidebar || !workspace) {
+      return
+    }
+
+    try {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: 680
+      })
+      window.dispatchEvent(new Event('resize'))
+
+      await waitFor(() =>
+        expect(sidebar).toHaveClass('sidebar--closed')
+      )
+      expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+      expect(sidebar).toHaveAttribute('inert')
+
+      const toggle = screen.getByRole('button', { name: '切换侧栏' })
+      fireEvent.click(toggle)
+      expect(sidebar).not.toHaveClass('sidebar--closed')
+      expect(sidebar).toHaveAttribute('aria-hidden', 'false')
+      expect(sidebar).toHaveAttribute('aria-modal', 'true')
+      expect(sidebar).not.toHaveAttribute('inert')
+      expect(workspace).toHaveAttribute('aria-hidden', 'true')
+      expect(workspace).toHaveAttribute('inert')
+      await waitFor(() =>
+        expect(
+          within(sidebar).getByRole('button', { name: '对话' })
+        ).toHaveFocus()
+      )
+
+      fireEvent.click(
+        screen.getByRole('button', { name: '关闭侧栏' })
+      )
+      await waitFor(() => expect(toggle).toHaveFocus())
+      expect(sidebar).toHaveClass('sidebar--closed')
+      expect(workspace).not.toHaveAttribute('aria-hidden')
+      expect(workspace).not.toHaveAttribute('inert')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth
+      })
+    }
+  })
+
+  it('opens Magic Notes as a scoped first-class workspace', async () => {
+    api.updates = {
+      getSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: true
+      })),
+      updateSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: true
+      })),
+      check: vi.fn(),
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      render(<App />)
+      await screen.findByText('项目：默认项目')
+      const magicNotesEntry = await screen.findByRole('button', {
+        name: '魔法笔记'
+      })
+
+      fireEvent.click(magicNotesEntry)
+
+      expect(
+        await screen.findByRole('heading', { name: '魔法笔记' })
+      ).toBeInTheDocument()
+      expect(screen.getByText('项目：默认项目')).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: '新建笔记' })
+      ).toBeInTheDocument()
+      expect(api.magicNotes.list).toHaveBeenCalled()
+      expect(
+        screen.queryByLabelText('切换助手工作栏')
+      ).not.toBeInTheDocument()
+    } finally {
+      delete api.updates
+    }
+  })
+
+  it('hides Magic Notes when the platform feature is disabled', async () => {
+    api.updates = {
+      getSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: false
+      })),
+      updateSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: false
+      })),
+      check: vi.fn(),
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      render(<App />)
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('button', { name: '魔法笔记' })
+        ).not.toBeInTheDocument()
+      )
+    } finally {
+      delete api.updates
+    }
+  })
+
+  it('hides Magic Notes by default without an explicit setting', () => {
+    render(<App />)
+
+    expect(
+      screen.queryByRole('button', { name: '魔法笔记' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps platform-feature switches in Settings without navigating', async () => {
+    let applicationSettings = {
+      checkUpdatesOnStartup: false,
+      magicNotesEnabled: false
+    }
+    api.updates = {
+      getSettings: vi.fn(async () => ({ ...applicationSettings })),
+      updateSettings: vi.fn(async (input) => {
+        applicationSettings = {
+          ...applicationSettings,
+          ...input
+        }
+        return { ...applicationSettings }
+      }),
+      check: vi.fn(),
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      const { container } = render(<App />)
+      fireEvent.click(await screen.findByText('本地工作区'))
+      fireEvent.click(
+        screen.getByRole('tab', { name: '平台功能' })
+      )
+      const toggle = await screen.findByRole('switch', {
+        name: '显示魔法笔记入口'
+      })
+
+      fireEvent.click(toggle)
+      await waitFor(() => expect(toggle).toBeChecked())
+      expect(
+        screen.getByRole('heading', { name: '设置中心' })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: '魔法笔记' })
+      ).toBeInTheDocument()
+      expect(
+        container.querySelector('.magic-notes-page')
+      ).not.toBeInTheDocument()
+
+      fireEvent.click(toggle)
+      await waitFor(() => expect(toggle).not.toBeChecked())
+      expect(
+        screen.getByRole('heading', { name: '设置中心' })
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: '魔法笔记' })
+      ).not.toBeInTheDocument()
+    } finally {
+      delete api.updates
+    }
   })
 
   it('gives the knowledge workspace the full content width', async () => {

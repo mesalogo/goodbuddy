@@ -123,6 +123,7 @@ const summaryFromDetail = (
 const list = vi.fn<() => Promise<MagicNotesSnapshot>>()
 const get = vi.fn<(noteId: string) => Promise<MagicNoteDetail>>()
 const listTodos = vi.fn<() => Promise<MagicTodosSnapshot>>()
+const remove = vi.fn<DesktopApi['magicNotes']['remove']>()
 const createTodo = vi.fn<DesktopApi['magicNotes']['createTodo']>()
 const updateTodo = vi.fn<DesktopApi['magicNotes']['updateTodo']>()
 const removeTodo = vi.fn<DesktopApi['magicNotes']['removeTodo']>()
@@ -133,6 +134,7 @@ beforeEach(() => {
   list.mockResolvedValue({ notes: [detail] })
   get.mockResolvedValue(detail)
   listTodos.mockResolvedValue({ todos: [noteTodo, manualTodo] })
+  remove.mockResolvedValue()
   createTodo.mockResolvedValue({
     ...manualTodo,
     id: '00000000-0000-4000-8000-000000000606',
@@ -166,6 +168,7 @@ beforeEach(() => {
         list,
         get,
         listTodos,
+        remove,
         createTodo,
         updateTodo,
         removeTodo,
@@ -181,6 +184,68 @@ afterEach(() => {
 })
 
 describe('MagicNotesWorkspace', () => {
+  it('shows a retryable EmptyState when the initial load fails', async () => {
+    get.mockRejectedValueOnce(new Error('详情暂时不可用'))
+
+    render(
+      <MagicNotesWorkspace
+        onNotify={onNotify}
+        projectId={detail.projectId}
+        projectName="默认项目"
+      />
+    )
+
+    expect(
+      await screen.findByText('魔法笔记加载失败')
+    ).toBeInTheDocument()
+    expect(screen.getByText(/详情暂时不可用/)).toBeInTheDocument()
+    expect(screen.queryByText('还没有笔记')).not.toBeInTheDocument()
+    expect(screen.queryByText('还没有待办')).not.toBeInTheDocument()
+    expect(screen.queryByText('还没有选择笔记')).not.toBeInTheDocument()
+    expect(onNotify).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    expect(await screen.findByText('记录正文')).toBeInTheDocument()
+    expect(screen.queryByText('魔法笔记加载失败')).not.toBeInTheDocument()
+  })
+
+  it('keeps successful data and selection when a refresh fails', async () => {
+    render(
+      <MagicNotesWorkspace
+        onNotify={onNotify}
+        projectId={detail.projectId}
+        projectName="默认项目"
+      />
+    )
+
+    await screen.findByText('记录正文')
+    list.mockRejectedValueOnce(new Error('刷新暂时不可用'))
+    fireEvent.click(screen.getByRole('button', { name: '删除笔记' }))
+    fireEvent.click(
+      screen.getAllByRole('button', { name: '删除笔记' })[1]!
+    )
+
+    expect(
+      await screen.findByText(/刷新失败，已保留当前内容：刷新暂时不可用/)
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('笔记标题')).toHaveValue(detail.title)
+    expect(
+      screen.getByRole('button', { name: /发布笔记/ })
+    ).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('tab', { name: '待办' }))
+    expect(screen.getByText('准备演示')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /核对发布材料/ })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(onNotify).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        tone: 'error',
+        message: '刷新暂时不可用'
+      })
+    )
+  })
+
   it('aggregates note and manual todos without AI-created todo actions', async () => {
     render(
       <MagicNotesWorkspace
@@ -276,6 +341,53 @@ describe('MagicNotesWorkspace', () => {
     )
   })
 
+  it('does not override a note selected while retrying a refresh', async () => {
+    const second = alternateDetail(secondNoteId, '第二篇笔记')
+    list.mockResolvedValue({
+      notes: [summaryFromDetail(detail), summaryFromDetail(second)]
+    })
+
+    render(
+      <MagicNotesWorkspace
+        onNotify={onNotify}
+        projectId={detail.projectId}
+        projectName="默认项目"
+      />
+    )
+
+    await screen.findByText('记录正文')
+    list.mockRejectedValueOnce(new Error('刷新暂时不可用'))
+    fireEvent.click(screen.getByRole('button', { name: '删除笔记' }))
+    fireEvent.click(
+      screen.getAllByRole('button', { name: '删除笔记' })[1]!
+    )
+    const retry = await screen.findByRole('button', { name: '重试' })
+
+    let resolveRefreshDetail:
+      | ((value: MagicNoteDetail) => void)
+      | undefined
+    const delayedRefreshDetail = new Promise<MagicNoteDetail>(
+      (resolve) => {
+        resolveRefreshDetail = resolve
+      }
+    )
+    get.mockImplementation((requestedId) =>
+      requestedId === second.id
+        ? Promise.resolve(second)
+        : delayedRefreshDetail
+    )
+
+    fireEvent.click(retry)
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByText(second.title).closest('button')!)
+    expect(await screen.findByDisplayValue(second.title)).toBeInTheDocument()
+
+    resolveRefreshDetail?.(detail)
+    await waitFor(() =>
+      expect(screen.getByLabelText('笔记标题')).toHaveValue(second.title)
+    )
+  })
+
   it('creates a manual todo with a dedicated title and details form', async () => {
     render(
       <MagicNotesWorkspace
@@ -289,7 +401,7 @@ describe('MagicNotesWorkspace', () => {
     fireEvent.click(screen.getByRole('tab', { name: '待办' }))
     fireEvent.click(screen.getByRole('button', { name: '新建待办' }))
     expect(createTodo).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }))
     expect(screen.getByRole('alert')).toHaveTextContent('请输入待办标题')
     expect(onNotify).not.toHaveBeenCalled()
 
@@ -300,7 +412,7 @@ describe('MagicNotesWorkspace', () => {
     fireEvent.change(screen.getByLabelText('说明'), {
       target: { value: '新增说明' }
     })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }))
 
     await waitFor(() =>
       expect(createTodo).toHaveBeenCalledWith({
@@ -333,6 +445,41 @@ describe('MagicNotesWorkspace', () => {
     expect(
       await screen.findByText('先补充明确的验收条件。')
     ).toBeInTheDocument()
+  })
+
+  it('clears note searches and todo status filters with no results', async () => {
+    listTodos.mockResolvedValue({
+      todos: [
+        { ...noteTodo, completed: true },
+        { ...manualTodo, completed: true }
+      ]
+    })
+    render(
+      <MagicNotesWorkspace
+        onNotify={onNotify}
+        projectId={detail.projectId}
+        projectName="默认项目"
+      />
+    )
+
+    await screen.findByText('记录正文')
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索当前范围的笔记' }), {
+      target: { value: '不存在的笔记' }
+    })
+    expect(screen.getByText('没有符合条件的笔记')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
+    expect(screen.getByRole('searchbox', {
+      name: '搜索当前范围的笔记'
+    })).toHaveValue('')
+    expect(screen.getByText('发布笔记')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '待办' }))
+    expect(screen.getByText('没有符合条件的待办')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
+    expect(
+      screen.getByRole('button', { name: '全部' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText('核对发布材料')).not.toHaveLength(0)
   })
 
   it('clears delete confirmation before selecting the next todo', async () => {

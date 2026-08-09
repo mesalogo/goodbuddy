@@ -60,8 +60,8 @@ export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
-    minWidth: 920,
-    minHeight: 620,
+    minWidth: 680,
+    minHeight: 560,
     show: false,
     frame: false,
     ...(usableIcon ? { icon: usableIcon } : {}),

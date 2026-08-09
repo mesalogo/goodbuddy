@@ -159,6 +159,8 @@ export type KnowledgeWorkspaceProps = {
   graphRelations: readonly KnowledgeGraphRelation[]
   evidence: readonly KnowledgeEvidence[]
   loading?: boolean
+  loadError?: string
+  onRetryLoad: () => void | Promise<void>
   onSelectLibrary: (libraryId: string) => void
   onCreateLibrary: (
     input: CreateKnowledgeLibraryInput
@@ -274,7 +276,6 @@ const styles = {
     padding: 'var(--space-2) var(--space-3)',
     border: '1px solid var(--border-control)',
     borderRadius: 'var(--radius-control)',
-    outline: 'none',
     background: 'var(--surface-raised)',
     color: 'var(--text-primary)',
     font: 'inherit'
@@ -2115,6 +2116,8 @@ export function KnowledgeWorkspace({
   graphRelations,
   evidence,
   loading = false,
+  loadError,
+  onRetryLoad,
   onSelectLibrary,
   onCreateLibrary,
   onDeleteLibrary,
@@ -2323,10 +2326,33 @@ export function KnowledgeWorkspace({
           </nav>
         </aside>
 
-      <main
+      <section
+        aria-label="知识库详情"
         className="knowledge-workspace__main"
         style={{ minWidth: 0, background: 'var(--surface-raised)' }}
       >
+        {loadError && libraries.length > 0 && (
+          <div
+            role="alert"
+            style={{
+              ...styles.surface,
+              margin: 'var(--space-4)',
+              padding: 'var(--space-3)',
+              color: 'var(--danger)'
+            }}
+          >
+            <strong>知识库刷新失败</strong>
+            <p style={{ margin: 'var(--space-2) 0' }}>{loadError}</p>
+            <button
+              className="secondary-button"
+              onClick={() => void onRetryLoad()}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={14} />
+              重试
+            </button>
+          </div>
+        )}
         {selectedLibrary && !creating && !loading && (
           <button
             className="knowledge-workspace__mobile-back secondary-button"
@@ -2337,12 +2363,30 @@ export function KnowledgeWorkspace({
             返回知识库列表
           </button>
         )}
-        {loading ? (
+        {loading && libraries.length === 0 ? (
           <EmptyState
             description="正在读取知识库、来源和索引状态。"
             icon={<LoaderCircle size={28} />}
             level="page"
             title="正在加载知识库"
+          />
+        ) : loadError && libraries.length === 0 ? (
+          <EmptyState
+            action={
+              <button
+                className="secondary-button"
+                onClick={() => void onRetryLoad()}
+                style={styles.button}
+                type="button"
+              >
+                <RefreshCw aria-hidden="true" size={14} />
+                重试
+              </button>
+            }
+            description={loadError}
+            icon={<AlertCircle size={28} />}
+            level="page"
+            title="知识库加载失败"
           />
         ) : creating ? (
           <CreateLibraryWizard
@@ -2502,7 +2546,7 @@ export function KnowledgeWorkspace({
             </div>
           </>
         )}
-      </main>
+      </section>
       {deletingLibrary && (
         <DeleteLibraryDialog
           library={deletingLibrary}

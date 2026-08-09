@@ -7,6 +7,7 @@ export const MAX_ACTIVITY_DETAIL_LENGTH = 4_000
 const MAX_STORED_JSON_LENGTH = 2_000_000
 const MAX_ID_LENGTH = 256
 const MAX_TITLE_LENGTH = 240
+const MAX_PROJECT_NAME_LENGTH = 120
 
 const activityKinds = [
   'request',
@@ -30,6 +31,10 @@ export type ActivityRecord = {
   conversationId: string
   requestId: string
   callId?: string
+  scope:
+    | { kind: 'global' }
+    | { kind: 'project'; projectId: string; projectName: string }
+    | { kind: 'unavailable' }
   kind: (typeof activityKinds)[number]
   title: string
   detail: string
@@ -57,30 +62,82 @@ function isBoundedString(
   )
 }
 
-function isActivityRecord(value: unknown): value is ActivityRecord {
+function parseActivityScope(
+  value: unknown
+): ActivityRecord['scope'] | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false
+    return undefined
+  }
+  const candidate = value as Record<string, unknown>
+  if (candidate.kind === 'global') {
+    return { kind: 'global' }
+  }
+  if (candidate.kind === 'unavailable') {
+    return { kind: 'unavailable' }
+  }
+  if (
+    candidate.kind === 'project' &&
+    isBoundedString(candidate.projectId, MAX_ID_LENGTH) &&
+    isBoundedString(candidate.projectName, MAX_PROJECT_NAME_LENGTH)
+  ) {
+    return {
+      kind: 'project',
+      projectId: candidate.projectId,
+      projectName: candidate.projectName
+    }
+  }
+  return undefined
+}
+
+function parseActivityRecord(value: unknown): ActivityRecord | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined
   }
 
   const candidate = value as Record<string, unknown>
-  return (
-    isBoundedString(candidate.id, MAX_ID_LENGTH) &&
-    isBoundedString(candidate.conversationId, MAX_ID_LENGTH) &&
-    isBoundedString(candidate.requestId, MAX_ID_LENGTH) &&
-    (candidate.callId === undefined ||
-      isBoundedString(candidate.callId, MAX_ID_LENGTH)) &&
-    activityKinds.some((kind) => kind === candidate.kind) &&
-    isBoundedString(candidate.title, MAX_TITLE_LENGTH) &&
-    isBoundedString(
+  if (
+    !isBoundedString(candidate.id, MAX_ID_LENGTH) ||
+    !isBoundedString(candidate.conversationId, MAX_ID_LENGTH) ||
+    !isBoundedString(candidate.requestId, MAX_ID_LENGTH) ||
+    (candidate.callId !== undefined &&
+      !isBoundedString(candidate.callId, MAX_ID_LENGTH)) ||
+    !activityKinds.some((kind) => kind === candidate.kind) ||
+    !isBoundedString(candidate.title, MAX_TITLE_LENGTH) ||
+    !isBoundedString(
       candidate.detail,
       MAX_ACTIVITY_DETAIL_LENGTH,
       true
-    ) &&
-    activityStatuses.some((status) => status === candidate.status) &&
-    typeof candidate.createdAt === 'number' &&
-    Number.isFinite(candidate.createdAt) &&
-    candidate.createdAt >= 0
-  )
+    ) ||
+    !activityStatuses.some((status) => status === candidate.status) ||
+    typeof candidate.createdAt !== 'number' ||
+    !Number.isFinite(candidate.createdAt) ||
+    candidate.createdAt < 0
+  ) {
+    return undefined
+  }
+
+  const scope =
+    candidate.scope === undefined
+      ? { kind: 'unavailable' as const }
+      : parseActivityScope(candidate.scope)
+  if (!scope) {
+    return undefined
+  }
+
+  return {
+    id: candidate.id,
+    conversationId: candidate.conversationId,
+    requestId: candidate.requestId,
+    ...(candidate.callId === undefined
+      ? {}
+      : { callId: candidate.callId }),
+    scope,
+    kind: candidate.kind as ActivityRecord['kind'],
+    title: candidate.title,
+    detail: candidate.detail,
+    status: candidate.status as ActivityRecord['status'],
+    createdAt: candidate.createdAt
+  }
 }
 
 export function upsertActivityRecord(
@@ -109,7 +166,8 @@ export function upsertActivityRecord(
     {
       ...incoming,
       id: existing.id,
-      createdAt: existing.createdAt
+      createdAt: existing.createdAt,
+      scope: existing.scope
     },
     ...records.filter((_, index) => index !== existingIndex)
   ].slice(0, MAX_ACTIVITY_RECORDS)
@@ -200,8 +258,9 @@ export function loadActivityRecords(
 
     const records: ActivityRecord[] = []
     for (const candidate of parsed) {
-      if (isActivityRecord(candidate)) {
-        records.push(candidate)
+      const record = parseActivityRecord(candidate)
+      if (record) {
+        records.push(record)
       }
       if (records.length === MAX_ACTIVITY_RECORDS) {
         break
@@ -227,8 +286,9 @@ export function saveActivityRecords(
 
   const safeRecords: ActivityRecord[] = []
   for (const record of records) {
-    if (isActivityRecord(record)) {
-      safeRecords.push(record)
+    const safeRecord = parseActivityRecord(record)
+    if (safeRecord) {
+      safeRecords.push(safeRecord)
     }
     if (safeRecords.length === MAX_ACTIVITY_RECORDS) {
       break
