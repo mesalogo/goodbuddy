@@ -38,6 +38,7 @@ import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { SegmentedControl } from './WorkspacePrimitives'
 import type { AppearanceTheme } from './theme'
+import type { AppNotificationInput } from './notifications'
 import type {
   EmbeddingDiagnosticResult,
   EmbeddingSettingsSnapshot
@@ -79,6 +80,7 @@ type SettingsPanelProps = {
   presentation?: 'modal' | 'page'
   onClose: () => void
   onSaved: (settings: RuntimeSettings) => void
+  onNotify?: (notification: AppNotificationInput) => void
   onExpertsChanged?: (experts: AssistantExpert[]) => void
   onClearLocalData: () => Promise<void>
   heartbeats: AssistantHeartbeatConfig[]
@@ -244,6 +246,7 @@ export function SettingsPanel({
   presentation = 'modal',
   onClose,
   onSaved,
+  onNotify,
   onClearLocalData,
   heartbeats,
   onCreateHeartbeat,
@@ -966,7 +969,7 @@ export function SettingsPanel({
           </button>
         </header>
 
-        <div className="settings-panel__body" ref={settingsBodyRef}>
+        <div className="settings-panel__body">
           <nav
             aria-label="设置分类"
             aria-orientation="vertical"
@@ -1139,6 +1142,7 @@ export function SettingsPanel({
             aria-labelledby={`settings-tab-${activeTab}`}
             className="settings-panel__content"
             id={`settings-panel-${activeTab}`}
+            ref={settingsBodyRef}
             role="tabpanel"
           >
           {activeTab === 'appearance' && (
@@ -2212,7 +2216,9 @@ export function SettingsPanel({
               />
             </div>
           )}
-          {activeTab === 'channels' && <ChannelSettingsSection />}
+          {activeTab === 'channels' && (
+            <ChannelSettingsSection onNotify={onNotify} />
+          )}
           {activeTab === 'roles' && (
             <>
               <div className="settings-section subagent-routing-settings">

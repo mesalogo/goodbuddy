@@ -95,10 +95,12 @@ describe('ActivityPanel', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    fireEvent.click(screen.getByText('对话：活动 1'))
     expect(screen.getByText('活动 1')).toBeInTheDocument()
     expect(screen.queryByText('活动 2')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '失败' }))
+    fireEvent.click(screen.getByText('对话：活动 2'))
     expect(screen.getByText('活动 2')).toBeInTheDocument()
     expect(screen.getByText('活动 3')).toBeInTheDocument()
     expect(screen.queryByText('活动 1')).not.toBeInTheDocument()
@@ -179,9 +181,9 @@ describe('ActivityPanel', () => {
   })
 
   it('groups activity by conversation in collapsible sections', () => {
-    const first = makeRecord(1)
+    const first = makeRecord(1, 'running')
     const second = {
-      ...makeRecord(2),
+      ...makeRecord(2, 'failed'),
       conversationId: first.conversationId
     }
     const { container } = render(

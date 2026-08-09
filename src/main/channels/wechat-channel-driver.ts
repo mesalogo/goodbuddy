@@ -23,7 +23,7 @@ type PendingReply = {
   reject: (error: Error) => void
 }
 
-const REPLY_TIMEOUT_MS = 20_000
+const REPLY_TIMEOUT_MS = 6 * 60_000
 
 export class WechatChannelDriver implements ChannelDriver {
   readonly channel = 'weixin'
@@ -91,7 +91,15 @@ export class WechatChannelDriver implements ChannelDriver {
       `任务状态：${message.status}`
     const replyId = crypto.randomUUID()
     return new Promise<void>((resolve, reject) => {
+      const cancelSidecarReply = (): void => {
+        try {
+          this.client.send({ type: 'cancel_reply', replyId })
+        } catch {
+          // A dead sidecar no longer has in-flight network work.
+        }
+      }
       const timeout = setTimeout(() => {
+        cancelSidecarReply()
         finish(() => reject(new Error('微信回复超时')))
       }, REPLY_TIMEOUT_MS)
       const finish = (callback: () => void): void => {
@@ -101,6 +109,7 @@ export class WechatChannelDriver implements ChannelDriver {
         callback()
       }
       const abort = (): void => {
+        cancelSidecarReply()
         finish(() => reject(new Error('微信回复已取消')))
       }
       this.pendingReplies.set(replyId, {
@@ -118,7 +127,8 @@ export class WechatChannelDriver implements ChannelDriver {
           replyId,
           inReplyToEventId: message.eventId,
           conversationId: message.conversationId,
-          text
+          text,
+          attachments: message.attachments
         })
       } catch (error) {
         finish(() =>
@@ -171,7 +181,7 @@ export class WechatChannelDriver implements ChannelDriver {
   private handleMessage(
     message: WechatSidecarMessage | WechatSidecarCredentialMessage
   ): void {
-    if (message.type === 'inbound_text') {
+    if (message.type === 'inbound_message') {
       void Promise.resolve(
         this.handler?.(
           {
@@ -181,6 +191,8 @@ export class WechatChannelDriver implements ChannelDriver {
             conversationId: message.conversationId,
             conversationType: 'direct',
             text: message.text,
+            attachments: message.attachments,
+            attachmentError: message.attachmentError,
             mentioned: false,
             workMode: 'ask',
             receivedAt: Date.now()

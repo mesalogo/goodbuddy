@@ -57,6 +57,7 @@ import type {
   WechatSidecarChild,
   WechatSidecarLauncher
 } from './channels/wechat-sidecar-client'
+import { buildWechatSidecarEnvironment } from './channels/wechat-sidecar-environment'
 import { ApplicationSettingsStore } from './application-settings-store'
 import { VersionChecker } from './version-checker'
 import { SpeechModelManager } from './speech/speech-model-manager'
@@ -190,6 +191,7 @@ const launchWechatSidecar: WechatSidecarLauncher = () => {
     join(mainModuleDirectory, 'wechat-sidecar.js'),
     [],
     {
+      env: buildWechatSidecarEnvironment(),
       serviceName: 'GoodBuddy Weixin Transport',
       stdio: 'ignore'
     }
@@ -318,6 +320,8 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'runtime-settings.json'),
       secureCipher
     )
+    const initialRuntimeSettings =
+      await settingsStore.getPublicSettings()
     const initialSettings = await settingsStore.getResolvedSettings()
     globalTlsPolicy = new GlobalTlsPolicy(app)
     globalTlsPolicy.install()
@@ -376,7 +380,13 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'assistant.sqlite')
     )
     assistantDatabase.initialize(defaultWorkspace)
-    assistantDatabase.ensureChannelProjects(defaultWorkspace)
+    assistantDatabase.ensureChannelProjects(
+      defaultWorkspace,
+      initialRuntimeSettings.defaultModelProfileId
+    )
+    assistantDatabase.repairConversationRuntimeSelections(
+      initialRuntimeSettings
+    )
     const subagentService = new SubagentService(
       createDefaultModelRuntime(defaultWorkspace, initialSettings),
       assistantDatabase,

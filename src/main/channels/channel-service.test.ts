@@ -99,6 +99,27 @@ describe('channel contracts', () => {
       }).success
     ).toBe(false)
     expect(
+      channelInboundTextSchema.parse({
+        channel: 'fake',
+        eventId: 'media-event',
+        senderId: 'user-1',
+        conversationId: 'direct-1',
+        conversationType: 'direct',
+        attachments: [
+          {
+            name: 'photo.png',
+            mimeType: 'image/png',
+            size: 4,
+            kind: 'image',
+            dataBase64: 'iVBORw=='
+          }
+        ]
+      })
+    ).toMatchObject({
+      text: '',
+      attachments: [expect.objectContaining({ name: 'photo.png' })]
+    })
+    expect(
       channelInboundTextSchema.safeParse({
         ...inbound(),
         platformPayload: { token: 'must not pass through' }
@@ -347,6 +368,48 @@ describe('ChannelService', () => {
     expect(serialized).not.toContain('Users')
     expect(serialized).toContain('已隐藏')
     expect(await outbox.listUndelivered()).toEqual([])
+    await service.stop()
+  })
+
+  it('delivers media results and removes binary payloads after delivery', async () => {
+    const driver = new FakeChannelDriver()
+    const outbox = new MemoryOutbox()
+    const service = new ChannelService(
+      driver,
+      async () => ({
+        status: 'completed',
+        output: '文件已生成',
+        attachments: [
+          {
+            name: 'result.txt',
+            mimeType: 'text/plain',
+            size: 2,
+            kind: 'file' as const,
+            dataBase64: 'b2s='
+          }
+        ]
+      }),
+      {
+        allowedSenderIds: ['allowed-user'],
+        outbox
+      }
+    )
+    await service.start()
+    await driver.emit(inbound({ eventId: 'media-result' }))
+    await waitForSent(driver, 1)
+
+    expect(driver.sent[0]?.attachments).toEqual([
+      expect.objectContaining({ name: 'result.txt' })
+    ])
+    expect(await outbox.listUndelivered()).toEqual([])
+    const storedEntries = (
+      outbox as unknown as {
+        entries: Map<string, { message: ChannelResultMessage }>
+      }
+    ).entries
+    expect(
+      [...storedEntries.values()][0]?.message.attachments
+    ).toBeUndefined()
     await service.stop()
   })
 

@@ -37,9 +37,6 @@ export const ipcChannels = {
     'settings:channels:weixin:binding:disconnect',
   weixinBindingChanged:
     'settings:channels:weixin:binding:changed',
-  remoteChannelApprovalRespond: 'channels:remote-approval:respond',
-  remoteChannelApprovalList: 'channels:remote-approval:list',
-  remoteChannelApprovalRequested: 'channels:remote-approval:requested',
   remoteChannelActivity: 'channels:remote-activity',
   applicationSettingsGet: 'settings:application:get',
   applicationSettingsUpdate: 'settings:application:update',

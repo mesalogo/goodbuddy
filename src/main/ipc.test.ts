@@ -3,6 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
+import type { AssistantProject } from '../shared/assistant-contracts'
 import type { BrowserLiveState } from '../shared/contracts'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { registerIpcHandlers } from './ipc'
@@ -41,12 +42,32 @@ const channelMocks = vi.hoisted(() => ({
           text: string
           mentioned: boolean
           workMode: 'ask' | 'plan'
+          attachments?: Array<{
+            name: string
+            mimeType: string
+            size: number
+            kind: 'image' | 'file'
+            dataBase64: string
+          }>
+          attachmentError?: string
         },
-        signal: AbortSignal
+        signal: AbortSignal,
+        reportProgress?: (result: {
+          status: string
+          output?: string
+          error?: string
+        }) => Promise<void>
       ) => Promise<{
         status: string
         output?: string
         error?: string
+        attachments?: Array<{
+          name: string
+          mimeType: string
+          size: number
+          kind: 'image' | 'file'
+          dataBase64: string
+        }>
       }>)
     | undefined,
   stop: vi.fn(async () => undefined)
@@ -880,13 +901,21 @@ describe('registerIpcHandlers agent terminal state', () => {
       appendTaskEvent: vi.fn(),
       updateTaskStatus: vi.fn(),
       createTextArtifact: vi.fn(),
-      listProjects: vi.fn(() => [
+      createImageArtifact: vi.fn(() => ({
+        id: '00000000-0000-4000-8000-000000000499',
+        title: '生成图片'
+      })),
+      listProjects: vi.fn<() => AssistantProject[]>(() => [
         {
           id: '00000000-0000-4000-8000-000000000401',
           name: '企业微信',
           description: '企业微信远程消息与受控任务',
           rootPath: 'C:\\ProjectWorkspace',
           defaultWorkMode: 'ask',
+          runtimeSelection: {
+            provider: 'model',
+            profileId: '00000000-0000-4000-8000-000000000001'
+          },
           kind: 'channel',
           channel: 'wecom',
           status: 'active',
@@ -925,6 +954,18 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const contextManager = {
       enrichRequest: vi.fn((request) => request),
+      ingestRemoteAttachment: vi.fn(async (attachment: {
+        name: string
+        size: number
+        kind: 'image' | 'file'
+      }) => ({
+        id: '00000000-0000-4000-8000-000000000498',
+        name: attachment.name,
+        size: attachment.size,
+        preview: '远程附件',
+        kind: attachment.kind === 'image' ? 'image' : 'text'
+      })),
+      remove: vi.fn(),
       clear: vi.fn()
     }
     const approvalBroker = {
@@ -1913,6 +1954,380 @@ describe('registerIpcHandlers agent terminal state', () => {
         origin: 'delegation'
       })
     )
+    await harness.dispose()
+  })
+
+  it('persists remote media and passes it through the existing context path', async () => {
+    let receivedRequest:
+      | {
+          contextIds?: string[]
+          prompt: string
+        }
+      | undefined
+    const runtime = {
+      capability: 'chat',
+      async *run(request: {
+        requestId: string
+        contextIds?: string[]
+        prompt: string
+      }) {
+        receivedRequest = request
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: '图片已分析'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+
+    await expect(
+      executor(
+        {
+          channel: 'wecom',
+          eventId: 'event-media',
+          senderId: 'user-1',
+          conversationId: 'conversation-media',
+          conversationType: 'direct',
+          text: '',
+          attachments: [
+            {
+              name: '现场.png',
+              mimeType: 'image/png',
+              size: 4,
+              kind: 'image',
+              dataBase64: 'iVBORw=='
+            }
+          ],
+          mentioned: false,
+          workMode: 'ask'
+        },
+        new AbortController().signal
+      )
+    ).resolves.toEqual({
+      status: 'completed',
+      output: '图片已分析'
+    })
+    expect(
+      harness.contextManager.ingestRemoteAttachment
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '现场.png' })
+    )
+    expect(receivedRequest?.contextIds).toEqual([
+      '00000000-0000-4000-8000-000000000498'
+    ])
+    expect(
+      harness.assistantDatabase.appendRemoteConversationMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'user',
+        content: '请分析我发送的附件。',
+        attachments: [
+          expect.objectContaining({ name: '现场.png' })
+        ]
+      })
+    )
+    expect(harness.contextManager.remove).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000498'
+    )
+    await harness.dispose()
+  })
+
+  it('returns a generated image only as a current-task channel attachment', async () => {
+    const image = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
+    ])
+    const runtime = {
+      capability: 'image-generation',
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'generated-image',
+          mimeType: 'image/png',
+          data: image.toString('base64'),
+          title: '结果图'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+
+    await expect(
+      executor(
+        {
+          channel: 'wecom',
+          eventId: 'event-generated-image',
+          senderId: 'user-1',
+          conversationId: 'conversation-generated-image',
+          conversationType: 'direct',
+          text: '生成结果图',
+          mentioned: false,
+          workMode: 'ask'
+        },
+        new AbortController().signal
+      )
+    ).resolves.toMatchObject({
+      status: 'completed',
+      attachments: [
+        {
+          name: '结果图.png',
+          mimeType: 'image/png',
+          size: image.byteLength,
+          kind: 'image',
+          dataBase64: image.toString('base64')
+        }
+      ],
+      artifactIds: [
+        '00000000-0000-4000-8000-000000000499'
+      ]
+    })
+    expect(
+      harness.assistantDatabase.appendRemoteConversationMessage
+    ).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        role: 'assistant',
+        artifactIds: [
+          '00000000-0000-4000-8000-000000000499'
+        ]
+      })
+    )
+    await harness.dispose()
+  })
+
+  it('creates a bounded result file only when the remote user explicitly requests one', async () => {
+    const runtime = {
+      capability: 'chat',
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: '# 本周报告\n\n已完成。'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+
+    const result = await executor(
+      {
+        channel: 'wecom',
+        eventId: 'event-result-file',
+        senderId: 'user-1',
+        conversationId: 'conversation-result-file',
+        conversationType: 'direct',
+        text: '请生成一个文件，总结本周进展',
+        mentioned: false,
+        workMode: 'ask'
+      },
+      new AbortController().signal
+    )
+    expect(result).toMatchObject({
+      status: 'completed',
+      output: '# 本周报告\n\n已完成。',
+      attachments: [
+        {
+          name: 'GoodBuddy-结果.md',
+          mimeType: 'text/markdown',
+          kind: 'file'
+        }
+      ]
+    })
+    expect(
+      Buffer.from(
+        result.attachments?.[0]?.dataBase64 ?? '',
+        'base64'
+      ).toString('utf8')
+    ).toBe('# 本周报告\n\n已完成。')
+    await harness.dispose()
+  })
+
+  it('runs remote Execute immediately with the selected direct model policy', async () => {
+    let authorization: string | undefined
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      getStatus: vi.fn(async () => ({
+        id: 'model',
+        label: 'Direct model',
+        available: true,
+        supportsToolExecution: true
+      })),
+      async *run(
+        request: { requestId: string },
+        _signal: AbortSignal,
+        authorize: (
+          request: {
+            scopeKey: string
+            title: string
+            description: string
+          }
+        ) => Promise<string>
+      ) {
+        authorization = await authorize({
+          scopeKey: 'model:builtin:workspace_write_text',
+          title: '写入文件',
+          description: '写入 README.md'
+        })
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: '执行完成'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+    const reportProgress = vi.fn(async () => undefined)
+
+    await expect(
+      executor(
+        {
+          channel: 'wecom',
+          eventId: 'event-execute-direct',
+          senderId: 'user-1',
+          conversationId: 'conversation-execute-direct',
+          conversationType: 'direct',
+          text: '/execute 更新 README',
+          mentioned: false,
+          workMode: 'ask'
+        },
+        new AbortController().signal,
+        reportProgress
+      )
+    ).resolves.toEqual({
+      status: 'completed',
+      output: '执行完成'
+    })
+    expect(authorization).toBe('once')
+    expect(reportProgress).not.toHaveBeenCalled()
+    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).not.toHaveBeenCalledWith(
+      expect.any(String),
+      'waiting_approval'
+    )
+    expect(
+      harness.assistantDatabase.getOrCreateRemoteConversation
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeSelection: {
+          provider: 'model',
+          profileId: '00000000-0000-4000-8000-000000000001'
+        }
+      })
+    )
+    await harness.dispose()
+  })
+
+  it('routes remote Execute to a configured Agent Runtime without a GoodBuddy approval callback', async () => {
+    let receivedAuthorize: unknown = 'not-called'
+    const selectedRuntime = {
+      runtimeId: 'continue',
+      capability: 'chat',
+      supportsToolExecution: true,
+      getStatus: vi.fn(async () => ({
+        id: 'continue',
+        label: 'Continue',
+        available: true,
+        supportsToolExecution: true
+      })),
+      async *run(
+        request: { requestId: string },
+        _signal: AbortSignal,
+        authorize?: unknown
+      ) {
+        receivedAuthorize = authorize
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: 'Continue 已执行'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => selectedRuntime),
+      getStatus: vi.fn(),
+      releaseConversation: vi.fn(async () => undefined)
+    }
+    const harness = createHarness(
+      {
+        runtimeId: 'model',
+        capability: 'chat',
+        supportsToolExecution: true,
+        run: vi.fn()
+      },
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    vi.mocked(
+      harness.assistantDatabase.listProjects
+    ).mockReturnValue([
+      {
+        id: '00000000-0000-4000-8000-000000000401',
+        name: '企业微信',
+        description: '企业微信远程消息与受控任务',
+        rootPath: 'C:\\ProjectWorkspace',
+        defaultWorkMode: 'execute',
+        runtimeSelection: { provider: 'continue' },
+        kind: 'channel',
+        channel: 'wecom',
+        status: 'active',
+        createdAt: '2026-08-04T00:00:00.000Z',
+        updatedAt: '2026-08-04T00:00:00.000Z'
+      }
+    ])
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+
+    await expect(
+      executor(
+        {
+          channel: 'wecom',
+          eventId: 'event-execute-runtime',
+          senderId: 'user-1',
+          conversationId: 'conversation-execute-runtime',
+          conversationType: 'direct',
+          text: '更新 README',
+          mentioned: false,
+          workMode: 'ask'
+        },
+        new AbortController().signal
+      )
+    ).resolves.toEqual({
+      status: 'completed',
+      output: 'Continue 已执行'
+    })
+    expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
+      { provider: 'continue' },
+      'C:\\ProjectWorkspace'
+    )
+    expect(receivedAuthorize).toBeUndefined()
+    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
     await harness.dispose()
   })
 

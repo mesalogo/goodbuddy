@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
 
 const temporaryDirectories: string[] = []
+const channelDefaultProfileId =
+  '00000000-0000-4000-8000-000000000001'
 
 afterEach(async () => {
   vi.useRealTimers()
@@ -109,6 +111,7 @@ describe('AssistantDatabase', () => {
     const oldDatabase = new DatabaseSync(databasePath)
     oldDatabase.exec(`
       DROP TABLE model_usage_calls;
+      ALTER TABLE projects DROP COLUMN runtime_selection_json;
       PRAGMA user_version = 3;
     `)
     oldDatabase.close()
@@ -124,7 +127,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(15)
+    ).toBe(16)
     expect(
       current
         .prepare(
@@ -133,6 +136,15 @@ describe('AssistantDatabase', () => {
         )
         .get()
     ).toEqual({ name: 'model_usage_calls' })
+    expect(
+      current
+        .prepare('PRAGMA table_info(projects)')
+        .all()
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'runtime_selection_json' })
+      ])
+    )
     const foreignKeys = current
       .prepare('PRAGMA foreign_key_list(model_usage_calls)')
       .all() as Array<{
@@ -219,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(15)
+    ).toBe(16)
     expect(
       current
         .prepare(
@@ -354,14 +366,24 @@ describe('AssistantDatabase', () => {
       defaultWorkMode: 'execute'
     })
 
-    const first = database.ensureChannelProjects('C:\\Users\\test')
-    const second = database.ensureChannelProjects('C:\\Ignored')
+    const first = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      channelDefaultProfileId
+    )
+    const second = database.ensureChannelProjects(
+      'C:\\Ignored',
+      channelDefaultProfileId
+    )
 
     expect(first).toEqual([
       expect.objectContaining({
         name: '微信 ClawBot',
         rootPath: 'C:\\Users\\test',
         defaultWorkMode: 'ask',
+        runtimeSelection: {
+          provider: 'model',
+          profileId: channelDefaultProfileId
+        },
         kind: 'channel',
         channel: 'weixin'
       }),
@@ -388,13 +410,21 @@ describe('AssistantDatabase', () => {
       name: '不可重命名',
       description: '更新后的通道说明',
       rootPath: 'C:\\Remote',
-      defaultWorkMode: 'execute'
+      defaultWorkMode: 'execute',
+      runtimeSelection: {
+        provider: 'opencode',
+        profileId: '00000000-0000-4000-8000-000000000019'
+      }
     })
     expect(updated).toMatchObject({
       name: '微信 ClawBot',
       description: '更新后的通道说明',
       rootPath: 'C:\\Remote',
-      defaultWorkMode: 'execute'
+      defaultWorkMode: 'execute',
+      runtimeSelection: {
+        provider: 'opencode',
+        profileId: '00000000-0000-4000-8000-000000000019'
+      }
     })
     expect(() =>
       database.updateProject(weixin.id, {
@@ -416,7 +446,8 @@ describe('AssistantDatabase', () => {
   it('persists one protected remote conversation per channel identity', async () => {
     const database = await createDatabase()
     const project = database.ensureChannelProjects(
-      'C:\\Users\\test'
+      'C:\\Users\\test',
+      channelDefaultProfileId
     )[0]!
     const first = database.getOrCreateRemoteConversation({
       projectId: project.id,
@@ -425,7 +456,8 @@ describe('AssistantDatabase', () => {
       externalConversationId: 'remote-user-1',
       conversationType: 'direct',
       title: '微信 ClawBot · ****0001',
-      accountDisplay: '发送者 ****0001'
+      accountDisplay: '发送者 ****0001',
+      runtimeSelection: { provider: 'continue' }
     })
     const second = database.getOrCreateRemoteConversation({
       projectId: project.id,
@@ -434,7 +466,8 @@ describe('AssistantDatabase', () => {
       externalConversationId: 'remote-user-1',
       conversationType: 'direct',
       title: '微信 ClawBot · ****0001',
-      accountDisplay: '发送者 ****0001'
+      accountDisplay: '发送者 ****0001',
+      runtimeSelection: { provider: 'continue' }
     })
     expect(second.id).toBe(first.id)
 
@@ -442,16 +475,29 @@ describe('AssistantDatabase', () => {
       conversationId: first.id,
       role: 'user',
       content: '请分析状态',
+      attachments: [
+        {
+          id: '00000000-0000-4000-8000-000000000090',
+          name: '状态.txt',
+          size: 12,
+          preview: '状态',
+          kind: 'text'
+        }
+      ],
       status: '微信 ClawBot · 对话'
     })
     database.appendRemoteConversationMessage({
       conversationId: first.id,
       role: 'assistant',
       content: '状态正常',
+      artifactIds: [
+        '00000000-0000-4000-8000-000000000091'
+      ],
       status: '微信 ClawBot · 已完成'
     })
     expect(database.getConversation(first.id)).toMatchObject({
       projectId: project.id,
+      runtimeSelection: { provider: 'continue' },
       remote: {
         channel: 'weixin',
         accountDisplay: '发送者 ****0001',
@@ -461,11 +507,17 @@ describe('AssistantDatabase', () => {
         {
           role: 'user',
           content: '请分析状态',
+          attachments: [
+            expect.objectContaining({ name: '状态.txt' })
+          ],
           status: '微信 ClawBot · 对话'
         },
         {
           role: 'assistant',
           content: '状态正常',
+          artifactIds: [
+            '00000000-0000-4000-8000-000000000091'
+          ],
           status: '微信 ClawBot · 已完成'
         }
       ]
@@ -1107,6 +1159,8 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000292'
     const runtimeProfileId =
       '00000000-0000-4000-8000-000000000293'
+    const imageProfileId =
+      '00000000-0000-4000-8000-000000000294'
     database.replaceConversations(
       ([
         ['model', removedProfileId],
@@ -1121,12 +1175,66 @@ describe('AssistantDatabase', () => {
         messages: []
       }))
     )
+    const channelProject = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      defaultProfileId
+    )[0]!
+    database.updateProject(channelProject.id, {
+      name: channelProject.name,
+      description: channelProject.description,
+      rootPath: channelProject.rootPath,
+      defaultWorkMode: channelProject.defaultWorkMode,
+      runtimeSelection: {
+        provider: 'model',
+        profileId: removedProfileId
+      }
+    })
+    const imageChannelProject = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      defaultProfileId
+    )[1]!
+    database.updateProject(imageChannelProject.id, {
+      name: imageChannelProject.name,
+      description: imageChannelProject.description,
+      rootPath: imageChannelProject.rootPath,
+      defaultWorkMode: imageChannelProject.defaultWorkMode,
+      runtimeSelection: {
+        provider: 'model',
+        profileId: imageProfileId
+      }
+    })
+    const automaticChannelProject = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      defaultProfileId
+    )[2]!
+    database.updateProject(automaticChannelProject.id, {
+      name: automaticChannelProject.name,
+      description: automaticChannelProject.description,
+      rootPath: automaticChannelProject.rootPath,
+      defaultWorkMode: automaticChannelProject.defaultWorkMode,
+      runtimeSelection: { provider: 'auto' }
+    })
+    const automaticRemoteConversation =
+      database.getOrCreateRemoteConversation({
+        projectId: automaticChannelProject.id,
+        channel: 'dingtalk',
+        accountId: 'default',
+        externalConversationId: 'legacy-auto-conversation',
+        conversationType: 'direct',
+        title: '钉钉 · 旧版自动后端',
+        accountDisplay: '发送者 ****0001',
+        runtimeSelection: { provider: 'auto' }
+      })
 
     expect(
       database.repairConversationRuntimeSelections({
         modelProfiles: [
           { id: defaultProfileId },
-          { id: runtimeProfileId }
+          { id: runtimeProfileId },
+          {
+            id: imageProfileId,
+            protocol: 'openai-images-generations'
+          }
         ],
         defaultModelProfileId: defaultProfileId,
         opencodeModelSource: {
@@ -1135,10 +1243,11 @@ describe('AssistantDatabase', () => {
         },
         continueModelSource: { kind: 'platform' }
       })
-    ).toBe(3)
+    ).toBe(7)
     expect(
       database
         .listConversations()
+        .filter((conversation) => !conversation.remote)
         .sort((left, right) => left.title.localeCompare(right.title))
         .map((conversation) => conversation.runtimeSelection)
     ).toEqual([
@@ -1147,6 +1256,30 @@ describe('AssistantDatabase', () => {
       { provider: 'continue' },
       { provider: 'model', profileId: runtimeProfileId }
     ])
+    expect(database.getProject(channelProject.id).runtimeSelection).toEqual({
+      provider: 'model',
+      profileId: defaultProfileId
+    })
+    expect(
+      database.getProject(imageChannelProject.id).runtimeSelection
+    ).toEqual({
+      provider: 'model',
+      profileId: defaultProfileId
+    })
+    expect(
+      database.getProject(automaticChannelProject.id).runtimeSelection
+    ).toEqual({
+      provider: 'model',
+      profileId: defaultProfileId
+    })
+    expect(
+      database.getConversation(
+        automaticRemoteConversation.id
+      ).runtimeSelection
+    ).toEqual({
+      provider: 'model',
+      profileId: defaultProfileId
+    })
     database.close()
   })
 

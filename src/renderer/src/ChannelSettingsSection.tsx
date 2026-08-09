@@ -16,6 +16,7 @@ import type {
   DingTalkChannelSettingsInput,
   WeComChannelSettingsInput
 } from '../../shared/channel-settings-contracts'
+import type { RuntimeSettings } from '../../shared/contracts'
 import {
   normalizeInteractiveWorkMode,
   projectChannels,
@@ -23,7 +24,14 @@ import {
   type InteractiveWorkMode,
   type ProjectChannel
 } from '../../shared/assistant-contracts'
+import {
+  agentRuntimeSelectionKey,
+  isChannelModelProfileUsable,
+  repairChannelRuntimeSelection,
+  type AgentRuntimeSelection
+} from '../../shared/runtime-selection-contracts'
 import type { WeixinBindingSnapshot } from '../../shared/weixin-channel-contracts'
+import type { AppNotificationInput } from './notifications'
 import { trapTabFocus } from './dialog-focus'
 import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
 
@@ -42,6 +50,7 @@ type ChannelProjectDraft = {
   description: string
   rootPath: string
   defaultWorkMode: InteractiveWorkMode
+  runtimeSelection: AgentRuntimeSelection
 }
 
 const channelOrder: readonly ProjectChannel[] = projectChannels
@@ -131,8 +140,35 @@ function inputFor(
     : { ...common, clientId: draft.identifier.trim() }
 }
 
+function channelDraftChanged(
+  channel: CredentialChannel,
+  draft: ChannelDraft,
+  snapshot: ChannelSettingsSnapshot
+): boolean {
+  const current = snapshot[channel]
+  const nextAllowedSenders = allowedSenderIds(
+    draft.allowedSenderIdsText
+  )
+  const currentIdentifier =
+    channel === 'wecom'
+      ? snapshot.wecom.botId
+      : snapshot.dingtalk.clientId
+  return (
+    draft.enabled !== current.enabled ||
+    draft.identifier.trim() !== currentIdentifier ||
+    draft.secret.trim().length > 0 ||
+    draft.clearSecret ||
+    draft.allowGroupMessages !== current.allowGroupMessages ||
+    nextAllowedSenders.length !== current.allowedSenderIds.length ||
+    nextAllowedSenders.some(
+      (senderId) => !current.allowedSenderIds.includes(senderId)
+    )
+  )
+}
+
 function projectDraftsFrom(
-  projects: AssistantProject[]
+  projects: AssistantProject[],
+  runtimeSettings: RuntimeSettings
 ): Partial<Record<ProjectChannel, ChannelProjectDraft>> {
   return Object.fromEntries(
     projects
@@ -152,24 +188,115 @@ function projectDraftsFrom(
           rootPath: project.rootPath,
           defaultWorkMode: normalizeInteractiveWorkMode(
             project.defaultWorkMode
+          ),
+          runtimeSelection: repairChannelRuntimeSelection(
+            project.runtimeSelection ?? { provider: 'auto' },
+            runtimeSettings
           )
         }
       ])
   )
 }
 
+function usableChannelModelProfiles(
+  settings: RuntimeSettings
+): RuntimeSettings['modelProfiles'] {
+  return settings.modelProfiles.filter(
+    isChannelModelProfileUsable
+  )
+}
+
+function configuredRuntimeSelection(
+  provider: 'opencode' | 'continue'
+): AgentRuntimeSelection {
+  return { provider }
+}
+
+function runtimeSelectionDescription(
+  selection: AgentRuntimeSelection,
+  settings: RuntimeSettings
+): string {
+  if (selection.provider === 'model') {
+    const profile = settings.modelProfiles.find(
+      (candidate) => candidate.id === selection.profileId
+    )
+    if (!profile) {
+      return '所选直连模型已不存在，请重新选择。'
+    }
+    if (profile.protocol === 'openai-images-generations') {
+      return '所选连接仅支持图片生成，请选择文本模型或 Agent Runtime。'
+    }
+    if (
+      profile.authentication === 'api-key' &&
+      !profile.apiKeyConfigured
+    ) {
+      return '所选直连模型尚未配置密钥，请先到模型连接中完成配置。'
+    }
+    return `直接使用 ${profile.name}（${profile.modelName}）处理消息。`
+  }
+  if (selection.provider === 'auto') {
+    return '使用模型设置中的默认直连模型处理消息。'
+  }
+  const runtimeLabel =
+    selection.provider === 'opencode' ? 'OpenCode' : 'Continue'
+  const profile =
+    'profileId' in selection
+      ? settings.modelProfiles.find(
+          (candidate) => candidate.id === selection.profileId
+        )
+      : undefined
+  return profile
+    ? `通过 ${runtimeLabel} Agent Runtime 运行，并使用 ${profile.name}。`
+    : `通过 ${runtimeLabel} Agent Runtime 及其当前模型配置运行。`
+}
+
 function ChannelProjectControls({
   draft,
   onChange,
-  onSelectRoot
+  onSelectRoot,
+  runtimeSettings
 }: {
   draft: ChannelProjectDraft
   onChange: (draft: ChannelProjectDraft) => void
   onSelectRoot: () => void
+  runtimeSettings: RuntimeSettings
 }): React.JSX.Element {
+  const openCodeSelection = configuredRuntimeSelection(
+    'opencode'
+  )
+  const continueSelection = configuredRuntimeSelection(
+    'continue'
+  )
+  const directProfiles = usableChannelModelProfiles(runtimeSettings)
+  const selectedDirectProfileId =
+    draft.runtimeSelection.provider === 'model'
+      ? draft.runtimeSelection.profileId
+      : undefined
+  const selectedDirectProfile = runtimeSettings.modelProfiles.find(
+    (profile) => profile.id === selectedDirectProfileId
+  )
+  const selectedDirectUnavailable =
+    selectedDirectProfileId !== undefined &&
+    !directProfiles.some(
+      (profile) => profile.id === selectedDirectProfileId
+    )
+  const selections = [
+    ...directProfiles.map((profile) => ({
+        provider: 'model' as const,
+        profileId: profile.id
+      })),
+    openCodeSelection,
+    continueSelection
+  ]
+  const selectionByKey = new Map(
+    selections.map((selection) => [
+      agentRuntimeSelectionKey(selection),
+      selection
+    ])
+  )
   return (
     <section
-      aria-label={`${draft.name}通道项目设置`}
+      aria-label={`${draft.name} 通道项目设置`}
       className="channel-project-settings"
     >
       <div className="channel-project-settings__identity">
@@ -180,7 +307,7 @@ function ChannelProjectControls({
         <span>默认工作目录</span>
         <div className="channel-project-settings__root">
           <input
-            aria-label={`${draft.name}默认工作目录`}
+            aria-label={`${draft.name} 默认工作目录`}
             maxLength={4_096}
             onChange={(event) =>
               onChange({ ...draft, rootPath: event.target.value })
@@ -188,7 +315,7 @@ function ChannelProjectControls({
             value={draft.rootPath}
           />
           <button
-            aria-label={`选择${draft.name}默认工作目录`}
+            aria-label={`选择 ${draft.name} 默认工作目录`}
             className="secondary-button"
             onClick={onSelectRoot}
             type="button"
@@ -199,10 +326,71 @@ function ChannelProjectControls({
         </div>
         <small>远程 Execute 只能在此项目目录范围内运行。</small>
       </label>
+      <label className="field">
+        <span>消息处理后端</span>
+        <select
+          aria-label={`${draft.name} 消息处理后端`}
+          onChange={(event) => {
+            const runtimeSelection = selectionByKey.get(
+              event.target.value
+            )
+            if (runtimeSelection) {
+              onChange({ ...draft, runtimeSelection })
+            }
+          }}
+          value={agentRuntimeSelectionKey(draft.runtimeSelection)}
+        >
+          <optgroup label="直连模型">
+            {selectedDirectUnavailable && (
+              <option
+                disabled
+                value={agentRuntimeSelectionKey(draft.runtimeSelection)}
+              >
+                {selectedDirectProfile
+                  ? `${selectedDirectProfile.name} · ${selectedDirectProfile.modelName}（不可用）`
+                  : '原直连模型已不存在'}
+              </option>
+            )}
+            {directProfiles.length === 0 && (
+              <option disabled value="model:unavailable">
+                暂无可用文本模型
+              </option>
+            )}
+            {directProfiles.map((profile) => {
+                const selection = {
+                  provider: 'model' as const,
+                  profileId: profile.id
+                }
+                return (
+                  <option
+                    key={profile.id}
+                    value={agentRuntimeSelectionKey(selection)}
+                  >
+                    {profile.name} · {profile.modelName}
+                  </option>
+                )
+              })}
+          </optgroup>
+          <optgroup label="Agent Runtime">
+            <option value={agentRuntimeSelectionKey(openCodeSelection)}>
+              OpenCode
+            </option>
+            <option value={agentRuntimeSelectionKey(continueSelection)}>
+              Continue
+            </option>
+          </optgroup>
+        </select>
+        <small>
+          {runtimeSelectionDescription(
+            draft.runtimeSelection,
+            runtimeSettings
+          )}
+        </small>
+      </label>
       <fieldset className="channel-work-mode">
         <legend>默认模式</legend>
         <SegmentedControl
-          ariaLabel={`${draft.name}默认模式`}
+          ariaLabel={`${draft.name} 默认模式`}
           onChange={(defaultWorkMode) =>
             onChange({ ...draft, defaultWorkMode })
           }
@@ -216,6 +404,12 @@ function ChannelProjectControls({
           可在消息前加 /ask、/execute、对话：或执行：临时覆盖。
         </small>
       </fieldset>
+      <p className="channel-project-settings__risk">
+        {draft.defaultWorkMode === 'execute'
+          ? '执行消息会立即交给所选后端，不再逐次弹窗确认。'
+          : '默认对话时，白名单发送者仍可用 /execute 临时发起执行，且不会弹窗确认。'}
+        请只连接可信账号，并将工作目录限制在必要范围。
+      </p>
     </section>
   )
 }
@@ -228,6 +422,7 @@ function ChannelEditor({
   onSelectRoot,
   onTest,
   project,
+  runtimeSettings,
   settings,
   testing
 }: {
@@ -238,6 +433,7 @@ function ChannelEditor({
   onSelectRoot: () => void
   onTest: () => void
   project: ChannelProjectDraft
+  runtimeSettings: RuntimeSettings
   settings: ChannelSettingsSnapshot[CredentialChannel]
   testing: boolean
 }): React.JSX.Element {
@@ -350,7 +546,7 @@ function ChannelEditor({
           value={draft.allowedSenderIdsText}
         />
         <small>
-          只有白名单内的发送者可以向 GoodBuddy 发起只读请求。
+          只有白名单内的发送者可以向 GoodBuddy 发消息；留空时不会处理任何发送者。
         </small>
       </label>
 
@@ -373,6 +569,7 @@ function ChannelEditor({
         draft={project}
         onChange={onProjectChange}
         onSelectRoot={onSelectRoot}
+        runtimeSettings={runtimeSettings}
       />
 
       <button
@@ -391,12 +588,14 @@ function ChannelEditor({
 function WeixinQrDialog({
   binding,
   busy,
+  error,
   onClose,
   onRestart,
   onVerify
 }: {
   binding: WeixinBindingSnapshot
   busy: boolean
+  error?: string
   onClose: () => void
   onRestart: () => void
   onVerify: (code: string) => void
@@ -409,17 +608,20 @@ function WeixinQrDialog({
   const [now, setNow] = useState(0)
   const dialogRef = useRef<HTMLElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const verificationInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       if (busy) {
         dialogRef.current?.focus()
+      } else if (binding.status === 'verification_required') {
+        verificationInputRef.current?.focus()
       } else {
         closeButtonRef.current?.focus()
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [busy])
+  }, [binding.status, busy, error])
 
   useEffect(() => {
     if (!binding.qrPayload) {
@@ -540,6 +742,9 @@ function WeixinQrDialog({
             <label className="field">
               <span>验证码</span>
               <input
+                aria-describedby={
+                  error ? 'channel-verification-error' : undefined
+                }
                 autoComplete="one-time-code"
                 inputMode="numeric"
                 maxLength={32}
@@ -548,9 +753,19 @@ function WeixinQrDialog({
                     event.target.value.replace(/\D/gu, '')
                   )
                 }
+                ref={verificationInputRef}
                 required
                 value={verificationCode}
               />
+              {error && (
+                <small
+                  className="field-error"
+                  id="channel-verification-error"
+                  role="alert"
+                >
+                  {error}
+                </small>
+              )}
             </label>
             <button
               className="primary-button"
@@ -590,6 +805,7 @@ function WeixinChannelEditor({
   binding,
   bindingButtonRef,
   bindingOpen,
+  bindingError,
   busy,
   enabled,
   onBindingClose,
@@ -600,11 +816,13 @@ function WeixinChannelEditor({
   onStartBinding,
   onVerify,
   project,
+  runtimeSettings,
   settings
 }: {
   binding: WeixinBindingSnapshot
   bindingButtonRef: React.RefObject<HTMLButtonElement | null>
   bindingOpen: boolean
+  bindingError?: string
   busy: boolean
   enabled: boolean
   onBindingClose: () => void
@@ -615,6 +833,7 @@ function WeixinChannelEditor({
   onStartBinding: () => void
   onVerify: (code: string) => void
   project: ChannelProjectDraft
+  runtimeSettings: RuntimeSettings
   settings: ChannelSettingsSnapshot['weixin']
 }): React.JSX.Element {
   return (
@@ -683,17 +902,22 @@ function WeixinChannelEditor({
             断开会删除本机保存的绑定，不保证解除微信服务端授权。
           </small>
         )}
+        <small>
+          处理已绑定账号发给 ClawBot 的私聊文字、图片和文件，不响应群聊；单条消息最多 4 个附件、合计 12MB。
+        </small>
 
         <ChannelProjectControls
           draft={project}
           onChange={onProjectChange}
           onSelectRoot={onSelectRoot}
+          runtimeSettings={runtimeSettings}
         />
       </article>
       {bindingOpen && (
         <WeixinQrDialog
           binding={binding}
           busy={busy}
+          error={bindingError}
           onClose={onBindingClose}
           onRestart={onStartBinding}
           onVerify={onVerify}
@@ -703,8 +927,14 @@ function WeixinChannelEditor({
   )
 }
 
-export function ChannelSettingsSection(): React.JSX.Element {
+export function ChannelSettingsSection({
+  onNotify = () => undefined
+}: {
+  onNotify?: (notification: AppNotificationInput) => void
+}): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot>()
+  const [runtimeSettings, setRuntimeSettings] =
+    useState<RuntimeSettings>()
   const [projects, setProjects] = useState<
     Partial<Record<ProjectChannel, ChannelProjectDraft>>
   >({})
@@ -713,6 +943,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
     status: 'stopped'
   })
   const [bindingOpen, setBindingOpen] = useState(false)
+  const [bindingError, setBindingError] = useState<string>()
   const [activeChannel, setActiveChannel] =
     useState<ProjectChannel>('weixin')
   const [drafts, setDrafts] = useState<
@@ -724,7 +955,6 @@ export function ChannelSettingsSection(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [testing, setTesting] = useState<CredentialChannel>()
   const [error, setError] = useState<string>()
-  const [notice, setNotice] = useState<string>()
   const bindingButtonRef = useRef<HTMLButtonElement>(null)
 
   const closeBinding = useCallback((): void => {
@@ -751,13 +981,17 @@ export function ChannelSettingsSection(): React.JSX.Element {
       return Promise.all([
         api.getSnapshot(),
         window.goodbuddy.projects.list(false),
-        api.getWeixinBinding()
+        api.getWeixinBinding(),
+        window.goodbuddy.settings.getRuntime()
       ])
     })()
-      .then(([next, projectList, bindingSnapshot]) => {
+      .then(([next, projectList, bindingSnapshot, nextRuntimeSettings]) => {
         if (active) {
           applySnapshot(next)
-          setProjects(projectDraftsFrom(projectList))
+          setRuntimeSettings(nextRuntimeSettings)
+          setProjects(
+            projectDraftsFrom(projectList, nextRuntimeSettings)
+          )
           setBinding(bindingSnapshot)
         }
       })
@@ -787,7 +1021,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
 
   const save = async (): Promise<void> => {
     const api = window.goodbuddy.channels
-    if (!api || !snapshot) {
+    if (!api || !snapshot || !runtimeSettings) {
       return
     }
     const channelProjects = channelOrder.map(
@@ -797,18 +1031,33 @@ export function ChannelSettingsSection(): React.JSX.Element {
       setError('通道项目尚未加载')
       return
     }
+    const invalidRootIndex = channelProjects.findIndex(
+      (project) => project!.rootPath.trim().length === 0
+    )
+    if (invalidRootIndex >= 0) {
+      const invalidChannel = channelOrder[invalidRootIndex]!
+      setActiveChannel(invalidChannel)
+      setError(
+        `${channelTabs[invalidRootIndex]!.label} 必须设置默认工作目录`
+      )
+      return
+    }
     const input: ChannelSettingsApply = {
-      weixin: { enabled: weixinEnabled },
-      ...(snapshot.wecom.readOnly
+      ...(weixinEnabled === snapshot.weixin.enabled
         ? {}
-        : { wecom: inputFor('wecom', drafts.wecom) }),
-      ...(snapshot.dingtalk.readOnly
-        ? {}
-        : { dingtalk: inputFor('dingtalk', drafts.dingtalk) })
+        : { weixin: { enabled: weixinEnabled } }),
+      ...(!snapshot.wecom.readOnly &&
+      channelDraftChanged('wecom', drafts.wecom, snapshot)
+        ? { wecom: inputFor('wecom', drafts.wecom) }
+        : {}),
+      ...(!snapshot.dingtalk.readOnly &&
+      channelDraftChanged('dingtalk', drafts.dingtalk, snapshot)
+        ? { dingtalk: inputFor('dingtalk', drafts.dingtalk) }
+        : {})
     }
     setBusy(true)
     setError(undefined)
-    setNotice(undefined)
+    setBindingError(undefined)
     try {
       const updatedProjects = await Promise.all(
         channelProjects.map((project) =>
@@ -816,13 +1065,20 @@ export function ChannelSettingsSection(): React.JSX.Element {
             name: project!.name,
             description: project!.description,
             rootPath: project!.rootPath,
-            defaultWorkMode: project!.defaultWorkMode
+            defaultWorkMode: project!.defaultWorkMode,
+            runtimeSelection: project!.runtimeSelection
           })
         )
       )
-      setProjects(projectDraftsFrom(updatedProjects))
-      applySnapshot(await api.apply(input))
-      setNotice('消息通道设置已保存并应用')
+      setProjects(projectDraftsFrom(updatedProjects, runtimeSettings))
+      if (Object.keys(input).length > 0) {
+        applySnapshot(await api.apply(input))
+      }
+      onNotify({
+        tone: 'success',
+        message: '消息通道设置已保存并应用',
+        dedupeKey: 'channel-settings-saved'
+      })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存消息通道设置失败')
     } finally {
@@ -863,6 +1119,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
     }
     setBusy(true)
     setError(undefined)
+    setBindingError(undefined)
     setBindingOpen(true)
     try {
       setBinding(await api.startWeixinBinding())
@@ -887,10 +1144,11 @@ export function ChannelSettingsSection(): React.JSX.Element {
     }
     setBusy(true)
     setError(undefined)
+    setBindingError(undefined)
     try {
       setBinding(await api.submitWeixinVerification(code))
     } catch (reason) {
-      setError(
+      setBindingError(
         reason instanceof Error ? reason.message : '提交微信验证码失败'
       )
     } finally {
@@ -905,11 +1163,14 @@ export function ChannelSettingsSection(): React.JSX.Element {
     }
     setBusy(true)
     setError(undefined)
-    setNotice(undefined)
     try {
       setBinding(await api.disconnectWeixin())
       applySnapshot(await api.getSnapshot())
-      setNotice('已删除本机保存的微信绑定')
+      onNotify({
+        tone: 'success',
+        message: '已删除本机保存的微信绑定',
+        dedupeKey: 'weixin-binding-disconnected'
+      })
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : '断开微信绑定失败'
@@ -926,7 +1187,6 @@ export function ChannelSettingsSection(): React.JSX.Element {
     }
     setTesting(channel)
     setError(undefined)
-    setNotice(undefined)
     try {
       const settings = snapshot[channel].readOnly
         ? undefined
@@ -938,7 +1198,14 @@ export function ChannelSettingsSection(): React.JSX.Element {
       if (!result.ok) {
         throw new Error(result.error)
       }
-      setNotice(channel === 'wecom' ? '企业微信连接成功' : '钉钉连接成功')
+      onNotify({
+        tone: 'success',
+        message:
+          channel === 'wecom'
+            ? '企业微信连接成功'
+            : '钉钉连接成功',
+        dedupeKey: `channel-test-${channel}`
+      })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '通道连接测试失败')
     } finally {
@@ -951,6 +1218,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
   const dingtalkProject = projects.dingtalk
   if (
     !snapshot ||
+    !runtimeSettings ||
     !weixinProject ||
     !wecomProject ||
     !dingtalkProject
@@ -974,7 +1242,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
         <div>
           <strong id="channel-settings-heading">消息通道</strong>
           <small>
-            连接微信、企业微信与钉钉；远程执行始终需要电脑端逐次确认
+            为每个通道配置连接、工作目录、消息处理后端与默认模式
           </small>
         </div>
         <button
@@ -990,7 +1258,6 @@ export function ChannelSettingsSection(): React.JSX.Element {
 
       {snapshot.warning && <p className="settings-warning">{snapshot.warning}</p>}
       {error && <p className="settings-warning" role="alert">{error}</p>}
-      {notice && <p className="settings-success" role="status">{notice}</p>}
 
       <div className="channel-settings__tabs">
         <PageTabs
@@ -999,6 +1266,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
           onChange={setActiveChannel}
           tabs={channelTabs}
           value={activeChannel}
+          variant="segmented"
         />
       </div>
 
@@ -1012,6 +1280,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
           <WeixinChannelEditor
             binding={binding}
             bindingButtonRef={bindingButtonRef}
+            bindingError={bindingError}
             bindingOpen={bindingOpen}
             busy={busy}
             enabled={weixinEnabled}
@@ -1025,6 +1294,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
             onStartBinding={() => void startBinding()}
             onVerify={(code) => void verifyBinding(code)}
             project={weixinProject}
+            runtimeSettings={runtimeSettings}
             settings={snapshot.weixin}
           />
         ) : activeChannel === 'wecom' ? (
@@ -1038,6 +1308,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
             onSelectRoot={() => void selectRoot('wecom')}
             onTest={() => void test('wecom')}
             project={wecomProject}
+            runtimeSettings={runtimeSettings}
             settings={snapshot.wecom}
             testing={testing === 'wecom'}
           />
@@ -1054,6 +1325,7 @@ export function ChannelSettingsSection(): React.JSX.Element {
             onSelectRoot={() => void selectRoot('dingtalk')}
             onTest={() => void test('dingtalk')}
             project={dingtalkProject}
+            runtimeSettings={runtimeSettings}
             settings={snapshot.dingtalk}
             testing={testing === 'dingtalk'}
           />

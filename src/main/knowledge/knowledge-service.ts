@@ -39,6 +39,7 @@ import type {
   SearchResult
 } from './types'
 import { UrlImporter } from './url-importer'
+import { mimeTypeFromFileName } from '../file-media-type'
 
 type ScannedFile = {
   absolutePath: string
@@ -92,27 +93,6 @@ const maximumEmbeddingChunksPerBatch = 32
 function isInside(root: string, candidate: string): boolean {
   const path = relative(resolve(root), resolve(candidate))
   return path === '' || (!path.startsWith('..') && !isAbsolute(path))
-}
-
-function mimeTypeFor(path: string): string {
-  const extension = extname(path).toLowerCase()
-  const types: Record<string, string> = {
-    '.csv': 'text/csv',
-    '.docx':
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.html': 'text/html',
-    '.htm': 'text/html',
-    '.json': 'application/json',
-    '.md': 'text/markdown',
-    '.pdf': 'application/pdf',
-    '.pptx':
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    '.txt': 'text/plain',
-    '.xlsx':
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.xml': 'application/xml'
-  }
-  return types[extension] ?? 'text/plain'
 }
 
 export class KnowledgeService {
@@ -633,7 +613,10 @@ export class KnowledgeService {
             sourceId: source.id,
             externalId: file.relativePath,
             title: parsed.title,
-            mimeType: mimeTypeFor(file.absolutePath),
+            mimeType: mimeTypeFromFileName(
+              file.absolutePath,
+              'text/plain'
+            ),
             sourceLocation: file.absolutePath,
             checksum,
             metadata: {

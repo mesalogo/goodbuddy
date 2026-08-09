@@ -389,6 +389,7 @@ export class ChannelService {
       status: string
       output?: string
       error?: string
+      attachments?: ChannelResultMessage['attachments']
     }
   ): ChannelResultMessage {
     return channelResultMessageSchema.parse({
@@ -409,7 +410,10 @@ export class ChannelService {
               redactChannelError(result.error),
               CHANNEL_LIMITS.maximumErrorLength
             )
-          })
+          }),
+      ...(result.attachments?.length
+        ? { attachments: result.attachments }
+        : {})
     })
   }
 

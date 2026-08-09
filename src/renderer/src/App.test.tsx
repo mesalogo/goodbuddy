@@ -715,11 +715,51 @@ describe('App', () => {
     )
     expect(await screen.findByDisplayValue('本地语音结果')).toBeInTheDocument()
     expect(
-      screen.getByText(/快捷唤起：Ctrl\+Shift\+Space/)
-    ).toBeInTheDocument()
+      screen.getByText('快捷唤起：', { exact: false })
+    ).toHaveTextContent('快捷唤起：Ctrl+Shift+Space')
     expect(
       screen.queryByText(/CommandOrControl/)
     ).not.toBeInTheDocument()
+  })
+
+  it('shows a red recording state until microphone capture stops', async () => {
+    let resolveRecording!: (value: {
+      audio: ArrayBuffer
+      sampleRate: 16_000
+    }) => void
+    const stop = vi.fn()
+    speechRecognitionMocks.startPcmRecording.mockResolvedValueOnce({
+      result: new Promise((resolve) => {
+        resolveRecording = resolve
+      }),
+      stop,
+      cancel: vi.fn()
+    })
+
+    render(<App />)
+    const input = await screen.findByLabelText('向 GoodBuddy 提问')
+    expect(input).toHaveAttribute('rows', '3')
+    expect(input).toHaveStyle({ height: '72px' })
+
+    fireEvent.click(screen.getByLabelText('语音输入'))
+    const recordingButton = await screen.findByRole('button', {
+      name: '停止录音'
+    })
+    expect(recordingButton).toHaveAttribute('data-state', 'recording')
+    expect(recordingButton).toHaveAttribute('aria-pressed', 'true')
+    expect(recordingButton).toHaveClass(
+      'composer__voice-button--recording'
+    )
+
+    fireEvent.click(recordingButton)
+    expect(stop).toHaveBeenCalledOnce()
+    resolveRecording({
+      audio: new Float32Array([0, 0.25, -0.25]).buffer,
+      sampleRate: 16_000
+    })
+    expect(
+      await screen.findByDisplayValue('本地语音结果')
+    ).toBeInTheDocument()
   })
 
   it('keeps conversation actions in the conversation list', async () => {
@@ -981,7 +1021,9 @@ describe('App', () => {
       evidence: []
     })
     render(<App />)
-    await screen.findByText('知识库 1')
+    await screen.findByRole('button', {
+      name: '选择知识库，本次已启用 1 个'
+    })
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '发布流程是什么？' }
@@ -1735,6 +1777,47 @@ describe('App', () => {
     expect(screen.queryByRole('option', { name: /Plan/u })).toBeNull()
   })
 
+  it('groups composer tools and exposes clear control descriptions', async () => {
+    render(<App />)
+
+    const composer = (await screen.findByLabelText(
+      '向 GoodBuddy 提问'
+    )).closest<HTMLElement>('.composer')
+    expect(composer).not.toBeNull()
+
+    const contentTools = within(composer!).getByRole('group', {
+      name: '添加内容'
+    })
+    expect(
+      within(contentTools).getByRole('button', { name: '添加附件' })
+    ).toHaveAttribute('title', '添加附件')
+    expect(
+      within(contentTools).getByRole('button', { name: '语音输入' })
+    ).toHaveAttribute(
+      'title',
+      '语音转文字，转写后可编辑再发送'
+    )
+
+    const conversationSettings = within(composer!).getByRole(
+      'group',
+      { name: '对话设置' }
+    )
+    expect(
+      within(conversationSettings).getByLabelText('专家角色')
+    ).toBeInTheDocument()
+    expect(
+      within(conversationSettings).getByLabelText('工作模式')
+    ).toBeInTheDocument()
+    expect(
+      within(conversationSettings).getByRole('button', {
+        name: /默认模型/u
+      })
+    ).toHaveAttribute(
+      'title',
+      expect.stringContaining('Runtime 和模型')
+    )
+  })
+
   it('normalizes a legacy Plan project default to Ask', async () => {
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       {
@@ -1793,6 +1876,119 @@ describe('App', () => {
         localStorage.getItem('goodbuddy.active-project.v1')
       ).toBe(project.id)
     )
+  })
+
+  it('keeps channel projects empty until a client message creates a remote conversation', async () => {
+    const channelProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000201',
+      name: '微信 ClawBot',
+      kind: 'channel' as const,
+      channel: 'weixin' as const,
+      runtimeSelection: {
+        provider: 'model' as const,
+        profileId: modelProfileId
+      }
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      channelProject
+    ])
+    render(<App />)
+
+    await screen.findByRole('option', { name: '微信 ClawBot' })
+    fireEvent.change(await screen.findByLabelText('当前项目'), {
+      target: { value: channelProject.id }
+    })
+
+    expect(
+      screen.queryByRole('button', { name: /新建对话/u })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Ctrl N')).not.toBeInTheDocument()
+    expect(
+      screen.getAllByText('尚无远程会话').length
+    ).toBeGreaterThan(0)
+    expect(
+      screen.getByText(
+        '请先连接微信 ClawBot，远程用户发送第一条消息后，会话会自动出现在这里。'
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.keyDown(document, {
+      key: 'n',
+      ctrlKey: true
+    })
+    expect(
+      await screen.findByText(
+        '通道项目的会话由客户端收到新消息后自动创建'
+      )
+    ).toBeInTheDocument()
+    await act(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(resolve, 550)
+        })
+    )
+    expect(api.conversations.replace).not.toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectId: channelProject.id,
+          remote: undefined
+        })
+      ])
+    )
+    expect(screen.getAllByText('尚无远程会话').length).toBeGreaterThan(0)
+  })
+
+  it('shows client-created remote conversations without obsolete approval copy', async () => {
+    const channelProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000201',
+      name: '微信 ClawBot',
+      kind: 'channel' as const,
+      channel: 'weixin' as const,
+      runtimeSelection: {
+        provider: 'model' as const,
+        profileId: modelProfileId
+      }
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      channelProject
+    ])
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000301',
+        projectId: channelProject.id,
+        runtimeSelection: channelProject.runtimeSelection,
+        remote: {
+          channel: 'weixin',
+          accountDisplay: '发送者 ****0001',
+          conversationType: 'direct'
+        },
+        title: '微信 ClawBot · ****0001',
+        updatedAt: 1_775_000_000_000,
+        messages: []
+      }
+    ])
+    render(<App />)
+
+    await screen.findByRole('option', { name: '微信 ClawBot' })
+    fireEvent.change(await screen.findByLabelText('当前项目'), {
+      target: { value: channelProject.id }
+    })
+
+    expect(
+      screen.getAllByRole('button', {
+        name: /微信 ClawBot · \*{4}0001/u
+      }).length
+    ).toBeGreaterThan(0)
+    expect(
+      screen.getByText(
+        '请在 微信 ClawBot 客户端继续发送消息。本窗口用于查看历史、任务与执行结果。'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/审批执行/u)).not.toBeInTheDocument()
   })
 
   it('falls back when the last active project is no longer available', async () => {

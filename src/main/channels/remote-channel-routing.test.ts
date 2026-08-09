@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  parseRemoteChannelPrompt
+  parseRemoteChannelPrompt,
+  requestsRemoteResultFile
 } from './remote-channel-routing'
 import { projectChannelLabels } from '../../shared/assistant-contracts'
 
@@ -38,6 +39,16 @@ describe('parseRemoteChannelPrompt', () => {
     expect(() => parseRemoteChannelPrompt('/execute', 'ask')).toThrow(
       '远程请求内容不能为空'
     )
+  })
+
+  it('requires an explicit downloadable file request', () => {
+    expect(requestsRemoteResultFile('请生成一个文件，总结今天的进展')).toBe(
+      true
+    )
+    expect(
+      requestsRemoteResultFile('Please export the result as a file')
+    ).toBe(true)
+    expect(requestsRemoteResultFile('请总结今天的进展')).toBe(false)
   })
 
   it('defines a stable product label for every managed channel', () => {

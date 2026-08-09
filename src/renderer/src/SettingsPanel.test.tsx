@@ -408,6 +408,27 @@ describe('SettingsPanel runtime files', () => {
     expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
   })
 
+  it('keeps page navigation beside an independently scrollable panel', () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        presentation="page"
+      />
+    )
+
+    const navigation = screen.getByRole('tablist', {
+      name: '设置分类'
+    })
+    const content = screen.getByRole('tabpanel')
+    expect(navigation.parentElement).toHaveClass('settings-panel__body')
+    expect(content.parentElement).toBe(navigation.parentElement)
+    expect(content).toHaveClass('settings-panel__content')
+  })
+
   it('supports keyboard navigation between settings tabs', () => {
     render(
       <SettingsPanel

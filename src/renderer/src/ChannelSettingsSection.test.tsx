@@ -8,12 +8,66 @@ import {
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChannelSettingsSnapshot } from '../../shared/channel-settings-contracts'
-import type { DesktopApi } from '../../shared/contracts'
+import {
+  defaultRuntimeSettings,
+  type DesktopApi,
+  type RuntimeSettings
+} from '../../shared/contracts'
 import type {
   AssistantProject,
   ProjectCreateInput
 } from '../../shared/assistant-contracts'
+import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import { ChannelSettingsSection } from './ChannelSettingsSection'
+
+const directProfileId = '00000000-0000-4000-8000-000000000011'
+const runtimeSettings: RuntimeSettings = {
+  ...defaultRuntimeSettings,
+  workspacePath: 'C:\\Users\\tester',
+  apiKeyConfigured: true,
+  credentialSource: 'encrypted',
+  modelProfiles: [
+    {
+      id: directProfileId,
+      name: '默认模型',
+      baseUrl: 'https://example.com',
+      modelName: 'text-model',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      imageGenerationQuality: 'auto',
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted'
+    },
+    {
+      id: '00000000-0000-4000-8000-000000000012',
+      name: '图片模型',
+      baseUrl: 'https://example.com',
+      modelName: 'image-model',
+      protocol: 'openai-images-generations',
+      authentication: 'api-key',
+      imageGenerationQuality: 'auto',
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted'
+    },
+    {
+      id: '00000000-0000-4000-8000-000000000013',
+      name: '未配置模型',
+      baseUrl: 'https://example.com',
+      modelName: 'missing-key-model',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      imageGenerationQuality: 'auto',
+      apiKeyConfigured: false,
+      credentialSource: 'none'
+    }
+  ],
+  defaultModelProfileId: directProfileId,
+  opencodeModelSource: { kind: 'platform' },
+  continueModelSource: { kind: 'platform' },
+  knowledgeEmbeddingApiKeyConfigured: false,
+  knowledgeEmbeddingCredentialSource: 'none',
+  secureStorageAvailable: true
+}
 
 const snapshot: ChannelSettingsSnapshot = {
   weixin: {
@@ -54,6 +108,7 @@ const projects: AssistantProject[] = [
   description: `${name}通道项目`,
   rootPath: 'C:\\Users\\tester',
   defaultWorkMode: 'ask',
+  runtimeSelection: { provider: 'auto' },
   kind: 'channel',
   channel: channel as 'weixin' | 'wecom' | 'dingtalk',
   status: 'active',
@@ -73,10 +128,14 @@ function bindingApi() {
     disconnectWeixin: vi.fn(async () => ({
       status: 'stopped' as const
     })),
-    onWeixinBindingChanged: vi.fn(() => () => undefined),
-    respondRemoteApproval: vi.fn(async () => true),
-    getPendingRemoteApprovals: vi.fn(async () => []),
-    onRemoteApproval: vi.fn(() => () => undefined)
+    onWeixinBindingChanged: vi.fn(() => () => undefined)
+  }
+}
+
+function settingsApi() {
+  return {
+    getRuntime: vi.fn(async () => runtimeSettings),
+    selectWorkspace: vi.fn(async () => undefined)
   }
 }
 
@@ -122,13 +181,12 @@ describe('ChannelSettingsSection', () => {
           list: vi.fn(async () => projects),
           update: updateProject
         },
-        settings: {
-          selectWorkspace: vi.fn(async () => undefined)
-        }
+        settings: settingsApi()
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    const onNotify = vi.fn()
+    render(<ChannelSettingsSection onNotify={onNotify} />)
     fireEvent.click(
       await screen.findByRole('tab', { name: '企业微信' })
     )
@@ -146,13 +204,21 @@ describe('ChannelSettingsSection', () => {
     fireEvent.change(screen.getByLabelText('企业微信允许的发送者 ID'), {
       target: { value: 'user-1\nuser-2\nuser-1' }
     })
-    fireEvent.change(screen.getByLabelText('企业微信默认工作目录'), {
+    fireEvent.change(screen.getByLabelText('企业微信 默认工作目录'), {
       target: { value: 'C:\\RemoteWorkspace' }
+    })
+    fireEvent.change(screen.getByLabelText('企业微信 消息处理后端'), {
+      target: {
+        value: agentRuntimeSelectionKey({
+          provider: 'model',
+          profileId: directProfileId
+        })
+      }
     })
     fireEvent.click(
       within(
         screen.getByRole('group', {
-          name: '企业微信默认模式'
+          name: '企业微信 默认模式'
         })
       ).getByRole('button', { name: '执行' })
     )
@@ -163,15 +229,16 @@ describe('ChannelSettingsSection', () => {
       projects[1]!.id,
       expect.objectContaining({
         rootPath: 'C:\\RemoteWorkspace',
-        defaultWorkMode: 'execute'
+        defaultWorkMode: 'execute',
+        runtimeSelection: {
+          provider: 'model',
+          profileId: directProfileId
+        }
       })
     )
 
     await waitFor(() =>
       expect(apply).toHaveBeenCalledWith({
-        weixin: {
-          enabled: false
-        },
         wecom: {
           enabled: true,
           botId: 'bot-1',
@@ -185,8 +252,11 @@ describe('ChannelSettingsSection', () => {
       })
     )
     expect(screen.queryByDisplayValue('channel-secret')).toBeNull()
-    expect(await screen.findByText('消息通道设置已保存并应用'))
-      .toBeInTheDocument()
+    expect(onNotify).toHaveBeenCalledWith({
+      tone: 'success',
+      message: '消息通道设置已保存并应用',
+      dedupeKey: 'channel-settings-saved'
+    })
   })
 
   it('tests environment-owned channels without exposing draft credentials', async () => {
@@ -207,13 +277,12 @@ describe('ChannelSettingsSection', () => {
           list: vi.fn(async () => projects),
           update: vi.fn()
         },
-        settings: {
-          selectWorkspace: vi.fn(async () => undefined)
-        }
+        settings: settingsApi()
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    const onNotify = vi.fn()
+    render(<ChannelSettingsSection onNotify={onNotify} />)
     fireEvent.click(
       await screen.findByRole('tab', { name: '钉钉' })
     )
@@ -227,7 +296,11 @@ describe('ChannelSettingsSection', () => {
         undefined
       )
     )
-    expect(screen.getByText('钉钉连接成功')).toBeInTheDocument()
+    expect(onNotify).toHaveBeenCalledWith({
+      tone: 'success',
+      message: '钉钉连接成功',
+      dedupeKey: 'channel-test-dingtalk'
+    })
   })
 
   it('focuses and restores the Weixin binding trigger', async () => {
@@ -245,9 +318,7 @@ describe('ChannelSettingsSection', () => {
           list: vi.fn(async () => projects),
           update: vi.fn()
         },
-        settings: {
-          selectWorkspace: vi.fn(async () => undefined)
-        }
+        settings: settingsApi()
       } as unknown as DesktopApi
     })
 
@@ -268,6 +339,169 @@ describe('ChannelSettingsSection', () => {
     expect(trigger).toHaveFocus()
   })
 
+  it('shows Weixin verification failures inside the QR dialog', async () => {
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...bindingApi(),
+          getSnapshot: vi.fn(async () => snapshot),
+          startWeixinBinding: vi.fn(async () => ({
+            status: 'verification_required' as const,
+            qrPayload: 'verification-qr'
+          })),
+          submitWeixinVerification: vi.fn(async () => {
+            throw new Error('验证码不正确，请重新输入')
+          }),
+          apply: vi.fn(),
+          testConnection: vi.fn()
+        },
+        projects: {
+          list: vi.fn(async () => projects),
+          update: vi.fn()
+        },
+        settings: settingsApi()
+      } as unknown as DesktopApi
+    })
+
+    render(<ChannelSettingsSection />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: '扫码绑定' })
+    )
+    const verificationInput = await screen.findByLabelText('验证码')
+    fireEvent.change(verificationInput, { target: { value: '123456' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: '提交验证码' })
+    )
+
+    const error = await screen.findByRole('alert')
+    expect(error).toHaveTextContent('验证码不正确，请重新输入')
+    expect(verificationInput).toHaveAttribute(
+      'aria-describedby',
+      error.id
+    )
+    await waitFor(() => expect(verificationInput).toHaveFocus())
+  })
+
+  it('defaults Weixin to a direct text model and also offers Agent Runtimes', async () => {
+    const updateProject = vi.fn(async (
+      projectId: string,
+      input: ProjectCreateInput
+    ) => ({
+      ...projects.find((project) => project.id === projectId)!,
+      ...input
+    }))
+    const apply = vi.fn(async () => snapshot)
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...bindingApi(),
+          getSnapshot: vi.fn(async () => snapshot),
+          apply,
+          testConnection: vi.fn()
+        },
+        projects: {
+          list: vi.fn(async () => projects),
+          update: updateProject
+        },
+        settings: settingsApi()
+      } as unknown as DesktopApi
+    })
+
+    render(<ChannelSettingsSection />)
+    const backend = await screen.findByLabelText(
+      '微信 ClawBot 消息处理后端'
+    )
+    expect(backend).toHaveValue(
+      agentRuntimeSelectionKey({
+        provider: 'model',
+        profileId: directProfileId
+      })
+    )
+    expect(
+      within(backend).queryByRole('option', {
+        name: /自动/u
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      within(backend).getByRole('option', {
+        name: '默认模型 · text-model'
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(backend).queryByRole('option', {
+        name: '图片模型 · image-model'
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      within(backend).queryByRole('option', {
+        name: '未配置模型 · missing-key-model'
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      within(backend).getByRole('option', { name: 'OpenCode' })
+    ).toBeInTheDocument()
+    expect(
+      within(backend).getByRole('option', { name: 'Continue' })
+    ).toBeInTheDocument()
+
+    fireEvent.change(backend, {
+      target: {
+        value: agentRuntimeSelectionKey({ provider: 'opencode' })
+      }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存通道设置' })
+    )
+
+    await waitFor(() =>
+      expect(updateProject).toHaveBeenCalledWith(
+        projects[0]!.id,
+        expect.objectContaining({
+          runtimeSelection: { provider: 'opencode' }
+        })
+      )
+    )
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('validates every project root before saving any channel', async () => {
+    const updateProject = vi.fn()
+    const apply = vi.fn()
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...bindingApi(),
+          getSnapshot: vi.fn(async () => snapshot),
+          apply,
+          testConnection: vi.fn()
+        },
+        projects: {
+          list: vi.fn(async () => projects),
+          update: updateProject
+        },
+        settings: settingsApi()
+      } as unknown as DesktopApi
+    })
+
+    render(<ChannelSettingsSection />)
+    fireEvent.change(
+      await screen.findByLabelText('微信 ClawBot 默认工作目录'),
+      { target: { value: '' } }
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存通道设置' })
+    )
+
+    expect(
+      await screen.findByText('微信 ClawBot 必须设置默认工作目录')
+    ).toBeInTheDocument()
+    expect(updateProject).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+  })
+
   it('presents the three channel configurations as keyboard tabs', async () => {
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
@@ -282,9 +516,7 @@ describe('ChannelSettingsSection', () => {
           list: vi.fn(async () => projects),
           update: vi.fn()
         },
-        settings: {
-          selectWorkspace: vi.fn(async () => undefined)
-        }
+        settings: settingsApi()
       } as unknown as DesktopApi
     })
 
@@ -292,6 +524,7 @@ describe('ChannelSettingsSection', () => {
     const tablist = await screen.findByRole('tablist', {
       name: '消息通道配置'
     })
+    expect(tablist).toHaveClass('page-tabs--segmented')
     const weixinTab = within(tablist).getByRole('tab', {
       name: '微信 ClawBot'
     })

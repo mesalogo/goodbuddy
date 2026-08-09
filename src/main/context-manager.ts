@@ -15,6 +15,7 @@ import type {
   ContextAttachment,
   WindowCaptureOption
 } from '../shared/contracts'
+import type { ChannelMediaAttachment } from '../shared/channel-contracts'
 import type {
   AgentExecutionRequest,
   AgentImage
@@ -101,6 +102,20 @@ function formatParsedDocument(
     .join('\n\n')
 }
 
+function remoteAttachmentName(value: string): string {
+  const sanitized = [...value]
+    .map((character) => {
+      const code = character.codePointAt(0)
+      return code !== undefined && (code <= 31 || code === 127)
+        ? '_'
+        : character
+    })
+    .join('')
+  const name = basename(sanitized.replaceAll('\\', '/'))
+    .trim()
+  return name.slice(0, 500) || '远程附件'
+}
+
 export class ContextManager {
   private readonly contexts = new Map<string, StoredContext>()
   private totalBytes = 0
@@ -176,6 +191,57 @@ export class ContextManager {
     this.contexts.set(context.id, context)
     this.totalBytes += context.size
     return this.toPublic(context)
+  }
+
+  async ingestRemoteAttachment(
+    attachment: ChannelMediaAttachment
+  ): Promise<ContextAttachment> {
+    const data = Buffer.from(attachment.dataBase64, 'base64')
+    if (
+      data.byteLength !== attachment.size ||
+      data.byteLength === 0 ||
+      data.byteLength > maximumContextBytes
+    ) {
+      throw new Error('远程附件大小无效')
+    }
+    const name = remoteAttachmentName(attachment.name)
+    const extension = extname(name).toLocaleLowerCase()
+    if (
+      attachment.kind === 'image' ||
+      supportedImageExtensions.has(extension)
+    ) {
+      if (
+        attachment.mimeType !== 'image/jpeg' &&
+        attachment.mimeType !== 'image/png' &&
+        attachment.mimeType !== 'image/webp'
+      ) {
+        throw new Error('远程图片格式不受支持')
+      }
+      return this.storeImage(
+        name,
+        nativeImage.createFromBuffer(data)
+      )
+    }
+    if (supportedDocumentExtensions.has(extension)) {
+      const parsed = await parseDocument(name, data)
+      return this.storeText(
+        name,
+        truncateUtf8(
+          formatParsedDocument(parsed.sections),
+          maximumFileSize
+        )
+      )
+    }
+    if (!supportedExtensions.has(extension)) {
+      throw new Error(`暂不支持此远程文件类型：${extension || '未知'}`)
+    }
+    if (data.byteLength > maximumFileSize) {
+      throw new Error('远程文本文件不能超过 256KB')
+    }
+    const content = new TextDecoder('utf-8', {
+      fatal: true
+    }).decode(data)
+    return this.storeText(name, content)
   }
 
   async selectFiles(window: BrowserWindow): Promise<ContextAttachment[]> {

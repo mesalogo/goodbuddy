@@ -75,11 +75,7 @@ import type {
 } from '../shared/embedding-contracts'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
-import type {
-  RemoteChannelActivity,
-  RemoteChannelApproval,
-  RemoteChannelApprovalDecision
-} from '../shared/remote-channel-contracts'
+import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
 import type {
   MagicNoteDetail,
   MagicNotesSnapshot,
@@ -277,33 +273,6 @@ const desktopApi: DesktopApi = {
       return () =>
         ipcRenderer.removeListener(
           ipcChannels.weixinBindingChanged,
-          handler
-        )
-    },
-    respondRemoteApproval: (
-      approvalId: string,
-      decision: RemoteChannelApprovalDecision
-    ) =>
-      ipcRenderer.invoke(ipcChannels.remoteChannelApprovalRespond, {
-        approvalId,
-        decision
-      }) as Promise<boolean>,
-    getPendingRemoteApprovals: () =>
-      ipcRenderer.invoke(
-        ipcChannels.remoteChannelApprovalList
-      ) as Promise<RemoteChannelApproval[]>,
-    onRemoteApproval: (listener) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        approval: RemoteChannelApproval
-      ): void => listener(approval)
-      ipcRenderer.on(
-        ipcChannels.remoteChannelApprovalRequested,
-        handler
-      )
-      return () =>
-        ipcRenderer.removeListener(
-          ipcChannels.remoteChannelApprovalRequested,
           handler
         )
     },

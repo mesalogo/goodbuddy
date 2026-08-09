@@ -72,7 +72,10 @@ import {
   embeddingIndexJobRequestSchema,
   embeddingSettingsSnapshotSchema
 } from '../shared/embedding-contracts'
-import { agentRuntimeSelectionSchema } from '../shared/runtime-selection-contracts'
+import {
+  agentRuntimeSelectionSchema,
+  type AgentRuntimeSelection
+} from '../shared/runtime-selection-contracts'
 import {
   magicNoteAnalyzeSchema,
   magicNoteCreateSchema,
@@ -97,8 +100,14 @@ import {
   expertCreateSchema,
   type AssistantSchedule,
   type AssistantArtifact,
+  type ConversationAttachment,
   type WorkMode
 } from '../shared/assistant-contracts'
+import {
+  CHANNEL_LIMITS,
+  decodedBase64Size,
+  type ChannelMediaAttachment
+} from '../shared/channel-contracts'
 import type {
   AgentExecutionRequest,
   AgentRuntime,
@@ -150,9 +159,9 @@ import { ChannelManager } from './channels/channel-manager'
 import type { ChannelSettingsStore } from './channels/channel-settings-store'
 import type { WechatSidecarLauncher } from './channels/wechat-sidecar-client'
 import { WechatBindingController } from './channels/wechat-binding-controller'
-import { RemoteChannelApprovalBroker } from './channels/remote-channel-approval-broker'
 import {
-  parseRemoteChannelPrompt
+  parseRemoteChannelPrompt,
+  requestsRemoteResultFile
 } from './channels/remote-channel-routing'
 import {
   SqliteChannelDedupStore,
@@ -169,10 +178,7 @@ import {
   validateMagicNoteRichContent
 } from './magic-notes/rich-content'
 import { weixinVerificationInputSchema } from '../shared/weixin-channel-contracts'
-import {
-  remoteChannelApprovalResponseSchema,
-  type RemoteChannelActivity
-} from '../shared/remote-channel-contracts'
+import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
 import {
   analyzeMagicNoteEntry,
   analyzeMagicTodo
@@ -594,7 +600,6 @@ export function registerIpcHandlers(
       channel !== ipcChannels.settingsOpen &&
       channel !== ipcChannels.versionCheckResult &&
       channel !== ipcChannels.weixinBindingChanged &&
-      channel !== ipcChannels.remoteChannelApprovalRequested &&
       channel !== ipcChannels.remoteChannelActivity &&
       channel !== ipcChannels.conversationsChanged &&
       channel !== ipcChannels.embeddingIndexStatusChanged &&
@@ -800,15 +805,6 @@ export function registerIpcHandlers(
       throw new Error('Heartbeat tool use is always denied')
     }
   )
-  const remoteChannelApprovalBroker =
-    new RemoteChannelApprovalBroker((approval) => {
-      if (!window.isDestroyed()) {
-        window.webContents.send(
-          ipcChannels.remoteChannelApprovalRequested,
-          approval
-        )
-      }
-    })
   const publishRemoteActivity = (
     activity: RemoteChannelActivity
   ): void => {
@@ -833,12 +829,18 @@ export function registerIpcHandlers(
       projectName: string
       rootPath: string
       conversationId: string
+      runtimeSelection: AgentRuntimeSelection
+      runtime?: AgentRuntime
       taskId?: string
+      contextIds?: string[]
+      resultFileRequested?: boolean
     }
   ): Promise<{
     status: 'completed' | 'failed'
     output?: string
     error?: string
+    attachments?: ChannelMediaAttachment[]
+    artifactIds?: string[]
   }> => {
     if (shuttingDown || executionPaused) {
       return { status: 'failed', error: '应用正在退出' }
@@ -875,106 +877,88 @@ export function registerIpcHandlers(
         ? 'Work mode: Ask. Do not call tools or make changes.'
         : schedule.workMode === 'plan'
           ? 'Work mode: Plan. Do not call tools or make changes. Produce a reviewable plan.'
-          : 'Work mode: Execute. Tool actions remain subject to GoodBuddy permission controls.'
+          : 'Work mode: Execute. Follow the request using the selected backend. Tool actions must remain within the configured workspace, sandbox, enabled capabilities, and security policy.'
     let output = ''
     let completed = false
+    const resultAttachments: ChannelMediaAttachment[] = []
+    const artifactIds: string[] = []
     try {
-      const requestRuntime = await resolveRequestRuntime({
-        projectId: schedule.projectId,
-        workspaceOverride: remoteContext?.rootPath
-      })
-      for await (const agentEvent of requestRuntime.run(
-        {
-          requestId,
-          conversationId: runtimeConversationId,
+      const requestRuntime =
+        remoteContext?.runtime ??
+        (await resolveRequestRuntime({
           projectId: schedule.projectId,
-          workMode: schedule.workMode,
-          prompt: `${modeInstruction}\n\n${schedule.prompt}`
-        },
-        controller.signal,
-        async (approvalRequest) => {
-          if (schedule.workMode !== 'execute') {
-            return 'deny'
-          }
-          if (origin === 'delegation') {
-            return 'deny'
-          }
-          if (origin === 'channel' && remoteContext) {
-            assistantDatabase.updateTaskStatus(
+          runtimeSelection: remoteContext?.runtimeSelection,
+          workspaceOverride: remoteContext?.rootPath
+        }))
+      const agentRuntimeSelected = isAgentRuntime(requestRuntime)
+      const channelToolPolicy =
+        origin === 'channel' &&
+        schedule.workMode === 'execute' &&
+        !agentRuntimeSelected
+          ? (await settingsStore.getResolvedSettings()).toolApproval
+          : undefined
+      const authorize: RuntimeAuthorizer = async (approvalRequest) => {
+        controller.signal.throwIfAborted()
+        if (schedule.workMode !== 'execute') {
+          return 'deny'
+        }
+        if (origin === 'delegation') {
+          return 'deny'
+        }
+        if (origin === 'channel') {
+          return channelToolPolicy === 'policy' ? 'deny' : 'once'
+        }
+        assistantDatabase.updateTaskStatus(
+          requestId,
+          'waiting_approval'
+        )
+        const settings = await settingsStore.getResolvedSettings()
+        try {
+          return await approvalBroker.request(
+            {
+              ...approvalRequest,
+              policy:
+                settings.toolApproval === 'policy'
+                  ? 'policy'
+                  : undefined,
               requestId,
-              'waiting_approval'
-            )
-            try {
-              const decision =
-                await remoteChannelApprovalBroker.request(
-                {
-                  requestId,
-                  kind: 'tool',
-                  channel: remoteContext.channel,
-                  channelLabel: remoteContext.channelLabel,
-                  senderDisplay: remoteContext.senderDisplay,
-                  projectName: remoteContext.projectName,
-                  rootPath: remoteContext.rootPath,
-                  title: approvalRequest.title,
-                  description: approvalRequest.description,
-                  toolName: approvalRequest.toolName,
-                  argumentSummary: approvalRequest.argumentSummary
-                },
-                controller.signal
-              )
-              publishRemoteActivity({
-                requestId,
-                conversationId: remoteContext.conversationId,
-                channel: remoteContext.channel,
-                kind: 'approval',
-                callId: approvalRequest.scopeKey,
-                title: approvalRequest.title,
-                detail: approvalRequest.description,
-                status:
-                  decision === 'once' ? 'completed' : 'denied'
-              })
-              return decision
-            } finally {
-              if (!controller.signal.aborted) {
-                assistantDatabase.updateTaskStatus(
-                  requestId,
-                  'running'
+              conversationId: runtimeConversationId
+            },
+            controller.signal,
+            (approvalEvent) => {
+              if (!window.isDestroyed()) {
+                window.webContents.send(
+                  ipcChannels.agentEvent,
+                  approvalEvent
                 )
               }
             }
-          }
-          assistantDatabase.updateTaskStatus(
-            requestId,
-            'waiting_approval'
           )
-          const settings = await settingsStore.getResolvedSettings()
-          try {
-            return await approvalBroker.request(
-              {
-                ...approvalRequest,
-                policy:
-                  settings.toolApproval === 'policy'
-                    ? 'policy'
-                    : undefined,
-                requestId,
-                conversationId: runtimeConversationId
-              },
-              controller.signal,
-              (approvalEvent) => {
-                if (!window.isDestroyed()) {
-                  window.webContents.send(
-                    ipcChannels.agentEvent,
-                    approvalEvent
-                  )
-                }
-              }
-            )
-          } finally {
-            if (!controller.signal.aborted) {
-              assistantDatabase.updateTaskStatus(requestId, 'running')
-            }
+        } finally {
+          if (!controller.signal.aborted) {
+            assistantDatabase.updateTaskStatus(requestId, 'running')
           }
         }
+      }
+      const trustedInstructions = modeInstruction
+      const runtimeRequest = {
+        ...contextManager.enrichRequest({
+        requestId,
+        conversationId: runtimeConversationId,
+        projectId: schedule.projectId,
+        workMode: schedule.workMode,
+        prompt: `${trustedInstructions}\n\n${schedule.prompt}`,
+        knowledgeLibraryIds: [],
+        ...(remoteContext?.contextIds?.length
+          ? { contextIds: remoteContext.contextIds }
+          : {})
+        }),
+        trustedInstructions
+      }
+      for await (const agentEvent of requestRuntime.run(
+        runtimeRequest,
+        controller.signal,
+        agentRuntimeSelected ? undefined : authorize
       )) {
         if (agentEvent.type === 'model-usage') {
           persistModelUsage(agentEvent)
@@ -988,6 +972,41 @@ export function registerIpcHandlers(
                 title: schedule.title
               })
             : agentEvent
+        if (
+          agentEvent.type === 'generated-image' &&
+          remoteContext &&
+          resultAttachments.length <
+            CHANNEL_LIMITS.maximumAttachmentCount
+        ) {
+          const size = decodedBase64Size(agentEvent.data)
+          const totalBytes = resultAttachments.reduce(
+            (sum, attachment) => sum + attachment.size,
+            0
+          )
+          if (
+            size > 0 &&
+            totalBytes + size <=
+              CHANNEL_LIMITS.maximumAttachmentBytes
+          ) {
+            resultAttachments.push({
+              name: `${agentEvent.title || schedule.title}.${
+                agentEvent.mimeType === 'image/jpeg'
+                  ? 'jpg'
+                  : agentEvent.mimeType.split('/')[1]
+              }`.slice(
+                0,
+                CHANNEL_LIMITS.maximumAttachmentNameLength
+              ),
+              mimeType: agentEvent.mimeType,
+              size,
+              kind: 'image',
+              dataBase64: agentEvent.data
+            })
+          }
+        }
+        if (taskEvent.type === 'artifact') {
+          artifactIds.push(taskEvent.artifactId)
+        }
         assistantDatabase.appendTaskEvent(
           requestId,
           taskEvent.type,
@@ -1027,6 +1046,30 @@ export function registerIpcHandlers(
       if (!completed) {
         throw new Error('Agent Runtime 未报告任务完成，定时任务已失败')
       }
+      if (
+        remoteContext?.resultFileRequested &&
+        output.trim() &&
+        resultAttachments.length <
+          CHANNEL_LIMITS.maximumAttachmentCount
+      ) {
+        const data = Buffer.from(output, 'utf8')
+        const totalBytes = resultAttachments.reduce(
+          (sum, attachment) => sum + attachment.size,
+          0
+        )
+        if (
+          totalBytes + data.byteLength <=
+          CHANNEL_LIMITS.maximumAttachmentBytes
+        ) {
+          resultAttachments.push({
+            name: 'GoodBuddy-结果.md',
+            mimeType: 'text/markdown',
+            size: data.byteLength,
+            kind: 'file',
+            dataBase64: data.toString('base64')
+          })
+        }
+      }
       if (output.trim()) {
         assistantDatabase.createTextArtifact({
           projectId: schedule.projectId,
@@ -1046,7 +1089,14 @@ export function registerIpcHandlers(
             ? '结果已回复，并保存到远程通道会话。'
             : '结果已保存到 GoodBuddy 成果工作栏。'
       })
-      return { status: 'completed', output }
+      return {
+        status: 'completed',
+        output,
+        ...(resultAttachments.length > 0
+          ? { attachments: resultAttachments }
+          : {}),
+        ...(artifactIds.length > 0 ? { artifactIds } : {})
+      }
     } catch (error) {
       const message = safeRuntimeError(error, '定时任务执行失败')
       assistantDatabase.updateTaskStatus(
@@ -1245,18 +1295,12 @@ export function registerIpcHandlers(
     message: Parameters<
       ConstructorParameters<typeof ChannelManager>[1]
     >[0],
-    signal: AbortSignal,
-    reportProgress: (
-      result: {
-        status: string
-        output?: string
-        error?: string
-      }
-    ) => Promise<void> = async () => undefined
+    signal: AbortSignal
   ): Promise<{
     status: string
     output?: string
     error?: string
+    attachments?: ChannelMediaAttachment[]
   }> => {
     if (!Object.hasOwn(projectChannelLabels, message.channel)) {
       return {
@@ -1279,10 +1323,22 @@ export function registerIpcHandlers(
         error: '远程通道项目不存在，请重启 GoodBuddy'
       }
     }
+    const rawRemoteInput = message.text.trim()
+    const attachmentFallback = message.attachments?.length
+      ? '请分析我发送的附件。'
+      : '请说明这条远程消息的附件无法读取。'
+    const remoteInput =
+      rawRemoteInput.length === 0
+        ? attachmentFallback
+        : /^\/(?:ask|execute|exec)$|^(?:对话|问答|执行)$/iu.test(
+              rawRemoteInput
+            )
+          ? `${rawRemoteInput} ${attachmentFallback}`
+          : rawRemoteInput
     let parsed: ReturnType<typeof parseRemoteChannelPrompt>
     try {
       parsed = parseRemoteChannelPrompt(
-        message.text,
+        remoteInput,
         message.workMode === 'plan'
           ? 'plan'
           : project.defaultWorkMode
@@ -1295,8 +1351,55 @@ export function registerIpcHandlers(
       }
     }
     const channelLabel = projectChannelLabels[channel]
+    const runtimeSelection = project.runtimeSelection ?? {
+      provider: 'auto' as const
+    }
     const identitySuffix = message.senderId.slice(-4)
     const senderDisplay = `发送者 ****${identitySuffix}`
+    const contextIds: string[] = []
+    const publicAttachments: ConversationAttachment[] = []
+    const attachmentWarnings: string[] = []
+    for (const attachment of message.attachments ?? []) {
+      try {
+        const stored =
+          await contextManager.ingestRemoteAttachment(attachment)
+        contextIds.push(stored.id)
+        const persistedAttachment = { ...stored }
+        delete persistedAttachment.contentUrl
+        publicAttachments.push(persistedAttachment)
+      } catch (error) {
+        publicAttachments.push({
+          id: randomUUID(),
+          name: attachment.name,
+          size: attachment.size,
+          preview: '附件未加入模型上下文',
+          kind:
+            attachment.kind === 'image'
+              ? 'image'
+              : 'text'
+        })
+        attachmentWarnings.push(
+          safeRuntimeError(error, `无法读取附件「${attachment.name}」`)
+        )
+      }
+    }
+    if (message.attachmentError) {
+      attachmentWarnings.push(message.attachmentError)
+    }
+    const executionPrompt =
+      attachmentWarnings.length > 0
+        ? [
+            parsed.prompt,
+            '',
+            '以下附件处理提示由 GoodBuddy 本地生成：',
+            ...attachmentWarnings.map((warning) => `- ${warning}`)
+          ].join('\n')
+        : parsed.prompt
+    const releaseRemoteContexts = (): void => {
+      for (const contextId of contextIds) {
+        contextManager.remove(contextId)
+      }
+    }
     const remoteConversation =
       assistantDatabase.getOrCreateRemoteConversation({
         projectId: project.id,
@@ -1305,12 +1408,14 @@ export function registerIpcHandlers(
         externalConversationId: message.conversationId,
         conversationType: message.conversationType,
         title: `${channelLabel} · ****${identitySuffix}`,
-        accountDisplay: senderDisplay
+        accountDisplay: senderDisplay,
+        runtimeSelection
       })
     assistantDatabase.appendRemoteConversationMessage({
       conversationId: remoteConversation.id,
       role: 'user',
       content: parsed.prompt,
+      attachments: publicAttachments,
       status: `${channelLabel} · ${
         parsed.workMode === 'execute'
           ? '执行'
@@ -1327,7 +1432,7 @@ export function registerIpcHandlers(
       projectId: project.id,
       conversationId: remoteConversation.id,
       title: `${channelLabel}远程请求`,
-      instructions: parsed.prompt,
+      instructions: executionPrompt,
       workMode: parsed.workMode,
       origin: 'delegation'
     })
@@ -1338,25 +1443,18 @@ export function registerIpcHandlers(
       kind: 'request',
       title: `${channelLabel} · ${senderDisplay}`,
       detail: parsed.prompt,
-      status:
-        parsed.workMode === 'execute' ? 'pending' : 'running'
+      status: 'running'
     })
 
+    let executionRuntime: AgentRuntime | undefined
     if (parsed.workMode === 'execute') {
-      assistantDatabase.updateTaskStatus(
-        remoteTaskId,
-        'waiting_approval'
-      )
-      await reportProgress({
-        status: 'waiting_approval',
-        output: '执行请求已发送到电脑端，等待本机确认。'
-      }).catch(() => undefined)
       let executionStatus: Awaited<
         ReturnType<AgentRuntime['getStatus']>
       >
       try {
-        const executionRuntime = await resolveRequestRuntime({
+        executionRuntime = await resolveRequestRuntime({
           projectId: project.id,
+          runtimeSelection,
           workspaceOverride: project.rootPath
         })
         executionStatus = await executionRuntime.getStatus()
@@ -1386,14 +1484,17 @@ export function registerIpcHandlers(
           detail: unavailable,
           status: 'failed'
         })
+        releaseRemoteContexts()
         return { status: 'failed', error: unavailable }
       }
       if (
-        executionStatus.id !== 'model' ||
+        !executionStatus.available ||
         !executionStatus.supportsToolExecution
       ) {
-        const unavailable =
-          '远程 Execute 需要启用支持逐次工具审批的直连模型 Runtime'
+        const unavailable = executionStatus.available
+          ? '所选处理后端不支持工具执行，请在消息通道设置中选择 OpenCode、Continue 或支持工具的直连模型'
+          : executionStatus.detail?.trim() ||
+            '所选处理后端当前不可用，请在消息通道设置中检查 Runtime 或模型连接'
         assistantDatabase.updateTaskStatus(
           remoteTaskId,
           'failed',
@@ -1415,58 +1516,8 @@ export function registerIpcHandlers(
           detail: unavailable,
           status: 'failed'
         })
+        releaseRemoteContexts()
         return { status: 'failed', error: unavailable }
-      }
-      const decision = await remoteChannelApprovalBroker.request(
-        {
-          requestId: remoteTaskId,
-          kind: 'request',
-          channel,
-          channelLabel,
-          senderDisplay,
-          projectName: project.name,
-          rootPath: project.rootPath,
-          title: `${senderDisplay}请求在电脑上执行任务`,
-          description: parsed.prompt
-        },
-        signal
-      )
-      publishRemoteActivity({
-        requestId: remoteTaskId,
-        conversationId: remoteConversation.id,
-        channel,
-        kind: 'approval',
-        title: '电脑端远程执行确认',
-        detail:
-          decision === 'once'
-            ? '电脑端已仅批准本次执行'
-            : '电脑端已拒绝或审批已超时',
-        status: decision === 'once' ? 'completed' : 'denied'
-      })
-      if (decision !== 'once') {
-        const denial = '电脑端未批准本次执行请求'
-        assistantDatabase.updateTaskStatus(
-          remoteTaskId,
-          'cancelled',
-          denial
-        )
-        assistantDatabase.appendRemoteConversationMessage({
-          conversationId: remoteConversation.id,
-          role: 'assistant',
-          content: denial,
-          status: '执行已拒绝'
-        })
-        publishRemoteConversationChange()
-        publishRemoteActivity({
-          requestId: remoteTaskId,
-          conversationId: remoteConversation.id,
-          channel,
-          kind: 'result',
-          title: `${channelLabel}远程执行已拒绝`,
-          detail: denial,
-          status: 'denied'
-        })
-        return { status: 'rejected', error: denial }
       }
     }
 
@@ -1477,7 +1528,7 @@ export function registerIpcHandlers(
           id: randomUUID(),
           projectId: project.id,
           title: `${channelLabel}远程请求`,
-          prompt: parsed.prompt,
+          prompt: executionPrompt,
           workMode: parsed.workMode,
           recurrence: 'once',
           nextRunAt: now,
@@ -1494,7 +1545,13 @@ export function registerIpcHandlers(
           projectName: project.name,
           rootPath: project.rootPath,
           conversationId: remoteConversation.id,
-          taskId: remoteTaskId
+          runtimeSelection,
+          runtime: executionRuntime,
+          taskId: remoteTaskId,
+          contextIds,
+          resultFileRequested: requestsRemoteResultFile(
+            message.text
+          )
         }
       )
     )
@@ -1506,6 +1563,25 @@ export function registerIpcHandlers(
       conversationId: remoteConversation.id,
       role: 'assistant',
       content: responseText,
+      artifactIds: result.artifactIds,
+      attachments: result.attachments?.flatMap(
+        (attachment, index) =>
+          attachment.kind === 'image' &&
+          index < (result.artifactIds?.length ?? 0)
+            ? []
+            : [
+                {
+                  id: randomUUID(),
+                  name: attachment.name,
+                  size: attachment.size,
+                  preview: '已发送到远程客户端',
+                  kind:
+                    attachment.kind === 'image'
+                      ? ('image' as const)
+                      : ('text' as const)
+                }
+              ]
+      ),
       status:
         result.status === 'completed'
           ? `${channelLabel} · 已完成`
@@ -1525,6 +1601,7 @@ export function registerIpcHandlers(
       status:
         result.status === 'completed' ? 'completed' : 'failed'
     })
+    releaseRemoteContexts()
     return result
   }
   const channelManager = channelSettingsStore
@@ -2302,24 +2379,6 @@ export function registerIpcHandlers(
       return wechatBindingController.disconnect()
     }
   )
-
-  ipcMain.handle(
-    ipcChannels.remoteChannelApprovalRespond,
-    (event, input: unknown) => {
-      assertTrustedSender(event, window)
-      const response =
-        remoteChannelApprovalResponseSchema.parse(input)
-      return remoteChannelApprovalBroker.respond(
-        response.approvalId,
-        response.decision
-      )
-    }
-  )
-
-  ipcMain.handle(ipcChannels.remoteChannelApprovalList, (event) => {
-    assertTrustedSender(event, window)
-    return remoteChannelApprovalBroker.listPending()
-  })
 
   ipcMain.handle(ipcChannels.applicationSettingsGet, (event) => {
     assertTrustedSender(event, window)
@@ -3677,7 +3736,6 @@ export function registerIpcHandlers(
       })
     embeddingIndexCoordinator?.cancel()
     wechatBindingController?.stop()
-    remoteChannelApprovalBroker.clear()
     approvalBroker.clear()
     contextManager.clear()
     window.removeListener('maximize', notifyMaximizedChanged)

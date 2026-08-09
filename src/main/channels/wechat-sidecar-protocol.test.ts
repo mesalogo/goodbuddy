@@ -34,13 +34,25 @@ describe('wechatSidecarMessageSchema', () => {
 
     expect(
       wechatSidecarMessageSchema.parse({
-        type: 'inbound_text',
+        type: 'inbound_message',
         eventId: 'event-1',
         senderId: 'sender-1',
         conversationId: 'conversation-1',
-        text: '你好'
+        text: '',
+        attachments: [
+          {
+            name: '截图.png',
+            mimeType: 'image/png',
+            size: 4,
+            kind: 'image',
+            dataBase64: 'iVBORw=='
+          }
+        ]
       })
-    ).toMatchObject({ eventId: 'event-1', text: '你好' })
+    ).toMatchObject({
+      eventId: 'event-1',
+      attachments: [expect.objectContaining({ name: '截图.png' })]
+    })
 
     expect(
       wechatSidecarCommandSchema.parse({
@@ -48,11 +60,29 @@ describe('wechatSidecarMessageSchema', () => {
         replyId: 'reply-1',
         inReplyToEventId: 'event-1',
         conversationId: 'conversation-1',
-        text: '收到'
+        text: '收到',
+        attachments: [
+          {
+            name: '结果.txt',
+            mimeType: 'text/plain',
+            size: 2,
+            kind: 'file',
+            dataBase64: 'b2s='
+          }
+        ]
       })
     ).toMatchObject({
       replyId: 'reply-1',
       inReplyToEventId: 'event-1'
+    })
+    expect(
+      wechatSidecarCommandSchema.parse({
+        type: 'cancel_reply',
+        replyId: 'reply-1'
+      })
+    ).toEqual({
+      type: 'cancel_reply',
+      replyId: 'reply-1'
     })
 
     expect(
@@ -84,7 +114,7 @@ describe('wechatSidecarMessageSchema', () => {
   it('rejects unknown, malicious, and oversized payloads', () => {
     expect(() =>
       wechatSidecarMessageSchema.parse({
-        type: 'inbound_text',
+        type: 'inbound_message',
         eventId: 'event-1',
         senderId: 'sender-1',
         conversationId: 'conversation-1',
@@ -95,7 +125,7 @@ describe('wechatSidecarMessageSchema', () => {
 
     expect(() =>
       wechatSidecarMessageSchema.parse({
-        type: 'inbound_text',
+        type: 'inbound_message',
         eventId: 'event-1\nforged',
         senderId: 'sender-1',
         conversationId: 'conversation-1',
@@ -105,7 +135,7 @@ describe('wechatSidecarMessageSchema', () => {
 
     expect(() =>
       wechatSidecarMessageSchema.parse({
-        type: 'inbound_text',
+        type: 'inbound_message',
         eventId: 'event-1',
         senderId: 'sender-1',
         conversationId: 'conversation-1',

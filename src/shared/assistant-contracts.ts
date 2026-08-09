@@ -33,7 +33,8 @@ export const projectCreateSchema = z
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(2_000),
     rootPath: z.string().trim().max(4_096),
-    defaultWorkMode: workModeSchema
+    defaultWorkMode: workModeSchema,
+    runtimeSelection: agentRuntimeSelectionSchema.optional()
   })
   .strict()
 

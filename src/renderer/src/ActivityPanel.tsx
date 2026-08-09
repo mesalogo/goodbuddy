@@ -374,13 +374,6 @@ export function ActivityPanel({
               <details
                 className="activity-group"
                 key={group.conversationId}
-                open={
-                  group.records.some(
-                    (record) => isActive(record) || isFailed(record)
-                  )
-                    ? true
-                    : undefined
-                }
               >
                 <summary>
                   <span>

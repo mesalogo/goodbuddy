@@ -3,11 +3,14 @@ import {
   weixinBindingStatusSchema,
   weixinVerificationInputSchema
 } from '../../shared/weixin-channel-contracts'
+import {
+  channelAttachmentsSchema
+} from '../../shared/channel-contracts'
 
 export const WECHAT_SIDECAR_MAX_TEXT_LENGTH = 8_000
 export const WECHAT_SIDECAR_MAX_QR_PAYLOAD_LENGTH = 4_096
 export const WECHAT_SIDECAR_MAX_QR_TTL_MS = 5 * 60 * 1_000
-export const WECHAT_SIDECAR_PROTOCOL_VERSION = 1
+export const WECHAT_SIDECAR_PROTOCOL_VERSION = 2
 
 function containsControlCharacter(value: string): boolean {
   for (const character of value) {
@@ -69,15 +72,30 @@ export const wechatSidecarQrMessageSchema = z
   })
   .strict()
 
-export const wechatSidecarInboundTextMessageSchema = z
+export const wechatSidecarInboundMessageSchema = z
   .object({
-    type: z.literal('inbound_text'),
+    type: z.literal('inbound_message'),
     eventId: identifierSchema,
     senderId: identifierSchema,
     conversationId: identifierSchema,
-    text: textSchema
+    text: z.string().max(WECHAT_SIDECAR_MAX_TEXT_LENGTH),
+    attachments: channelAttachmentsSchema.optional(),
+    attachmentError: z.string().trim().min(1).max(512).optional()
   })
   .strict()
+  .superRefine((message, context) => {
+    if (
+      message.text.trim().length === 0 &&
+      !message.attachments?.length &&
+      !message.attachmentError
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['text'],
+        message: '消息内容不能为空'
+      })
+    }
+  })
 
 export const wechatSidecarVerificationRequiredMessageSchema = z
   .object({
@@ -120,14 +138,22 @@ export const wechatSidecarReplyCommandSchema = z
     replyId: identifierSchema,
     inReplyToEventId: identifierSchema,
     conversationId: identifierSchema,
-    text: textSchema
+    text: textSchema,
+    attachments: channelAttachmentsSchema.optional()
+  })
+  .strict()
+
+export const wechatSidecarCancelReplyCommandSchema = z
+  .object({
+    type: z.literal('cancel_reply'),
+    replyId: identifierSchema
   })
   .strict()
 
 export const wechatSidecarMessageSchema = z.discriminatedUnion('type', [
   wechatSidecarStatusMessageSchema,
   wechatSidecarQrMessageSchema,
-  wechatSidecarInboundTextMessageSchema,
+  wechatSidecarInboundMessageSchema,
   wechatSidecarVerificationRequiredMessageSchema,
   wechatSidecarConnectedMessageSchema,
   wechatSidecarReplyResultMessageSchema
@@ -169,6 +195,7 @@ export const wechatSidecarCommandSchema = z.discriminatedUnion('type', [
   wechatSidecarStartLoginCommandSchema,
   wechatSidecarSubmitVerificationCommandSchema,
   wechatSidecarReplyCommandSchema,
+  wechatSidecarCancelReplyCommandSchema,
   wechatSidecarDisconnectCommandSchema,
   wechatSidecarShutdownCommandSchema
 ])

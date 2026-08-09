@@ -39,6 +39,8 @@ import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
   repairAgentRuntimeSelection,
+  repairChannelRuntimeSelection,
+  type AgentRuntimeSelection,
   type RuntimeSelectionRepairSettings
 } from '../../shared/runtime-selection-contracts'
 import {
@@ -65,6 +67,7 @@ type ProjectRow = {
   description: string
   root_path: string
   default_work_mode: ProjectCreateInput['defaultWorkMode']
+  runtime_selection_json: string | null
   kind: AssistantProject['kind']
   channel: ProjectChannel | null
   status: AssistantProject['status']
@@ -166,6 +169,9 @@ type MessageMetadata = {
   artifactIds?: string[]
   attachments?: ConversationSnapshot['messages'][number]['attachments']
 }
+
+const MAX_CHANNEL_OUTBOX_RETRY_BYTES = 20 * 1024 * 1024
+const MAX_CHANNEL_OUTBOX_MEDIA_ENTRIES = 8
 
 function parseRuntimeSelection(value: string | null):
   | ConversationSnapshot['runtimeSelection']
@@ -354,6 +360,12 @@ function toProject(row: ProjectRow): AssistantProject {
     description: row.description,
     rootPath: row.root_path,
     defaultWorkMode: row.default_work_mode,
+    runtimeSelection:
+      row.kind === 'channel'
+        ? parseRuntimeSelection(row.runtime_selection_json) ?? {
+            provider: 'auto'
+          }
+        : parseRuntimeSelection(row.runtime_selection_json),
     kind: row.kind,
     channel: row.channel ?? undefined,
     status: row.status,
@@ -952,7 +964,10 @@ export class AssistantDatabase {
     return rows.map(toProject)
   }
 
-  ensureChannelProjects(defaultRootPath: string): AssistantProject[] {
+  ensureChannelProjects(
+    defaultRootPath: string,
+    defaultModelProfileId: string
+  ): AssistantProject[] {
     const database = this.requireDatabase()
     const definitions: ReadonlyArray<{
       channel: ProjectChannel
@@ -980,9 +995,10 @@ export class AssistantDatabase {
     )
     const insert = database.prepare(
       `INSERT INTO projects
-        (id, name, description, root_path, default_work_mode, kind,
-         channel, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'ask', 'channel', ?, 'active', ?, ?)`
+        (id, name, description, root_path, default_work_mode,
+         runtime_selection_json, kind, channel, status, created_at,
+         updated_at)
+       VALUES (?, ?, ?, ?, 'ask', ?, 'channel', ?, 'active', ?, ?)`
     )
 
     database.exec('BEGIN IMMEDIATE')
@@ -997,6 +1013,10 @@ export class AssistantDatabase {
           definition.name,
           definition.description,
           defaultRootPath,
+          JSON.stringify({
+            provider: 'model',
+            profileId: defaultModelProfileId
+          }),
           definition.channel,
           now,
           now
@@ -1024,9 +1044,10 @@ export class AssistantDatabase {
     database
       .prepare(
         `INSERT INTO projects
-          (id, name, description, root_path, default_work_mode, kind,
-           channel, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'user', NULL, 'active', ?, ?)`
+          (id, name, description, root_path, default_work_mode,
+           runtime_selection_json, kind, channel, status, created_at,
+           updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, 'active', ?, ?)`
       )
       .run(
         id,
@@ -1034,6 +1055,9 @@ export class AssistantDatabase {
         input.description,
         input.rootPath,
         input.defaultWorkMode,
+        input.runtimeSelection
+          ? JSON.stringify(input.runtimeSelection)
+          : null,
         now,
         now
       )
@@ -1056,7 +1080,8 @@ export class AssistantDatabase {
       .prepare(
         `UPDATE projects
          SET name = ?, description = ?, root_path = ?,
-             default_work_mode = ?, updated_at = ?
+             default_work_mode = ?, runtime_selection_json = ?,
+             updated_at = ?
          WHERE id = ?`
       )
       .run(
@@ -1064,6 +1089,11 @@ export class AssistantDatabase {
         input.description,
         input.rootPath,
         input.defaultWorkMode,
+        input.runtimeSelection || current.runtimeSelection
+          ? JSON.stringify(
+              input.runtimeSelection ?? current.runtimeSelection
+            )
+          : null,
         new Date().toISOString(),
         projectId
       )
@@ -1279,24 +1309,60 @@ export class AssistantDatabase {
     settings: RuntimeSelectionRepairSettings
   ): number {
     const database = this.requireDatabase()
-    const conversations = database
+    const projects = database
       .prepare(
         `SELECT id, runtime_selection_json
+         FROM projects
+         WHERE kind = 'channel'`
+      )
+      .all() as Array<{
+        id: string
+        runtime_selection_json: string | null
+      }>
+    const conversations = database
+      .prepare(
+        `SELECT id, runtime_selection_json, channel
          FROM conversations
          WHERE runtime_selection_json IS NOT NULL`
       )
       .all() as Array<{
         id: string
         runtime_selection_json: string
+        channel: ProjectChannel | null
       }>
     const update = database.prepare(
       `UPDATE conversations
        SET runtime_selection_json = ?
        WHERE id = ?`
     )
+    const updateProject = database.prepare(
+      `UPDATE projects
+       SET runtime_selection_json = ?, updated_at = ?
+       WHERE id = ?`
+    )
     let repaired = 0
     database.exec('BEGIN IMMEDIATE')
     try {
+      for (const project of projects) {
+        const stored = parseRuntimeSelection(
+          project.runtime_selection_json
+        )
+        const current = stored ?? { provider: 'auto' as const }
+        const next = repairChannelRuntimeSelection(current, settings)
+        if (
+          stored &&
+          agentRuntimeSelectionKey(next) ===
+            agentRuntimeSelectionKey(current)
+        ) {
+          continue
+        }
+        updateProject.run(
+          JSON.stringify(next),
+          new Date().toISOString(),
+          project.id
+        )
+        repaired += 1
+      }
       for (const conversation of conversations) {
         const current = parseRuntimeSelection(
           conversation.runtime_selection_json
@@ -1304,7 +1370,9 @@ export class AssistantDatabase {
         if (!current) {
           continue
         }
-        const next = repairAgentRuntimeSelection(current, settings)
+        const next = conversation.channel
+          ? repairChannelRuntimeSelection(current, settings)
+          : repairAgentRuntimeSelection(current, settings)
         if (
           agentRuntimeSelectionKey(next) ===
           agentRuntimeSelectionKey(current)
@@ -1402,6 +1470,7 @@ export class AssistantDatabase {
     conversationType: 'direct' | 'group'
     title: string
     accountDisplay: string
+    runtimeSelection?: AgentRuntimeSelection
   }): ConversationSnapshot {
     const database = this.requireDatabase()
     const existing = database
@@ -1422,7 +1491,9 @@ export class AssistantDatabase {
         .prepare(
           `UPDATE conversations
            SET project_id = ?, title = ?, conversation_type = ?,
-               account_display = ?, status = 'active', updated_at = ?
+               account_display = ?,
+               runtime_selection_json = COALESCE(?, runtime_selection_json),
+               status = 'active', updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -1430,6 +1501,9 @@ export class AssistantDatabase {
           input.title,
           input.conversationType,
           input.accountDisplay,
+          input.runtimeSelection
+            ? JSON.stringify(input.runtimeSelection)
+            : null,
           new Date().toISOString(),
           existing.id
         )
@@ -1444,11 +1518,14 @@ export class AssistantDatabase {
           (id, project_id, runtime_selection_json, work_mode, title, status,
            channel, external_account_id, external_conversation_id,
            conversation_type, account_display, created_at, updated_at)
-         VALUES (?, ?, NULL, 'ask', ?, 'active', ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, 'ask', ?, 'active', ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         input.projectId,
+        input.runtimeSelection
+          ? JSON.stringify(input.runtimeSelection)
+          : null,
         input.title,
         input.channel,
         input.accountId,
@@ -1466,6 +1543,8 @@ export class AssistantDatabase {
     role: 'user' | 'assistant'
     content: string
     status?: string
+    attachments?: ConversationSnapshot['messages'][number]['attachments']
+    artifactIds?: string[]
   }): void {
     const database = this.requireDatabase()
     const now = Date.now()
@@ -1493,7 +1572,13 @@ export class AssistantDatabase {
           sequence.sequence,
           JSON.stringify({
             createdAt: now,
-            ...(input.status ? { status: input.status } : {})
+            ...(input.status ? { status: input.status } : {}),
+            ...(input.attachments?.length
+              ? { attachments: input.attachments }
+              : {}),
+            ...(input.artifactIds?.length
+              ? { artifactIds: input.artifactIds }
+              : {})
           }),
           new Date(now).toISOString()
         )
@@ -1553,6 +1638,22 @@ export class AssistantDatabase {
     createdAt: number
   } {
     const parsed = channelResultMessageSchema.parse(message)
+    if (parsed.attachments?.length) {
+      const pendingMedia = (
+        this.requireDatabase()
+          .prepare(
+            `SELECT COUNT(*) AS count
+             FROM channel_outbox
+             WHERE state != 'delivered'
+               AND attempts < 5
+               AND json_type(message_json, '$.attachments') = 'array'`
+          )
+          .get() as { count: number }
+      ).count
+      if (pendingMedia >= MAX_CHANNEL_OUTBOX_MEDIA_ENTRIES) {
+        throw new Error('媒体结果等待发送过多，请恢复通道连接后重试')
+      }
+    }
     const entry = {
       id: randomUUID(),
       message: parsed,
@@ -1600,10 +1701,16 @@ export class AssistantDatabase {
     this.requireDatabase()
       .prepare(
         `UPDATE channel_outbox
-         SET state = ?, attempts = attempts + 1
+         SET state = ?,
+             attempts = attempts + 1,
+             message_json = CASE
+               WHEN ? = 'delivered' OR attempts + 1 >= 5
+               THEN json_remove(message_json, '$.attachments')
+               ELSE message_json
+             END
          WHERE id = ?`
       )
-      .run(state, id)
+      .run(state, state, id)
   }
 
   listUndeliveredChannelResults(
@@ -1622,15 +1729,34 @@ export class AssistantDatabase {
     )
     const rows = this.requireDatabase()
       .prepare(
-        `SELECT id, message_json, state, attempts, created_at
-         FROM channel_outbox
-         WHERE state != 'delivered'
-           AND attempts < 5
-           ${channel === undefined ? '' : 'AND channel = ?'}
+        `WITH pending AS (
+           SELECT id, message_json, state, attempts, created_at,
+                  ROW_NUMBER() OVER (
+                    ORDER BY attempts ASC, created_at ASC
+                  ) AS position,
+                  SUM(LENGTH(CAST(message_json AS BLOB))) OVER (
+                    ORDER BY attempts ASC, created_at ASC
+                  ) AS cumulative_bytes
+           FROM channel_outbox
+           WHERE state != 'delivered'
+             AND attempts < 5
+             ${channel === undefined ? '' : 'AND channel = ?'}
+         )
+         SELECT id, message_json, state, attempts, created_at
+         FROM pending
+         WHERE position = 1 OR cumulative_bytes <= ?
          ORDER BY attempts ASC, created_at ASC
          LIMIT ?`
       )
-      .all(...(channel === undefined ? [safeLimit] : [channel, safeLimit])) as Array<{
+      .all(
+        ...(channel === undefined
+          ? [MAX_CHANNEL_OUTBOX_RETRY_BYTES, safeLimit]
+          : [
+              channel,
+              MAX_CHANNEL_OUTBOX_RETRY_BYTES,
+              safeLimit
+            ])
+      ) as Array<{
       id: string
       message_json: string
       state: 'pending' | 'failed'
@@ -4136,12 +4262,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 15) {
+    if (version.user_version > 16) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 15) {
+    if (version.user_version === 16) {
       return
     }
     if (version.user_version < 1) {
@@ -4154,6 +4280,7 @@ export class AssistantDatabase {
         root_path TEXT NOT NULL DEFAULT '',
         default_work_mode TEXT NOT NULL
           CHECK(default_work_mode IN ('ask', 'plan', 'execute')),
+        runtime_selection_json TEXT,
         status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -4836,6 +4963,33 @@ export class AssistantDatabase {
           CREATE INDEX IF NOT EXISTS channel_outbox_state_created
             ON channel_outbox(state, created_at);
           PRAGMA user_version = 15;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 16) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const projectColumns = new Set(
+          (
+            database.prepare('PRAGMA table_info(projects)').all() as Array<{
+              name: string
+            }>
+          ).map((column) => column.name)
+        )
+        if (!projectColumns.has('runtime_selection_json')) {
+          database.exec(`
+            ALTER TABLE projects ADD COLUMN runtime_selection_json TEXT;
+          `)
+        }
+        database.exec(`
+          UPDATE projects
+          SET runtime_selection_json = '{"provider":"auto"}'
+          WHERE kind = 'channel' AND runtime_selection_json IS NULL;
+          PRAGMA user_version = 16;
           COMMIT;
         `)
       } catch (error) {

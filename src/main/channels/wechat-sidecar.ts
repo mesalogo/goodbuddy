@@ -11,6 +11,12 @@ import {
   isAllowedWechatUrl,
   redactWechatSidecarError
 } from './wechat-sidecar-security'
+import {
+  downloadWechatFile,
+  downloadWechatImage,
+  uploadWechatAttachment
+} from './wechat-media'
+import { CHANNEL_LIMITS } from '../../shared/channel-contracts'
 
 const QR_BASE_URL = 'https://ilinkai.weixin.qq.com'
 const DEFAULT_API_BASE_URL = QR_BASE_URL
@@ -18,6 +24,7 @@ const BOT_TYPE = '3'
 const LONG_POLL_TIMEOUT_MS = 35_000
 const API_TIMEOUT_MS = 15_000
 const MAX_REPLY_CONTEXTS = 1_000
+const MAX_API_REDIRECTS = 3
 const ILINK_CHANNEL_VERSION = '2.4.6'
 const ILINK_CLIENT_VERSION = '132102'
 const parentPort = process.parentPort
@@ -49,6 +56,25 @@ type QrStatusResponse = {
 type WeixinMessageItem = {
   type?: number
   text_item?: { text?: string }
+  image_item?: {
+    media?: {
+      encrypt_query_param?: string
+      aes_key?: string
+      full_url?: string
+    }
+    aeskey?: string
+    mid_size?: number
+    hd_size?: number
+  }
+  file_item?: {
+    media?: {
+      encrypt_query_param?: string
+      aes_key?: string
+      full_url?: string
+    }
+    file_name?: string
+    len?: string
+  }
 }
 
 type WeixinMessage = {
@@ -76,6 +102,7 @@ type ReplyContext = {
 }
 
 const replyContexts = new Map<string, ReplyContext>()
+const replyControllers = new Map<string, AbortController>()
 let activeQr:
   | {
       qrcode: string
@@ -152,21 +179,50 @@ async function requestJson<T>(input: {
   }, input.timeoutMs)
   const abort = (): void => timeoutController.abort(input.signal?.reason)
   input.signal?.addEventListener('abort', abort, { once: true })
+  if (input.signal?.aborted) {
+    abort()
+  }
   try {
     try {
-      const response = await fetch(url, {
-        method: input.method,
-        headers: commonHeaders(input.token),
-        ...(input.body === undefined
-          ? {}
-          : { body: JSON.stringify(input.body) }),
-        signal: timeoutController.signal
-      })
-      const text = await response.text()
-      if (!response.ok) {
-        throw new Error(`微信服务请求失败（${response.status}）`)
+      const body =
+        input.body === undefined
+          ? undefined
+          : JSON.stringify(input.body)
+      let requestUrl = url
+      for (
+        let redirectCount = 0;
+        redirectCount <= MAX_API_REDIRECTS;
+        redirectCount += 1
+      ) {
+        const response = await fetch(requestUrl, {
+          method: input.method,
+          headers: commonHeaders(input.token),
+          ...(body === undefined ? {} : { body }),
+          redirect: 'manual',
+          signal: timeoutController.signal
+        })
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location')
+          if (
+            !location ||
+            redirectCount === MAX_API_REDIRECTS
+          ) {
+            throw new Error('微信服务重定向无效')
+          }
+          requestUrl = assertTencentUrl(
+            new URL(location, requestUrl).toString()
+          )
+          continue
+        }
+        const text = await response.text()
+        if (!response.ok) {
+          throw new Error(
+            `微信服务请求失败（${response.status}）`
+          )
+        }
+        return JSON.parse(text) as T
       }
-      return JSON.parse(text) as T
+      throw new Error('微信服务重定向过多')
     } catch (error) {
       if (timedOut) {
         throw new RequestTimeoutError('微信请求等待超时')
@@ -405,7 +461,7 @@ async function pollMessages(signal: AbortSignal): Promise<void> {
         timeoutMs = Math.min(result.longpolling_timeout_ms, 60_000)
       }
       for (const message of result.msgs ?? []) {
-        handleInboundMessage(message)
+        await handleInboundMessage(message, signal)
       }
     } catch (error) {
       if (signal.aborted) {
@@ -430,18 +486,28 @@ async function pollMessages(signal: AbortSignal): Promise<void> {
   }
 }
 
-function handleInboundMessage(message: WeixinMessage): void {
+async function handleInboundMessage(
+  message: WeixinMessage,
+  signal: AbortSignal
+): Promise<void> {
   if (message.message_type !== undefined && message.message_type !== 1) {
     return
   }
   const senderId = message.from_user_id?.trim()
   const text = message.item_list
     ?.find((item) => item.type === 1)
-    ?.text_item?.text?.trim()
-  if (!senderId || !text) {
+    ?.text_item?.text?.trim() ?? ''
+  const mediaItems = (message.item_list ?? [])
+    .filter((item) => item.type === 2 || item.type === 4)
+    .slice(0, CHANNEL_LIMITS.maximumAttachmentCount)
+  if (!senderId || (!text && mediaItems.length === 0)) {
     return
   }
-  const eventId = stableEventId(message, senderId, text)
+  const eventId = stableEventId(
+    message,
+    senderId,
+    text || `media:${mediaItems.length}`
+  )
   replyContexts.set(eventId, {
     recipientId: senderId,
     ...(message.context_token
@@ -455,12 +521,60 @@ function handleInboundMessage(message: WeixinMessage): void {
     }
     replyContexts.delete(oldest)
   }
+  const results = await Promise.all(
+    mediaItems.map(async (item, index) => {
+      try {
+        if (item.type === 2 && item.image_item) {
+          return {
+            attachment: await downloadWechatImage(
+              item.image_item,
+              `微信图片-${message.message_id ?? message.seq ?? index + 1}`,
+              signal
+            )
+          }
+        }
+        if (item.type === 4 && item.file_item) {
+          return {
+            attachment: await downloadWechatFile(
+              item.file_item,
+              signal
+            )
+          }
+        }
+        return {}
+      } catch (error) {
+        return { error: safeDetail(error) }
+      }
+    })
+  )
+  const attachments = []
+  let attachmentError: string | undefined
+  for (const result of results) {
+    attachmentError ??= result.error
+    if (!result.attachment) {
+      continue
+    }
+    const total = attachments.reduce(
+      (sum, candidate) => sum + candidate.size,
+      0
+    )
+    if (
+      total + result.attachment.size >
+      CHANNEL_LIMITS.maximumAttachmentBytes
+    ) {
+      attachmentError = '微信附件总大小超过 12MB 限制'
+      break
+    }
+    attachments.push(result.attachment)
+  }
   post({
-    type: 'inbound_text',
+    type: 'inbound_message',
     eventId,
     senderId,
     conversationId: senderId,
-    text
+    text,
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(attachmentError ? { attachmentError } : {})
   })
 }
 
@@ -497,34 +611,96 @@ async function sendReply(
     })
     return
   }
+  const controller = new AbortController()
+  const lifecycleSignal = lifecycleController.signal
+  const abortFromLifecycle = (): void =>
+    controller.abort(lifecycleSignal.reason)
+  lifecycleSignal.addEventListener(
+    'abort',
+    abortFromLifecycle,
+    { once: true }
+  )
+  if (lifecycleSignal.aborted) {
+    abortFromLifecycle()
+  }
+  replyControllers.set(command.replyId, controller)
   try {
-    const response = await requestJson<{ ret?: number; errmsg?: string }>({
-      baseUrl: currentAccount.baseUrl,
-      endpoint: 'ilink/bot/sendmessage',
-      method: 'POST',
-      token: currentAccount.token,
-      body: {
-        msg: {
-          from_user_id: '',
-          to_user_id: context.recipientId,
-          client_id: `goodbuddy-${randomUUID()}`,
-          context_token: context.contextToken,
-          message_type: 2,
-          message_state: 2,
-          item_list: [
-            {
-              type: 1,
-              text_item: { text: command.text }
-            }
-          ]
+    const items: Array<{
+      item: WeixinMessageItem
+      stableKey: string
+    }> = [
+      {
+        item: {
+          type: 1,
+          text_item: { text: command.text }
         },
-        base_info: baseInfo()
-      },
-      timeoutMs: API_TIMEOUT_MS,
-      signal: lifecycleController.signal
-    })
-    if (response.ret !== undefined && response.ret !== 0) {
-      throw new Error(response.errmsg || '微信消息发送失败')
+        stableKey: `text\u0000${command.text}`
+      }
+    ]
+    for (const [index, attachment] of (
+      command.attachments ?? []
+    ).entries()) {
+      items.push(
+        {
+          item: await uploadWechatAttachment({
+            attachment,
+            recipientId: context.recipientId,
+            signal: controller.signal,
+            getUploadUrl: (request) =>
+              requestJson({
+                baseUrl: currentAccount.baseUrl,
+                endpoint: 'ilink/bot/getuploadurl',
+                method: 'POST',
+                token: currentAccount.token,
+                body: {
+                  ...request,
+                  base_info: baseInfo()
+                },
+                timeoutMs: API_TIMEOUT_MS,
+                signal: controller.signal
+              })
+          }),
+          stableKey: `attachment\u0000${index}\u0000${attachment.kind}\u0000${createHash(
+            'sha256'
+          )
+            .update(attachment.dataBase64, 'ascii')
+            .digest('hex')}`
+        }
+      )
+    }
+    for (const [index, entry] of items.entries()) {
+      const clientId = `goodbuddy-${createHash('sha256')
+        .update(
+          `${command.inReplyToEventId}\u0000${index}\u0000${entry.stableKey}`
+        )
+        .digest('hex')
+        .slice(0, 32)}`
+      const response = await requestJson<{
+        ret?: number
+        errmsg?: string
+      }>({
+        baseUrl: currentAccount.baseUrl,
+        endpoint: 'ilink/bot/sendmessage',
+        method: 'POST',
+        token: currentAccount.token,
+        body: {
+          msg: {
+            from_user_id: '',
+            to_user_id: context.recipientId,
+            client_id: clientId,
+            context_token: context.contextToken,
+            message_type: 2,
+            message_state: 2,
+            item_list: [entry.item]
+          },
+          base_info: baseInfo()
+        },
+        timeoutMs: API_TIMEOUT_MS,
+        signal: controller.signal
+      })
+      if (response.ret !== undefined && response.ret !== 0) {
+        throw new Error(response.errmsg || '微信消息发送失败')
+      }
     }
     post({ type: 'reply_result', replyId: command.replyId, ok: true })
   } catch (error) {
@@ -534,7 +710,19 @@ async function sendReply(
       ok: false,
       error: safeDetail(error)
     })
+  } finally {
+    lifecycleSignal.removeEventListener(
+      'abort',
+      abortFromLifecycle
+    )
+    replyControllers.delete(command.replyId)
   }
+}
+
+function cancelReply(replyId: string): void {
+  replyControllers
+    .get(replyId)
+    ?.abort(new Error('微信回复已取消'))
 }
 
 async function notifyLifecycle(
@@ -563,6 +751,7 @@ async function disconnect(): Promise<void> {
   activeQr = undefined
   account = undefined
   replyContexts.clear()
+  replyControllers.clear()
   post({ type: 'status', status: 'stopped' })
 }
 
@@ -611,6 +800,9 @@ parentPort.on('message', (event) => {
       break
     case 'reply':
       void sendReply(command.data)
+      break
+    case 'cancel_reply':
+      cancelReply(command.data.replyId)
       break
     case 'disconnect':
       void disconnect()

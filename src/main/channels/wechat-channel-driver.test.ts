@@ -58,11 +58,20 @@ describe('WechatChannelDriver', () => {
     await starting
 
     child.emit('message', {
-      type: 'inbound_text',
+      type: 'inbound_message',
       eventId: 'event-1',
       senderId: 'sender-1',
       conversationId: 'sender-1',
-      text: '你好'
+      text: '你好',
+      attachments: [
+        {
+          name: '说明.txt',
+          mimeType: 'text/plain',
+          size: 2,
+          kind: 'file',
+          dataBase64: 'b2s='
+        }
+      ]
     })
     await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce())
     expect(handler).toHaveBeenCalledWith(
@@ -70,7 +79,10 @@ describe('WechatChannelDriver', () => {
         channel: 'weixin',
         eventId: 'event-1',
         senderId: 'sender-1',
-        workMode: 'ask'
+        workMode: 'ask',
+        attachments: [
+          expect.objectContaining({ name: '说明.txt' })
+        ]
       }),
       expect.any(Function)
     )
@@ -82,7 +94,16 @@ describe('WechatChannelDriver', () => {
         conversationId: 'sender-1',
         recipientId: 'sender-1',
         status: 'completed',
-        output: '收到'
+        output: '收到',
+        attachments: [
+          {
+            name: '结果.txt',
+            mimeType: 'text/plain',
+            size: 2,
+            kind: 'file',
+            dataBase64: 'b2s='
+          }
+        ]
       },
       new AbortController().signal
     )
@@ -99,6 +120,9 @@ describe('WechatChannelDriver', () => {
         message.type === 'reply'
     )
     expect(reply).toBeDefined()
+    expect(reply).toMatchObject({
+      attachments: [expect.objectContaining({ name: '结果.txt' })]
+    })
     child.emit('message', {
       type: 'reply_result',
       replyId: reply!.replyId,
@@ -157,6 +181,57 @@ describe('WechatChannelDriver', () => {
       detail: 'Sidecar 已退出'
     })
     await expect(sending).rejects.toThrow('Sidecar 已退出')
+    driver.stop()
+  })
+
+  it('cancels in-flight sidecar media work when delivery is aborted', async () => {
+    const child = new FakeSidecar()
+    const driver = new WechatChannelDriver(
+      settings,
+      () => child as unknown as WechatSidecarChild
+    )
+    const starting = driver.start(vi.fn())
+    await vi.waitFor(() =>
+      expect(child.posted).toContainEqual(
+        expect.objectContaining({ type: 'start_account' })
+      )
+    )
+    child.emit('message', {
+      type: 'status',
+      status: 'connected'
+    })
+    await starting
+    const controller = new AbortController()
+    const sending = driver.send(
+      {
+        channel: 'weixin',
+        eventId: 'event-cancel',
+        conversationId: 'sender-1',
+        recipientId: 'sender-1',
+        status: 'completed',
+        output: '结果'
+      },
+      controller.signal
+    )
+    const reply = child.posted.find(
+      (
+        message
+      ): message is {
+        type: 'reply'
+        replyId: string
+      } =>
+        typeof message === 'object' &&
+        message !== null &&
+        'type' in message &&
+        message.type === 'reply'
+    )
+    controller.abort()
+
+    await expect(sending).rejects.toThrow('已取消')
+    expect(child.posted).toContainEqual({
+      type: 'cancel_reply',
+      replyId: reply!.replyId
+    })
     driver.stop()
   })
 })

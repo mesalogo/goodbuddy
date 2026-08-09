@@ -1,5 +1,6 @@
 import type {
   ChannelInboundText,
+  ChannelMediaAttachment,
   ChannelResultMessage
 } from '../../shared/channel-contracts'
 
@@ -109,6 +110,7 @@ export class MemoryOutbox implements Outbox {
     }
     entry.state = 'delivered'
     entry.attempts += 1
+    entry.message = this.withoutAttachments(entry.message)
   }
 
   markFailed(id: string): void {
@@ -118,6 +120,9 @@ export class MemoryOutbox implements Outbox {
     }
     entry.state = 'failed'
     entry.attempts += 1
+    if (entry.attempts >= 5) {
+      entry.message = this.withoutAttachments(entry.message)
+    }
   }
 
   listUndelivered(
@@ -158,6 +163,14 @@ export class MemoryOutbox implements Outbox {
       message: structuredClone(entry.message)
     }
   }
+
+  private withoutAttachments(
+    message: ChannelResultMessage
+  ): ChannelResultMessage {
+    const sanitized = structuredClone(message)
+    delete sanitized.attachments
+    return sanitized
+  }
 }
 
 export type ChannelExecutor = (
@@ -172,4 +185,5 @@ export type ChannelExecutor = (
   status: string
   output?: string
   error?: string
+  attachments?: ChannelMediaAttachment[]
 }>

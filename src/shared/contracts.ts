@@ -71,11 +71,7 @@ import type {
   EmbeddingSettingsSnapshot
 } from './embedding-contracts'
 import type { WeixinBindingSnapshot } from './weixin-channel-contracts'
-import type {
-  RemoteChannelActivity,
-  RemoteChannelApproval,
-  RemoteChannelApprovalDecision
-} from './remote-channel-contracts'
+import type { RemoteChannelActivity } from './remote-channel-contracts'
 import {
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
@@ -977,16 +973,6 @@ export type DesktopApi = {
     disconnectWeixin: () => Promise<WeixinBindingSnapshot>
     onWeixinBindingChanged: (
       listener: (snapshot: WeixinBindingSnapshot) => void
-    ) => () => void
-    respondRemoteApproval: (
-      approvalId: string,
-      decision: RemoteChannelApprovalDecision
-    ) => Promise<boolean>
-    getPendingRemoteApprovals: () => Promise<
-      RemoteChannelApproval[]
-    >
-    onRemoteApproval: (
-      listener: (approval: RemoteChannelApproval) => void
     ) => () => void
     onRemoteActivity: (
       listener: (activity: RemoteChannelActivity) => void

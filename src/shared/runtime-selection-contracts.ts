@@ -32,7 +32,12 @@ export type AgentRuntimeSelection = z.infer<
 >
 
 export type RuntimeSelectionRepairSettings = {
-  modelProfiles: ReadonlyArray<{ id: string }>
+  modelProfiles: ReadonlyArray<{
+    id: string
+    protocol?: string
+    authentication?: 'api-key' | 'none'
+    apiKeyConfigured?: boolean
+  }>
   defaultModelProfileId: string
   opencodeModelSource:
     | { kind: 'platform' }
@@ -40,6 +45,51 @@ export type RuntimeSelectionRepairSettings = {
   continueModelSource:
     | { kind: 'platform' }
     | { kind: 'profile'; profileId: string }
+}
+
+type ChannelModelProfile = RuntimeSelectionRepairSettings['modelProfiles'][number]
+
+export function isChannelModelProfileUsable(
+  profile: ChannelModelProfile
+): boolean {
+  return (
+    profile.protocol !== 'openai-images-generations' &&
+    !(
+      profile.authentication === 'api-key' &&
+      profile.apiKeyConfigured === false
+    )
+  )
+}
+
+export function repairChannelRuntimeSelection(
+  selection: AgentRuntimeSelection,
+  settings: RuntimeSelectionRepairSettings
+): AgentRuntimeSelection {
+  const defaultDirectProfile =
+    settings.modelProfiles.find(
+      (profile) =>
+        profile.id === settings.defaultModelProfileId &&
+        isChannelModelProfileUsable(profile)
+    ) ??
+    settings.modelProfiles.find(isChannelModelProfileUsable)
+  const defaultDirectSelection: AgentRuntimeSelection = {
+    provider: 'model',
+    profileId:
+      defaultDirectProfile?.id ?? settings.defaultModelProfileId
+  }
+  if (selection.provider === 'auto') {
+    return defaultDirectSelection
+  }
+  const repaired = repairAgentRuntimeSelection(selection, settings)
+  if (repaired.provider !== 'model') {
+    return repaired
+  }
+  const profile = settings.modelProfiles.find(
+    (candidate) => candidate.id === repaired.profileId
+  )
+  return profile && isChannelModelProfileUsable(profile)
+    ? repaired
+    : defaultDirectSelection
 }
 
 export function repairAgentRuntimeSelection(

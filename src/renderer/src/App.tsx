@@ -17,7 +17,6 @@ import {
   MessageSquarePlus,
   MessageSquare,
   Mic,
-  MicOff,
   Minimize2,
   Minus,
   MoreHorizontal,
@@ -104,7 +103,11 @@ import { KnowledgeWorkspace } from './KnowledgeWorkspace'
 import { HeartbeatCenter } from './HeartbeatCenter'
 import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 import { MarkdownRenderer } from './MarkdownRenderer'
-import { PageShell, ScopeBadge } from './WorkspacePrimitives'
+import {
+  EmptyState,
+  PageShell,
+  ScopeBadge
+} from './WorkspacePrimitives'
 import {
   ProjectSwitcher,
   workModeLabels
@@ -116,7 +119,6 @@ import {
   type SidebarArtifact
 } from './RightAssistantSidebar'
 import { SettingsPanel } from './SettingsPanel'
-import { RemoteChannelApprovalDialog } from './RemoteChannelApprovalDialog'
 import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
 import goodbuddyLightIcon from './assets/goodbuddy-light.png'
 import {
@@ -879,6 +881,22 @@ function formatAttachmentSize(size: number): string {
   return `${Math.max(1, Math.ceil(size / 1024))} KB`
 }
 
+const composerTextareaMinHeight = 72
+const composerTextareaMaxHeight = 220
+
+function resizeComposerTextarea(
+  textarea: HTMLTextAreaElement | null
+): void {
+  if (!textarea) {
+    return
+  }
+  textarea.style.height = 'auto'
+  textarea.style.height = `${Math.max(
+    composerTextareaMinHeight,
+    Math.min(textarea.scrollHeight, composerTextareaMaxHeight)
+  )}px`
+}
+
 const imageDataUrlPattern =
   /^data:image\/(png|jpeg|webp);base64,/u
 
@@ -1061,6 +1079,7 @@ function App(): React.JSX.Element {
     useState<InteractiveWorkMode>('ask')
   const [input, setInput] = useState('')
   const [voiceListening, setVoiceListening] = useState(false)
+  const [voiceRecording, setVoiceRecording] = useState(false)
   const voiceRecordingRef = useRef<PcmRecording | undefined>(undefined)
   const voiceRequestIdRef = useRef<string | undefined>(undefined)
   const voiceStartingRef = useRef(false)
@@ -1176,6 +1195,10 @@ function App(): React.JSX.Element {
   useEffect(() => {
     conversationsRef.current = conversations
   }, [conversations])
+
+  useEffect(() => {
+    resizeComposerTextarea(inputRef.current)
+  }, [input])
 
   useEffect(() => {
     if (!topbarMenuOpen) {
@@ -1505,7 +1528,19 @@ function App(): React.JSX.Element {
   ])
 
   const startNewConversation = useCallback(
-    (projectId?: string): void => {
+    (projectId?: string): boolean => {
+      const project = projects.find(
+        (candidate) => candidate.id === projectId
+      )
+      if (project?.kind === 'channel') {
+        setView('chat')
+        notify({
+          tone: 'info',
+          message: '通道项目的会话由客户端收到新消息后自动创建',
+          dedupeKey: 'channel-project-new-conversation'
+        })
+        return false
+      }
       const navigation = conversationNavigationRef.current
       const currentConversation = navigation.conversations.find(
         (conversation) => conversation.id === navigation.activeId
@@ -1517,7 +1552,7 @@ function App(): React.JSX.Element {
       ) {
         setView('chat')
         requestAnimationFrame(() => inputRef.current?.focus())
-        return
+        return true
       }
       const conversation = createConversation(
         projectId,
@@ -1544,8 +1579,9 @@ function App(): React.JSX.Element {
         return []
       })
       requestAnimationFrame(() => inputRef.current?.focus())
+      return true
     },
-    [runtimeSettings, updateAttachments]
+    [notify, projects, runtimeSettings, updateAttachments]
   )
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -1557,13 +1593,15 @@ function App(): React.JSX.Element {
       (conversation) =>
         (!activeProjectId ||
           conversation.projectId === activeProjectId) &&
+        (activeProject?.kind !== 'channel' ||
+          conversation.remote !== undefined) &&
         (!query ||
         conversation.title.toLocaleLowerCase().includes(query) ||
         conversation.messages.some((message) =>
           message.content.toLocaleLowerCase().includes(query)
         ))
     )
-  }, [activeProjectId, conversations, searchQuery])
+  }, [activeProject, activeProjectId, conversations, searchQuery])
   const pendingSidebarApprovals = useMemo<PendingSidebarApproval[]>(
     () =>
       conversations.flatMap((conversation) =>
@@ -2400,14 +2438,17 @@ function App(): React.JSX.Element {
           persistedConversations.length > 0
             ? persistedConversations
             : migrationConversations.current.map((conversation) =>
-            conversation.projectId
+            conversation.projectId || project.kind === 'channel'
               ? conversation
               : { ...conversation, projectId: project.id }
           )
         let projectConversation = nextConversations.find(
-          (conversation) => conversation.projectId === project.id
+          (conversation) =>
+            conversation.projectId === project.id &&
+            (project.kind !== 'channel' ||
+              conversation.remote !== undefined)
         )
-        if (!projectConversation) {
+        if (!projectConversation && project.kind !== 'channel') {
           projectConversation = createConversation(project.id)
           nextConversations = [
             projectConversation,
@@ -2423,7 +2464,7 @@ function App(): React.JSX.Element {
           return
         }
         setConversations(nextConversations)
-        setActiveId(projectConversation.id)
+        setActiveId(projectConversation?.id ?? '')
         localStorage.removeItem(storageKey)
         setConversationStoreReady(true)
       })
@@ -2863,6 +2904,32 @@ function App(): React.JSX.Element {
   )
 
   useEffect(() => {
+    const handleNewConversationShortcut = (
+      event: KeyboardEvent
+    ): void => {
+      if (
+        event.key.toLocaleLowerCase() !== 'n' ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return
+      }
+      event.preventDefault()
+      startNewConversation(activeProjectIdRef.current || undefined)
+    }
+    document.addEventListener(
+      'keydown',
+      handleNewConversationShortcut
+    )
+    return () =>
+      document.removeEventListener(
+        'keydown',
+        handleNewConversationShortcut
+      )
+  }, [startNewConversation])
+
+  useEffect(() => {
     const frame = requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({
         top: scrollRef.current.scrollHeight,
@@ -2880,10 +2947,14 @@ function App(): React.JSX.Element {
     setActiveProjectId(projectId)
     setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode))
     const conversation = conversations.find(
-      (candidate) => candidate.projectId === projectId
+      (candidate) =>
+        candidate.projectId === projectId &&
+        (project.kind !== 'channel' || candidate.remote !== undefined)
     )
     if (conversation) {
       setActiveId(conversation.id)
+    } else if (project.kind === 'channel') {
+      setActiveId('')
     } else {
       const created = createConversation(
         projectId,
@@ -2988,10 +3059,15 @@ function App(): React.JSX.Element {
         normalizeInteractiveWorkMode(next.defaultWorkMode)
       )
       const nextConversation = remainingConversations.find(
-        (conversation) => conversation.projectId === next.id
+        (conversation) =>
+          conversation.projectId === next.id &&
+          (next.kind !== 'channel' ||
+            conversation.remote !== undefined)
       )
       if (nextConversation) {
         setActiveId(nextConversation.id)
+      } else if (next.kind === 'channel') {
+        setActiveId('')
       } else {
         const created = createConversation(
           next.id,
@@ -3006,8 +3082,8 @@ function App(): React.JSX.Element {
     setView('chat')
   }
 
-  const newConversation = (): void => {
-    startNewConversation(activeProjectId || undefined)
+  const newConversation = (): boolean => {
+    return startNewConversation(activeProjectId || undefined)
   }
 
   const setMemoryStatus = async (
@@ -3025,7 +3101,9 @@ function App(): React.JSX.Element {
   }
 
   const useHeartbeatTask = (task: AssistantTask): void => {
-    newConversation()
+    if (!newConversation()) {
+      return
+    }
     setWorkMode('ask')
     setInput(
       [
@@ -3097,6 +3175,10 @@ function App(): React.JSX.Element {
       if (conversationId === activeId) {
         setActiveId(projectRemaining[0]?.id ?? '')
       }
+      return
+    }
+    if (activeProject?.kind === 'channel') {
+      setActiveId('')
       return
     }
     const replacement = createConversation(
@@ -3563,6 +3645,7 @@ function App(): React.JSX.Element {
       return
     }
     setVoiceListening(true)
+    setVoiceRecording(false)
     let started = false
     try {
       const prepared = await prepareSpeechRecognition(
@@ -3597,10 +3680,15 @@ function App(): React.JSX.Element {
           dedupeKey: 'speech-status'
         })
         setVoiceListening(false)
+        setVoiceRecording(false)
       }
-      recognition.onend = () => setVoiceListening(false)
+      recognition.onend = () => {
+        setVoiceListening(false)
+        setVoiceRecording(false)
+      }
       recognition.start()
       started = true
+      setVoiceRecording(true)
       notify({
         tone: 'info',
         message: prepared.local
@@ -3620,6 +3708,7 @@ function App(): React.JSX.Element {
     } finally {
       if (!started) {
         setVoiceListening(false)
+        setVoiceRecording(false)
       }
     }
   }
@@ -3644,6 +3733,7 @@ function App(): React.JSX.Element {
       return
     }
     setVoiceListening(true)
+    setVoiceRecording(false)
     voiceStartingRef.current = true
     try {
       const recording = await startPcmRecording(
@@ -3657,6 +3747,7 @@ function App(): React.JSX.Element {
         return
       }
       voiceRecordingRef.current = recording
+      setVoiceRecording(true)
       notify({
         tone: 'info',
         message: '正在录音，再次点击语音按钮即可结束并识别',
@@ -3665,6 +3756,7 @@ function App(): React.JSX.Element {
       void recording.result
         .then(async ({ audio, sampleRate }) => {
           voiceRecordingRef.current = undefined
+          setVoiceRecording(false)
           const requestId = crypto.randomUUID()
           voiceRequestIdRef.current = requestId
           notify({
@@ -3718,10 +3810,12 @@ function App(): React.JSX.Element {
         .finally(() => {
           voiceRequestIdRef.current = undefined
           setVoiceListening(false)
+          setVoiceRecording(false)
         })
     } catch (reason) {
       voiceStartingRef.current = false
       setVoiceListening(false)
+      setVoiceRecording(false)
       notify({
         tone: 'error',
         message:
@@ -3742,6 +3836,7 @@ function App(): React.JSX.Element {
     }
     const recording = voiceRecordingRef.current
     if (recording) {
+      setVoiceRecording(false)
       recording.stop()
       notify({
         tone: 'info',
@@ -3760,6 +3855,7 @@ function App(): React.JSX.Element {
         dedupeKey: 'speech-status'
       })
       setVoiceListening(false)
+      setVoiceRecording(false)
       return
     }
     void startVoiceInput()
@@ -3908,11 +4004,17 @@ function App(): React.JSX.Element {
           projects={projects}
         />
 
-        <button className="new-chat" type="button" onClick={newConversation}>
-          <MessageSquarePlus size={17} />
-          <span>新建对话</span>
-          <kbd>Ctrl N</kbd>
-        </button>
+        {activeProject?.kind !== 'channel' && (
+          <button
+            className="new-chat"
+            onClick={newConversation}
+            type="button"
+          >
+            <MessageSquarePlus size={17} />
+            <span>新建对话</span>
+            <kbd>Ctrl N</kbd>
+          </button>
+        )}
 
         <div className="sidebar-search">
           <Search size={15} />
@@ -4178,7 +4280,12 @@ function App(): React.JSX.Element {
             </div>
           ))}
           {filteredConversations.length === 0 && (
-            <p className="conversation-empty">没有匹配的对话</p>
+            <p className="conversation-empty">
+              {activeProject?.kind === 'channel' &&
+              !searchQuery.trim()
+                ? '尚无远程会话'
+                : '没有匹配的对话'}
+            </p>
           )}
         </div>
 
@@ -4214,7 +4321,12 @@ function App(): React.JSX.Element {
                 className="conversation-title"
                 title={activeConversation?.title}
               >
-                <span>{activeConversation?.title ?? '新对话'}</span>
+                <span>
+                  {activeConversation?.title ??
+                    (activeProject?.kind === 'channel'
+                      ? '远程会话'
+                      : '新对话')}
+                </span>
                 {activeConversation?.remote && (
                   <b className="conversation-source-badge">
                     {
@@ -4332,6 +4444,24 @@ function App(): React.JSX.Element {
         {view === 'chat' ? (
           <PageShell variant="reading">
             <section className="chat" ref={scrollRef}>
+          {activeProject?.kind === 'channel' &&
+            !activeConversation && (
+              <EmptyState
+                action={
+                  <button
+                    className="secondary-button"
+                    onClick={() => setView('settings')}
+                    type="button"
+                  >
+                    打开设置
+                  </button>
+                }
+                description={`请先连接${activeProject.name}，远程用户发送第一条消息后，会话会自动出现在这里。`}
+                icon={<MessageSquare size={28} />}
+                level="page"
+                title="尚无远程会话"
+              />
+            )}
           {activeConversation && isUnusedConversation(activeConversation) && (
             <div className="welcome">
               <div className="welcome__badge">
@@ -4822,19 +4952,15 @@ function App(): React.JSX.Element {
             </section>
 
             <footer className="composer-wrap">
-          {activeConversation?.remote ? (
+          {activeProject?.kind === 'channel' ? (
             <div className="remote-conversation-notice">
               <MessageSquare aria-hidden="true" size={18} />
               <div>
                 <strong>远程通道会话</strong>
                 <span>
-                  请从
-                  {
-                    projectChannelLabels[
-                      activeConversation.remote.channel
-                    ]
-                  }
-                  继续发送消息。本窗口用于查看历史与审批执行。
+                  {activeConversation?.remote
+                    ? `请在 ${projectChannelLabels[activeConversation.remote.channel]} 客户端继续发送消息。本窗口用于查看历史、任务与执行结果。`
+                    : '远程用户发送消息后，会话会自动出现在这里。'}
                 </span>
               </div>
             </div>
@@ -4883,93 +5009,133 @@ function App(): React.JSX.Element {
                 ))}
               </div>
             )}
-            <textarea
-              aria-label="向 GoodBuddy 提问"
-              placeholder={
-                runtime?.capability === 'image-generation'
-                  ? '描述你想生成的图片…'
-                  : '给 GoodBuddy 发消息…'
-              }
-              ref={inputRef}
-              rows={1}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  void submit()
+            <div className="composer__input">
+              <textarea
+                aria-label="向 GoodBuddy 提问"
+                placeholder={
+                  runtime?.capability === 'image-generation'
+                    ? '描述你想生成的图片…'
+                    : '给 GoodBuddy 发消息…'
                 }
-              }}
-            />
+                ref={inputRef}
+                rows={3}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onInput={(event) =>
+                  resizeComposerTextarea(event.currentTarget)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    void submit()
+                  }
+                }}
+              />
+            </div>
             <div className="composer__toolbar">
-              <div className="composer__attachments">
-                <button
-                  type="button"
-                  aria-label="添加附件"
-                  onClick={() =>
-                    void addContext(() =>
-                      window.goodbuddy.context.selectFiles()
-                    )
-                  }
+              <div className="composer__controls">
+                <div
+                  aria-label="添加内容"
+                  className="composer__tool-group"
+                  role="group"
                 >
-                  <Paperclip size={18} />
-                </button>
-                <button
-                  aria-label="读取剪贴板"
-                  onClick={() =>
-                    void addContext(() =>
-                      window.goodbuddy.context.readClipboard()
-                    )
-                  }
-                  title="添加剪贴板文本或图片"
-                  type="button"
-                >
-                  <ClipboardPaste size={18} />
-                </button>
-                <button
-                  aria-label="截取当前屏幕"
-                  onClick={() =>
-                    void addContext(() =>
-                      window.goodbuddy.context.captureScreen()
-                    )
-                  }
-                  title="截取当前屏幕"
-                  type="button"
-                >
-                  <MonitorUp size={18} />
-                </button>
-                <button
-                  aria-label={voiceListening ? '正在听写' : '语音输入'}
-                  onClick={toggleVoiceInput}
-                  title="语音转文字，转写后可编辑再发送"
-                  type="button"
-                >
-                  {voiceListening ? (
-                    <MicOff size={18} />
-                  ) : (
-                    <Mic size={18} />
-                  )}
-                </button>
-                <button
-                  aria-label="捕获应用窗口"
-                  disabled={windowCaptureLoading}
-                  onClick={() => void openWindowCapture()}
-                  title="选择一个应用或浏览器窗口，仅捕获当前画面"
-                  type="button"
-                >
-                  <PanelsTopLeft size={18} />
-                </button>
+                  <button
+                    type="button"
+                    aria-label="添加附件"
+                    onClick={() =>
+                      void addContext(() =>
+                        window.goodbuddy.context.selectFiles()
+                      )
+                    }
+                    title="添加附件"
+                  >
+                    <Paperclip aria-hidden="true" size={18} />
+                  </button>
+                  <button
+                    aria-label="读取剪贴板"
+                    onClick={() =>
+                      void addContext(() =>
+                        window.goodbuddy.context.readClipboard()
+                      )
+                    }
+                    title="添加剪贴板文本或图片"
+                    type="button"
+                  >
+                    <ClipboardPaste aria-hidden="true" size={18} />
+                  </button>
+                  <button
+                    aria-label="截取当前屏幕"
+                    onClick={() =>
+                      void addContext(() =>
+                        window.goodbuddy.context.captureScreen()
+                      )
+                    }
+                    title="截取当前屏幕"
+                    type="button"
+                  >
+                    <MonitorUp aria-hidden="true" size={18} />
+                  </button>
+                  <button
+                    aria-label={
+                      voiceRecording
+                        ? '停止录音'
+                        : voiceListening
+                          ? '取消语音识别'
+                          : '语音输入'
+                    }
+                    aria-pressed={voiceRecording}
+                    className={
+                      voiceRecording
+                        ? 'composer__voice-button composer__voice-button--recording'
+                        : voiceListening
+                          ? 'composer__voice-button composer__voice-button--processing'
+                          : 'composer__voice-button'
+                    }
+                    data-state={
+                      voiceRecording
+                        ? 'recording'
+                        : voiceListening
+                          ? 'processing'
+                          : 'idle'
+                    }
+                    onClick={toggleVoiceInput}
+                    title={
+                      voiceRecording
+                        ? '停止录音并开始识别'
+                        : voiceListening
+                          ? '取消语音识别'
+                          : '语音转文字，转写后可编辑再发送'
+                    }
+                    type="button"
+                  >
+                    <Mic aria-hidden="true" size={18} />
+                  </button>
+                  <button
+                    aria-label="捕获应用窗口"
+                    disabled={windowCaptureLoading}
+                    onClick={() => void openWindowCapture()}
+                    title="选择一个应用或浏览器窗口，仅捕获当前画面"
+                    type="button"
+                  >
+                    <PanelsTopLeft aria-hidden="true" size={18} />
+                  </button>
+                </div>
                 {knowledgeSnapshot.libraries.length > 0 && (
                   <div className="knowledge-scope">
                     <button
+                      aria-label={`选择知识库，本次已启用 ${enabledKnowledgeLibraryIds.length} 个`}
                       aria-expanded={knowledgeScopeOpen}
                       onClick={() =>
                         setKnowledgeScopeOpen((current) => !current)
                       }
+                      title="选择本次对话检索的知识库"
                       type="button"
                     >
-                      <Library size={16} />
-                      知识库 {enabledKnowledgeLibraryIds.length}
+                      <Library aria-hidden="true" size={16} />
+                      <span>
+                        知识库
+                        <strong>{enabledKnowledgeLibraryIds.length}</strong>
+                      </span>
                     </button>
                     {knowledgeScopeOpen && (
                       <div className="knowledge-scope__popover">
@@ -4999,135 +5165,150 @@ function App(): React.JSX.Element {
                     )}
                   </div>
                 )}
-                <span className="divider" />
-                <label className="composer__expert">
-                  <Bot size={15} />
-                  <select
-                    aria-label="专家角色"
-                    disabled={runtime?.capability === 'image-generation'}
-                    onChange={(event) =>
-                      setSelectedExpertId(event.target.value)
-                    }
-                    value={selectedExpertId}
-                  >
-                    <option value="">通用助手</option>
-                    <option value="team">专家团队（并行）</option>
-                    {assistantExperts.map((expert) => (
-                      <option key={expert.id} value={expert.id}>
-                        {expert.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label
-                  className={`composer__mode composer__mode--${effectiveWorkMode}`}
+                <div
+                  aria-label="对话设置"
+                  className="composer__configuration"
+                  role="group"
                 >
-                  <span>模式</span>
-                  <select
-                    aria-describedby="work-mode-hint"
-                    aria-label="工作模式"
-                    onChange={(event) =>
-                      setWorkMode(
-                        event.target.value as InteractiveWorkMode
-                      )
-                    }
-                    value={effectiveWorkMode}
+                  <label
+                    className="composer__expert"
+                    title="选择参与本次对话的专家角色"
                   >
-                    {interactiveWorkModes.map((value) => (
-                      <option
-                        disabled={
-                          value === 'execute' &&
-                          !runtime?.supportsToolExecution
-                        }
-                        key={value}
-                        value={value}
-                      >
-                        {workModeLabels[value]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="runtime-picker">
-                  <button
-                    aria-expanded={runtimeMenuOpen}
-                    aria-haspopup="menu"
-                    className="model-button"
-                    disabled={isRunning || runtimeSwitching}
-                    onClick={() => setRuntimeMenuOpen(!runtimeMenuOpen)}
-                    onKeyDown={(event) => {
-                      if (
-                        !runtimeMenuOpen &&
-                        (event.key === 'ArrowDown' ||
-                          event.key === 'Enter' ||
-                          event.key === ' ')
-                      ) {
-                        event.preventDefault()
-                        setRuntimeMenuOpen(true)
+                    <Bot aria-hidden="true" size={15} />
+                    <select
+                      aria-label="专家角色"
+                      disabled={runtime?.capability === 'image-generation'}
+                      onChange={(event) =>
+                        setSelectedExpertId(event.target.value)
                       }
-                    }}
-                    ref={runtimeMenuButtonRef}
-                    type="button"
+                      value={selectedExpertId}
+                    >
+                      <option value="">通用助手</option>
+                      <option value="team">专家团队（并行）</option>
+                      {assistantExperts.map((expert) => (
+                        <option key={expert.id} value={expert.id}>
+                          {expert.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label
+                    className={`composer__mode composer__mode--${effectiveWorkMode}`}
+                    title={`工作模式：${workModeLabels[effectiveWorkMode]}`}
                   >
-                    <Sparkles size={15} />
-                    {runtimeSwitching
-                      ? '切换中…'
-                      : activeRuntimeLabel}
-                    {runtime?.capability === 'image-generation' && (
-                      <span className="runtime-capability-badge">
-                        生图
-                      </span>
+                    {effectiveWorkMode === 'execute' ? (
+                      <ShieldCheck aria-hidden="true" size={15} />
+                    ) : (
+                      <CircleHelp aria-hidden="true" size={15} />
                     )}
-                    <ChevronDown size={14} />
-                  </button>
-                  {runtimeMenuOpen && (
-                    <div
-                      aria-label="Runtime 和模型"
-                      className="runtime-picker__menu"
-                      onKeyDown={(event) => {
-                        const items = Array.from(
-                          event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                            '[role="menuitemradio"], [role="menuitem"]'
-                          )
-                        ).filter((item) => !item.disabled)
-                        const currentIndex = items.indexOf(
-                          document.activeElement as HTMLButtonElement
+                    <select
+                      aria-describedby="work-mode-hint"
+                      aria-label="工作模式"
+                      onChange={(event) =>
+                        setWorkMode(
+                          event.target.value as InteractiveWorkMode
                         )
-                        let nextIndex: number | undefined
-                        if (event.key === 'ArrowDown') {
-                          nextIndex = (currentIndex + 1) % items.length
-                        } else if (event.key === 'ArrowUp') {
-                          nextIndex =
-                            (currentIndex - 1 + items.length) % items.length
-                        } else if (event.key === 'Home') {
-                          nextIndex = 0
-                        } else if (event.key === 'End') {
-                          nextIndex = items.length - 1
-                        } else if (event.key === 'Escape') {
+                      }
+                      value={effectiveWorkMode}
+                    >
+                      {interactiveWorkModes.map((value) => (
+                        <option
+                          disabled={
+                            value === 'execute' &&
+                            !runtime?.supportsToolExecution
+                          }
+                          key={value}
+                          value={value}
+                        >
+                          {workModeLabels[value]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="runtime-picker">
+                    <button
+                      aria-expanded={runtimeMenuOpen}
+                      aria-haspopup="menu"
+                      className="model-button"
+                      disabled={isRunning || runtimeSwitching}
+                      onClick={() => setRuntimeMenuOpen(!runtimeMenuOpen)}
+                      onKeyDown={(event) => {
+                        if (
+                          !runtimeMenuOpen &&
+                          (event.key === 'ArrowDown' ||
+                            event.key === 'Enter' ||
+                            event.key === ' ')
+                        ) {
                           event.preventDefault()
-                          setRuntimeMenuOpen(false)
-                          runtimeMenuButtonRef.current?.focus()
-                        }
-                        const nextItem =
-                          nextIndex === undefined
-                            ? undefined
-                            : items.at(nextIndex)
-                        if (nextItem) {
-                          event.preventDefault()
-                          items.forEach((item) => {
-                            item.tabIndex = item === nextItem ? 0 : -1
-                          })
-                          nextItem.focus()
+                          setRuntimeMenuOpen(true)
                         }
                       }}
-                      ref={runtimeMenuRef}
-                      role="menu"
+                      ref={runtimeMenuButtonRef}
+                      title={`Runtime 和模型：${activeRuntimeLabel}`}
+                      type="button"
                     >
-                      <strong
-                        role="presentation"
+                      <Sparkles aria-hidden="true" size={15} />
+                      <span className="model-button__label">
+                        {runtimeSwitching
+                          ? '切换中…'
+                          : activeRuntimeLabel}
+                      </span>
+                      {runtime?.capability === 'image-generation' && (
+                        <span className="runtime-capability-badge">
+                          生图
+                        </span>
+                      )}
+                      <ChevronDown aria-hidden="true" size={14} />
+                    </button>
+                    {runtimeMenuOpen && (
+                      <div
+                        aria-label="Runtime 和模型"
+                        className="runtime-picker__menu"
+                        onKeyDown={(event) => {
+                          const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                              '[role="menuitemradio"], [role="menuitem"]'
+                            )
+                          ).filter((item) => !item.disabled)
+                          const currentIndex = items.indexOf(
+                            document.activeElement as HTMLButtonElement
+                          )
+                          let nextIndex: number | undefined
+                          if (event.key === 'ArrowDown') {
+                            nextIndex = (currentIndex + 1) % items.length
+                          } else if (event.key === 'ArrowUp') {
+                            nextIndex =
+                              (currentIndex - 1 + items.length) % items.length
+                          } else if (event.key === 'Home') {
+                            nextIndex = 0
+                          } else if (event.key === 'End') {
+                            nextIndex = items.length - 1
+                          } else if (event.key === 'Escape') {
+                            event.preventDefault()
+                            setRuntimeMenuOpen(false)
+                            runtimeMenuButtonRef.current?.focus()
+                          }
+                          const nextItem =
+                            nextIndex === undefined
+                              ? undefined
+                              : items.at(nextIndex)
+                          if (nextItem) {
+                            event.preventDefault()
+                            items.forEach((item) => {
+                              item.tabIndex = item === nextItem ? 0 : -1
+                            })
+                            nextItem.focus()
+                          }
+                        }}
+                        ref={runtimeMenuRef}
+                        role="menu"
                       >
-                        直连模型
-                      </strong>
-                      {runtimeSettings?.modelProfiles.map((profile) => (
+                        <strong
+                          role="presentation"
+                        >
+                          直连模型
+                        </strong>
+                        {runtimeSettings?.modelProfiles.map((profile) => (
                         <button
                           aria-checked={
                             activeRuntimeSelectionKey ===
@@ -5160,17 +5341,17 @@ function App(): React.JSX.Element {
                           </span>
                           <small>{profile.modelName}</small>
                         </button>
-                      ))}
-                      <div
-                        className="runtime-picker__divider"
-                        role="separator"
-                      />
-                      <strong
-                        role="presentation"
-                      >
-                        OpenCode Runtime
-                      </strong>
-                      {openCodeMenuSelection && openCodeMenuSource && (
+                        ))}
+                        <div
+                          className="runtime-picker__divider"
+                          role="separator"
+                        />
+                        <strong
+                          role="presentation"
+                        >
+                          OpenCode Runtime
+                        </strong>
+                        {openCodeMenuSelection && openCodeMenuSource && (
                         <button
                           aria-checked={
                             activeRuntimeSelectionKey ===
@@ -5191,17 +5372,17 @@ function App(): React.JSX.Element {
                           <span>{openCodeMenuSource.label}</span>
                           <small>{openCodeMenuSource.detail}</small>
                         </button>
-                      )}
-                      <div
-                        className="runtime-picker__divider"
-                        role="separator"
-                      />
-                      <strong
-                        role="presentation"
-                      >
-                        Continue Runtime
-                      </strong>
-                      {continueMenuSelection && continueMenuSource && (
+                        )}
+                        <div
+                          className="runtime-picker__divider"
+                          role="separator"
+                        />
+                        <strong
+                          role="presentation"
+                        >
+                          Continue Runtime
+                        </strong>
+                        {continueMenuSelection && continueMenuSource && (
                         <button
                           aria-checked={
                             activeRuntimeSelectionKey ===
@@ -5222,24 +5403,25 @@ function App(): React.JSX.Element {
                           <span>{continueMenuSource.label}</span>
                           <small>{continueMenuSource.detail}</small>
                         </button>
-                      )}
-                      <div
-                        className="runtime-picker__divider"
-                        role="separator"
-                      />
-                      <button
-                        onClick={() => {
-                          setRuntimeMenuOpen(false)
-                          setView('settings')
-                        }}
-                        role="menuitem"
-                        tabIndex={-1}
-                        type="button"
-                      >
-                        <span>管理 Runtime 和模型连接</span>
-                      </button>
-                    </div>
-                  )}
+                        )}
+                        <div
+                          className="runtime-picker__divider"
+                          role="separator"
+                        />
+                        <button
+                          onClick={() => {
+                            setRuntimeMenuOpen(false)
+                            setView('settings')
+                          }}
+                          role="menuitem"
+                          tabIndex={-1}
+                          type="button"
+                        >
+                          <span>管理 Runtime 和模型连接</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
               {isRunning ? (
@@ -5248,8 +5430,13 @@ function App(): React.JSX.Element {
                   type="button"
                   aria-label="停止生成"
                   onClick={() => void stop()}
+                  title="停止生成"
                 >
-                  <Square size={15} fill="currentColor" />
+                  <Square
+                    aria-hidden="true"
+                    fill="currentColor"
+                    size={15}
+                  />
                 </button>
               ) : (
                 <button
@@ -5263,26 +5450,40 @@ function App(): React.JSX.Element {
                     runtimeStatusKey !== activeRuntimeSelectionKey
                   }
                   onClick={() => void submit()}
+                  title="发送消息"
                 >
-                  <Send size={17} />
+                  <Send aria-hidden="true" size={17} />
                 </button>
               )}
             </div>
           </div>
-          <p className="composer-hint" id="work-mode-hint">
-            {contextError ??
-              (!runtime?.available
-                ? '请先配置可用的模型或 Agent Runtime。'
-                : runtime.capability === 'image-generation'
-                  ? '图像生成模型：输入画面描述后，生成结果会直接显示并保存到成果。'
-                  : agentRuntimeSelected
-                    ? effectiveWorkMode === 'ask'
-                      ? `${runtime.label} Ask 模式：只允许搜索当前启用的知识库，不会修改文件。`
-                      : `${runtime.label} Execute 模式：工具调用不会弹出 GoodBuddy 审批，并会记录到活动。`
-                  : effectiveWorkMode === 'ask'
-                    ? 'Ask 模式：只读问答，不会调用工具或修改文件。'
-                    : 'Execute 模式：已启用工具自动授权，调用仍会记录到活动。')}
-            {appInfo?.shortcut && ` 快捷唤起：${appInfo.shortcut}`}
+          <p
+            className={
+              contextError
+                ? 'composer-hint composer-hint--error'
+                : 'composer-hint'
+            }
+            id="work-mode-hint"
+          >
+            <span>
+              {contextError ??
+                (!runtime?.available
+                  ? '请先配置可用的模型或 Agent Runtime。'
+                  : runtime.capability === 'image-generation'
+                    ? '图像生成模型：输入画面描述后，生成结果会直接显示并保存到成果。'
+                    : agentRuntimeSelected
+                      ? effectiveWorkMode === 'ask'
+                        ? `${runtime.label} Ask 模式：只允许搜索当前启用的知识库，不会修改文件。`
+                        : `${runtime.label} Execute 模式：工具调用不会弹出 GoodBuddy 审批，并会记录到活动。`
+                    : effectiveWorkMode === 'ask'
+                      ? 'Ask 模式：只读问答，不会调用工具或修改文件。'
+                      : 'Execute 模式：已启用工具自动授权，调用仍会记录到活动。')}
+            </span>
+            {appInfo?.shortcut && (
+              <span className="composer-hint__shortcut">
+                快捷唤起：<kbd>{appInfo.shortcut}</kbd>
+              </span>
+            )}
           </p>
           </>
           )}
@@ -5488,6 +5689,7 @@ function App(): React.JSX.Element {
             }}
             onRemoveHeartbeat={removeHeartbeat}
             onRunHeartbeat={runHeartbeat}
+            onNotify={notify}
             onSaved={(settings) => {
               setRuntimeSettings(settings)
             }}
@@ -5510,7 +5712,6 @@ function App(): React.JSX.Element {
         dispatch={notify}
         notifications={notifications}
       />
-      <RemoteChannelApprovalDialog />
       {imageViewerItem && (
         <div
           className="image-viewer-backdrop"
