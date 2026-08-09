@@ -58,7 +58,8 @@ class FailingBrowserProfileService extends BrowserProfileService {
 async function writeSkill(
   root: string,
   id: string,
-  name: string
+  name: string,
+  body = '仅用于离线测试。'
 ): Promise<void> {
   const directory = join(root, id)
   await mkdir(directory, { recursive: true })
@@ -76,7 +77,7 @@ async function writeSkill(
       '',
       `# ${name}`,
       '',
-      '仅用于离线测试。'
+      body
     ].join('\n'),
     'utf8'
   )
@@ -327,7 +328,12 @@ describe('CapabilityService', () => {
 
   it('exposes the skill directory and names skills dropped by the budget', async () => {
     const { builtinRoot, service } = await createService()
-    await writeSkill(builtinRoot, 'oversized-skill', '超长技能')
+    await writeSkill(
+      builtinRoot,
+      'oversized-skill',
+      '超长技能',
+      '超长技能说明。'.repeat(80)
+    )
 
     const instructions = await service.getSkillInstructions('model')
     expect(instructions).toContain(join(builtinRoot, 'document-writing'))
@@ -335,6 +341,7 @@ describe('CapabilityService', () => {
 
     const truncated = await service.getSkillInstructions('model', 200)
     expect(truncated).toContain('因超出注入上限未加载')
+    expect(truncated).toContain('超长技能')
 
     const fullyTruncated = await service.getSkillInstructions('model', 1)
     expect(fullyTruncated).toContain('因超出注入上限未加载')
