@@ -1361,7 +1361,7 @@ export class CapabilityService {
       sections.push(section)
       length += section.length
     }
-    if (sections.length === 0) {
+    if (sections.length === 0 && skipped.length === 0) {
       return ''
     }
     return [

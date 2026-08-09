@@ -335,6 +335,11 @@ describe('CapabilityService', () => {
 
     const truncated = await service.getSkillInstructions('model', 200)
     expect(truncated).toContain('因超出注入上限未加载')
+
+    const fullyTruncated = await service.getSkillInstructions('model', 1)
+    expect(fullyTruncated).toContain('因超出注入上限未加载')
+    expect(fullyTruncated).toContain('文档写作')
+    expect(fullyTruncated).toContain('超长技能')
   })
 
   it('imports a managed Skill from a ZIP package', async () => {
