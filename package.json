@@ -90,6 +90,14 @@
       {
         "from": "node_modules/typescript/LICENSE.txt",
         "to": "licenses/continuedev-cli-LICENSE"
+      },
+      {
+        "from": "node_modules/@fontsource-variable/inter/LICENSE",
+        "to": "licenses/inter-OFL-1.1.txt"
+      },
+      {
+        "from": "node_modules/@fontsource-variable/noto-sans-sc/LICENSE",
+        "to": "licenses/noto-sans-sc-OFL-1.1.txt"
       }
     ],
     "win": {
@@ -140,6 +148,8 @@
     "json5": "^2.2.3",
     "lucide-react": "^1.27.0",
     "pdfjs-dist": "^6.2.108",
+    "qrcode": "^1.5.4",
+    "quill": "^2.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
@@ -152,11 +162,14 @@
   "devDependencies": {
     "@continuedev/cli": "1.5.47",
     "@eslint/js": "^10.0.1",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/noto-sans-sc": "^5.3.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@types/cross-spawn": "^6.0.6",
     "@types/html-to-text": "^9.0.4",
     "@types/node": "^26.1.2",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",

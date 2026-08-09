@@ -7,6 +7,7 @@ import {
   type ChannelRuntimeStatus,
   type ChannelSettingsApply,
   type ChannelSettingsSnapshot,
+  type CredentialChannel,
   type DingTalkChannelSettingsInput,
   type ManagedChannel,
   type WeComChannelSettingsInput
@@ -15,7 +16,10 @@ import type {
   ChannelDriver,
   ChannelExecutor
 } from './channel-driver'
-import { ChannelService } from './channel-service'
+import {
+  ChannelService,
+  type ChannelServiceOptions
+} from './channel-service'
 import { redactChannelError } from './channel-service'
 import {
   ChannelSettingsStore,
@@ -23,6 +27,8 @@ import {
 } from './channel-settings-store'
 import { DingTalkChannelDriver } from './dingtalk-channel-driver'
 import { WeComChannelDriver } from './wecom-channel-driver'
+import { WechatChannelDriver } from './wechat-channel-driver'
+import type { WechatSidecarLauncher } from './wechat-sidecar-client'
 
 export type ManagedChannelService = Pick<
   ChannelService,
@@ -39,12 +45,19 @@ export type ChannelServiceFactory = (
   options: {
     allowedSenderIds: readonly string[]
     allowGroupMessages: boolean
+    dedupStore?: ChannelServiceOptions['dedupStore']
+    outbox?: ChannelServiceOptions['outbox']
+    onDeliveryFailure?: ChannelServiceOptions['onDeliveryFailure']
+    onDeliverySuccess?: ChannelServiceOptions['onDeliverySuccess']
   }
 ) => ManagedChannelService | Promise<ManagedChannelService>
 
 export type ChannelManagerOptions = {
   createDriver?: ChannelDriverFactory
   createService?: ChannelServiceFactory
+  launchWechatSidecar?: WechatSidecarLauncher
+  dedupStore?: ChannelServiceOptions['dedupStore']
+  outbox?: ChannelServiceOptions['outbox']
 }
 
 type TestSettingsInput =
@@ -58,8 +71,15 @@ type TestSettingsInput =
     }
 
 function defaultDriverFactory(
-  settings: ResolvedChannelSettings
+  settings: ResolvedChannelSettings,
+  launchWechatSidecar?: WechatSidecarLauncher
 ): ChannelDriver {
+  if (settings.channel === 'weixin') {
+    if (!launchWechatSidecar) {
+      throw new Error('微信 Sidecar 启动器不可用')
+    }
+    return new WechatChannelDriver(settings, launchWechatSidecar)
+  }
   if (settings.secret === undefined) {
     throw new Error('通道 Secret 尚未配置')
   }
@@ -116,6 +136,17 @@ function sanitizedManagerFailure(message: string): Error {
 }
 
 function validateResolved(settings: ResolvedChannelSettings): void {
+  if (settings.channel === 'weixin') {
+    if (
+      settings.accountId.length === 0 ||
+      settings.userId.length === 0 ||
+      settings.baseUrl.length === 0 ||
+      settings.token === undefined
+    ) {
+      throw new Error('微信 ClawBot 需要先完成扫码绑定')
+    }
+    return
+  }
   const identifier =
     settings.channel === 'wecom' ? settings.botId : settings.clientId
   if (
@@ -142,6 +173,8 @@ export class ChannelManager {
   >()
   private readonly createDriver: ChannelDriverFactory
   private readonly createService: ChannelServiceFactory
+  private readonly dedupStore?: ChannelServiceOptions['dedupStore']
+  private readonly outbox?: ChannelServiceOptions['outbox']
   private operationQueue: Promise<void> = Promise.resolve()
 
   constructor(
@@ -149,8 +182,13 @@ export class ChannelManager {
     private readonly executor: ChannelExecutor,
     options: ChannelManagerOptions = {}
   ) {
-    this.createDriver = options.createDriver ?? defaultDriverFactory
+    this.createDriver =
+      options.createDriver ??
+      ((settings) =>
+        defaultDriverFactory(settings, options.launchWechatSidecar))
     this.createService = options.createService ?? defaultServiceFactory
+    this.dedupStore = options.dedupStore
+    this.outbox = options.outbox
   }
 
   snapshot(): Promise<ChannelSettingsSnapshot> {
@@ -185,6 +223,7 @@ export class ChannelManager {
     return this.enqueue(async () => {
       await this.store.apply(input)
       const channels: ManagedChannel[] = [
+        ...(input.weixin === undefined ? [] : (['weixin'] as const)),
         ...(input.wecom === undefined ? [] : (['wecom'] as const)),
         ...(input.dingtalk === undefined ? [] : (['dingtalk'] as const))
       ]
@@ -209,7 +248,7 @@ export class ChannelManager {
     settings?: DingTalkChannelSettingsInput
   ): Promise<ChannelConnectionTestResult>
   async test(
-    channel: ManagedChannel,
+    channel: CredentialChannel,
     settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
   ): Promise<ChannelConnectionTestResult> {
     let resolved: ResolvedChannelSettings | undefined
@@ -234,7 +273,9 @@ export class ChannelManager {
         channel,
         ok: false,
         error: redactManagerError(error, [
-          resolved?.secret,
+          resolved && resolved.channel !== 'weixin'
+            ? resolved.secret
+            : undefined,
           settings?.secret.action === 'replace'
             ? settings.secret.value
             : undefined
@@ -252,7 +293,7 @@ export class ChannelManager {
     settings?: DingTalkChannelSettingsInput
   ): Promise<ChannelConnectionTestResult>
   testConnection(
-    channel: ManagedChannel,
+    channel: CredentialChannel,
     settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
   ): Promise<ChannelConnectionTestResult> {
     return channel === 'wecom'
@@ -286,6 +327,18 @@ export class ChannelManager {
     })
   }
 
+  reload(channel: ManagedChannel): Promise<ChannelSettingsSnapshot> {
+    return this.enqueue(async () => {
+      const settings = await this.store.resolve(channel)
+      if (!settings.enabled) {
+        await this.disableService(channel)
+      } else {
+        await this.replaceService(settings)
+      }
+      return this.snapshot()
+    })
+  }
+
   private async replaceService(
     settings: ResolvedChannelSettings
   ): Promise<void> {
@@ -310,7 +363,11 @@ export class ChannelManager {
         this.services.delete(channel)
         await Promise.resolve(previous.stop()).catch(() => undefined)
       }
-      const redacted = redactManagerError(error, [settings.secret])
+      const redacted = redactManagerError(error, [
+        settings.channel === 'weixin'
+          ? settings.token
+          : settings.secret
+      ])
       this.statuses.set(channel, {
         state: 'error',
         lastError: redacted
@@ -337,22 +394,36 @@ export class ChannelManager {
     const driver = await this.createDriver(settings)
     return this.createService(driver, this.executor, {
       allowedSenderIds: settings.allowedSenderIds,
-      allowGroupMessages: settings.allowGroupMessages
+      allowGroupMessages: settings.allowGroupMessages,
+      dedupStore: this.dedupStore,
+      outbox: this.outbox,
+      onDeliveryFailure: (error) => {
+        this.statuses.set(settings.channel, {
+          state: 'error',
+          lastError: redactManagerError(error, [
+            settings.channel === 'weixin'
+              ? settings.token
+              : settings.secret
+          ])
+        })
+      },
+      onDeliverySuccess: () => {
+        this.statuses.set(settings.channel, { state: 'running' })
+      }
     })
   }
 
   private async settingsForTest(
     input: TestSettingsInput
   ): Promise<ResolvedChannelSettings> {
-    const current = await this.store.resolve(input.channel)
-    if (input.settings === undefined) {
-      return current
-    }
-    if (current.readOnly) {
-      throw new Error('环境变量通道配置为只读，不能使用临时设置')
-    }
-
     if (input.channel === 'wecom') {
+      const current = await this.store.resolve('wecom')
+      if (input.settings === undefined) {
+        return current
+      }
+      if (current.readOnly) {
+        throw new Error('环境变量通道配置为只读，不能使用临时设置')
+      }
       const parsed = weComChannelSettingsInputSchema.parse(input.settings)
       return {
         channel: 'wecom',
@@ -360,6 +431,13 @@ export class ChannelManager {
         botId: parsed.botId,
         ...this.testCommonSettings(current.secret, parsed)
       }
+    }
+    const current = await this.store.resolve('dingtalk')
+    if (input.settings === undefined) {
+      return current
+    }
+    if (current.readOnly) {
+      throw new Error('环境变量通道配置为只读，不能使用临时设置')
     }
     const parsed = dingTalkChannelSettingsInputSchema.parse(input.settings)
     return {

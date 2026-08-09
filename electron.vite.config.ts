@@ -4,7 +4,17 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          'wechat-sidecar': resolve(
+            'src/main/channels/wechat-sidecar.ts'
+          )
+        }
+      }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

@@ -1055,7 +1055,7 @@ export function SettingsPanel({
             </button>
             <button
               aria-controls="settings-panel-channels"
-              aria-label="企业通信"
+              aria-label="消息通道"
               aria-selected={activeTab === 'channels'}
               id="settings-tab-channels"
               onClick={() => setActiveTab('channels')}
@@ -1066,8 +1066,8 @@ export function SettingsPanel({
               tabIndex={activeTab === 'channels' ? 0 : -1}
               type="button"
             >
-              <strong>企业通信</strong>
-              <small>企业微信与钉钉</small>
+              <strong>消息通道</strong>
+              <small>微信、企业微信与钉钉</small>
             </button>
             <button
               aria-controls="settings-panel-roles"

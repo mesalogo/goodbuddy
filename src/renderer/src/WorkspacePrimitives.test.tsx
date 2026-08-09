@@ -22,6 +22,14 @@ const stylesheet = readFileSync(
   join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
   'utf8'
 )
+const rendererEntry = readFileSync(
+  join(process.cwd(), 'src', 'renderer', 'src', 'main.tsx'),
+  'utf8'
+)
+const fontSetup = readFileSync(
+  join(process.cwd(), 'src', 'renderer', 'src', 'fonts.ts'),
+  'utf8'
+)
 
 function themeTokens(selector: string): Record<string, string> {
   const selectorIndex = stylesheet.indexOf(selector)
@@ -69,6 +77,25 @@ function contrast(foreground: string, background: string): number {
 describe('WorkspacePrimitives', () => {
   afterEach(() => {
     cleanup()
+  })
+
+  it('uses bundled variable fonts and readable shared type tokens', () => {
+    expect(rendererEntry).toContain(
+      "@fontsource-variable/noto-sans-sc/wght.css"
+    )
+    expect(rendererEntry).toContain('installBundledUiFonts()')
+    expect(fontSetup).toContain(
+      'inter-latin-standard-normal.woff2?url'
+    )
+    expect(fontSetup).toContain(
+      'inter-latin-standard-italic.woff2?url'
+    )
+    expect(stylesheet).toMatch(/--font-body:\s*13px/u)
+    expect(stylesheet).toMatch(/--font-caption:\s*11px/u)
+    expect(stylesheet).toMatch(/font-synthesis:\s*style/u)
+    expect(stylesheet).toContain(
+      '"Inter Variable", "Noto Sans SC Variable"'
+    )
   })
 
   it('renders a consistent page shell and scoped header', () => {

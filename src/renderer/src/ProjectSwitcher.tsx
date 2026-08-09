@@ -72,6 +72,12 @@ export function ProjectSwitcher({
   const activeProject = projects.find(
     (project) => project.id === activeProjectId
   )
+  const userProjects = projects.filter(
+    (project) => project.kind === 'user'
+  )
+  const channelProjects = projects.filter(
+    (project) => project.kind === 'channel'
+  )
   const busy = saving || archiving || deleting
 
   useEffect(() => {
@@ -188,11 +194,24 @@ export function ProjectSwitcher({
           onChange={(event) => onSelect(event.target.value)}
           value={activeProjectId}
         >
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
+          {userProjects.length > 0 && (
+            <optgroup label="普通项目">
+              {userProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {channelProjects.length > 0 && (
+            <optgroup label="远程通道">
+              {channelProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <button
           aria-label="新建项目"
@@ -281,6 +300,7 @@ export function ProjectSwitcher({
               <span>名称</span>
               <input
                 autoFocus={!confirmingDelete}
+                disabled={busy || activeProject?.kind === 'channel'}
                 maxLength={120}
                 onChange={(event) =>
                   setDraft((current) => ({
@@ -290,6 +310,9 @@ export function ProjectSwitcher({
                 }
                 value={draft.name}
               />
+              {activeProject?.kind === 'channel' && (
+                <small>通道项目名称由 GoodBuddy 管理。</small>
+              )}
             </label>
             <label>
               <span>说明</span>
@@ -343,83 +366,85 @@ export function ProjectSwitcher({
                 {error}
               </p>
             )}
-            {dialogMode === 'settings' && (
-              <section
-                aria-labelledby="project-danger-title"
-                className="project-danger-zone"
-              >
-                <div>
-                  <strong id="project-danger-title">危险操作</strong>
-                  <p>
-                    删除项目会永久移除 GoodBuddy
-                    中的项目、对话、任务、计划、心跳、记忆和成果，但不会删除磁盘上的项目目录或文件。
-                  </p>
-                </div>
-                {!confirmingDelete ? (
-                  <button
-                    className="danger-button danger-button--quiet"
-                    disabled={busy || projects.length <= 1}
-                    onClick={() => {
-                      setError(undefined)
-                      setDeleteConfirmation('')
-                      setConfirmingDelete(true)
-                    }}
-                    type="button"
-                  >
-                    <Trash2 size={13} />
-                    删除项目
-                  </button>
-                ) : (
-                  <div className="project-delete-confirmation">
-                    <label>
-                      <span>
-                        输入“{activeProject?.name}”确认删除
-                      </span>
-                      <input
-                        autoFocus
-                        disabled={busy}
-                        onChange={(event) =>
-                          setDeleteConfirmation(event.target.value)
-                        }
-                        value={deleteConfirmation}
-                      />
-                    </label>
-                    <div>
-                      <button
-                        className="secondary-button"
-                        disabled={busy}
-                        onClick={() => {
-                          setError(undefined)
-                          setDeleteConfirmation('')
-                          setConfirmingDelete(false)
-                        }}
-                        type="button"
-                      >
-                        取消删除
-                      </button>
-                      <button
-                        className="danger-button"
-                        disabled={
-                          busy ||
-                          deleteConfirmation !== activeProject?.name
-                        }
-                        onClick={() => void deleteProject()}
-                        type="button"
-                      >
-                        <Trash2 size={13} />
-                        {deleting ? '删除中' : '永久删除项目'}
-                      </button>
-                    </div>
+            {dialogMode === 'settings' &&
+              activeProject?.kind !== 'channel' && (
+                <section
+                  aria-labelledby="project-danger-title"
+                  className="project-danger-zone"
+                >
+                  <div>
+                    <strong id="project-danger-title">危险操作</strong>
+                    <p>
+                      删除项目会永久移除 GoodBuddy
+                      中的项目、对话、任务、计划、心跳、记忆和成果，但不会删除磁盘上的项目目录或文件。
+                    </p>
                   </div>
-                )}
-                {projects.length <= 1 && (
-                  <small>至少需要保留一个可用项目。</small>
-                )}
-              </section>
-            )}
+                  {!confirmingDelete ? (
+                    <button
+                      className="danger-button danger-button--quiet"
+                      disabled={busy || userProjects.length <= 1}
+                      onClick={() => {
+                        setError(undefined)
+                        setDeleteConfirmation('')
+                        setConfirmingDelete(true)
+                      }}
+                      type="button"
+                    >
+                      <Trash2 size={13} />
+                      删除项目
+                    </button>
+                  ) : (
+                    <div className="project-delete-confirmation">
+                      <label>
+                        <span>
+                          输入“{activeProject?.name}”确认删除
+                        </span>
+                        <input
+                          autoFocus
+                          disabled={busy}
+                          onChange={(event) =>
+                            setDeleteConfirmation(event.target.value)
+                          }
+                          value={deleteConfirmation}
+                        />
+                      </label>
+                      <div>
+                        <button
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={() => {
+                            setError(undefined)
+                            setDeleteConfirmation('')
+                            setConfirmingDelete(false)
+                          }}
+                          type="button"
+                        >
+                          取消删除
+                        </button>
+                        <button
+                          className="danger-button"
+                          disabled={
+                            busy ||
+                            deleteConfirmation !== activeProject?.name
+                          }
+                          onClick={() => void deleteProject()}
+                          type="button"
+                        >
+                          <Trash2 size={13} />
+                          {deleting ? '删除中' : '永久删除项目'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {userProjects.length <= 1 && (
+                    <small>至少需要保留一个可用项目。</small>
+                  )}
+                </section>
+              )}
             <div className="project-create-card__actions">
               {dialogMode === 'settings' &&
-                projects.length > 1 &&
+                activeProject?.kind !== 'channel' &&
+                userProjects.length > 1 &&
                 activeProjectId && (
                   <button
                     className="secondary-button"

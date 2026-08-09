@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  projectChannelSchema,
+  type ProjectChannel
+} from './assistant-contracts'
 
 export const CHANNEL_SETTINGS_LIMITS = {
   maximumIdentifierLength: 256,
@@ -8,8 +12,12 @@ export const CHANNEL_SETTINGS_LIMITS = {
   maximumWarningLength: 500
 } as const
 
-export const managedChannelSchema = z.enum(['wecom', 'dingtalk'])
-export type ManagedChannel = z.infer<typeof managedChannelSchema>
+export const managedChannelSchema = projectChannelSchema
+export type ManagedChannel = ProjectChannel
+export const credentialChannelSchema = z.enum(['wecom', 'dingtalk'])
+export type CredentialChannel = z.infer<
+  typeof credentialChannelSchema
+>
 
 const identifierSchema = z
   .string()
@@ -68,14 +76,27 @@ export type DingTalkChannelSettingsInput = z.infer<
   typeof dingTalkChannelSettingsInputSchema
 >
 
+export const weixinChannelSettingsInputSchema = z
+  .object({
+    enabled: z.boolean()
+  })
+  .strict()
+export type WeixinChannelSettingsInput = z.infer<
+  typeof weixinChannelSettingsInputSchema
+>
+
 export const channelSettingsApplySchema = z
   .object({
+    weixin: weixinChannelSettingsInputSchema.optional(),
     wecom: weComChannelSettingsInputSchema.optional(),
     dingtalk: dingTalkChannelSettingsInputSchema.optional()
   })
   .strict()
   .refine(
-    (input) => input.wecom !== undefined || input.dingtalk !== undefined,
+    (input) =>
+      input.weixin !== undefined ||
+      input.wecom !== undefined ||
+      input.dingtalk !== undefined,
     '至少需要提供一个通道设置'
   )
 export type ChannelSettingsApply = z.infer<
@@ -147,8 +168,22 @@ export type DingTalkChannelSettings = z.infer<
   typeof dingTalkChannelSettingsSchema
 >
 
+export const weixinChannelSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    bindingConfigured: z.boolean(),
+    source: z.enum(['none', 'encrypted']),
+    accountDisplay: z.string().trim().min(1).max(64).optional(),
+    status: channelRuntimeStatusSchema
+  })
+  .strict()
+export type WeixinChannelSettings = z.infer<
+  typeof weixinChannelSettingsSchema
+>
+
 export const channelSettingsSnapshotSchema = z
   .object({
+    weixin: weixinChannelSettingsSchema,
     wecom: weComChannelSettingsSchema,
     dingtalk: dingTalkChannelSettingsSchema,
     warning: z

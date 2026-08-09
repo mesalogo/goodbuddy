@@ -15,10 +15,12 @@ import {
   type ChannelRuntimeStatus,
   type ChannelSettingsApply,
   type ChannelSettingsSnapshot,
+  type CredentialChannel,
   type DingTalkChannelSettingsInput,
   type ManagedChannel,
   type WeComChannelSettingsInput
 } from '../../shared/channel-settings-contracts'
+import { weixinAccountDisplay } from '../../shared/weixin-channel-contracts'
 
 export interface ChannelCredentialCipher {
   isAvailable(): boolean
@@ -45,7 +47,7 @@ const storedChannelFields = {
   allowGroupMessages: z.boolean()
 } as const
 
-const storedSettingsSchema = z
+const legacyStoredSettingsSchema = z
   .object({
     version: z.literal(1),
     wecom: z
@@ -69,17 +71,86 @@ const storedSettingsSchema = z
   })
   .strict()
 
+const legacyWeixinStoredChannelSchema = z
+  .object({
+    enabled: z.boolean(),
+    credential: encryptedCredentialSchema.optional(),
+    accountId: z
+      .string()
+      .trim()
+      .max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength),
+    userId: z
+      .string()
+      .trim()
+      .max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength),
+    baseUrl: z.union([
+      z.literal(''),
+      z.string().url().max(2_048)
+    ])
+  })
+  .strict()
+
+const storedSettingsSchema = z
+  .object({
+    version: z.literal(3),
+    weixin: z
+      .object({
+        enabled: z.boolean(),
+        credential: encryptedCredentialSchema.optional()
+      })
+      .strict(),
+    wecom: legacyStoredSettingsSchema.shape.wecom,
+    dingtalk: legacyStoredSettingsSchema.shape.dingtalk
+  })
+  .strict()
+
 type StoredSettings = z.infer<typeof storedSettingsSchema>
-type StoredChannel = StoredSettings['wecom'] | StoredSettings['dingtalk']
+type StoredCredentialChannel =
+  | StoredSettings['wecom']
+  | StoredSettings['dingtalk']
+type StoredEncryptedCredential = z.infer<
+  typeof encryptedCredentialSchema
+>
 
 const credentialPayloadSchema = z
   .object({
     version: z.literal(1),
-    channel: z.enum(['wecom', 'dingtalk']),
+    channel: z.enum(['weixin', 'wecom', 'dingtalk']),
     secret: z
       .string()
       .min(1)
       .max(CHANNEL_SETTINGS_LIMITS.maximumSecretLength)
+  })
+  .strict()
+
+const weixinCredentialPayloadSchema = z
+  .object({
+    version: z.literal(2),
+    channel: z.literal('weixin'),
+    accountId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength),
+    userId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength),
+    baseUrl: z.string().url().max(2_048),
+    token: z
+      .string()
+      .min(1)
+      .max(CHANNEL_SETTINGS_LIMITS.maximumSecretLength)
+  })
+  .strict()
+
+const versionTwoStoredSettingsSchema = z
+  .object({
+    version: z.literal(2),
+    weixin: legacyWeixinStoredChannelSchema,
+    wecom: legacyStoredSettingsSchema.shape.wecom,
+    dingtalk: legacyStoredSettingsSchema.shape.dingtalk
   })
   .strict()
 
@@ -94,6 +165,18 @@ type EnvironmentChannel = {
 }
 
 export type ResolvedChannelSettings =
+  | {
+      channel: 'weixin'
+      enabled: boolean
+      accountId: string
+      userId: string
+      baseUrl: string
+      token?: string
+      allowedSenderIds: readonly string[]
+      allowGroupMessages: false
+      source: 'none' | 'encrypted'
+      readOnly: false
+    }
   | {
       channel: 'wecom'
       enabled: boolean
@@ -116,7 +199,10 @@ export type ResolvedChannelSettings =
     }
 
 const defaultStoredSettings: StoredSettings = {
-  version: 1,
+  version: 3,
+  weixin: {
+    enabled: false
+  },
   wecom: {
     enabled: false,
     botId: '',
@@ -202,6 +288,35 @@ function cloneStored(settings: StoredSettings): StoredSettings {
   return structuredClone(settings)
 }
 
+const weixinBindingSchema = z
+  .object({
+    accountId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength),
+    userId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CHANNEL_SETTINGS_LIMITS.maximumIdentifierLength),
+    baseUrl: z
+      .string()
+      .url()
+      .max(2_048)
+      .refine((value) => new URL(value).protocol === 'https:', {
+        message: '微信服务地址必须使用 HTTPS'
+      }),
+    token: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CHANNEL_SETTINGS_LIMITS.maximumSecretLength)
+  })
+  .strict()
+
+export type WeixinBinding = z.infer<typeof weixinBindingSchema>
+
 export class ChannelSettingsStore {
   private settings?: StoredSettings
   private warning?: string
@@ -217,7 +332,8 @@ export class ChannelSettingsStore {
   async snapshot(
     statuses: Partial<Record<ManagedChannel, ChannelRuntimeStatus>> = {}
   ): Promise<ChannelSettingsSnapshot> {
-    const [wecom, dingtalk] = await Promise.all([
+    const [weixin, wecom, dingtalk] = await Promise.all([
+      this.resolve('weixin'),
       this.resolve('wecom'),
       this.resolve('dingtalk')
     ])
@@ -227,6 +343,13 @@ export class ChannelSettingsStore {
       weComEnvironment.error ?? dingTalkEnvironment.error
     const warning = this.warning ?? environmentWarning
     return {
+      weixin: {
+        enabled: weixin.enabled,
+        bindingConfigured: weixin.token !== undefined,
+        source: weixin.source,
+        accountDisplay: weixinAccountDisplay(weixin.userId),
+        status: statuses.weixin ?? defaultStatus(weixin.enabled)
+      },
       wecom: {
         enabled: wecom.enabled,
         botId: wecom.botId,
@@ -277,8 +400,28 @@ export class ChannelSettingsStore {
   resolve(channel: 'dingtalk'): Promise<Extract<ResolvedChannelSettings, {
     channel: 'dingtalk'
   }>>
+  resolve(channel: 'weixin'): Promise<Extract<ResolvedChannelSettings, {
+    channel: 'weixin'
+  }>>
   resolve(channel: ManagedChannel): Promise<ResolvedChannelSettings>
   async resolve(channel: ManagedChannel): Promise<ResolvedChannelSettings> {
+    if (channel === 'weixin') {
+      const settings = await this.load()
+      const stored = settings.weixin
+      const binding = this.decryptWeixinBinding(stored)
+      return {
+        channel,
+        enabled: stored.enabled,
+        accountId: binding?.accountId ?? '',
+        userId: binding?.userId ?? '',
+        baseUrl: binding?.baseUrl ?? '',
+        ...(binding === undefined ? {} : { token: binding.token }),
+        allowedSenderIds: binding ? [binding.userId] : [],
+        allowGroupMessages: false,
+        source: binding === undefined ? 'none' : 'encrypted',
+        readOnly: false
+      }
+    }
     const environment = this.environmentChannel(channel)
     if (environment.owned) {
       const common = {
@@ -319,10 +462,57 @@ export class ChannelSettingsStore {
   }
 
   resolveAll(): Promise<readonly [
+    Extract<ResolvedChannelSettings, { channel: 'weixin' }>,
     Extract<ResolvedChannelSettings, { channel: 'wecom' }>,
     Extract<ResolvedChannelSettings, { channel: 'dingtalk' }>
   ]> {
-    return Promise.all([this.resolve('wecom'), this.resolve('dingtalk')])
+    return Promise.all([
+      this.resolve('weixin'),
+      this.resolve('wecom'),
+      this.resolve('dingtalk')
+    ])
+  }
+
+  async saveWeixinBinding(input: WeixinBinding): Promise<ChannelSettingsSnapshot> {
+    const parsed = weixinBindingSchema.parse(input)
+    let snapshot!: ChannelSettingsSnapshot
+    const update = async (): Promise<void> => {
+      const current = cloneStored(await this.load())
+      current.weixin = {
+        enabled: true,
+        credential: this.encryptWeixinBinding(parsed)
+      }
+      await this.persist(current)
+      this.settings = current
+      this.warning = undefined
+      snapshot = await this.snapshot()
+    }
+    const operation = this.updateQueue.then(update, update)
+    this.updateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation.then(() => snapshot)
+  }
+
+  async clearWeixinBinding(): Promise<ChannelSettingsSnapshot> {
+    let snapshot!: ChannelSettingsSnapshot
+    const update = async (): Promise<void> => {
+      const current = cloneStored(await this.load())
+      current.weixin = {
+        enabled: false
+      }
+      await this.persist(current)
+      this.settings = current
+      this.warning = undefined
+      snapshot = await this.snapshot()
+    }
+    const operation = this.updateQueue.then(update, update)
+    this.updateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation.then(() => snapshot)
   }
 
   apply(input: ChannelSettingsApply): Promise<ChannelSettingsSnapshot> {
@@ -343,6 +533,9 @@ export class ChannelSettingsStore {
     input: ChannelSettingsApply
   ): Promise<ChannelSettingsSnapshot> {
     const current = cloneStored(await this.load())
+    if (input.weixin !== undefined) {
+      current.weixin.enabled = input.weixin.enabled
+    }
     if (input.wecom !== undefined) {
       if (this.environmentChannel('wecom').owned) {
         throw new Error('企业微信由环境变量配置，不能在设置中修改')
@@ -364,8 +557,9 @@ export class ChannelSettingsStore {
       )
     }
 
-    this.validateEnabledChannel('wecom', current.wecom)
-    this.validateEnabledChannel('dingtalk', current.dingtalk)
+    this.validateEnabledWeixin(current.weixin)
+    this.validateEnabledCredentialChannel('wecom', current.wecom)
+    this.validateEnabledCredentialChannel('dingtalk', current.dingtalk)
     await this.persist(current)
     this.settings = current
     this.warning = undefined
@@ -383,10 +577,10 @@ export class ChannelSettingsStore {
     input: DingTalkChannelSettingsInput
   ): StoredSettings['dingtalk']
   private updateStoredChannel(
-    channel: ManagedChannel,
-    current: StoredChannel,
+    channel: CredentialChannel,
+    current: StoredCredentialChannel,
     input: WeComChannelSettingsInput | DingTalkChannelSettingsInput
-  ): StoredChannel {
+  ): StoredCredentialChannel {
     const credential =
       input.secret.action === 'keep'
         ? current.credential
@@ -414,9 +608,22 @@ export class ChannelSettingsStore {
         }
   }
 
-  private validateEnabledChannel(
-    channel: ManagedChannel,
-    stored: StoredChannel
+  private validateEnabledWeixin(
+    stored: StoredSettings['weixin']
+  ): void {
+    if (!stored.enabled) {
+      return
+    }
+    if (
+      this.decryptWeixinBinding(stored) === undefined
+    ) {
+      throw new Error('启用微信 ClawBot 前需要先完成扫码绑定')
+    }
+  }
+
+  private validateEnabledCredentialChannel(
+    channel: CredentialChannel,
+    stored: StoredCredentialChannel
   ): void {
     if (!stored.enabled) {
       return
@@ -439,9 +646,9 @@ export class ChannelSettingsStore {
   }
 
   private encryptCredential(
-    channel: ManagedChannel,
+    channel: CredentialChannel,
     secret: string
-  ): StoredChannel['credential'] {
+  ): StoredEncryptedCredential {
     if (!this.cipher.isAvailable()) {
       throw new Error('系统安全存储不可用，无法保存通道 Secret')
     }
@@ -456,8 +663,8 @@ export class ChannelSettingsStore {
   }
 
   private decryptCredential(
-    channel: ManagedChannel,
-    stored: StoredChannel
+    channel: CredentialChannel,
+    stored: StoredCredentialChannel
   ): string | undefined {
     if (stored.credential === undefined || !this.cipher.isAvailable()) {
       return undefined
@@ -476,14 +683,125 @@ export class ChannelSettingsStore {
     }
   }
 
+  private encryptWeixinBinding(
+    binding: WeixinBinding
+  ): StoredEncryptedCredential {
+    if (!this.cipher.isAvailable()) {
+      throw new Error('系统安全存储不可用，无法保存微信绑定')
+    }
+    const encrypted = this.cipher.encrypt(
+      JSON.stringify({
+        version: 2,
+        channel: 'weixin',
+        accountId: binding.accountId,
+        userId: binding.userId,
+        baseUrl: binding.baseUrl,
+        token: binding.token
+      })
+    )
+    return {
+      formatVersion: 1,
+      scheme: 'electron-safe-storage',
+      ciphertextBase64: encrypted.toString('base64')
+    }
+  }
+
+  private decryptWeixinBinding(
+    stored: StoredSettings['weixin']
+  ): WeixinBinding | undefined {
+    if (stored.credential === undefined || !this.cipher.isAvailable()) {
+      return undefined
+    }
+    try {
+      return weixinCredentialPayloadSchema.parse(
+        JSON.parse(
+          this.cipher.decrypt(
+            Buffer.from(stored.credential.ciphertextBase64, 'base64')
+          )
+        )
+      )
+    } catch {
+      return undefined
+    }
+  }
+
   private async load(): Promise<StoredSettings> {
     if (this.settings !== undefined) {
       return this.settings
     }
     try {
-      this.settings = storedSettingsSchema.parse(
-        JSON.parse(await readFile(this.filePath, 'utf8'))
-      )
+      const raw: unknown = JSON.parse(await readFile(this.filePath, 'utf8'))
+      const current = storedSettingsSchema.safeParse(raw)
+      if (current.success) {
+        this.settings = current.data
+      } else {
+        const versionTwo = versionTwoStoredSettingsSchema.safeParse(raw)
+        if (versionTwo.success) {
+          const legacyWeixin = versionTwo.data.weixin
+          let token: string | undefined
+          if (
+            legacyWeixin.credential &&
+            this.cipher.isAvailable()
+          ) {
+            try {
+              const payload = credentialPayloadSchema.parse(
+                JSON.parse(
+                  this.cipher.decrypt(
+                    Buffer.from(
+                      legacyWeixin.credential.ciphertextBase64,
+                      'base64'
+                    )
+                  )
+                )
+              )
+              token =
+                payload.channel === 'weixin'
+                  ? payload.secret
+                  : undefined
+            } catch {
+              token = undefined
+            }
+          }
+          const binding =
+            token &&
+            legacyWeixin.accountId &&
+            legacyWeixin.userId &&
+            legacyWeixin.baseUrl
+              ? {
+                  accountId: legacyWeixin.accountId,
+                  userId: legacyWeixin.userId,
+                  baseUrl: legacyWeixin.baseUrl,
+                  token
+                }
+              : undefined
+          this.settings = {
+            version: 3,
+            weixin: {
+              enabled: binding ? legacyWeixin.enabled : false,
+              ...(binding
+                ? { credential: this.encryptWeixinBinding(binding) }
+                : {})
+            },
+            wecom: versionTwo.data.wecom,
+            dingtalk: versionTwo.data.dingtalk
+          }
+          if (legacyWeixin.enabled && !binding) {
+            this.warning =
+              '旧版微信绑定无法安全迁移，请重新扫码绑定'
+          }
+        } else {
+          const legacy = legacyStoredSettingsSchema.parse(raw)
+          this.settings = {
+            version: 3,
+            weixin: {
+              enabled: false
+            },
+            wecom: legacy.wecom,
+            dingtalk: legacy.dingtalk
+          }
+        }
+        await this.persist(this.settings)
+      }
     } catch (error) {
       if (!isMissingFile(error)) {
         this.warning = '通道设置文件已损坏，已隔离原文件并恢复默认设置'
@@ -516,7 +834,7 @@ export class ChannelSettingsStore {
     }
   }
 
-  private environmentChannel(channel: ManagedChannel): EnvironmentChannel {
+  private environmentChannel(channel: CredentialChannel): EnvironmentChannel {
     const prefix =
       channel === 'wecom' ? 'GOODBUDDY_WECOM' : 'GOODBUDDY_DINGTALK'
     const idName =

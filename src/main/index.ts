@@ -10,6 +10,7 @@ import {
   utilityProcess
 } from 'electron'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
 import {
@@ -52,6 +53,10 @@ import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
 import { SubagentService } from './assistant/subagent-service'
 import { ChannelSettingsStore } from './channels/channel-settings-store'
+import type {
+  WechatSidecarChild,
+  WechatSidecarLauncher
+} from './channels/wechat-sidecar-client'
 import { ApplicationSettingsStore } from './application-settings-store'
 import { VersionChecker } from './version-checker'
 import { SpeechModelManager } from './speech/speech-model-manager'
@@ -63,6 +68,7 @@ import type { AgentRuntimeSelection } from '../shared/runtime-selection-contract
 import { waitForCleanup } from './shutdown'
 
 const shortcut = 'CommandOrControl+Shift+Space'
+const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
 const portableUserDataPath = resolvePortableUserDataPath({
   packaged: app.isPackaged,
   platform: process.platform,
@@ -174,6 +180,45 @@ const launchContinueHost: ContinueHostLauncher = (
     kill: () => {
       killed = true
       return utilityChild.kill()
+    }
+  }
+  return child
+}
+
+const launchWechatSidecar: WechatSidecarLauncher = () => {
+  const utilityChild = utilityProcess.fork(
+    join(mainModuleDirectory, 'wechat-sidecar.js'),
+    [],
+    {
+      serviceName: 'GoodBuddy Weixin Transport',
+      stdio: 'ignore'
+    }
+  )
+  const child: WechatSidecarChild = {
+    postMessage: (message) => utilityChild.postMessage(message),
+    kill: () => utilityChild.kill(),
+    on: (_event, listener) => {
+      utilityChild.on('message', listener)
+      return child
+    },
+    once: (
+      event: 'exit' | 'error',
+      listener: ((code: number | null) => void) | ((error: Error) => void)
+    ) => {
+      if (event === 'exit') {
+        utilityChild.once('exit', (code) => {
+          ;(listener as (code: number | null) => void)(code)
+        })
+      } else {
+        utilityChild.once('error', (_type, location, report) => {
+          ;(listener as (error: Error) => void)(
+            new Error(
+              `微信 Sidecar 异常（${location}）：${report.slice(0, 300)}`
+            )
+          )
+        })
+      }
+      return child
     }
   }
   return child
@@ -331,6 +376,7 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'assistant.sqlite')
     )
     assistantDatabase.initialize(defaultWorkspace)
+    assistantDatabase.ensureChannelProjects(defaultWorkspace)
     const subagentService = new SubagentService(
       createDefaultModelRuntime(defaultWorkspace, initialSettings),
       assistantDatabase,
@@ -450,7 +496,8 @@ if (hasSingleInstanceLock) {
       embeddingIndexCoordinator,
       selectedRuntimeManager,
       speechTranscriptionService,
-      knowledgeGateway
+      knowledgeGateway,
+      launchWechatSidecar
     )
     loadMainWindow(mainWindow)
 

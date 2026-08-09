@@ -37,11 +37,23 @@ import {
   type ExpertUpdateInput
 } from './assistant-contracts'
 import type {
+  MagicNoteDetail,
+  MagicNoteCreateInput,
+  MagicNoteEntryCreateInput,
+  MagicNoteEntryUpdateInput,
+  MagicNotesSnapshot,
+  MagicNoteUpdateInput,
+  MagicTodoCreateInput,
+  MagicTodoItem,
+  MagicTodosSnapshot,
+  MagicTodoUpdateInput
+} from './magic-notes-contracts'
+import type {
   ChannelConnectionTestResult,
   ChannelSettingsApply,
   ChannelSettingsSnapshot,
+  CredentialChannel,
   DingTalkChannelSettingsInput,
-  ManagedChannel,
   WeComChannelSettingsInput
 } from './channel-settings-contracts'
 import type {
@@ -58,6 +70,12 @@ import type {
   EmbeddingIndexStatus,
   EmbeddingSettingsSnapshot
 } from './embedding-contracts'
+import type { WeixinBindingSnapshot } from './weixin-channel-contracts'
+import type {
+  RemoteChannelActivity,
+  RemoteChannelApproval,
+  RemoteChannelApprovalDecision
+} from './remote-channel-contracts'
 import {
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
@@ -948,9 +966,31 @@ export type DesktopApi = {
     getSnapshot: () => Promise<ChannelSettingsSnapshot>
     apply: (input: ChannelSettingsApply) => Promise<ChannelSettingsSnapshot>
     testConnection: (
-      channel: ManagedChannel,
+      channel: CredentialChannel,
       settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
     ) => Promise<ChannelConnectionTestResult>
+    getWeixinBinding: () => Promise<WeixinBindingSnapshot>
+    startWeixinBinding: () => Promise<WeixinBindingSnapshot>
+    submitWeixinVerification: (
+      code: string
+    ) => Promise<WeixinBindingSnapshot>
+    disconnectWeixin: () => Promise<WeixinBindingSnapshot>
+    onWeixinBindingChanged: (
+      listener: (snapshot: WeixinBindingSnapshot) => void
+    ) => () => void
+    respondRemoteApproval: (
+      approvalId: string,
+      decision: RemoteChannelApprovalDecision
+    ) => Promise<boolean>
+    getPendingRemoteApprovals: () => Promise<
+      RemoteChannelApproval[]
+    >
+    onRemoteApproval: (
+      listener: (approval: RemoteChannelApproval) => void
+    ) => () => void
+    onRemoteActivity: (
+      listener: (activity: RemoteChannelActivity) => void
+    ) => () => void
   }
   updates?: {
     getSettings: () => Promise<ApplicationSettings>
@@ -1003,6 +1043,7 @@ export type DesktopApi = {
   conversations: {
     list: () => Promise<ConversationSnapshot[]>
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
+    onChanged: (listener: () => void) => () => void
   }
   workspace: {
     getChanges: (projectId: string) => Promise<WorkspaceChanges>
@@ -1128,6 +1169,26 @@ export type DesktopApi = {
     captureWindow: (sourceId: string) => Promise<ContextAttachment>
     readClipboard: () => Promise<ContextAttachment>
     remove: (contextId: string) => Promise<void>
+  }
+  magicNotes: {
+    list: (projectId?: string) => Promise<MagicNotesSnapshot>
+    get: (noteId: string) => Promise<MagicNoteDetail>
+    create: (input: MagicNoteCreateInput) => Promise<MagicNoteDetail>
+    update: (input: MagicNoteUpdateInput) => Promise<MagicNoteDetail>
+    remove: (noteId: string) => Promise<void>
+    createEntry: (
+      input: MagicNoteEntryCreateInput
+    ) => Promise<MagicNoteDetail>
+    updateEntry: (
+      input: MagicNoteEntryUpdateInput
+    ) => Promise<MagicNoteDetail>
+    removeEntry: (entryId: string) => Promise<MagicNoteDetail>
+    analyze: (entryId: string) => Promise<MagicNoteDetail>
+    listTodos: (projectId?: string) => Promise<MagicTodosSnapshot>
+    createTodo: (input: MagicTodoCreateInput) => Promise<MagicTodoItem>
+    updateTodo: (input: MagicTodoUpdateInput) => Promise<MagicTodoItem>
+    removeTodo: (todoId: string) => Promise<void>
+    analyzeTodo: (todoId: string) => Promise<MagicTodoItem>
   }
   knowledge: {
     getSnapshot: (libraryId?: string) => Promise<KnowledgeSnapshot>

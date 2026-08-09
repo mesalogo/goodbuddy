@@ -254,8 +254,7 @@ const styles = {
     border: '1px solid var(--border-default)',
     borderRadius: 'var(--radius-card)',
     background: 'var(--surface-canvas)',
-    color: 'var(--text-primary)',
-    boxShadow: 'var(--shadow-card)'
+    color: 'var(--text-primary)'
   },
   surface: {
     border: '1px solid var(--border-default)',
@@ -2189,131 +2188,140 @@ export function KnowledgeWorkspace({
   }
 
   return (
-    <section
-      aria-busy={loading}
-      aria-label="知识工作区"
-      className={`knowledge-workspace${
-        mobileListOpen ? ' knowledge-workspace--mobile-list' : ''
-      }`}
-      style={styles.workspace}
-    >
-      <aside className="knowledge-workspace__sidebar">
-        <PageHeader
-          compact
-          description={`${libraries.length} 个知识库 · 跨项目共享`}
-          eyebrow="知识库"
-          headingId="knowledge-workspace-title"
-          icon={<Database size={18} />}
-          scope={{ kind: 'global' }}
-          title="知识工作区"
-        />
-        <button
-          className="primary-button"
-          disabled={loading}
-          onClick={() => {
-            setCreating(true)
-            setMobileListOpen(false)
-          }}
-          style={{ ...styles.button, width: '100%' }}
-          type="button"
-        >
-          <Plus aria-hidden="true" size={16} />
-          新建知识库
-        </button>
-        <nav
-          aria-label="知识库列表"
-          className="knowledge-workspace__library-nav"
-          style={{ flex: 1 }}
-        >
-          {libraries.length === 0 ? (
-            <div
-              style={{
-                ...styles.surface,
-                padding: 13,
-                color: 'var(--text-muted)',
-                fontSize: 13,
-                lineHeight: 1.55
-              }}
-            >
-              创建知识库，集中管理可跨项目使用的来源、索引和实体关系。
-            </div>
-          ) : (
-            <ul
-              style={{
-                display: 'grid',
-                gap: 7,
-                margin: 0,
-                padding: 0,
-                listStyle: 'none'
-              }}
-            >
-              {libraries.map((library) => {
-                const selected = library.id === selectedLibrary?.id
-                return (
-                  <li key={library.id}>
-                    <button
-                      aria-current={selected ? 'page' : undefined}
-                      onClick={() => {
-                        onSelectLibrary(library.id)
-                        setTab('documents')
-                        setMobileListOpen(false)
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: 11,
-                        border: `1px solid ${
-                          selected
-                            ? 'var(--accent)'
-                            : 'transparent'
-                        }`,
-                        borderRadius: 'var(--radius-control)',
-                        background: selected
-                          ? 'var(--accent-subtle)'
-                          : 'transparent',
-                        color: selected
-                          ? 'var(--accent)'
-                          : 'var(--text-primary)',
-                        textAlign: 'left',
-                        cursor: 'pointer'
-                      }}
-                      type="button"
-                    >
-                      <span
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 7
+    <div className="knowledge-page">
+      <PageHeader
+        actions={
+          <button
+            className="primary-button"
+            disabled={loading}
+            onClick={() => {
+              setCreating(true)
+              setMobileListOpen(false)
+            }}
+            style={styles.button}
+            type="button"
+          >
+            <Plus aria-hidden="true" size={16} />
+            新建知识库
+          </button>
+        }
+        description="集中组织文件、目录和网页来源，建立可追溯、可跨项目使用的索引与图谱。"
+        eyebrow="KNOWLEDGE"
+        headingId="knowledge-workspace-title"
+        icon={<Database size={20} />}
+        scope={{ kind: 'global' }}
+        title="知识库"
+      />
+      <section
+        aria-busy={loading}
+        aria-label="知识工作区"
+        className={`knowledge-workspace${
+          mobileListOpen ? ' knowledge-workspace--mobile-list' : ''
+        }`}
+        style={styles.workspace}
+      >
+        <aside className="knowledge-workspace__sidebar">
+          <div className="knowledge-workspace__sidebar-heading">
+            <span>
+              <BookOpen aria-hidden="true" size={16} />
+              <strong>知识库列表</strong>
+            </span>
+            <small>{libraries.length}</small>
+          </div>
+          <nav
+            aria-label="知识库列表"
+            className="knowledge-workspace__library-nav"
+            style={{ flex: 1 }}
+          >
+            {libraries.length === 0 ? (
+              <div
+                style={{
+                  ...styles.surface,
+                  padding: 13,
+                  color: 'var(--text-muted)',
+                  fontSize: 13,
+                  lineHeight: 1.55
+                }}
+              >
+                创建知识库，集中管理可跨项目使用的来源、索引和实体关系。
+              </div>
+            ) : (
+              <ul
+                style={{
+                  display: 'grid',
+                  gap: 7,
+                  margin: 0,
+                  padding: 0,
+                  listStyle: 'none'
+                }}
+              >
+                {libraries.map((library) => {
+                  const selected = library.id === selectedLibrary?.id
+                  return (
+                    <li key={library.id}>
+                      <button
+                        aria-current={selected ? 'page' : undefined}
+                        onClick={() => {
+                          onSelectLibrary(library.id)
+                          setTab('documents')
+                          setMobileListOpen(false)
                         }}
+                        style={{
+                          width: '100%',
+                          padding: 11,
+                          border: `1px solid ${
+                            selected
+                              ? 'var(--accent)'
+                              : 'transparent'
+                          }`,
+                          borderRadius: 'var(--radius-control)',
+                          background: selected
+                            ? 'var(--accent-subtle)'
+                            : 'transparent',
+                          color: selected
+                            ? 'var(--accent)'
+                            : 'var(--text-primary)',
+                          textAlign: 'left',
+                          cursor: 'pointer'
+                        }}
+                        type="button"
                       >
-                        <BookOpen aria-hidden="true" size={15} />
-                        <strong
+                        <span
                           style={{
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 7
                           }}
                         >
-                          {library.name}
-                        </strong>
-                      </span>
-                      <span
-                        style={{
-                          ...styles.muted,
-                          display: 'block',
-                          marginTop: 5
-                        }}
-                      >
-                        {library.documentCount} 个文档 ·{' '}
-                        {storageModeLabels[library.storageMode]}
-                      </span>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </nav>
-      </aside>
+                          <BookOpen aria-hidden="true" size={15} />
+                          <strong
+                            style={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {library.name}
+                          </strong>
+                        </span>
+                        <span
+                          style={{
+                            ...styles.muted,
+                            display: 'block',
+                            marginTop: 5
+                          }}
+                        >
+                          {library.documentCount} 个文档 ·{' '}
+                          {storageModeLabels[library.storageMode]}
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </nav>
+        </aside>
 
       <main
         className="knowledge-workspace__main"
@@ -2502,6 +2510,7 @@ export function KnowledgeWorkspace({
           onConfirm={() => onDeleteLibrary(deletingLibrary.id)}
         />
       )}
-    </section>
+      </section>
+    </div>
   )
 }

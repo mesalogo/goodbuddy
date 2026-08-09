@@ -74,15 +74,30 @@ import {
 } from '../shared/embedding-contracts'
 import { agentRuntimeSelectionSchema } from '../shared/runtime-selection-contracts'
 import {
+  magicNoteAnalyzeSchema,
+  magicNoteCreateSchema,
+  magicNoteDeleteSchema,
+  magicNoteEntryCreateSchema,
+  magicNoteEntryDeleteSchema,
+  magicNoteEntryUpdateSchema,
+  magicNoteScopeSchema,
+  magicNoteUpdateSchema,
+  magicTodoCreateSchema,
+  magicTodoIdSchema,
+  magicTodoUpdateSchema
+} from '../shared/magic-notes-contracts'
+import {
   assistantIdSchema,
   conversationSnapshotsSchema,
   memoryCreateSchema,
   normalizeInteractiveWorkMode,
+  projectChannelLabels,
   projectCreateSchema,
   scheduleCreateSchema,
   expertCreateSchema,
   type AssistantSchedule,
-  type AssistantArtifact
+  type AssistantArtifact,
+  type WorkMode
 } from '../shared/assistant-contracts'
 import type {
   AgentExecutionRequest,
@@ -93,7 +108,10 @@ import type {
   RuntimeModelUsageEvent
 } from './agent/runtime'
 import { detectAgentRuntimes } from './agent/runtime-discovery'
-import { createModelProfileRuntime } from './agent/create-runtime'
+import {
+  createDefaultModelRuntime,
+  createModelProfileRuntime
+} from './agent/create-runtime'
 import { safeToolErrorDetail } from './agent/approval-summary'
 import { ReasoningTagStreamParser } from './agent/reasoning-stream'
 import type { BundledRuntimePaths } from './agent/bundled-runtimes'
@@ -126,17 +144,39 @@ import {
 } from './assistant/subagent-service'
 import { routeSubagent } from './assistant/subagent-router'
 import {
-  isReadOnlyChannelMessage,
   startEnvironmentChannels
 } from './channels/channel-env'
 import { ChannelManager } from './channels/channel-manager'
 import type { ChannelSettingsStore } from './channels/channel-settings-store'
+import type { WechatSidecarLauncher } from './channels/wechat-sidecar-client'
+import { WechatBindingController } from './channels/wechat-binding-controller'
+import { RemoteChannelApprovalBroker } from './channels/remote-channel-approval-broker'
+import {
+  parseRemoteChannelPrompt
+} from './channels/remote-channel-routing'
+import {
+  SqliteChannelDedupStore,
+  SqliteChannelOutbox
+} from './channels/sqlite-channel-state'
 import type { ApplicationSettingsStore } from './application-settings-store'
 import type { VersionChecker } from './version-checker'
 import type { SpeechModelManager } from './speech/speech-model-manager'
 import type { SpeechTranscriptionService } from './speech/speech-transcription-service'
 import type { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinator'
 import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
+import {
+  magicNotePlainText,
+  validateMagicNoteRichContent
+} from './magic-notes/rich-content'
+import { weixinVerificationInputSchema } from '../shared/weixin-channel-contracts'
+import {
+  remoteChannelApprovalResponseSchema,
+  type RemoteChannelActivity
+} from '../shared/remote-channel-contracts'
+import {
+  analyzeMagicNoteEntry,
+  analyzeMagicTodo
+} from './magic-notes/magic-note-analyzer'
 
 const requestIdSchema = z.string().uuid()
 const GOODBUDDY_RELEASES_URL =
@@ -507,7 +547,8 @@ export function registerIpcHandlers(
   embeddingIndexCoordinator?: EmbeddingIndexCoordinator,
   selectedRuntimes?: SelectedRuntimeResolver,
   speechTranscriptionService?: SpeechTranscriptionService,
-  knowledgeGateway?: KnowledgeMcpGateway
+  knowledgeGateway?: KnowledgeMcpGateway,
+  launchWechatSidecar?: WechatSidecarLauncher
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
   const pendingAgentQuestions = new Map<
@@ -527,11 +568,15 @@ export function registerIpcHandlers(
     return execution
   }
   const resolveRequestRuntime = async (
-    request: Pick<AgentRequest, 'projectId' | 'runtimeSelection'>
+    request: Pick<AgentRequest, 'projectId' | 'runtimeSelection'> & {
+      workspaceOverride?: string
+    }
   ): Promise<AgentRuntime> => {
-    const projectWorkspace = request.projectId
-      ? assistantDatabase.getProject(request.projectId).rootPath.trim()
-      : ''
+    const projectWorkspace =
+      request.workspaceOverride?.trim() ??
+      (request.projectId
+        ? assistantDatabase.getProject(request.projectId).rootPath.trim()
+        : '')
     if (!selectedRuntimes || (!request.runtimeSelection && !projectWorkspace)) {
       return runtime
     }
@@ -548,6 +593,10 @@ export function registerIpcHandlers(
       channel !== ipcChannels.conversationNew &&
       channel !== ipcChannels.settingsOpen &&
       channel !== ipcChannels.versionCheckResult &&
+      channel !== ipcChannels.weixinBindingChanged &&
+      channel !== ipcChannels.remoteChannelApprovalRequested &&
+      channel !== ipcChannels.remoteChannelActivity &&
+      channel !== ipcChannels.conversationsChanged &&
       channel !== ipcChannels.embeddingIndexStatusChanged &&
       channel !== ipcChannels.windowMaximizedChanged
   )
@@ -751,11 +800,41 @@ export function registerIpcHandlers(
       throw new Error('Heartbeat tool use is always denied')
     }
   )
+  const remoteChannelApprovalBroker =
+    new RemoteChannelApprovalBroker((approval) => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(
+          ipcChannels.remoteChannelApprovalRequested,
+          approval
+        )
+      }
+    })
+  const publishRemoteActivity = (
+    activity: RemoteChannelActivity
+  ): void => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(
+        ipcChannels.remoteChannelActivity,
+        activity
+      )
+    }
+  }
 
   const executeSchedule = async (
-    schedule: AssistantSchedule,
-    origin: 'schedule' | 'delegation' = 'schedule',
-    externalSignal?: AbortSignal
+    schedule: Omit<AssistantSchedule, 'workMode'> & {
+      workMode: WorkMode
+    },
+    origin: 'schedule' | 'delegation' | 'channel' = 'schedule',
+    externalSignal?: AbortSignal,
+    remoteContext?: {
+      channel: keyof typeof projectChannelLabels
+      channelLabel: string
+      senderDisplay: string
+      projectName: string
+      rootPath: string
+      conversationId: string
+      taskId?: string
+    }
   ): Promise<{
     status: 'completed' | 'failed'
     output?: string
@@ -767,7 +846,7 @@ export function registerIpcHandlers(
     if (externalSignal?.aborted) {
       return { status: 'failed', error: '请求已取消' }
     }
-    const requestId = randomUUID()
+    const requestId = remoteContext?.taskId ?? randomUUID()
     const controller = new AbortController()
     const abortFromExternal = (): void => {
       controller.abort(externalSignal?.reason)
@@ -776,15 +855,21 @@ export function registerIpcHandlers(
       once: true
     })
     activeRequests.set(requestId, controller)
-    assistantDatabase.createTask({
-      id: requestId,
-      projectId: schedule.projectId,
-      conversationId: `${origin}:${schedule.id}`,
-      title: schedule.title,
-      instructions: schedule.prompt,
-      workMode: schedule.workMode,
-      origin
-    })
+    const runtimeConversationId =
+      remoteContext?.conversationId ?? `${origin}:${schedule.id}`
+    if (remoteContext?.taskId) {
+      assistantDatabase.updateTaskStatus(requestId, 'running')
+    } else {
+      assistantDatabase.createTask({
+        id: requestId,
+        projectId: schedule.projectId,
+        conversationId: runtimeConversationId,
+        title: schedule.title,
+        instructions: schedule.prompt,
+        workMode: schedule.workMode,
+        origin: origin === 'channel' ? 'delegation' : origin
+      })
+    }
     const modeInstruction =
       schedule.workMode === 'ask'
         ? 'Work mode: Ask. Do not call tools or make changes.'
@@ -795,20 +880,68 @@ export function registerIpcHandlers(
     let completed = false
     try {
       const requestRuntime = await resolveRequestRuntime({
-        projectId: schedule.projectId
+        projectId: schedule.projectId,
+        workspaceOverride: remoteContext?.rootPath
       })
       for await (const agentEvent of requestRuntime.run(
         {
           requestId,
-          conversationId: `${origin}:${schedule.id}`,
+          conversationId: runtimeConversationId,
           projectId: schedule.projectId,
           workMode: schedule.workMode,
           prompt: `${modeInstruction}\n\n${schedule.prompt}`
         },
         controller.signal,
         async (approvalRequest) => {
+          if (schedule.workMode !== 'execute') {
+            return 'deny'
+          }
           if (origin === 'delegation') {
             return 'deny'
+          }
+          if (origin === 'channel' && remoteContext) {
+            assistantDatabase.updateTaskStatus(
+              requestId,
+              'waiting_approval'
+            )
+            try {
+              const decision =
+                await remoteChannelApprovalBroker.request(
+                {
+                  requestId,
+                  kind: 'tool',
+                  channel: remoteContext.channel,
+                  channelLabel: remoteContext.channelLabel,
+                  senderDisplay: remoteContext.senderDisplay,
+                  projectName: remoteContext.projectName,
+                  rootPath: remoteContext.rootPath,
+                  title: approvalRequest.title,
+                  description: approvalRequest.description,
+                  toolName: approvalRequest.toolName,
+                  argumentSummary: approvalRequest.argumentSummary
+                },
+                controller.signal
+              )
+              publishRemoteActivity({
+                requestId,
+                conversationId: remoteContext.conversationId,
+                channel: remoteContext.channel,
+                kind: 'approval',
+                callId: approvalRequest.scopeKey,
+                title: approvalRequest.title,
+                detail: approvalRequest.description,
+                status:
+                  decision === 'once' ? 'completed' : 'denied'
+              })
+              return decision
+            } finally {
+              if (!controller.signal.aborted) {
+                assistantDatabase.updateTaskStatus(
+                  requestId,
+                  'running'
+                )
+              }
+            }
           }
           assistantDatabase.updateTaskStatus(
             requestId,
@@ -824,7 +957,7 @@ export function registerIpcHandlers(
                     ? 'policy'
                     : undefined,
                 requestId,
-                conversationId: `${origin}:${schedule.id}`
+                conversationId: runtimeConversationId
               },
               controller.signal,
               (approvalEvent) => {
@@ -860,9 +993,29 @@ export function registerIpcHandlers(
           taskEvent.type,
           taskEvent
         )
+        if (taskEvent.type === 'tool' && remoteContext) {
+          publishRemoteActivity({
+            requestId,
+            conversationId: remoteContext.conversationId,
+            channel: remoteContext.channel,
+            kind: 'tool',
+            callId: taskEvent.callId,
+            title: taskEvent.name,
+            detail: taskEvent.summary,
+            status:
+              taskEvent.state === 'pending' ||
+              taskEvent.state === 'running' ||
+              taskEvent.state === 'completed'
+                ? taskEvent.state
+                : 'failed'
+          })
+        }
         if (taskEvent.type === 'text') {
           output = `${output}${taskEvent.delta}`.slice(0, 1_000_000)
-        } else if (taskEvent.type === 'tool') {
+        } else if (
+          taskEvent.type === 'tool' &&
+          schedule.workMode !== 'execute'
+        ) {
           throw new Error('只读定时任务不允许调用工具')
         } else if (taskEvent.type === 'error') {
           throw new Error(taskEvent.message)
@@ -884,8 +1037,14 @@ export function registerIpcHandlers(
       }
       assistantDatabase.updateTaskStatus(requestId, 'completed')
       showDesktopNotificationWhenUnfocused(window, {
-        title: `定时任务完成：${schedule.title}`,
-        body: '结果已保存到 GoodBuddy 成果工作栏。'
+        title:
+          origin === 'channel'
+            ? `${remoteContext?.channelLabel ?? '远程通道'}请求已完成`
+            : `定时任务完成：${schedule.title}`,
+        body:
+          origin === 'channel'
+            ? '结果已回复，并保存到远程通道会话。'
+            : '结果已保存到 GoodBuddy 成果工作栏。'
       })
       return { status: 'completed', output }
     } catch (error) {
@@ -896,8 +1055,14 @@ export function registerIpcHandlers(
         message
       )
       showDesktopNotificationWhenUnfocused(window, {
-        title: `定时任务失败：${schedule.title}`,
-        body: '打开 GoodBuddy 任务工作栏查看详情。'
+        title:
+          origin === 'channel'
+            ? `${remoteContext?.channelLabel ?? '远程通道'}请求失败`
+            : `定时任务失败：${schedule.title}`,
+        body:
+          origin === 'channel'
+            ? '打开 GoodBuddy 查看远程通道会话详情。'
+            : '打开 GoodBuddy 任务工作栏查看详情。'
       })
       return { status: 'failed', error: message }
     } finally {
@@ -1071,43 +1236,322 @@ export function registerIpcHandlers(
         })
       : undefined
   remoteDelegation?.start()
-  const channelExecutor = (
+  const publishRemoteConversationChange = (): void => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(ipcChannels.conversationsChanged)
+    }
+  }
+  const channelExecutor = async (
     message: Parameters<
       ConstructorParameters<typeof ChannelManager>[1]
     >[0],
-    signal: AbortSignal
-  ) => {
-    if (!isReadOnlyChannelMessage(message)) {
-      return Promise.resolve({
+    signal: AbortSignal,
+    reportProgress: (
+      result: {
+        status: string
+        output?: string
+        error?: string
+      }
+    ) => Promise<void> = async () => undefined
+  ): Promise<{
+    status: string
+    output?: string
+    error?: string
+  }> => {
+    if (!Object.hasOwn(projectChannelLabels, message.channel)) {
+      return {
         status: 'failed',
-        error: '远程通道仅允许 Ask 或 Plan 模式'
-      })
+        error: '不支持的远程消息通道'
+      }
     }
+    const channel =
+      message.channel as keyof typeof projectChannelLabels
+    const project = assistantDatabase
+      .listProjects(false)
+      .find(
+        (candidate) =>
+          candidate.kind === 'channel' &&
+          candidate.channel === channel
+      )
+    if (!project) {
+      return {
+        status: 'failed',
+        error: '远程通道项目不存在，请重启 GoodBuddy'
+      }
+    }
+    let parsed: ReturnType<typeof parseRemoteChannelPrompt>
+    try {
+      parsed = parseRemoteChannelPrompt(
+        message.text,
+        message.workMode === 'plan'
+          ? 'plan'
+          : project.defaultWorkMode
+      )
+    } catch (error) {
+      return {
+        status: 'rejected',
+        error:
+          error instanceof Error ? error.message : '远程请求内容无效'
+      }
+    }
+    const channelLabel = projectChannelLabels[channel]
+    const identitySuffix = message.senderId.slice(-4)
+    const senderDisplay = `发送者 ****${identitySuffix}`
+    const remoteConversation =
+      assistantDatabase.getOrCreateRemoteConversation({
+        projectId: project.id,
+        channel,
+        accountId: 'default',
+        externalConversationId: message.conversationId,
+        conversationType: message.conversationType,
+        title: `${channelLabel} · ****${identitySuffix}`,
+        accountDisplay: senderDisplay
+      })
+    assistantDatabase.appendRemoteConversationMessage({
+      conversationId: remoteConversation.id,
+      role: 'user',
+      content: parsed.prompt,
+      status: `${channelLabel} · ${
+        parsed.workMode === 'execute'
+          ? '执行'
+          : parsed.workMode === 'plan'
+            ? '规划'
+            : '对话'
+      }`
+    })
+    publishRemoteConversationChange()
+
+    const remoteTaskId = randomUUID()
+    assistantDatabase.createTask({
+      id: remoteTaskId,
+      projectId: project.id,
+      conversationId: remoteConversation.id,
+      title: `${channelLabel}远程请求`,
+      instructions: parsed.prompt,
+      workMode: parsed.workMode,
+      origin: 'delegation'
+    })
+    publishRemoteActivity({
+      requestId: remoteTaskId,
+      conversationId: remoteConversation.id,
+      channel,
+      kind: 'request',
+      title: `${channelLabel} · ${senderDisplay}`,
+      detail: parsed.prompt,
+      status:
+        parsed.workMode === 'execute' ? 'pending' : 'running'
+    })
+
+    if (parsed.workMode === 'execute') {
+      assistantDatabase.updateTaskStatus(
+        remoteTaskId,
+        'waiting_approval'
+      )
+      await reportProgress({
+        status: 'waiting_approval',
+        output: '执行请求已发送到电脑端，等待本机确认。'
+      }).catch(() => undefined)
+      let executionStatus: Awaited<
+        ReturnType<AgentRuntime['getStatus']>
+      >
+      try {
+        const executionRuntime = await resolveRequestRuntime({
+          projectId: project.id,
+          workspaceOverride: project.rootPath
+        })
+        executionStatus = await executionRuntime.getStatus()
+      } catch (error) {
+        const unavailable = safeRuntimeError(
+          error,
+          '远程 Execute Runtime 不可用'
+        )
+        assistantDatabase.updateTaskStatus(
+          remoteTaskId,
+          'failed',
+          unavailable
+        )
+        assistantDatabase.appendRemoteConversationMessage({
+          conversationId: remoteConversation.id,
+          role: 'assistant',
+          content: unavailable,
+          status: '执行不可用'
+        })
+        publishRemoteConversationChange()
+        publishRemoteActivity({
+          requestId: remoteTaskId,
+          conversationId: remoteConversation.id,
+          channel,
+          kind: 'result',
+          title: `${channelLabel}远程执行不可用`,
+          detail: unavailable,
+          status: 'failed'
+        })
+        return { status: 'failed', error: unavailable }
+      }
+      if (
+        executionStatus.id !== 'model' ||
+        !executionStatus.supportsToolExecution
+      ) {
+        const unavailable =
+          '远程 Execute 需要启用支持逐次工具审批的直连模型 Runtime'
+        assistantDatabase.updateTaskStatus(
+          remoteTaskId,
+          'failed',
+          unavailable
+        )
+        assistantDatabase.appendRemoteConversationMessage({
+          conversationId: remoteConversation.id,
+          role: 'assistant',
+          content: unavailable,
+          status: '执行不可用'
+        })
+        publishRemoteConversationChange()
+        publishRemoteActivity({
+          requestId: remoteTaskId,
+          conversationId: remoteConversation.id,
+          channel,
+          kind: 'result',
+          title: `${channelLabel}远程执行不可用`,
+          detail: unavailable,
+          status: 'failed'
+        })
+        return { status: 'failed', error: unavailable }
+      }
+      const decision = await remoteChannelApprovalBroker.request(
+        {
+          requestId: remoteTaskId,
+          kind: 'request',
+          channel,
+          channelLabel,
+          senderDisplay,
+          projectName: project.name,
+          rootPath: project.rootPath,
+          title: `${senderDisplay}请求在电脑上执行任务`,
+          description: parsed.prompt
+        },
+        signal
+      )
+      publishRemoteActivity({
+        requestId: remoteTaskId,
+        conversationId: remoteConversation.id,
+        channel,
+        kind: 'approval',
+        title: '电脑端远程执行确认',
+        detail:
+          decision === 'once'
+            ? '电脑端已仅批准本次执行'
+            : '电脑端已拒绝或审批已超时',
+        status: decision === 'once' ? 'completed' : 'denied'
+      })
+      if (decision !== 'once') {
+        const denial = '电脑端未批准本次执行请求'
+        assistantDatabase.updateTaskStatus(
+          remoteTaskId,
+          'cancelled',
+          denial
+        )
+        assistantDatabase.appendRemoteConversationMessage({
+          conversationId: remoteConversation.id,
+          role: 'assistant',
+          content: denial,
+          status: '执行已拒绝'
+        })
+        publishRemoteConversationChange()
+        publishRemoteActivity({
+          requestId: remoteTaskId,
+          conversationId: remoteConversation.id,
+          channel,
+          kind: 'result',
+          title: `${channelLabel}远程执行已拒绝`,
+          detail: denial,
+          status: 'denied'
+        })
+        return { status: 'rejected', error: denial }
+      }
+    }
+
     const now = new Date().toISOString()
-    return trackExecution(
+    const result = await trackExecution(
       executeSchedule(
         {
           id: randomUUID(),
-          title:
-            message.channel === 'dingtalk'
-              ? '钉钉远程请求'
-              : '企业微信远程请求',
-          prompt: message.text,
-          workMode: message.workMode,
+          projectId: project.id,
+          title: `${channelLabel}远程请求`,
+          prompt: parsed.prompt,
+          workMode: parsed.workMode,
           recurrence: 'once',
           nextRunAt: now,
           enabled: true,
           createdAt: now,
           updatedAt: now
         },
-        'delegation',
-        signal
+        'channel',
+        signal,
+        {
+          channel,
+          channelLabel,
+          senderDisplay,
+          projectName: project.name,
+          rootPath: project.rootPath,
+          conversationId: remoteConversation.id,
+          taskId: remoteTaskId
+        }
       )
     )
+    const responseText =
+      result.output?.trim() ||
+      result.error?.trim() ||
+      (result.status === 'completed' ? '请求已完成。' : '请求执行失败。')
+    assistantDatabase.appendRemoteConversationMessage({
+      conversationId: remoteConversation.id,
+      role: 'assistant',
+      content: responseText,
+      status:
+        result.status === 'completed'
+          ? `${channelLabel} · 已完成`
+          : `${channelLabel} · 失败`
+    })
+    publishRemoteConversationChange()
+    publishRemoteActivity({
+      requestId: remoteTaskId,
+      conversationId: remoteConversation.id,
+      channel,
+      kind: 'result',
+      title:
+        result.status === 'completed'
+          ? `${channelLabel}远程请求完成`
+          : `${channelLabel}远程请求失败`,
+      detail: responseText,
+      status:
+        result.status === 'completed' ? 'completed' : 'failed'
+    })
+    return result
   }
   const channelManager = channelSettingsStore
-    ? new ChannelManager(channelSettingsStore, channelExecutor)
+    ? new ChannelManager(channelSettingsStore, channelExecutor, {
+        launchWechatSidecar,
+        dedupStore: new SqliteChannelDedupStore(assistantDatabase),
+        outbox: new SqliteChannelOutbox(assistantDatabase)
+      })
     : undefined
+  const wechatBindingController =
+    channelSettingsStore && channelManager && launchWechatSidecar
+      ? new WechatBindingController(
+          channelSettingsStore,
+          launchWechatSidecar,
+          async () => {
+            await channelManager.reload('weixin')
+          },
+          (snapshot) => {
+            if (!window.isDestroyed()) {
+              window.webContents.send(
+                ipcChannels.weixinBindingChanged,
+                snapshot
+              )
+            }
+          }
+        )
+      : undefined
   const channelServices = channelManager
     ? []
     : startEnvironmentChannels({ executor: channelExecutor })
@@ -1790,7 +2234,7 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.channelSettingsGet, (event) => {
     assertTrustedSender(event, window)
     if (!channelManager) {
-      throw new Error('企业通信设置服务不可用')
+      throw new Error('消息通道设置服务不可用')
     }
     return channelManager.getSnapshot()
   })
@@ -1800,7 +2244,7 @@ export function registerIpcHandlers(
     (event, input: unknown) => {
       assertTrustedSender(event, window)
       if (!channelManager) {
-        throw new Error('企业通信设置服务不可用')
+        throw new Error('消息通道设置服务不可用')
       }
       return channelManager.apply(channelSettingsApplySchema.parse(input))
     }
@@ -1811,7 +2255,7 @@ export function registerIpcHandlers(
     (event, input: unknown) => {
       assertTrustedSender(event, window)
       if (!channelManager) {
-        throw new Error('企业通信设置服务不可用')
+        throw new Error('消息通道设置服务不可用')
       }
       const request = channelSettingsTestRequestSchema.parse(input)
       return request.channel === 'wecom'
@@ -1819,6 +2263,63 @@ export function registerIpcHandlers(
         : channelManager.testConnection('dingtalk', request.settings)
     }
   )
+
+  ipcMain.handle(ipcChannels.weixinBindingGet, (event) => {
+    assertTrustedSender(event, window)
+    if (!wechatBindingController) {
+      throw new Error('微信 ClawBot 绑定服务不可用')
+    }
+    return wechatBindingController.snapshot()
+  })
+
+  ipcMain.handle(ipcChannels.weixinBindingStart, (event) => {
+    assertTrustedSender(event, window)
+    if (!wechatBindingController) {
+      throw new Error('微信 ClawBot 绑定服务不可用')
+    }
+    return wechatBindingController.start()
+  })
+
+  ipcMain.handle(
+    ipcChannels.weixinBindingVerify,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!wechatBindingController) {
+        throw new Error('微信 ClawBot 绑定服务不可用')
+      }
+      const value = weixinVerificationInputSchema.parse(input)
+      return wechatBindingController.submitVerification(value.code)
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.weixinBindingDisconnect,
+    (event) => {
+      assertTrustedSender(event, window)
+      if (!wechatBindingController) {
+        throw new Error('微信 ClawBot 绑定服务不可用')
+      }
+      return wechatBindingController.disconnect()
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.remoteChannelApprovalRespond,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const response =
+        remoteChannelApprovalResponseSchema.parse(input)
+      return remoteChannelApprovalBroker.respond(
+        response.approvalId,
+        response.decision
+      )
+    }
+  )
+
+  ipcMain.handle(ipcChannels.remoteChannelApprovalList, (event) => {
+    assertTrustedSender(event, window)
+    return remoteChannelApprovalBroker.listPending()
+  })
 
   ipcMain.handle(ipcChannels.applicationSettingsGet, (event) => {
     assertTrustedSender(event, window)
@@ -2654,6 +3155,217 @@ export function registerIpcHandlers(
     contextManager.remove(requestIdSchema.parse(input))
   })
 
+  ipcMain.handle(ipcChannels.magicNotesList, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { projectId } = magicNoteScopeSchema.parse(input)
+    return { notes: assistantDatabase.listMagicNotes(projectId) }
+  })
+
+  ipcMain.handle(ipcChannels.magicNotesGet, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { noteId } = magicNoteDeleteSchema.parse(input)
+    return assistantDatabase.getMagicNote(noteId)
+  })
+
+  ipcMain.handle(ipcChannels.magicNotesCreate, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.createMagicNote(
+      magicNoteCreateSchema.parse(input)
+    )
+  })
+
+  ipcMain.handle(ipcChannels.magicNotesUpdate, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.updateMagicNote(
+      magicNoteUpdateSchema.parse(input)
+    )
+  })
+
+  ipcMain.handle(ipcChannels.magicNotesDelete, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { noteId } = magicNoteDeleteSchema.parse(input)
+    assistantDatabase.deleteMagicNote(noteId)
+  })
+
+  ipcMain.handle(
+    ipcChannels.magicNotesCreateEntry,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const parsed = magicNoteEntryCreateSchema.parse(input)
+      const content = validateMagicNoteRichContent(parsed.content)
+      return assistantDatabase.createMagicNoteEntry({
+        noteId: parsed.noteId,
+        content,
+        plainText: magicNotePlainText(content)
+      })
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicNotesUpdateEntry,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const parsed = magicNoteEntryUpdateSchema.parse(input)
+      const content = validateMagicNoteRichContent(parsed.content)
+      return assistantDatabase.updateMagicNoteEntry({
+        entryId: parsed.entryId,
+        expectedRevision: parsed.expectedRevision,
+        content,
+        plainText: magicNotePlainText(content)
+      })
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicNotesDeleteEntry,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { entryId } = magicNoteEntryDeleteSchema.parse(input)
+      return assistantDatabase.deleteMagicNoteEntry(entryId)
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicNotesAnalyze,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { entryId } = magicNoteAnalyzeSchema.parse(input)
+      const entry = assistantDatabase.getMagicNoteEntry(entryId)
+      const note = assistantDatabase.getMagicNoteContext(entry.noteId)
+      const settings = await settingsStore.getResolvedSettings()
+      const analysisRuntime = createDefaultModelRuntime(
+        settings.workspacePath,
+        settings
+      )
+      const requestId = randomUUID()
+      assistantDatabase.createTask({
+        id: requestId,
+        projectId: note.projectId,
+        title: `分析笔记：${note.title}`,
+        instructions: '使用无工具模型对笔记记录进行只读分析',
+        workMode: 'ask',
+        origin: 'assistant',
+        visible: false
+      })
+      try {
+        const comments = await analyzeMagicNoteEntry(
+          analysisRuntime,
+          entry,
+          requestId,
+          persistModelUsage
+        )
+        const analyzedNote = assistantDatabase.saveMagicNoteAnalysis({
+          entryId,
+          expectedRevision: entry.revision,
+          comments
+        })
+        assistantDatabase.updateTaskStatus(requestId, 'completed')
+        return analyzedNote
+      } catch (error) {
+        const message = safeRuntimeError(error, '魔法笔记 AI 分析失败')
+        assistantDatabase.updateTaskStatus(requestId, 'failed', message)
+        throw new Error(message, { cause: error })
+      } finally {
+        try {
+          await analysisRuntime.releaseConversation?.(
+            `magic-notes:${entry.id}`
+          )
+        } finally {
+          await analysisRuntime.dispose()
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicTodosList,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { projectId } = magicNoteScopeSchema.parse(input)
+      return { todos: assistantDatabase.listMagicTodos(projectId) }
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicTodosCreate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      return assistantDatabase.createMagicTodo(
+        magicTodoCreateSchema.parse(input)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicTodosUpdate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      return assistantDatabase.updateMagicTodo(
+        magicTodoUpdateSchema.parse(input)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicTodosDelete,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { todoId } = magicTodoIdSchema.parse(input)
+      assistantDatabase.deleteMagicTodo(todoId)
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicTodosAnalyze,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { todoId } = magicTodoIdSchema.parse(input)
+      const todo = assistantDatabase.getMagicTodo(todoId)
+      const settings = await settingsStore.getResolvedSettings()
+      const analysisRuntime = createDefaultModelRuntime(
+        settings.workspacePath,
+        settings
+      )
+      const requestId = randomUUID()
+      assistantDatabase.createTask({
+        id: requestId,
+        projectId: todo.projectId,
+        title: `分析待办：${todo.title}`,
+        instructions: '使用无工具模型对魔法笔记待办进行只读分析',
+        workMode: 'ask',
+        origin: 'assistant',
+        visible: false
+      })
+      try {
+        const comments = await analyzeMagicTodo(
+          analysisRuntime,
+          todo,
+          requestId,
+          persistModelUsage
+        )
+        const analyzedTodo = assistantDatabase.saveMagicTodoAnalysis({
+          todoId,
+          expectedRevision: todo.revision,
+          comments
+        })
+        assistantDatabase.updateTaskStatus(requestId, 'completed')
+        return analyzedTodo
+      } catch (error) {
+        const message = safeRuntimeError(error, '魔法笔记待办 AI 分析失败')
+        assistantDatabase.updateTaskStatus(requestId, 'failed', message)
+        throw new Error(message, { cause: error })
+      } finally {
+        try {
+          await analysisRuntime.releaseConversation?.(
+            `magic-todos:${todo.id}`
+          )
+        } finally {
+          await analysisRuntime.dispose()
+        }
+      }
+    }
+  )
+
   ipcMain.handle(ipcChannels.knowledgeSnapshot, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const libraryId =
@@ -2964,6 +3676,8 @@ export function registerIpcHandlers(
         }
       })
     embeddingIndexCoordinator?.cancel()
+    wechatBindingController?.stop()
+    remoteChannelApprovalBroker.clear()
     approvalBroker.clear()
     contextManager.clear()
     window.removeListener('maximize', notifyMaximizedChanged)

@@ -154,16 +154,22 @@ export function PageTabs<T extends string>({
   idPrefix,
   onChange,
   tabs,
-  value
+  value,
+  variant = 'default'
 }: {
   ariaLabel: string
   idPrefix: string
   onChange: (value: T) => void
   tabs: readonly PageTab<T>[]
   value: T
+  variant?: 'default' | 'segmented'
 }): React.JSX.Element {
   return (
-    <nav aria-label={ariaLabel} className="page-tabs" role="tablist">
+    <nav
+      aria-label={ariaLabel}
+      className={`page-tabs page-tabs--${variant}`}
+      role="tablist"
+    >
       {tabs.map((tab, index) => (
         <button
           aria-controls={`${idPrefix}-panel-${tab.id}`}

@@ -41,6 +41,7 @@ const project = {
   description: '测试项目',
   rootPath: 'C:\\Users\\test',
   defaultWorkMode: 'ask' as const,
+  kind: 'user' as const,
   status: 'active' as const,
   createdAt: '2026-07-31T00:00:00.000Z',
   updatedAt: '2026-07-31T00:00:00.000Z'
@@ -272,7 +273,8 @@ const api: DesktopApi = {
   },
   conversations: {
     list: vi.fn(async () => []),
-    replace: vi.fn(async () => {})
+    replace: vi.fn(async () => {}),
+    onChanged: vi.fn(() => () => undefined)
   },
   workspace: {
     getChanges: vi.fn(async () => ({
@@ -443,6 +445,42 @@ const api: DesktopApi = {
       throw new Error('not used')
     }),
     remove: vi.fn(async () => {})
+  },
+  magicNotes: {
+    list: vi.fn(async () => ({ notes: [] })),
+    get: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    create: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    update: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    remove: vi.fn(async () => {}),
+    createEntry: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    updateEntry: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    removeEntry: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    analyze: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    listTodos: vi.fn(async () => ({ todos: [] })),
+    createTodo: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    updateTodo: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    removeTodo: vi.fn(async () => {}),
+    analyzeTodo: vi.fn(async () => {
+      throw new Error('not used')
+    })
   },
   knowledge: {
     getSnapshot: vi.fn(async () => ({
@@ -3204,6 +3242,27 @@ describe('App', () => {
     expect(
       screen.getByRole('button', { name: '配置智能心跳' })
     ).toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('切换助手工作栏')
+    ).not.toBeInTheDocument()
+  })
+
+  it('opens Magic Notes as a scoped first-class workspace', async () => {
+    render(<App />)
+    await screen.findByText('项目：默认项目')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '魔法笔记' })
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: '魔法笔记' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('项目：默认项目')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '新建笔记' })
+    ).toBeInTheDocument()
+    expect(api.magicNotes.list).toHaveBeenCalled()
     expect(
       screen.queryByLabelText('切换助手工作栏')
     ).not.toBeInTheDocument()

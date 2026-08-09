@@ -210,10 +210,45 @@ describe('ChannelSettingsStore', () => {
       version: number
       dingtalk: { allowedSenderIds: string[] }
     }
-    expect(persisted.version).toBe(1)
+    expect(persisted.version).toBe(3)
     expect(persisted.dingtalk.allowedSenderIds).toEqual(['staff-a'])
     expect((await readdir(join(filePath, '..'))).some(
       (name) => name.endsWith('.tmp')
     )).toBe(false)
+  })
+
+  it('encrypts Weixin binding credentials and removes them on disconnect', async () => {
+    const filePath = await settingsPath()
+    const store = new ChannelSettingsStore(filePath, createCipher(), {})
+
+    const bound = await store.saveWeixinBinding({
+      accountId: 'account-123456',
+      userId: 'user-654321',
+      baseUrl: 'https://ilinkai.weixin.qq.com',
+      token: 'weixin-private-token'
+    })
+    expect(bound.weixin).toMatchObject({
+      enabled: true,
+      bindingConfigured: true,
+      source: 'encrypted',
+      accountDisplay: '微信用户 ****4321'
+    })
+    const raw = await readFile(filePath, 'utf8')
+    expect(raw).not.toContain('weixin-private-token')
+    expect(raw).not.toContain('user-654321')
+    expect(await store.resolve('weixin')).toMatchObject({
+      enabled: true,
+      accountId: 'account-123456',
+      userId: 'user-654321',
+      token: 'weixin-private-token'
+    })
+
+    const disconnected = await store.clearWeixinBinding()
+    expect(disconnected.weixin).toMatchObject({
+      enabled: false,
+      bindingConfigured: false,
+      source: 'none'
+    })
+    expect((await store.resolve('weixin')).token).toBeUndefined()
   })
 })

@@ -88,7 +88,8 @@ import {
   conversationAttachmentSchema,
   conversationMessageBlocksSchema,
   interactiveWorkModes,
-  normalizeInteractiveWorkMode
+  normalizeInteractiveWorkMode,
+  projectChannelLabels
 } from '../../shared/assistant-contracts'
 import { ActivityPanel } from './ActivityPanel'
 import { AgentQuestionCard } from './AgentQuestionCard'
@@ -101,6 +102,7 @@ import {
 } from './activity-store'
 import { KnowledgeWorkspace } from './KnowledgeWorkspace'
 import { HeartbeatCenter } from './HeartbeatCenter'
+import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { PageShell, ScopeBadge } from './WorkspacePrimitives'
 import {
@@ -114,6 +116,7 @@ import {
   type SidebarArtifact
 } from './RightAssistantSidebar'
 import { SettingsPanel } from './SettingsPanel'
+import { RemoteChannelApprovalDialog } from './RemoteChannelApprovalDialog'
 import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
 import goodbuddyLightIcon from './assets/goodbuddy-light.png'
 import {
@@ -130,8 +133,10 @@ import {
   startPcmRecording,
   type PcmRecording
 } from './speech-recognition'
-
-type AppNotificationTone = 'success' | 'info' | 'error'
+import type {
+  AppNotificationInput,
+  AppNotificationTone
+} from './notifications'
 
 type AppNotification = {
   id: string
@@ -140,13 +145,7 @@ type AppNotification = {
   revision: number
 }
 
-type AppNotificationAction =
-  | {
-      tone: AppNotificationTone
-      message: string
-      dedupeKey?: string
-    }
-  | { dismiss: string }
+type AppNotificationAction = AppNotificationInput | { dismiss: string }
 
 function appNotificationReducer(
   current: AppNotification[],
@@ -157,15 +156,23 @@ function appNotificationReducer(
       (notification) => notification.id !== action.dismiss
     )
   }
-  const id = action.dedupeKey ?? `${action.tone}:${action.message}`
+  const message = action.message.slice(0, 2_000)
+  const id = action.dedupeKey ?? `${action.tone}:${message}`
   const existing = current.find(
     (notification) => notification.id === id
   )
+  if (
+    existing?.tone === 'error' &&
+    action.tone === 'error' &&
+    existing.message === message
+  ) {
+    return current
+  }
   const updated = [
     ...current.filter((notification) => notification.id !== id),
     {
       id,
-      message: action.message.slice(0, 2_000),
+      message,
       tone: action.tone,
       revision: (existing?.revision ?? 0) + 1
     }
@@ -315,6 +322,7 @@ type Conversation = {
   id: string
   projectId?: string
   runtimeSelection?: AgentRuntimeSelection
+  remote?: ConversationSnapshot['remote']
   title: string
   updatedAt: number
   messages: Message[]
@@ -333,6 +341,7 @@ type ActiveRun = {
 
 type WorkspaceView =
   | 'chat'
+  | 'magic-notes'
   | 'knowledge'
   | 'heartbeat'
   | 'activity'
@@ -664,6 +673,12 @@ function isConversation(value: unknown): value is Conversation {
     (item.runtimeSelection === undefined ||
       agentRuntimeSelectionSchema.safeParse(item.runtimeSelection)
         .success) &&
+    (item.remote === undefined ||
+      (typeof item.remote === 'object' &&
+        item.remote !== null &&
+        ['weixin', 'wecom', 'dingtalk'].includes(
+          String((item.remote as Record<string, unknown>).channel)
+        ))) &&
     typeof item.title === 'string' &&
     item.title.length <= 200 &&
     typeof item.updatedAt === 'number' &&
@@ -709,6 +724,7 @@ function toConversationSnapshots(
     id: conversation.id,
     projectId: conversation.projectId,
     runtimeSelection: conversation.runtimeSelection,
+    remote: conversation.remote,
     title: conversation.title,
     updatedAt: conversation.updatedAt,
     messages: conversation.messages.slice(-500).map((message) => ({
@@ -987,6 +1003,11 @@ function WindowControls({
 function App(): React.JSX.Element {
   const [conversations, setConversations] = useState(loadConversations)
   const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? '')
+  const activeConversationIdRef = useRef(activeId)
+  const conversationsRef = useRef(conversations)
+  const [unreadConversationIds, setUnreadConversationIds] = useState<
+    Set<string>
+  >(() => new Set())
   const [conversationStoreReady, setConversationStoreReady] =
     useState(false)
   const migrationConversations = useRef(conversations)
@@ -1147,6 +1168,14 @@ function App(): React.JSX.Element {
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
   )
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeId
+  }, [activeId])
+
+  useEffect(() => {
+    conversationsRef.current = conversations
+  }, [conversations])
 
   useEffect(() => {
     if (!topbarMenuOpen) {
@@ -1677,6 +1706,31 @@ function App(): React.JSX.Element {
     },
     []
   )
+
+  useEffect(() => {
+    const api = window.goodbuddy.channels
+    if (!api) {
+      return
+    }
+    return api.onRemoteActivity((activity) => {
+      if (activity.kind === 'result') {
+        updateRequestActivity(
+          activity.requestId,
+          activity.status,
+          activity.detail
+        )
+      }
+      recordActivity({
+        requestId: activity.requestId,
+        conversationId: activity.conversationId,
+        callId: activity.callId,
+        kind: activity.kind,
+        title: activity.title,
+        detail: activity.detail,
+        status: activity.status
+      })
+    })
+  }, [recordActivity, updateRequestActivity])
 
   const refreshKnowledge = useCallback(
     async (libraryId?: string): Promise<KnowledgeSnapshot> => {
@@ -2240,6 +2294,83 @@ function App(): React.JSX.Element {
     }, 500)
     return () => clearTimeout(timeout)
   }, [conversationStoreReady, conversations])
+
+  useEffect(() => {
+    if (!conversationStoreReady) {
+      return
+    }
+    let active = true
+    let refreshSequence = 0
+    const remove = window.goodbuddy.conversations.onChanged(() => {
+      const sequence = ++refreshSequence
+      void window.goodbuddy.conversations
+        .list()
+        .then((persisted) => {
+          if (!active || sequence !== refreshSequence) {
+            return
+          }
+          const remote = persisted.filter(
+            (conversation) => conversation.remote
+          )
+          const previousById = new Map(
+            conversationsRef.current.map((conversation) => [
+              conversation.id,
+              conversation
+            ])
+          )
+          const updated = remote.filter((conversation) => {
+            const previous = previousById.get(conversation.id)
+            return (
+              previous === undefined ||
+              conversation.updatedAt > previous.updatedAt
+            )
+          })
+          const unread = updated.filter(
+            (conversation) =>
+              conversation.id !== activeConversationIdRef.current
+          )
+          if (unread.length > 0) {
+            setUnreadConversationIds((current) => {
+              const next = new Set(current)
+              unread.forEach((conversation) =>
+                next.add(conversation.id)
+              )
+              return next
+            })
+            notify({
+              tone: 'info',
+              message: `${
+                projectChannelLabels[
+                  unread[0]!.remote!.channel
+                ]
+              } 收到新消息`,
+              dedupeKey: 'remote-channel-message'
+            })
+          }
+          const local = conversationsRef.current.filter(
+            (conversation) => !conversation.remote
+          )
+          setConversations(
+            [...remote, ...local].sort(
+              (left, right) => right.updatedAt - left.updatedAt
+            )
+          )
+        })
+        .catch(() => {
+          if (active) {
+            notify({
+              tone: 'error',
+              message: '远程通道会话刷新失败',
+              dedupeKey: 'remote-conversation-refresh'
+            })
+          }
+        })
+    })
+    return () => {
+      active = false
+      remove()
+    }
+  }, [conversationStoreReady])
 
   useEffect(() => {
     saveActivityRecords(activityRecords)
@@ -3086,6 +3217,13 @@ function App(): React.JSX.Element {
     if (!prompt || !activeConversation) {
       return
     }
+    if (activeConversation.remote) {
+      notify({
+        tone: 'info',
+        message: '远程通道会话只能从对应消息应用继续发起'
+      })
+      return
+    }
     if (!runtime) {
       notify({
         tone: 'info',
@@ -3673,6 +3811,14 @@ function App(): React.JSX.Element {
       }
     }
     setActiveId(conversationId)
+    setUnreadConversationIds((current) => {
+      if (!current.has(conversationId)) {
+        return current
+      }
+      const next = new Set(current)
+      next.delete(conversationId)
+      return next
+    })
     setView('chat')
   }
 
@@ -3791,6 +3937,18 @@ function App(): React.JSX.Element {
           </button>
           <button
             className={
+              view === 'magic-notes'
+                ? 'nav-item nav-item--active'
+                : 'nav-item'
+            }
+            onClick={() => setView('magic-notes')}
+            type="button"
+          >
+            <Sparkles size={17} />
+            <span>魔法笔记</span>
+          </button>
+          <button
+            className={
               view === 'knowledge'
                 ? 'nav-item nav-item--active'
                 : 'nav-item'
@@ -3856,10 +4014,36 @@ function App(): React.JSX.Element {
                   onClick={() => {
                     setConversationActionsId('')
                     setActiveId(conversation.id)
+                    setUnreadConversationIds((current) => {
+                      if (!current.has(conversation.id)) {
+                        return current
+                      }
+                      const next = new Set(current)
+                      next.delete(conversation.id)
+                      return next
+                    })
                     setView('chat')
                   }}
                 >
-                  <span>{conversation.title}</span>
+                  <span>
+                    {conversation.remote && (
+                      <b className="conversation-source-badge">
+                        {
+                          projectChannelLabels[
+                            conversation.remote.channel
+                          ]
+                        }
+                      </b>
+                    )}
+                    {conversation.title}
+                    {unreadConversationIds.has(conversation.id) && (
+                      <i
+                        aria-label="未读"
+                        className="conversation-unread"
+                        title="未读远程消息"
+                      />
+                    )}
+                  </span>
                   <small>{formatTime(conversation.updatedAt)}</small>
                 </button>
                 <button
@@ -3891,14 +4075,16 @@ function App(): React.JSX.Element {
                 >
                   <MoreHorizontal size={14} />
                 </button>
-                <button
-                  aria-label={`删除对话 ${conversation.title}`}
-                  className="conversation-delete"
-                  onClick={() => deleteConversation(conversation.id)}
-                  type="button"
-                >
-                  <Trash2 size={14} />
-                </button>
+                {!conversation.remote && (
+                  <button
+                    aria-label={`删除对话 ${conversation.title}`}
+                    className="conversation-delete"
+                    onClick={() => deleteConversation(conversation.id)}
+                    type="button"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </div>
               {conversationActionsId === conversation.id && (
                 <div
@@ -3906,16 +4092,18 @@ function App(): React.JSX.Element {
                   className="conversation-actions"
                   id={`conversation-actions-${conversation.id}`}
                 >
-                  <button
-                    onClick={() => {
-                      setConversationActionsId('')
-                      setRenamingConversationId(conversation.id)
-                    }}
-                    type="button"
-                  >
-                    <Edit3 size={14} />
-                    重命名会话
-                  </button>
+                  {!conversation.remote && (
+                    <button
+                      onClick={() => {
+                        setConversationActionsId('')
+                        setRenamingConversationId(conversation.id)
+                      }}
+                      type="button"
+                    >
+                      <Edit3 size={14} />
+                      重命名会话
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setConversationActionsId('')
@@ -3941,7 +4129,8 @@ function App(): React.JSX.Element {
                   </button>
                 </div>
               )}
-              {renamingConversationId === conversation.id && (
+              {!conversation.remote &&
+                renamingConversationId === conversation.id && (
                 <form
                   className="conversation-rename"
                   onSubmit={(event) => {
@@ -3985,7 +4174,7 @@ function App(): React.JSX.Element {
                     <X size={14} />
                   </button>
                 </form>
-              )}
+                )}
             </div>
           ))}
           {filteredConversations.length === 0 && (
@@ -4026,6 +4215,15 @@ function App(): React.JSX.Element {
                 title={activeConversation?.title}
               >
                 <span>{activeConversation?.title ?? '新对话'}</span>
+                {activeConversation?.remote && (
+                  <b className="conversation-source-badge">
+                    {
+                      projectChannelLabels[
+                        activeConversation.remote.channel
+                      ]
+                    }
+                  </b>
+                )}
               </div>
               <ScopeBadge
                 scope={
@@ -4624,6 +4822,24 @@ function App(): React.JSX.Element {
             </section>
 
             <footer className="composer-wrap">
+          {activeConversation?.remote ? (
+            <div className="remote-conversation-notice">
+              <MessageSquare aria-hidden="true" size={18} />
+              <div>
+                <strong>远程通道会话</strong>
+                <span>
+                  请从
+                  {
+                    projectChannelLabels[
+                      activeConversation.remote.channel
+                    ]
+                  }
+                  继续发送消息。本窗口用于查看历史与审批执行。
+                </span>
+              </div>
+            </div>
+          ) : (
+          <>
           <div className="composer">
             {attachments.length > 0 && (
               <div className="context-list">
@@ -5068,7 +5284,18 @@ function App(): React.JSX.Element {
                     : 'Execute 模式：已启用工具自动授权，调用仍会记录到活动。')}
             {appInfo?.shortcut && ` 快捷唤起：${appInfo.shortcut}`}
           </p>
+          </>
+          )}
             </footer>
+          </PageShell>
+        ) : view === 'magic-notes' ? (
+          <PageShell variant="master-detail">
+            <MagicNotesWorkspace
+              key={activeProject?.id ?? 'global'}
+              onNotify={notify}
+              projectId={activeProject?.id}
+              projectName={activeProject?.name}
+            />
           </PageShell>
         ) : view === 'knowledge' ? (
           <PageShell variant="master-detail">
@@ -5283,6 +5510,7 @@ function App(): React.JSX.Element {
         dispatch={notify}
         notifications={notifications}
       />
+      <RemoteChannelApprovalDialog />
       {imageViewerItem && (
         <div
           className="image-viewer-backdrop"

@@ -58,6 +58,25 @@ Keep Electron security boundaries intact:
 - Keep UI accessible with labels, keyboard behavior, semantic roles, and visible
   focus states.
 
+## UI Consistency
+
+- Reuse the shared `PageTabs` and `SegmentedControl` primitives instead of
+  creating page-specific tab or toggle styles. A semantic tab set may use the
+  shared segmented visual variant, but it must retain `tablist`, `tab`,
+  `tabpanel`, `aria-selected`, roving focus, and arrow-key behavior.
+- Use the bundled `Inter Variable` and `Noto Sans SC Variable` UI fonts through
+  the shared typography tokens. Do not add remote font requests or page-local
+  font stacks. Keep redistributed font licenses in packaged resources and
+  retain system fallbacks for startup and unsupported glyphs.
+- Route transient success and informational feedback, plus asynchronous errors
+  that are not tied to one field, through the application notification
+  viewport. Do not render page-local copies of the same notification pattern.
+- Keep inline feedback only when it must remain attached to its context, such
+  as field validation, destructive confirmation, operation progress, a
+  blocking page state, or an error with an immediate local recovery action.
+- Do not show the same event both inline and as an application notification.
+  Preserve user input and actionable error context when an operation fails.
+
 ## Release Packaging
 
 - `.github/workflows/packages.yml` is the canonical cross-platform packaging

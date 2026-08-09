@@ -3,6 +3,7 @@ import {
   WECHAT_SIDECAR_MAX_QR_PAYLOAD_LENGTH,
   WECHAT_SIDECAR_MAX_TEXT_LENGTH,
   WechatQrStateMachine,
+  wechatSidecarCommandSchema,
   wechatSidecarMessageSchema
 } from './wechat-sidecar-protocol'
 
@@ -42,7 +43,7 @@ describe('wechatSidecarMessageSchema', () => {
     ).toMatchObject({ eventId: 'event-1', text: '你好' })
 
     expect(
-      wechatSidecarMessageSchema.parse({
+      wechatSidecarCommandSchema.parse({
         type: 'reply',
         replyId: 'reply-1',
         inReplyToEventId: 'event-1',
@@ -52,6 +53,18 @@ describe('wechatSidecarMessageSchema', () => {
     ).toMatchObject({
       replyId: 'reply-1',
       inReplyToEventId: 'event-1'
+    })
+
+    expect(
+      wechatSidecarMessageSchema.parse({
+        type: 'reply_result',
+        replyId: 'reply-1',
+        ok: true
+      })
+    ).toEqual({
+      type: 'reply_result',
+      replyId: 'reply-1',
+      ok: true
     })
   })
 

@@ -17,6 +17,8 @@ export function trapTabFocus(
   const focusable =
     container.querySelectorAll<HTMLElement>(focusableSelector)
   if (focusable.length === 0) {
+    event.preventDefault()
+    container.focus()
     return
   }
   const first = focusable[0]!

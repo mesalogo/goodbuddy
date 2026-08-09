@@ -74,7 +74,10 @@ export interface Outbox {
   enqueue(message: ChannelResultMessage): OutboxEntry | Promise<OutboxEntry>
   markDelivered(id: string): void | Promise<void>
   markFailed(id: string): void | Promise<void>
-  listUndelivered(): readonly OutboxEntry[] | Promise<readonly OutboxEntry[]>
+  listUndelivered(
+    channel?: string,
+    limit?: number
+  ): readonly OutboxEntry[] | Promise<readonly OutboxEntry[]>
 }
 
 export class MemoryOutbox implements Outbox {
@@ -117,9 +120,22 @@ export class MemoryOutbox implements Outbox {
     entry.attempts += 1
   }
 
-  listUndelivered(): readonly OutboxEntry[] {
+  listUndelivered(
+    channel?: string,
+    limit = this.maximumEntries
+  ): readonly OutboxEntry[] {
     return [...this.entries.values()]
-      .filter((entry) => entry.state !== 'delivered')
+      .filter(
+        (entry) =>
+          entry.state !== 'delivered' &&
+          (channel === undefined || entry.message.channel === channel)
+      )
+      .sort(
+        (left, right) =>
+          left.attempts - right.attempts ||
+          left.createdAt - right.createdAt
+      )
+      .slice(0, limit)
       .map((entry) => this.clone(entry))
   }
 
@@ -146,7 +162,12 @@ export class MemoryOutbox implements Outbox {
 
 export type ChannelExecutor = (
   message: ChannelInboundText,
-  signal: AbortSignal
+  signal: AbortSignal,
+  reportProgress: (result: {
+    status: string
+    output?: string
+    error?: string
+  }) => Promise<void>
 ) => Promise<{
   status: string
   output?: string

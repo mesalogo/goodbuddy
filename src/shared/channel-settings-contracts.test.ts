@@ -11,6 +11,9 @@ describe('channel settings contracts', () => {
   it('accepts bounded strict WeCom and DingTalk updates', () => {
     expect(
       channelSettingsApplySchema.parse({
+        weixin: {
+          enabled: false
+        },
         wecom: {
           enabled: true,
           botId: ' bot-id ',
@@ -27,6 +30,9 @@ describe('channel settings contracts', () => {
         }
       })
     ).toEqual({
+      weixin: {
+        enabled: false
+      },
       wecom: {
         enabled: true,
         botId: 'bot-id',
@@ -69,6 +75,13 @@ describe('channel settings contracts', () => {
 
   it('models public credential source and runtime status without secrets', () => {
     const snapshot = channelSettingsSnapshotSchema.parse({
+      weixin: {
+        enabled: true,
+        bindingConfigured: true,
+        source: 'encrypted',
+        accountDisplay: '微信用户 ****1234',
+        status: { state: 'running' }
+      },
       wecom: {
         enabled: true,
         botId: 'bot-id',

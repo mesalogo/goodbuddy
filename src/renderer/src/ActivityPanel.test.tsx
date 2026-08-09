@@ -178,6 +178,34 @@ describe('ActivityPanel', () => {
     expect(within(item).getByText('进行中')).toBeInTheDocument()
   })
 
+  it('groups activity by conversation in collapsible sections', () => {
+    const first = makeRecord(1)
+    const second = {
+      ...makeRecord(2),
+      conversationId: first.conversationId
+    }
+    const { container } = render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[first, second]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    const groups =
+      container.querySelectorAll<HTMLDetailsElement>(
+        'details.activity-group'
+      )
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).not.toHaveAttribute('open')
+    expect(within(groups[0]!).getByText('2 条活动')).toBeInTheDocument()
+
+    fireEvent.click(within(groups[0]!).getByText('对话：活动 1'))
+    expect(groups[0]).toHaveAttribute('open')
+    expect(groups[0]!.querySelectorAll('article')).toHaveLength(2)
+  })
+
   it('uses the shared page hierarchy and explicit global scope', () => {
     render(
       <ActivityPanel

@@ -96,7 +96,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 8', async () => {
+  it('migrates existing databases to schema version 15', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -124,7 +124,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(8)
+    ).toBe(15)
     expect(
       current
         .prepare(
@@ -164,6 +164,28 @@ describe('AssistantDatabase', () => {
       { name: 'messages_state_idx' },
       { name: 'tasks_status_idx' }
     ])
+    expect(
+      (
+        current.prepare('PRAGMA table_info(tasks)').all() as Array<{
+          name: string
+        }>
+      ).some((column) => column.name === 'visible')
+    ).toBe(true)
+    expect(
+      (
+        current
+          .prepare('PRAGMA table_info(magic_note_entries)')
+          .all() as Array<{ name: string }>
+      ).some((column) => column.name === 'image_bytes')
+    ).toBe(true)
+    expect(
+      current
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table' AND name = 'magic_todos'`
+        )
+        .get()
+    ).toEqual({ name: 'magic_todos' })
     current.close()
   })
 
@@ -197,7 +219,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(8)
+    ).toBe(15)
     expect(
       current
         .prepare(
@@ -235,6 +257,52 @@ describe('AssistantDatabase', () => {
     current.close()
   })
 
+  it('backfills checklist todos when migrating existing magic notes', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-magic-todo-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const project = initial.listProjects()[0]!
+    const note = initial.createMagicNote({
+      projectId: project.id,
+      title: '迁移笔记'
+    })
+    initial.createMagicNoteEntry({
+      noteId: note.id,
+      content: {
+        version: 1,
+        ops: [
+          { insert: '迁移待办' },
+          { insert: '\n', attributes: { list: 'unchecked' } }
+        ]
+      },
+      plainText: '迁移待办'
+    })
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DELETE FROM magic_todos;
+      PRAGMA user_version = 9;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(migrated.listMagicTodos(project.id)).toEqual([
+      expect.objectContaining({
+        noteId: note.id,
+        source: 'note',
+        title: '迁移待办',
+        completed: false
+      })
+    ])
+    migrated.close()
+  })
+
   it('creates a default project and persists project updates', async () => {
     const database = await createDatabase()
     const [defaultProject] = database.listProjects()
@@ -264,7 +332,6 @@ describe('AssistantDatabase', () => {
       name: '产品发布 2',
       defaultWorkMode: 'execute'
     })
-
     database.setProjectArchived(project.id, true)
     expect(database.listProjects()).toHaveLength(1)
     expect(database.listProjects(true)).toEqual(
@@ -276,6 +343,179 @@ describe('AssistantDatabase', () => {
       ])
     )
     database.close()
+  })
+
+  it('idempotently creates protected channel projects by channel identity', async () => {
+    const database = await createDatabase()
+    const sameName = database.createProject({
+      name: '微信 ClawBot',
+      description: '普通同名项目',
+      rootPath: 'C:\\Ordinary',
+      defaultWorkMode: 'execute'
+    })
+
+    const first = database.ensureChannelProjects('C:\\Users\\test')
+    const second = database.ensureChannelProjects('C:\\Ignored')
+
+    expect(first).toEqual([
+      expect.objectContaining({
+        name: '微信 ClawBot',
+        rootPath: 'C:\\Users\\test',
+        defaultWorkMode: 'ask',
+        kind: 'channel',
+        channel: 'weixin'
+      }),
+      expect.objectContaining({
+        kind: 'channel',
+        channel: 'wecom'
+      }),
+      expect.objectContaining({
+        kind: 'channel',
+        channel: 'dingtalk'
+      })
+    ])
+    expect(second.map((project) => project.id)).toEqual(
+      first.map((project) => project.id)
+    )
+    expect(database.getProject(sameName.id)).toMatchObject({
+      kind: 'user',
+      channel: undefined,
+      rootPath: 'C:\\Ordinary'
+    })
+
+    const weixin = first[0]!
+    const updated = database.updateProject(weixin.id, {
+      name: '不可重命名',
+      description: '更新后的通道说明',
+      rootPath: 'C:\\Remote',
+      defaultWorkMode: 'execute'
+    })
+    expect(updated).toMatchObject({
+      name: '微信 ClawBot',
+      description: '更新后的通道说明',
+      rootPath: 'C:\\Remote',
+      defaultWorkMode: 'execute'
+    })
+    expect(() =>
+      database.updateProject(weixin.id, {
+        name: weixin.name,
+        description: weixin.description,
+        rootPath: '  ',
+        defaultWorkMode: 'execute'
+      })
+    ).toThrow('通道项目必须设置默认工作目录')
+    expect(() =>
+      database.setProjectArchived(weixin.id, true)
+    ).toThrow('系统通道项目不能归档')
+    expect(() =>
+      database.deleteProject(weixin.id, weixin.name)
+    ).toThrow('系统通道项目不能删除')
+    database.close()
+  })
+
+  it('persists one protected remote conversation per channel identity', async () => {
+    const database = await createDatabase()
+    const project = database.ensureChannelProjects(
+      'C:\\Users\\test'
+    )[0]!
+    const first = database.getOrCreateRemoteConversation({
+      projectId: project.id,
+      channel: 'weixin',
+      accountId: 'default',
+      externalConversationId: 'remote-user-1',
+      conversationType: 'direct',
+      title: '微信 ClawBot · ****0001',
+      accountDisplay: '发送者 ****0001'
+    })
+    const second = database.getOrCreateRemoteConversation({
+      projectId: project.id,
+      channel: 'weixin',
+      accountId: 'default',
+      externalConversationId: 'remote-user-1',
+      conversationType: 'direct',
+      title: '微信 ClawBot · ****0001',
+      accountDisplay: '发送者 ****0001'
+    })
+    expect(second.id).toBe(first.id)
+
+    database.appendRemoteConversationMessage({
+      conversationId: first.id,
+      role: 'user',
+      content: '请分析状态',
+      status: '微信 ClawBot · 对话'
+    })
+    database.appendRemoteConversationMessage({
+      conversationId: first.id,
+      role: 'assistant',
+      content: '状态正常',
+      status: '微信 ClawBot · 已完成'
+    })
+    expect(database.getConversation(first.id)).toMatchObject({
+      projectId: project.id,
+      remote: {
+        channel: 'weixin',
+        accountDisplay: '发送者 ****0001',
+        conversationType: 'direct'
+      },
+      messages: [
+        {
+          role: 'user',
+          content: '请分析状态',
+          status: '微信 ClawBot · 对话'
+        },
+        {
+          role: 'assistant',
+          content: '状态正常',
+          status: '微信 ClawBot · 已完成'
+        }
+      ]
+    })
+
+    database.replaceConversations([])
+    expect(database.getConversation(first.id).remote?.channel).toBe(
+      'weixin'
+    )
+    database.close()
+  })
+
+  it('persists remote event deduplication and failed reply outbox state', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-channel-state-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    expect(database.claimChannelEvent('weixin', 'event-1')).toBe(true)
+    expect(database.claimChannelEvent('weixin', 'event-1')).toBe(false)
+    expect(database.claimChannelEvent('dingtalk', 'event-1')).toBe(true)
+
+    const entry = database.enqueueChannelResult({
+      channel: 'weixin',
+      eventId: 'event-1',
+      conversationId: 'conversation-1',
+      recipientId: 'sender-1',
+      status: 'completed',
+      output: '已完成'
+    })
+    database.markChannelResult(entry.id, 'failed')
+    expect(database.listUndeliveredChannelResults()).toEqual([
+      {
+        ...entry,
+        state: 'failed',
+        attempts: 1
+      }
+    ])
+    database.markChannelResult(entry.id, 'delivered')
+    expect(database.listUndeliveredChannelResults()).toEqual([])
+    database.close()
+
+    const reopened = new AssistantDatabase(databasePath)
+    reopened.initialize('C:\\Workspace')
+    expect(reopened.claimChannelEvent('weixin', 'event-1')).toBe(
+      false
+    )
+    reopened.close()
   })
 
   it('safely deletes a confirmed project and its scoped data', async () => {
@@ -1347,6 +1587,202 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it('persists scoped magic notes and AI comments without todo proposals', async () => {
+    const database = await createDatabase()
+    const project = database.listProjects()[0]!
+    const globalNote = database.createMagicNote({
+      title: '全局笔记'
+    })
+    const projectNote = database.createMagicNote({
+      projectId: project.id,
+      title: '项目笔记'
+    })
+
+    expect(database.listMagicNotes()).toEqual([
+      expect.objectContaining({ id: globalNote.id, title: '全局笔记' })
+    ])
+    expect(database.listMagicNotes(project.id)).toEqual([
+      expect.objectContaining({ id: projectNote.id, title: '项目笔记' })
+    ])
+
+    const withEntry = database.createMagicNoteEntry({
+      noteId: projectNote.id,
+      content: {
+        version: 1,
+        ops: [
+          { insert: '整理发布清单', attributes: { bold: true } },
+          { insert: '\n' }
+        ]
+      },
+      plainText: '整理发布清单'
+    })
+    const entry = withEntry.entries[0]!
+    expect(withEntry).toMatchObject({
+      entryCount: 1,
+      preview: '整理发布清单'
+    })
+
+    const analyzed = database.saveMagicNoteAnalysis({
+      entryId: entry.id,
+      expectedRevision: entry.revision,
+      comments: [
+        {
+          id: '00000000-0000-4000-8000-000000000401',
+          kind: 'suggestion',
+          content: '可以拆成可检查的发布步骤。'
+        }
+      ]
+    })
+    expect(analyzed.entries[0]!.comments).toEqual([
+      expect.objectContaining({
+        kind: 'suggestion',
+        content: '可以拆成可检查的发布步骤。'
+      })
+    ])
+    expect(database.listTasks()).toEqual([])
+    database.close()
+  })
+
+  it('synchronizes note checklists and standalone magic todos bidirectionally', async () => {
+    const database = await createDatabase()
+    const project = database.listProjects()[0]!
+    const note = database.createMagicNote({
+      projectId: project.id,
+      title: '发布笔记'
+    })
+    const withEntry = database.createMagicNoteEntry({
+      noteId: note.id,
+      content: {
+        version: 1,
+        ops: [
+          { insert: '核对发布材料' },
+          { insert: '\n', attributes: { list: 'unchecked' } },
+          { insert: '上传构建产物' },
+          { insert: '\n', attributes: { list: 'checked' } }
+        ]
+      },
+      plainText: '核对发布材料\n上传构建产物'
+    })
+    const entry = withEntry.entries[0]!
+
+    const noteTodos = database.listMagicTodos(project.id)
+    expect(noteTodos).toEqual([
+      expect.objectContaining({
+        noteId: note.id,
+        entryId: entry.id,
+        source: 'note',
+        title: '核对发布材料',
+        completed: false
+      }),
+      expect.objectContaining({
+        source: 'note',
+        title: '上传构建产物',
+        completed: true
+      })
+    ])
+
+    const completed = database.updateMagicTodo({
+      todoId: noteTodos[0]!.id,
+      completed: true,
+      expectedRevision: noteTodos[0]!.revision
+    })
+    expect(completed.completed).toBe(true)
+    expect(database.getMagicNote(note.id).entries[0]!.content.ops).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          insert: '\n',
+          attributes: expect.objectContaining({ list: 'checked' })
+        })
+      ])
+    )
+
+    const updatedEntry = database.getMagicNote(note.id).entries[0]!
+    database.updateMagicNoteEntry({
+      entryId: entry.id,
+      expectedRevision: updatedEntry.revision,
+      content: {
+        version: 1,
+        ops: [
+          { insert: '新增首项' },
+          { insert: '\n', attributes: { list: 'unchecked' } },
+          { insert: '上传构建产物' },
+          { insert: '\n', attributes: { list: 'unchecked' } },
+          { insert: '核对发布材料' },
+          { insert: '\n', attributes: { list: 'checked' } }
+        ]
+      },
+      plainText: '新增首项\n上传构建产物\n核对发布材料'
+    })
+    const reordered = database.listMagicTodos(project.id)
+    expect(
+      reordered.find((todo) => todo.title === '核对发布材料')
+    ).toMatchObject({
+      id: noteTodos[0]!.id,
+      completed: true,
+      sourceIndex: 2
+    })
+    expect(
+      reordered.find((todo) => todo.title === '上传构建产物')
+    ).toMatchObject({
+      id: noteTodos[1]!.id,
+      completed: false,
+      sourceIndex: 1
+    })
+
+    const manual = database.createMagicTodo({
+      projectId: project.id,
+      title: '手动待办',
+      instructions: '补充验收说明'
+    })
+    expect(manual).toMatchObject({
+      source: 'manual',
+      completed: false,
+      title: '手动待办'
+    })
+    const edited = database.updateMagicTodo({
+      todoId: manual.id,
+      title: '更新后的手动待办',
+      instructions: '新的说明',
+      expectedRevision: manual.revision
+    })
+    expect(edited).toMatchObject({
+      title: '更新后的手动待办',
+      instructions: '新的说明'
+    })
+    database.deleteMagicTodo(edited.id)
+    expect(
+      database.listMagicTodos(project.id).some((todo) => todo.id === edited.id)
+    ).toBe(false)
+    database.close()
+  })
+
+  it('protects magic note records from stale revisions', async () => {
+    const database = await createDatabase()
+    const note = database.createMagicNote({ title: '并发笔记' })
+    const withEntry = database.createMagicNoteEntry({
+      noteId: note.id,
+      content: { version: 1, ops: [{ insert: '初始内容\n' }] },
+      plainText: '初始内容'
+    })
+    const entry = withEntry.entries[0]!
+
+    database.updateMagicNoteEntry({
+      entryId: entry.id,
+      expectedRevision: entry.revision,
+      content: { version: 1, ops: [{ insert: '新内容\n' }] },
+      plainText: '新内容'
+    })
+    expect(() =>
+      database.updateMagicNoteEntry({
+        entryId: entry.id,
+        expectedRevision: entry.revision,
+        content: { version: 1, ops: [{ insert: '过期内容\n' }] },
+        plainText: '过期内容'
+      })
+    ).toThrow('记录已被更新')
+    database.close()
+  })
+
   it('clears private assistant content while preserving workspace configuration', async () => {
     const database = await createDatabase()
     const project = database.listProjects()[0]!
@@ -1395,6 +1831,10 @@ describe('AssistantDatabase', () => {
       cacheRead: 2,
       cacheWrite: 1
     })
+    database.createMagicNote({
+      projectId: project.id,
+      title: '待清除笔记'
+    })
     expect(database.getTokenUsageSummary().totals.totalTokens).toBe(15)
 
     database.clearAssistantData()
@@ -1406,6 +1846,7 @@ describe('AssistantDatabase', () => {
     expect(database.listHeartbeatConfigs(project.id)).toEqual([])
     expect(database.listTasks()).toEqual([])
     expect(database.listArtifacts(project.id)).toEqual([])
+    expect(database.listMagicNotes(project.id)).toEqual([])
     expect(database.getTokenUsageSummary()).toEqual({
       totals: {
         callCount: 0,

@@ -82,9 +82,13 @@ function managerHarness(
       const record: ServiceRecord = {
         settings,
         start: vi.fn(async () => {
-          if (settings.secret === failSecret) {
+          const secret =
+            settings.channel === 'weixin'
+              ? settings.token
+              : settings.secret
+          if (secret === failSecret) {
             throw new Error(
-              `Authorization secret=${settings.secret} connection failed`
+              `Authorization secret=${secret} connection failed`
             )
           }
         }),

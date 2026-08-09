@@ -19,6 +19,7 @@ import type {
   HeartbeatUpdateInput,
   MemoryCreateInput,
   ModelUsageCallInput,
+  ProjectChannel,
   ProjectCreateInput,
   ScheduleCreateInput,
   TokenUsageRecord,
@@ -31,12 +32,31 @@ import {
   type ComputerControlRisk
 } from '../../shared/computer-control-contracts'
 import {
+  channelResultMessageSchema,
+  type ChannelResultMessage
+} from '../../shared/channel-contracts'
+import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
   repairAgentRuntimeSelection,
   type RuntimeSelectionRepairSettings
 } from '../../shared/runtime-selection-contracts'
+import {
+  MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES,
+  type MagicNoteComment,
+  type MagicNoteDetail,
+  type MagicNoteEntry,
+  type MagicNoteRichContent,
+  type MagicNoteSummary,
+  type MagicTodoItem
+} from '../../shared/magic-notes-contracts'
 import type { ComputerControlAuditEvent } from '../computer-control/audit'
+import {
+  magicNoteChecklistItems,
+  magicNoteImageBytes,
+  magicNotePreview,
+  setMagicNoteChecklistCompletion
+} from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
 type ProjectRow = {
@@ -45,6 +65,8 @@ type ProjectRow = {
   description: string
   root_path: string
   default_work_mode: ProjectCreateInput['defaultWorkMode']
+  kind: AssistantProject['kind']
+  channel: ProjectChannel | null
   status: AssistantProject['status']
   created_at: string
   updated_at: string
@@ -73,6 +95,11 @@ type ConversationRow = {
   project_id: string | null
   runtime_selection_json: string | null
   title: string
+  channel: ProjectChannel | null
+  external_account_id: string | null
+  external_conversation_id: string | null
+  conversation_type: 'direct' | 'group' | null
+  account_display: string | null
   updated_at: string
 }
 
@@ -84,6 +111,48 @@ type MessageRow = {
   state: ConversationSnapshot['messages'][number]['state']
   metadata_json: string
   created_at: string
+}
+
+type MagicNoteRow = {
+  id: string
+  project_id: string | null
+  title: string
+  pinned: number
+  revision: number
+  created_at: string
+  updated_at: string
+  entry_count: number
+  latest_plain_text: string | null
+}
+
+type MagicNoteEntryRow = {
+  id: string
+  note_id: string
+  content_json: string
+  plain_text: string
+  comments_json: string
+  analyzed_at: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+type MagicTodoRow = {
+  id: string
+  project_id: string | null
+  note_id: string | null
+  entry_id: string | null
+  note_title: string | null
+  source_index: number | null
+  source: MagicTodoItem['source']
+  title: string
+  instructions: string
+  completed: number
+  comments_json: string
+  analyzed_at: string | null
+  revision: number
+  created_at: string
+  updated_at: string
 }
 
 type MessageMetadata = {
@@ -285,6 +354,8 @@ function toProject(row: ProjectRow): AssistantProject {
     description: row.description,
     rootPath: row.root_path,
     defaultWorkMode: row.default_work_mode,
+    kind: row.kind,
+    channel: row.channel ?? undefined,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -308,6 +379,54 @@ function toTask(row: TaskRow): AssistantTask {
     startedAt: row.started_at ?? undefined,
     completedAt: row.completed_at ?? undefined,
     error: row.error ?? undefined
+  }
+}
+
+function toMagicNoteEntry(row: MagicNoteEntryRow): MagicNoteEntry {
+  return {
+    id: row.id,
+    noteId: row.note_id,
+    content: JSON.parse(row.content_json) as MagicNoteRichContent,
+    plainText: row.plain_text,
+    comments: JSON.parse(row.comments_json) as MagicNoteComment[],
+    analyzedAt: row.analyzed_at ?? undefined,
+    revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function toMagicTodo(row: MagicTodoRow): MagicTodoItem {
+  return {
+    id: row.id,
+    projectId: row.project_id ?? undefined,
+    noteId: row.note_id ?? undefined,
+    entryId: row.entry_id ?? undefined,
+    noteTitle: row.note_title ?? undefined,
+    sourceIndex: row.source_index ?? undefined,
+    source: row.source,
+    title: row.title,
+    instructions: row.instructions,
+    completed: row.completed === 1,
+    comments: JSON.parse(row.comments_json) as MagicNoteComment[],
+    analyzedAt: row.analyzed_at ?? undefined,
+    revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function toMagicNoteSummary(row: MagicNoteRow): MagicNoteSummary {
+  return {
+    id: row.id,
+    projectId: row.project_id ?? undefined,
+    title: row.title,
+    preview: magicNotePreview(row.latest_plain_text ?? ''),
+    entryCount: row.entry_count,
+    pinned: row.pinned === 1,
+    revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 
@@ -597,6 +716,8 @@ function interruptActiveToolBlocks(
 
 export class AssistantDatabase {
   private database?: DatabaseSync
+  private channelEventWrites = 0
+  private channelOutboxWrites = 0
 
   constructor(private readonly databasePath: string) {}
 
@@ -616,6 +737,16 @@ export class AssistantDatabase {
       `)
       this.migrate(database)
       this.database = database
+      this.channelEventWrites = (
+        database
+          .prepare('SELECT COUNT(*) AS count FROM channel_events')
+          .get() as { count: number }
+      ).count % 128
+      this.channelOutboxWrites = (
+        database
+          .prepare('SELECT COUNT(*) AS count FROM channel_outbox')
+          .get() as { count: number }
+      ).count % 128
       const count = database
         .prepare('SELECT COUNT(*) AS count FROM projects')
         .get() as { count: number }
@@ -776,6 +907,9 @@ export class AssistantDatabase {
     database.exec('BEGIN IMMEDIATE')
     try {
       for (const table of [
+        'magic_todos',
+        'magic_note_entries',
+        'magic_notes',
         'heartbeat_configs',
         'delegation_outbox',
         'delegations',
@@ -788,6 +922,8 @@ export class AssistantDatabase {
         'task_events',
         'runs',
         'model_usage_calls',
+        'channel_outbox',
+        'channel_events',
         'tasks',
         'messages',
         'conversations'
@@ -816,6 +952,71 @@ export class AssistantDatabase {
     return rows.map(toProject)
   }
 
+  ensureChannelProjects(defaultRootPath: string): AssistantProject[] {
+    const database = this.requireDatabase()
+    const definitions: ReadonlyArray<{
+      channel: ProjectChannel
+      name: string
+      description: string
+    }> = [
+      {
+        channel: 'weixin',
+        name: '微信 ClawBot',
+        description: '个人微信远程消息与受控任务'
+      },
+      {
+        channel: 'wecom',
+        name: '企业微信',
+        description: '企业微信远程消息与受控任务'
+      },
+      {
+        channel: 'dingtalk',
+        name: '钉钉',
+        description: '钉钉远程消息与受控任务'
+      }
+    ]
+    const find = database.prepare(
+      'SELECT * FROM projects WHERE channel = ?'
+    )
+    const insert = database.prepare(
+      `INSERT INTO projects
+        (id, name, description, root_path, default_work_mode, kind,
+         channel, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'ask', 'channel', ?, 'active', ?, ?)`
+    )
+
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const definition of definitions) {
+        if (find.get(definition.channel)) {
+          continue
+        }
+        const now = new Date().toISOString()
+        insert.run(
+          randomUUID(),
+          definition.name,
+          definition.description,
+          defaultRootPath,
+          definition.channel,
+          now,
+          now
+        )
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+
+    return definitions.map((definition) => {
+      const row = find.get(definition.channel) as ProjectRow | undefined
+      if (!row) {
+        throw new Error(`未能创建${definition.name}通道项目`)
+      }
+      return toProject(row)
+    })
+  }
+
   createProject(input: ProjectCreateInput): AssistantProject {
     const database = this.requireDatabase()
     const id = randomUUID()
@@ -823,9 +1024,9 @@ export class AssistantDatabase {
     database
       .prepare(
         `INSERT INTO projects
-          (id, name, description, root_path, default_work_mode, status,
-           created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
+          (id, name, description, root_path, default_work_mode, kind,
+           channel, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'user', NULL, 'active', ?, ?)`
       )
       .run(
         id,
@@ -844,6 +1045,13 @@ export class AssistantDatabase {
     input: ProjectCreateInput
   ): AssistantProject {
     const database = this.requireDatabase()
+    const current = this.getProject(projectId)
+    if (
+      current.kind === 'channel' &&
+      input.rootPath.trim().length === 0
+    ) {
+      throw new Error('通道项目必须设置默认工作目录')
+    }
     const result = database
       .prepare(
         `UPDATE projects
@@ -852,7 +1060,7 @@ export class AssistantDatabase {
          WHERE id = ?`
       )
       .run(
-        input.name,
+        current.kind === 'channel' ? current.name : input.name,
         input.description,
         input.rootPath,
         input.defaultWorkMode,
@@ -867,6 +1075,9 @@ export class AssistantDatabase {
 
   setProjectArchived(projectId: string, archived: boolean): void {
     const database = this.requireDatabase()
+    if (this.getProject(projectId).kind === 'channel') {
+      throw new Error('系统通道项目不能归档')
+    }
     const result = database
       .prepare(
         `UPDATE projects
@@ -888,12 +1099,19 @@ export class AssistantDatabase {
     database.exec('BEGIN IMMEDIATE')
     try {
       const project = database
-        .prepare('SELECT name, status FROM projects WHERE id = ?')
+        .prepare('SELECT name, kind, status FROM projects WHERE id = ?')
         .get(projectId) as
-        | { name: string; status: AssistantProject['status'] }
+        | {
+            name: string
+            kind: AssistantProject['kind']
+            status: AssistantProject['status']
+          }
         | undefined
       if (!project) {
         throw new Error('项目不存在')
+      }
+      if (project.kind === 'channel') {
+        throw new Error('系统通道项目不能删除')
       }
       if (confirmation !== project.name) {
         throw new Error('项目名称确认不匹配')
@@ -901,7 +1119,7 @@ export class AssistantDatabase {
       const activeProjectCount = database
         .prepare(
           `SELECT COUNT(*) AS count FROM projects
-           WHERE status = 'active'`
+           WHERE kind = 'user' AND status = 'active'`
         )
         .get() as { count: number }
       if (project.status === 'active' && activeProjectCount.count <= 1) {
@@ -911,6 +1129,7 @@ export class AssistantDatabase {
         .prepare(
           `SELECT COUNT(*) AS count FROM tasks
            WHERE project_id = ?
+             AND visible = 1
              AND status IN ('queued', 'running', 'waiting_approval', 'paused')`
         )
         .get(projectId) as { count: number }
@@ -977,7 +1196,9 @@ export class AssistantDatabase {
     const database = this.requireDatabase()
     const conversations = database
       .prepare(
-        `SELECT id, project_id, runtime_selection_json, title, updated_at
+        `SELECT id, project_id, runtime_selection_json, title, channel,
+                external_account_id, external_conversation_id,
+                conversation_type, account_display, updated_at
          FROM conversations
          WHERE status = 'active'
          ORDER BY updated_at DESC
@@ -998,6 +1219,17 @@ export class AssistantDatabase {
       runtimeSelection: parseRuntimeSelection(
         conversation.runtime_selection_json
       ),
+      ...(conversation.channel &&
+      conversation.conversation_type &&
+      conversation.account_display
+        ? {
+            remote: {
+              channel: conversation.channel,
+              accountDisplay: conversation.account_display,
+              conversationType: conversation.conversation_type
+            }
+          }
+        : {}),
       title: conversation.title,
       updatedAt: Date.parse(conversation.updated_at),
       messages: (
@@ -1031,6 +1263,16 @@ export class AssistantDatabase {
         }
       })
     }))
+  }
+
+  getConversation(conversationId: string): ConversationSnapshot {
+    const conversation = this.listConversations().find(
+      (candidate) => candidate.id === conversationId
+    )
+    if (!conversation) {
+      throw new Error('对话不存在')
+    }
+    return conversation
   }
 
   repairConversationRuntimeSelections(
@@ -1086,7 +1328,13 @@ export class AssistantDatabase {
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     try {
-      database.exec('DELETE FROM messages; DELETE FROM conversations;')
+      database.exec(`
+        DELETE FROM messages
+        WHERE conversation_id IN (
+          SELECT id FROM conversations WHERE channel IS NULL
+        );
+        DELETE FROM conversations WHERE channel IS NULL;
+      `)
       const insertConversation = database.prepare(
         `INSERT INTO conversations
           (id, project_id, runtime_selection_json, work_mode, title, status,
@@ -1100,6 +1348,9 @@ export class AssistantDatabase {
          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`
       )
       for (const conversation of conversations.slice(0, 100)) {
+        if (conversation.remote) {
+          continue
+        }
         const updatedAt = new Date(conversation.updatedAt).toISOString()
         insertConversation.run(
           conversation.id,
@@ -1141,6 +1392,755 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+  }
+
+  getOrCreateRemoteConversation(input: {
+    projectId: string
+    channel: ProjectChannel
+    accountId: string
+    externalConversationId: string
+    conversationType: 'direct' | 'group'
+    title: string
+    accountDisplay: string
+  }): ConversationSnapshot {
+    const database = this.requireDatabase()
+    const existing = database
+      .prepare(
+        `SELECT id
+         FROM conversations
+         WHERE channel = ?
+           AND external_account_id = ?
+           AND external_conversation_id = ?`
+      )
+      .get(
+        input.channel,
+        input.accountId,
+        input.externalConversationId
+      ) as { id: string } | undefined
+    if (existing) {
+      database
+        .prepare(
+          `UPDATE conversations
+           SET project_id = ?, title = ?, conversation_type = ?,
+               account_display = ?, status = 'active', updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          input.projectId,
+          input.title,
+          input.conversationType,
+          input.accountDisplay,
+          new Date().toISOString(),
+          existing.id
+        )
+      return this.getConversation(existing.id)
+    }
+
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    database
+      .prepare(
+        `INSERT INTO conversations
+          (id, project_id, runtime_selection_json, work_mode, title, status,
+           channel, external_account_id, external_conversation_id,
+           conversation_type, account_display, created_at, updated_at)
+         VALUES (?, ?, NULL, 'ask', ?, 'active', ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        input.projectId,
+        input.title,
+        input.channel,
+        input.accountId,
+        input.externalConversationId,
+        input.conversationType,
+        input.accountDisplay,
+        now,
+        now
+      )
+    return this.getConversation(id)
+  }
+
+  appendRemoteConversationMessage(input: {
+    conversationId: string
+    role: 'user' | 'assistant'
+    content: string
+    status?: string
+  }): void {
+    const database = this.requireDatabase()
+    const now = Date.now()
+    const sequence = database
+      .prepare(
+        `SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
+         FROM messages
+         WHERE conversation_id = ?`
+      )
+      .get(input.conversationId) as { sequence: number }
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database
+        .prepare(
+          `INSERT INTO messages
+            (id, conversation_id, request_id, role, content, state,
+             sequence, metadata_json, created_at)
+           VALUES (?, ?, NULL, ?, ?, 'complete', ?, ?, ?)`
+        )
+        .run(
+          randomUUID(),
+          input.conversationId,
+          input.role,
+          input.content,
+          sequence.sequence,
+          JSON.stringify({
+            createdAt: now,
+            ...(input.status ? { status: input.status } : {})
+          }),
+          new Date(now).toISOString()
+        )
+      database
+        .prepare(
+          'UPDATE conversations SET updated_at = ? WHERE id = ?'
+        )
+        .run(new Date(now).toISOString(), input.conversationId)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  claimChannelEvent(channel: string, eventId: string): boolean {
+    const database = this.requireDatabase()
+    const result = database
+      .prepare(
+        `INSERT OR IGNORE INTO channel_events
+          (channel, event_id, claimed_at)
+         VALUES (?, ?, ?)`
+      )
+      .run(channel, eventId, Date.now())
+    if (result.changes === 1) {
+      this.channelEventWrites += 1
+      if (this.channelEventWrites % 128 === 0) {
+        database.exec(`
+        DELETE FROM channel_events
+        WHERE rowid IN (
+          SELECT rowid FROM channel_events
+          ORDER BY claimed_at ASC, rowid ASC
+          LIMIT MAX(
+            (SELECT COUNT(*) FROM channel_events) - 10000,
+            0
+          )
+        );
+      `)
+      }
+    }
+    return result.changes === 1
+  }
+
+  releaseChannelEvent(channel: string, eventId: string): void {
+    this.requireDatabase()
+      .prepare(
+        'DELETE FROM channel_events WHERE channel = ? AND event_id = ?'
+      )
+      .run(channel, eventId)
+  }
+
+  enqueueChannelResult(message: ChannelResultMessage): {
+    id: string
+    message: ChannelResultMessage
+    state: 'pending'
+    attempts: number
+    createdAt: number
+  } {
+    const parsed = channelResultMessageSchema.parse(message)
+    const entry = {
+      id: randomUUID(),
+      message: parsed,
+      state: 'pending' as const,
+      attempts: 0,
+      createdAt: Date.now()
+    }
+    this.requireDatabase()
+      .prepare(
+        `INSERT INTO channel_outbox
+          (id, channel, event_id, message_json, state, attempts, created_at)
+         VALUES (?, ?, ?, ?, 'pending', 0, ?)`
+      )
+      .run(
+        entry.id,
+        parsed.channel,
+        parsed.eventId,
+        JSON.stringify(parsed),
+        entry.createdAt
+      )
+    this.channelOutboxWrites += 1
+    if (this.channelOutboxWrites % 128 === 0) {
+      this.requireDatabase().exec(`
+      DELETE FROM channel_outbox
+      WHERE rowid IN (
+        SELECT rowid FROM channel_outbox
+        ORDER BY
+          CASE state WHEN 'delivered' THEN 0 ELSE 1 END,
+          created_at ASC,
+          rowid ASC
+        LIMIT MAX(
+          (SELECT COUNT(*) FROM channel_outbox) - 10000,
+          0
+        )
+      );
+    `)
+    }
+    return structuredClone(entry)
+  }
+
+  markChannelResult(
+    id: string,
+    state: 'delivered' | 'failed'
+  ): void {
+    this.requireDatabase()
+      .prepare(
+        `UPDATE channel_outbox
+         SET state = ?, attempts = attempts + 1
+         WHERE id = ?`
+      )
+      .run(state, id)
+  }
+
+  listUndeliveredChannelResults(
+    channel?: string,
+    limit = 100
+  ): Array<{
+    id: string
+    message: ChannelResultMessage
+    state: 'pending' | 'failed'
+    attempts: number
+    createdAt: number
+  }> {
+    const safeLimit = Math.min(
+      Math.max(Number.isSafeInteger(limit) ? limit : 100, 1),
+      1_000
+    )
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT id, message_json, state, attempts, created_at
+         FROM channel_outbox
+         WHERE state != 'delivered'
+           AND attempts < 5
+           ${channel === undefined ? '' : 'AND channel = ?'}
+         ORDER BY attempts ASC, created_at ASC
+         LIMIT ?`
+      )
+      .all(...(channel === undefined ? [safeLimit] : [channel, safeLimit])) as Array<{
+      id: string
+      message_json: string
+      state: 'pending' | 'failed'
+      attempts: number
+      created_at: number
+    }>
+    return rows.map((row) => ({
+      id: row.id,
+      message: channelResultMessageSchema.parse(
+        JSON.parse(row.message_json)
+      ),
+      state: row.state,
+      attempts: row.attempts,
+      createdAt: row.created_at
+    }))
+  }
+
+  listMagicNotes(projectId?: string): MagicNoteSummary[] {
+    const database = this.requireDatabase()
+    const rows = database
+      .prepare(
+        `SELECT n.*,
+           (SELECT COUNT(*) FROM magic_note_entries e
+            WHERE e.note_id = n.id) AS entry_count,
+           (SELECT plain_text FROM magic_note_entries e
+            WHERE e.note_id = n.id
+            ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
+             AS latest_plain_text
+         FROM magic_notes n
+         WHERE n.project_id IS ?
+         ORDER BY n.pinned DESC, n.updated_at DESC, n.rowid DESC
+         LIMIT 200`
+      )
+      .all(projectId ?? null) as MagicNoteRow[]
+    return rows.map(toMagicNoteSummary)
+  }
+
+  getMagicNote(noteId: string): MagicNoteDetail {
+    const database = this.requireDatabase()
+    const row = database
+      .prepare(
+        `SELECT n.*,
+           (SELECT COUNT(*) FROM magic_note_entries e
+            WHERE e.note_id = n.id) AS entry_count,
+           (SELECT plain_text FROM magic_note_entries e
+            WHERE e.note_id = n.id
+            ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
+             AS latest_plain_text
+         FROM magic_notes n
+         WHERE n.id = ?`
+      )
+      .get(noteId) as MagicNoteRow | undefined
+    if (!row) {
+      throw new Error('笔记不存在')
+    }
+    const entryRows = database
+      .prepare(
+        `SELECT * FROM magic_note_entries
+         WHERE note_id = ?
+         ORDER BY created_at ASC, rowid ASC`
+      )
+      .all(noteId) as MagicNoteEntryRow[]
+    return {
+      ...toMagicNoteSummary(row),
+      entries: entryRows.map(toMagicNoteEntry)
+    }
+  }
+
+  getMagicNoteContext(noteId: string): {
+    id: string
+    projectId?: string
+    title: string
+  } {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT id, project_id, title
+         FROM magic_notes
+         WHERE id = ?`
+      )
+      .get(noteId) as
+      | { id: string; project_id: string | null; title: string }
+      | undefined
+    if (!row) {
+      throw new Error('笔记不存在')
+    }
+    return {
+      id: row.id,
+      projectId: row.project_id ?? undefined,
+      title: row.title
+    }
+  }
+
+  createMagicNote(input: {
+    projectId?: string
+    title: string
+  }): MagicNoteDetail {
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    this.requireDatabase()
+      .prepare(
+        `INSERT INTO magic_notes
+          (id, project_id, title, pinned, revision, created_at, updated_at)
+         VALUES (?, ?, ?, 0, 0, ?, ?)`
+      )
+      .run(id, input.projectId ?? null, input.title, now, now)
+    return this.getMagicNote(id)
+  }
+
+  updateMagicNote(input: {
+    noteId: string
+    title?: string
+    pinned?: boolean
+    expectedRevision: number
+  }): MagicNoteDetail {
+    const now = new Date().toISOString()
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE magic_notes
+         SET title = COALESCE(?, title),
+             pinned = COALESCE(?, pinned),
+             revision = revision + 1,
+             updated_at = ?
+         WHERE id = ? AND revision = ?`
+      )
+      .run(
+        input.title ?? null,
+        input.pinned === undefined ? null : input.pinned ? 1 : 0,
+        now,
+        input.noteId,
+        input.expectedRevision
+      )
+    if (result.changes !== 1) {
+      throw new Error('笔记已被更新，请刷新后重试')
+    }
+    return this.getMagicNote(input.noteId)
+  }
+
+  deleteMagicNote(noteId: string): void {
+    const result = this.requireDatabase()
+      .prepare('DELETE FROM magic_notes WHERE id = ?')
+      .run(noteId)
+    if (result.changes !== 1) {
+      throw new Error('笔记不存在')
+    }
+  }
+
+  createMagicNoteEntry(input: {
+    noteId: string
+    content: MagicNoteRichContent
+    plainText: string
+  }): MagicNoteDetail {
+    const database = this.requireDatabase()
+    const entryId = randomUUID()
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      this.assertMagicNoteImageBudget(input.noteId, input.content)
+      const noteResult = database
+        .prepare(
+          `UPDATE magic_notes
+           SET revision = revision + 1, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(now, input.noteId)
+      if (noteResult.changes !== 1) {
+        throw new Error('笔记不存在')
+      }
+      database
+        .prepare(
+          `INSERT INTO magic_note_entries
+            (id, note_id, content_json, plain_text, comments_json,
+             actions_json, analyzed_at, revision, created_at, updated_at,
+             image_bytes)
+           VALUES (?, ?, ?, ?, '[]', '[]', NULL, 0, ?, ?, ?)`
+        )
+        .run(
+          entryId,
+          input.noteId,
+          JSON.stringify(input.content),
+          input.plainText,
+          now,
+          now,
+          magicNoteImageBytes(input.content)
+        )
+      this.syncMagicNoteTodos(
+        database,
+        input.noteId,
+        entryId,
+        input.content,
+        now
+      )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getMagicNote(input.noteId)
+  }
+
+  updateMagicNoteEntry(input: {
+    entryId: string
+    content: MagicNoteRichContent
+    plainText: string
+    expectedRevision: number
+  }): MagicNoteDetail {
+    const database = this.requireDatabase()
+    const existing = database
+      .prepare('SELECT note_id FROM magic_note_entries WHERE id = ?')
+      .get(input.entryId) as { note_id: string } | undefined
+    if (!existing) {
+      throw new Error('记录不存在')
+    }
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      this.assertMagicNoteImageBudget(
+        existing.note_id,
+        input.content,
+        input.entryId
+      )
+      const result = database
+        .prepare(
+          `UPDATE magic_note_entries
+           SET content_json = ?, plain_text = ?, comments_json = '[]',
+               analyzed_at = NULL, revision = revision + 1, updated_at = ?,
+               image_bytes = ?
+           WHERE id = ? AND revision = ?`
+        )
+        .run(
+          JSON.stringify(input.content),
+          input.plainText,
+          now,
+          magicNoteImageBytes(input.content),
+          input.entryId,
+          input.expectedRevision
+        )
+      if (result.changes !== 1) {
+        throw new Error('记录已被更新，请刷新后重试')
+      }
+      database
+        .prepare(
+          `UPDATE magic_notes
+           SET revision = revision + 1, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(now, existing.note_id)
+      this.syncMagicNoteTodos(
+        database,
+        existing.note_id,
+        input.entryId,
+        input.content,
+        now
+      )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getMagicNote(existing.note_id)
+  }
+
+  deleteMagicNoteEntry(entryId: string): MagicNoteDetail {
+    const database = this.requireDatabase()
+    const existing = database
+      .prepare('SELECT note_id FROM magic_note_entries WHERE id = ?')
+      .get(entryId) as { note_id: string } | undefined
+    if (!existing) {
+      throw new Error('记录不存在')
+    }
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database
+        .prepare('DELETE FROM magic_note_entries WHERE id = ?')
+        .run(entryId)
+      database
+        .prepare(
+          `UPDATE magic_notes
+           SET revision = revision + 1, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(now, existing.note_id)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getMagicNote(existing.note_id)
+  }
+
+  getMagicNoteEntry(entryId: string): MagicNoteEntry {
+    const row = this.requireDatabase()
+      .prepare('SELECT * FROM magic_note_entries WHERE id = ?')
+      .get(entryId) as MagicNoteEntryRow | undefined
+    if (!row) {
+      throw new Error('记录不存在')
+    }
+    return toMagicNoteEntry(row)
+  }
+
+  saveMagicNoteAnalysis(input: {
+    entryId: string
+    expectedRevision: number
+    comments: MagicNoteComment[]
+  }): MagicNoteDetail {
+    const database = this.requireDatabase()
+    const existing = database
+      .prepare('SELECT note_id FROM magic_note_entries WHERE id = ?')
+      .get(input.entryId) as { note_id: string } | undefined
+    if (!existing) {
+      throw new Error('记录不存在')
+    }
+    const now = new Date().toISOString()
+    const result = database
+      .prepare(
+        `UPDATE magic_note_entries
+         SET comments_json = ?, analyzed_at = ?, revision = revision + 1,
+             updated_at = ?
+         WHERE id = ? AND revision = ?`
+      )
+      .run(
+        JSON.stringify(input.comments),
+        now,
+        now,
+        input.entryId,
+        input.expectedRevision
+      )
+    if (result.changes !== 1) {
+      throw new Error('记录已被更新，请重新分析')
+    }
+    return this.getMagicNote(existing.note_id)
+  }
+
+  listMagicTodos(projectId?: string): MagicTodoItem[] {
+    return (
+      this.requireDatabase()
+        .prepare(
+          `SELECT t.*, n.title AS note_title
+           FROM magic_todos t
+           LEFT JOIN magic_notes n ON n.id = t.note_id
+           WHERE t.project_id IS ?
+           ORDER BY t.completed ASC, t.updated_at DESC, t.rowid DESC
+           LIMIT 500`
+        )
+        .all(projectId ?? null) as MagicTodoRow[]
+    ).map(toMagicTodo)
+  }
+
+  getMagicTodo(todoId: string): MagicTodoItem {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT t.*, n.title AS note_title
+         FROM magic_todos t
+         LEFT JOIN magic_notes n ON n.id = t.note_id
+         WHERE t.id = ?`
+      )
+      .get(todoId) as MagicTodoRow | undefined
+    if (!row) {
+      throw new Error('待办不存在')
+    }
+    return toMagicTodo(row)
+  }
+
+  createMagicTodo(input: {
+    projectId?: string
+    title: string
+    instructions: string
+  }): MagicTodoItem {
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    this.requireDatabase()
+      .prepare(
+        `INSERT INTO magic_todos
+          (id, project_id, note_id, entry_id, source_index, source,
+           title, instructions, completed, comments_json, analyzed_at,
+           revision, created_at, updated_at)
+         VALUES (?, ?, NULL, NULL, NULL, 'manual', ?, ?, 0, '[]',
+                 NULL, 0, ?, ?)`
+      )
+      .run(
+        id,
+        input.projectId ?? null,
+        input.title,
+        input.instructions,
+        now,
+        now
+      )
+    return this.getMagicTodo(id)
+  }
+
+  updateMagicTodo(input: {
+    todoId: string
+    title?: string
+    instructions?: string
+    completed?: boolean
+    expectedRevision: number
+  }): MagicTodoItem {
+    const database = this.requireDatabase()
+    const existing = database
+      .prepare('SELECT * FROM magic_todos WHERE id = ?')
+      .get(input.todoId) as Omit<MagicTodoRow, 'note_title'> | undefined
+    if (!existing) {
+      throw new Error('待办不存在')
+    }
+    if (
+      existing.source === 'note' &&
+      (input.title !== undefined || input.instructions !== undefined)
+    ) {
+      throw new Error('笔记待办的内容需要在原笔记中编辑')
+    }
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = database
+        .prepare(
+          `UPDATE magic_todos
+           SET title = COALESCE(?, title),
+               instructions = COALESCE(?, instructions),
+               completed = COALESCE(?, completed),
+               revision = revision + 1,
+               updated_at = ?
+           WHERE id = ? AND revision = ?`
+        )
+        .run(
+          input.title ?? null,
+          input.instructions ?? null,
+          input.completed === undefined ? null : Number(input.completed),
+          now,
+          input.todoId,
+          input.expectedRevision
+        )
+      if (result.changes !== 1) {
+        throw new Error('待办已被更新，请刷新后重试')
+      }
+      if (
+        existing.source === 'note' &&
+        input.completed !== undefined &&
+        existing.entry_id &&
+        existing.note_id &&
+        existing.source_index !== null
+      ) {
+        const entry = database
+          .prepare(
+            'SELECT content_json FROM magic_note_entries WHERE id = ?'
+          )
+          .get(existing.entry_id) as { content_json: string } | undefined
+        if (!entry) {
+          throw new Error('待办来源记录不存在')
+        }
+        const content = setMagicNoteChecklistCompletion(
+          JSON.parse(entry.content_json) as MagicNoteRichContent,
+          existing.source_index,
+          input.completed
+        )
+        database
+          .prepare(
+            `UPDATE magic_note_entries
+             SET content_json = ?, revision = revision + 1, updated_at = ?
+             WHERE id = ?`
+          )
+          .run(JSON.stringify(content), now, existing.entry_id)
+        database
+          .prepare(
+            `UPDATE magic_notes
+             SET revision = revision + 1, updated_at = ?
+             WHERE id = ?`
+          )
+          .run(now, existing.note_id)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getMagicTodo(input.todoId)
+  }
+
+  deleteMagicTodo(todoId: string): void {
+    const result = this.requireDatabase()
+      .prepare("DELETE FROM magic_todos WHERE id = ? AND source = 'manual'")
+      .run(todoId)
+    if (result.changes !== 1) {
+      throw new Error('手动待办不存在')
+    }
+  }
+
+  saveMagicTodoAnalysis(input: {
+    todoId: string
+    expectedRevision: number
+    comments: MagicNoteComment[]
+  }): MagicTodoItem {
+    const now = new Date().toISOString()
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE magic_todos
+         SET comments_json = ?, analyzed_at = ?,
+             revision = revision + 1, updated_at = ?
+         WHERE id = ? AND revision = ?`
+      )
+      .run(
+        JSON.stringify(input.comments),
+        now,
+        now,
+        input.todoId,
+        input.expectedRevision
+      )
+    if (result.changes !== 1) {
+      throw new Error('待办已被更新，请刷新后重试')
+    }
+    return this.getMagicTodo(input.todoId)
   }
 
   listPendingDelegationResults(): Array<{
@@ -1230,6 +2230,7 @@ export class AssistantDatabase {
     const rows = this.requireDatabase()
       .prepare(
         `SELECT * FROM tasks
+         WHERE visible = 1
          ORDER BY created_at DESC
          LIMIT ?`
       )
@@ -1249,6 +2250,7 @@ export class AssistantDatabase {
     workMode: 'ask' | 'plan' | 'execute'
     origin?: AssistantTask['origin']
     status?: 'queued' | 'running'
+    visible?: boolean
   }): AssistantTask {
     const now = new Date().toISOString()
     const status = input.status ?? 'running'
@@ -1257,8 +2259,8 @@ export class AssistantDatabase {
         `INSERT INTO tasks
           (id, project_id, conversation_id, parent_task_id, expert_id,
            routing_mode, title, instructions, origin, status, priority,
-           work_mode, progress, created_at, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?)`
+           work_mode, progress, created_at, started_at, visible)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?, ?)`
       )
       .run(
         input.id,
@@ -1273,7 +2275,8 @@ export class AssistantDatabase {
         status,
         input.workMode,
         now,
-        status === 'running' ? now : null
+        status === 'running' ? now : null,
+        Number(input.visible ?? true)
       )
     this.appendTaskEvent(input.id, status, {
       workMode: input.workMode
@@ -2486,7 +3489,7 @@ export class AssistantDatabase {
             .prepare(
               `SELECT id, title, status, created_at, completed_at
                FROM tasks
-               WHERE project_id = ? AND created_at >= ?
+               WHERE project_id = ? AND visible = 1 AND created_at >= ?
                ORDER BY created_at DESC LIMIT 100`
             )
             .all(config.projectId, since)
@@ -2494,7 +3497,7 @@ export class AssistantDatabase {
             .prepare(
               `SELECT id, title, status, created_at, completed_at
                FROM tasks
-               WHERE created_at >= ?
+               WHERE visible = 1 AND created_at >= ?
                ORDER BY created_at DESC LIMIT 100`
             )
             .all(since)
@@ -2945,16 +3948,200 @@ export class AssistantDatabase {
     return toSchedule(row)
   }
 
+  private syncMagicNoteTodos(
+    database: DatabaseSync,
+    noteId: string,
+    entryId: string,
+    content: MagicNoteRichContent,
+    now: string
+  ): void {
+    const note = database
+      .prepare('SELECT project_id FROM magic_notes WHERE id = ?')
+      .get(noteId) as { project_id: string | null } | undefined
+    if (!note) {
+      throw new Error('笔记不存在')
+    }
+    const items = magicNoteChecklistItems(content)
+    const existing = database
+      .prepare(
+        `SELECT id, project_id, note_id, source_index, title, completed
+         FROM magic_todos
+         WHERE entry_id = ? AND source = 'note'`
+      )
+      .all(entryId) as Array<{
+      id: string
+      project_id: string | null
+      note_id: string | null
+      source_index: number
+      title: string
+      completed: number
+    }>
+    const unmatched = new Set(existing)
+    const byExactPosition = new Map(
+      existing.map((todo) => [
+        `${todo.source_index}\u0000${todo.title}`,
+        todo
+      ])
+    )
+    const byPosition = new Map(
+      existing.map((todo) => [todo.source_index, todo])
+    )
+    const byTitle = new Map<string, typeof existing>()
+    const unmatchedTitleCounts = new Map<string, number>()
+    for (const todo of existing) {
+      const titleMatches = byTitle.get(todo.title) ?? []
+      titleMatches.push(todo)
+      byTitle.set(todo.title, titleMatches)
+      unmatchedTitleCounts.set(
+        todo.title,
+        (unmatchedTitleCounts.get(todo.title) ?? 0) + 1
+      )
+    }
+    const matches: Array<{
+      item: (typeof items)[number]
+      matched?: (typeof existing)[number]
+    }> = items.map((item) => ({ item }))
+    const assign = (
+      match: (typeof matches)[number],
+      todo: (typeof existing)[number] | undefined
+    ): void => {
+      if (!todo || !unmatched.delete(todo)) {
+        return
+      }
+      match.matched = todo
+      unmatchedTitleCounts.set(
+        todo.title,
+        (unmatchedTitleCounts.get(todo.title) ?? 1) - 1
+      )
+    }
+    for (const match of matches) {
+      assign(
+        match,
+        byExactPosition.get(
+          `${match.item.sourceIndex}\u0000${match.item.title}`
+        )
+      )
+    }
+    for (const match of matches.filter((candidate) => !candidate.matched)) {
+      if (unmatchedTitleCounts.get(match.item.title) === 1) {
+        assign(
+          match,
+          byTitle
+            .get(match.item.title)
+            ?.find((todo) => unmatched.has(todo))
+        )
+      }
+    }
+    for (const match of matches.filter((candidate) => !candidate.matched)) {
+      assign(match, byPosition.get(match.item.sourceIndex))
+    }
+    const deleteTodo = database.prepare(
+      'DELETE FROM magic_todos WHERE id = ?'
+    )
+    for (const todo of unmatched) {
+      deleteTodo.run(todo.id)
+    }
+    const parkSourceIndex = database.prepare(
+      `UPDATE magic_todos
+       SET source_index = -source_index - 1
+       WHERE id = ?`
+    )
+    for (const { item, matched } of matches) {
+      if (matched && matched.source_index !== item.sourceIndex) {
+        parkSourceIndex.run(matched.id)
+      }
+    }
+    const insertTodo = database.prepare(
+      `INSERT INTO magic_todos
+        (id, project_id, note_id, entry_id, source_index, source,
+         title, instructions, completed, comments_json, analyzed_at,
+         revision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'note', ?, '', ?, '[]', NULL, 0, ?, ?)`
+    )
+    const updateTodo = database.prepare(
+      `UPDATE magic_todos
+       SET project_id = ?, note_id = ?, source_index = ?, title = ?,
+           completed = ?,
+           comments_json = CASE WHEN ? THEN '[]' ELSE comments_json END,
+           analyzed_at = CASE WHEN ? THEN NULL ELSE analyzed_at END,
+           revision = revision + 1, updated_at = ?
+       WHERE id = ?`
+    )
+    for (const { item, matched } of matches) {
+      if (!matched) {
+        insertTodo.run(
+          randomUUID(),
+          note.project_id,
+          noteId,
+          entryId,
+          item.sourceIndex,
+          item.title,
+          Number(item.completed),
+          now,
+          now
+        )
+        continue
+      }
+      const titleChanged = matched.title !== item.title
+      const completionChanged =
+        Boolean(matched.completed) !== item.completed
+      const positionChanged =
+        matched.source_index !== item.sourceIndex
+      const scopeChanged =
+        matched.project_id !== note.project_id ||
+        matched.note_id !== noteId
+      if (
+        !titleChanged &&
+        !completionChanged &&
+        !positionChanged &&
+        !scopeChanged
+      ) {
+        continue
+      }
+      updateTodo.run(
+        note.project_id,
+        noteId,
+        item.sourceIndex,
+        item.title,
+        Number(item.completed),
+        Number(titleChanged),
+        Number(titleChanged),
+        now,
+        matched.id
+      )
+    }
+  }
+
+  private assertMagicNoteImageBudget(
+    noteId: string,
+    content: MagicNoteRichContent,
+    excludedEntryId?: string
+  ): void {
+    const existing = this.requireDatabase()
+      .prepare(
+        `SELECT COALESCE(SUM(image_bytes), 0) AS image_bytes
+         FROM magic_note_entries
+         WHERE note_id = ? AND id <> ?`
+      )
+      .get(noteId, excludedEntryId ?? '') as { image_bytes: number }
+    if (
+      existing.image_bytes + magicNoteImageBytes(content) >
+      MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES
+    ) {
+      throw new Error('一篇笔记中的图片总大小不能超过 8 MB')
+    }
+  }
+
   private migrate(database: DatabaseSync): void {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 8) {
+    if (version.user_version > 15) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 8) {
+    if (version.user_version === 15) {
       return
     }
     if (version.user_version < 1) {
@@ -3364,6 +4551,293 @@ export class AssistantDatabase {
           )
         }
         database.exec('PRAGMA user_version = 8; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 9) {
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS magic_notes (
+          id TEXT PRIMARY KEY,
+          project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0, 1)),
+          revision INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS magic_note_entries (
+          id TEXT PRIMARY KEY,
+          note_id TEXT NOT NULL REFERENCES magic_notes(id) ON DELETE CASCADE,
+          content_json TEXT NOT NULL,
+          plain_text TEXT NOT NULL,
+          comments_json TEXT NOT NULL DEFAULT '[]',
+          actions_json TEXT NOT NULL DEFAULT '[]',
+          analyzed_at TEXT,
+          revision INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS magic_notes_scope_updated_idx
+          ON magic_notes(project_id, pinned DESC, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS magic_note_entries_note_created_idx
+          ON magic_note_entries(note_id, created_at ASC);
+        PRAGMA user_version = 9;
+        COMMIT;
+      `)
+    }
+    if (version.user_version < 10) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS magic_todos (
+            id TEXT PRIMARY KEY,
+            project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+            note_id TEXT REFERENCES magic_notes(id) ON DELETE CASCADE,
+            entry_id TEXT REFERENCES magic_note_entries(id) ON DELETE CASCADE,
+            source_index INTEGER,
+            source TEXT NOT NULL CHECK(source IN ('note', 'manual')),
+            title TEXT NOT NULL,
+            instructions TEXT NOT NULL DEFAULT '',
+            completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0, 1)),
+            comments_json TEXT NOT NULL DEFAULT '[]',
+            analyzed_at TEXT,
+            revision INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(
+              (source = 'note' AND note_id IS NOT NULL AND
+               entry_id IS NOT NULL AND source_index IS NOT NULL) OR
+              (source = 'manual' AND note_id IS NULL AND
+               entry_id IS NULL AND source_index IS NULL)
+            ),
+            UNIQUE(entry_id, source_index)
+          );
+          CREATE INDEX IF NOT EXISTS magic_todos_scope_status_idx
+            ON magic_todos(project_id, completed, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS magic_todos_note_idx
+            ON magic_todos(note_id, entry_id, source_index);
+        `)
+        const entries = database
+          .prepare(
+            `SELECT id, note_id, content_json, updated_at
+             FROM magic_note_entries`
+          )
+          .iterate() as Iterable<{
+          id: string
+          note_id: string
+          content_json: string
+          updated_at: string
+        }>
+        for (const entry of entries) {
+          this.syncMagicNoteTodos(
+            database,
+            entry.note_id,
+            entry.id,
+            JSON.parse(entry.content_json) as MagicNoteRichContent,
+            entry.updated_at
+          )
+        }
+        database.exec('PRAGMA user_version = 10')
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 11) {
+      const hasVisibilityColumn = (
+        database.prepare('PRAGMA table_info(tasks)').all() as Array<{
+          name: string
+        }>
+      ).some((column) => column.name === 'visible')
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!hasVisibilityColumn) {
+          database.exec(`
+            ALTER TABLE tasks
+              ADD COLUMN visible INTEGER NOT NULL DEFAULT 1
+                CHECK(visible IN (0, 1));
+          `)
+        }
+        database.exec('PRAGMA user_version = 11')
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 12) {
+      const hasImageBytesColumn = (
+        database
+          .prepare('PRAGMA table_info(magic_note_entries)')
+          .all() as Array<{ name: string }>
+      ).some((column) => column.name === 'image_bytes')
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!hasImageBytesColumn) {
+          database.exec(`
+            ALTER TABLE magic_note_entries
+              ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0
+                CHECK(image_bytes >= 0);
+          `)
+        }
+        const entries = database
+          .prepare('SELECT id, content_json FROM magic_note_entries')
+          .iterate() as Iterable<{
+          id: string
+          content_json: string
+        }>
+        const updateImageBytes = database.prepare(
+          `UPDATE magic_note_entries
+           SET image_bytes = ?
+           WHERE id = ?`
+        )
+        for (const entry of entries) {
+          updateImageBytes.run(
+            magicNoteImageBytes(
+              JSON.parse(entry.content_json) as MagicNoteRichContent
+            ),
+            entry.id
+          )
+        }
+        database.exec('PRAGMA user_version = 12')
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 13) {
+      const projectColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(projects)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!projectColumns.has('kind')) {
+          database.exec(`
+            ALTER TABLE projects
+              ADD COLUMN kind TEXT NOT NULL DEFAULT 'user'
+                CHECK(kind IN ('user', 'channel'));
+          `)
+        }
+        if (!projectColumns.has('channel')) {
+          database.exec(`
+            ALTER TABLE projects
+              ADD COLUMN channel TEXT
+                CHECK(
+                  channel IS NULL OR
+                  channel IN ('weixin', 'wecom', 'dingtalk')
+                );
+          `)
+        }
+        database.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS projects_channel_unique
+            ON projects(channel)
+            WHERE channel IS NOT NULL;
+          PRAGMA user_version = 13;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 14) {
+      const conversationColumns = new Set(
+        (
+          database
+            .prepare('PRAGMA table_info(conversations)')
+            .all() as Array<{ name: string }>
+        ).map((column) => column.name)
+      )
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!conversationColumns.has('channel')) {
+          database.exec(`
+            ALTER TABLE conversations ADD COLUMN channel TEXT
+              CHECK(
+                channel IS NULL OR
+                channel IN ('weixin', 'wecom', 'dingtalk')
+              );
+          `)
+        }
+        if (!conversationColumns.has('external_account_id')) {
+          database.exec(`
+            ALTER TABLE conversations
+              ADD COLUMN external_account_id TEXT;
+          `)
+        }
+        if (!conversationColumns.has('external_conversation_id')) {
+          database.exec(`
+            ALTER TABLE conversations
+              ADD COLUMN external_conversation_id TEXT;
+          `)
+        }
+        if (!conversationColumns.has('conversation_type')) {
+          database.exec(`
+            ALTER TABLE conversations ADD COLUMN conversation_type TEXT
+              CHECK(
+                conversation_type IS NULL OR
+                conversation_type IN ('direct', 'group')
+              );
+          `)
+        }
+        if (!conversationColumns.has('account_display')) {
+          database.exec(`
+            ALTER TABLE conversations ADD COLUMN account_display TEXT;
+          `)
+        }
+        database.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS
+            conversations_remote_identity_unique
+          ON conversations(
+            channel,
+            external_account_id,
+            external_conversation_id
+          )
+          WHERE channel IS NOT NULL;
+          PRAGMA user_version = 14;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 15) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS channel_events (
+            channel TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            claimed_at INTEGER NOT NULL,
+            PRIMARY KEY(channel, event_id)
+          );
+          CREATE INDEX IF NOT EXISTS channel_events_claimed_at
+            ON channel_events(claimed_at);
+          CREATE TABLE IF NOT EXISTS channel_outbox (
+            id TEXT PRIMARY KEY,
+            channel TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            message_json TEXT NOT NULL,
+            state TEXT NOT NULL
+              CHECK(state IN ('pending', 'delivered', 'failed')),
+            attempts INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS channel_outbox_state_created
+            ON channel_outbox(state, created_at);
+          PRAGMA user_version = 15;
+          COMMIT;
+        `)
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

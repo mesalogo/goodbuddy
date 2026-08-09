@@ -132,6 +132,51 @@ function emptyMessage(filter: ActivityFilter): string {
   return '任务请求、子专家、工具调用和审批决定会显示在这里。'
 }
 
+type ActivityGroup = {
+  conversationId: string
+  title: string
+  records: ActivityRecord[]
+  latestAt: number
+  status: ActivityRecord['status']
+}
+
+function groupActivityRecords(
+  records: readonly ActivityRecord[],
+  allRecords: readonly ActivityRecord[]
+): ActivityGroup[] {
+  const conversationTitles = new Map<string, string>()
+  for (const record of allRecords) {
+    if (
+      record.kind === 'request' &&
+      !conversationTitles.has(record.conversationId)
+    ) {
+      conversationTitles.set(record.conversationId, record.title)
+    }
+  }
+  const groups = new Map<string, ActivityRecord[]>()
+  for (const record of records) {
+    const current = groups.get(record.conversationId) ?? []
+    current.push(record)
+    groups.set(record.conversationId, current)
+  }
+  return [...groups.entries()].map(([conversationId, items]) => {
+    const request = items.find((record) => record.kind === 'request')
+    const activeRecord = items.find(isActive)
+    const failedRecord = items.find(isFailed)
+    const status = activeRecord?.status ?? failedRecord?.status ?? 'completed'
+    return {
+      conversationId,
+      title:
+        conversationTitles.get(conversationId) ??
+        request?.title ??
+        items[0]!.title,
+      records: items,
+      latestAt: Math.max(...items.map((record) => record.createdAt)),
+      status
+    }
+  })
+}
+
 export function ActivityPanel({
   records,
   tokenUsage,
@@ -150,6 +195,10 @@ export function ActivityPanel({
   const filteredRecords = useMemo(
     () => visibleRecords.filter((record) => matchesFilter(record, filter)),
     [filter, visibleRecords]
+  )
+  const activityGroups = useMemo(
+    () => groupActivityRecords(filteredRecords, records),
+    [filteredRecords, records]
   )
   const activeCount = visibleRecords.filter(isActive).length
   const failedCount = visibleRecords.filter(isFailed).length
@@ -318,46 +367,79 @@ export function ActivityPanel({
           title={filter === 'all' ? '尚无活动记录' : '没有匹配的活动'}
         />
       ) : (
-        <ol className="activity-list">
-          {filteredRecords.map((record, index) => {
-            const time = formatTime(record.createdAt)
+        <div className="activity-groups">
+          {activityGroups.map((group) => {
+            const groupTime = formatTime(group.latestAt)
             return (
-              <li
-                className={`activity-item activity-item--${record.status}`}
-                key={`${record.id}-${index}`}
+              <details
+                className="activity-group"
+                key={group.conversationId}
+                open={
+                  group.records.some(
+                    (record) => isActive(record) || isFailed(record)
+                  )
+                    ? true
+                    : undefined
+                }
               >
-                <article>
-                  <header className="activity-item__header">
-                    <div className="activity-item__labels">
-                      <span className="activity-item__kind">
-                        {kindLabels[record.kind]}
-                      </span>
-                      <span
-                        className={`status-badge activity-item__status activity-item__status--${record.status}`}
-                      >
-                        {statusLabels[record.status]}
-                      </span>
-                    </div>
-                    <time dateTime={time.machineReadable}>
-                      {time.display}
-                    </time>
-                  </header>
-                  <h3>{record.title}</h3>
-                  {record.detail.length > 0 && <p>{record.detail}</p>}
-                  <button
-                    className="activity-item__conversation"
-                    onClick={() =>
-                      onOpenConversation(record.conversationId)
-                    }
-                    type="button"
+                <summary>
+                  <span>
+                    <strong>对话：{group.title}</strong>
+                    <small>{group.records.length} 条活动</small>
+                  </span>
+                  <span
+                    className={`status-badge activity-item__status activity-item__status--${group.status}`}
                   >
-                    打开所属对话
-                  </button>
-                </article>
-              </li>
+                    {statusLabels[group.status]}
+                  </span>
+                  <time dateTime={groupTime.machineReadable}>
+                    {groupTime.display}
+                  </time>
+                </summary>
+                <ol className="activity-list">
+                  {group.records.map((record, index) => {
+                    const time = formatTime(record.createdAt)
+                    return (
+                      <li
+                        className={`activity-item activity-item--${record.status}`}
+                        key={`${record.id}-${index}`}
+                      >
+                        <article>
+                          <header className="activity-item__header">
+                            <div className="activity-item__labels">
+                              <span className="activity-item__kind">
+                                {kindLabels[record.kind]}
+                              </span>
+                              <span
+                                className={`status-badge activity-item__status activity-item__status--${record.status}`}
+                              >
+                                {statusLabels[record.status]}
+                              </span>
+                            </div>
+                            <time dateTime={time.machineReadable}>
+                              {time.display}
+                            </time>
+                          </header>
+                          <h3>{record.title}</h3>
+                          {record.detail.length > 0 && <p>{record.detail}</p>}
+                          <button
+                            className="activity-item__conversation"
+                            onClick={() =>
+                              onOpenConversation(record.conversationId)
+                            }
+                            type="button"
+                          >
+                            打开所属对话
+                          </button>
+                        </article>
+                      </li>
+                    )
+                  })}
+                </ol>
+              </details>
             )
           })}
-        </ol>
+        </div>
       )}
     </section>
   )

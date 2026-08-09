@@ -1,8 +1,13 @@
 import { z } from 'zod'
+import {
+  weixinBindingStatusSchema,
+  weixinVerificationInputSchema
+} from '../../shared/weixin-channel-contracts'
 
 export const WECHAT_SIDECAR_MAX_TEXT_LENGTH = 8_000
 export const WECHAT_SIDECAR_MAX_QR_PAYLOAD_LENGTH = 4_096
 export const WECHAT_SIDECAR_MAX_QR_TTL_MS = 5 * 60 * 1_000
+export const WECHAT_SIDECAR_PROTOCOL_VERSION = 1
 
 function containsControlCharacter(value: string): boolean {
   for (const character of value) {
@@ -37,15 +42,7 @@ const textSchema = z
   .min(1)
   .max(WECHAT_SIDECAR_MAX_TEXT_LENGTH)
 
-export const wechatSidecarStatusSchema = z.enum([
-  'stopped',
-  'starting',
-  'pending',
-  'scanned',
-  'connected',
-  'expired',
-  'failed'
-])
+export const wechatSidecarStatusSchema = weixinBindingStatusSchema
 
 export type WechatSidecarStatus = z.infer<
   typeof wechatSidecarStatusSchema
@@ -82,7 +79,42 @@ export const wechatSidecarInboundTextMessageSchema = z
   })
   .strict()
 
-export const wechatSidecarReplyMessageSchema = z
+export const wechatSidecarVerificationRequiredMessageSchema = z
+  .object({
+    type: z.literal('verification_required'),
+    prompt: z.string().trim().min(1).max(256)
+  })
+  .strict()
+
+export const wechatSidecarConnectedMessageSchema = z
+  .object({
+    type: z.literal('connected'),
+    accountId: identifierSchema,
+    userId: identifierSchema
+  })
+  .strict()
+
+export const wechatSidecarReplyResultMessageSchema = z
+  .object({
+    type: z.literal('reply_result'),
+    replyId: identifierSchema,
+    ok: z.boolean(),
+    error: z.string().trim().min(1).max(512).optional()
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.ok === (result.error !== undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['error'],
+        message: result.ok
+          ? '成功回复不能包含错误'
+          : '失败回复必须包含错误'
+      })
+    }
+  })
+
+export const wechatSidecarReplyCommandSchema = z
   .object({
     type: z.literal('reply'),
     replyId: identifierSchema,
@@ -96,7 +128,9 @@ export const wechatSidecarMessageSchema = z.discriminatedUnion('type', [
   wechatSidecarStatusMessageSchema,
   wechatSidecarQrMessageSchema,
   wechatSidecarInboundTextMessageSchema,
-  wechatSidecarReplyMessageSchema
+  wechatSidecarVerificationRequiredMessageSchema,
+  wechatSidecarConnectedMessageSchema,
+  wechatSidecarReplyResultMessageSchema
 ])
 
 export type WechatSidecarMessage = z.infer<
@@ -104,6 +138,69 @@ export type WechatSidecarMessage = z.infer<
 >
 export type WechatSidecarQrMessage = z.infer<
   typeof wechatSidecarQrMessageSchema
+>
+
+export const wechatSidecarStartLoginCommandSchema = z
+  .object({
+    type: z.literal('start_login')
+  })
+  .strict()
+
+export const wechatSidecarSubmitVerificationCommandSchema = z
+  .object({
+    type: z.literal('submit_verification'),
+    code: weixinVerificationInputSchema.shape.code
+  })
+  .strict()
+
+export const wechatSidecarDisconnectCommandSchema = z
+  .object({
+    type: z.literal('disconnect')
+  })
+  .strict()
+
+export const wechatSidecarShutdownCommandSchema = z
+  .object({
+    type: z.literal('shutdown')
+  })
+  .strict()
+
+export const wechatSidecarCommandSchema = z.discriminatedUnion('type', [
+  wechatSidecarStartLoginCommandSchema,
+  wechatSidecarSubmitVerificationCommandSchema,
+  wechatSidecarReplyCommandSchema,
+  wechatSidecarDisconnectCommandSchema,
+  wechatSidecarShutdownCommandSchema
+])
+export type WechatSidecarCommand = z.infer<
+  typeof wechatSidecarCommandSchema
+>
+
+export const wechatSidecarStartAccountCommandSchema = z
+  .object({
+    type: z.literal('start_account'),
+    accountId: identifierSchema,
+    userId: identifierSchema,
+    baseUrl: z.string().url().max(2_048),
+    token: z.string().trim().min(1).max(4_096)
+  })
+  .strict()
+
+export const wechatSidecarCredentialMessageSchema = z
+  .object({
+    type: z.literal('credential'),
+    accountId: identifierSchema,
+    userId: identifierSchema,
+    baseUrl: z.string().url().max(2_048),
+    token: z.string().trim().min(1).max(4_096)
+  })
+  .strict()
+
+export type WechatSidecarStartAccountCommand = z.infer<
+  typeof wechatSidecarStartAccountCommandSchema
+>
+export type WechatSidecarCredentialMessage = z.infer<
+  typeof wechatSidecarCredentialMessageSchema
 >
 
 const allowedTransitions: Readonly<
@@ -120,7 +217,15 @@ const allowedTransitions: Readonly<
   ]),
   scanned: new Set([
     'scanned',
+    'verification_required',
     'connected',
+    'expired',
+    'failed',
+    'stopped'
+  ]),
+  verification_required: new Set([
+    'verification_required',
+    'scanned',
     'expired',
     'failed',
     'stopped'
@@ -201,7 +306,9 @@ export class WechatQrStateMachine {
   expire(now = Date.now()): boolean {
     this.assertTimestamp(now)
     if (
-      (this.status === 'pending' || this.status === 'scanned') &&
+      (this.status === 'pending' ||
+        this.status === 'scanned' ||
+        this.status === 'verification_required') &&
       this.qr &&
       Date.parse(this.qr.expiresAt) <= now
     ) {

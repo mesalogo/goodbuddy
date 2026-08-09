@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
 import type { BrowserLiveState } from '../shared/contracts'
+import { AssistantDatabase } from './assistant/assistant-database'
 import { registerIpcHandlers } from './ipc'
 
 type InvokeHandler = (event: unknown, input?: unknown) => unknown
@@ -52,7 +53,8 @@ const channelMocks = vi.hoisted(() => ({
 }))
 
 const runtimeFactoryMocks = vi.hoisted(() => ({
-  createModelProfileRuntime: vi.fn()
+  createModelProfileRuntime: vi.fn(),
+  createDefaultModelRuntime: vi.fn()
 }))
 
 describe('registerIpcHandlers computer capabilities', () => {
@@ -878,6 +880,28 @@ describe('registerIpcHandlers agent terminal state', () => {
       appendTaskEvent: vi.fn(),
       updateTaskStatus: vi.fn(),
       createTextArtifact: vi.fn(),
+      listProjects: vi.fn(() => [
+        {
+          id: '00000000-0000-4000-8000-000000000401',
+          name: '企业微信',
+          description: '企业微信远程消息与受控任务',
+          rootPath: 'C:\\ProjectWorkspace',
+          defaultWorkMode: 'ask',
+          kind: 'channel',
+          channel: 'wecom',
+          status: 'active',
+          createdAt: '2026-08-04T00:00:00.000Z',
+          updatedAt: '2026-08-04T00:00:00.000Z'
+        }
+      ]),
+      getOrCreateRemoteConversation: vi.fn(() => ({
+        id: '00000000-0000-4000-8000-000000000402',
+        projectId: '00000000-0000-4000-8000-000000000401',
+        title: '企业微信 · ****er-1',
+        updatedAt: Date.now(),
+        messages: []
+      })),
+      appendRemoteConversationMessage: vi.fn(),
       upsertModelUsageCall: vi.fn(),
       clearAssistantData: vi.fn(),
       listExperts: vi.fn<() => Array<Record<string, unknown>>>(() => []),
@@ -2084,5 +2108,139 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
     )
     await harness.dispose()
+  })
+})
+
+describe('registerIpcHandlers Magic Notes analysis', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+    channelMocks.stop.mockResolvedValue(undefined)
+  })
+
+  it('persists comments and usage without exposing an analysis task', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-magic-ipc-'))
+    const database = new AssistantDatabase(
+      join(directory, 'assistant.sqlite')
+    )
+    database.initialize('C:\\Workspace')
+    const project = database.listProjects()[0]!
+    const note = database.createMagicNote({
+      projectId: project.id,
+      title: 'API 回归测试'
+    })
+    const withEntry = database.createMagicNoteEntry({
+      noteId: note.id,
+      content: {
+        version: 1,
+        ops: [{ insert: '请完成发布清单。\n' }]
+      },
+      plainText: '请完成发布清单。'
+    })
+    const entry = withEntry.entries[0]!
+    const releaseConversation = vi.fn(async () => undefined)
+    const disposeRuntime = vi.fn(async () => undefined)
+    let analysisRequestId = ''
+    const analysisRuntime = {
+      releaseConversation,
+      dispose: disposeRuntime,
+      async *run(request: { requestId: string }) {
+        analysisRequestId = request.requestId
+        yield {
+          requestId: request.requestId,
+          type: 'model-usage',
+          callId: 'magic-call-1',
+          runtime: 'model',
+          provider: 'openai',
+          model: 'test-model',
+          inputTokens: 20,
+          outputTokens: 10,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0
+        } as const
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta:
+            '{"comments":[{"kind":"suggestion","content":"先核对发布材料。"}]}'
+        } as const
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    runtimeFactoryMocks.createDefaultModelRuntime.mockReturnValue(
+      analysisRuntime
+    )
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const disposeHandlers = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {
+        getResolvedSettings: vi.fn(async () => ({
+          workspacePath: 'C:\\Workspace'
+        }))
+      } as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      database,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined)
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    try {
+      await expect(
+        electronMocks.handlers.get(ipcChannels.magicNotesAnalyze)?.(
+          event,
+          { entryId: entry.id }
+        )
+      ).resolves.toMatchObject({
+        entries: [
+          {
+            comments: [
+              expect.objectContaining({
+                content: '先核对发布材料。'
+              })
+            ]
+          }
+        ]
+      })
+      expect(database.listTasks()).toEqual([])
+      expect(database.getTokenUsageSummary().records).toEqual([
+        expect.objectContaining({
+          requestId: analysisRequestId,
+          provider: 'openai',
+          model: 'test-model',
+          totalTokens: 30
+        })
+      ])
+      expect(releaseConversation).toHaveBeenCalledWith(
+        `magic-notes:${entry.id}`
+      )
+      expect(disposeRuntime).toHaveBeenCalledOnce()
+    } finally {
+      await disposeHandlers()
+      database.close()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

@@ -25,6 +25,8 @@ export type ChannelServiceOptions = {
   maximumResultLength?: number
   dedupStore?: DedupStore
   outbox?: Outbox
+  onDeliveryFailure?: (error: unknown) => void
+  onDeliverySuccess?: () => void
 }
 
 type ServiceState = 'idle' | 'running' | 'stopped'
@@ -85,6 +87,8 @@ export class ChannelService {
   private readonly maximumResultLength: number
   private readonly dedupStore: DedupStore
   private readonly outbox: Outbox
+  private readonly onDeliveryFailure?: (error: unknown) => void
+  private readonly onDeliverySuccess?: () => void
   private readonly tasks = new Set<Promise<void>>()
   private readonly active = new Map<string, AbortController>()
   private state: ServiceState = 'idle'
@@ -130,6 +134,8 @@ export class ChannelService {
     )
     this.dedupStore = options.dedupStore ?? new MemoryDedupStore()
     this.outbox = options.outbox ?? new MemoryOutbox()
+    this.onDeliveryFailure = options.onDeliveryFailure
+    this.onDeliverySuccess = options.onDeliverySuccess
   }
 
   async start(): Promise<void> {
@@ -156,6 +162,7 @@ export class ChannelService {
           this.tasks.delete(task)
         })
       })
+      await this.retryUndelivered()
     } catch (error) {
       this.state = 'idle'
       throw error
@@ -199,6 +206,38 @@ export class ChannelService {
     const driverResult = results[0]
     if (driverResult?.status === 'rejected') {
       throw driverResult.reason
+    }
+  }
+
+  private async retryUndelivered(): Promise<void> {
+    const entries = await this.outbox.listUndelivered(
+      this.driver.channel,
+      100
+    )
+    let consecutiveFailures = 0
+    for (const entry of entries) {
+      if (this.state !== 'running') {
+        return
+      }
+      if (entry.attempts >= 5) {
+        continue
+      }
+      try {
+        await this.driver.send(
+          entry.message,
+          new AbortController().signal
+        )
+        await this.outbox.markDelivered(entry.id)
+        this.onDeliverySuccess?.()
+        consecutiveFailures = 0
+      } catch (error) {
+        await this.outbox.markFailed(entry.id)
+        this.onDeliveryFailure?.(error)
+        consecutiveFailures += 1
+        if (consecutiveFailures >= 3) {
+          return
+        }
+      }
     }
   }
 
@@ -316,8 +355,27 @@ export class ChannelService {
       }
 
       signal.addEventListener('abort', abort, { once: true })
+      let progressCount = 0
+      const reportProgress = async (rawResult: {
+        status: string
+        output?: string
+        error?: string
+      }): Promise<void> => {
+        if (signal.aborted) {
+          throw signal.reason
+        }
+        if (progressCount >= 3) {
+          throw new Error('远程进度消息超过限制')
+        }
+        const result = channelExecutorResultSchema.parse(rawResult)
+        progressCount += 1
+        await this.deliver(
+          this.result(message, result),
+          signal
+        )
+      }
       void Promise.resolve()
-        .then(() => this.executor(message, signal))
+        .then(() => this.executor(message, signal, reportProgress))
         .then(
           (result) => finish(resolve, result),
           (error: unknown) => finish(reject, error)
@@ -363,8 +421,10 @@ export class ChannelService {
     try {
       await this.driver.send(message, signal)
       await this.outbox.markDelivered(entry.id)
+      this.onDeliverySuccess?.()
     } catch (error) {
       await this.outbox.markFailed(entry.id)
+      this.onDeliveryFailure?.(error)
       throw error
     }
   }

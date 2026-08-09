@@ -4,9 +4,23 @@ import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
 export const assistantIdSchema = z.string().uuid()
 export const workModeSchema = z.enum(['ask', 'plan', 'execute'])
 export const interactiveWorkModes = ['ask', 'execute'] as const
+export const projectKindSchema = z.enum(['user', 'channel'])
+export const projectChannels = [
+  'weixin',
+  'wecom',
+  'dingtalk'
+] as const
+export const projectChannelSchema = z.enum(projectChannels)
+export const projectChannelLabels: Record<ProjectChannel, string> = {
+  weixin: '微信 ClawBot',
+  wecom: '企业微信',
+  dingtalk: '钉钉'
+}
 
 export type WorkMode = z.infer<typeof workModeSchema>
 export type InteractiveWorkMode = (typeof interactiveWorkModes)[number]
+export type ProjectKind = z.infer<typeof projectKindSchema>
+export type ProjectChannel = z.infer<typeof projectChannelSchema>
 
 export function normalizeInteractiveWorkMode(
   workMode: WorkMode | undefined
@@ -121,6 +135,14 @@ export const conversationSnapshotSchema = z
     id: assistantIdSchema,
     projectId: assistantIdSchema.optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
+    remote: z
+      .object({
+        channel: projectChannelSchema,
+        accountDisplay: z.string().trim().min(1).max(200),
+        conversationType: z.enum(['direct', 'group'])
+      })
+      .strict()
+      .optional(),
     title: z.string().trim().min(1).max(200),
     updatedAt: z.number().int().nonnegative(),
     messages: z
@@ -184,6 +206,8 @@ export const conversationSnapshotsSchema = z
 
 export type AssistantProject = ProjectCreateInput & {
   id: string
+  kind: ProjectKind
+  channel?: ProjectChannel
   status: 'active' | 'archived'
   createdAt: string
   updatedAt: string

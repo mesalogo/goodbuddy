@@ -55,8 +55,8 @@ import type {
   ChannelConnectionTestResult,
   ChannelSettingsApply,
   ChannelSettingsSnapshot,
+  CredentialChannel,
   DingTalkChannelSettingsInput,
-  ManagedChannel,
   WeComChannelSettingsInput
 } from '../shared/channel-settings-contracts'
 import type {
@@ -74,6 +74,18 @@ import type {
   EmbeddingSettingsSnapshot
 } from '../shared/embedding-contracts'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
+import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
+import type {
+  RemoteChannelActivity,
+  RemoteChannelApproval,
+  RemoteChannelApprovalDecision
+} from '../shared/remote-channel-contracts'
+import type {
+  MagicNoteDetail,
+  MagicNotesSnapshot,
+  MagicTodoItem,
+  MagicTodosSnapshot
+} from '../shared/magic-notes-contracts'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -232,13 +244,81 @@ const desktopApi: DesktopApi = {
         input
       ) as Promise<ChannelSettingsSnapshot>,
     testConnection: (
-      channel: ManagedChannel,
+      channel: CredentialChannel,
       settings?: WeComChannelSettingsInput | DingTalkChannelSettingsInput
     ) =>
       ipcRenderer.invoke(ipcChannels.channelSettingsTest, {
         channel,
         settings
-      }) as Promise<ChannelConnectionTestResult>
+      }) as Promise<ChannelConnectionTestResult>,
+    getWeixinBinding: () =>
+      ipcRenderer.invoke(
+        ipcChannels.weixinBindingGet
+      ) as Promise<WeixinBindingSnapshot>,
+    startWeixinBinding: () =>
+      ipcRenderer.invoke(
+        ipcChannels.weixinBindingStart
+      ) as Promise<WeixinBindingSnapshot>,
+    submitWeixinVerification: (code: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.weixinBindingVerify,
+        { code }
+      ) as Promise<WeixinBindingSnapshot>,
+    disconnectWeixin: () =>
+      ipcRenderer.invoke(
+        ipcChannels.weixinBindingDisconnect
+      ) as Promise<WeixinBindingSnapshot>,
+    onWeixinBindingChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        snapshot: WeixinBindingSnapshot
+      ): void => listener(snapshot)
+      ipcRenderer.on(ipcChannels.weixinBindingChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.weixinBindingChanged,
+          handler
+        )
+    },
+    respondRemoteApproval: (
+      approvalId: string,
+      decision: RemoteChannelApprovalDecision
+    ) =>
+      ipcRenderer.invoke(ipcChannels.remoteChannelApprovalRespond, {
+        approvalId,
+        decision
+      }) as Promise<boolean>,
+    getPendingRemoteApprovals: () =>
+      ipcRenderer.invoke(
+        ipcChannels.remoteChannelApprovalList
+      ) as Promise<RemoteChannelApproval[]>,
+    onRemoteApproval: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        approval: RemoteChannelApproval
+      ): void => listener(approval)
+      ipcRenderer.on(
+        ipcChannels.remoteChannelApprovalRequested,
+        handler
+      )
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.remoteChannelApprovalRequested,
+          handler
+        )
+    },
+    onRemoteActivity: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        activity: RemoteChannelActivity
+      ): void => listener(activity)
+      ipcRenderer.on(ipcChannels.remoteChannelActivity, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.remoteChannelActivity,
+          handler
+        )
+    }
   },
   updates: {
     getSettings: () =>
@@ -389,6 +469,15 @@ const desktopApi: DesktopApi = {
         ipcChannels.conversationsReplace,
         conversations
       )
+    },
+    onChanged: (listener) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(ipcChannels.conversationsChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.conversationsChanged,
+          handler
+        )
     }
   },
   workspace: {
@@ -667,6 +756,68 @@ const desktopApi: DesktopApi = {
     remove: async (contextId: string) => {
       await ipcRenderer.invoke(ipcChannels.contextRemove, contextId)
     }
+  },
+  magicNotes: {
+    list: (projectId?: string) =>
+      ipcRenderer.invoke(ipcChannels.magicNotesList, {
+        projectId
+      }) as Promise<MagicNotesSnapshot>,
+    get: (noteId: string) =>
+      ipcRenderer.invoke(ipcChannels.magicNotesGet, {
+        noteId
+      }) as Promise<MagicNoteDetail>,
+    create: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicNotesCreate,
+        input
+      ) as Promise<MagicNoteDetail>,
+    update: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicNotesUpdate,
+        input
+      ) as Promise<MagicNoteDetail>,
+    remove: async (noteId: string) => {
+      await ipcRenderer.invoke(ipcChannels.magicNotesDelete, { noteId })
+    },
+    createEntry: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicNotesCreateEntry,
+        input
+      ) as Promise<MagicNoteDetail>,
+    updateEntry: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicNotesUpdateEntry,
+        input
+      ) as Promise<MagicNoteDetail>,
+    removeEntry: (entryId: string) =>
+      ipcRenderer.invoke(ipcChannels.magicNotesDeleteEntry, {
+        entryId
+      }) as Promise<MagicNoteDetail>,
+    analyze: (entryId: string) =>
+      ipcRenderer.invoke(ipcChannels.magicNotesAnalyze, {
+        entryId
+      }) as Promise<MagicNoteDetail>,
+    listTodos: (projectId?: string) =>
+      ipcRenderer.invoke(ipcChannels.magicTodosList, {
+        projectId
+      }) as Promise<MagicTodosSnapshot>,
+    createTodo: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicTodosCreate,
+        input
+      ) as Promise<MagicTodoItem>,
+    updateTodo: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicTodosUpdate,
+        input
+      ) as Promise<MagicTodoItem>,
+    removeTodo: async (todoId: string) => {
+      await ipcRenderer.invoke(ipcChannels.magicTodosDelete, { todoId })
+    },
+    analyzeTodo: (todoId: string) =>
+      ipcRenderer.invoke(ipcChannels.magicTodosAnalyze, {
+        todoId
+      }) as Promise<MagicTodoItem>
   },
   knowledge: {
     getSnapshot: (libraryId?: string) =>

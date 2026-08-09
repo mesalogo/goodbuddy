@@ -151,7 +151,8 @@ describe('ChannelService', () => {
         text: '帮我分析',
         workMode: 'ask'
       }),
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Function)
     )
     expect(driver.sent).toEqual([])
 
@@ -163,6 +164,42 @@ describe('ChannelService', () => {
       status: 'completed',
       output: '完成'
     })
+    await service.stop()
+  })
+
+  it('delivers a bounded waiting message before the final result', async () => {
+    const driver = new FakeChannelDriver()
+    const executor = vi.fn(
+      async (
+        _message: unknown,
+        _signal: AbortSignal,
+        reportProgress: (
+          result: { status: string; output: string }
+        ) => Promise<void>
+      ) => {
+        await reportProgress({
+          status: 'waiting_approval',
+          output: '等待电脑端确认'
+        })
+        return { status: 'completed', output: '执行完成' }
+      }
+    )
+    const service = new ChannelService(driver, executor, {
+      allowedSenderIds: ['allowed-user']
+    })
+    await service.start()
+    await driver.emit(
+      inbound({
+        eventId: 'progress-event',
+        senderId: 'allowed-user'
+      })
+    )
+
+    await waitForSent(driver, 2)
+    expect(driver.sent.map((message) => message.status)).toEqual([
+      'waiting_approval',
+      'completed'
+    ])
     await service.stop()
   })
 
