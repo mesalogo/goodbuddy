@@ -1343,6 +1343,7 @@ export class CapabilityService {
     const snapshot = await this.getSnapshot()
     const sections: string[] = []
     const skipped: string[] = []
+    const incompatible: string[] = []
     const packages: RuntimeSkillPackage[] = []
     let length = 0
     for (const skill of snapshot.skills) {
@@ -1355,6 +1356,10 @@ export class CapabilityService {
           : this.importedSkillsRoot
       const directory = join(root, skill.id)
       const content = await readFile(join(directory, 'SKILL.md'), 'utf8')
+      if (target === 'opencode' && skill.id.length > 64) {
+        incompatible.push(skill.name)
+        continue
+      }
       const body =
         /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]+)$/u.exec(content)?.[1]?.trim() ??
         ''
@@ -1373,7 +1378,11 @@ export class CapabilityService {
       sections.push(section)
       length += section.length
     }
-    if (sections.length === 0 && skipped.length === 0) {
+    if (
+      sections.length === 0 &&
+      skipped.length === 0 &&
+      incompatible.length === 0
+    ) {
       return { instructions: '', packages }
     }
     return {
@@ -1383,6 +1392,11 @@ export class CapabilityService {
         ...(skipped.length > 0
           ? [
               `注意：以下 Skill 因超出注入上限未加载，本次对话不可用：${skipped.join('、')}。`
+            ]
+          : []),
+        ...(incompatible.length > 0
+          ? [
+              `注意：以下 Skill 名称超过 OpenCode 的 64 字符上限，本次对话不可用：${incompatible.join('、')}。`
             ]
           : []),
         ...sections

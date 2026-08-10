@@ -360,6 +360,27 @@ describe('CapabilityService', () => {
     expect(fullyTruncated).toContain('超长技能')
   })
 
+  it('omits Skill names that exceed the OpenCode native limit', async () => {
+    const { builtinRoot, service } = await createService()
+    const longId = `a${'-a'.repeat(32)}`
+    await writeSkill(builtinRoot, longId, '超长名称技能')
+
+    const openCodeContext =
+      await service.getRuntimeSkillContext('opencode')
+    expect(openCodeContext.instructions).toContain(
+      '超过 OpenCode 的 64 字符上限'
+    )
+    expect(openCodeContext.instructions).toContain('超长名称技能')
+    expect(openCodeContext.packages).not.toContainEqual(
+      expect.objectContaining({ id: longId })
+    )
+
+    const modelContext = await service.getRuntimeSkillContext('model')
+    expect(modelContext.packages).toContainEqual(
+      expect.objectContaining({ id: longId })
+    )
+  })
+
   it('imports a managed Skill from a ZIP package', async () => {
     const { directory, importedRoot, service } = await createService()
     const packageRoot = join(directory, 'zip-source')

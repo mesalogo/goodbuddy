@@ -8,7 +8,15 @@ import {
 } from '@opencode-ai/sdk/v2'
 import spawn from 'cross-spawn'
 import { createHash, randomBytes } from 'node:crypto'
-import { resolve } from 'node:path'
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type {
   AgentQuestionAnswer,
   AgentRuntimeStatus
@@ -38,6 +46,8 @@ import {
   boundedToolDetail,
   safeToolErrorDetail
 } from './approval-summary'
+import type { RuntimeSkillPackage } from '../capabilities/capability-service'
+import { stageRuntimeSkillPackages } from './runtime-skill-packages'
 
 const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
 const STARTUP_TIMEOUT_MS = 10_000
@@ -51,6 +61,7 @@ const MAX_QUESTION_REQUEST_BYTES = 32 * 1_024
 const MAX_QUESTIONS_PER_REQUEST = 4
 const MAX_QUESTION_OPTIONS = 20
 const EMBEDDED_SERVER_USERNAME = 'goodbuddy'
+const OPENCODE_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 
 type SpawnedProcess = ReturnType<typeof spawn>
 
@@ -88,6 +99,12 @@ type OpenCodeServer = {
   url: string
   authorization: string
   close: () => Promise<void>
+}
+
+type OpenCodeSkillRegistration = {
+  root: string
+  configDirectory: string
+  skillsRoot: string
 }
 
 const executePermissionRules: PermissionRuleset = [
@@ -359,8 +376,89 @@ export type OpenCodeRuntimeOptions = {
   defaultWorkspace: string
   modelProfile?: ResolvedModelProfile
   skillInstructions?: string
+  skillPackages?: RuntimeSkillPackage[]
   sandbox?: RuntimeSandboxResolution
   knowledgeGateway?: KnowledgeMcpGateway
+}
+
+function createSkillPermissionRules(
+  skillIds: readonly string[]
+): PermissionRuleset {
+  if (skillIds.length === 0) {
+    return []
+  }
+  return Object.entries(createSkillPermissionConfig(skillIds)).map(
+    ([pattern, action]) => ({
+      permission: 'skill',
+      pattern,
+      action
+    })
+  )
+}
+
+function createSkillPermissionConfig(
+  skillIds: readonly string[]
+): Record<string, 'allow' | 'deny'> {
+  return Object.fromEntries([
+    ['*', 'deny' as const],
+    ...skillIds.map((skillId) => [skillId, 'allow' as const])
+  ])
+}
+
+function createOpenCodeSkillConfig(
+  registration: OpenCodeSkillRegistration,
+  skillIds: readonly string[]
+): {
+  skills: { paths: string[]; urls: never[] }
+  permission: {
+    skill: Record<string, 'allow' | 'deny'>
+  }
+} {
+  return {
+    skills: {
+      paths: [registration.skillsRoot],
+      urls: []
+    },
+    permission: {
+      skill: createSkillPermissionConfig(skillIds)
+    }
+  }
+}
+
+async function normalizeOpenCodeSkillManifest(
+  skillDirectory: string,
+  skillId: string
+): Promise<void> {
+  const manifestPath = join(skillDirectory, 'SKILL.md')
+  const content = await readFile(manifestPath, 'utf8')
+  const match =
+    /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]+)$/u.exec(content)
+  if (!match?.[1] || !match[2]?.trim()) {
+    throw new Error('OpenCode Skill 清单格式无效')
+  }
+  const metadata = parseYaml(match[1])
+  if (
+    typeof metadata !== 'object' ||
+    metadata === null ||
+    Array.isArray(metadata)
+  ) {
+    throw new Error('OpenCode Skill 清单元数据无效')
+  }
+  const normalizedMetadata: Record<string, unknown> = {
+    ...metadata,
+    name: skillId
+  }
+  delete normalizedMetadata.id
+  await writeFile(
+    manifestPath,
+    [
+      '---',
+      stringifyYaml(normalizedMetadata).trimEnd(),
+      '---',
+      match[2]
+    ].join('\n'),
+    'utf8'
+  )
 }
 
 async function defaultDetectBinary(
@@ -518,6 +616,47 @@ export class OpenCodeRuntime implements AgentRuntime {
     })
   }
 
+  private getNativeSkillIds(): string[] {
+    if (!this.usesEmbeddedPermissionMediation()) {
+      return []
+    }
+    const ids = (this.options.skillPackages ?? []).map(
+      (skill) => skill.id
+    )
+    if (
+      new Set(ids).size !== ids.length ||
+      ids.some(
+        (id) =>
+          id.length > 64 || !OPENCODE_SKILL_NAME_PATTERN.test(id)
+      )
+    ) {
+      throw new Error('OpenCode Skill 注册信息无效')
+    }
+    return ids
+  }
+
+  private async createSkillRegistration(): Promise<OpenCodeSkillRegistration> {
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-'))
+    const configDirectory = join(root, 'config')
+    try {
+      const skillsRoot = await stageRuntimeSkillPackages(
+        configDirectory,
+        this.options.skillPackages ?? [],
+        'OpenCode'
+      )
+      for (const skill of this.options.skillPackages ?? []) {
+        await normalizeOpenCodeSkillManifest(
+          join(skillsRoot, skill.id),
+          skill.id
+        )
+      }
+      return { root, configDirectory, skillsRoot }
+    } catch (error) {
+      await rm(root, { recursive: true, force: true })
+      throw error
+    }
+  }
+
   private async launchEmbedded(signal?: AbortSignal): Promise<OpenCodeServer> {
     if (signal?.aborted) {
       throw new Error('OpenCode Server 启动已取消')
@@ -545,48 +684,6 @@ export class OpenCodeRuntime implements AgentRuntime {
     ) {
       throw new Error('OpenCode 独立模型连接尚未配置 API Key')
     }
-    const profile = this.options.modelProfile
-    const env = profile
-      ? buildExplicitProfileRuntimeEnvironment(
-          runtimePrivacyEnvironment,
-          profile.authentication === 'api-key' && profile.apiKey
-            ? {
-                name:
-                  profile.protocol === 'anthropic-messages'
-                    ? 'ANTHROPIC_API_KEY'
-                    : 'OPENAI_API_KEY',
-                value: profile.apiKey
-              }
-            : undefined
-        )
-      : buildRuntimeEnvironment(runtimePrivacyEnvironment)
-    delete env.OPENCODE_CONFIG
-    delete env.OPENCODE_CONFIG_CONTENT
-    delete env.OPENCODE_SERVER_PASSWORD
-    delete env.OPENCODE_SERVER_USERNAME
-    const serverPassword = randomBytes(32).toString('base64url')
-    const authorization = `Basic ${Buffer.from(
-      `${EMBEDDED_SERVER_USERNAME}:${serverPassword}`
-    ).toString('base64')}`
-    env.OPENCODE_SERVER_USERNAME = EMBEDDED_SERVER_USERNAME
-    env.OPENCODE_SERVER_PASSWORD = serverPassword
-    env.OPENCODE_DISABLE_AUTOUPDATE = '1'
-    env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = '1'
-    env.OPENCODE_DISABLE_LSP_DOWNLOAD = '1'
-    env.OPENCODE_DISABLE_MODELS_FETCH = '1'
-    env.OPENCODE_DISABLE_SHARE = '1'
-    if (profile) {
-      env.OPENCODE_CONFIG_CONTENT = JSON.stringify(
-        createOpenCodeProviderConfig(profile)
-      )
-    } else if (this.options.configPath.trim()) {
-      env.OPENCODE_CONFIG = resolve(this.options.configPath)
-    }
-    const serverArgs = [
-      'serve',
-      '--hostname=127.0.0.1',
-      `--port=${port}`
-    ]
     const sandbox = this.options.sandbox
     if (
       sandbox?.status.mode === 'strict' &&
@@ -594,134 +691,215 @@ export class OpenCodeRuntime implements AgentRuntime {
     ) {
       throw new Error(sandbox.status.detail)
     }
-    const launch =
-      sandbox?.status.available && sandbox.binaryPath
-        ? buildBubblewrapLaunch({
-            binaryPath: sandbox.binaryPath,
-            command: binaryPath,
-            args: serverArgs,
-            workspace: this.options.defaultWorkspace,
-            readOnlyPaths: this.options.configPath.trim()
-              ? [resolve(this.options.configPath)]
-              : [],
-            platform: this.dependencies.platform
-          })
-        : { command: binaryPath, args: serverArgs }
-
-    return new Promise<OpenCodeServer>((resolveServer, reject) => {
-      const child = this.dependencies.spawn(
-        launch.command,
-        launch.args,
-        {
-          cwd: this.options.defaultWorkspace,
-          env,
-          shell: false,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          windowsHide: true
-        }
-      )
-      this.startingChild = child
-      const { stdout, stderr } = child
-      let stdoutText = ''
-      let stdoutBytes = 0
-      let stderrBytes = 0
-      let settled = false
-
-      const cleanupStartupListeners = (): void => {
-        clearTimeout(timeout)
-        signal?.removeEventListener('abort', abort)
-        stdout?.removeListener('data', onStdout)
-        stderr?.removeListener('data', onStderr)
-        child.removeListener('error', onError)
-        child.removeListener('close', onClose)
+    const skillIds = this.getNativeSkillIds()
+    const registration = await this.createSkillRegistration()
+    try {
+      if (signal?.aborted) {
+        throw new Error('OpenCode Server 启动已取消')
       }
-      const fail = (message: string): void => {
-        if (settled) {
-          return
+      const profile = this.options.modelProfile
+      const env = profile
+        ? buildExplicitProfileRuntimeEnvironment(
+            runtimePrivacyEnvironment,
+            profile.authentication === 'api-key' && profile.apiKey
+              ? {
+                  name:
+                    profile.protocol === 'anthropic-messages'
+                      ? 'ANTHROPIC_API_KEY'
+                      : 'OPENAI_API_KEY',
+                  value: profile.apiKey
+                }
+              : undefined
+          )
+        : buildRuntimeEnvironment(runtimePrivacyEnvironment)
+      delete env.OPENCODE_CONFIG
+      delete env.OPENCODE_CONFIG_CONTENT
+      delete env.OPENCODE_CONFIG_DIR
+      delete env.OPENCODE_SERVER_PASSWORD
+      delete env.OPENCODE_SERVER_USERNAME
+      const serverPassword = randomBytes(32).toString('base64url')
+      const authorization = `Basic ${Buffer.from(
+        `${EMBEDDED_SERVER_USERNAME}:${serverPassword}`
+      ).toString('base64')}`
+      env.OPENCODE_SERVER_USERNAME = EMBEDDED_SERVER_USERNAME
+      env.OPENCODE_SERVER_PASSWORD = serverPassword
+      env.OPENCODE_CONFIG_DIR = registration.configDirectory
+      env.OPENCODE_DISABLE_AUTOUPDATE = '1'
+      env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = '1'
+      env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = '1'
+      env.OPENCODE_DISABLE_EXTERNAL_SKILLS = '1'
+      env.OPENCODE_DISABLE_LSP_DOWNLOAD = '1'
+      env.OPENCODE_DISABLE_MODELS_FETCH = '1'
+      env.OPENCODE_DISABLE_PROJECT_CONFIG = '1'
+      env.OPENCODE_DISABLE_SHARE = '1'
+      env.XDG_CACHE_HOME = join(registration.root, 'xdg-cache')
+      env.XDG_CONFIG_HOME = join(registration.root, 'xdg-config')
+      env.XDG_DATA_HOME = join(registration.root, 'xdg-data')
+      env.XDG_STATE_HOME = join(registration.root, 'xdg-state')
+      const skillConfig = createOpenCodeSkillConfig(
+        registration,
+        skillIds
+      )
+      env.OPENCODE_CONFIG_CONTENT = JSON.stringify(
+        profile
+          ? {
+              ...createOpenCodeProviderConfig(profile),
+              ...skillConfig
+            }
+          : skillConfig
+      )
+      if (!profile && this.options.configPath.trim()) {
+        env.OPENCODE_CONFIG = resolve(this.options.configPath)
+      }
+      const serverArgs = [
+        'serve',
+        '--hostname=127.0.0.1',
+        `--port=${port}`
+      ]
+      const launch =
+        sandbox?.status.available && sandbox.binaryPath
+          ? buildBubblewrapLaunch({
+              binaryPath: sandbox.binaryPath,
+              command: binaryPath,
+              args: serverArgs,
+              workspace: this.options.defaultWorkspace,
+              readOnlyPaths: this.options.configPath.trim()
+                ? [resolve(this.options.configPath)]
+                : [],
+              writablePaths: [registration.root],
+              platform: this.dependencies.platform
+            })
+          : { command: binaryPath, args: serverArgs }
+
+      return await new Promise<OpenCodeServer>((resolveServer, reject) => {
+        const child = this.dependencies.spawn(
+          launch.command,
+          launch.args,
+          {
+            cwd: this.options.defaultWorkspace,
+            env,
+            shell: false,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true
+          }
+        )
+        this.startingChild = child
+        const { stdout, stderr } = child
+        let stdoutText = ''
+        let stdoutBytes = 0
+        let stderrBytes = 0
+        let settled = false
+
+        const cleanupStartupListeners = (): void => {
+          clearTimeout(timeout)
+          signal?.removeEventListener('abort', abort)
+          stdout?.removeListener('data', onStdout)
+          stderr?.removeListener('data', onStderr)
+          child.removeListener('error', onError)
+          child.removeListener('close', onClose)
         }
-        settled = true
-        cleanupStartupListeners()
-        const clearStartingChild = (): void => {
+        const fail = (message: string): void => {
+          if (settled) {
+            return
+          }
+          settled = true
+          cleanupStartupListeners()
+          const clearStartingChild = (): void => {
+            if (this.startingChild === child) {
+              this.startingChild = undefined
+            }
+          }
+          const exited = this.waitForExit(child)
+          this.terminate(child)
+          void exited.finally(() => {
+            if (child.exitCode !== null) {
+              clearStartingChild()
+            }
+            reject(new Error(message.slice(0, 1_000)))
+          })
+        }
+        const succeed = (url: string): void => {
+          if (settled) {
+            return
+          }
+          settled = true
+          cleanupStartupListeners()
           if (this.startingChild === child) {
             this.startingChild = undefined
           }
+          stdout?.resume()
+          stderr?.resume()
+          resolveServer({
+            url,
+            authorization,
+            close: async () => {
+              try {
+                const exited = this.waitForExit(child)
+                this.terminate(child)
+                await exited
+              } finally {
+                await rm(registration.root, {
+                  recursive: true,
+                  force: true
+                })
+              }
+            }
+          })
         }
-        child.once('close', clearStartingChild)
-        this.terminate(child)
-        if (child.exitCode !== null) {
-          child.removeListener('close', clearStartingChild)
-          clearStartingChild()
-        }
-        reject(new Error(message.slice(0, 1_000)))
-      }
-      const succeed = (url: string): void => {
-        if (settled) {
-          return
-        }
-        settled = true
-        cleanupStartupListeners()
-        if (this.startingChild === child) {
-          this.startingChild = undefined
-        }
-        stdout?.resume()
-        stderr?.resume()
-        resolveServer({
-          url,
-          authorization,
-          close: async () => {
-            const exited = this.waitForExit(child)
-            this.terminate(child)
-            await exited
+        const onStdout = (chunk: string | Buffer): void => {
+          const text = chunk.toString()
+          stdoutBytes += Buffer.isBuffer(chunk)
+            ? chunk.byteLength
+            : Buffer.byteLength(chunk)
+          if (stdoutBytes > MAX_STARTUP_OUTPUT_BYTES) {
+            fail('OpenCode Server stdout 超过 64KB 安全限制')
+            return
           }
-        })
-      }
-      const onStdout = (chunk: string | Buffer): void => {
-        const text = chunk.toString()
-        stdoutBytes += Buffer.isBuffer(chunk)
-          ? chunk.byteLength
-          : Buffer.byteLength(chunk)
-        if (stdoutBytes > MAX_STARTUP_OUTPUT_BYTES) {
-          fail('OpenCode Server stdout 超过 64KB 安全限制')
+          stdoutText += text
+          const url = parseListeningUrl(stdoutText)
+          if (url) {
+            succeed(url)
+          }
+        }
+        const onStderr = (chunk: string | Buffer): void => {
+          stderrBytes += Buffer.byteLength(chunk)
+          if (stderrBytes > MAX_STARTUP_OUTPUT_BYTES) {
+            fail('OpenCode Server stderr 超过 64KB 安全限制')
+          }
+        }
+        const onError = (): void => {
+          fail('OpenCode Server 启动失败')
+        }
+        const onClose = (code: number | null): void => {
+          fail(`OpenCode Server 启动前退出（code ${code ?? 'unknown'}）`)
+        }
+        const abort = (): void => {
+          fail('OpenCode Server 启动已取消')
+        }
+        const timeout = setTimeout(() => {
+          fail('OpenCode Server 启动超时（10 秒）')
+        }, this.dependencies.startupTimeoutMs)
+
+        if (!stdout || !stderr) {
+          fail('OpenCode Server 管道初始化失败')
           return
         }
-        stdoutText += text
-        const url = parseListeningUrl(stdoutText)
-        if (url) {
-          succeed(url)
+        stdout.on('data', onStdout)
+        stderr.on('data', onStderr)
+        child.once('error', onError)
+        child.once('close', onClose)
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) {
+          abort()
         }
-      }
-      const onStderr = (chunk: string | Buffer): void => {
-        stderrBytes += Buffer.byteLength(chunk)
-        if (stderrBytes > MAX_STARTUP_OUTPUT_BYTES) {
-          fail('OpenCode Server stderr 超过 64KB 安全限制')
-        }
-      }
-      const onError = (): void => {
-        fail('OpenCode Server 启动失败')
-      }
-      const onClose = (code: number | null): void => {
-        fail(`OpenCode Server 启动前退出（code ${code ?? 'unknown'}）`)
-      }
-      const abort = (): void => {
-        fail('OpenCode Server 启动已取消')
-      }
-      const timeout = setTimeout(() => {
-        fail('OpenCode Server 启动超时（10 秒）')
-      }, this.dependencies.startupTimeoutMs)
-
-      if (!stdout || !stderr) {
-        fail('OpenCode Server 管道初始化失败')
-        return
-      }
-      stdout.on('data', onStdout)
-      stderr.on('data', onStderr)
-      child.once('error', onError)
-      child.once('close', onClose)
-      signal?.addEventListener('abort', abort, { once: true })
-      if (signal?.aborted) {
-        abort()
-      }
-    })
+      })
+    } catch (error) {
+      await rm(registration.root, {
+        recursive: true,
+        force: true
+      }).catch(() => undefined)
+      throw error
+    }
   }
 
   private async getClient(signal?: AbortSignal): Promise<OpencodeClient> {
@@ -861,6 +1039,9 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
     const client = await this.getClient(signal)
     const directory = this.options.defaultWorkspace
+    const nativeSkillIds = this.getNativeSkillIds()
+    const nativeSkillPermissionRules =
+      createSkillPermissionRules(nativeSkillIds)
     let knowledgeMcpName: string | undefined
     let knowledgeToolIds: string[] = []
     try {
@@ -907,6 +1088,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         ? request.workMode === 'execute'
           ? [
               ...executePermissionRules,
+              ...nativeSkillPermissionRules,
               ...knowledgeToolIds.map((toolId) => ({
                 permission: toolId,
                 pattern: '*',
@@ -916,13 +1098,17 @@ export class OpenCodeRuntime implements AgentRuntime {
           : knowledgeToolIds.length > 0
             ? [
                 ...readOnlyPermissionRules,
+                ...nativeSkillPermissionRules,
                 ...knowledgeToolIds.map((toolId) => ({
                   permission: toolId,
                   pattern: '*',
                   action: 'allow' as const
                 }))
               ]
-            : readOnlyPermissionRules
+            : [
+                ...readOnlyPermissionRules,
+                ...nativeSkillPermissionRules
+              ]
         : undefined
       let disabledTools: Record<string, boolean> | undefined
       if (request.workMode !== 'execute') {
@@ -938,7 +1124,8 @@ export class OpenCodeRuntime implements AgentRuntime {
           ),
           ...Object.fromEntries(
             knowledgeToolIds.map((toolId) => [toolId, true])
-          )
+          ),
+          ...(nativeSkillIds.length > 0 ? { skill: true } : {})
         }
       }
       const session = await this.getSessionId(
@@ -1010,7 +1197,10 @@ export class OpenCodeRuntime implements AgentRuntime {
               modelID: this.options.modelProfile.modelName
             }
           : undefined,
-        system: this.options.skillInstructions || undefined,
+        system:
+          nativeSkillIds.length > 0
+            ? undefined
+            : this.options.skillInstructions || undefined,
         ...(disabledTools ? { tools: disabledTools } : {}),
         parts: [{ type: 'text', text: promptText }]
       }, { signal })

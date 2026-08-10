@@ -160,6 +160,7 @@ export function createAgentRuntime(
         '',
       modelProfile: settings?.opencodeModelProfile,
       skillInstructions: capabilities.skillInstructions,
+      skillPackages: capabilities.skillPackages,
       sandbox: resolveRuntimeSandbox(sandboxMode),
       defaultWorkspace: workspace,
       knowledgeGateway: capabilities.knowledgeGateway

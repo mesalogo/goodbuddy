@@ -1,6 +1,13 @@
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
-import { mkdtemp, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -246,7 +253,10 @@ function runClient(events: Record<string, unknown>[]) {
 }
 
 function embeddedRuntime(
-  client: ReturnType<typeof createOpencodeClient>
+  client: ReturnType<typeof createOpencodeClient>,
+  overrides: Partial<
+    ConstructorParameters<typeof OpenCodeRuntime>[0]
+  > = {}
 ): OpenCodeRuntime {
   const child = fakeChild()
   const { deps } = dependencies(child, {
@@ -259,7 +269,7 @@ function embeddedRuntime(
       'opencode server listening on http://127.0.0.1:4010\n'
     )
   }, 0)
-  return new OpenCodeRuntime(options(), deps)
+  return new OpenCodeRuntime(options(overrides), deps)
 }
 
 async function collectRun(
@@ -403,6 +413,109 @@ describe('OpenCodeRuntime embedded launcher', () => {
       }
     )
     expect(killerChild.unref).toHaveBeenCalledOnce()
+  })
+
+  it('registers only assigned Skill packages in an isolated config directory', async () => {
+    const sourceRoot = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-opencode-skill-source-')
+    )
+    const skillDirectory = join(sourceRoot, 'longdoc-docx')
+    await mkdir(join(skillDirectory, 'templates'), {
+      recursive: true
+    })
+    await writeFile(
+      join(skillDirectory, 'SKILL.md'),
+      [
+        '---',
+        'id: longdoc-docx',
+        'name: 长文档',
+        'description: Build a DOCX',
+        '---',
+        '',
+        '# Long document'
+      ].join('\n'),
+      'utf8'
+    )
+    await writeFile(
+      join(skillDirectory, 'templates', 'document.txt'),
+      'template',
+      'utf8'
+    )
+    const child = fakeChild()
+    const { deps, spawnMock } = dependencies(child)
+    setTimeout(() => {
+      stdoutOf(child).write(
+        'opencode server listening on http://127.0.0.1:3012\n'
+      )
+    }, 0)
+    const runtime = new OpenCodeRuntime(
+      options({
+        skillPackages: [
+          {
+            id: 'longdoc-docx',
+            directory: skillDirectory
+          }
+        ]
+      }),
+      deps
+    )
+
+    await expect(runtime.getStatus()).resolves.toMatchObject({
+      available: true
+    })
+    const spawnOptions = spawnMock.mock.calls[0]?.[2] as
+      | { env?: NodeJS.ProcessEnv }
+      | undefined
+    const configDirectory = spawnOptions?.env?.OPENCODE_CONFIG_DIR
+    expect(configDirectory).toBeTruthy()
+    const registrationRoot = resolve(configDirectory!, '..')
+    const registeredSkill = join(
+      configDirectory!,
+      'skills',
+      'longdoc-docx'
+    )
+    try {
+      await expect(
+        readFile(
+          join(registeredSkill, 'templates', 'document.txt'),
+          'utf8'
+        )
+      ).resolves.toBe('template')
+      const registeredManifest = await readFile(
+        join(registeredSkill, 'SKILL.md'),
+        'utf8'
+      )
+      expect(registeredManifest).toContain('name: longdoc-docx')
+      expect(registeredManifest).not.toContain('id: longdoc-docx')
+      const config = JSON.parse(
+        spawnOptions?.env?.OPENCODE_CONFIG_CONTENT ?? '{}'
+      ) as Record<string, unknown>
+      expect(config).toEqual({
+        skills: {
+          paths: [join(configDirectory!, 'skills')],
+          urls: []
+        },
+        permission: {
+          skill: {
+            '*': 'deny',
+            'longdoc-docx': 'allow'
+          }
+        }
+      })
+      expect(spawnOptions?.env).toMatchObject({
+        OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
+        OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
+        OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+        XDG_CACHE_HOME: join(registrationRoot, 'xdg-cache'),
+        XDG_CONFIG_HOME: join(registrationRoot, 'xdg-config'),
+        XDG_DATA_HOME: join(registrationRoot, 'xdg-data'),
+        XDG_STATE_HOME: join(registrationRoot, 'xdg-state')
+      })
+    } finally {
+      await runtime.dispose()
+      await rm(sourceRoot, { recursive: true, force: true })
+    }
+    await expect(stat(registrationRoot)).rejects.toThrow()
   })
 
   it('injects an independent model profile without persisting its key', async () => {
@@ -764,6 +877,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
     const isolatedNames = [
       'OPENCODE_CONFIG',
       'OPENCODE_CONFIG_CONTENT',
+      'OPENCODE_CONFIG_DIR',
       'OPENCODE_SERVER_PASSWORD',
       'OPENCODE_SERVER_USERNAME'
     ] as const
@@ -791,7 +905,12 @@ describe('OpenCodeRuntime embedded launcher', () => {
         | { env?: NodeJS.ProcessEnv }
         | undefined
       expect(spawnOptions?.env?.OPENCODE_CONFIG).toBeUndefined()
-      expect(spawnOptions?.env?.OPENCODE_CONFIG_CONTENT).toBeUndefined()
+      expect(
+        spawnOptions?.env?.OPENCODE_CONFIG_CONTENT
+      ).not.toBe('must-not-be-inherited')
+      expect(spawnOptions?.env?.OPENCODE_CONFIG_DIR).not.toBe(
+        'must-not-be-inherited'
+      )
       expect(spawnOptions?.env?.OPENCODE_SERVER_USERNAME).toBe(
         'goodbuddy'
       )
@@ -801,9 +920,12 @@ describe('OpenCodeRuntime embedded launcher', () => {
       expect(spawnOptions?.env).toMatchObject({
         DO_NOT_TRACK: '1',
         OPENCODE_DISABLE_AUTOUPDATE: '1',
+        OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
         OPENCODE_DISABLE_EMBEDDED_WEB_UI: '1',
+        OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
         OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
         OPENCODE_DISABLE_MODELS_FETCH: '1',
+        OPENCODE_DISABLE_PROJECT_CONFIG: '1',
         OPENCODE_DISABLE_SHARE: '1',
         OTEL_EXPORTER_OTLP_ENDPOINT: '',
         OTEL_EXPORTER_OTLP_HEADERS: '',
@@ -838,11 +960,15 @@ describe('OpenCodeRuntime embedded launcher', () => {
     'http://127.0.0.1:4321/admin'
   ])('rejects an unsafe listening URL: %s', async (url) => {
     const child = fakeChild()
-    const { deps, createClient } = dependencies(child)
-    setTimeout(() => {
-      stdoutOf(child).write(`opencode server listening on ${url}\n`)
-      closeChild(child, 7)
-    }, 0)
+    const { deps, createClient } = dependencies(child, {
+      spawn: vi.fn(() => {
+        queueMicrotask(() => {
+          stdoutOf(child).write(`opencode server listening on ${url}\n`)
+          closeChild(child, 7)
+        })
+        return child
+      }) as unknown as typeof spawn
+    })
     const runtime = new OpenCodeRuntime(options(), deps)
 
     await expect(runtime.getStatus()).resolves.toMatchObject({
@@ -872,17 +998,34 @@ describe('OpenCodeRuntime embedded launcher', () => {
   it('reports early exit without leaking captured stderr', async () => {
     const child = fakeChild()
     const secret = 'OPENCODE_CONFIG=/secret/config.json'
-    const { deps } = dependencies(child)
-    setTimeout(() => {
-      stderrOf(child).write(secret)
-      closeChild(child, 9)
-    }, 0)
+    let registrationRoot = ''
+    const { deps } = dependencies(child, {
+      spawn: vi.fn(
+        (
+          _command: string,
+          _args: string[],
+          spawnOptions: { env?: NodeJS.ProcessEnv }
+        ) => {
+          registrationRoot = resolve(
+            spawnOptions.env?.OPENCODE_CONFIG_DIR ?? '',
+            '..'
+          )
+          queueMicrotask(() => {
+            stderrOf(child).write(secret)
+            closeChild(child, 9)
+          })
+          return child
+        }
+      ) as unknown as typeof spawn
+    })
     const runtime = new OpenCodeRuntime(options(), deps)
 
     const status = await runtime.getStatus()
 
     expect(status.detail).toBe('OpenCode Server 启动前退出（code 9）')
     expect(status.detail).not.toContain(secret)
+    expect(registrationRoot).toBeTruthy()
+    await expect(stat(registrationRoot)).rejects.toThrow()
   })
 
   it('terminates startup when the request is aborted', async () => {
@@ -1423,6 +1566,75 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       )
     ).not.toContain('must-not-leave-main')
     await runtime.dispose()
+  })
+
+  it('allows only registered native Skills in read-only modes', async () => {
+    const sourceRoot = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-opencode-permission-skill-')
+    )
+    const skillDirectory = join(sourceRoot, 'longdoc-docx')
+    await mkdir(skillDirectory)
+    await writeFile(
+      join(skillDirectory, 'SKILL.md'),
+      [
+        '---',
+        'name: longdoc-docx',
+        'description: Build a DOCX',
+        '---',
+        '',
+        '# Long document'
+      ].join('\n'),
+      'utf8'
+    )
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(setup.client, {
+      skillInstructions: '# Original path: C:\\private\\skills',
+      skillPackages: [
+        {
+          id: 'longdoc-docx',
+          directory: skillDirectory
+        }
+      ]
+    })
+    try {
+      await collectRun(runtime, 'ask')
+
+      expect(setup.session.create).toHaveBeenCalledWith({
+        title: 'GoodBuddy 对话',
+        directory: process.cwd(),
+        permission: [
+          { permission: '*', pattern: '*', action: 'deny' },
+          { permission: 'skill', pattern: '*', action: 'deny' },
+          {
+            permission: 'skill',
+            pattern: 'longdoc-docx',
+            action: 'allow'
+          }
+        ]
+      })
+      expect(setup.session.promptAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: undefined,
+          tools: {
+            read: false,
+            write: false,
+            bash: false,
+            task: false,
+            skill: true
+          }
+        }),
+        expect.anything()
+      )
+    } finally {
+      await runtime.dispose()
+      await rm(sourceRoot, { recursive: true, force: true })
+    }
   })
 
   it('subscribes before prompting and auto-allows a tool request', async () => {

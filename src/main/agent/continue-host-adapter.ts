@@ -1,7 +1,6 @@
 import spawn from 'cross-spawn'
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  cp,
   copyFile,
   mkdir,
   readFile,
@@ -38,6 +37,7 @@ import {
   boundedToolDetail,
   safeToolErrorDetail
 } from './approval-summary'
+import { stageRuntimeSkillPackages } from './runtime-skill-packages'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -997,22 +997,8 @@ export class ContinueHostAdapter {
     if (skillPackages.length === 0) {
       return root
     }
-    const skillsRoot = join(root, 'skills')
-    await mkdir(skillsRoot, { mode: 0o700 })
-    try {
-      for (const skill of skillPackages) {
-        await cp(skill.directory, join(skillsRoot, skill.id), {
-          recursive: true,
-          errorOnExist: true,
-          force: false,
-          verbatimSymlinks: true
-        })
-      }
-      return root
-    } catch (error) {
-      await rm(root, { recursive: true, force: true })
-      throw new Error('Continue Skill 注册失败', { cause: error })
-    }
+    await stageRuntimeSkillPackages(root, skillPackages, 'Continue')
+    return root
   }
 
   async run(
