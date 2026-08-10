@@ -79,6 +79,7 @@ import type { AgentRuntimeSelection } from '../shared/runtime-selection-contract
 import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
 import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
 import type {
+  MagicNoteAnalysisStreamEvent,
   MagicNoteDraftAnalysis,
   MagicNoteDetail,
   MagicNotesSnapshot,
@@ -770,23 +771,37 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.magicNotesDeleteEntry, {
         entryId
       }) as Promise<MagicNoteDetail>,
-    analyze: (entryId: string) =>
+    analyze: (entryId, options) =>
       ipcRenderer.invoke(ipcChannels.magicNotesAnalyze, {
-        entryId
+        entryId,
+        ...options
       }) as Promise<MagicNoteDetail>,
-    analyzeDraft: (content) =>
+    analyzeDraft: (content, options) =>
       ipcRenderer.invoke(
         ipcChannels.magicNotesAnalyzeDraft,
-        { content }
+        { content, ...options }
       ) as Promise<MagicNoteDraftAnalysis>,
     listTodos: () =>
       ipcRenderer.invoke(
         ipcChannels.magicTodosList
       ) as Promise<MagicTodosSnapshot>,
-    analyzeTodo: (todoId: string) =>
+    analyzeTodo: (todoId, options) =>
       ipcRenderer.invoke(ipcChannels.magicTodosAnalyze, {
-        todoId
-      }) as Promise<MagicTodoItem>
+        todoId,
+        ...options
+      }) as Promise<MagicTodoItem>,
+    onAnalysisEvent: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: MagicNoteAnalysisStreamEvent
+      ): void => listener(payload)
+      ipcRenderer.on(ipcChannels.magicNotesAnalysisEvent, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.magicNotesAnalysisEvent,
+          handler
+        )
+    }
   },
   knowledge: {
     getSnapshot: (libraryId?: string) =>

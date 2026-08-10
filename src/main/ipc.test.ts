@@ -2642,7 +2642,12 @@ describe('registerIpcHandlers Magic Notes analysis', () => {
       await expect(
         electronMocks.handlers.get(ipcChannels.magicNotesAnalyze)?.(
           event,
-          { entryId: entry.id }
+          {
+            entryId: entry.id,
+            requestId: '00000000-0000-4000-8000-000000000701',
+            direction: 'general',
+            format: 'structured'
+          }
         )
       ).resolves.toMatchObject({
         entries: [

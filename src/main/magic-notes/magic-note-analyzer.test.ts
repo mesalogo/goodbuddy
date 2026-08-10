@@ -51,7 +51,11 @@ describe('magic note analyzer', () => {
     const result = await analyzeMagicNoteEntry(
       runtime,
       entry,
-      '00000000-0000-4000-8000-000000000506'
+      {
+        requestId: '00000000-0000-4000-8000-000000000506',
+        direction: 'general',
+        format: 'structured'
+      }
     )
 
     expect(request).toMatchObject({
@@ -77,7 +81,11 @@ describe('magic note analyzer', () => {
           ...entry,
           plainText: ''
         },
-        '00000000-0000-4000-8000-000000000507'
+        {
+          requestId: '00000000-0000-4000-8000-000000000507',
+          direction: 'general',
+          format: 'structured'
+        }
       )
     ).rejects.toThrow('没有可供 AI 分析的文字')
   })
@@ -128,7 +136,11 @@ describe('magic note analyzer', () => {
       analyzeMagicTodo(
         runtime,
         todo,
-        '00000000-0000-4000-8000-000000000604'
+        {
+          requestId: '00000000-0000-4000-8000-000000000604',
+          direction: 'general',
+          format: 'structured'
+        }
       )
     ).resolves.toEqual([
       expect.objectContaining({
@@ -138,5 +150,71 @@ describe('magic note analyzer', () => {
     ])
     expect(request?.workMode).toBe('ask')
     expect(request?.trustedInstructions).toContain('禁止工具调用')
+  })
+
+  it('streams the narrative and snapshots combined comment options', async () => {
+    const runtime = {
+      requiresToolApproval: false,
+      supportsToolExecution: false,
+      async getStatus() {
+        return {
+          id: 'model',
+          label: 'Test model',
+          available: true,
+          detail: 'Ready',
+          supportsToolExecution: false
+        } as const
+      },
+      async *run(input: AgentExecutionRequest) {
+        yield {
+          requestId: input.requestId,
+          type: 'text',
+          delta: '可以先扩展目标读者，'
+        } as const
+        yield {
+          requestId: input.requestId,
+          type: 'text',
+          delta:
+            '再补充一个实际例子。\n<<<GOODBUDDY_STRUCTURED_COMMENTS>>>\n'
+        } as const
+        yield {
+          requestId: input.requestId,
+          type: 'text',
+          delta:
+            '{"comments":[{"kind":"suggestion","content":"补充一个读者场景。"}]}'
+        } as const
+        yield { requestId: input.requestId, type: 'done' } as const
+      },
+      async dispose() {}
+    } as AgentRuntime
+    const deltas: string[] = []
+
+    const result = await analyzeMagicNoteEntry(
+      runtime,
+      entry,
+      {
+        requestId: '00000000-0000-4000-8000-000000000508',
+        direction: 'expand',
+        format: 'combined'
+      },
+      (delta) => deltas.push(delta)
+    )
+
+    expect(deltas.join('')).toBe(
+      '可以先扩展目标读者，再补充一个实际例子。\n'
+    )
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'narrative',
+        direction: 'expand',
+        format: 'combined'
+      }),
+      expect.objectContaining({
+        kind: 'suggestion',
+        content: '补充一个读者场景。',
+        direction: 'expand',
+        format: 'combined'
+      })
+    ])
   })
 })

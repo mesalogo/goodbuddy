@@ -329,7 +329,8 @@ const onEmbeddingStatus = vi.fn(
 let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   magicNotesEnabled: false,
-  magicNoteCommentMode: 'immediate'
+  magicNoteCommentMode: 'immediate',
+  magicNoteCommentFormat: 'combined'
 }
 const getApplicationSettings = vi.fn(async () => ({
   ...applicationSettings
@@ -350,7 +351,8 @@ describe('SettingsPanel runtime files', () => {
     applicationSettings = {
       checkUpdatesOnStartup: true,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     }
     embeddingStatusListeners.splice(0)
     Object.defineProperty(window, 'goodbuddy', {
@@ -472,6 +474,15 @@ describe('SettingsPanel runtime files', () => {
     await waitFor(() =>
       expect(updateApplicationSettings).toHaveBeenCalledWith({
         magicNoteCommentMode: 'after-save-auto'
+      })
+    )
+    expect(
+      screen.getByRole('button', { name: '长评 + 要点' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '要点' }))
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        magicNoteCommentFormat: 'structured'
       })
     )
   })

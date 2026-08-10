@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { magicNoteCommentFormatSchema } from './magic-notes-contracts'
 
 export const magicNoteCommentModeSchema = z.enum([
   'immediate',
@@ -14,7 +15,8 @@ export const applicationSettingsSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
     magicNotesEnabled: z.boolean(),
-    magicNoteCommentMode: magicNoteCommentModeSchema
+    magicNoteCommentMode: magicNoteCommentModeSchema,
+    magicNoteCommentFormat: magicNoteCommentFormatSchema
   })
   .strict()
 

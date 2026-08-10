@@ -37,6 +37,8 @@ import {
   type ExpertUpdateInput
 } from './assistant-contracts'
 import type {
+  MagicNoteAnalysisOptions,
+  MagicNoteAnalysisStreamEvent,
   MagicNoteDraftAnalysis,
   MagicNoteDetail,
   MagicNoteCreateInput,
@@ -1212,12 +1214,22 @@ export type DesktopApi = {
       input: MagicNoteEntryUpdateInput
     ) => Promise<MagicNoteDetail>
     removeEntry: (entryId: string) => Promise<MagicNoteDetail>
-    analyze: (entryId: string) => Promise<MagicNoteDetail>
+    analyze: (
+      entryId: string,
+      options: MagicNoteAnalysisOptions
+    ) => Promise<MagicNoteDetail>
     analyzeDraft: (
-      content: MagicNoteRichContent
+      content: MagicNoteRichContent,
+      options: MagicNoteAnalysisOptions
     ) => Promise<MagicNoteDraftAnalysis>
     listTodos: () => Promise<MagicTodosSnapshot>
-    analyzeTodo: (todoId: string) => Promise<MagicTodoItem>
+    analyzeTodo: (
+      todoId: string,
+      options: MagicNoteAnalysisOptions
+    ) => Promise<MagicTodoItem>
+    onAnalysisEvent: (
+      listener: (event: MagicNoteAnalysisStreamEvent) => void
+    ) => () => void
   }
   knowledge: {
     getSnapshot: (libraryId?: string) => Promise<KnowledgeSnapshot>

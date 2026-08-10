@@ -481,7 +481,8 @@ const api: DesktopApi = {
     listTodos: vi.fn(async () => ({ todos: [] })),
     analyzeTodo: vi.fn(async () => {
       throw new Error('not used')
-    })
+    }),
+    onAnalysisEvent: vi.fn(() => vi.fn())
   },
   knowledge: {
     getSnapshot: vi.fn(async () => ({
@@ -643,12 +644,14 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         magicNotesEnabled: true,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         magicNotesEnabled: true,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
@@ -690,12 +693,14 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         magicNotesEnabled: true,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         magicNotesEnabled: true,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
@@ -4031,12 +4036,14 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         magicNotesEnabled: true,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         magicNotesEnabled: true,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
@@ -4072,12 +4079,14 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         magicNotesEnabled: false,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         magicNotesEnabled: false,
-        magicNoteCommentMode: 'immediate' as const
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
@@ -4107,7 +4116,8 @@ describe('App', () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     }
     api.updates = {
       getSettings: vi.fn(async () => ({ ...applicationSettings })),

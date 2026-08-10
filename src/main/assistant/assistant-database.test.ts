@@ -1832,6 +1832,30 @@ describe('AssistantDatabase', () => {
         content: '可以拆成可检查的发布步骤。'
       })
     ])
+    const reanalyzed = database.saveMagicNoteAnalysis({
+      entryId: entry.id,
+      expectedRevision: analyzed.entries[0]!.revision,
+      comments: [
+        {
+          id: '00000000-0000-4000-8000-000000000402',
+          kind: 'narrative',
+          content: '可以继续补充目标读者和发布场景。',
+          direction: 'expand',
+          format: 'narrative'
+        }
+      ]
+    })
+    expect(reanalyzed.entries[0]!.comments).toEqual([
+      expect.objectContaining({
+        content: '可以拆成可检查的发布步骤。'
+      }),
+      expect.objectContaining({
+        content: '可以继续补充目标读者和发布场景。',
+        direction: 'expand',
+        format: 'narrative',
+        analyzedAt: expect.any(String)
+      })
+    ])
     expect(database.listTasks()).toEqual([])
     database.close()
   })

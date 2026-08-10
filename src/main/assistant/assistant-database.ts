@@ -2065,12 +2065,25 @@ export class AssistantDatabase {
   }): MagicNoteDetail {
     const database = this.requireDatabase()
     const existing = database
-      .prepare('SELECT note_id FROM magic_note_entries WHERE id = ?')
-      .get(input.entryId) as { note_id: string } | undefined
+      .prepare(
+        `SELECT note_id, comments_json
+         FROM magic_note_entries
+         WHERE id = ?`
+      )
+      .get(input.entryId) as
+      | { note_id: string; comments_json: string }
+      | undefined
     if (!existing) {
       throw new Error('记录不存在')
     }
     const now = new Date().toISOString()
+    const comments = [
+      ...(JSON.parse(existing.comments_json) as MagicNoteComment[]),
+      ...input.comments.map((comment) => ({
+        ...comment,
+        analyzedAt: now
+      }))
+    ]
     const result = database
       .prepare(
         `UPDATE magic_note_entries
@@ -2079,7 +2092,7 @@ export class AssistantDatabase {
          WHERE id = ? AND revision = ?`
       )
       .run(
-        JSON.stringify(input.comments),
+        JSON.stringify(comments),
         now,
         now,
         input.entryId,
@@ -2156,8 +2169,22 @@ export class AssistantDatabase {
     expectedRevision: number
     comments: MagicNoteComment[]
   }): MagicTodoItem {
+    const database = this.requireDatabase()
+    const existing = database
+      .prepare('SELECT comments_json FROM magic_todos WHERE id = ?')
+      .get(input.todoId) as { comments_json: string } | undefined
+    if (!existing) {
+      throw new Error('待办不存在')
+    }
     const now = new Date().toISOString()
-    const result = this.requireDatabase()
+    const comments = [
+      ...(JSON.parse(existing.comments_json) as MagicNoteComment[]),
+      ...input.comments.map((comment) => ({
+        ...comment,
+        analyzedAt: now
+      }))
+    ]
+    const result = database
       .prepare(
         `UPDATE magic_todos
          SET comments_json = ?, analyzed_at = ?,
@@ -2165,7 +2192,7 @@ export class AssistantDatabase {
          WHERE id = ? AND revision = ?`
       )
       .run(
-        JSON.stringify(input.comments),
+        JSON.stringify(comments),
         now,
         now,
         input.todoId,

@@ -24,6 +24,9 @@ import {
   useState
 } from 'react'
 import type {
+  MagicNoteAnalysisOptions,
+  MagicNoteCommentDirection,
+  MagicNoteCommentFormat,
   MagicNoteDraftAnalysis,
   MagicNoteComment,
   MagicNoteDetail,
@@ -35,6 +38,7 @@ import type {
 import type { MagicNoteCommentMode } from '../../shared/application-settings-contracts'
 import { MagicNoteContent } from './MagicNoteContent'
 import { MagicNoteEditor } from './MagicNoteEditor'
+import { MarkdownRenderer } from './MarkdownRenderer'
 import type { AppNotificationInput } from './notifications'
 import {
   EmptyState,
@@ -73,6 +77,56 @@ const todoListModes = [
   { value: 'list', label: '待办视图' },
   { value: 'directory', label: '目录视图' }
 ] as const
+
+const commentDirections: ReadonlyArray<{
+  value: MagicNoteCommentDirection
+  label: string
+}> = [
+  { value: 'general', label: '综合点评' },
+  { value: 'expand', label: '扩展写作' },
+  { value: 'polish', label: '润色改写' },
+  { value: 'challenge', label: '质疑审校' },
+  { value: 'brainstorm', label: '灵感发散' }
+]
+
+const commentDirectionLabels = Object.fromEntries(
+  commentDirections.map((direction) => [
+    direction.value,
+    direction.label
+  ])
+) as Record<MagicNoteCommentDirection, string>
+
+const defaultAiPaneWidth = 300
+const minimumAiPaneWidth = 240
+const maximumAiPaneWidth = 520
+const magicNotesListPaneWidth = 220
+const minimumMagicNotesEditorWidth = 300
+const magicNotesResizeHandleWidth = 9
+const aiPaneKeyboardResizeStep = 16
+
+function getAiPaneWidthLimits(layoutWidth: number): {
+  minimum: number
+  maximum: number
+} {
+  return {
+    minimum: minimumAiPaneWidth,
+    maximum: Math.max(
+      minimumAiPaneWidth,
+      Math.min(
+        maximumAiPaneWidth,
+        layoutWidth -
+          magicNotesListPaneWidth -
+          minimumMagicNotesEditorWidth -
+          magicNotesResizeHandleWidth
+      )
+    )
+  }
+}
+
+function clampAiPaneWidth(width: number, layoutWidth: number): number {
+  const limits = getAiPaneWidthLimits(layoutWidth)
+  return Math.min(limits.maximum, Math.max(limits.minimum, width))
+}
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   month: '2-digit',
@@ -131,13 +185,26 @@ function AiComment({
       </span>
       <div>
         <strong>
-          {comment.kind === 'warning'
+          {comment.kind === 'narrative'
+            ? '长评'
+            : comment.kind === 'warning'
             ? '提醒'
             : comment.kind === 'suggestion'
               ? '建议'
               : '摘要'}
         </strong>
-        <p>{comment.content}</p>
+        {comment.direction && (
+          <span className="magic-note-comment__direction">
+            {commentDirectionLabels[comment.direction]}
+          </span>
+        )}
+        {comment.kind === 'narrative' ? (
+          <div className="magic-note-comment__narrative markdown-content">
+            <MarkdownRenderer>{comment.content}</MarkdownRenderer>
+          </div>
+        ) : (
+          <p>{comment.content}</p>
+        )}
       </div>
     </div>
   )
@@ -187,6 +254,10 @@ export function MagicNotesWorkspace({
     useState<TodoListMode>('list')
   const [commentMode, setCommentMode] =
     useState<MagicNoteCommentMode>('immediate')
+  const [commentDirection, setCommentDirection] =
+    useState<MagicNoteCommentDirection>('general')
+  const [commentFormat, setCommentFormat] =
+    useState<MagicNoteCommentFormat>('combined')
   const [selectedNoteId, setSelectedNoteId] = useState('')
   const [selectedTodoId, setSelectedTodoId] = useState('')
   const [detail, setDetail] = useState<MagicNoteDetail>()
@@ -207,10 +278,21 @@ export function MagicNotesWorkspace({
   const [editingEntry, setEditingEntry] = useState<MagicNoteEntry>()
   const [deletingEntryId, setDeletingEntryId] = useState('')
   const [aiPaneOpen, setAiPaneOpen] = useState(true)
+  const [aiPaneWidth, setAiPaneWidth] = useState(defaultAiPaneWidth)
+  const [aiPaneResizing, setAiPaneResizing] = useState(false)
+  const [magicNotesLayoutWidth, setMagicNotesLayoutWidth] = useState(
+    window.innerWidth
+  )
   const [draftAnalyses, setDraftAnalyses] = useState<
     MagicNoteDraftAnalysis[]
   >([])
   const [draftAnalysisRunning, setDraftAnalysisRunning] = useState(false)
+  const [liveAnalysis, setLiveAnalysis] = useState<{
+    requestId: string
+    content: string
+    direction: MagicNoteCommentDirection
+    format: MagicNoteCommentFormat
+  }>()
   const [validation, setValidation] = useState<{
     target: ValidationTarget
     message: string
@@ -235,9 +317,148 @@ export function MagicNotesWorkspace({
   const draftAnalysisArmedRef = useRef(false)
   const draftAnalysisContextRef = useRef(0)
   const lastDraftAnalysisStartedAtRef = useRef(0)
+  const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
+  const liveAiPaneWidthRef = useRef(defaultAiPaneWidth)
+  const aiResizePointerIdRef = useRef<number | undefined>(undefined)
   const runDraftAnalysisRef = useRef<
     (content: MagicNoteRichContent) => Promise<void>
   >(async () => undefined)
+
+  const createAnalysisOptions = useCallback(
+    async (): Promise<MagicNoteAnalysisOptions> => {
+      let format = commentFormat
+      try {
+        const settings = await window.goodbuddy.updates?.getSettings()
+        if (settings) {
+          format = settings.magicNoteCommentFormat
+          setCommentFormat(format)
+        }
+      } catch {
+        // Keep the last loaded format if settings cannot be refreshed.
+      }
+      return {
+        requestId: crypto.randomUUID(),
+        direction: commentDirection,
+        format
+      }
+    },
+    [commentDirection, commentFormat]
+  )
+
+  const getLayoutBounds = useCallback((): {
+    width: number
+    right: number
+  } => {
+    const bounds = magicNotesLayoutRef.current?.getBoundingClientRect()
+    const width = bounds?.width || window.innerWidth
+    return {
+      width,
+      right: bounds?.right || width
+    }
+  }, [])
+
+  const resizeAiPaneFromClientX = useCallback(
+    (clientX: number, commit: boolean): void => {
+      const bounds = getLayoutBounds()
+      const width = clampAiPaneWidth(
+        bounds.right - clientX,
+        bounds.width
+      )
+      liveAiPaneWidthRef.current = width
+      if (commit) {
+        setAiPaneWidth(width)
+        return
+      }
+      magicNotesLayoutRef.current?.style.setProperty(
+        '--magic-notes-ai-width',
+        `${width}px`
+      )
+    },
+    [getLayoutBounds]
+  )
+
+  const finishAiPaneResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (aiResizePointerIdRef.current !== event.pointerId) {
+        return
+      }
+      aiResizePointerIdRef.current = undefined
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      setAiPaneWidth(liveAiPaneWidthRef.current)
+      setAiPaneResizing(false)
+    },
+    []
+  )
+
+  const resizeAiPaneWithKeyboard = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      const bounds = getLayoutBounds()
+      const limits = getAiPaneWidthLimits(bounds.width)
+      const nextWidth =
+        event.key === 'Home'
+          ? limits.minimum
+          : event.key === 'End'
+            ? limits.maximum
+            : event.key === 'ArrowLeft'
+              ? aiPaneWidth + aiPaneKeyboardResizeStep
+              : event.key === 'ArrowRight'
+                ? aiPaneWidth - aiPaneKeyboardResizeStep
+                : undefined
+      if (nextWidth === undefined) {
+        return
+      }
+      event.preventDefault()
+      const width = clampAiPaneWidth(nextWidth, bounds.width)
+      liveAiPaneWidthRef.current = width
+      setAiPaneWidth(width)
+    },
+    [aiPaneWidth, getLayoutBounds]
+  )
+
+  useEffect(
+    () =>
+      window.goodbuddy.magicNotes.onAnalysisEvent((event) => {
+        setLiveAnalysis((current) =>
+          current?.requestId === event.requestId
+            ? {
+                ...current,
+                content: current.content + event.delta
+              }
+            : current
+        )
+      }),
+    []
+  )
+
+  useEffect(() => {
+    const layout = magicNotesLayoutRef.current
+    const updateLayoutWidth = (): void => {
+      const width = layout?.getBoundingClientRect().width || window.innerWidth
+      setMagicNotesLayoutWidth(width)
+      if (width > 800) {
+        setAiPaneWidth((current) => {
+          const next = clampAiPaneWidth(current, width)
+          liveAiPaneWidthRef.current = next
+          return next
+        })
+      }
+    }
+    updateLayoutWidth()
+    window.addEventListener('resize', updateLayoutWidth)
+    const observer =
+      layout && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(updateLayoutWidth)
+        : undefined
+    if (layout && observer) {
+      observer.observe(layout)
+    }
+    return () => {
+      window.removeEventListener('resize', updateLayoutWidth)
+      observer?.disconnect()
+    }
+  }, [])
 
   const notifyError = useCallback(
     (error: unknown): void =>
@@ -287,6 +508,7 @@ export function MagicNotesWorkspace({
       .then((settings) => {
         if (active) {
           setCommentMode(settings.magicNoteCommentMode)
+          setCommentFormat(settings.magicNoteCommentFormat)
         }
       })
       .catch(() => undefined)
@@ -307,9 +529,16 @@ export function MagicNotesWorkspace({
       const analysisContext = draftAnalysisContextRef.current
       lastDraftAnalysisStartedAtRef.current = Date.now()
       setDraftAnalysisRunning(true)
+      const options = await createAnalysisOptions()
+      setLiveAnalysis({
+        requestId: options.requestId,
+        content: '',
+        direction: options.direction,
+        format: options.format
+      })
       try {
         const analysis =
-          await window.goodbuddy.magicNotes.analyzeDraft(content)
+          await window.goodbuddy.magicNotes.analyzeDraft(content, options)
         if (draftAnalysisContextRef.current === analysisContext) {
           setDraftAnalyses((current) => [analysis, ...current].slice(0, 20))
         }
@@ -318,6 +547,9 @@ export function MagicNotesWorkspace({
           notifyError(analysisError)
         }
       } finally {
+        setLiveAnalysis((current) =>
+          current?.requestId === options.requestId ? undefined : current
+        )
         draftAnalysisRunningRef.current = false
         setDraftAnalysisRunning(false)
         if (draftAnalysisQueuedRef.current) {
@@ -336,7 +568,7 @@ export function MagicNotesWorkspace({
         }
       }
     },
-    [notifyError]
+    [createAnalysisOptions, notifyError]
   )
   useEffect(() => {
     runDraftAnalysisRef.current = runDraftAnalysis
@@ -583,6 +815,8 @@ export function MagicNotesWorkspace({
         .reverse(),
     [detail]
   )
+  const aiPaneWidthLimits = getAiPaneWidthLimits(magicNotesLayoutWidth)
+  const canResizeAiPane = aiPaneOpen && magicNotesLayoutWidth > 800
 
   const createNote = async (): Promise<void> => {
     const title = newTitle.trim()
@@ -617,12 +851,24 @@ export function MagicNotesWorkspace({
     if (!beginBusy(operation)) {
       return
     }
+    const options = await createAnalysisOptions()
+    setLiveAnalysis({
+      requestId: options.requestId,
+      content: '',
+      direction: options.direction,
+      format: options.format
+    })
     try {
-      applyTodo(await window.goodbuddy.magicNotes.analyzeTodo(todoId))
-      notifySuccess('AI 评论已更新')
+      applyTodo(
+        await window.goodbuddy.magicNotes.analyzeTodo(todoId, options)
+      )
+      notifySuccess('AI 评论已添加')
     } catch (analysisError) {
       notifyError(analysisError)
     } finally {
+      setLiveAnalysis((current) =>
+        current?.requestId === options.requestId ? undefined : current
+      )
       endBusy(operation)
     }
   }
@@ -693,13 +939,29 @@ export function MagicNotesWorkspace({
         (entry) => !existingEntryIds.has(entry.id)
       )
       if (commentMode === 'after-save-auto' && createdEntry) {
+        const options = await createAnalysisOptions()
+        setLiveAnalysis({
+          requestId: options.requestId,
+          content: '',
+          direction: options.direction,
+          format: options.format
+        })
         try {
           applyDetail(
-            await window.goodbuddy.magicNotes.analyze(createdEntry.id)
+            await window.goodbuddy.magicNotes.analyze(
+              createdEntry.id,
+              options
+            )
           )
-          notifySuccess('AI 评论已更新')
+          notifySuccess('AI 评论已添加')
         } catch (analysisError) {
           notifyError(analysisError)
+        } finally {
+          setLiveAnalysis((current) =>
+            current?.requestId === options.requestId
+              ? undefined
+              : current
+          )
         }
       }
     } catch (saveError) {
@@ -732,13 +994,29 @@ export function MagicNotesWorkspace({
       editingContentRef.current = undefined
       notifySuccess('记录已更新，原 AI 评论已清除')
       if (commentMode === 'after-save-auto') {
+        const options = await createAnalysisOptions()
+        setLiveAnalysis({
+          requestId: options.requestId,
+          content: '',
+          direction: options.direction,
+          format: options.format
+        })
         try {
           applyDetail(
-            await window.goodbuddy.magicNotes.analyze(editingEntry.id)
+            await window.goodbuddy.magicNotes.analyze(
+              editingEntry.id,
+              options
+            )
           )
-          notifySuccess('AI 评论已更新')
+          notifySuccess('AI 评论已添加')
         } catch (analysisError) {
           notifyError(analysisError)
+        } finally {
+          setLiveAnalysis((current) =>
+            current?.requestId === options.requestId
+              ? undefined
+              : current
+          )
         }
       }
     } catch (updateError) {
@@ -753,12 +1031,24 @@ export function MagicNotesWorkspace({
     if (!beginBusy(operation)) {
       return
     }
+    const options = await createAnalysisOptions()
+    setLiveAnalysis({
+      requestId: options.requestId,
+      content: '',
+      direction: options.direction,
+      format: options.format
+    })
     try {
-      applyDetail(await window.goodbuddy.magicNotes.analyze(entryId))
-      notifySuccess('AI 评论已更新')
+      applyDetail(
+        await window.goodbuddy.magicNotes.analyze(entryId, options)
+      )
+      notifySuccess('AI 评论已添加')
     } catch (analysisError) {
       notifyError(analysisError)
     } finally {
+      setLiveAnalysis((current) =>
+        current?.requestId === options.requestId ? undefined : current
+      )
       endBusy(operation)
     }
   }
@@ -836,10 +1126,20 @@ export function MagicNotesWorkspace({
             </div>
           )}
       <div
+        ref={magicNotesLayoutRef}
         aria-busy={Boolean(busy)}
         className={`magic-notes-layout${
           aiPaneOpen ? '' : ' magic-notes-layout--ai-hidden'
+        }${
+          aiPaneResizing && canResizeAiPane
+            ? ' magic-notes-layout--resizing'
+            : ''
         }`}
+        style={
+          {
+            '--magic-notes-ai-width': `${aiPaneWidth}px`
+          } as React.CSSProperties
+        }
       >
         <aside
           aria-label={libraryView === 'notes' ? '笔记列表' : '待办列表'}
@@ -1542,6 +1842,53 @@ export function MagicNotesWorkspace({
           )}
         </section>
 
+        {aiPaneOpen && (
+          <div
+            aria-controls="magic-notes-ai-pane"
+            aria-disabled={!canResizeAiPane}
+            aria-label="调整编辑区与 AI 评论宽度"
+            aria-orientation="vertical"
+            aria-valuemax={aiPaneWidthLimits.maximum}
+            aria-valuemin={aiPaneWidthLimits.minimum}
+            aria-valuenow={aiPaneWidth}
+            aria-valuetext={`AI 评论栏 ${aiPaneWidth} 像素`}
+            className="magic-notes-ai-resize-handle"
+            onKeyDown={resizeAiPaneWithKeyboard}
+            onLostPointerCapture={(event) => {
+              if (aiResizePointerIdRef.current === event.pointerId) {
+                aiResizePointerIdRef.current = undefined
+                setAiPaneWidth(liveAiPaneWidthRef.current)
+                setAiPaneResizing(false)
+              }
+            }}
+            onPointerCancel={finishAiPaneResize}
+            onPointerDown={(event) => {
+              if (event.button !== 0 || !canResizeAiPane) {
+                return
+              }
+              event.preventDefault()
+              aiResizePointerIdRef.current = event.pointerId
+              event.currentTarget.setPointerCapture(event.pointerId)
+              resizeAiPaneFromClientX(event.clientX, true)
+              setAiPaneResizing(true)
+            }}
+            onPointerMove={(event) => {
+              if (aiResizePointerIdRef.current !== event.pointerId) {
+                return
+              }
+              if (!canResizeAiPane) {
+                finishAiPaneResize(event)
+                return
+              }
+              event.preventDefault()
+              resizeAiPaneFromClientX(event.clientX, false)
+            }}
+            onPointerUp={finishAiPaneResize}
+            role="separator"
+            tabIndex={canResizeAiPane ? 0 : -1}
+          />
+        )}
+
         <aside
           aria-label="AI 评论"
           className="magic-notes-ai-pane"
@@ -1560,13 +1907,72 @@ export function MagicNotesWorkspace({
               <PanelRightClose aria-hidden="true" size={15} />
             </button>
           </div>
+          <div className="magic-notes-ai-controls">
+            <label>
+              <span>评论方向</span>
+              <select
+                aria-label="AI 评论方向"
+                onChange={(event) =>
+                  setCommentDirection(
+                    event.target.value as MagicNoteCommentDirection
+                  )
+                }
+                value={commentDirection}
+              >
+                {commentDirections.map((direction) => (
+                  <option key={direction.value} value={direction.value}>
+                    {direction.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <small>
+              评论方向更改仅用于下一次评论，不会改动已生成的内容；评论形式可在设置中心修改。
+            </small>
+          </div>
+          {liveAnalysis?.format === 'structured' ? (
+            <p className="magic-notes-muted" role="status">
+              正在生成
+              {commentDirectionLabels[liveAnalysis.direction]}
+              要点…
+            </p>
+          ) : liveAnalysis ? (
+            <section
+              aria-live="polite"
+              className="magic-notes-ai-group magic-notes-ai-live"
+            >
+              <span className="magic-notes-ai-source">
+                正在生成 ·{' '}
+                {commentDirectionLabels[liveAnalysis.direction]}
+              </span>
+              <div className="magic-note-comment magic-note-comment--narrative">
+                <span aria-hidden="true">
+                  <Bot size={15} />
+                </span>
+                <div>
+                  <strong>长评</strong>
+                  {liveAnalysis.content ? (
+                    <div className="magic-note-comment__narrative markdown-content">
+                      <MarkdownRenderer>
+                        {liveAnalysis.content}
+                      </MarkdownRenderer>
+                    </div>
+                  ) : (
+                    <p role="status">正在准备评论…</p>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : null}
           {libraryView === 'todos' ? (
             !selectedTodo ? (
               <p className="magic-notes-muted">选择待办后显示 AI 评论。</p>
             ) : selectedTodo.comments.length === 0 ? (
-              <p className="magic-notes-muted">
-                点击待办详情中的“AI 分析”，评论会显示在这里。
-              </p>
+              !liveAnalysis && (
+                <p className="magic-notes-muted">
+                  点击待办详情中的“AI 分析”，评论会显示在这里。
+                </p>
+              )
             ) : (
               <div className="magic-notes-ai-feed">
                 <section className="magic-notes-ai-group">
@@ -1583,7 +1989,8 @@ export function MagicNotesWorkspace({
             <p className="magic-notes-muted">选择笔记后显示 AI 评论。</p>
           ) : aiEntries.length === 0 &&
             draftAnalyses.length === 0 &&
-            !draftAnalysisRunning ? (
+            !draftAnalysisRunning &&
+            !liveAnalysis ? (
             <p className="magic-notes-muted">
               {commentMode === 'immediate'
                 ? '写完一句后按回车，停止输入 5 秒，评论会显示在这里。'
@@ -1593,7 +2000,7 @@ export function MagicNotesWorkspace({
             </p>
           ) : (
             <div className="magic-notes-ai-feed">
-              {draftAnalysisRunning && (
+              {draftAnalysisRunning && !liveAnalysis && (
                 <p className="magic-notes-muted" role="status">
                   正在评论当前草稿…
                 </p>

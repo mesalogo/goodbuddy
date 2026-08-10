@@ -153,30 +153,79 @@ export const magicNoteEntryDeleteSchema = z
   })
   .strict()
 
+export const magicNoteCommentDirectionSchema = z.enum([
+  'general',
+  'expand',
+  'polish',
+  'challenge',
+  'brainstorm'
+])
+export type MagicNoteCommentDirection = z.infer<
+  typeof magicNoteCommentDirectionSchema
+>
+
+export const magicNoteCommentFormatSchema = z.enum([
+  'combined',
+  'narrative',
+  'structured'
+])
+export type MagicNoteCommentFormat = z.infer<
+  typeof magicNoteCommentFormatSchema
+>
+
+export const magicNoteAnalysisOptionsSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    direction: magicNoteCommentDirectionSchema,
+    format: magicNoteCommentFormatSchema
+  })
+  .strict()
+export type MagicNoteAnalysisOptions = z.infer<
+  typeof magicNoteAnalysisOptionsSchema
+>
+
 export const magicNoteAnalyzeSchema = z
   .object({
-    entryId: magicNoteIdSchema
+    entryId: magicNoteIdSchema,
+    ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
 
 export const magicNoteDraftAnalyzeSchema = z
   .object({
-    content: magicNoteRichContentSchema
+    content: magicNoteRichContentSchema,
+    ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
 
 export const magicTodoIdSchema = z
   .object({
-    todoId: magicNoteIdSchema
+    todoId: magicNoteIdSchema,
+    ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
 
-export type MagicNoteCommentKind = 'summary' | 'suggestion' | 'warning'
+export type MagicNoteCommentKind =
+  | 'narrative'
+  | 'summary'
+  | 'suggestion'
+  | 'warning'
 
 export type MagicNoteComment = {
   id: string
   kind: MagicNoteCommentKind
   content: string
+  direction?: MagicNoteCommentDirection
+  format?: MagicNoteCommentFormat
+  analyzedAt?: string
+}
+
+export type MagicNoteAnalysisStreamEvent = {
+  requestId: string
+  type: 'text'
+  delta: string
+  direction: MagicNoteCommentDirection
+  format: 'combined' | 'narrative'
 }
 
 export type MagicNoteEntry = {

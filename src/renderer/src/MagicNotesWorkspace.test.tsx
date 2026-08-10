@@ -154,18 +154,30 @@ const createEntry = vi.fn<DesktopApi['magicNotes']['createEntry']>()
 const analyze = vi.fn<DesktopApi['magicNotes']['analyze']>()
 const analyzeTodo = vi.fn<DesktopApi['magicNotes']['analyzeTodo']>()
 const analyzeDraft = vi.fn<DesktopApi['magicNotes']['analyzeDraft']>()
+let analysisEventListener:
+  | Parameters<DesktopApi['magicNotes']['onAnalysisEvent']>[0]
+  | undefined
+const onAnalysisEvent = vi.fn<
+  DesktopApi['magicNotes']['onAnalysisEvent']
+>((listener) => {
+  analysisEventListener = listener
+  return vi.fn()
+})
 const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async () => ({
   checkUpdatesOnStartup: false,
   magicNotesEnabled: true,
-  magicNoteCommentMode: 'immediate'
+  magicNoteCommentMode: 'immediate',
+  magicNoteCommentFormat: 'combined'
 }))
 const onNotify = vi.fn()
 
 beforeEach(() => {
+  analysisEventListener = undefined
   getApplicationSettings.mockResolvedValue({
     checkUpdatesOnStartup: false,
     magicNotesEnabled: true,
-    magicNoteCommentMode: 'immediate'
+    magicNoteCommentMode: 'immediate',
+    magicNoteCommentFormat: 'combined'
   })
   list.mockResolvedValue({ notes: [detail] })
   get.mockResolvedValue(detail)
@@ -247,7 +259,8 @@ beforeEach(() => {
         createEntry,
         analyze,
         analyzeTodo,
-        analyzeDraft
+        analyzeDraft,
+        onAnalysisEvent
       },
       updates: {
         getSettings: getApplicationSettings
@@ -399,6 +412,12 @@ describe('MagicNotesWorkspace', () => {
     )
 
     const pane = await screen.findByLabelText('AI 评论')
+    expect(
+      screen.queryByRole('group', { name: 'AI 评论形式' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('combobox', { name: 'AI 评论方向' })
+    ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', { name: '关闭 AI 评论面板' })
     )
@@ -408,6 +427,69 @@ describe('MagicNotesWorkspace', () => {
       screen.getByRole('button', { name: '显示 AI 评论' })
     )
     expect(pane).toBeVisible()
+  })
+
+  it('resizes the AI comments pane with pointer and keyboard controls', async () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1200
+    })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    const separator = screen.getByRole('separator', {
+      name: '调整编辑区与 AI 评论宽度'
+    })
+    const layout = separator.closest('.magic-notes-layout') as HTMLElement
+    const setPointerCapture = vi.fn()
+    const releasePointerCapture = vi.fn()
+    Object.defineProperties(separator, {
+      setPointerCapture: { value: setPointerCapture },
+      hasPointerCapture: { value: () => true },
+      releasePointerCapture: { value: releasePointerCapture }
+    })
+
+    fireEvent.pointerDown(separator, {
+      button: 0,
+      clientX: 800,
+      pointerId: 12
+    })
+    fireEvent.pointerMove(separator, {
+      clientX: 600,
+      pointerId: 12
+    })
+
+    expect(setPointerCapture).toHaveBeenCalledWith(12)
+    expect(layout).toHaveClass('magic-notes-layout--resizing')
+    expect(
+      layout.style.getPropertyValue('--magic-notes-ai-width')
+    ).toBe('520px')
+
+    fireEvent.pointerUp(separator, { pointerId: 12 })
+    expect(releasePointerCapture).toHaveBeenCalledWith(12)
+    expect(layout).not.toHaveClass('magic-notes-layout--resizing')
+
+    fireEvent.keyDown(separator, { key: 'Home' })
+    expect(
+      layout.style.getPropertyValue('--magic-notes-ai-width')
+    ).toBe('240px')
+    expect(separator).toHaveAttribute('aria-valuenow', '240')
+
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    expect(
+      layout.style.getPropertyValue('--magic-notes-ai-width')
+    ).toBe('256px')
+
+    fireEvent.keyDown(separator, { key: 'End' })
+    expect(
+      layout.style.getPropertyValue('--magic-notes-ai-width')
+    ).toBe('520px')
+
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalInnerWidth
+    })
   })
 
   it('keeps the selected note aligned with the latest detail request', async () => {
@@ -509,7 +591,8 @@ describe('MagicNotesWorkspace', () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: true,
-      magicNoteCommentMode: 'after-save-manual'
+      magicNoteCommentMode: 'after-save-manual',
+      magicNoteCommentFormat: 'combined'
     })
     render(
       <MagicNotesWorkspace onNotify={onNotify} />
@@ -519,10 +602,101 @@ describe('MagicNotesWorkspace', () => {
     fireEvent.click(screen.getByRole('tab', { name: '待办' }))
     fireEvent.click(screen.getByRole('button', { name: 'AI 分析' }))
 
-    await waitFor(() => expect(analyzeTodo).toHaveBeenCalledWith(noteTodo.id))
+    await waitFor(() =>
+      expect(analyzeTodo).toHaveBeenCalledWith(
+        noteTodo.id,
+        expect.objectContaining({
+          requestId: expect.any(String),
+          direction: 'general',
+          format: 'combined'
+        })
+      )
+    )
     expect(
       await screen.findByText('先补充明确的验收条件。')
     ).toBeInTheDocument()
+  })
+
+  it('streams with snapshotted sidebar options while later changes stay local', async () => {
+    getApplicationSettings.mockResolvedValue({
+      checkUpdatesOnStartup: false,
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-manual',
+      magicNoteCommentFormat: 'narrative'
+    })
+    let finishAnalysis: (() => void) | undefined
+    analyzeTodo.mockImplementationOnce(
+      (_todoId, options) =>
+        new Promise<MagicTodoItem>((resolve) => {
+          analysisEventListener?.({
+            requestId: options.requestId,
+            type: 'text',
+            delta: '正在扩展这一段内容。',
+            direction: 'expand',
+            format: 'narrative'
+          })
+          finishAnalysis = () =>
+            resolve({
+              ...noteTodo,
+              comments: [
+                {
+                  id: '00000000-0000-4000-8000-000000000620',
+                  kind: 'narrative',
+                  content: '扩展后的完整评论。',
+                  direction: 'expand',
+                  format: 'narrative'
+                }
+              ],
+              analyzedAt: '2026-08-01T00:07:00.000Z',
+              revision: 2
+            })
+        })
+    )
+
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'AI 评论方向' }),
+      { target: { value: 'expand' } }
+    )
+    fireEvent.click(screen.getByRole('tab', { name: '待办' }))
+    fireEvent.click(screen.getByRole('button', { name: 'AI 分析' }))
+
+    expect(
+      await screen.findByText('正在扩展这一段内容。')
+    ).toBeInTheDocument()
+    expect(screen.getByText(/正在生成 ·/)).toHaveTextContent(
+      '正在生成 · 扩展写作'
+    )
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'AI 评论方向' }),
+      { target: { value: 'polish' } }
+    )
+    expect(screen.getByText(/正在生成 ·/)).toHaveTextContent(
+      '正在生成 · 扩展写作'
+    )
+
+    await act(async () => finishAnalysis?.())
+
+    expect(await screen.findByText('扩展后的完整评论。')).toBeInTheDocument()
+    expect(
+      screen
+        .getAllByText('扩展写作')
+        .some((element) =>
+          element.classList.contains('magic-note-comment__direction')
+        )
+    ).toBe(true)
+    expect(
+      screen.getByRole('combobox', { name: 'AI 评论方向' })
+    ).toHaveValue('polish')
+    expect(analyzeTodo).toHaveBeenCalledWith(
+      noteTodo.id,
+      expect.objectContaining({
+        direction: 'expand',
+        format: 'narrative'
+      })
+    )
   })
 
   it('clears note searches and todo status filters with no results', async () => {
@@ -560,7 +734,8 @@ describe('MagicNotesWorkspace', () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: true,
-      magicNoteCommentMode: 'after-save-auto'
+      magicNoteCommentMode: 'after-save-auto',
+      magicNoteCommentFormat: 'combined'
     })
     render(<MagicNotesWorkspace onNotify={onNotify} />)
 
@@ -578,7 +753,14 @@ describe('MagicNotesWorkspace', () => {
       })
     )
     await waitFor(() =>
-      expect(analyze).toHaveBeenCalledWith(createdEntryId)
+      expect(analyze).toHaveBeenCalledWith(
+        createdEntryId,
+        expect.objectContaining({
+          requestId: expect.any(String),
+          direction: 'general',
+          format: 'combined'
+        })
+      )
     )
     expect(
       await screen.findByText('保存后的自动评论。')
@@ -600,10 +782,17 @@ describe('MagicNotesWorkspace', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1)
     })
-    expect(analyzeDraft).toHaveBeenCalledWith({
-      version: 1,
-      ops: [{ insert: '新的句子\n' }]
-    })
+    expect(analyzeDraft).toHaveBeenCalledWith(
+      {
+        version: 1,
+        ops: [{ insert: '新的句子\n' }]
+      },
+      expect.objectContaining({
+        requestId: expect.any(String),
+        direction: 'general',
+        format: 'combined'
+      })
+    )
     expect(screen.getByText('这是最新的草稿评论。')).toBeInTheDocument()
     vi.useRealTimers()
   })

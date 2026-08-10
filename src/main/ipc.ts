@@ -3349,7 +3349,8 @@ export function registerIpcHandlers(
     ipcChannels.magicNotesAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { entryId } = magicNoteAnalyzeSchema.parse(input)
+      const { entryId, requestId, direction, format } =
+        magicNoteAnalyzeSchema.parse(input)
       const entry = assistantDatabase.getMagicNoteEntry(entryId)
       const note = assistantDatabase.getMagicNoteContext(entry.noteId)
       const settings = await settingsStore.getResolvedSettings()
@@ -3357,7 +3358,6 @@ export function registerIpcHandlers(
         settings.workspacePath,
         settings
       )
-      const requestId = randomUUID()
       assistantDatabase.createTask({
         id: requestId,
         title: `分析笔记：${note.title}`,
@@ -3370,7 +3370,23 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicNoteEntry(
           analysisRuntime,
           entry,
-          requestId,
+          { requestId, direction, format },
+          format === 'structured'
+            ? undefined
+            : (delta) => {
+                if (!window.isDestroyed()) {
+                  window.webContents.send(
+                    ipcChannels.magicNotesAnalysisEvent,
+                    {
+                      requestId,
+                      type: 'text',
+                      delta,
+                      direction,
+                      format
+                    }
+                  )
+                }
+              },
           persistModelUsage
         )
         const analyzedNote = assistantDatabase.saveMagicNoteAnalysis({
@@ -3408,7 +3424,7 @@ export function registerIpcHandlers(
         settings.workspacePath,
         settings
       )
-      const requestId = randomUUID()
+      const { requestId, direction, format } = parsed
       assistantDatabase.createTask({
         id: requestId,
         title: '分析未保存笔记草稿',
@@ -3421,7 +3437,23 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicNoteDraft(
           analysisRuntime,
           plainText,
-          requestId,
+          { requestId, direction, format },
+          format === 'structured'
+            ? undefined
+            : (delta) => {
+                if (!window.isDestroyed()) {
+                  window.webContents.send(
+                    ipcChannels.magicNotesAnalysisEvent,
+                    {
+                      requestId,
+                      type: 'text',
+                      delta,
+                      direction,
+                      format
+                    }
+                  )
+                }
+              },
           persistModelUsage
         )
         assistantDatabase.updateTaskStatus(requestId, 'completed')
@@ -3458,14 +3490,14 @@ export function registerIpcHandlers(
     ipcChannels.magicTodosAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { todoId } = magicTodoIdSchema.parse(input)
+      const { todoId, requestId, direction, format } =
+        magicTodoIdSchema.parse(input)
       const todo = assistantDatabase.getMagicTodo(todoId)
       const settings = await settingsStore.getResolvedSettings()
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
         settings
       )
-      const requestId = randomUUID()
       assistantDatabase.createTask({
         id: requestId,
         title: `分析待办：${todo.title}`,
@@ -3478,7 +3510,23 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicTodo(
           analysisRuntime,
           todo,
-          requestId,
+          { requestId, direction, format },
+          format === 'structured'
+            ? undefined
+            : (delta) => {
+                if (!window.isDestroyed()) {
+                  window.webContents.send(
+                    ipcChannels.magicNotesAnalysisEvent,
+                    {
+                      requestId,
+                      type: 'text',
+                      delta,
+                      direction,
+                      format
+                    }
+                  )
+                }
+              },
           persistModelUsage
         )
         const analyzedTodo = assistantDatabase.saveMagicTodoAnalysis({

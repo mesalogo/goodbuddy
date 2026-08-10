@@ -19,7 +19,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 3
+const CURRENT_SETTINGS_VERSION = 4
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -36,6 +36,15 @@ const versionTwoStoredApplicationSettingsSchema = z
   })
   .strict()
 
+const versionThreeStoredApplicationSettingsSchema = z
+  .object({
+    version: z.literal(3),
+    checkUpdatesOnStartup: z.boolean(),
+    magicNotesEnabled: z.boolean(),
+    magicNoteCommentMode: applicationSettingsSchema.shape.magicNoteCommentMode
+  })
+  .strict()
+
 const storedApplicationSettingsSchema = applicationSettingsSchema
   .extend({
     version: z.literal(CURRENT_SETTINGS_VERSION)
@@ -49,7 +58,8 @@ type StoredApplicationSettings = z.infer<
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   magicNotesEnabled: false,
-  magicNoteCommentMode: 'immediate'
+  magicNoteCommentMode: 'immediate',
+  magicNoteCommentFormat: 'combined'
 }
 
 function isMissingFile(error: unknown): boolean {
@@ -102,13 +112,24 @@ export class ApplicationSettingsStore {
       }
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionThreeResult =
+          versionThreeStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionThreeResult.success) {
+          this.settings = {
+            ...versionThreeResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            magicNoteCommentFormat: 'combined'
+          }
+          return this.settings
+        }
         const versionTwoResult =
           versionTwoStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionTwoResult.success) {
           this.settings = {
             ...versionTwoResult.data,
             version: CURRENT_SETTINGS_VERSION,
-            magicNoteCommentMode: 'immediate'
+            magicNoteCommentMode: 'immediate',
+            magicNoteCommentFormat: 'combined'
           }
           return this.settings
         }
@@ -120,7 +141,8 @@ export class ApplicationSettingsStore {
             checkUpdatesOnStartup:
               legacyResult.data.checkUpdatesOnStartup,
             magicNotesEnabled: false,
-            magicNoteCommentMode: 'immediate'
+            magicNoteCommentMode: 'immediate',
+            magicNoteCommentFormat: 'combined'
           }
           return this.settings
         }
@@ -151,7 +173,8 @@ export class ApplicationSettingsStore {
     return {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
       magicNotesEnabled: stored.magicNotesEnabled,
-      magicNoteCommentMode: stored.magicNoteCommentMode
+      magicNoteCommentMode: stored.magicNoteCommentMode,
+      magicNoteCommentFormat: stored.magicNoteCommentFormat
     }
   }
 
@@ -186,7 +209,8 @@ export class ApplicationSettingsStore {
       return {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         magicNotesEnabled: next.magicNotesEnabled,
-        magicNoteCommentMode: next.magicNoteCommentMode
+        magicNoteCommentMode: next.magicNoteCommentMode,
+        magicNoteCommentFormat: next.magicNoteCommentFormat
       }
     })
     this.updateQueue = operation.then(

@@ -4,6 +4,7 @@ import type {
   ApplicationSettings,
   MagicNoteCommentMode
 } from '../../shared/application-settings-contracts'
+import type { MagicNoteCommentFormat } from '../../shared/magic-notes-contracts'
 import { SegmentedControl } from './WorkspacePrimitives'
 
 type PlatformFeaturesSettingsSectionProps = {
@@ -86,6 +87,26 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
+  const changeCommentFormat = async (
+    magicNoteCommentFormat: MagicNoteCommentFormat
+  ): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates || !settings) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      setSettings(
+        await updates.updateSettings({ magicNoteCommentFormat })
+      )
+    } catch {
+      setError('保存 AI 评论形式失败，请重试')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <section
       aria-labelledby="platform-features-heading"
@@ -134,6 +155,23 @@ export function PlatformFeaturesSettingsSection({
           />
           <small>
             即时模式会在按回车并停止输入 5 秒后评论未保存草稿；自动模式在保存后评论；手动模式仅在点击 AI 分析后评论。
+          </small>
+        </div>
+        <div className="platform-feature-option">
+          <span>AI 评论形式</span>
+          <SegmentedControl
+            ariaLabel="魔法笔记 AI 评论形式"
+            disabled={!settings || saving}
+            onChange={(value) => void changeCommentFormat(value)}
+            options={[
+              { value: 'combined', label: '长评 + 要点' },
+              { value: 'narrative', label: '长评' },
+              { value: 'structured', label: '要点' }
+            ]}
+            value={settings?.magicNoteCommentFormat ?? 'combined'}
+          />
+          <small>
+            默认同时生成流式长评和结构化要点；也可以只保留其中一种。
           </small>
         </div>
       </article>

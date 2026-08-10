@@ -63,18 +63,21 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 3,
+      version: 4,
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
     expect(
       (await readdir(directory)).filter((name) => name.endsWith('.tmp'))
@@ -95,7 +98,8 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
   })
 
@@ -115,7 +119,8 @@ describe('ApplicationSettingsStore', () => {
       await expect(store.get()).resolves.toEqual({
         checkUpdatesOnStartup: false,
         magicNotesEnabled: false,
-        magicNoteCommentMode: 'immediate'
+        magicNoteCommentMode: 'immediate',
+        magicNoteCommentFormat: 'combined'
       })
     }
   )
@@ -135,7 +140,29 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: true,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
+    })
+  })
+
+  it('migrates version 3 settings with the combined comment format', async () => {
+    const { filePath, store } = await createStore()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 3,
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'after-save-manual'
+      }),
+      'utf8'
+    )
+
+    await expect(store.get()).resolves.toEqual({
+      checkUpdatesOnStartup: false,
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-manual',
+      magicNoteCommentFormat: 'combined'
     })
   })
 
@@ -182,7 +209,8 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: true,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
   })
 
@@ -258,13 +286,15 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 3,
+      version: 4,
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
   })
 
@@ -285,7 +315,8 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       magicNotesEnabled: true,
-      magicNoteCommentMode: 'immediate'
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
     })
   })
 })
