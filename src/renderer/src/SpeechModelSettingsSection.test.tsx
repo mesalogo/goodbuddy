@@ -17,6 +17,9 @@ const entry = {
   languages: ['中文', '粤语'],
   family: 'sensevoice' as const,
   quantization: 'int8' as const,
+  quality: 'high' as const,
+  speed: 'fast' as const,
+  recommended: true,
   repositoryUrl: 'https://huggingface.co/example/model',
   license: {
     name: '模型仓库自定义许可',
@@ -81,6 +84,7 @@ describe('SpeechModelSettingsSection', () => {
       ]
     }
     const install = vi.fn(async () => installedSnapshot)
+    const onNotify = vi.fn()
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
@@ -97,16 +101,22 @@ describe('SpeechModelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<SpeechModelSettingsSection />)
+    render(<SpeechModelSettingsSection onNotify={onNotify} />)
     expect(await screen.findByText('SenseVoiceSmall INT8'))
       .toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '下载模型' }))
+    expect(screen.getByText('推荐')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', {
+      name: '下载 SenseVoiceSmall INT8'
+    }))
 
     await waitFor(() =>
       expect(install).toHaveBeenCalledWith('sensevoice-small-int8')
     )
-    expect(await screen.findByText('SenseVoiceSmall INT8 已安装'))
-      .toBeInTheDocument()
+    expect(onNotify).toHaveBeenCalledWith({
+      tone: 'success',
+      message: 'SenseVoiceSmall INT8 已安装',
+      dedupeKey: 'speech-model-sensevoice-small-int8'
+    })
   })
 
   it('offers a download button for a verified Whisper model', async () => {
@@ -147,7 +157,9 @@ describe('SpeechModelSettingsSection', () => {
     render(<SpeechModelSettingsSection />)
     expect(await screen.findByText('Whisper Tiny（多语言）'))
       .toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '下载模型' }))
+    fireEvent.click(screen.getByRole('button', {
+      name: '下载 Whisper Tiny（多语言）'
+    }))
 
     await waitFor(() =>
       expect(install).toHaveBeenCalledWith('whisper-tiny-multilingual')
@@ -189,7 +201,9 @@ describe('SpeechModelSettingsSection', () => {
     expect(await screen.findByRole('progressbar', {
       name: 'SenseVoiceSmall INT8下载进度'
     })).toHaveValue(50)
-    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    fireEvent.click(screen.getByRole('button', {
+      name: '取消 SenseVoiceSmall INT8 操作'
+    }))
     await waitFor(() =>
       expect(cancel).toHaveBeenCalledWith('sensevoice-small-int8')
     )
@@ -263,5 +277,64 @@ describe('SpeechModelSettingsSection', () => {
       { timeout: 1_000 }
     )
     expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('shows installed and selected states and switches with a radio choice', async () => {
+    const installed = {
+      id: entry.id,
+      displayName: entry.displayName,
+      source: 'download' as const,
+      installedAt: '2026-08-06T00:00:00.000Z',
+      files: [
+        {
+          name: 'model.int8.onnx',
+          role: 'model' as const,
+          size: 1_000,
+          sha256: 'a'.repeat(64)
+        }
+      ]
+    }
+    const installedSnapshot: SpeechModelSnapshot = {
+      ...snapshot,
+      installed: [installed]
+    }
+    const selectedSnapshot: SpeechModelSnapshot = {
+      ...installedSnapshot,
+      selectedModelId: entry.id
+    }
+    let currentSnapshot = installedSnapshot
+    const select = vi.fn(async () => {
+      currentSnapshot = selectedSnapshot
+      return selectedSnapshot
+    })
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        speechModels: {
+          getSnapshot: vi.fn(async () => currentSnapshot),
+          install: vi.fn(),
+          cancel: vi.fn(async () => true),
+          remove: vi.fn(),
+          select,
+          importLocalDirectory: vi.fn(),
+          openRepository: vi.fn(),
+          openModelsDirectory: vi.fn()
+        }
+      } as unknown as DesktopApi
+    })
+
+    render(<SpeechModelSettingsSection />)
+    const choice = await screen.findByRole('radio', {
+      name: '使用 SenseVoiceSmall INT8'
+    })
+    expect(choice).not.toBeChecked()
+    expect(screen.getByText('已安装')).toBeInTheDocument()
+
+    fireEvent.click(choice)
+    await waitFor(() =>
+      expect(select).toHaveBeenCalledWith('sensevoice-small-int8')
+    )
+    expect(await screen.findByText('正在使用')).toBeInTheDocument()
+    expect(choice).toBeChecked()
   })
 })

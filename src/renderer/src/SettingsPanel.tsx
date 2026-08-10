@@ -2039,7 +2039,9 @@ export function SettingsPanel({
               }}
             />
           )}
-          {modelType === 'speech' && <SpeechModelSettingsSection />}
+          {modelType === 'speech' && (
+            <SpeechModelSettingsSection onNotify={onNotify} />
+          )}
             </>
           )}
 

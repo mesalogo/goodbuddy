@@ -29,6 +29,9 @@ type SherpaRecognizerConfig = {
       language: string
       useInverseTextNormalization: number
     }
+    paraformer?: {
+      model: string
+    }
     whisper?: {
       encoder: string
       decoder: string
@@ -120,6 +123,17 @@ export function createSherpaRecognizerConfig(
           model: requiredFile(model, 'model'),
           language: 'auto',
           useInverseTextNormalization: 1
+        }
+      }
+    }
+  }
+  if (model.family === 'paraformer') {
+    return {
+      ...base,
+      modelConfig: {
+        ...base.modelConfig,
+        paraformer: {
+          model: requiredFile(model, 'model')
         }
       }
     }

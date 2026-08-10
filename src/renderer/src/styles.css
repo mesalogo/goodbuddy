@@ -110,6 +110,7 @@
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
   background: var(--surface-raised);
+  container: speech-model-list / inline-size;
   grid-template-columns:
     220px minmax(300px, 1fr) 9px
     var(--magic-notes-ai-width, 300px);
@@ -4775,33 +4776,268 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .speech-model-settings__list {
   display: grid;
-  gap: var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
 }
 
 .speech-model-settings .settings-section__title--actions > button,
-.speech-model-card__actions,
-.speech-model-card__actions button {
+.speech-model-row__actions,
+.speech-model-row__actions button,
+.speech-model-row__details button {
   display: flex;
   align-items: center;
 }
 
 .speech-model-settings .settings-section__title--actions > button,
-.speech-model-card__actions button {
+.speech-model-row__actions button,
+.speech-model-row__details button {
   gap: var(--space-2);
 }
 
-.speech-model-card__actions {
+.speech-model-row {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  grid-template-columns: 20px minmax(0, 1fr) minmax(144px, auto);
+  gap: var(--space-2) var(--space-3);
+  transition:
+    background var(--motion-fast) ease-out,
+    border-color var(--motion-fast) ease-out;
+}
+
+.speech-model-row:last-child {
+  border-bottom: 0;
+}
+
+.speech-model-row--selected {
+  box-shadow: inset 3px 0 0 var(--accent-solid);
+  background: var(--accent-subtle);
+}
+
+.speech-model-row__selection {
+  align-self: start;
+  padding-top: var(--space-1);
+}
+
+.speech-model-row__selection input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent-solid);
+}
+
+.speech-model-row__summary {
+  display: grid;
+  min-width: 0;
+  grid-column: 2;
+  gap: var(--space-1);
+}
+
+.speech-model-row__name,
+.speech-model-row__tags,
+.speech-model-row__profile,
+.speech-model-status,
+.speech-model-row__actions,
+.speech-model-row__details summary {
+  display: flex;
+  align-items: center;
+}
+
+.speech-model-row__name {
+  min-width: 0;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
+.speech-model-row__name strong {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+}
+
+.speech-model-row__summary p,
+.speech-model-row__details p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.55;
+}
+
+.speech-model-row__tags {
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.speech-model-tag {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.4;
+}
+
+.speech-model-tag--recommended {
+  border-color: var(--accent-selected);
+  background: var(--accent-selected);
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.speech-model-row__profile {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  gap: var(--space-1) var(--space-3);
+}
+
+.speech-model-row__state {
+  align-self: start;
+  padding-top: var(--space-1);
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.speech-model-status {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 650;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.speech-model-status--installed {
+  color: var(--text-secondary);
+}
+
+.speech-model-status--selected {
+  color: var(--accent);
+}
+
+.speech-model-row__actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  grid-column: 3;
+  grid-row: 2;
+  gap: var(--space-2);
+}
+
+.speech-model-row__actions button,
+.speech-model-row__details button {
+  min-height: 30px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.speech-model-row__actions .danger-ghost {
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--danger);
+  font: inherit;
+  font-size: var(--font-caption);
+  gap: var(--space-1);
+}
+
+.speech-model-row__actions .danger-ghost:hover {
+  border-color: var(--danger-border);
+  background: var(--danger-subtle);
+}
+
 .speech-model-operation {
   display: grid;
+  grid-column: 2 / -1;
   gap: var(--space-1);
 }
 
 .speech-model-operation progress {
   width: 100%;
+  accent-color: var(--accent-solid);
+}
+
+.speech-model-operation small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.speech-model-row__details {
+  min-width: 0;
+  grid-column: 2 / -1;
+}
+
+.speech-model-row__details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  gap: var(--space-1);
+  list-style: none;
+}
+
+.speech-model-row__details summary::-webkit-details-marker {
+  display: none;
+}
+
+.speech-model-row__details summary svg {
+  transition: transform var(--motion-fast) ease-out;
+}
+
+.speech-model-row__details[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.speech-model-row__details > div {
+  display: grid;
+  padding-top: var(--space-2);
+  gap: var(--space-2);
+}
+
+.speech-model-row__details button {
+  width: fit-content;
+}
+
+@container speech-model-list (max-width: 500px) {
+  .speech-model-row {
+    align-items: start;
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .speech-model-row__summary,
+  .speech-model-row__profile {
+    grid-column: 2;
+  }
+
+  .speech-model-row__state {
+    grid-column: 2;
+    grid-row: auto;
+  }
+
+  .speech-model-row__actions,
+  .speech-model-operation,
+  .speech-model-row__details {
+    justify-content: flex-start;
+    grid-column: 2;
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .speech-model-settings .settings-section__title--actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .speech-model-settings .settings-section__title--actions > button {
+    margin-left: 26px;
+  }
 }
 
 .role-prompt-empty {

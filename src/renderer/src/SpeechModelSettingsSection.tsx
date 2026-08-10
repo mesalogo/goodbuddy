@@ -1,4 +1,6 @@
 import {
+  CheckCircle2,
+  ChevronDown,
   Download,
   ExternalLink,
   FolderOpen,
@@ -12,6 +14,29 @@ import type {
   SpeechModelOperation,
   SpeechModelSnapshot
 } from '../../shared/speech-model-contracts'
+import type { AppNotificationInput } from './notifications'
+
+type SpeechModelSettingsSectionProps = {
+  onNotify?: (notification: AppNotificationInput) => void
+}
+
+const qualityLabels: Record<SpeechModelCatalogEntry['quality'], string> = {
+  basic: '基础质量',
+  balanced: '均衡质量',
+  high: '高质量'
+}
+
+const speedLabels: Record<SpeechModelCatalogEntry['speed'], string> = {
+  fast: '快速',
+  balanced: '均衡速度',
+  slow: '较慢'
+}
+
+const familyLabels: Record<SpeechModelCatalogEntry['family'], string> = {
+  sensevoice: 'SenseVoice',
+  paraformer: 'Paraformer',
+  whisper: 'Whisper'
+}
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
@@ -39,12 +64,23 @@ function progressPercent(operation: SpeechModelOperation): number | undefined {
     : undefined
 }
 
-export function SpeechModelSettingsSection(): React.JSX.Element {
+function operationLabel(operation: SpeechModelOperation): string {
+  if (operation.phase === 'installing') {
+    return '正在校验并安装'
+  }
+  if (operation.phase === 'preparing') {
+    return operation.kind === 'import' ? '正在准备导入' : '正在准备下载'
+  }
+  return operation.kind === 'import' ? '正在导入' : '正在下载'
+}
+
+export function SpeechModelSettingsSection({
+  onNotify
+}: SpeechModelSettingsSectionProps): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<SpeechModelSnapshot>()
   const [busyModelId, setBusyModelId] = useState<string>()
   const [confirmingRemove, setConfirmingRemove] = useState<string>()
   const [error, setError] = useState<string>()
-  const [notice, setNotice] = useState<string>()
   const mountedRef = useRef(false)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -106,12 +142,15 @@ export function SpeechModelSettingsSection(): React.JSX.Element {
   ): Promise<void> => {
     setBusyModelId(modelId)
     setError(undefined)
-    setNotice(undefined)
     try {
       const next = await operation()
       if (next && mountedRef.current) {
         setSnapshot(next)
-        setNotice(successMessage)
+        onNotify?.({
+          tone: 'success',
+          message: successMessage,
+          dedupeKey: `speech-model-${modelId}`
+        })
       }
     } catch (reason) {
       if (mountedRef.current) {
@@ -192,9 +231,12 @@ export function SpeechModelSettingsSection(): React.JSX.Element {
         并校验文件大小和 SHA-256；也可以从模型仓库手动下载后导入。
       </p>
       {error && <p className="settings-warning" role="alert">{error}</p>}
-      {notice && <p className="settings-success" role="status">{notice}</p>}
 
-      <div className="speech-model-settings__list">
+      <div
+        aria-label="可用语音模型"
+        className="speech-model-settings__list"
+        role="list"
+      >
         {snapshot.catalog.map((entry) => {
           const installed = installedById.get(entry.id)
           const operation = operationsById.get(entry.id)
@@ -203,59 +245,91 @@ export function SpeechModelSettingsSection(): React.JSX.Element {
             : undefined
           const size = catalogSize(entry)
           const selected = snapshot.selectedModelId === entry.id
+          const status = operation
+            ? operationLabel(operation)
+            : selected
+              ? '正在使用'
+              : installed
+                ? '已安装'
+                : entry.manualOnly
+                  ? '手动导入'
+                  : '可下载'
           return (
-            <article className="capability-card" key={entry.id}>
-              <div className="capability-card__header">
-                <div>
+            <article
+              className={`speech-model-row${selected ? ' speech-model-row--selected' : ''}`}
+              key={entry.id}
+              role="listitem"
+            >
+              <div className="speech-model-row__selection">
+                <input
+                  aria-label={
+                    installed
+                      ? `使用 ${entry.displayName}`
+                      : `${entry.displayName} 尚未安装`
+                  }
+                  checked={selected}
+                  disabled={!installed || operation !== undefined}
+                  name="selected-speech-model"
+                  onChange={() =>
+                    void run(
+                      entry.id,
+                      () =>
+                        window.goodbuddy.speechModels!.select(entry.id),
+                      `已切换到 ${entry.displayName}`
+                    )
+                  }
+                  type="radio"
+                />
+              </div>
+
+              <div className="speech-model-row__summary">
+                <div className="speech-model-row__name">
                   <strong>{entry.displayName}</strong>
-                  <small>
-                    {entry.languages.join('、')} · {entry.quantization.toUpperCase()}
-                    {size ? ` · ${formatBytes(size)}` : ''}
-                  </small>
+                  {entry.recommended && (
+                    <span className="speech-model-tag speech-model-tag--recommended">
+                      推荐
+                    </span>
+                  )}
                 </div>
-                <span>
-                  {selected
-                    ? '正在使用'
-                    : installed
-                      ? '已安装'
-                      : entry.manualOnly
-                        ? '手动导入'
-                        : '可下载'}
+                <p>{entry.description}</p>
+                <div className="speech-model-row__tags">
+                  <span className="speech-model-tag">
+                    {familyLabels[entry.family]}
+                  </span>
+                  <span className="speech-model-tag">
+                    {entry.languages.join(' / ')}
+                  </span>
+                  <span className="speech-model-tag">
+                    {entry.quantization.toUpperCase()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="speech-model-row__profile">
+                <span>{qualityLabels[entry.quality]}</span>
+                <span>{speedLabels[entry.speed]}</span>
+                <span>{size ? formatBytes(size) : '大小未知'}</span>
+              </div>
+
+              <div className="speech-model-row__state">
+                <span
+                  className={`speech-model-status${
+                    selected
+                      ? ' speech-model-status--selected'
+                      : installed
+                        ? ' speech-model-status--installed'
+                        : ''
+                  }`}
+                >
+                  {selected && <CheckCircle2 aria-hidden="true" size={13} />}
+                  {status}
                 </span>
               </div>
-              <p>{entry.description}</p>
-              <p>
-                许可证：<strong>{entry.license.name}</strong>。
-                {entry.license.notice}
-              </p>
 
-              {operation && (
-                <div aria-live="polite" className="speech-model-operation">
-                  <progress
-                    aria-label={`${entry.displayName}下载进度`}
-                    max={100}
-                    {...(percent === undefined ? {} : { value: percent })}
-                  />
-                  <small>
-                    {operation.currentFile
-                      ? `正在处理 ${operation.currentFile}`
-                      : operation.phase === 'installing'
-                        ? '正在校验并安装…'
-                        : '正在准备…'}
-                    {percent === undefined
-                      ? ''
-                      : ` · ${percent.toFixed(0)}%`}
-                  </small>
-                </div>
-              )}
-
-              {entry.manualOnly && entry.manualReason && !installed && (
-                <p className="settings-notice">{entry.manualReason}</p>
-              )}
-
-              <div className="speech-model-card__actions">
+              <div className="speech-model-row__actions">
                 {operation ? (
                   <button
+                    aria-label={`取消 ${entry.displayName} 操作`}
                     className="secondary-button"
                     onClick={() =>
                       void window.goodbuddy.speechModels
@@ -268,46 +342,27 @@ export function SpeechModelSettingsSection(): React.JSX.Element {
                     取消
                   </button>
                 ) : installed ? (
-                  <>
-                    {!selected && (
-                      <button
-                        className="primary-button"
-                        disabled={busyModelId === entry.id}
-                        onClick={() =>
-                          void run(
-                            entry.id,
-                            () =>
-                              window.goodbuddy.speechModels!.select(
-                                entry.id
-                              ),
-                            `已切换到 ${entry.displayName}`
-                          )
-                        }
-                        type="button"
-                      >
-                        使用此模型
-                      </button>
-                    )}
-                    <button
-                      className={
-                        confirmingRemove === entry.id
-                          ? 'danger-button'
-                          : 'secondary-button'
-                      }
-                      disabled={busyModelId === entry.id}
-                      onClick={() => void remove(entry.id)}
-                      type="button"
-                    >
-                      <Trash2 aria-hidden="true" size={12} />
-                      {confirmingRemove === entry.id
-                        ? '确认删除模型'
-                        : '删除模型'}
-                    </button>
-                  </>
+                  <button
+                    aria-label={`删除 ${entry.displayName}`}
+                    className={
+                      confirmingRemove === entry.id
+                        ? 'danger-button'
+                        : 'danger-ghost'
+                    }
+                    disabled={busyModelId === entry.id}
+                    onClick={() => void remove(entry.id)}
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={12} />
+                    {confirmingRemove === entry.id
+                      ? '确认删除'
+                      : '删除'}
+                  </button>
                 ) : (
                   <>
                     {!entry.manualOnly && (
                       <button
+                        aria-label={`下载 ${entry.displayName}`}
                         className="primary-button"
                         disabled={busyModelId === entry.id}
                         onClick={() =>
@@ -323,10 +378,11 @@ export function SpeechModelSettingsSection(): React.JSX.Element {
                         type="button"
                       >
                         <Download aria-hidden="true" size={13} />
-                        下载模型
+                        下载
                       </button>
                     )}
                     <button
+                      aria-label={`从本地目录导入 ${entry.displayName}`}
                       className="secondary-button"
                       disabled={busyModelId === entry.id}
                       onClick={() =>
@@ -341,23 +397,60 @@ export function SpeechModelSettingsSection(): React.JSX.Element {
                       type="button"
                     >
                       <FolderOpen aria-hidden="true" size={13} />
-                      从本地目录导入
+                      导入
                     </button>
                   </>
                 )}
-                <button
-                  className="secondary-button"
-                  onClick={() =>
-                    void window.goodbuddy.speechModels?.openRepository(
-                      entry.id
-                    )
-                  }
-                  type="button"
-                >
-                  <ExternalLink aria-hidden="true" size={13} />
-                  打开模型仓库
-                </button>
               </div>
+
+              {operation && (
+                <div aria-live="polite" className="speech-model-operation">
+                  <progress
+                    aria-label={`${entry.displayName}下载进度`}
+                    max={100}
+                    {...(percent === undefined ? {} : { value: percent })}
+                  />
+                  <small>
+                    {operation.currentFile
+                      ? `正在处理 ${operation.currentFile}`
+                      : `${operationLabel(operation)}…`}
+                    {percent === undefined
+                      ? ''
+                      : ` · ${percent.toFixed(0)}%`}
+                  </small>
+                </div>
+              )}
+
+              <details className="speech-model-row__details">
+                <summary>
+                  <ChevronDown aria-hidden="true" size={13} />
+                  模型详情
+                </summary>
+                <div>
+                  {entry.manualOnly &&
+                    entry.manualReason &&
+                    !installed && (
+                      <p>{entry.manualReason}</p>
+                    )}
+                  <p>
+                    许可证：<strong>{entry.license.name}</strong>。
+                    {entry.license.notice}
+                  </p>
+                  <button
+                    aria-label={`打开 ${entry.displayName} 模型仓库`}
+                    className="secondary-button"
+                    onClick={() =>
+                      void window.goodbuddy.speechModels?.openRepository(
+                        entry.id
+                      )
+                    }
+                    type="button"
+                  >
+                    <ExternalLink aria-hidden="true" size={13} />
+                    打开模型仓库
+                  </button>
+                </div>
+              </details>
             </article>
           )
         })}

@@ -39,6 +39,28 @@ function whisperModel(): SelectedSpeechRuntimeModel {
   }
 }
 
+function paraformerModel(): SelectedSpeechRuntimeModel {
+  return {
+    id: 'paraformer-bilingual-zh-en-int8',
+    family: 'paraformer',
+    directory: 'C:\\models\\paraformer',
+    files: [
+      {
+        name: 'model.int8.onnx',
+        role: 'model',
+        size: 1,
+        sha256: 'a'.repeat(64)
+      },
+      {
+        name: 'tokens.txt',
+        role: 'tokens',
+        size: 1,
+        sha256: 'b'.repeat(64)
+      }
+    ]
+  }
+}
+
 function input(): SpeechTranscriptionInput {
   return {
     requestId,
@@ -70,6 +92,15 @@ describe('SpeechTranscriptionService', () => {
       createSherpaRecognizerConfig(whisperModel()).modelConfig.whisper
         ?.language
     ).toBe('')
+  })
+
+  it('wires an offline Paraformer model to local inference', () => {
+    expect(
+      createSherpaRecognizerConfig(paraformerModel()).modelConfig
+        .paraformer
+    ).toEqual({
+      model: 'C:\\models\\paraformer\\model.int8.onnx'
+    })
   })
 
   it('requires an installed selected model and rejects oversized audio', async () => {

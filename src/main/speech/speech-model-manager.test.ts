@@ -55,6 +55,9 @@ function downloadableCatalog(
       languages: ['中文'],
       family: 'whisper',
       quantization: 'int8',
+      quality: 'balanced',
+      speed: 'balanced',
+      recommended: false,
       repositoryUrl:
         'https://modelscope.cn/models/example/download-test-model',
       license: {
@@ -92,12 +95,24 @@ function downloadableCatalog(
 }
 
 describe('speech model catalog', () => {
-  it('lists metadata only and accurately labels SenseVoice custom licensing', () => {
+  it('lists verified multilingual models with accurate licensing', () => {
     const senseVoice = SPEECH_MODEL_CATALOG.find(
       (entry) => entry.id === 'sensevoice-small-int8'
     )
     const whisper = SPEECH_MODEL_CATALOG.find(
       (entry) => entry.id === 'whisper-tiny-multilingual'
+    )
+    const paraformerBilingual = SPEECH_MODEL_CATALOG.find(
+      (entry) => entry.id === 'paraformer-bilingual-zh-en-int8'
+    )
+    const paraformerTrilingual = SPEECH_MODEL_CATALOG.find(
+      (entry) => entry.id === 'paraformer-trilingual-zh-yue-en-int8'
+    )
+    const whisperSmall = SPEECH_MODEL_CATALOG.find(
+      (entry) => entry.id === 'whisper-small-multilingual-int8'
+    )
+    const whisperMedium = SPEECH_MODEL_CATALOG.find(
+      (entry) => entry.id === 'whisper-medium-multilingual-int8'
     )
 
     expect(senseVoice).toMatchObject({
@@ -125,13 +140,35 @@ describe('speech model catalog', () => {
       'tiny-decoder.int8.onnx',
       'tiny-tokens.txt'
     ])
+    expect(paraformerBilingual).toMatchObject({
+      family: 'paraformer',
+      languages: ['中文', '英语'],
+      license: { name: 'MIT License' },
+      recommended: true
+    })
+    expect(paraformerTrilingual).toMatchObject({
+      family: 'paraformer',
+      languages: ['中文', '粤语', '英语'],
+      license: { name: 'Apache License 2.0' }
+    })
+    expect(whisperSmall).toMatchObject({
+      family: 'whisper',
+      quality: 'balanced',
+      speed: 'balanced'
+    })
+    expect(whisperMedium).toMatchObject({
+      family: 'whisper',
+      quality: 'high',
+      speed: 'slow'
+    })
+    expect(SPEECH_MODEL_CATALOG).toHaveLength(6)
     for (const entry of SPEECH_MODEL_CATALOG) {
       expect(entry.repositoryUrl).toMatch(
-        /^https:\/\/modelscope\.cn\/models\//u
+        /^https:\/\/(?:modelscope\.cn\/models\/|huggingface\.co\/)/u
       )
       for (const file of entry.files) {
         expect(file.download?.url).toMatch(
-          /^https:\/\/modelscope\.cn\/models\/[^/]+\/[^/]+\/resolve\/[a-f0-9]{40}\/[^/]+$/u
+          /^https:\/\/(?:modelscope\.cn\/models|huggingface\.co)\/[^/]+\/[^/]+\/resolve\/[a-f0-9]{40}\/[^/]+$/u
         )
       }
     }

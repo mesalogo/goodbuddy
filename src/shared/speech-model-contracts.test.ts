@@ -12,6 +12,9 @@ const downloadableEntry = {
   languages: ['中文'],
   family: 'whisper' as const,
   quantization: 'int8' as const,
+  quality: 'balanced' as const,
+  speed: 'balanced' as const,
+  recommended: false,
   repositoryUrl: 'https://huggingface.co/example/test-speech-model',
   license: {
     name: 'MIT License',
