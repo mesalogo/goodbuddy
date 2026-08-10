@@ -1,6 +1,13 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { KnowledgeService } from '../knowledge/knowledge-service'
-import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import { AssistantDatabase } from '../assistant/assistant-database'
+import {
+  KnowledgeMcpGateway,
+  type MagicNotesDatabase
+} from './knowledge-mcp-gateway'
 
 const firstLibraryId = '11111111-1111-4111-8111-111111111111'
 const secondLibraryId = '22222222-2222-4222-8222-222222222222'
@@ -50,9 +57,19 @@ function createService() {
 }
 
 const gateways: KnowledgeMcpGateway[] = []
+const databases: AssistantDatabase[] = []
+const temporaryDirectories: string[] = []
 
 afterEach(async () => {
   await Promise.all(gateways.splice(0).map((gateway) => gateway.dispose()))
+  for (const database of databases.splice(0)) {
+    database.close()
+  }
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true }))
+  )
 })
 
 describe('KnowledgeMcpGateway', () => {
@@ -168,17 +185,46 @@ describe('KnowledgeMcpGateway', () => {
       }
     ])
     const gateway = new KnowledgeMcpGateway(service, {
-      magicNotesDatabase: { searchMagicNotes }
+      magicNotesDatabase: {
+        listMagicNotes: vi.fn(() => []),
+        getMagicNote: vi.fn(() => {
+          throw new Error('not used')
+        }),
+        getMagicNoteEntry: vi.fn(() => {
+          throw new Error('not used')
+        }),
+        searchMagicNotes,
+        createMagicNote: vi.fn(() => {
+          throw new Error('not used')
+        }),
+        updateMagicNote: vi.fn(() => {
+          throw new Error('not used')
+        }),
+        deleteMagicNote: vi.fn(),
+        createMagicNoteEntry: vi.fn(() => {
+          throw new Error('not used')
+        }),
+        updateMagicNoteEntry: vi.fn(() => {
+          throw new Error('not used')
+        }),
+        deleteMagicNoteEntry: vi.fn(() => {
+          throw new Error('not used')
+        })
+      } satisfies MagicNotesDatabase
     })
     gateways.push(gateway)
     const token = gateway.grant(
       'notes',
       [],
       new AbortController().signal,
-      true
+      'read'
     )!
 
-    expect(gateway.getAvailableToolNames(token)).toEqual(['note_search'])
+    expect(gateway.getAvailableToolNames(token)).toEqual([
+      'note_list',
+      'note_get',
+      'note_search'
+    ])
     expect(
       gateway.searchMagicNotes(token, {
         query: '  发布  ',
@@ -197,6 +243,100 @@ describe('KnowledgeMcpGateway', () => {
         noteIds: ['not-allowed']
       })
     ).toThrow()
+  })
+
+  it('keeps Ask read-only and supports revision-safe Magic Notes CRUD in Execute', async () => {
+    const { service } = createService()
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-note-mcp-'))
+    temporaryDirectories.push(directory)
+    const database = new AssistantDatabase(
+      join(directory, 'assistant.sqlite')
+    )
+    databases.push(database)
+    database.initialize('C:\\Workspace')
+    const gateway = new KnowledgeMcpGateway(service, {
+      magicNotesDatabase: database
+    })
+    gateways.push(gateway)
+    const readToken = gateway.grant(
+      'notes-read',
+      [],
+      new AbortController().signal,
+      'read'
+    )!
+    const writeToken = gateway.grant(
+      'notes-write',
+      [],
+      new AbortController().signal,
+      'write'
+    )!
+
+    expect(gateway.getAvailableToolNames(readToken)).toEqual([
+      'note_list',
+      'note_get',
+      'note_search'
+    ])
+    expect(gateway.getAvailableToolNames(writeToken)).toEqual([
+      'note_list',
+      'note_get',
+      'note_search',
+      'note_create',
+      'note_update',
+      'note_entry_create',
+      'note_entry_update',
+      'note_entry_delete',
+      'note_delete'
+    ])
+    expect(() =>
+      gateway.createMagicNote(readToken, { title: '不允许创建' })
+    ).toThrow('unavailable')
+
+    const created = gateway.createMagicNote(writeToken, {
+      title: '发布计划'
+    })
+    expect(gateway.listMagicNotes(readToken)).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        title: '发布计划',
+        revision: 0
+      })
+    ])
+    const withEntry = gateway.createMagicNoteEntry(writeToken, {
+      noteId: created.id,
+      content: '核对构建产物'
+    })
+    const entry = withEntry.entries[0]!
+    expect(entry.content).toBe('核对构建产物')
+
+    const updatedEntry = gateway.updateMagicNoteEntry(writeToken, {
+      entryId: entry.id,
+      content: '核对六个平台构建产物',
+      expectedRevision: entry.revision
+    })
+    expect(updatedEntry.entries[0]?.content).toBe(
+      '核对六个平台构建产物'
+    )
+    expect(() =>
+      gateway.deleteMagicNoteEntry(writeToken, {
+        entryId: entry.id,
+        expectedRevision: entry.revision
+      })
+    ).toThrow('已被更新')
+
+    const withoutEntry = gateway.deleteMagicNoteEntry(writeToken, {
+      entryId: entry.id,
+      expectedRevision: updatedEntry.entries[0]!.revision
+    })
+    expect(withoutEntry.entries).toEqual([])
+    expect(
+      gateway.deleteMagicNote(writeToken, {
+        noteId: created.id,
+        expectedRevision: withoutEntry.revision
+      })
+    ).toEqual({ deleted: true, noteId: created.id })
+    expect(() =>
+      gateway.getMagicNote(readToken, { noteId: created.id })
+    ).toThrow('笔记不存在')
   })
 
   it('binds a POST-only authenticated endpoint and rejects oversized bodies', async () => {

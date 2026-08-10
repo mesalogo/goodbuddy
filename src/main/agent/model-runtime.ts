@@ -7,7 +7,10 @@ import type {
 } from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
-import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import {
+  scopedReadToolNames,
+  type KnowledgeMcpGateway
+} from './knowledge-mcp-gateway'
 import { createAnthropicMessagesUrl } from './anthropic-endpoint'
 import {
   ModelToolProvider,
@@ -39,6 +42,8 @@ type ConversationMessage = {
   role: 'user' | 'assistant'
   content: string
 }
+
+const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
 
 type AnthropicApiMessage = {
   role: 'user' | 'assistant'
@@ -1588,9 +1593,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         let decision: ApprovalDecision
         try {
           if (
-            (tool.name === 'knowledge_list' ||
-              tool.name === 'knowledge_search' ||
-              tool.name === 'note_search') &&
+            scopedReadToolNameSet.has(tool.name) &&
             Boolean(request.knowledgeCapabilityToken)
           ) {
             decision = 'once'

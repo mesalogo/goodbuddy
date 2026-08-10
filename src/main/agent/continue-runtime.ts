@@ -12,7 +12,10 @@ import type {
 import { detectRuntimeBinary } from './runtime-discovery'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type { RuntimeSkillPackage } from '../capabilities/capability-service'
-import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import {
+  scopedReadToolNames,
+  type KnowledgeMcpGateway
+} from './knowledge-mcp-gateway'
 import {
   ContinueHostAdapter,
   ContinueHostRunError,
@@ -48,6 +51,7 @@ export type ContinueRuntimeOptions = {
 // The prompt reaches the Continue host through a local HTTP POST body, so no
 // platform command-line limit applies to it.
 const MAX_CONTINUE_PROMPT_CHARACTERS = 128_000
+const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
 
 function continueToolFailureMessage(tool: ContinueHostTool): string {
   const callId = tool.callId.slice(0, 128)
@@ -318,9 +322,8 @@ export class ContinueAgentRuntime implements AgentRuntime {
         execute ||
         (request.workMode === 'ask' &&
           Boolean(knowledgeCapability) &&
-          (approval.toolName === 'knowledge_list' ||
-            approval.toolName === 'knowledge_search' ||
-            approval.toolName === 'note_search'))
+          typeof approval.toolName === 'string' &&
+          scopedReadToolNameSet.has(approval.toolName))
           ? 'once' as const
           : 'deny' as const
       const queuedEvents: ContinueHostStreamEvent[] = []

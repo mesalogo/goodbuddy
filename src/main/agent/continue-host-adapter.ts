@@ -1053,6 +1053,10 @@ export class ContinueHostAdapter {
         '--allow',
         'knowledge_search',
         '--allow',
+        'note_list',
+        '--allow',
+        'note_get',
+        '--allow',
         'note_search',
         '--exclude',
         '*'

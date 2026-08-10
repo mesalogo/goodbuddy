@@ -342,8 +342,9 @@ export function McpSettingsSection(): React.JSX.Element {
 
       <p className="settings-notice">
         自定义 MCP 当前仅用于直连模型，新建时默认分配给直连模型，并仅在 Execute
-        模式加载。内置共享 MCP 提供知识库与全局笔记只读搜索，可供直连模型、
-        OpenCode 和 Continue 使用。Runtime 自有 MCP 配置不在此处管理。
+        模式加载。内置共享 MCP 提供知识库读取与全局笔记管理，可供直连模型、
+        OpenCode 和 Continue 使用；Ask 只读，笔记写入仅在 Execute
+        模式开放。Runtime 自有 MCP 配置不在此处管理。
       </p>
       <p className="settings-notice">
         内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server
@@ -625,7 +626,9 @@ export function McpSettingsSection(): React.JSX.Element {
                   <div>
                     <strong>{server.name}</strong>
                     <small>
-                      内置 MCP Server · 只读 · 按对话授权
+                      内置 MCP Server ·{' '}
+                      {server.access === 'mixed' ? '按模式读写' : '只读'} ·
+                      按对话授权
                     </small>
                   </div>
                   <span className="mcp-server-card__summary">
@@ -658,7 +661,7 @@ export function McpSettingsSection(): React.JSX.Element {
                             <div>
                               <code>{tool.name}</code>
                               <span className="builtin-tool-badge">
-                                只读
+                                {tool.access === 'write' ? '写入' : '只读'}
                               </span>
                             </div>
                             <p>{tool.description}</p>

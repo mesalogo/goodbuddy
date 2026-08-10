@@ -1194,8 +1194,8 @@ export function SettingsPanel({
                 原生模型、插件或 MCP 配置时，才切换到 Runtime 自有配置。
               </div>
               <div className="runtime-note">
-                对话时可选择 Ask 或 Execute。Ask 仅可调用知识库与全局笔记的只读搜索；Execute
-                可调用已启用工具，调用过程会记录到活动。
+                对话时可选择 Ask 或 Execute。Ask 仅可调用知识库与全局笔记读取工具；Execute
+                可调用已启用工具及笔记写入工具，调用过程会记录到活动。
               </div>
               {detectionSummary(detection?.opencode)}
               <details className="settings-section">
@@ -1393,8 +1393,8 @@ export function SettingsPanel({
                 原生模型、规则或 MCP 配置时，才切换到 Runtime 自有配置。
               </div>
               <div className="runtime-note">
-                对话时可选择 Ask 或 Execute。Ask 仅可调用知识库与全局笔记的只读搜索；Execute
-                可调用已启用工具，调用过程会记录到活动。
+                对话时可选择 Ask 或 Execute。Ask 仅可调用知识库与全局笔记读取工具；Execute
+                可调用已启用工具及笔记写入工具，调用过程会记录到活动。
               </div>
               {detectionSummary(detection?.continue)}
               <details className="settings-section">

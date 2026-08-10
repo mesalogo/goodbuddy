@@ -288,6 +288,12 @@ describe('ContinueAgentRuntime', () => {
     await expect(
       authorize?.({ toolName: 'note_search' })
     ).resolves.toBe('once')
+    await expect(
+      authorize?.({ toolName: 'note_list' })
+    ).resolves.toBe('once')
+    await expect(
+      authorize?.({ toolName: 'note_get' })
+    ).resolves.toBe('once')
     await expect(authorize?.({ toolName: 'Bash' })).resolves.toBe('deny')
   })
 

@@ -893,7 +893,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     smartRoutingEnabled = false,
     selectedRuntimes?: Record<string, unknown>,
     knowledgeServiceOverride?: Record<string, unknown>,
-    knowledgeGateway?: Record<string, unknown>
+    knowledgeGateway?: Record<string, unknown>,
+    magicNotesEnabled = false
   ) {
     const assistantDatabase = {
       claimDueSchedules: vi.fn(() => []),
@@ -999,7 +1000,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       undefined,
       subagentService as never,
       undefined,
-      undefined,
+      {
+        get: vi.fn(async () => ({ magicNotesEnabled }))
+      } as never,
       undefined,
       undefined,
       undefined,
@@ -1093,6 +1096,79 @@ describe('registerIpcHandlers agent terminal state', () => {
       )
     )
     expect(knowledgeGateway.grant).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
+  it('grants read-only Magic Notes tools in Ask and write tools in Execute', async () => {
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'capability'),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      true
+    )
+    const event = trustedEvent(harness.webContents)
+    const askRequestId = '00000000-0000-4000-8000-000000000023'
+    const executeRequestId = '00000000-0000-4000-8000-000000000024'
+
+    await harness.handler?.(event, {
+      requestId: askRequestId,
+      conversationId: 'notes-read',
+      prompt: '读取笔记',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        askRequestId,
+        'completed'
+      )
+    )
+    await harness.handler?.(event, {
+      requestId: executeRequestId,
+      conversationId: 'notes-write',
+      prompt: '创建笔记',
+      workMode: 'execute',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        executeRequestId,
+        'completed'
+      )
+    )
+
+    expect(knowledgeGateway.grant).toHaveBeenNthCalledWith(
+      1,
+      askRequestId,
+      [],
+      expect.any(AbortSignal),
+      'read'
+    )
+    expect(knowledgeGateway.grant).toHaveBeenNthCalledWith(
+      2,
+      executeRequestId,
+      [],
+      expect.any(AbortSignal),
+      'write'
+    )
     await harness.dispose()
   })
 

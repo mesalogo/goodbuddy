@@ -888,7 +888,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 Continue 可执行文件将以当前用户权限运行/)
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Ask 仅可调用知识库与全局笔记的只读搜索/)
+      screen.getByText(/Ask 仅可调用知识库与全局笔记读取工具/)
     ).toBeInTheDocument()
     fireEvent.click(within(field).getByRole('button', { name: '清除' }))
     expect(input).toHaveValue('')
@@ -2002,7 +2002,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 MCP 当前仅用于直连模型/)
     ).toHaveTextContent('新建时默认分配给直连模型')
     expect(
-      screen.getByText(/内置共享 MCP 提供知识库与全局笔记只读搜索/)
+      screen.getByText(/内置共享 MCP 提供知识库读取与全局笔记管理/)
     ).toHaveTextContent(/直连模型、\s*OpenCode 和 Continue/u)
     expect(
       screen.getByText(/Runtime 自有 MCP 配置不在此处管理/)

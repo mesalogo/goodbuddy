@@ -189,21 +189,39 @@ describe('ModelToolProvider', () => {
     ).resolves.toBe('saved')
   })
 
-  it('exposes only scoped built-in searches in Ask', async () => {
+  it('exposes scoped reads in Ask and Magic Notes writes only in Execute', async () => {
     const workspace = await createWorkspace()
     const search = vi.fn(async () => [])
     const searchMagicNotes = vi.fn(() => [])
     const listLibraries = vi.fn(() => [
       { id: 'library-1', name: '产品知识' }
     ])
+    const listMagicNotes = vi.fn(() => [])
+    const getMagicNote = vi.fn(() => ({
+      id: '00000000-0000-4000-8000-000000000701'
+    }))
+    const createMagicNote = vi.fn(() => ({
+      id: '00000000-0000-4000-8000-000000000701'
+    }))
     const gateway = {
       listLibraries,
       search,
       searchMagicNotes,
+      listMagicNotes,
+      getMagicNote,
+      createMagicNote,
       getAvailableToolNames: vi.fn(() => [
         'knowledge_list',
         'knowledge_search',
-        'note_search'
+        'note_list',
+        'note_get',
+        'note_search',
+        'note_create',
+        'note_update',
+        'note_entry_create',
+        'note_entry_update',
+        'note_entry_delete',
+        'note_delete'
       ])
     } as unknown as KnowledgeMcpGateway
     const provider = new ModelToolProvider(
@@ -223,7 +241,9 @@ describe('ModelToolProvider', () => {
     expect(askTools.map((tool) => tool.name)).toEqual([
       'knowledge_list',
       'knowledge_search',
-      'note_search'
+      'note_search',
+      'note_list',
+      'note_get'
     ])
     expect(
       JSON.stringify(
@@ -263,6 +283,17 @@ describe('ModelToolProvider', () => {
       { query: '发布计划', limit: 3 },
       signal
     )
+    await provider.callTool('note_list', {}, signal, askContext)
+    expect(listMagicNotes).toHaveBeenCalledWith('main-only-token', {})
+    await provider.callTool(
+      'note_get',
+      { noteId: '00000000-0000-4000-8000-000000000701' },
+      signal,
+      askContext
+    )
+    expect(getMagicNote).toHaveBeenCalledWith('main-only-token', {
+      noteId: '00000000-0000-4000-8000-000000000701'
+    })
 
     await expect(
       provider.listTools(
@@ -284,12 +315,45 @@ describe('ModelToolProvider', () => {
         'workspace_write_text',
         'knowledge_list',
         'knowledge_search',
-        'note_search'
+        'note_search',
+        'note_create',
+        'note_update',
+        'note_entry_create',
+        'note_entry_update',
+        'note_entry_delete',
+        'note_delete'
       ])
     )
+    await provider.callTool(
+      'note_create',
+      { title: '发布计划' },
+      signal,
+      { ...askContext, workMode: 'execute' }
+    )
+    expect(createMagicNote).toHaveBeenCalledWith('main-only-token', {
+      title: '发布计划'
+    })
+    const deleteTool = executeTools.find(
+      (tool) => tool.name === 'note_delete'
+    )!
+    expect(
+      provider.getApproval(
+        deleteTool,
+        {
+          noteId: '00000000-0000-4000-8000-000000000701',
+          expectedRevision: 1
+        },
+        '{"expectedRevision":1}',
+        { ...askContext, workMode: 'execute' }
+      )
+    ).toMatchObject({
+      scopeKey: 'model:magic-notes:note_delete',
+      allowPermanent: false,
+      description: expect.stringContaining('永久删除')
+    })
   })
 
-  it('reserves three Execute tool slots for scoped built-in knowledge tools', async () => {
+  it('reserves all scoped data tool slots for Execute', async () => {
     const workspace = await createWorkspace()
     const gateway = {
       listLibraries: vi.fn(() => []),
@@ -298,7 +362,15 @@ describe('ModelToolProvider', () => {
       getAvailableToolNames: vi.fn(() => [
         'knowledge_list',
         'knowledge_search',
-        'note_search'
+        'note_list',
+        'note_get',
+        'note_search',
+        'note_create',
+        'note_update',
+        'note_entry_create',
+        'note_entry_update',
+        'note_entry_delete',
+        'note_delete'
       ])
     } as unknown as KnowledgeMcpGateway
     const context = {
@@ -318,7 +390,7 @@ describe('ModelToolProvider', () => {
       }))
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(94)
+      tools: createTools(86)
     })
     const validProvider = new ModelToolProvider(
       workspace,
@@ -332,7 +404,7 @@ describe('ModelToolProvider', () => {
     await validProvider.dispose()
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(95)
+      tools: createTools(87)
     })
     const overflowingProvider = new ModelToolProvider(
       workspace,
