@@ -800,8 +800,10 @@ export const knowledgeUrlImportSchema = z
 export const knowledgeUpdateLibrarySchema = z
   .object({
     libraryId: knowledgeIdSchema,
-    graphEnabled: z.boolean(),
-    graphStrategy: z.enum(['rules', 'model', 'hybrid', 'ask'])
+    name: z.string().trim().min(1).max(120).optional(),
+    description: z.string().trim().max(1_000).optional(),
+    graphEnabled: z.boolean().optional(),
+    graphStrategy: z.enum(['rules', 'model', 'hybrid', 'ask']).optional()
   })
   .strict()
 export const knowledgeEntityUpdateSchema = z
@@ -856,6 +858,21 @@ export type KnowledgeDocumentItem = {
   error?: string
 }
 
+export type KnowledgeTaskItem = {
+  id: string
+  libraryId: string
+  sourceId?: string
+  documentId?: string
+  documentName: string
+  kind: 'parsing' | 'embedding' | 'graph'
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  progress: number
+  message?: string
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+}
+
 export type KnowledgeGraphNode = {
   id: string
   label: string
@@ -892,6 +909,7 @@ export type KnowledgeSnapshot = {
   graphNodes: KnowledgeGraphNode[]
   graphRelations: KnowledgeGraphRelation[]
   evidence: KnowledgeEvidence[]
+  tasks?: KnowledgeTaskItem[]
 }
 
 export type KnowledgeSearchReference = {
@@ -1185,11 +1203,14 @@ export type DesktopApi = {
     updateLibrary: (
       libraryId: string,
       update: {
-        graphEnabled: boolean
-        graphStrategy: 'rules' | 'model' | 'hybrid' | 'ask'
+        name?: string
+        description?: string
+        graphEnabled?: boolean
+        graphStrategy?: 'rules' | 'model' | 'hybrid' | 'ask'
       }
     ) => Promise<void>
     deleteLibrary: (libraryId: string) => Promise<void>
+    reextractGraph: (libraryId: string) => Promise<void>
     selectFiles: (
       libraryId: string,
       graphStrategy?: 'rules' | 'model' | 'hybrid'

@@ -17,33 +17,27 @@ python -m http.server 4173 --bind 127.0.0.1 --directory sites
 ```powershell
 node sites/scripts/validate.mjs
 node --check sites/app.js
-node --check sites/site.config.js
 ```
 
-校验脚本会检查必需文件、页内链接、本地资源、关键产品文案、主题与响应式规则，以及未发布状态下的下载链接保护。
+校验脚本会检查必需文件、页内链接、本地资源、关键产品文案、主题与响应式规则，以及下载入口是否始终指向官方最新 Release。
 
-## Release 配置
+## 下载入口
 
-当前版本的 Release 地址集中在 `site.config.js`，版本号必须与根目录
-`package.json` 保持一致：
+官网正文不展示具体版本号，所有下载入口直接指向 GitHub 最新正式
+Release：
 
-```js
-window.GOODBUDDY_SITE_CONFIG = Object.freeze({
-  version: "0.8.1",
-  releasePublished: true,
-  releaseUrl: "https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.1",
-});
+```text
+https://github.com/mesalogo/goodbuddy/releases/latest
 ```
 
-准备尚未发布的版本时，将 `releasePublished` 暂时设为 `false`；正式
-Release 确认发布后改回 `true`，页面上的下载入口才会指向 Release
-页面。官网不配置或猜测具体安装资产名称。
+新版本发布后 GitHub 会自动更新该地址的目标，官网无需同步修改版本号
+或安装资产名称。用户在 Release 页面按系统与架构选择文件并核对
+SHA-256 清单。
 
 ## 文件
 
 - `index.html`：页面结构与简体中文内容
 - `styles.css`：语义令牌、浅深主题、焦点与响应式布局
-- `app.js`：主题、移动导航、当前章节和 Release 状态
-- `site.config.js`：版本与未来 Release 地址
+- `app.js`：主题、移动导航和当前章节
 - `assets/favicon.svg`：站点图标
 - `scripts/validate.mjs`：无依赖静态检查

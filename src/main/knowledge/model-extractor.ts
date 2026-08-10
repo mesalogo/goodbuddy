@@ -95,12 +95,28 @@ function openAIChatText(payload: unknown): string {
   if (!Array.isArray(choices)) {
     return ''
   }
-  const message = record(record(choices[0])?.message)
-  return typeof message?.content === 'string' ? message.content : ''
+  const choice = record(choices[0])
+  const message = record(choice?.message)
+  if (typeof message?.content === 'string') {
+    return message.content
+  }
+  if (Array.isArray(message?.content)) {
+    return message.content
+      .flatMap((part) => {
+        const value = record(part)
+        return typeof value?.text === 'string' ? [value.text] : []
+      })
+      .join('')
+  }
+  return typeof choice?.text === 'string' ? choice.text : ''
 }
 
 function openAIResponsesText(payload: unknown): string {
-  const output = record(payload)?.output
+  const response = record(payload)
+  if (typeof response?.output_text === 'string') {
+    return response.output_text
+  }
+  const output = response?.output
   if (!Array.isArray(output)) {
     return ''
   }
@@ -111,7 +127,7 @@ function openAIResponsesText(payload: unknown): string {
     })
     .flatMap((part) => {
       const value = record(part)
-      return value?.type === 'output_text' &&
+      return (value?.type === 'output_text' || value?.type === 'text') &&
         typeof value.text === 'string'
         ? [value.text]
         : []
@@ -211,7 +227,9 @@ export function createModelGraphExtractor(
           ? openAIResponsesText(payload)
           : openAIChatText(payload)
     if (!text) {
-      throw new Error('模型未返回图谱内容')
+      throw new Error(
+        '模型未返回图谱内容，请重试或在知识库设置中切换到规则抽取'
+      )
     }
     return extractJsonText(text)
   }

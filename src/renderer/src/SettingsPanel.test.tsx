@@ -497,6 +497,30 @@ describe('SettingsPanel runtime files', () => {
     expect(content).toHaveClass('settings-panel__content')
   })
 
+  it('omits the redundant close-only footer on passive settings pages', () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        presentation="page"
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+
+    expect(
+      screen.getByRole('button', { name: '关闭设置' })
+    ).toBeInTheDocument()
+    expect(
+      screen
+        .getByRole('region', { name: '设置中心' })
+        .querySelector('.settings-panel__footer')
+    ).toBeNull()
+  })
+
   it('uses one first-level heading for the settings page', () => {
     render(
       <SettingsPanel

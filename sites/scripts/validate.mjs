@@ -3,14 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const repositoryRoot = path.resolve(siteRoot, "..");
 const errors = [];
 
 const requiredFiles = [
   "index.html",
   "styles.css",
   "app.js",
-  "site.config.js",
   "assets/favicon.svg",
   "README.md",
 ];
@@ -41,26 +39,16 @@ await Promise.all(
   }),
 );
 
-const [html, css, appJs, configJs] = await Promise.all([
+const [html, css, appJs] = await Promise.all([
   readSiteFile("index.html"),
   readSiteFile("styles.css"),
   readSiteFile("app.js"),
-  readSiteFile("site.config.js"),
 ]);
-let packageVersion = "";
-try {
-  packageVersion = JSON.parse(
-    await readFile(path.join(repositoryRoot, "package.json"), "utf8"),
-  ).version;
-} catch {
-  errors.push("无法读取 package.json 版本");
-}
 
 for (const [relativePath, content] of [
   ["index.html", html],
   ["styles.css", css],
   ["app.js", appJs],
-  ["site.config.js", configJs],
 ]) {
   report(!/[ \t]+$/m.test(content), `${relativePath} 包含行尾空白`);
   report(!content.includes("\t"), `${relativePath} 包含 Tab 缩进`);
@@ -81,42 +69,38 @@ for (const breakpoint of ["1199px", "959px", "719px"]) {
 }
 
 const requiredCopy = [
-  "Subagent 与智能路由",
-  "钉钉与企业微信以开发者预览提供",
-  "个人微信处于实验性边界",
+  "在本地管理笔记和待办",
+  "微信、企业微信和钉钉",
+  "单条消息最多 4 个附件",
+  "OpenCode 与 Continue",
   "单次最多添加 8 个附件，支持同时传入 5 张图片",
   "auto、low、medium、high",
-  "当前按单张结果呈现，不承诺批量多图生成",
-  "发布后开放",
-  "安全不是开关",
+  "下载入口始终指向最新正式 Release",
+  "主要安全边界",
 ];
 
 for (const copy of requiredCopy) {
   report(html.includes(copy), `缺少准确文案：${copy}`);
 }
 
+const htmlWithoutSvg = html.replace(/<svg\b[\s\S]*?<\/svg>/g, "");
 report(
-  configJs.includes(`version: "${packageVersion}"`),
-  `site.config.js 版本必须与 package.json 的 ${packageVersion} 一致`,
+  !/\bv?\d+\.\d+\.\d+\b/.test(htmlWithoutSvg),
+  "官网正文不得写入需要随发布更新的具体版本号",
 );
-report(
-  /releasePublished:\s*true/.test(configJs),
-  `v${packageVersion} Release 发布后 releasePublished 必须为 true`,
-);
-report(
-  configJs.includes(
-    `releaseUrl: "https://github.com/mesalogo/goodbuddy/releases/tag/v${packageVersion}"`,
-  ),
-  `v${packageVersion} Release URL 配置不正确`,
-);
-report(
-  appJs.includes("config?.releasePublished === true"),
-  "下载链接必须受 releasePublished 配置保护",
-);
-report(
-  appJs.includes("config.releaseUrl === expectedReleaseUrl"),
-  "下载链接必须与配置版本对应的 GitHub Release 地址一致",
-);
+
+const releaseLinks = [
+  ...html.matchAll(/<a\b(?=[^>]*data-release-link)[^>]*>/g),
+].map((match) => match[0]);
+report(releaseLinks.length >= 5, "缺少完整的官方下载入口");
+for (const link of releaseLinks) {
+  report(
+    /href="https:\/\/github\.com\/mesalogo\/goodbuddy\/releases\/latest"/.test(link),
+    `下载入口必须指向官方最新 Release：${link}`,
+  );
+  report(/target="_blank"/.test(link), `下载入口必须在新窗口打开：${link}`);
+  report(/rel="[^"]*noreferrer[^"]*"/.test(link), `下载入口缺少 noreferrer：${link}`);
+}
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);

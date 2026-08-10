@@ -8,7 +8,6 @@
   const themeToggle = document.querySelector("[data-theme-toggle]");
   const themeColor = document.querySelector('meta[name="theme-color"]');
   const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
-  const config = window.GOODBUDDY_SITE_CONFIG;
 
   const getSavedTheme = () => {
     try {
@@ -46,41 +45,7 @@
     header?.classList.toggle("is-scrolled", window.scrollY > 12);
   };
 
-  const configureReleaseLinks = () => {
-    const releaseLinks = document.querySelectorAll("[data-release-link]");
-    const hasValidVersion =
-      typeof config?.version === "string" &&
-      /^\d+\.\d+\.\d+$/.test(config.version);
-    const expectedReleaseUrl = hasValidVersion
-      ? `https://github.com/mesalogo/goodbuddy/releases/tag/v${config.version}`
-      : "";
-    const isReady =
-      config?.releasePublished === true &&
-      typeof config.releaseUrl === "string" &&
-      config.releaseUrl === expectedReleaseUrl;
-
-    releaseLinks.forEach((link) => {
-      if (!isReady) {
-        link.removeAttribute("href");
-        link.removeAttribute("target");
-        link.removeAttribute("rel");
-        link.setAttribute("aria-disabled", "true");
-        link.classList.add("is-disabled");
-        link.textContent = "发布后开放";
-        return;
-      }
-
-      link.href = config.releaseUrl;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.removeAttribute("aria-disabled");
-      link.classList.remove("is-disabled");
-      link.innerHTML = `前往 v${config.version} Release<span class="sr-only">（在新窗口打开）</span>`;
-    });
-  };
-
   applyTheme(getSavedTheme() ?? (systemTheme.matches ? "dark" : "light"));
-  configureReleaseLinks();
   setHeaderState();
 
   themeToggle?.addEventListener("click", () => {

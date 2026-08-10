@@ -348,6 +348,28 @@ describe('extraction strategies', () => {
     )
   })
 
+  it('propagates model extraction failures for hybrid and model strategies', async () => {
+    const chunks = [{ id: 'fallback', content: '# Local Entity' }]
+    for (const strategy of ['hybrid', 'model'] as const) {
+      await expect(
+        extractKnowledgeGraph(chunks, {
+          strategy,
+          extractStructured: async () => {
+            throw new Error('模型未返回图谱内容')
+          }
+        })
+      ).rejects.toThrow('模型未返回图谱内容')
+    }
+    await expect(
+      extractKnowledgeGraph(chunks, {
+        strategy: 'hybrid',
+        extractStructured: async () => {
+          return { invalid: true }
+        }
+      })
+    ).rejects.toThrow()
+  })
+
   it('supports rules, model, and ask behavior without an implicit model call', async () => {
     const chunks = [{ id: 'strategy', content: '# Local Entity' }]
     const callback = vi.fn()
@@ -359,14 +381,12 @@ describe('extraction strategies', () => {
       strategy: 'ask',
       extractStructured: callback
     })
-    const unavailable = await extractKnowledgeGraph(chunks, {
-      strategy: 'model'
-    })
-
     expect(callback).not.toHaveBeenCalled()
     expect(rules.requiresModelApproval).toBe(false)
     expect(ask.requiresModelApproval).toBe(true)
-    expect(unavailable.warnings).toEqual(['Model extraction is unavailable'])
+    await expect(
+      extractKnowledgeGraph(chunks, { strategy: 'model' })
+    ).rejects.toThrow('Model extraction is unavailable')
   })
 
   it('honors cancellation before and after the injected model callback', async () => {

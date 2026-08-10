@@ -12,6 +12,7 @@ import {
   FolderOpen,
   GitMerge,
   Link2,
+  ListChecks,
   LoaderCircle,
   Network,
   Pencil,
@@ -19,6 +20,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Settings2,
   Trash2,
   UploadCloud,
   X,
@@ -136,6 +138,21 @@ export type KnowledgeEvidence = {
   location?: string
 }
 
+export type KnowledgeTaskItem = {
+  id: string
+  libraryId: string
+  sourceId?: string
+  documentId?: string
+  documentName: string
+  kind: 'parsing' | 'embedding' | 'graph'
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  progress: number
+  message?: string
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+}
+
 export type KnowledgeEntityUpdate = {
   label: string
   type: string
@@ -158,6 +175,7 @@ export type KnowledgeWorkspaceProps = {
   graphNodes: readonly KnowledgeGraphNode[]
   graphRelations: readonly KnowledgeGraphRelation[]
   evidence: readonly KnowledgeEvidence[]
+  tasks?: readonly KnowledgeTaskItem[]
   loading?: boolean
   loadError?: string
   onRetryLoad: () => void | Promise<void>
@@ -169,10 +187,13 @@ export type KnowledgeWorkspaceProps = {
   onUpdateLibrary: (
     libraryId: string,
     update: {
-      graphEnabled: boolean
-      graphStrategy: KnowledgeGraphStrategy
+      name?: string
+      description?: string
+      graphEnabled?: boolean
+      graphStrategy?: KnowledgeGraphStrategy
     }
   ) => void | Promise<void>
+  onReextractGraph: (libraryId: string) => void | Promise<void>
   onImportFiles: (
     libraryId: string,
     files: File[],
@@ -219,7 +240,7 @@ export type KnowledgeWorkspaceProps = {
   onOpenEvidence?: (evidence: KnowledgeEvidence) => void
 }
 
-type WorkspaceTab = 'documents' | 'graph'
+type WorkspaceTab = 'documents' | 'graph' | 'tasks' | 'settings'
 
 const storageModeLabels: Record<KnowledgeStorageMode, string> = {
   reference: '引用原文件',
@@ -587,6 +608,147 @@ function CreateLibraryWizard({
         </button>
       </div>
     </form>
+  )
+}
+
+function EditLibraryDialog({
+  library,
+  onCancel,
+  onConfirm
+}: {
+  library: KnowledgeLibrary
+  onCancel: () => void
+  onConfirm: (update: {
+    name: string
+    description: string
+  }) => void | Promise<void>
+}): React.JSX.Element {
+  const [name, setName] = useState(library.name)
+  const [description, setDescription] = useState(library.description ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    nameRef.current?.focus()
+  }, [])
+
+  const submit = async (
+    event: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    event.preventDefault()
+    const normalizedName = name.trim()
+    if (!normalizedName) {
+      setError('请输入知识库名称')
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      await onConfirm({
+        name: normalizedName,
+        description: description.trim()
+      })
+      onCancel()
+    } catch (reason) {
+      setError(toErrorMessage(reason))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      aria-label="编辑知识库"
+      aria-modal="true"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !saving) {
+          event.preventDefault()
+          onCancel()
+          return
+        }
+        trapTabFocus(event, dialogRef.current)
+      }}
+      ref={dialogRef}
+      role="dialog"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 50,
+        display: 'grid',
+        placeItems: 'center',
+        padding: 20,
+        background: 'var(--overlay-backdrop)'
+      }}
+    >
+      <form
+        aria-label="编辑知识库表单"
+        onSubmit={(event) => void submit(event)}
+        style={{
+          ...styles.surface,
+          display: 'grid',
+          width: 'min(480px, 100%)',
+          padding: 20,
+          boxShadow: 'var(--shadow-dialog)',
+          gap: 14
+        }}
+      >
+        <div>
+          <h2 style={{ margin: 0 }}>编辑知识库</h2>
+          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+            修改名称和说明不会改变来源、索引或知识图谱。
+          </p>
+        </div>
+        <label style={styles.label}>
+          名称
+          <input
+            onChange={(event) => setName(event.currentTarget.value)}
+            ref={nameRef}
+            style={styles.input}
+            value={name}
+          />
+        </label>
+        <label style={styles.label}>
+          描述
+          <textarea
+            onChange={(event) => setDescription(event.currentTarget.value)}
+            rows={4}
+            style={{ ...styles.input, resize: 'vertical' }}
+            value={description}
+          />
+        </label>
+        {error && (
+          <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>
+            {error}
+          </p>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            className="secondary-button"
+            disabled={saving}
+            onClick={onCancel}
+            style={styles.button}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="primary-button"
+            disabled={saving}
+            style={styles.button}
+            type="submit"
+          >
+            {saving ? (
+              <LoaderCircle aria-hidden="true" size={15} />
+            ) : (
+              <Check aria-hidden="true" size={15} />
+            )}
+            {saving ? '保存中…' : '保存修改'}
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }
 
@@ -1488,10 +1650,192 @@ function RelationForm({
   )
 }
 
+function KnowledgeSettingsView({
+  library,
+  onUpdateLibrary
+}: {
+  library: KnowledgeLibrary
+  onUpdateLibrary: KnowledgeWorkspaceProps['onUpdateLibrary']
+}): React.JSX.Element {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const update = async (
+    change: Parameters<KnowledgeWorkspaceProps['onUpdateLibrary']>[1]
+  ): Promise<void> => {
+    setSaving(true)
+    setError(undefined)
+    try {
+      await onUpdateLibrary(library.id, change)
+    } catch (reason) {
+      setError(toErrorMessage(reason))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="knowledge-settings">
+      <section
+        aria-labelledby="knowledge-graph-settings-title"
+        style={{ ...styles.surface, padding: 16 }}
+      >
+        <div>
+          <h3 id="knowledge-graph-settings-title" style={{ margin: 0 }}>
+            知识图谱
+          </h3>
+          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+            控制是否从知识库文档中抽取实体、关系和证据。
+          </p>
+        </div>
+        <label
+          className="knowledge-settings__toggle"
+          style={{ ...styles.surface, cursor: saving ? 'wait' : 'pointer' }}
+        >
+          <input
+            checked={library.graphEnabled}
+            disabled={saving}
+            onChange={(event) =>
+              void update({ graphEnabled: event.currentTarget.checked })
+            }
+            type="checkbox"
+          />
+          <span>
+            <strong style={{ display: 'block' }}>启用知识图谱</strong>
+            <span style={styles.muted}>
+              启用后，新导入和重新同步的文档会按所选策略抽取图谱。
+            </span>
+          </span>
+        </label>
+        <label style={styles.label}>
+          图谱抽取策略
+          <select
+            aria-label="知识图谱抽取策略"
+            disabled={!library.graphEnabled || saving}
+            onChange={(event) =>
+              void update({
+                graphStrategy:
+                  event.currentTarget.value as KnowledgeGraphStrategy
+              })
+            }
+            style={styles.input}
+            value={library.graphStrategy}
+          >
+            {Object.entries(strategyLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <span style={styles.muted}>
+            “按需询问”不会自动生成图谱，也不能执行重新抽取。
+          </span>
+        </label>
+        {error && (
+          <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>
+            {error}
+          </p>
+        )}
+      </section>
+    </div>
+  )
+}
+
+const taskKindLabels: Record<KnowledgeTaskItem['kind'], string> = {
+  parsing: '文档解析',
+  embedding: '向量化',
+  graph: '图谱抽取'
+}
+
+const taskStatusLabels: Record<KnowledgeTaskItem['status'], string> = {
+  queued: '等待中',
+  running: '进行中',
+  succeeded: '已完成',
+  failed: '失败',
+  skipped: '已跳过'
+}
+
+function KnowledgeTasksView({
+  tasks
+}: {
+  tasks: readonly KnowledgeTaskItem[]
+}): React.JSX.Element {
+  const activeCount = tasks.filter(
+    (task) => task.status === 'queued' || task.status === 'running'
+  ).length
+  const failedCount = tasks.filter(
+    (task) => task.status === 'failed'
+  ).length
+
+  if (tasks.length === 0) {
+    return (
+      <EmptyState
+        description="导入或同步文档后，可以在这里查看解析、向量化和图谱抽取进度。"
+        icon={<ListChecks size={30} />}
+        level="section"
+        title="还没有知识任务"
+      />
+    )
+  }
+
+  return (
+    <section aria-labelledby="knowledge-tasks-title">
+      <div className="knowledge-tasks__summary">
+        <div>
+          <h3 id="knowledge-tasks-title" style={{ margin: 0 }}>
+            任务中心
+          </h3>
+          <p style={{ ...styles.muted, margin: '5px 0 0' }}>
+            最近 {tasks.length} 个任务
+          </p>
+        </div>
+        <div className="knowledge-tasks__metrics">
+          <span>进行中 {activeCount}</span>
+          <span>失败 {failedCount}</span>
+        </div>
+      </div>
+      <ol className="knowledge-task-list">
+        {tasks.map((task) => (
+          <li className="knowledge-task" key={task.id}>
+            <div className="knowledge-task__heading">
+              <div>
+                <strong>{task.documentName}</strong>
+                <span>{taskKindLabels[task.kind]}</span>
+              </div>
+              <span
+                className={`knowledge-task__status knowledge-task__status--${task.status}`}
+              >
+                {taskStatusLabels[task.status]}
+              </span>
+            </div>
+            <div className="knowledge-task__progress">
+              <progress
+                aria-label={`${task.documentName} ${taskKindLabels[task.kind]}进度`}
+                max={100}
+                value={task.progress}
+              />
+              <span>{task.progress}%</span>
+            </div>
+            <div className="knowledge-task__meta">
+              <span>{task.message || '等待处理'}</span>
+              <time dateTime={task.completedAt ?? task.startedAt ?? task.createdAt}>
+                {new Date(
+                  task.completedAt ?? task.startedAt ?? task.createdAt
+                ).toLocaleString('zh-CN')}
+              </time>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
 function GraphView({
   evidence,
   graphNodes,
   graphRelations,
+  libraryId,
   onCreateEntity,
   onCreateRelation,
   onDeleteEntity,
@@ -1499,6 +1843,7 @@ function GraphView({
   onMergeEntities,
   onMoveNode,
   onOpenEvidence,
+  onReextractGraph,
   onUpdateEntity,
   onUpdateRelation
 }: Pick<
@@ -1513,9 +1858,12 @@ function GraphView({
   | 'onMergeEntities'
   | 'onMoveNode'
   | 'onOpenEvidence'
+  | 'onReextractGraph'
   | 'onUpdateEntity'
   | 'onUpdateRelation'
->): React.JSX.Element {
+> & {
+  libraryId: string
+}): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [selectedNodeId, setSelectedNodeId] = useState<string>()
@@ -1526,6 +1874,8 @@ function GraphView({
   const [mergeTargetId, setMergeTargetId] = useState('')
   const [zoom, setZoom] = useState(1)
   const [relationsExpanded, setRelationsExpanded] = useState(false)
+  const [reextracting, setReextracting] = useState(false)
+  const [reextractError, setReextractError] = useState<string>()
 
   const nodeMap = useMemo(
     () => new Map(graphNodes.map((node) => [node.id, node])),
@@ -1660,6 +2010,22 @@ function GraphView({
           </select>
           <button
             className="secondary-button"
+            disabled={reextracting}
+            onClick={() => {
+              setReextracting(true)
+              setReextractError(undefined)
+              void Promise.resolve(onReextractGraph(libraryId))
+                .catch((reason) => setReextractError(toErrorMessage(reason)))
+                .finally(() => setReextracting(false))
+            }}
+            style={styles.button}
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" size={15} />
+            {reextracting ? '重新抽取中…' : '重新抽取'}
+          </button>
+          <button
+            className="secondary-button"
             onClick={() => {
               setSelectedNodeId(undefined)
               setCreatingEntity(true)
@@ -1704,6 +2070,14 @@ function GraphView({
           >
             <ZoomIn aria-hidden="true" size={16} />
           </button>
+          {reextractError && (
+            <span
+              className="knowledge-graph__toolbar-error"
+              role="alert"
+            >
+              {reextractError}
+            </span>
+          )}
         </div>
         {graphNodes.length === 0 ? (
           <div
@@ -2117,6 +2491,7 @@ export function KnowledgeWorkspace({
   graphNodes,
   graphRelations,
   evidence,
+  tasks = [],
   loading = false,
   loadError,
   onRetryLoad,
@@ -2124,6 +2499,7 @@ export function KnowledgeWorkspace({
   onCreateLibrary,
   onDeleteLibrary,
   onUpdateLibrary,
+  onReextractGraph,
   onImportFiles,
   onImportDirectory,
   onImportUrl,
@@ -2144,8 +2520,11 @@ export function KnowledgeWorkspace({
   const [creating, setCreating] = useState(false)
   const [mobileListOpen, setMobileListOpen] = useState(false)
   const [tab, setTab] = useState<WorkspaceTab>('documents')
+  const [editingLibrary, setEditingLibrary] =
+    useState<KnowledgeLibrary>()
   const [deletingLibrary, setDeletingLibrary] =
     useState<KnowledgeLibrary>()
+  const editLibraryTriggerRef = useRef<HTMLButtonElement>(null)
   const deleteLibraryTriggerRef = useRef<HTMLButtonElement>(null)
   const selectedLibrary =
     libraries.find((library) => library.id === selectedLibraryId) ??
@@ -2158,6 +2537,9 @@ export function KnowledgeWorkspace({
         (document) => document.libraryId === selectedLibrary.id
       )
     : []
+  const libraryTasks = selectedLibrary
+    ? tasks.filter((task) => task.libraryId === selectedLibrary.id)
+    : []
 
   useEffect(() => {
     if (
@@ -2167,24 +2549,35 @@ export function KnowledgeWorkspace({
       onSelectLibrary(selectedLibrary.id)
     }
   }, [onSelectLibrary, selectedLibrary, selectedLibraryId])
-  const visibleTab =
-    selectedLibrary?.graphEnabled === false ? 'documents' : tab
+  const visibleTab = tab
   const workspaceTabs: ReadonlyArray<PageTab<WorkspaceTab>> = [
     {
       id: 'documents',
       label: '文档与来源',
       icon: <FileText aria-hidden="true" size={15} />
     },
-    ...(selectedLibrary?.graphEnabled
-      ? [
-          {
-            id: 'graph' as const,
-            label: '知识图谱',
-            icon: <Network aria-hidden="true" size={15} />
-          }
-        ]
-      : [])
+    {
+      id: 'graph',
+      label: '知识图谱',
+      icon: <Network aria-hidden="true" size={15} />
+    },
+    {
+      id: 'tasks',
+      label: '任务中心',
+      icon: <ListChecks aria-hidden="true" size={15} />
+    },
+    {
+      id: 'settings',
+      label: '设置',
+      icon: <Settings2 aria-hidden="true" size={15} />
+    }
   ]
+  const closeEditDialog = (): void => {
+    setEditingLibrary(undefined)
+    requestAnimationFrame(() =>
+      editLibraryTriggerRef.current?.focus()
+    )
+  }
   const closeDeleteDialog = (): void => {
     setDeletingLibrary(undefined)
     requestAnimationFrame(() =>
@@ -2445,49 +2838,16 @@ export function KnowledgeWorkspace({
               <div
                 className="knowledge-workspace__header-actions"
               >
-                <label
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    color: 'var(--text-secondary)',
-                    fontSize: 12,
-                    gap: 6
-                  }}
+                <button
+                  className="secondary-button"
+                  onClick={() => setEditingLibrary(selectedLibrary)}
+                  ref={editLibraryTriggerRef}
+                  style={styles.button}
+                  type="button"
                 >
-                  <input
-                    checked={selectedLibrary.graphEnabled}
-                    onChange={(event) =>
-                      void onUpdateLibrary(selectedLibrary.id, {
-                        graphEnabled: event.currentTarget.checked,
-                        graphStrategy: selectedLibrary.graphStrategy
-                      })
-                    }
-                    type="checkbox"
-                  />
-                  知识图谱
-                </label>
-                {selectedLibrary.graphEnabled && (
-                  <select
-                    aria-label="知识图谱抽取策略"
-                    className="knowledge-workspace__strategy"
-                    onChange={(event) =>
-                      void onUpdateLibrary(selectedLibrary.id, {
-                        graphEnabled: true,
-                        graphStrategy:
-                          event.currentTarget
-                            .value as KnowledgeGraphStrategy
-                      })
-                    }
-                    style={styles.input}
-                    value={selectedLibrary.graphStrategy}
-                  >
-                    {Object.entries(strategyLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                  <Pencil aria-hidden="true" size={15} />
+                  编辑
+                </button>
                 <button
                   aria-label={`删除知识库 ${selectedLibrary.name}`}
                   className="danger-button danger-button--quiet"
@@ -2497,7 +2857,7 @@ export function KnowledgeWorkspace({
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={15} />
-                  删除知识库
+                  删除
                 </button>
               </div>
             </header>
@@ -2529,11 +2889,13 @@ export function KnowledgeWorkspace({
                   onSyncSource={onSyncSource}
                   sources={librarySources}
                 />
-              ) : (
+              ) : visibleTab === 'graph' &&
+                selectedLibrary.graphEnabled ? (
                 <GraphView
                   evidence={evidence}
                   graphNodes={graphNodes}
                   graphRelations={graphRelations}
+                  libraryId={selectedLibrary.id}
                   onCreateEntity={onCreateEntity}
                   onCreateRelation={onCreateRelation}
                   onDeleteEntity={onDeleteEntity}
@@ -2541,14 +2903,49 @@ export function KnowledgeWorkspace({
                   onMergeEntities={onMergeEntities}
                   onMoveNode={onMoveNode}
                   onOpenEvidence={onOpenEvidence}
+                  onReextractGraph={onReextractGraph}
                   onUpdateEntity={onUpdateEntity}
                   onUpdateRelation={onUpdateRelation}
+                />
+              ) : visibleTab === 'graph' ? (
+                <EmptyState
+                  action={
+                    <button
+                      className="secondary-button"
+                      onClick={() => setTab('settings')}
+                      style={styles.button}
+                      type="button"
+                    >
+                      <Settings2 aria-hidden="true" size={15} />
+                      前往设置
+                    </button>
+                  }
+                  description="在“设置”中启用知识图谱后，可以查看实体关系并重新抽取。"
+                  icon={<Network size={30} />}
+                  level="section"
+                  title="知识图谱未启用"
+                />
+              ) : visibleTab === 'tasks' ? (
+                <KnowledgeTasksView tasks={libraryTasks} />
+              ) : (
+                <KnowledgeSettingsView
+                  library={selectedLibrary}
+                  onUpdateLibrary={onUpdateLibrary}
                 />
               )}
             </div>
           </>
         )}
       </section>
+      {editingLibrary && (
+        <EditLibraryDialog
+          library={editingLibrary}
+          onCancel={closeEditDialog}
+          onConfirm={(update) =>
+            onUpdateLibrary(editingLibrary.id, update)
+          }
+        />
+      )}
       {deletingLibrary && (
         <DeleteLibraryDialog
           library={deletingLibrary}

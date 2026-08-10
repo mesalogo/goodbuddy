@@ -65,7 +65,12 @@ describe('createModelGraphExtractor', () => {
         choices: [
           {
             message: {
-              content: '```json\n{"relations":[]}\n```'
+              content: [
+                {
+                  type: 'text',
+                  text: '```json\n{"relations":[]}\n```'
+                }
+              ]
             }
           }
         ]
@@ -134,6 +139,22 @@ describe('createModelGraphExtractor', () => {
         }
       })
     )
+  })
+
+  it('accepts top-level output text from compatible Responses providers', async () => {
+    const extract = createModelGraphExtractor(
+      store({ modelProtocol: 'openai-responses' }),
+      vi.fn(async () =>
+        jsonResponse({
+          output_text: '{"entities":[],"relations":[]}'
+        })
+      )
+    )
+
+    await expect(extract('extract this')).resolves.toEqual({
+      entities: [],
+      relations: []
+    })
   })
 
   it('requires a key only for API-key authentication', async () => {

@@ -133,6 +133,7 @@ export const ipcChannels = {
   knowledgeCreateLibrary: 'knowledge:library:create',
   knowledgeUpdateLibrary: 'knowledge:library:update',
   knowledgeDeleteLibrary: 'knowledge:library:delete',
+  knowledgeReextractGraph: 'knowledge:graph:reextract',
   knowledgeSelectFiles: 'knowledge:source:select-files',
   knowledgeSelectDirectory: 'knowledge:source:select-directory',
   knowledgeImportPaths: 'knowledge:source:import-paths',

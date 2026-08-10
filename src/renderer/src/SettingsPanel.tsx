@@ -346,6 +346,11 @@ export function SettingsPanel({
     activeTab === 'runtime' ||
     activeTab === 'security' ||
     activeTab === 'roles'
+  const showFooter =
+    presentation !== 'page' ||
+    configurationTab ||
+    Boolean(error) ||
+    saved
 
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -2297,49 +2302,55 @@ export function SettingsPanel({
           </div>
         </div>
 
-        <footer className="settings-panel__footer">
-          <div className="settings-feedback">
-            {error && <span className="settings-error">{error}</span>}
-            {saved && (
-              <span className="settings-success">
-                <Check size={14} />
-                {connectionResult ?? '设置已保存'}
-              </span>
-            )}
-          </div>
-          <button className="secondary-button" onClick={close} type="button">
-            {configurationTab ? '取消' : '关闭'}
-          </button>
-          {configurationTab && (
-            <>
-              {(activeTab === 'runtime' ||
-                (activeTab === 'model' && modelType === 'llm')) && (
+        {showFooter && (
+          <footer className="settings-panel__footer">
+            <div className="settings-feedback">
+              {error && <span className="settings-error">{error}</span>}
+              {saved && (
+                <span className="settings-success">
+                  <Check size={14} />
+                  {connectionResult ?? '设置已保存'}
+                </span>
+              )}
+            </div>
+            <button
+              className="secondary-button"
+              onClick={close}
+              type="button"
+            >
+              {configurationTab ? '取消' : '关闭'}
+            </button>
+            {configurationTab && (
+              <>
+                {(activeTab === 'runtime' ||
+                  (activeTab === 'model' && modelType === 'llm')) && (
+                  <button
+                    className="secondary-button"
+                    disabled={saving || testing}
+                    onClick={() => void testConnection()}
+                    type="button"
+                  >
+                    {testing
+                      ? '测试中…'
+                      : activeTab === 'model'
+                        ? '保存并测试模型'
+                        : agentRuntimeType === 'opencode'
+                          ? '保存并测试 OpenCode'
+                          : '保存并测试 Continue'}
+                  </button>
+                )}
                 <button
-                  className="secondary-button"
+                  className="primary-button"
                   disabled={saving || testing}
-                  onClick={() => void testConnection()}
+                  onClick={() => void save()}
                   type="button"
                 >
-                  {testing
-                    ? '测试中…'
-                    : activeTab === 'model'
-                      ? '保存并测试模型'
-                      : agentRuntimeType === 'opencode'
-                        ? '保存并测试 OpenCode'
-                        : '保存并测试 Continue'}
+                  {saving ? '保存中…' : '保存设置'}
                 </button>
-              )}
-              <button
-                className="primary-button"
-                disabled={saving || testing}
-                onClick={() => void save()}
-                type="button"
-              >
-                {saving ? '保存中…' : '保存设置'}
-              </button>
-            </>
-          )}
-        </footer>
+              </>
+            )}
+          </footer>
+        )}
       </section>
     </div>
   )

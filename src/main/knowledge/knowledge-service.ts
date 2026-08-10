@@ -23,7 +23,8 @@ import { classifyEmbeddingError } from './embedding-errors'
 import {
   extractKnowledgeGraph,
   normalizeEntityAlias,
-  type ExtractStructured
+  type ExtractStructured,
+  type GraphExtractionResult
 } from './graph-extractor'
 import { KnowledgeDatabase } from './knowledge-database'
 import type {
@@ -66,6 +67,21 @@ export type KnowledgeDocumentSnapshot = Document & {
   error?: string
 }
 
+export type KnowledgeTaskSnapshot = {
+  id: string
+  libraryId: string
+  sourceId?: string
+  documentId?: string
+  documentName: string
+  kind: 'parsing' | 'embedding' | 'graph'
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  progress: number
+  message?: string
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+}
+
 export type KnowledgeSnapshot = {
   libraries: KnowledgeLibrarySnapshot[]
   sources: KnowledgeSourceSnapshot[]
@@ -73,6 +89,7 @@ export type KnowledgeSnapshot = {
   entities: GraphEntity[]
   relations: GraphRelation[]
   evidence: ReturnType<KnowledgeDatabase['listEvidence']>
+  tasks: KnowledgeTaskSnapshot[]
 }
 
 export type KnowledgeServiceOptions = {
@@ -89,6 +106,7 @@ const maximumFileBytes = 20 * 1024 * 1024
 const maximumSourceBytes = 500 * 1024 * 1024
 const maximumFilesPerSource = 2_000
 const maximumEmbeddingChunksPerBatch = 32
+const maximumKnowledgeTasks = 500
 
 function isInside(root: string, candidate: string): boolean {
   const path = relative(resolve(root), resolve(candidate))
@@ -105,6 +123,7 @@ export class KnowledgeService {
   private readonly watchers = new Map<string, FSWatcher>()
   private readonly syncTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly activeSyncs = new Map<string, Promise<void>>()
+  private readonly tasks = new Map<string, KnowledgeTaskSnapshot>()
   private readonly lifecycleController = new AbortController()
 
   constructor(options: KnowledgeServiceOptions) {
@@ -163,6 +182,109 @@ export class KnowledgeService {
     return Promise.resolve()
   }
 
+  private createKnowledgeTask(input: {
+    libraryId: string
+    sourceId?: string
+    documentId?: string
+    documentName: string
+    kind: KnowledgeTaskSnapshot['kind']
+    status?: KnowledgeTaskSnapshot['status']
+    message?: string
+  }): KnowledgeTaskSnapshot {
+    while (this.tasks.size >= maximumKnowledgeTasks) {
+      const oldestTaskId = this.tasks.keys().next().value as
+        | string
+        | undefined
+      if (!oldestTaskId) {
+        break
+      }
+      this.tasks.delete(oldestTaskId)
+    }
+    const now = new Date().toISOString()
+    const status = input.status ?? 'queued'
+    const task: KnowledgeTaskSnapshot = {
+      id: randomUUID(),
+      libraryId: input.libraryId,
+      sourceId: input.sourceId,
+      documentId: input.documentId,
+      documentName: input.documentName.slice(0, 512),
+      kind: input.kind,
+      status,
+      progress: status === 'succeeded' || status === 'skipped' ? 100 : 0,
+      message: input.message?.slice(0, 1_000),
+      createdAt: now,
+      startedAt: status === 'running' ? now : undefined,
+      completedAt:
+        status === 'succeeded' ||
+        status === 'failed' ||
+        status === 'skipped'
+          ? now
+          : undefined
+    }
+    this.tasks.set(task.id, task)
+    return task
+  }
+
+  private updateKnowledgeTask(
+    taskId: string,
+    update: {
+      status?: KnowledgeTaskSnapshot['status']
+      progress?: number
+      message?: string
+      documentId?: string
+      documentName?: string
+    }
+  ): void {
+    const current = this.tasks.get(taskId)
+    if (!current) {
+      return
+    }
+    const status = update.status ?? current.status
+    const terminal =
+      status === 'succeeded' ||
+      status === 'failed' ||
+      status === 'skipped'
+    this.tasks.set(taskId, {
+      ...current,
+      status,
+      documentId: update.documentId ?? current.documentId,
+      documentName:
+        update.documentName?.slice(0, 512) ?? current.documentName,
+      progress:
+        status === 'succeeded' || status === 'skipped'
+          ? 100
+          : update.progress === undefined
+            ? current.progress
+            : Math.max(0, Math.min(100, Math.round(update.progress))),
+      message:
+        update.message === undefined
+          ? current.message
+          : update.message.slice(0, 1_000),
+      startedAt:
+        status === 'running' && !current.startedAt
+          ? new Date().toISOString()
+          : current.startedAt,
+      completedAt:
+        terminal && !current.completedAt
+          ? new Date().toISOString()
+          : current.completedAt
+    })
+  }
+
+  private failKnowledgeTask(taskId: string, error: unknown): void {
+    const current = this.tasks.get(taskId)
+    if (
+      current?.status === 'succeeded' ||
+      current?.status === 'skipped'
+    ) {
+      return
+    }
+    this.updateKnowledgeTask(taskId, {
+      status: 'failed',
+      message: error instanceof Error ? error.message : '任务失败'
+    })
+  }
+
   createLibrary(input: CreateKnowledgeBaseInput): KnowledgeBase {
     return this.database.createKnowledgeBase(input)
   }
@@ -174,6 +296,11 @@ export class KnowledgeService {
     }
     for (const source of this.database.listSources(id)) {
       this.stopWatcher(source.id)
+    }
+    for (const task of this.tasks.values()) {
+      if (task.libraryId === id) {
+        this.tasks.delete(task.id)
+      }
     }
     const deleted = this.database.deleteKnowledgeBase(id)
     if (deleted && library.storageMode === 'managed') {
@@ -206,7 +333,8 @@ export class KnowledgeService {
         documents: [],
         entities: [],
         relations: [],
-        evidence: []
+        evidence: [],
+        tasks: []
       }
     }
     const sources = this.database.listSources(libraryId).map((source) => ({
@@ -253,7 +381,12 @@ export class KnowledgeService {
       documents,
       entities: this.database.listEntities(libraryId),
       relations: this.database.listRelations(libraryId),
-      evidence: this.database.listEvidence(libraryId)
+      evidence: this.database.listEvidence(libraryId),
+      tasks: [...this.tasks.values()]
+        .filter((task) => task.libraryId === libraryId)
+        .sort((left, right) =>
+          right.createdAt.localeCompare(left.createdAt)
+        )
     }
   }
 
@@ -427,7 +560,28 @@ export class KnowledgeService {
       this.lifecycleController.signal,
       AbortSignal.timeout(60_000)
     ])
-    const result = await this.urlImporter.import(input, effectiveSignal)
+    const parsingTask = this.createKnowledgeTask({
+      libraryId: library.id,
+      sourceId,
+      documentName: new URL(input).hostname,
+      kind: 'parsing'
+    })
+    let result: Awaited<ReturnType<UrlImporter['import']>>
+    try {
+      this.updateKnowledgeTask(parsingTask.id, {
+        status: 'running',
+        progress: 10,
+        message: '正在抓取并解析网页'
+      })
+      result = await this.urlImporter.import(input, effectiveSignal)
+      this.updateKnowledgeTask(parsingTask.id, {
+        progress: 70,
+        message: '正在保存网页内容'
+      })
+    } catch (error) {
+      this.failKnowledgeTask(parsingTask.id, error)
+      throw error
+    }
     let source = this.database.upsertSource({
       id: sourceId,
       knowledgeBaseId,
@@ -465,6 +619,12 @@ export class KnowledgeService {
           location: chunk.locator
         }))
       )
+      this.updateKnowledgeTask(parsingTask.id, {
+        status: 'succeeded',
+        documentId: document.id,
+        documentName: document.title,
+        message: '网页解析完成'
+      })
       await this.indexDocumentEmbeddings(document)
       await this.extractGraph(effectiveLibrary, document)
       source = this.database.upsertSource({
@@ -477,6 +637,7 @@ export class KnowledgeService {
         }
       })
     } catch (error) {
+      this.failKnowledgeTask(parsingTask.id, error)
       this.database.upsertSource({
         ...source,
         status: 'error',
@@ -509,6 +670,62 @@ export class KnowledgeService {
 
   async retrySource(sourceId: string): Promise<void> {
     return this.syncSource(sourceId)
+  }
+
+  async reextractGraph(knowledgeBaseId: string): Promise<void> {
+    const library = this.requireLibrary(knowledgeBaseId)
+    if (!library.graphEnabled) {
+      throw new Error('请先启用知识图谱')
+    }
+    if (library.graphStrategy === 'ask') {
+      throw new Error('按需询问策略不会自动抽取，请在设置中选择其他策略')
+    }
+    const documents = this.database.listDocuments(library.id)
+    const tasks = documents.map((document) =>
+      this.createKnowledgeTask({
+        libraryId: library.id,
+        sourceId: document.sourceId,
+        documentId: document.id,
+        documentName: document.title,
+        kind: 'graph',
+        message: '等待重新抽取'
+      })
+    )
+    for (let index = 0; index < documents.length; index += 1) {
+      const document = documents[index]
+      const task = tasks[index]
+      if (!document || !task) {
+        continue
+      }
+      try {
+        this.updateKnowledgeTask(task.id, {
+          status: 'running',
+          progress: 10,
+          message: '正在重新抽取知识图谱'
+        })
+        const result = await this.extractGraphResult(library, document)
+        this.updateKnowledgeTask(task.id, {
+          progress: 85,
+          message: '正在保存实体和关系'
+        })
+        this.database.removeEvidenceForDocument(document.id)
+        this.storeExtractedGraph(library, document, result)
+        this.updateKnowledgeTask(task.id, {
+          status: 'succeeded',
+          message: `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系`
+        })
+      } catch (error) {
+        this.failKnowledgeTask(task.id, error)
+        for (const pendingTask of tasks.slice(index + 1)) {
+          this.updateKnowledgeTask(pendingTask.id, {
+            status: 'skipped',
+            message: '因前序图谱任务失败而未执行'
+          })
+        }
+        throw error
+      }
+    }
+    this.database.pruneUnreferencedGeneratedGraph(library.id)
   }
 
   async removeSource(sourceId: string): Promise<boolean> {
@@ -594,19 +811,42 @@ export class KnowledgeService {
       if (!file) {
         continue
       }
+      const parsingTask = this.createKnowledgeTask({
+        libraryId: library.id,
+        sourceId: source.id,
+        documentName: file.relativePath,
+        kind: 'parsing'
+      })
       try {
+        this.updateKnowledgeTask(parsingTask.id, {
+          status: 'running',
+          progress: 10,
+          message: '正在读取文档'
+        })
         const buffer = await this.readBoundedFile(file.absolutePath)
+        this.updateKnowledgeTask(parsingTask.id, {
+          progress: 35,
+          message: '正在解析文档内容'
+        })
         const checksum = createHash('sha256').update(buffer).digest('hex')
         const previous = existing.find(
           (document) => document.externalId === file.relativePath
         )
         if (previous?.checksum === checksum) {
+          this.updateKnowledgeTask(parsingTask.id, {
+            status: 'skipped',
+            message: '文档内容未发生变化'
+          })
           continue
         }
         const parsed = await parseDocument(
           basename(file.absolutePath),
           buffer
         )
+        this.updateKnowledgeTask(parsingTask.id, {
+          progress: 75,
+          message: '正在保存解析结果'
+        })
         const document = this.database.upsertDocument(
           {
             knowledgeBaseId: library.id,
@@ -630,10 +870,17 @@ export class KnowledgeService {
             location: chunk.locator
           }))
         )
+        this.updateKnowledgeTask(parsingTask.id, {
+          status: 'succeeded',
+          documentId: document.id,
+          documentName: document.title,
+          message: '文档解析完成'
+        })
         this.database.removeEvidenceForDocument(document.id)
         await this.indexDocumentEmbeddings(document)
         await this.extractGraph(library, document)
       } catch (error) {
+        this.failKnowledgeTask(parsingTask.id, error)
         failures.push(
           `${file.relativePath}: ${
             error instanceof Error ? error.message : '解析失败'
@@ -661,10 +908,26 @@ export class KnowledgeService {
     requestedProvider?: EmbeddingProvider
   ): Promise<void> {
     const provider = requestedProvider ?? this.embeddingProvider
+    const task = this.createKnowledgeTask({
+      libraryId: document.knowledgeBaseId,
+      sourceId: document.sourceId,
+      documentId: document.id,
+      documentName: document.title,
+      kind: 'embedding'
+    })
     if (!provider) {
+      this.updateKnowledgeTask(task.id, {
+        status: 'skipped',
+        message: '未启用向量化'
+      })
       return
     }
     try {
+      this.updateKnowledgeTask(task.id, {
+        status: 'running',
+        progress: 5,
+        message: '正在准备文档分块'
+      })
       const chunks = this.database.listChunks(document.id, 10_000)
       const embeddings: Array<{
         chunkId: string
@@ -704,8 +967,21 @@ export class KnowledgeService {
             vector
           })
         }
+        this.updateKnowledgeTask(task.id, {
+          progress:
+            5 +
+            ((offset + batch.length) / Math.max(chunks.length, 1)) * 85,
+          message: `正在向量化 ${Math.min(
+            offset + batch.length,
+            chunks.length
+          )}/${chunks.length} 个分块`
+        })
       }
       if (this.embeddingProvider !== provider) {
+        this.updateKnowledgeTask(task.id, {
+          status: 'skipped',
+          message: '向量模型配置已变化'
+        })
         return
       }
       this.database.replaceDocumentEmbeddings(
@@ -714,11 +990,17 @@ export class KnowledgeService {
         provider.model,
         embeddings
       )
+      this.updateKnowledgeTask(task.id, {
+        status: 'succeeded',
+        message: `已向量化 ${chunks.length} 个分块`
+      })
     } catch (error) {
       if (this.lifecycleController.signal.aborted) {
+        this.failKnowledgeTask(task.id, new Error('向量化已取消'))
         return
       }
       const safeError = classifyEmbeddingError(error)
+      this.failKnowledgeTask(task.id, safeError)
       try {
         this.database.recordEmbeddingIndexError(
           document.id,
@@ -736,11 +1018,55 @@ export class KnowledgeService {
     library: KnowledgeBase,
     document: Document
   ): Promise<void> {
-    if (!library.graphEnabled || library.graphStrategy === 'ask') {
+    const task = this.createKnowledgeTask({
+      libraryId: library.id,
+      sourceId: document.sourceId,
+      documentId: document.id,
+      documentName: document.title,
+      kind: 'graph'
+    })
+    if (!library.graphEnabled) {
+      this.updateKnowledgeTask(task.id, {
+        status: 'skipped',
+        message: '知识图谱未启用'
+      })
       return
     }
+    if (library.graphStrategy === 'ask') {
+      this.updateKnowledgeTask(task.id, {
+        status: 'skipped',
+        message: '按需询问策略不自动抽取'
+      })
+      return
+    }
+    try {
+      this.updateKnowledgeTask(task.id, {
+        status: 'running',
+        progress: 10,
+        message: '正在准备图谱抽取'
+      })
+      const result = await this.extractGraphResult(library, document)
+      this.updateKnowledgeTask(task.id, {
+        progress: 85,
+        message: '正在保存实体和关系'
+      })
+      this.storeExtractedGraph(library, document, result)
+      this.updateKnowledgeTask(task.id, {
+        status: 'succeeded',
+        message: `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系`
+      })
+    } catch (error) {
+      this.failKnowledgeTask(task.id, error)
+      throw error
+    }
+  }
+
+  private async extractGraphResult(
+    library: KnowledgeBase,
+    document: Document
+  ): Promise<GraphExtractionResult> {
     const chunks = this.database.listChunks(document.id)
-    const result = await extractKnowledgeGraph(
+    return extractKnowledgeGraph(
       chunks.map((chunk) => ({
         id: chunk.id,
         content: chunk.content
@@ -750,6 +1076,13 @@ export class KnowledgeService {
         extractStructured: this.extractStructured
       }
     )
+  }
+
+  private storeExtractedGraph(
+    library: KnowledgeBase,
+    document: Document,
+    result: GraphExtractionResult
+  ): void {
     const existingEntities = this.database.listEntities(library.id)
     const entityIds = new Map<string, string>()
     for (const entity of result.entities) {

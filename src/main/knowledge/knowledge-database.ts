@@ -905,6 +905,54 @@ export class KnowledgeDatabase {
     )
   }
 
+  pruneUnreferencedGeneratedGraph(knowledgeBaseId: string): {
+    entities: number
+    relations: number
+  } {
+    const normalizedId = requiredString(
+      knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    const database = this.requireDatabase()
+    let entities = 0
+    let relations = 0
+    this.transaction(database, () => {
+      relations = Number(
+        database
+          .prepare(
+            `DELETE FROM graph_relations
+             WHERE knowledge_base_id = ?
+               AND locked = 0
+               AND NOT EXISTS (
+                 SELECT 1 FROM graph_evidence
+                 WHERE relation_id = graph_relations.id
+               )`
+          )
+          .run(normalizedId).changes
+      )
+      entities = Number(
+        database
+          .prepare(
+            `DELETE FROM graph_entities
+             WHERE knowledge_base_id = ?
+               AND locked = 0
+               AND NOT EXISTS (
+                 SELECT 1 FROM graph_evidence
+                 WHERE entity_id = graph_entities.id
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM graph_relations
+                 WHERE source_entity_id = graph_entities.id
+                    OR target_entity_id = graph_entities.id
+               )`
+          )
+          .run(normalizedId).changes
+      )
+    })
+    return { entities, relations }
+  }
+
   listChunks(documentId: string, limit = MAX_LIST_LIMIT): Chunk[] {
     const normalizedId = requiredString(
       documentId,

@@ -498,6 +498,7 @@ const api: DesktopApi = {
     })),
     updateLibrary: vi.fn(async () => {}),
     deleteLibrary: vi.fn(async () => {}),
+    reextractGraph: vi.fn(async () => {}),
     selectFiles: vi.fn(async () => {}),
     selectDirectory: vi.fn(async () => {}),
     importDroppedFiles: vi.fn(async () => {}),
@@ -516,6 +517,35 @@ const api: DesktopApi = {
     updateRelation: vi.fn(async () => {}),
     deleteRelation: vi.fn(async () => {})
   }
+}
+
+function composerMenuTrigger(
+  label: '专家角色' | '工作模式'
+): HTMLButtonElement {
+  return screen.getByRole('button', {
+    name: new RegExp(`^${label}：`, 'u')
+  })
+}
+
+function openComposerMenu(
+  label: '专家角色' | '工作模式'
+): HTMLElement {
+  fireEvent.click(composerMenuTrigger(label))
+  return screen.getByRole('menu', { name: label })
+}
+
+function selectComposerOption(
+  label: '专家角色' | '工作模式',
+  optionLabel: string
+): void {
+  const menu = openComposerMenu(label)
+  const option = within(menu)
+    .getByText(optionLabel, { selector: 'span' })
+    .closest<HTMLButtonElement>('button')
+  if (!option) {
+    throw new Error(`Missing ${label} option: ${optionLabel}`)
+  }
+  fireEvent.click(option)
 }
 
 describe('App', () => {
@@ -788,26 +818,28 @@ describe('App', () => {
       return
     }
 
-    expect(within(topbar).queryByLabelText('专家角色')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('专家角色').closest('.composer')).not.toBeNull()
+    expect(
+      within(topbar).queryByRole('button', {
+        name: /^专家角色：/u
+      })
+    ).not.toBeInTheDocument()
+    expect(composerMenuTrigger('专家角色').closest('.composer')).not.toBeNull()
 
-    const appMenuTrigger = within(topbar).getByLabelText('应用菜单')
-    fireEvent.click(appMenuTrigger)
+    const themeToggle = within(topbar).getByRole('button', {
+      name: '切换深色主题'
+    })
+    fireEvent.click(themeToggle)
+    await waitFor(() =>
+      expect(document.documentElement.dataset.theme).toBe('dark')
+    )
     expect(
       screen.queryByRole('menuitem', { name: '重命名会话' })
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('menuitem', { name: '安全与 Runtime 设置' })
-    ).toBeVisible()
-    await waitFor(() =>
-      expect(
-        screen.getByRole('menuitem', { name: '安全与 Runtime 设置' })
-      ).toHaveFocus()
-    )
-    fireEvent.keyDown(document, { key: 'ArrowDown' })
-    expect(screen.getByRole('menuitem', { name: '使用帮助' })).toHaveFocus()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(appMenuTrigger).toHaveFocus()
+      within(topbar).getByRole('button', {
+        name: '切换浅色主题'
+      })
+    ).toBe(themeToggle)
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 
     const conversationMenuTrigger = within(
@@ -1831,7 +1863,9 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: '任务与活动' })
     ).toBeInTheDocument()
-    expect(screen.queryByLabelText('专家角色')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /^专家角色：/u })
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByLabelText('切换助手工作栏')
     ).not.toBeInTheDocument()
@@ -1884,11 +1918,14 @@ describe('App', () => {
   it('offers only Ask and Execute in visible work mode controls', async () => {
     render(<App />)
 
-    const mode = await screen.findByLabelText('工作模式')
+    await screen.findByRole('button', {
+      name: '工作模式：Ask · 只读问答'
+    })
+    const modeMenu = openComposerMenu('工作模式')
     expect(
-      within(mode)
-        .getAllByRole('option')
-        .map((option) => option.textContent)
+      within(modeMenu)
+        .getAllByRole('menuitemradio')
+        .map((option) => option.querySelector('span')?.textContent)
     ).toEqual(['Ask · 只读问答', 'Execute · 受控执行'])
 
     fireEvent.click(screen.getByLabelText('新建项目'))
@@ -1902,6 +1939,46 @@ describe('App', () => {
         .map((option) => option.textContent)
     ).toEqual(['Ask · 只读问答', 'Execute · 受控执行'])
     expect(screen.queryByRole('option', { name: /Plan/u })).toBeNull()
+  })
+
+  it('matches expert and work mode keyboard menus to the model picker', async () => {
+    render(<App />)
+
+    const expertTrigger = await screen.findByRole('button', {
+      name: '专家角色：通用助手'
+    })
+    expect(expertTrigger).toHaveClass('model-button')
+    fireEvent.keyDown(expertTrigger, { key: 'ArrowDown' })
+
+    const expertMenu = screen.getByRole('menu', {
+      name: '专家角色'
+    })
+    expect(expertMenu).toHaveClass('runtime-picker__menu')
+    const generalExpert = within(expertMenu).getByRole(
+      'menuitemradio',
+      { name: /^通用助手/u }
+    )
+    const expertTeam = within(expertMenu).getByRole(
+      'menuitemradio',
+      { name: /^专家团队（并行）/u }
+    )
+    await waitFor(() => expect(generalExpert).toHaveFocus())
+    fireEvent.keyDown(generalExpert, { key: 'ArrowDown' })
+    expect(expertTeam).toHaveFocus()
+    fireEvent.keyDown(expertTeam, { key: 'Escape' })
+    expect(expertTrigger).toHaveFocus()
+    expect(
+      screen.queryByRole('menu', { name: '专家角色' })
+    ).not.toBeInTheDocument()
+
+    const modeTrigger = composerMenuTrigger('工作模式')
+    fireEvent.click(modeTrigger)
+    const modeMenu = screen.getByRole('menu', { name: '工作模式' })
+    expect(modeMenu).toHaveClass('runtime-picker__menu')
+    fireEvent.pointerDown(screen.getByLabelText('向 GoodBuddy 提问'))
+    expect(
+      screen.queryByRole('menu', { name: '工作模式' })
+    ).not.toBeInTheDocument()
   })
 
   it('groups composer tools and exposes clear control descriptions', async () => {
@@ -1930,11 +2007,19 @@ describe('App', () => {
       { name: '对话设置' }
     )
     expect(
-      within(conversationSettings).getByLabelText('专家角色')
+      within(conversationSettings).getByRole('button', {
+        name: '专家角色：通用助手'
+      })
     ).toBeInTheDocument()
     expect(
-      within(conversationSettings).getByLabelText('工作模式')
+      within(conversationSettings).getByRole('button', {
+        name: '工作模式：Ask · 只读问答'
+      })
     ).toBeInTheDocument()
+    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
+      'placeholder',
+      '给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · 附件仅在选择后发送'
+    )
     expect(
       within(conversationSettings).getByRole('button', {
         name: /默认模型/u
@@ -1954,8 +2039,10 @@ describe('App', () => {
     ])
     render(<App />)
 
-    const mode = await screen.findByLabelText('工作模式')
-    expect(mode).toHaveValue('ask')
+    const mode = await screen.findByRole('button', {
+      name: '工作模式：Ask · 只读问答'
+    })
+    expect(mode).toBeEnabled()
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '制定发布方案' }
     })
@@ -1993,7 +2080,11 @@ describe('App', () => {
     expect(await screen.findByLabelText('当前项目')).toHaveValue(
       secondProject.id
     )
-    expect(screen.getByLabelText('工作模式')).toHaveValue('execute')
+    expect(
+      screen.getByRole('button', {
+        name: '工作模式：Execute · 受控执行'
+      })
+    ).toBeEnabled()
 
     fireEvent.change(screen.getByLabelText('当前项目'), {
       target: { value: project.id }
@@ -2151,8 +2242,9 @@ describe('App', () => {
     })
     render(<App />)
 
-    const mode = await screen.findByLabelText('工作模式')
-    expect(mode).toHaveValue('ask')
+    const mode = await screen.findByRole('button', {
+      name: '工作模式：Ask · 只读问答'
+    })
     expect(mode).toBeEnabled()
     expect(mode.closest('.composer')).not.toBeNull()
     expect(
@@ -2160,7 +2252,10 @@ describe('App', () => {
         new RegExp(`${label} Ask 模式.*只允许搜索当前启用的知识库`)
       )
     ).toBeInTheDocument()
-    fireEvent.change(mode, { target: { value: 'execute' } })
+    selectComposerOption('工作模式', 'Execute · 受控执行')
+    expect(mode).toHaveAccessibleName(
+      '工作模式：Execute · 受控执行'
+    )
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '执行任务' }
@@ -2203,11 +2298,14 @@ describe('App', () => {
       })
     render(<App />)
 
-    const mode = await screen.findByLabelText('工作模式')
-    expect(mode).toHaveValue('ask')
+    const mode = await screen.findByRole('button', {
+      name: '工作模式：Ask · 只读问答'
+    })
     expect(mode).toBeEnabled()
-    fireEvent.change(mode, { target: { value: 'execute' } })
-    expect(mode).toHaveValue('execute')
+    selectComposerOption('工作模式', 'Execute · 受控执行')
+    expect(mode).toHaveAccessibleName(
+      '工作模式：Execute · 受控执行'
+    )
 
     fireEvent.click(await screen.findByRole('button', { name: /OpenCode/u }))
     fireEvent.click(
@@ -2217,7 +2315,7 @@ describe('App', () => {
     )
 
     await waitFor(() => {
-      expect(mode).toHaveValue('ask')
+      expect(mode).toHaveAccessibleName('工作模式：Ask · 只读问答')
       expect(mode).toBeEnabled()
     })
   })
@@ -2232,13 +2330,16 @@ describe('App', () => {
     })
     render(<App />)
 
-    const mode = await screen.findByLabelText('工作模式')
+    const mode = await screen.findByRole('button', {
+      name: '工作模式：Ask · 只读问答'
+    })
+    const modeMenu = openComposerMenu('工作模式')
     expect(
-      within(mode).getByRole('option', {
-        name: 'Execute · 受控执行'
+      within(modeMenu).getByRole('menuitemradio', {
+        name: /^Execute · 受控执行/u
       })
     ).toBeDisabled()
-    expect(mode).toHaveValue('ask')
+    expect(mode).toHaveAccessibleName('工作模式：Ask · 只读问答')
   })
 
   it('allows a direct model to submit Execute with GoodBuddy approvals', async () => {
@@ -2251,8 +2352,10 @@ describe('App', () => {
     })
     render(<App />)
 
-    const mode = await screen.findByLabelText('工作模式')
-    fireEvent.change(mode, { target: { value: 'execute' } })
+    const mode = await screen.findByRole('button', {
+      name: '工作模式：Ask · 只读问答'
+    })
+    selectComposerOption('工作模式', 'Execute · 受控执行')
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '读取项目文件' }
     })
@@ -3116,7 +3219,7 @@ describe('App', () => {
     expect((await screen.findAllByText('生图')).length).toBeGreaterThan(0)
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
       'placeholder',
-      '描述你想生成的图片…'
+      '描述你想生成的图片…\nEnter 发送 · Shift+Enter 换行 · 附件仅在选择后发送'
     )
     await waitFor(() =>
       expect(api.artifacts.list).toHaveBeenCalled()
@@ -3195,9 +3298,7 @@ describe('App', () => {
   it('can dispatch a request to the parallel expert team', async () => {
     render(<App />)
 
-    fireEvent.change(screen.getByLabelText('专家角色'), {
-      target: { value: 'team' }
-    })
+    selectComposerOption('专家角色', '专家团队（并行）')
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '制定发布计划' }
     })
@@ -3260,10 +3361,14 @@ describe('App', () => {
     ])
     render(<App />)
 
-    await screen.findByRole('option', { name: '发布专家' })
-    fireEvent.change(screen.getByLabelText('专家角色'), {
-      target: { value: expertId }
-    })
+    await waitFor(() => expect(api.experts.list).toHaveBeenCalled())
+    const expertMenu = openComposerMenu('专家角色')
+    fireEvent.click(
+      (await within(expertMenu).findByText('发布专家', {
+        selector: 'span'
+      }))
+        .closest<HTMLButtonElement>('button')!
+    )
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '检查发布方案' }
     })
@@ -4021,7 +4126,7 @@ describe('App', () => {
       screen.queryByLabelText('切换助手工作栏')
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByLabelText('专家角色')
+      screen.queryByRole('button', { name: /^专家角色：/u })
     ).not.toBeInTheDocument()
   })
 

@@ -679,12 +679,7 @@ export async function extractKnowledgeGraph(
     }
   }
   if (!options.extractStructured) {
-    return {
-      ...rules,
-      strategy,
-      requiresModelApproval: false,
-      warnings: ['Model extraction is unavailable']
-    }
+    throw new Error('Model extraction is unavailable')
   }
 
   const output = await options.extractStructured(
@@ -692,7 +687,11 @@ export async function extractKnowledgeGraph(
     options.signal
   )
   throwIfAborted(options.signal)
-  const model = validateModelGraph(output, prepared)
+  const parsedOutput = parseModelOutput(output)
+  if (!modelEnvelopeSchema.safeParse(parsedOutput).success) {
+    throw new Error('模型返回的图谱结构无效')
+  }
+  const model = validateModelGraph(parsedOutput, prepared)
   const graph =
     strategy === 'hybrid' ? mergeKnowledgeGraphs(rules, model) : model
   return {

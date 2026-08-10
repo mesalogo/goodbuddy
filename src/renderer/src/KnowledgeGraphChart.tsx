@@ -8,7 +8,7 @@ import {
   type EChartsCoreOption
 } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   KnowledgeGraphNode,
   KnowledgeGraphRelation
@@ -59,6 +59,42 @@ function readToken(name: string): string {
     .trim()
 }
 
+function graphTypeStyles(nodes: readonly ChartKnowledgeGraphNode[]): Map<
+  string,
+  { color: string; borderColor: string }
+> {
+  const palette = Array.from({ length: 8 }, (_, index) => ({
+    color: readToken(`--graph-node-${index + 1}`),
+    borderColor: readToken(`--graph-node-${index + 1}-border`)
+  }))
+  return new Map(
+    [...new Set(nodes.map((node) => node.type))]
+      .sort((left, right) => left.localeCompare(right, 'zh-CN'))
+      .map((type, index) => [type, palette[index % palette.length]!])
+  )
+}
+
+function graphRevision(
+  nodes: readonly ChartKnowledgeGraphNode[],
+  relations: readonly ChartKnowledgeGraphRelation[]
+): string {
+  return JSON.stringify({
+    nodes: nodes.map((node) => [
+      node.id,
+      node.label,
+      node.type,
+      node.x,
+      node.y
+    ]),
+    relations: relations.map((relation) => [
+      relation.id,
+      relation.sourceId,
+      relation.targetId,
+      relation.type
+    ])
+  })
+}
+
 function createOption({
   nodes,
   relations,
@@ -72,17 +108,50 @@ function createOption({
   const textSecondary = readToken('--text-secondary')
   const textMuted = readToken('--text-muted')
   const accent = readToken('--accent')
-  const accentSelected = readToken('--accent-selected')
   const accentSubtle = readToken('--accent-subtle')
   const surfaceRaised = readToken('--surface-raised')
   const borderDefault = readToken('--border-default')
+  const typeStyles = graphTypeStyles(nodes)
   const dense = nodes.length > 24
-  const veryDense = nodes.length > 60
+  const degreeByNodeId = new Map(nodes.map((node) => [node.id, 0]))
+  for (const relation of relations) {
+    degreeByNodeId.set(
+      relation.sourceId,
+      (degreeByNodeId.get(relation.sourceId) ?? 0) + 1
+    )
+    degreeByNodeId.set(
+      relation.targetId,
+      (degreeByNodeId.get(relation.targetId) ?? 0) + 1
+    )
+  }
+  const maximumDegree = Math.max(1, ...degreeByNodeId.values())
+  const keyNodeCount = Math.min(
+    nodes.length,
+    Math.max(8, Math.min(16, Math.round(Math.sqrt(nodes.length) * 1.4)))
+  )
+  const keyNodeIds = new Set(
+    [...nodes]
+      .sort((left, right) => {
+        const degreeDifference =
+          (degreeByNodeId.get(right.id) ?? 0) -
+          (degreeByNodeId.get(left.id) ?? 0)
+        return (
+          degreeDifference ||
+          left.label.localeCompare(right.label, 'zh-CN')
+        )
+      })
+      .slice(0, keyNodeCount)
+      .map((node) => node.id)
+  )
+  const reducedMotion =
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
   const showEdgeLabels =
     nodes.length <= 18 && relations.length <= 24
 
   return {
-    animation: !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
+    animation: !reducedMotion,
+    animationDuration: 220,
+    animationDurationUpdate: 160,
     tooltip: {
       trigger: 'item',
       renderMode: 'richText',
@@ -113,49 +182,54 @@ function createOption({
         },
         force: {
           repulsion: dense
-            ? Math.min(520, 130 + nodes.length * 3)
-            : 220,
-          gravity: dense ? 0.14 : 0.08,
-          edgeLength: dense
-            ? veryDense
-              ? [45, 80]
-              : [60, 110]
-            : [110, 190],
-          friction: dense ? 0.5 : 0.6,
-          layoutAnimation:
-            !window.matchMedia?.('(prefers-reduced-motion: reduce)')
-              .matches
+            ? Math.min(480, 220 + nodes.length * 2)
+            : 200,
+          gravity: 0.06,
+          edgeLength: dense ? [70, 130] : [90, 150],
+          friction: 0.08,
+          layoutAnimation: !reducedMotion
         },
         selectedMode: 'single',
         symbol: 'circle',
+        categories: [...typeStyles.entries()].map(([name, style]) => ({
+          name,
+          itemStyle: style
+        })),
         data: nodes.map((node) => {
           const selected = node.id === selectedNodeId
+          const typeStyle = typeStyles.get(node.type) ?? {
+            color: accentSubtle,
+            borderColor: accent
+          }
+          const degree = degreeByNodeId.get(node.id) ?? 0
+          const degreeRatio = Math.sqrt(degree / maximumDegree)
+          const symbolSize = dense
+            ? 16 + degreeRatio * 16
+            : 32 + degreeRatio * 16
+          const showLabel = !dense || keyNodeIds.has(node.id)
           return {
             id: node.id,
             name: node.label,
             type: node.type,
-            ...(dense ? {} : { x: node.x, y: node.y }),
+            value: degree,
+            category: node.type,
+            x: node.x,
+            y: node.y,
             draggable: true,
             selected,
-            symbolSize: selected
-              ? dense
-                ? 34
-                : 60
-              : dense
-                ? veryDense
-                  ? 18
-                  : 24
-                : 52,
+            symbolSize: selected ? symbolSize + 4 : symbolSize,
             itemStyle: {
-              color: selected ? accentSelected : accentSubtle,
-              borderColor: accent,
-              borderWidth: selected ? 3 : 2
+              color: typeStyle.color,
+              borderColor: selected ? accent : typeStyle.borderColor,
+              borderWidth: selected ? 2.5 : 1.5
             },
             label: {
-              show: !dense || selected,
+              show: showLabel || selected,
               color: textPrimary,
               fontSize: dense ? 11 : 12,
-              fontWeight: 700,
+              fontWeight: keyNodeIds.has(node.id) ? 650 : 500,
+              position: dense ? 'right' : 'inside',
+              distance: dense ? 5 : 0,
               formatter:
                 node.label.length > 8
                   ? `${node.label.slice(0, 8)}…`
@@ -163,15 +237,19 @@ function createOption({
             },
             emphasis: {
               focus: 'adjacency',
+              itemStyle: {
+                borderColor: accent,
+                borderWidth: 2.5
+              },
               label: {
                 show: true
               }
             },
             select: {
               itemStyle: {
-                color: accentSelected,
+                color: typeStyle.color,
                 borderColor: accent,
-                borderWidth: 3
+                borderWidth: 2.5
               },
               label: {
                 show: true
@@ -186,14 +264,14 @@ function createOption({
           value: relation.type,
           description: relation.description,
           lineStyle: {
-            color: textMuted,
-            width: 1.5,
-            curveness: 0.08
+            color: borderDefault,
+            width: 1.2,
+            opacity: 0.72,
+            curveness: 0.06
           }
         })),
         edgeSymbol: ['none', 'arrow'],
-        edgeSymbolSize: 8,
-        autoCurveness: true,
+        edgeSymbolSize: 6,
         edgeLabel: {
           show: showEdgeLabels,
           color: textSecondary,
@@ -229,11 +307,22 @@ export function KnowledgeGraphChart({
   const onMoveNodeRef = useRef(onMoveNode)
   const onSelectNodeRef = useRef(onSelectNode)
   const onZoomChangeRef = useRef(onZoomChange)
+  const nodesRef = useRef(nodes)
+  const relationsRef = useRef(relations)
   const dragRef = useRef<NodeDrag | undefined>(undefined)
   const viewportRef = useRef<GraphViewport>({})
   const zoomRef = useRef(zoom)
   const appliedZoomRef = useRef<number | undefined>(undefined)
+  const dataRevision = useMemo(
+    () => graphRevision(nodes, relations),
+    [nodes, relations]
+  )
   const [themeRevision, setThemeRevision] = useState(0)
+
+  useEffect(() => {
+    nodesRef.current = nodes
+    relationsRef.current = relations
+  }, [nodes, relations])
 
   useEffect(() => {
     onMoveNodeRef.current = onMoveNode
@@ -417,8 +506,8 @@ export function KnowledgeGraphChart({
       return
     }
     const option = createOption({
-      nodes,
-      relations,
+      nodes: nodesRef.current,
+      relations: relationsRef.current,
       selectedNodeId: undefined,
       zoom: zoomRef.current
     })
@@ -437,7 +526,7 @@ export function KnowledgeGraphChart({
       { notMerge: true }
     )
     appliedZoomRef.current = zoomRef.current
-  }, [nodes, relations, themeRevision])
+  }, [dataRevision, themeRevision])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -466,7 +555,7 @@ export function KnowledgeGraphChart({
       seriesIndex: 0
     })
     const dataIndex = selectedNodeId
-      ? nodes.findIndex((node) => node.id === selectedNodeId)
+      ? nodesRef.current.findIndex((node) => node.id === selectedNodeId)
       : -1
     if (dataIndex >= 0) {
       chart.dispatchAction({
@@ -475,7 +564,7 @@ export function KnowledgeGraphChart({
         dataIndex
       })
     }
-  }, [nodes, selectedNodeId, themeRevision])
+  }, [dataRevision, selectedNodeId, themeRevision])
 
   return (
     <div

@@ -8,6 +8,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ExtractStructured } from './graph-extractor'
 import { KnowledgeService } from './knowledge-service'
 import type { EmbeddingProvider } from './types'
 import { UrlImporter } from './url-importer'
@@ -17,7 +18,8 @@ const services: KnowledgeService[] = []
 
 async function createService(
   urlImporter?: UrlImporter,
-  embeddingProvider?: EmbeddingProvider
+  embeddingProvider?: EmbeddingProvider,
+  extractStructured?: ExtractStructured
 ): Promise<{ directory: string; service: KnowledgeService }> {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-knowledge-service-'))
   temporaryDirectories.push(directory)
@@ -25,7 +27,8 @@ async function createService(
     databasePath: join(directory, 'knowledge.sqlite'),
     managedRoot: join(directory, 'managed'),
     urlImporter,
-    embeddingProvider
+    embeddingProvider,
+    extractStructured
   })
   await service.initialize()
   services.push(service)
@@ -145,7 +148,99 @@ describe('KnowledgeService', () => {
 
     expect(snapshot.entities.length).toBeGreaterThan(0)
     expect(snapshot.evidence.length).toBeGreaterThan(0)
+    expect(snapshot.tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'parsing',
+          status: 'succeeded',
+          progress: 100
+        }),
+        expect.objectContaining({
+          kind: 'embedding',
+          status: 'skipped',
+          progress: 100
+        }),
+        expect.objectContaining({
+          kind: 'graph',
+          status: 'succeeded',
+          progress: 100
+        })
+      ])
+    )
     await service.dispose()
+  })
+
+  it('reextracts graph evidence and removes only stale generated entities', async () => {
+    const { directory, service } = await createService()
+    const sourcePath = join(directory, 'reextract.md')
+    await writeFile(
+      sourcePath,
+      'GoodBuddy（产品）依赖 Electron（框架）。',
+      'utf8'
+    )
+    const library = service.createLibrary({
+      name: '重新抽取',
+      storageMode: 'reference',
+      graphEnabled: true,
+      graphStrategy: 'rules'
+    })
+    await service.importPaths(library.id, [sourcePath])
+    const stale = service.database.createEntity({
+      knowledgeBaseId: library.id,
+      name: '过期实体',
+      type: '概念',
+      locked: false
+    })
+    const manual = service.database.createEntity({
+      knowledgeBaseId: library.id,
+      name: '人工实体',
+      type: '概念',
+      locked: true
+    })
+
+    await service.reextractGraph(library.id)
+
+    const snapshot = service.snapshot(library.id)
+    expect(snapshot.evidence.length).toBeGreaterThan(0)
+    expect(service.database.getEntity(stale.id)).toBeUndefined()
+    expect(service.database.getEntity(manual.id)).toBeDefined()
+  })
+
+  it('fails hybrid reextraction when model extraction fails', async () => {
+    const extractStructured = vi.fn(async () => {
+      throw new Error('模型未返回图谱内容')
+    })
+    const { directory, service } = await createService(
+      undefined,
+      undefined,
+      extractStructured
+    )
+    const sourcePath = join(directory, 'hybrid-fallback.md')
+    await writeFile(sourcePath, '# 本地实体', 'utf8')
+    const library = service.createLibrary({
+      name: '混合抽取',
+      storageMode: 'reference',
+      graphEnabled: false,
+      graphStrategy: 'hybrid'
+    })
+    await service.importPaths(library.id, [sourcePath])
+    service.database.updateKnowledgeBase(library.id, {
+      graphEnabled: true
+    })
+
+    await expect(service.reextractGraph(library.id)).rejects.toThrow(
+      '模型未返回图谱内容'
+    )
+    expect(service.snapshot(library.id).entities).toHaveLength(0)
+    expect(service.snapshot(library.id).tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'graph',
+          status: 'failed',
+          message: '模型未返回图谱内容'
+        })
+      ])
+    )
   })
 
   it('indexes optional embeddings and performs vector-backed hybrid search', async () => {

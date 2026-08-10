@@ -805,6 +805,11 @@ const desktopApi: DesktopApi = {
         libraryId
       )
     },
+    reextractGraph: (libraryId) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeReextractGraph,
+        libraryId
+      ) as Promise<void>,
     selectFiles: async (libraryId, graphStrategy) => {
       await ipcRenderer.invoke(ipcChannels.knowledgeSelectFiles, {
         libraryId,

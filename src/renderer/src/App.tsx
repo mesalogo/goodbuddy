@@ -19,6 +19,7 @@ import {
   Mic,
   Minimize2,
   Minus,
+  Moon,
   MoreHorizontal,
   Paperclip,
   PanelLeft,
@@ -31,6 +32,7 @@ import {
   PanelsTopLeft,
   Sparkles,
   Square,
+  Sun,
   TerminalSquare,
   Trash2,
   UserRound,
@@ -42,7 +44,8 @@ import {
   useMemo,
   useReducer,
   useRef,
-  useState
+  useState,
+  type ReactNode
 } from 'react'
 import type {
   ApprovalDecision,
@@ -1032,6 +1035,186 @@ function WindowControls({
   )
 }
 
+type ComposerMenuOption<T extends string> = {
+  value: T
+  label: string
+  description: string
+  disabled?: boolean
+}
+
+function ComposerMenuSelect<T extends string>({
+  ariaLabel,
+  className,
+  describedBy,
+  disabled = false,
+  icon,
+  menuOpen,
+  onChange,
+  onOpenChange,
+  options,
+  value
+}: {
+  ariaLabel: string
+  className: string
+  describedBy?: string
+  disabled?: boolean
+  icon: ReactNode
+  menuOpen: boolean
+  onChange: (value: T) => void
+  onOpenChange: (open: boolean) => void
+  options: readonly ComposerMenuOption<T>[]
+  value: T
+}): React.JSX.Element {
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const selectedOption =
+    options.find((option) => option.value === value) ?? options[0]
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return
+    }
+    const menu = menuRef.current
+    if (!menu) {
+      return
+    }
+    const menuItems = Array.from(
+      menu.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).filter((item) => !item.disabled)
+    const initialItem =
+      menuItems.find(
+        (item) => item.getAttribute('aria-checked') === 'true'
+      ) ?? menuItems[0]
+    menuItems.forEach((item) => {
+      item.tabIndex = item === initialItem ? 0 : -1
+    })
+    const focusFrame = requestAnimationFrame(() => {
+      initialItem?.focus()
+    })
+    const isMenuTarget = (target: EventTarget | null): boolean =>
+      target instanceof Node &&
+      (menu.contains(target) ||
+        buttonRef.current?.contains(target) === true)
+    const dismissOnOutsidePointer = (event: PointerEvent): void => {
+      if (!isMenuTarget(event.target)) {
+        onOpenChange(false)
+      }
+    }
+    const dismissOnOutsideFocus = (event: FocusEvent): void => {
+      if (!isMenuTarget(event.target)) {
+        onOpenChange(false)
+      }
+    }
+    document.addEventListener('pointerdown', dismissOnOutsidePointer)
+    document.addEventListener('focusin', dismissOnOutsideFocus)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener(
+        'pointerdown',
+        dismissOnOutsidePointer
+      )
+      document.removeEventListener('focusin', dismissOnOutsideFocus)
+    }
+  }, [menuOpen, onOpenChange, value])
+
+  return (
+    <div className={`runtime-picker composer-picker ${className}`}>
+      <button
+        aria-describedby={describedBy}
+        aria-expanded={menuOpen}
+        aria-haspopup="menu"
+        aria-label={`${ariaLabel}：${selectedOption?.label ?? ''}`}
+        className="model-button composer-picker__button"
+        disabled={disabled}
+        onClick={() => onOpenChange(!menuOpen)}
+        onKeyDown={(event) => {
+          if (
+            !menuOpen &&
+            (event.key === 'ArrowDown' ||
+              event.key === 'Enter' ||
+              event.key === ' ')
+          ) {
+            event.preventDefault()
+            onOpenChange(true)
+          }
+        }}
+        ref={buttonRef}
+        title={`${ariaLabel}：${selectedOption?.label ?? ''}`}
+        type="button"
+      >
+        {icon}
+        <span className="model-button__label">
+          {selectedOption?.label}
+        </span>
+        <ChevronDown aria-hidden="true" size={14} />
+      </button>
+      {menuOpen && (
+        <div
+          aria-label={ariaLabel}
+          className="runtime-picker__menu composer-picker__menu"
+          onKeyDown={(event) => {
+            const items = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                '[role="menuitemradio"]'
+              )
+            ).filter((item) => !item.disabled)
+            const currentIndex = items.indexOf(
+              document.activeElement as HTMLButtonElement
+            )
+            let nextIndex: number | undefined
+            if (event.key === 'ArrowDown') {
+              nextIndex = (currentIndex + 1) % items.length
+            } else if (event.key === 'ArrowUp') {
+              nextIndex =
+                (currentIndex - 1 + items.length) % items.length
+            } else if (event.key === 'Home') {
+              nextIndex = 0
+            } else if (event.key === 'End') {
+              nextIndex = items.length - 1
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              onOpenChange(false)
+              buttonRef.current?.focus()
+            }
+            const nextItem =
+              nextIndex === undefined ? undefined : items.at(nextIndex)
+            if (nextItem) {
+              event.preventDefault()
+              items.forEach((item) => {
+                item.tabIndex = item === nextItem ? 0 : -1
+              })
+              nextItem.focus()
+            }
+          }}
+          ref={menuRef}
+          role="menu"
+        >
+          {options.map((option) => (
+            <button
+              aria-checked={option.value === value}
+              disabled={option.disabled}
+              key={option.value}
+              onClick={() => {
+                onChange(option.value)
+                onOpenChange(false)
+                requestAnimationFrame(() => {
+                  buttonRef.current?.focus()
+                })
+              }}
+              role="menuitemradio"
+              tabIndex={option.value === value ? 0 : -1}
+              type="button"
+            >
+              <span>{option.label}</span>
+              <small>{option.description}</small>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function App(): React.JSX.Element {
   const [conversations, setConversations] = useState(loadConversations)
   const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? '')
@@ -1105,9 +1288,11 @@ function App(): React.JSX.Element {
   const [runtimeStatusKey, setRuntimeStatusKey] = useState('')
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false)
+  const [composerMenuOpen, setComposerMenuOpen] = useState<
+    'expert' | 'mode' | undefined
+  >()
   const runtimeMenuButtonRef = useRef<HTMLButtonElement>(null)
   const runtimeMenuRef = useRef<HTMLDivElement>(null)
-  const [topbarMenuOpen, setTopbarMenuOpen] = useState(false)
   const [runtimeSwitching, setRuntimeSwitching] = useState(false)
   const [appearanceTheme, setAppearanceTheme] =
     useState<AppearanceTheme>(loadAppearanceTheme)
@@ -1120,12 +1305,67 @@ function App(): React.JSX.Element {
     appearanceTheme,
     systemPrefersDark
   )
+  const toggleAppearanceTheme = useCallback((): void => {
+    setAppearanceTheme(
+      resolvedAppearanceTheme === 'dark' ? 'light' : 'dark'
+    )
+  }, [resolvedAppearanceTheme])
   const agentRuntimeSelected = isAgentRuntime(runtime)
   const effectiveWorkMode =
     workMode === 'execute' &&
     runtime?.supportsToolExecution === false
       ? 'ask'
       : workMode
+  const setExpertMenuOpen = useCallback((open: boolean): void => {
+    setComposerMenuOpen(open ? 'expert' : undefined)
+    if (open) {
+      setRuntimeMenuOpen(false)
+    }
+  }, [])
+  const setModeMenuOpen = useCallback((open: boolean): void => {
+    setComposerMenuOpen(open ? 'mode' : undefined)
+    if (open) {
+      setRuntimeMenuOpen(false)
+    }
+  }, [])
+  const assistantExpertOptions = useMemo<
+    ComposerMenuOption<string>[]
+  >(
+    () => [
+      {
+        value: '',
+        label: '通用助手',
+        description: '默认单助手'
+      },
+      {
+        value: 'team',
+        label: '专家团队（并行）',
+        description: '多个专家并行协作'
+      },
+      ...assistantExperts.map((expert) => ({
+        value: expert.id,
+        label: expert.name,
+        description: expert.description || '自定义专家角色'
+      }))
+    ],
+    [assistantExperts]
+  )
+  const workModeOptions = useMemo<
+    ComposerMenuOption<InteractiveWorkMode>[]
+  >(
+    () =>
+      interactiveWorkModes.map((value) => ({
+        value,
+        label: workModeLabels[value],
+        description:
+          value === 'execute'
+            ? '通过审批后执行工具操作'
+            : '只读问答，不修改文件',
+        disabled:
+          value === 'execute' && !runtime?.supportsToolExecution
+      })),
+    [runtime?.supportsToolExecution]
+  )
   const [appInfo, setAppInfo] = useState<AppInfo>()
   const [narrowWindow, setNarrowWindow] = useState(
     () => window.innerWidth < 900
@@ -1193,10 +1433,12 @@ function App(): React.JSX.Element {
     documents: [],
     graphNodes: [],
     graphRelations: [],
-    evidence: []
+    evidence: [],
+    tasks: []
   })
   const [knowledgeLoading, setKnowledgeLoading] = useState(true)
   const [knowledgeLoadError, setKnowledgeLoadError] = useState<string>()
+  const [knowledgeOperationCount, setKnowledgeOperationCount] = useState(0)
   const knowledgeLoadRequestRef = useRef(0)
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(
     undefined
@@ -1216,8 +1458,6 @@ function App(): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
-  const topbarMenuRef = useRef<HTMLDivElement>(null)
-  const topbarMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
   )
@@ -1278,66 +1518,6 @@ function App(): React.JSX.Element {
   useEffect(() => {
     resizeComposerTextarea(inputRef.current)
   }, [input])
-
-  useEffect(() => {
-    if (!topbarMenuOpen) {
-      return
-    }
-    const focusFrame = requestAnimationFrame(() => {
-      topbarMenuRef.current
-        ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
-        ?.focus()
-    })
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      if (
-        event.target instanceof Node &&
-        !topbarMenuRef.current?.contains(event.target)
-      ) {
-        setTopbarMenuOpen(false)
-      }
-    }
-    const handleMenuKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setTopbarMenuOpen(false)
-        topbarMenuTriggerRef.current?.focus()
-        return
-      }
-      const menuItems = Array.from(
-        topbarMenuRef.current?.querySelectorAll<HTMLButtonElement>(
-          '[role="menuitem"]'
-        ) ?? []
-      )
-      if (menuItems.length === 0) {
-        return
-      }
-      const currentIndex = menuItems.indexOf(
-        document.activeElement as HTMLButtonElement
-      )
-      const targetIndex =
-        event.key === 'Home'
-          ? 0
-          : event.key === 'End'
-            ? menuItems.length - 1
-            : event.key === 'ArrowDown'
-              ? (currentIndex + 1) % menuItems.length
-              : event.key === 'ArrowUp'
-                ? (currentIndex - 1 + menuItems.length) %
-                  menuItems.length
-                : -1
-      if (targetIndex >= 0) {
-        event.preventDefault()
-        menuItems[targetIndex]?.focus()
-      }
-    }
-    document.addEventListener('pointerdown', closeOnOutsidePointer)
-    document.addEventListener('keydown', handleMenuKeyDown)
-    return () => {
-      cancelAnimationFrame(focusFrame)
-      document.removeEventListener('pointerdown', closeOnOutsidePointer)
-      document.removeEventListener('keydown', handleMenuKeyDown)
-    }
-  }, [topbarMenuOpen])
 
   useEffect(() => {
     saveAppearanceTheme(appearanceTheme)
@@ -3000,6 +3180,25 @@ function App(): React.JSX.Element {
   }, [refreshKnowledge])
 
   useEffect(() => {
+    if (view !== 'knowledge' && knowledgeOperationCount === 0) {
+      return
+    }
+    const interval = setInterval(() => {
+      void refreshKnowledge(
+        knowledgeSnapshot.selectedLibraryId
+      ).catch(() => {
+        // The task center keeps the last successful snapshot while polling.
+      })
+    }, knowledgeOperationCount > 0 ? 350 : 1_000)
+    return () => clearInterval(interval)
+  }, [
+    knowledgeOperationCount,
+    knowledgeSnapshot.selectedLibraryId,
+    refreshKnowledge,
+    view
+  ])
+
+  useEffect(() => {
     void Promise.all([
       window.goodbuddy.settings.getRuntime(),
       window.goodbuddy.agent.getStatus()
@@ -4078,11 +4277,20 @@ function App(): React.JSX.Element {
     await refreshKnowledge()
   }
 
-  const runKnowledgeSourceAction = async (
-    action: () => Promise<void>
-  ): Promise<void> => {
-    await action()
-    await refreshSelectedKnowledge()
+  const runKnowledgeSourceAction = async <T,>(
+    action: () => Promise<T>
+  ): Promise<T> => {
+    setKnowledgeOperationCount((count) => count + 1)
+    try {
+      const result = await action()
+      await refreshSelectedKnowledge()
+      return result
+    } catch (error) {
+      await refreshSelectedKnowledge().catch(() => undefined)
+      throw error
+    } finally {
+      setKnowledgeOperationCount((count) => Math.max(0, count - 1))
+    }
   }
 
   const openActivityConversation = (conversationId: string): void => {
@@ -4627,55 +4835,28 @@ function App(): React.JSX.Element {
                 <PanelRightOpen size={18} />
               </button>
             )}
-            <div className="topbar-menu" ref={topbarMenuRef}>
-              <button
-                aria-expanded={topbarMenuOpen}
-                aria-haspopup="menu"
-                aria-label="应用菜单"
-                className="icon-button"
-                onClick={() =>
-                  setTopbarMenuOpen((current) => !current)
-                }
-                ref={topbarMenuTriggerRef}
-                type="button"
-              >
-                <MoreHorizontal size={18} />
-              </button>
-              {topbarMenuOpen && (
-                <div
-                  aria-label="应用操作"
-                  className="topbar-menu__popover"
-                  role="menu"
-                >
-                  <button
-                    onClick={() => {
-                      setTopbarMenuOpen(false)
-                      setView('settings')
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <ShieldCheck size={16} />
-                    安全与 Runtime 设置
-                  </button>
-                  <button
-                    onClick={() => {
-                      setTopbarMenuOpen(false)
-                      notify({
-                        tone: 'info',
-                        message:
-                          '输入问题后按 Enter 发送，Shift+Enter 换行。附件只会在你明确选择后发送。'
-                      })
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <CircleHelp size={16} />
-                    使用帮助
-                  </button>
-                </div>
+            <button
+              aria-label={
+                resolvedAppearanceTheme === 'dark'
+                  ? '切换浅色主题'
+                  : '切换深色主题'
+              }
+              aria-pressed={resolvedAppearanceTheme === 'dark'}
+              className="icon-button theme-toggle-button"
+              onClick={toggleAppearanceTheme}
+              title={
+                resolvedAppearanceTheme === 'dark'
+                  ? '切换浅色主题'
+                  : '切换深色主题'
+              }
+              type="button"
+            >
+              {resolvedAppearanceTheme === 'dark' ? (
+                <Sun aria-hidden="true" size={18} />
+              ) : (
+                <Moon aria-hidden="true" size={18} />
               )}
-            </div>
+            </button>
           </div>
           <WindowControls
             onError={handleWindowControlError}
@@ -5260,11 +5441,11 @@ function App(): React.JSX.Element {
             <div className="composer__input">
               <textarea
                 aria-label="向 GoodBuddy 提问"
-                placeholder={
+                placeholder={`${
                   runtime?.capability === 'image-generation'
                     ? '描述你想生成的图片…'
                     : '给 GoodBuddy 发消息…'
-                }
+                }\nEnter 发送 · Shift+Enter 换行 · 附件仅在选择后发送`}
                 ref={inputRef}
                 rows={3}
                 value={input}
@@ -5418,68 +5599,46 @@ function App(): React.JSX.Element {
                   className="composer__configuration"
                   role="group"
                 >
-                  <label
-                    className="composer__expert"
-                    title="选择参与本次对话的专家角色"
-                  >
-                    <Bot aria-hidden="true" size={15} />
-                    <select
-                      aria-label="专家角色"
-                      disabled={runtime?.capability === 'image-generation'}
-                      onChange={(event) =>
-                        setSelectedExpertId(event.target.value)
-                      }
-                      value={selectedExpertId}
-                    >
-                      <option value="">通用助手</option>
-                      <option value="team">专家团队（并行）</option>
-                      {assistantExperts.map((expert) => (
-                        <option key={expert.id} value={expert.id}>
-                          {expert.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label
-                    className={`composer__mode composer__mode--${effectiveWorkMode}`}
-                    title={`工作模式：${workModeLabels[effectiveWorkMode]}`}
-                  >
-                    {effectiveWorkMode === 'execute' ? (
-                      <ShieldCheck aria-hidden="true" size={15} />
-                    ) : (
-                      <CircleHelp aria-hidden="true" size={15} />
-                    )}
-                    <select
-                      aria-describedby="work-mode-hint"
-                      aria-label="工作模式"
-                      onChange={(event) =>
-                        setWorkMode(
-                          event.target.value as InteractiveWorkMode
-                        )
-                      }
-                      value={effectiveWorkMode}
-                    >
-                      {interactiveWorkModes.map((value) => (
-                        <option
-                          disabled={
-                            value === 'execute' &&
-                            !runtime?.supportsToolExecution
-                          }
-                          key={value}
-                          value={value}
-                        >
-                          {workModeLabels[value]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <ComposerMenuSelect
+                    ariaLabel="专家角色"
+                    className="composer-picker--expert"
+                    disabled={
+                      runtime?.capability === 'image-generation'
+                    }
+                    icon={<Bot aria-hidden="true" size={15} />}
+                    menuOpen={composerMenuOpen === 'expert'}
+                    onChange={setSelectedExpertId}
+                    onOpenChange={setExpertMenuOpen}
+                    options={assistantExpertOptions}
+                    value={selectedExpertId}
+                  />
+                  <ComposerMenuSelect
+                    ariaLabel="工作模式"
+                    className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
+                    describedBy="work-mode-hint"
+                    icon={
+                      effectiveWorkMode === 'execute' ? (
+                        <ShieldCheck aria-hidden="true" size={15} />
+                      ) : (
+                        <CircleHelp aria-hidden="true" size={15} />
+                      )
+                    }
+                    menuOpen={composerMenuOpen === 'mode'}
+                    onChange={setWorkMode}
+                    onOpenChange={setModeMenuOpen}
+                    options={workModeOptions}
+                    value={effectiveWorkMode}
+                  />
                   <div className="runtime-picker">
                     <button
                       aria-expanded={runtimeMenuOpen}
                       aria-haspopup="menu"
                       className="model-button"
                       disabled={isRunning || runtimeSwitching}
-                      onClick={() => setRuntimeMenuOpen(!runtimeMenuOpen)}
+                      onClick={() => {
+                        setComposerMenuOpen(undefined)
+                        setRuntimeMenuOpen(!runtimeMenuOpen)
+                      }}
                       onKeyDown={(event) => {
                         if (
                           !runtimeMenuOpen &&
@@ -5488,6 +5647,7 @@ function App(): React.JSX.Element {
                             event.key === ' ')
                         ) {
                           event.preventDefault()
+                          setComposerMenuOpen(undefined)
                           setRuntimeMenuOpen(true)
                         }
                       }}
@@ -5782,14 +5942,29 @@ function App(): React.JSX.Element {
                 )
               }
               onDeleteLibrary={deleteKnowledgeLibrary}
-              onUpdateLibrary={(libraryId, update) =>
-                runKnowledgeSourceAction(async () => {
+              onReextractGraph={async (libraryId) => {
+                await runKnowledgeSourceAction(() =>
+                  window.goodbuddy.knowledge.reextractGraph(libraryId)
+                )
+                notify({
+                  tone: 'success',
+                  message: '知识图谱已重新抽取',
+                  dedupeKey: `knowledge-graph:${libraryId}`
+                })
+              }}
+              onUpdateLibrary={async (libraryId, update) => {
+                await runKnowledgeSourceAction(async () => {
                   await window.goodbuddy.knowledge.updateLibrary(
                     libraryId,
                     update
                   )
                 })
-              }
+                notify({
+                  tone: 'success',
+                  message: '知识库设置已更新',
+                  dedupeKey: `knowledge-library:${libraryId}`
+                })
+              }}
               onDeleteRelation={(relationId) =>
                 runKnowledgeSourceAction(() =>
                   window.goodbuddy.knowledge.deleteRelation(relationId)
@@ -5892,6 +6067,7 @@ function App(): React.JSX.Element {
               }
               selectedLibraryId={knowledgeSnapshot.selectedLibraryId}
               sources={knowledgeSnapshot.sources}
+              tasks={knowledgeSnapshot.tasks}
             />
           </PageShell>
         ) : view === 'heartbeat' ? (

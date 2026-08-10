@@ -129,6 +129,7 @@ function createProps(
     onCreateLibrary: vi.fn(),
     onDeleteLibrary: vi.fn(),
     onUpdateLibrary: vi.fn(),
+    onReextractGraph: vi.fn(),
     onImportFiles: vi.fn(),
     onImportDirectory: vi.fn(),
     onImportUrl: vi.fn(),
@@ -221,6 +222,91 @@ describe('KnowledgeWorkspace', () => {
     expect(screen.getByLabelText('实体详情')).toBeInTheDocument()
     expect(screen.getByText('跨平台 AI 桌面助手')).toBeInTheDocument()
     expect(screen.getByText('架构说明.md')).toBeInTheDocument()
+  })
+
+  it('uses shared tabs and keeps graph configuration in settings', () => {
+    const onUpdateLibrary = vi.fn()
+    render(<KnowledgeWorkspace {...createProps({ onUpdateLibrary })} />)
+
+    const tabs = screen.getByRole('tablist', { name: '知识库视图' })
+    expect(within(tabs).getAllByRole('tab').map((item) => item.textContent))
+      .toEqual(['文档与来源', '知识图谱', '任务中心', '设置'])
+    expect(
+      screen.queryByRole('checkbox', { name: '知识图谱' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /启用知识图谱/u }))
+    expect(onUpdateLibrary).toHaveBeenCalledWith('library-1', {
+      graphEnabled: false
+    })
+  })
+
+  it('shows parsing, embedding, and graph progress in the task center', () => {
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          tasks: [
+            {
+              id: 'task-1',
+              libraryId: 'library-1',
+              documentId: 'document-1',
+              documentName: '架构说明.md',
+              kind: 'graph',
+              status: 'running',
+              progress: 40,
+              message: '正在重新抽取知识图谱',
+              createdAt: '2026-08-10T08:00:00.000Z',
+              startedAt: '2026-08-10T08:00:01.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: /^任务中心/u })
+    )
+    expect(screen.getByText('图谱抽取')).toBeInTheDocument()
+    expect(screen.getByText('正在重新抽取知识图谱')).toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', {
+        name: '架构说明.md 图谱抽取进度'
+      })
+    ).toHaveValue(40)
+  })
+
+  it('edits library metadata from the detail header', async () => {
+    const onUpdateLibrary = vi.fn()
+    render(<KnowledgeWorkspace {...createProps({ onUpdateLibrary })} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '研发知识' }
+    })
+    fireEvent.change(screen.getByLabelText('描述'), {
+      target: { value: '研发资料与设计说明' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+
+    await waitFor(() =>
+      expect(onUpdateLibrary).toHaveBeenCalledWith('library-1', {
+        name: '研发知识',
+        description: '研发资料与设计说明'
+      })
+    )
+  })
+
+  it('reextracts the graph from the graph tab', async () => {
+    const onReextractGraph = vi.fn()
+    render(<KnowledgeWorkspace {...createProps({ onReextractGraph })} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    fireEvent.click(screen.getByRole('button', { name: '重新抽取' }))
+
+    await waitFor(() =>
+      expect(onReextractGraph).toHaveBeenCalledWith('library-1')
+    )
   })
 
   it('renders and filters graph nodes with their relationships', async () => {
@@ -335,7 +421,7 @@ describe('KnowledgeWorkspace', () => {
 
   it('manages the graph chart, zoom, selection, movement, and cleanup', () => {
     const onMoveNode = vi.fn()
-    const { unmount } = render(
+    const { rerender, unmount } = render(
       <KnowledgeWorkspace {...createProps({ onMoveNode })} />
     )
 
@@ -351,15 +437,27 @@ describe('KnowledgeWorkspace', () => {
       expect.objectContaining({
         series: [
           expect.objectContaining({
+            categories: expect.arrayContaining([
+              expect.objectContaining({ name: '产品' }),
+              expect.objectContaining({ name: '技术' })
+            ]),
             layout: 'force',
             symbol: 'circle',
             type: 'graph',
             data: expect.arrayContaining([
               expect.objectContaining({
+                category: '产品',
                 id: 'entity-1',
                 name: 'GoodBuddy'
               })
             ]),
+            force: expect.objectContaining({
+              edgeLength: [90, 150],
+              friction: 0.08,
+              gravity: 0.06,
+              layoutAnimation: true,
+              repulsion: 200
+            }),
             links: [
               expect.objectContaining({
                 id: 'relation-1',
@@ -370,6 +468,12 @@ describe('KnowledgeWorkspace', () => {
         ]
       }),
       { notMerge: true }
+    )
+    const stableOptionCallCount =
+      echartsMock.chart.setOption.mock.calls.length
+    rerender(<KnowledgeWorkspace {...createProps({ onMoveNode })} />)
+    expect(echartsMock.chart.setOption).toHaveBeenCalledTimes(
+      stableOptionCallCount
     )
 
     fireEvent.click(screen.getByRole('button', { name: '放大图谱' }))
@@ -491,7 +595,7 @@ describe('KnowledgeWorkspace', () => {
     delete document.documentElement.dataset.theme
   })
 
-  it('reduces labels and node size for dense graphs', () => {
+  it('sizes dense nodes by degree and labels key entities', () => {
     const graphNodes = Array.from({ length: 30 }, (_, index) => ({
       id: `entity-${index}`,
       label: `实体 ${index}`,
@@ -501,7 +605,23 @@ describe('KnowledgeWorkspace', () => {
     }))
     render(
       <KnowledgeWorkspace
-        {...createProps({ graphNodes, graphRelations: [] })}
+        {...createProps({
+          graphNodes,
+          graphRelations: [
+            {
+              id: 'relation-dense-1',
+              sourceId: 'entity-0',
+              targetId: 'entity-1',
+              type: '关联'
+            },
+            {
+              id: 'relation-dense-2',
+              sourceId: 'entity-0',
+              targetId: 'entity-2',
+              type: '关联'
+            }
+          ]
+        })}
       />
     )
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
@@ -513,13 +633,27 @@ describe('KnowledgeWorkspace', () => {
             data: expect.arrayContaining([
               expect.objectContaining({
                 id: 'entity-0',
-                symbolSize: 24,
+                symbolSize: 32,
+                x: 0,
+                y: 0,
+                label: expect.objectContaining({
+                  position: 'right',
+                  show: true
+                })
+              }),
+              expect.objectContaining({
+                id: 'entity-29',
+                symbolSize: 16,
                 label: expect.objectContaining({ show: false })
               })
             ]),
             edgeLabel: expect.objectContaining({ show: false }),
             force: expect.objectContaining({
-              repulsion: 220
+              edgeLength: [70, 130],
+              friction: 0.08,
+              gravity: 0.06,
+              layoutAnimation: true,
+              repulsion: 280
             })
           })
         ]
@@ -529,8 +663,8 @@ describe('KnowledgeWorkspace', () => {
     const option = echartsMock.chart.setOption.mock.calls.at(-1)?.[0] as {
       series?: Array<{ data?: Array<Record<string, unknown>> }>
     }
-    expect(option.series?.[0]?.data?.[0]).not.toHaveProperty('x')
-    expect(option.series?.[0]?.data?.[0]).not.toHaveProperty('y')
+    expect(option.series?.[0]?.data?.[0]).toHaveProperty('x', 0)
+    expect(option.series?.[0]?.data?.[0]).toHaveProperty('y', 0)
   })
 
   it('creates relationships, merges entities, and opens graph evidence', async () => {

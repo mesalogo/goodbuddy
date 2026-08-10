@@ -520,6 +520,20 @@ function getKnowledgeSnapshot(
         documentsById.get(item.documentId)?.title ?? '未知文档',
       excerpt: item.quote ?? '',
       location: item.location
+    })),
+    tasks: snapshot.tasks.map((task) => ({
+      id: task.id,
+      libraryId: task.libraryId,
+      sourceId: task.sourceId,
+      documentId: task.documentId,
+      documentName: task.documentName,
+      kind: task.kind,
+      status: task.status,
+      progress: task.progress,
+      message: task.message,
+      createdAt: task.createdAt,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt
     }))
   }
 }
@@ -3515,9 +3529,19 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const value = knowledgeUpdateLibrarySchema.parse(input)
       knowledgeService.database.updateKnowledgeBase(value.libraryId, {
+        name: value.name,
+        description: value.description,
         graphEnabled: value.graphEnabled,
         graphStrategy: value.graphStrategy
       })
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.knowledgeReextractGraph,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      return knowledgeService.reextractGraph(knowledgeIdSchema.parse(input))
     }
   )
 
