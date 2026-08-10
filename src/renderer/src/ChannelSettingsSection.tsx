@@ -681,7 +681,9 @@ function WeixinQrDialog({
         <header>
           <div>
             <strong id="channel-qr-title">绑定微信 ClawBot</strong>
-            <small>请使用个人微信扫码。二维码不会发送到第三方页面。</small>
+            <small>
+              请在微信中依次打开“设置 → ClawBot → 开始扫一扫”，扫描下方二维码。二维码不会发送到第三方页面。
+            </small>
           </div>
           <button
             aria-label="关闭微信绑定"

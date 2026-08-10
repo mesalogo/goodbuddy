@@ -1352,9 +1352,7 @@ export function registerIpcHandlers(
     try {
       parsed = parseRemoteChannelPrompt(
         remoteInput,
-        message.workMode === 'plan'
-          ? 'plan'
-          : project.defaultWorkMode
+        normalizeInteractiveWorkMode(project.defaultWorkMode)
       )
     } catch (error) {
       return {
@@ -1432,9 +1430,7 @@ export function registerIpcHandlers(
       status: `${channelLabel} · ${
         parsed.workMode === 'execute'
           ? '执行'
-          : parsed.workMode === 'plan'
-            ? '规划'
-            : '对话'
+          : '对话'
       }`
     })
     publishRemoteConversationChange()

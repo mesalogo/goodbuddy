@@ -71,7 +71,7 @@ async function waitForSent(
 }
 
 describe('channel contracts', () => {
-  it('normalizes text, defaults to ask, and strictly refuses execute mode', () => {
+  it('normalizes text, defaults to ask, and refuses non-ask modes', () => {
     expect(
       channelInboundTextSchema.parse({
         channel: ' fake ',
@@ -96,6 +96,12 @@ describe('channel contracts', () => {
       channelInboundTextSchema.safeParse({
         ...inbound(),
         workMode: 'execute'
+      }).success
+    ).toBe(false)
+    expect(
+      channelInboundTextSchema.safeParse({
+        ...inbound(),
+        workMode: 'plan'
       }).success
     ).toBe(false)
     expect(

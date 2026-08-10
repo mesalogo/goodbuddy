@@ -226,5 +226,5 @@ export function startEnvironmentChannels(
 export function isReadOnlyChannelMessage(
   message: ChannelInboundText
 ): boolean {
-  return message.workMode === 'ask' || message.workMode === 'plan'
+  return message.workMode === 'ask'
 }

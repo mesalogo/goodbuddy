@@ -41,7 +41,7 @@ const channelMocks = vi.hoisted(() => ({
           conversationType: 'direct' | 'group'
           text: string
           mentioned: boolean
-          workMode: 'ask' | 'plan'
+          workMode: 'ask'
           attachments?: Array<{
             name: string
             mimeType: string
@@ -276,7 +276,7 @@ vi.mock('./agent/create-runtime', () => runtimeFactoryMocks)
 
 vi.mock('./channels/channel-env', () => ({
   isReadOnlyChannelMessage: (message: { workMode: string }) =>
-    message.workMode === 'ask' || message.workMode === 'plan',
+    message.workMode === 'ask',
   startEnvironmentChannels: vi.fn(
     (options: { executor: typeof channelMocks.executor }) => {
       channelMocks.executor = options.executor
@@ -1873,7 +1873,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('bridges channel requests to read-only delegation tasks without approval', async () => {
+  it('bridges channel ask requests to read-only tasks without approval', async () => {
     let received:
       | {
           request: {
@@ -1928,9 +1928,9 @@ describe('registerIpcHandlers agent terminal state', () => {
           senderId: 'user-1',
           conversationId: 'conversation-1',
           conversationType: 'direct',
-          text: '请制定只读计划',
+          text: '请只读分析',
           mentioned: false,
-          workMode: 'plan'
+          workMode: 'ask'
         },
         new AbortController().signal
       )
@@ -1939,8 +1939,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       output: '只读结果'
     })
     expect(received?.request).toMatchObject({
-      workMode: 'plan',
-      prompt: expect.stringContaining('请制定只读计划')
+      workMode: 'ask',
+      prompt: expect.stringContaining('请只读分析')
     })
     await expect(
       received?.authorize?.({
@@ -1953,8 +1953,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(harness.assistantDatabase.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
         title: '企业微信远程请求',
-        instructions: '请制定只读计划',
-        workMode: 'plan',
+        instructions: '请只读分析',
+        workMode: 'ask',
         origin: 'delegation'
       })
     )

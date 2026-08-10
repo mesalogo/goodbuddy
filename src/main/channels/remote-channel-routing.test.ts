@@ -13,8 +13,8 @@ describe('parseRemoteChannelPrompt', () => {
       workMode: 'execute',
       prompt: '请整理下载目录'
     })
-    expect(parseRemoteChannelPrompt('总结进展', 'plan')).toEqual({
-      workMode: 'plan',
+    expect(parseRemoteChannelPrompt('总结进展', 'ask')).toEqual({
+      workMode: 'ask',
       prompt: '总结进展'
     })
   })

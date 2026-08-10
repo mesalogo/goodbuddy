@@ -20,7 +20,7 @@ const channelIdentifierSchema = z
   .min(1)
   .max(CHANNEL_LIMITS.maximumIdentityLength)
 
-export const channelWorkModeSchema = z.enum(['ask', 'plan'])
+export const channelWorkModeSchema = z.literal('ask')
 export type ChannelWorkMode = z.infer<typeof channelWorkModeSchema>
 
 const attachmentBase64Schema = z

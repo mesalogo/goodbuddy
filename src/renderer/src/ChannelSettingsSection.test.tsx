@@ -330,6 +330,11 @@ describe('ChannelSettingsSection', () => {
     const close = await screen.findByRole('button', {
       name: '关闭微信绑定'
     })
+    expect(
+      screen.getByText(
+        '请在微信中依次打开“设置 → ClawBot → 开始扫一扫”，扫描下方二维码。二维码不会发送到第三方页面。'
+      )
+    ).toBeInTheDocument()
     await waitFor(() => expect(close).toHaveFocus())
 
     fireEvent.keyDown(document, { key: 'Escape' })

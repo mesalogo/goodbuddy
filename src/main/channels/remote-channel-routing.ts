@@ -1,4 +1,4 @@
-import type { WorkMode } from '../../shared/assistant-contracts'
+import type { InteractiveWorkMode } from '../../shared/assistant-contracts'
 
 const COMMAND_PATTERN =
   /^\/(?<command>ask|execute|exec)(?=$|[\s:：])[\s:：]*/iu
@@ -7,9 +7,9 @@ const CHINESE_PATTERN =
 
 export function parseRemoteChannelPrompt(
   text: string,
-  defaultWorkMode: WorkMode
+  defaultWorkMode: InteractiveWorkMode
 ): {
-  workMode: WorkMode
+  workMode: InteractiveWorkMode
   prompt: string
 } {
   const value = text.trim()
