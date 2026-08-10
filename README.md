@@ -27,7 +27,19 @@ GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode �
 
 ### 面向国产化环境交付
 
-GoodBuddy 按模型协议、消息通道和内网部署能力提供国产化适配。以下内容只列当前代码和发布流程已经提供的能力；具体国产操作系统、整机和外设组合仍应在目标环境完成安装、启动、模型调用和桌面集成验收。
+GoodBuddy 按操作系统、处理器架构、模型协议、消息通道和内网部署能力提供国产化适配。下表只列当前代码和发布流程已经提供的能力；具体国产操作系统、整机和外设组合仍应在目标环境完成安装、启动、模型调用和桌面集成验收。
+
+#### 操作系统与处理器
+
+| 类别 | 支持范围 | 交付形式 |
+| --- | --- | --- |
+| Windows | Windows `x64`、Windows on Arm `arm64` | NSIS 安装包、便携 ZIP |
+| Linux | Linux `x64`、Linux `arm64` | `deb`、AppImage |
+| 国产 Linux | 银河麒麟、统信 UOS、开放麒麟、Deepin 等 | 优先使用 `deb`，也可用 AppImage 免安装验证 |
+| macOS | Intel `x64`、Apple Silicon `arm64` | DMG、ZIP |
+| x86-64 处理器 | 海光、兆芯及其他兼容 `x86_64` 的处理器 | 对应系统的 `x64` 包 |
+| ARM64 处理器 | 鲲鹏、飞腾及其他兼容 `aarch64` 的处理器 | 对应系统的 `arm64` 包 |
+| LoongArch | 暂无正式发布包 | 无 |
 
 #### 国产模型与私有化服务
 
@@ -110,6 +122,12 @@ GoodBuddy 不把模型厂商写死在客户端中，而是通过标准协议连�
 - 文档解析包含压缩包展开限制、路径校验和敏感字段过滤。
 
 ![GoodBuddy 知识图谱](docs/screenshots/knowledge-graph.png)
+
+### 魔法笔记
+
+魔法笔记提供本地优先的笔记与待办工作台，支持范围管理、编辑、筛选和受控 AI 评论。
+
+![GoodBuddy 魔法笔记](docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
 
 ### 智能心跳
 
