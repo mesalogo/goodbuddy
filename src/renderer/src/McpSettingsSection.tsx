@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   CircleAlert,
   Database,
   FlaskConical,
@@ -15,7 +16,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
-import { builtinModelTools } from '../../shared/builtin-model-tools'
+import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import type {
   CapabilityDiagnosticReport,
   CapabilityAssignments,
@@ -98,6 +99,9 @@ export function McpSettingsSection(): React.JSX.Element {
   const [testResults, setTestResults] = useState<
     Record<string, McpServerTestResult>
   >({})
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
+    () => new Set()
+  )
   const [diagnostics, setDiagnostics] = useState<
     Partial<Record<ComputerCapabilityId, CapabilityDiagnosticReport>>
   >({})
@@ -111,6 +115,17 @@ export function McpSettingsSection(): React.JSX.Element {
     undefined
   )
   const editorOpen = Boolean(editor)
+  const toggleItem = (itemId: string): void => {
+    setExpandedItemIds((current) => {
+      const next = new Set(current)
+      if (next.has(itemId)) {
+        next.delete(itemId)
+      } else {
+        next.add(itemId)
+      }
+      return next
+    })
+  }
 
   useEffect(() => {
     void window.goodbuddy.capabilities
@@ -236,6 +251,11 @@ export function McpSettingsSection(): React.JSX.Element {
         ...current,
         [server.id]: result
       }))
+      setExpandedItemIds((current) => {
+        const next = new Set(current)
+        next.add(`custom:${server.id}`)
+        return next
+      })
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : 'MCP 连接测试失败'
@@ -320,8 +340,8 @@ export function McpSettingsSection(): React.JSX.Element {
 
       <p className="settings-notice">
         自定义 MCP 当前仅用于直连模型，新建时默认分配给直连模型，并仅在 Execute
-        模式加载。内置共享 MCP 当前仅有知识库搜索，可供直连模型、OpenCode 和
-        Continue 使用。Runtime 自有 MCP 配置不在此处管理。
+        模式加载。内置共享 MCP 提供知识库与全局笔记只读搜索，可供直连模型、
+        OpenCode 和 Continue 使用。Runtime 自有 MCP 配置不在此处管理。
       </p>
       <p className="settings-notice">
         内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server
@@ -577,35 +597,80 @@ export function McpSettingsSection(): React.JSX.Element {
         <div className="mcp-subsection-heading">
           <div>
             <Database size={15} />
-            <strong id="builtin-mcp-heading">GoodBuddy 内置 MCP</strong>
+            <span className="mcp-subsection-heading__title">
+              <strong id="builtin-mcp-heading">GoodBuddy 内置 MCP</strong>
+              <small>可用于：模型、OpenCode、Continue</small>
+            </span>
           </div>
           <small>{builtinMcpServers.length} 个</small>
         </div>
         <p className="settings-notice">
           内置 MCP 由 GoodBuddy 在主进程按当前对话签发短期权限，不公开服务地址或凭据。
         </p>
-        <div className="capability-list capability-list--tools">
-          {builtinMcpServers.map((server) => (
-            <article className="capability-card" key={server.id}>
-              <div className="capability-card__header">
-                <div>
-                  <strong>{server.name}</strong>
-                  <small>只读 · 按对话授权</small>
-                </div>
-                <span className="builtin-tool-badge">内置 MCP</span>
-              </div>
-              <p>{server.description}</p>
-              <code>{server.tools.join('、')}</code>
-              <div className="runtime-assignments">
-                <small>可用于：</small>
-                <span>
-                  {server.assignments
-                    .map((target) => runtimeLabels[target])
-                    .join('、')}
-                </span>
-              </div>
-            </article>
-          ))}
+        <div className="mcp-server-list">
+          {builtinMcpServers.map((server) => {
+            const expansionId = `builtin:${server.id}`
+            const expanded = expandedItemIds.has(expansionId)
+            const panelId = `mcp-server-tools-${server.id}`
+            return (
+              <article className="mcp-server-card" key={server.id}>
+                <button
+                  aria-controls={panelId}
+                  aria-expanded={expanded}
+                  aria-label={`${expanded ? '收起' : '展开'}服务器 ${server.name}`}
+                  className="mcp-server-card__toggle"
+                  onClick={() => toggleItem(expansionId)}
+                  type="button"
+                >
+                  <div>
+                    <strong>{server.name}</strong>
+                    <small>
+                      内置 MCP Server · 只读 · 按对话授权
+                    </small>
+                  </div>
+                  <span className="mcp-server-card__summary">
+                    {server.tools.length} 个工具
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={
+                        expanded
+                          ? 'mcp-server-card__chevron mcp-server-card__chevron--expanded'
+                          : 'mcp-server-card__chevron'
+                      }
+                      size={15}
+                    />
+                  </span>
+                </button>
+                {expanded && (
+                  <div className="mcp-server-card__body" id={panelId}>
+                    <p>{server.description}</p>
+                    <section
+                      aria-label={`${server.name} 工具`}
+                      className="mcp-server-tools"
+                    >
+                      <div className="mcp-server-tools__heading">
+                        <strong>工具</strong>
+                        <small>{server.tools.length} 个</small>
+                      </div>
+                      <ul>
+                        {server.tools.map((tool) => (
+                          <li key={tool.name}>
+                            <div>
+                              <code>{tool.name}</code>
+                              <span className="builtin-tool-badge">
+                                只读
+                              </span>
+                            </div>
+                            <p>{tool.description}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  </div>
+                )}
+              </article>
+            )
+          })}
         </div>
       </section>
 
@@ -615,25 +680,73 @@ export function McpSettingsSection(): React.JSX.Element {
             <Wrench size={15} />
             <strong>直连模型内置工具</strong>
           </div>
-          <small>{builtinModelTools.length} 个</small>
+          <small>{builtinModelToolGroups.length} 组</small>
         </div>
-        <div className="capability-list capability-list--tools">
-          {builtinModelTools.map((tool) => (
-            <article className="capability-card" key={tool.name}>
-              <div className="capability-card__header">
-                <div>
-                  <strong>{tool.displayName}</strong>
-                  <small>
-                    GoodBuddy 内置 ·{' '}
-                    {tool.access === 'write' ? '写入工具' : '只读工具'}
-                  </small>
-                </div>
-                <span className="builtin-tool-badge">直连模型</span>
-              </div>
-              <p>{tool.description}</p>
-              <code>{tool.name}</code>
-            </article>
-          ))}
+        <div className="mcp-server-list">
+          {builtinModelToolGroups.map((group) => {
+            const expansionId = `model-tools:${group.id}`
+            const expanded = expandedItemIds.has(expansionId)
+            const panelId = `model-tool-group-${group.id}`
+            return (
+              <article className="mcp-server-card" key={group.id}>
+                <button
+                  aria-controls={panelId}
+                  aria-expanded={expanded}
+                  aria-label={`${expanded ? '收起' : '展开'}工具组 ${group.name}`}
+                  className="mcp-server-card__toggle"
+                  onClick={() => toggleItem(expansionId)}
+                  type="button"
+                >
+                  <div>
+                    <strong>{group.name}</strong>
+                    <small>GoodBuddy 直连模型内置能力</small>
+                  </div>
+                  <span className="mcp-server-card__summary">
+                    {group.tools.length} 个工具
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={
+                        expanded
+                          ? 'mcp-server-card__chevron mcp-server-card__chevron--expanded'
+                          : 'mcp-server-card__chevron'
+                      }
+                      size={15}
+                    />
+                  </span>
+                </button>
+                {expanded && (
+                  <div className="mcp-server-card__body" id={panelId}>
+                    <p>{group.description}</p>
+                    <section
+                      aria-label={`${group.name} 工具`}
+                      className="mcp-server-tools"
+                    >
+                      <div className="mcp-server-tools__heading">
+                        <strong>工具</strong>
+                        <small>{group.tools.length} 个</small>
+                      </div>
+                      <ul>
+                        {group.tools.map((tool) => (
+                          <li key={tool.name}>
+                            <div>
+                              <span className="mcp-server-tool__identity">
+                                <strong>{tool.displayName}</strong>
+                                <code>{tool.name}</code>
+                              </span>
+                              <span className="builtin-tool-badge">
+                                {tool.access === 'write' ? '写入' : '只读'}
+                              </span>
+                            </div>
+                            <p>{tool.description}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  </div>
+                )}
+              </article>
+            )
+          })}
         </div>
       </div>
 
@@ -859,17 +972,41 @@ export function McpSettingsSection(): React.JSX.Element {
         )}
         {snapshot?.mcpServers.map((server) => {
           const result = testResults[server.id]
+          const expansionId = `custom:${server.id}`
+          const expanded = expandedItemIds.has(expansionId)
+          const panelId = `mcp-custom-server-${server.id}`
           return (
-            <article className="capability-card" key={server.id}>
-              <div className="capability-card__header">
-                <div>
-                  <strong>{server.name}</strong>
-                  <small>
-                    {server.transport.toUpperCase()} ·{' '}
-                    {server.enabled ? '已启用' : '已停用'}
-                    {server.secretConfigured ? ' · 已加密令牌' : ''}
-                  </small>
-                </div>
+            <article className="mcp-server-card" key={server.id}>
+              <div className="mcp-server-card__header">
+                <button
+                  aria-controls={panelId}
+                  aria-expanded={expanded}
+                  aria-label={`${expanded ? '收起' : '展开'}服务器 ${server.name}`}
+                  className="mcp-server-card__toggle"
+                  onClick={() => toggleItem(expansionId)}
+                  type="button"
+                >
+                  <div>
+                    <strong>{server.name}</strong>
+                    <small>
+                      {server.transport.toUpperCase()} MCP Server ·{' '}
+                      {server.enabled ? '已启用' : '已停用'}
+                      {server.secretConfigured ? ' · 已加密令牌' : ''}
+                    </small>
+                  </div>
+                  <span className="mcp-server-card__summary">
+                    {result ? `${result.toolCount} 个工具` : '工具未检测'}
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={
+                        expanded
+                          ? 'mcp-server-card__chevron mcp-server-card__chevron--expanded'
+                          : 'mcp-server-card__chevron'
+                      }
+                      size={15}
+                    />
+                  </span>
+                </button>
                 <div className="capability-card__actions">
                   <button
                     aria-label={`测试 ${server.name}`}
@@ -911,30 +1048,61 @@ export function McpSettingsSection(): React.JSX.Element {
                   </button>
                 </div>
               </div>
-              {server.description && <p>{server.description}</p>}
-              <code>
-                {server.transport === 'stdio'
-                  ? [server.command, ...server.args].join(' ')
-                  : server.url}
-              </code>
-              <div className="runtime-assignments">
-                <small>已分配：</small>
-                <span>
-                  {server.assignments
-                    .map((target) => runtimeLabels[target])
-                    .join('、') || '无'}
-                </span>
-              </div>
-              {result && (
-                <p className="mcp-test-result">
-                  连接成功
-                  {result.serverName ? `：${result.serverName}` : ''}
-                  {result.serverVersion ? ` ${result.serverVersion}` : ''}，共{' '}
-                  {result.toolCount} 个工具
-                  {result.tools.length > 0
-                    ? `（${result.tools.map((tool) => tool.name).join('、')}）`
-                    : ''}
-                </p>
+              {expanded && (
+                <div className="mcp-server-card__body" id={panelId}>
+                  {server.description && <p>{server.description}</p>}
+                  <code>
+                    {server.transport === 'stdio'
+                      ? [server.command, ...server.args].join(' ')
+                      : server.url}
+                  </code>
+                  <div className="runtime-assignments">
+                    <small>已分配：</small>
+                    <span>
+                      {server.assignments
+                        .map((target) => runtimeLabels[target])
+                        .join('、') || '无'}
+                    </span>
+                  </div>
+                  {result ? (
+                    <section
+                      aria-label={`${server.name} 工具`}
+                      className="mcp-server-tools"
+                    >
+                      <div className="mcp-server-tools__heading">
+                        <strong>
+                          {result.serverName || server.name}
+                          {result.serverVersion
+                            ? ` ${result.serverVersion}`
+                            : ''}
+                        </strong>
+                        <small>{result.toolCount} 个工具</small>
+                      </div>
+                      {result.tools.length > 0 ? (
+                        <ul>
+                          {result.tools.map((tool) => (
+                            <li key={tool.name}>
+                              <div>
+                                <code>{tool.name}</code>
+                              </div>
+                              {tool.description && (
+                                <p>{tool.description}</p>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="settings-empty">
+                          服务器未公开可用工具。
+                        </p>
+                      )}
+                    </section>
+                  ) : (
+                    <p className="settings-empty">
+                      点击“测试”连接服务器并读取其工具列表。
+                    </p>
+                  )}
+                </div>
               )}
             </article>
           )

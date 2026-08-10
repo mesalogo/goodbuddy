@@ -365,8 +365,6 @@ if (hasSingleInstanceLock) {
       extractStructured: createModelGraphExtractor(settingsStore)
     })
     await knowledgeService.initialize()
-    knowledgeGateway = new KnowledgeMcpGateway(knowledgeService)
-    await knowledgeGateway.start()
     const embeddingIndexCoordinator = new EmbeddingIndexCoordinator(
       new KnowledgeEmbeddingIndexRepository(knowledgeService.database)
     )
@@ -387,6 +385,10 @@ if (hasSingleInstanceLock) {
     assistantDatabase.repairConversationRuntimeSelections(
       initialRuntimeSettings
     )
+    knowledgeGateway = new KnowledgeMcpGateway(knowledgeService, {
+      magicNotesDatabase: assistantDatabase
+    })
+    await knowledgeGateway.start()
     const subagentService = new SubagentService(
       createDefaultModelRuntime(defaultWorkspace, initialSettings),
       assistantDatabase,
@@ -400,9 +402,9 @@ if (hasSingleInstanceLock) {
       settings: ResolvedRuntimeSettings,
       target: SelectedRuntimeTarget
     ): Promise<AgentRuntime> => {
-      const [skillInstructions, mcpServers, browserCapability] =
+      const [skillContext, mcpServers, browserCapability] =
         await Promise.all([
-          capabilityService.getSkillInstructions(target),
+          capabilityService.getRuntimeSkillContext(target),
           target === 'model'
             ? capabilityService.getResolvedMcpServers('model')
             : Promise.resolve([]),
@@ -413,7 +415,8 @@ if (hasSingleInstanceLock) {
             : Promise.resolve(undefined)
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
-        skillInstructions,
+        skillInstructions: skillContext.instructions,
+        skillPackages: skillContext.packages,
         mcpServers,
         continueHostCacheRoot: join(
           app.getPath('userData'),

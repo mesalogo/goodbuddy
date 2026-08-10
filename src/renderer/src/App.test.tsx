@@ -13,6 +13,7 @@ import type {
   BrowserLiveState,
   DesktopApi
 } from '../../shared/contracts'
+import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 
 const speechRecognitionMocks = vi.hoisted(() => ({
   startPcmRecording: vi.fn()
@@ -471,14 +472,10 @@ const api: DesktopApi = {
     analyze: vi.fn(async () => {
       throw new Error('not used')
     }),
+    analyzeDraft: vi.fn(async () => {
+      throw new Error('not used')
+    }),
     listTodos: vi.fn(async () => ({ todos: [] })),
-    createTodo: vi.fn(async () => {
-      throw new Error('not used')
-    }),
-    updateTodo: vi.fn(async () => {
-      throw new Error('not used')
-    }),
-    removeTodo: vi.fn(async () => {}),
     analyzeTodo: vi.fn(async () => {
       throw new Error('not used')
     })
@@ -612,11 +609,13 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        magicNotesEnabled: true
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'immediate' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        magicNotesEnabled: true
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'immediate' as const
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
@@ -657,11 +656,13 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        magicNotesEnabled: true
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'immediate' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        magicNotesEnabled: true
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'immediate' as const
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
@@ -3877,15 +3878,17 @@ describe('App', () => {
     }
   })
 
-  it('opens Magic Notes as a scoped first-class workspace', async () => {
+  it('opens Magic Notes as a global first-class workspace', async () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        magicNotesEnabled: true
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'immediate' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        magicNotesEnabled: true
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'immediate' as const
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
@@ -3903,7 +3906,7 @@ describe('App', () => {
       expect(
         await screen.findByRole('heading', { name: '魔法笔记' })
       ).toBeInTheDocument()
-      expect(screen.getByText('项目：默认项目')).toBeInTheDocument()
+      expect(screen.getByText('全局')).toBeInTheDocument()
       expect(
         screen.getByRole('button', { name: '新建笔记' })
       ).toBeInTheDocument()
@@ -3920,11 +3923,13 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        magicNotesEnabled: false
+        magicNotesEnabled: false,
+        magicNoteCommentMode: 'immediate' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        magicNotesEnabled: false
+        magicNotesEnabled: false,
+        magicNoteCommentMode: 'immediate' as const
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
@@ -3951,9 +3956,10 @@ describe('App', () => {
   })
 
   it('keeps platform-feature switches in Settings without navigating', async () => {
-    let applicationSettings = {
+    let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     }
     api.updates = {
       getSettings: vi.fn(async () => ({ ...applicationSettings })),

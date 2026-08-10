@@ -1587,7 +1587,8 @@ export class ModelAgentRuntime implements AgentRuntime {
         let decision: ApprovalDecision
         try {
           if (
-            tool.name === 'knowledge_search' &&
+            (tool.name === 'knowledge_search' ||
+              tool.name === 'note_search') &&
             Boolean(request.knowledgeCapabilityToken)
           ) {
             decision = 'once'

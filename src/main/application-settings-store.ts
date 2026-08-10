@@ -19,12 +19,20 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 2
+const CURRENT_SETTINGS_VERSION = 3
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
     version: z.union([z.literal(1), z.literal(2)]),
     checkUpdatesOnStartup: z.boolean()
+  })
+  .strict()
+
+const versionTwoStoredApplicationSettingsSchema = z
+  .object({
+    version: z.literal(2),
+    checkUpdatesOnStartup: z.boolean(),
+    magicNotesEnabled: z.boolean()
   })
   .strict()
 
@@ -40,7 +48,8 @@ type StoredApplicationSettings = z.infer<
 
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
-  magicNotesEnabled: false
+  magicNotesEnabled: false,
+  magicNoteCommentMode: 'immediate'
 }
 
 function isMissingFile(error: unknown): boolean {
@@ -93,6 +102,16 @@ export class ApplicationSettingsStore {
       }
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionTwoResult =
+          versionTwoStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionTwoResult.success) {
+          this.settings = {
+            ...versionTwoResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            magicNoteCommentMode: 'immediate'
+          }
+          return this.settings
+        }
         const legacyResult =
           legacyStoredApplicationSettingsSchema.safeParse(parsed)
         if (legacyResult.success) {
@@ -100,7 +119,8 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             checkUpdatesOnStartup:
               legacyResult.data.checkUpdatesOnStartup,
-            magicNotesEnabled: false
+            magicNotesEnabled: false,
+            magicNoteCommentMode: 'immediate'
           }
           return this.settings
         }
@@ -130,7 +150,8 @@ export class ApplicationSettingsStore {
     const stored = await this.loadStored()
     return {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
-      magicNotesEnabled: stored.magicNotesEnabled
+      magicNotesEnabled: stored.magicNotesEnabled,
+      magicNoteCommentMode: stored.magicNoteCommentMode
     }
   }
 
@@ -164,7 +185,8 @@ export class ApplicationSettingsStore {
       this.settings = next
       return {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
-        magicNotesEnabled: next.magicNotesEnabled
+        magicNotesEnabled: next.magicNotesEnabled,
+        magicNoteCommentMode: next.magicNoteCommentMode
       }
     })
     this.updateQueue = operation.then(

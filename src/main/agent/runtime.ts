@@ -76,6 +76,6 @@ export type AgentExecutionRequest = AgentRequest & {
   images?: AgentImage[]
   /** Main-process-only instructions placed in the model system layer. */
   trustedInstructions?: string
-  /** Main-process-only request-scoped authorization for knowledge search. */
+  /** Main-process-only request-scoped authorization for built-in read tools. */
   knowledgeCapabilityToken?: string
 }

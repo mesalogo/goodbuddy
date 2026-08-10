@@ -21,7 +21,9 @@ describe('UpdateSettingsSection', () => {
     >(async (input) => ({
       checkUpdatesOnStartup:
         input.checkUpdatesOnStartup ?? true,
-      magicNotesEnabled: input.magicNotesEnabled ?? true
+      magicNotesEnabled: input.magicNotesEnabled ?? true,
+      magicNoteCommentMode:
+        input.magicNoteCommentMode ?? 'immediate'
     }))
     const check = vi.fn<
       NonNullable<DesktopApi['updates']>['check']
@@ -59,7 +61,8 @@ describe('UpdateSettingsSection', () => {
         updates: {
           getSettings: vi.fn(async () => ({
             checkUpdatesOnStartup: true,
-            magicNotesEnabled: true
+            magicNotesEnabled: true,
+            magicNoteCommentMode: 'immediate'
           })),
           updateSettings,
           check,
@@ -107,11 +110,13 @@ describe('UpdateSettingsSection', () => {
         updates: {
           getSettings: vi.fn(async () => ({
             checkUpdatesOnStartup: true,
-            magicNotesEnabled: true
+            magicNotesEnabled: true,
+            magicNoteCommentMode: 'immediate'
           })),
           updateSettings: vi.fn(async () => ({
             checkUpdatesOnStartup: true,
-            magicNotesEnabled: true
+            magicNotesEnabled: true,
+            magicNoteCommentMode: 'immediate'
           })),
           check: vi.fn(async () => {
             throw new Error(

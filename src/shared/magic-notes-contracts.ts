@@ -100,15 +100,8 @@ export type MagicNoteRichContent = z.infer<
   typeof magicNoteRichContentSchema
 >
 
-export const magicNoteScopeSchema = z
-  .object({
-    projectId: magicNoteIdSchema.optional()
-  })
-  .strict()
-
 export const magicNoteCreateSchema = z
   .object({
-    projectId: magicNoteIdSchema.optional(),
     title: z.string().trim().min(1).max(100)
   })
   .strict()
@@ -166,32 +159,11 @@ export const magicNoteAnalyzeSchema = z
   })
   .strict()
 
-export const magicTodoCreateSchema = z
+export const magicNoteDraftAnalyzeSchema = z
   .object({
-    projectId: magicNoteIdSchema.optional(),
-    title: z.string().trim().min(1).max(120),
-    instructions: z.string().trim().max(20_000)
+    content: magicNoteRichContentSchema
   })
   .strict()
-export type MagicTodoCreateInput = z.infer<typeof magicTodoCreateSchema>
-
-export const magicTodoUpdateSchema = z
-  .object({
-    todoId: magicNoteIdSchema,
-    title: z.string().trim().min(1).max(120).optional(),
-    instructions: z.string().trim().max(20_000).optional(),
-    completed: z.boolean().optional(),
-    expectedRevision: z.number().int().nonnegative()
-  })
-  .strict()
-  .refine(
-    (input) =>
-      input.title !== undefined ||
-      input.instructions !== undefined ||
-      input.completed !== undefined,
-    { message: '没有可更新的待办字段' }
-  )
-export type MagicTodoUpdateInput = z.infer<typeof magicTodoUpdateSchema>
 
 export const magicTodoIdSchema = z
   .object({
@@ -221,7 +193,6 @@ export type MagicNoteEntry = {
 
 export type MagicNoteSummary = {
   id: string
-  projectId?: string
   title: string
   preview: string
   entryCount: number
@@ -241,12 +212,11 @@ export type MagicNotesSnapshot = {
 
 export type MagicTodoItem = {
   id: string
-  projectId?: string
-  noteId?: string
-  entryId?: string
-  noteTitle?: string
-  sourceIndex?: number
-  source: 'note' | 'manual'
+  noteId: string
+  entryId: string
+  noteTitle: string
+  sourceIndex: number
+  source: 'note'
   title: string
   instructions: string
   completed: boolean
@@ -259,4 +229,18 @@ export type MagicTodoItem = {
 
 export type MagicTodosSnapshot = {
   todos: MagicTodoItem[]
+}
+
+export type MagicNoteDraftAnalysis = {
+  id: string
+  comments: MagicNoteComment[]
+  analyzedAt: string
+}
+
+export type MagicNoteSearchResult = {
+  noteId: string
+  noteTitle: string
+  entryId: string
+  content: string
+  updatedAt: string
 }

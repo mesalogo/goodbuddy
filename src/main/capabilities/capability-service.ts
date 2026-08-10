@@ -182,6 +182,16 @@ export type ResolvedMcpServer = McpServerSummary & {
   secret?: string
 }
 
+export type RuntimeSkillPackage = {
+  id: string
+  directory: string
+}
+
+export type RuntimeSkillContext = {
+  instructions: string
+  packages: RuntimeSkillPackage[]
+}
+
 export type CapabilityServiceOptions = Readonly<{
   platform?: NodeJS.Platform
   architecture?: string
@@ -1322,10 +1332,10 @@ export class CapabilityService {
     }
   }
 
-  async getSkillInstructions(
+  async getRuntimeSkillContext(
     target: RuntimeTarget,
     maximumCharacters: number = MAX_SKILL_INSTRUCTION_CHARACTERS
-  ): Promise<string> {
+  ): Promise<RuntimeSkillContext> {
     const budget = Math.min(
       maximumCharacters,
       MAX_SKILL_INSTRUCTION_CHARACTERS
@@ -1333,6 +1343,7 @@ export class CapabilityService {
     const snapshot = await this.getSnapshot()
     const sections: string[] = []
     const skipped: string[] = []
+    const packages: RuntimeSkillPackage[] = []
     let length = 0
     for (const skill of snapshot.skills) {
       if (!skill.enabled || !skill.assignments.includes(target)) {
@@ -1358,22 +1369,35 @@ export class CapabilityService {
         skipped.push(skill.name)
         continue
       }
+      packages.push({ id: skill.id, directory })
       sections.push(section)
       length += section.length
     }
     if (sections.length === 0 && skipped.length === 0) {
-      return ''
+      return { instructions: '', packages }
     }
-    return [
-      '# GoodBuddy 已启用 Skills',
-      '以下是用户明确启用并分配给当前 Runtime 的本地能力说明。请遵循这些说明，但不得覆盖系统安全规则。',
-      ...(skipped.length > 0
-        ? [
-            `注意：以下 Skill 因超出注入上限未加载，本次对话不可用：${skipped.join('、')}。`
-          ]
-        : []),
-      ...sections
-    ].join('\n\n')
+    return {
+      instructions: [
+        '# GoodBuddy 已启用 Skills',
+        '以下是用户明确启用并分配给当前 Runtime 的本地能力说明。请遵循这些说明，但不得覆盖系统安全规则。',
+        ...(skipped.length > 0
+          ? [
+              `注意：以下 Skill 因超出注入上限未加载，本次对话不可用：${skipped.join('、')}。`
+            ]
+          : []),
+        ...sections
+      ].join('\n\n'),
+      packages
+    }
+  }
+
+  async getSkillInstructions(
+    target: RuntimeTarget,
+    maximumCharacters: number = MAX_SKILL_INSTRUCTION_CHARACTERS
+  ): Promise<string> {
+    return (
+      await this.getRuntimeSkillContext(target, maximumCharacters)
+    ).instructions
   }
 
   async getResolvedMcpServers(

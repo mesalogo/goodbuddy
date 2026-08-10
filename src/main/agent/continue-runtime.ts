@@ -11,6 +11,7 @@ import type {
 } from './runtime'
 import { detectRuntimeBinary } from './runtime-discovery'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
+import type { RuntimeSkillPackage } from '../capabilities/capability-service'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import {
   ContinueHostAdapter,
@@ -32,6 +33,7 @@ export type ContinueRuntimeOptions = {
   defaultWorkspace: string
   hostCacheRoot: string
   skillInstructions?: string
+  skillPackages?: RuntimeSkillPackage[]
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
   knowledgeGateway?: KnowledgeMcpGateway
@@ -170,7 +172,8 @@ export class ContinueAgentRuntime implements AgentRuntime {
       cacheRoot: this.options.hostCacheRoot,
       mode,
       launchHost: this.options.launchHost,
-      modelProfile: this.options.modelProfile
+      modelProfile: this.options.modelProfile,
+      skillPackages: this.options.skillPackages
     })
     this.hostAdapters.set(mode, host)
     return host
@@ -311,7 +314,8 @@ export class ContinueAgentRuntime implements AgentRuntime {
         execute ||
         (request.workMode === 'ask' &&
           Boolean(knowledgeCapability) &&
-          approval.toolName === 'knowledge_search')
+          (approval.toolName === 'knowledge_search' ||
+            approval.toolName === 'note_search'))
           ? 'once' as const
           : 'deny' as const
       const queuedEvents: ContinueHostStreamEvent[] = []

@@ -79,6 +79,8 @@ async function createDistribution(version = '1.5.47'): Promise<{
     'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}',
     'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}',
     'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-ExecutionPolicy","Bypass","-Command",e]}',
+    'let{shell:d,args:p}=Csa(e),f=Esa(d,p),g="",y="",A,S=!1,x=18e4;',
+    'let r=[eS.join(n,".continue",AKt),eS.join(n,".claude",AKt),eS.join(hu.continueHome,AKt)],o=',
     'a={onContent:u=>{},onContentComplete:u=>{},onToolStart:(u,l)=>{},onToolResult:(u,l,c)=>{},onToolError:(u,l)=>{},onToolPermissionRequest:',
     'pendingPermission:null},B=',
     'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission);Te.json(ue)})',
@@ -151,6 +153,12 @@ describe('ContinueHostAdapter', () => {
     )
     expect(bundle).toContain('"-NoProfile"')
     expect(bundle).toContain('[Console]::OutputEncoding')
+    expect(bundle).toContain(
+      'f.stdout.setEncoding("utf8"),f.stderr.setEncoding("utf8")'
+    )
+    expect(bundle).toContain(
+      'let r=[eS.join(hu.continueHome,AKt)],o='
+    )
     expect(bundle).toContain('goodbuddyEvents:[]')
     expect(bundle).toContain('goodbuddyEvents:ce')
     expect(bundle).toContain('type:"text",delta:u')
@@ -296,6 +304,29 @@ describe('ContinueHostAdapter', () => {
 
   it('launches the prepared host through the injected launcher', async () => {
     const distribution = await createDistribution()
+    const skillDirectory = join(
+      distribution.cacheRoot,
+      '..',
+      'longdoc-docx'
+    )
+    await mkdir(skillDirectory, { recursive: true })
+    await writeFile(
+      join(skillDirectory, 'SKILL.md'),
+      [
+        '---',
+        'name: longdoc-docx',
+        'description: Build a long Word document',
+        '---',
+        '',
+        '# Long document'
+      ].join('\n'),
+      'utf8'
+    )
+    await writeFile(
+      join(skillDirectory, 'build.py'),
+      'print("build")\n',
+      'utf8'
+    )
     let launch:
       | {
           entryPath: string
@@ -306,12 +337,35 @@ describe('ContinueHostAdapter', () => {
     let killed = false
     let generatedConfig = ''
     let generatedConfigPath = ''
+    let isolatedGlobalDirectory = ''
+    let registeredSkill = ''
+    let registeredSkillFile = ''
     const launchHost: ContinueHostLauncher = (
       entryPath,
       args,
       options
     ) => {
       launch = { entryPath, args, env: options.env }
+      isolatedGlobalDirectory =
+        options.env.CONTINUE_GLOBAL_DIR ?? ''
+      registeredSkill = readFileSync(
+        join(
+          isolatedGlobalDirectory,
+          'skills',
+          'longdoc-docx',
+          'SKILL.md'
+        ),
+        'utf8'
+      )
+      registeredSkillFile = readFileSync(
+        join(
+          isolatedGlobalDirectory,
+          'skills',
+          'longdoc-docx',
+          'build.py'
+        ),
+        'utf8'
+      )
       const configIndex = args.indexOf('--config')
       if (configIndex >= 0) {
         generatedConfigPath = args[configIndex + 1] ?? ''
@@ -387,6 +441,12 @@ describe('ContinueHostAdapter', () => {
       trustedBundleHashes: [distribution.sourceHash],
       launchHost,
       mode: 'chat',
+      skillPackages: [
+        {
+          id: 'longdoc-docx',
+          directory: skillDirectory
+        }
+      ],
       modelProfile: {
         id: '00000000-0000-4000-8000-000000000011',
         name: '独立模型',
@@ -443,6 +503,15 @@ describe('ContinueHostAdapter', () => {
       OTEL_SDK_DISABLED: 'true',
       OTEL_TRACES_EXPORTER: 'none'
     })
+    if (process.platform === 'win32') {
+      expect(launch?.env).toMatchObject({
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1'
+      })
+    }
+    expect(registeredSkill).toContain('name: longdoc-docx')
+    expect(registeredSkillFile).toBe('print("build")\n')
+    expect(existsSync(isolatedGlobalDirectory)).toBe(false)
     expect(killed).toBe(true)
     expect(JSON.parse(generatedConfig)).toMatchObject({
       models: [
@@ -491,6 +560,8 @@ describe('ContinueHostAdapter', () => {
         expect.stringContaining('knowledge-config-'),
         '--allow',
         'knowledge_search',
+        '--allow',
+        'note_search',
         '--exclude',
         '*',
         'serve',
@@ -749,6 +820,8 @@ describe('ContinueHostAdapter', () => {
         expect.arrayContaining([
           '--allow',
           'knowledge_search',
+          '--allow',
+          'note_search',
           '--exclude',
           '*'
         ])
@@ -821,7 +894,7 @@ describe('ContinueHostAdapter', () => {
                             output: [
                               {
                                 content:
-                                  'PowerShell parser failed Authorization: Bearer secret-token'
+                                  'PowerShell 原始错误：路径不存在 ���'
                               }
                             ]
                           }
@@ -876,7 +949,7 @@ describe('ContinueHostAdapter', () => {
           name: 'Bash',
           state: 'failed',
           error:
-            'PowerShell parser failed Authorization: Bearer secret-token'
+            'PowerShell 原始错误：路径不存在 ���'
         }
       ]
     })

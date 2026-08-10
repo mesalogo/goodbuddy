@@ -100,7 +100,7 @@ describe('WorkspacePrimitives', () => {
 
   it('keeps shared controls keyboard and pointer accessible at narrow widths', () => {
     expect(stylesheet).toMatch(
-      /\.window-control\s*>\s*svg,\s*\.icon-button\s*>\s*svg\s*\{[^}]*pointer-events:\s*none;/u
+      /button\s*>\s*svg,\s*button\s*>\s*svg\s+\*\s*\{[^}]*pointer-events:\s*none;/u
     )
     expect(stylesheet).toMatch(
       /button:focus-visible,\s*input:focus-visible,\s*select:focus-visible,\s*textarea:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\);/u

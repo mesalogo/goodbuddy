@@ -1,6 +1,10 @@
 import { Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { ApplicationSettings } from '../../shared/application-settings-contracts'
+import type {
+  ApplicationSettings,
+  MagicNoteCommentMode
+} from '../../shared/application-settings-contracts'
+import { SegmentedControl } from './WorkspacePrimitives'
 
 type PlatformFeaturesSettingsSectionProps = {
   onMagicNotesEnabledChange: (enabled: boolean) => void
@@ -62,6 +66,26 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
+  const changeCommentMode = async (
+    magicNoteCommentMode: MagicNoteCommentMode
+  ): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates || !settings) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      setSettings(
+        await updates.updateSettings({ magicNoteCommentMode })
+      )
+    } catch {
+      setError('保存 AI 评论方式失败，请重试')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <section
       aria-labelledby="platform-features-heading"
@@ -95,6 +119,23 @@ export function PlatformFeaturesSettingsSection({
           />
           <span>显示魔法笔记入口</span>
         </label>
+        <div className="platform-feature-option">
+          <span>AI 评论方式</span>
+          <SegmentedControl
+            ariaLabel="魔法笔记 AI 评论方式"
+            disabled={!settings || saving}
+            onChange={(value) => void changeCommentMode(value)}
+            options={[
+              { value: 'immediate', label: '即时' },
+              { value: 'after-save-auto', label: '保存后自动' },
+              { value: 'after-save-manual', label: '保存后手动' }
+            ]}
+            value={settings?.magicNoteCommentMode ?? 'immediate'}
+          />
+          <small>
+            即时模式会在按回车并停止输入 5 秒后评论未保存草稿；自动模式在保存后评论；手动模式仅在点击 AI 分析后评论。
+          </small>
+        </div>
       </article>
       {error && (
         <p className="settings-warning" role="alert">

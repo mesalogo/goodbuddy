@@ -78,6 +78,7 @@ import type { AgentRuntimeSelection } from '../shared/runtime-selection-contract
 import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
 import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
 import type {
+  MagicNoteDraftAnalysis,
   MagicNoteDetail,
   MagicNotesSnapshot,
   MagicTodoItem,
@@ -728,10 +729,10 @@ const desktopApi: DesktopApi = {
     }
   },
   magicNotes: {
-    list: (projectId?: string) =>
-      ipcRenderer.invoke(ipcChannels.magicNotesList, {
-        projectId
-      }) as Promise<MagicNotesSnapshot>,
+    list: () =>
+      ipcRenderer.invoke(
+        ipcChannels.magicNotesList
+      ) as Promise<MagicNotesSnapshot>,
     get: (noteId: string) =>
       ipcRenderer.invoke(ipcChannels.magicNotesGet, {
         noteId
@@ -767,23 +768,15 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.magicNotesAnalyze, {
         entryId
       }) as Promise<MagicNoteDetail>,
-    listTodos: (projectId?: string) =>
-      ipcRenderer.invoke(ipcChannels.magicTodosList, {
-        projectId
-      }) as Promise<MagicTodosSnapshot>,
-    createTodo: (input) =>
+    analyzeDraft: (content) =>
       ipcRenderer.invoke(
-        ipcChannels.magicTodosCreate,
-        input
-      ) as Promise<MagicTodoItem>,
-    updateTodo: (input) =>
+        ipcChannels.magicNotesAnalyzeDraft,
+        { content }
+      ) as Promise<MagicNoteDraftAnalysis>,
+    listTodos: () =>
       ipcRenderer.invoke(
-        ipcChannels.magicTodosUpdate,
-        input
-      ) as Promise<MagicTodoItem>,
-    removeTodo: async (todoId: string) => {
-      await ipcRenderer.invoke(ipcChannels.magicTodosDelete, { todoId })
-    },
+        ipcChannels.magicTodosList
+      ) as Promise<MagicTodosSnapshot>,
     analyzeTodo: (todoId: string) =>
       ipcRenderer.invoke(ipcChannels.magicTodosAnalyze, {
         todoId

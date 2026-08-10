@@ -1142,6 +1142,7 @@ function DocumentsView({
                     type="button"
                   >
                     <Trash2 aria-hidden="true" size={14} />
+                    移除
                   </button>
                 </div>
               </li>
@@ -1968,6 +1969,7 @@ function GraphView({
                       type="button"
                     >
                       <Trash2 aria-hidden="true" size={13} />
+                      删除
                     </button>
                     {other && (
                       <button

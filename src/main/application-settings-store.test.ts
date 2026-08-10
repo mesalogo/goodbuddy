@@ -62,16 +62,19 @@ describe('ApplicationSettingsStore', () => {
       })
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     })
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 2,
+      version: 3,
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     })
     expect(
       (await readdir(directory)).filter((name) => name.endsWith('.tmp'))
@@ -91,7 +94,8 @@ describe('ApplicationSettingsStore', () => {
       new ApplicationSettingsStore(filePath).get()
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     })
   })
 
@@ -110,10 +114,30 @@ describe('ApplicationSettingsStore', () => {
 
       await expect(store.get()).resolves.toEqual({
         checkUpdatesOnStartup: false,
-        magicNotesEnabled: false
+        magicNotesEnabled: false,
+        magicNoteCommentMode: 'immediate'
       })
     }
   )
+
+  it('migrates version 2 Magic Notes settings with the immediate comment mode', async () => {
+    const { filePath, store } = await createStore()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 2,
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: true
+      }),
+      'utf8'
+    )
+
+    await expect(store.get()).resolves.toEqual({
+      checkUpdatesOnStartup: false,
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'immediate'
+    })
+  })
 
   it('strictly rejects incomplete full settings', () => {
     for (const input of [
@@ -157,7 +181,8 @@ describe('ApplicationSettingsStore', () => {
       store.update({ checkUpdatesOnStartup: false })
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: true
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'immediate'
     })
   })
 
@@ -232,12 +257,14 @@ describe('ApplicationSettingsStore', () => {
 
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 2,
+      version: 3,
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     })
   })
 
@@ -257,7 +284,8 @@ describe('ApplicationSettingsStore', () => {
       })
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: true
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'immediate'
     })
   })
 })

@@ -132,6 +132,49 @@ describe('KnowledgeMcpGateway', () => {
     ).rejects.toThrow('unavailable or expired')
   })
 
+  it('grants bounded global Magic Notes search without a knowledge scope', () => {
+    const { service } = createService()
+    const searchMagicNotes = vi.fn(() => [
+      {
+        noteId: '00000000-0000-4000-8000-000000000701',
+        noteTitle: '发布计划',
+        entryId: '00000000-0000-4000-8000-000000000702',
+        content: '核对构建产物',
+        updatedAt: '2026-08-10T00:00:00.000Z'
+      }
+    ])
+    const gateway = new KnowledgeMcpGateway(service, {
+      magicNotesDatabase: { searchMagicNotes }
+    })
+    gateways.push(gateway)
+    const token = gateway.grant(
+      'notes',
+      [],
+      new AbortController().signal,
+      true
+    )!
+
+    expect(gateway.getAvailableToolNames(token)).toEqual(['note_search'])
+    expect(
+      gateway.searchMagicNotes(token, {
+        query: '  发布  ',
+        limit: 3
+      })
+    ).toEqual([
+      expect.objectContaining({
+        noteTitle: '发布计划',
+        content: '核对构建产物'
+      })
+    ])
+    expect(searchMagicNotes).toHaveBeenCalledWith('发布', 3)
+    expect(() =>
+      gateway.searchMagicNotes(token, {
+        query: '发布',
+        noteIds: ['not-allowed']
+      })
+    ).toThrow()
+  })
+
   it('binds a POST-only authenticated endpoint and rejects oversized bodies', async () => {
     const { service } = createService()
     const gateway = new KnowledgeMcpGateway(service, {

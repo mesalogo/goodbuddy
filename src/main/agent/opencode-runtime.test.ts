@@ -1077,7 +1077,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it('adds only the request-scoped knowledge MCP tool for Ask and disconnects it', async () => {
+  it('adds only request-scoped built-in read tools for Ask and disconnects them', async () => {
     const setup = runClient([
       {
         id: 'idle',
@@ -1110,7 +1110,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         error: undefined
       })
     const gateway = {
-      getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+      getEndpoint: () => 'http://127.0.0.1:4567/mcp',
+      getAvailableToolNames: () => ['knowledge_search']
     } as unknown as KnowledgeMcpGateway
     const child = fakeChild()
     const { deps } = dependencies(child, {
@@ -1144,7 +1145,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
 
     expect(setup.client.mcp.add).toHaveBeenCalledWith({
       directory: process.cwd(),
-      name: expect.stringMatching(/^goodbuddy-knowledge-[a-f0-9]{20}$/u),
+      name: expect.stringMatching(/^goodbuddy-data-[a-f0-9]{20}$/u),
       config: {
         type: 'remote',
         url: 'http://127.0.0.1:4567/mcp',
@@ -1185,7 +1186,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       expect.anything()
     )
     expect(setup.client.mcp.disconnect).toHaveBeenCalledWith({
-      name: expect.stringMatching(/^goodbuddy-knowledge-/u),
+      name: expect.stringMatching(/^goodbuddy-data-/u),
       directory: process.cwd()
     })
     expect(events.at(-1)).toMatchObject({ type: 'done' })
@@ -1220,7 +1221,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     const runtime = new OpenCodeRuntime(
       options({
         knowledgeGateway: {
-          getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+          getEndpoint: () => 'http://127.0.0.1:4567/mcp',
+          getAvailableToolNames: () => ['knowledge_search']
         } as unknown as KnowledgeMcpGateway
       }),
       deps
@@ -1322,7 +1324,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     const runtime = new OpenCodeRuntime(
       options({
         knowledgeGateway: {
-          getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+          getEndpoint: () => 'http://127.0.0.1:4567/mcp',
+          getAvailableToolNames: () => ['knowledge_search']
         } as unknown as KnowledgeMcpGateway
       }),
       deps
@@ -1389,7 +1392,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         embedded: false,
         baseUrl: 'http://127.0.0.1:4096',
         knowledgeGateway: {
-          getEndpoint: () => 'http://127.0.0.1:4567/mcp'
+          getEndpoint: () => 'http://127.0.0.1:4567/mcp',
+          getAvailableToolNames: () => ['knowledge_search']
         } as unknown as KnowledgeMcpGateway
       }),
       {

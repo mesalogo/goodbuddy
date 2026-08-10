@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,6 +8,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopApi } from '../../shared/contracts'
+import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type {
   MagicNoteDetail,
   MagicNotesSnapshot,
@@ -16,7 +18,30 @@ import type {
 import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 
 vi.mock('./MagicNoteEditor', () => ({
-  MagicNoteEditor: () => <div data-testid="magic-note-editor" />
+  MagicNoteEditor: ({
+    onChange,
+    onParagraphCommit
+  }: {
+    onChange: (content: MagicNoteDetail['entries'][number]['content']) => void
+    onParagraphCommit?: (
+      content: MagicNoteDetail['entries'][number]['content']
+    ) => void
+  }) => (
+    <button
+      data-testid="magic-note-editor"
+      onClick={() => {
+        const content = {
+          version: 1 as const,
+          ops: [{ insert: '新的句子\n' }]
+        }
+        onChange(content)
+        onParagraphCommit?.(content)
+      }}
+      type="button"
+    >
+      模拟输入并回车
+    </button>
+  )
 }))
 
 vi.mock('./MagicNoteContent', () => ({
@@ -29,10 +54,10 @@ const noteTodoId = '00000000-0000-4000-8000-000000000603'
 const manualTodoId = '00000000-0000-4000-8000-000000000604'
 const secondNoteId = '00000000-0000-4000-8000-000000000608'
 const thirdNoteId = '00000000-0000-4000-8000-000000000609'
+const createdEntryId = '00000000-0000-4000-8000-000000000613'
 
 const detail: MagicNoteDetail = {
   id: noteId,
-  projectId: '00000000-0000-4000-8000-000000000101',
   title: '发布笔记',
   preview: '整理发布清单',
   entryCount: 1,
@@ -66,7 +91,6 @@ const detail: MagicNoteDetail = {
 
 const noteTodo: MagicTodoItem = {
   id: noteTodoId,
-  projectId: detail.projectId,
   noteId,
   noteTitle: detail.title,
   entryId,
@@ -83,8 +107,11 @@ const noteTodo: MagicTodoItem = {
 
 const manualTodo: MagicTodoItem = {
   id: manualTodoId,
-  projectId: detail.projectId,
-  source: 'manual',
+  noteId: secondNoteId,
+  noteTitle: '演示笔记',
+  entryId: '00000000-0000-4000-8000-000000000610',
+  sourceIndex: 0,
+  source: 'note',
   title: '准备演示',
   instructions: '确认演示环境和样例数据。',
   completed: false,
@@ -110,7 +137,6 @@ const summaryFromDetail = (
   note: MagicNoteDetail
 ): MagicNotesSnapshot['notes'][number] => ({
   id: note.id,
-  projectId: note.projectId,
   title: note.title,
   preview: note.preview,
   entryCount: note.entryCount,
@@ -124,31 +150,80 @@ const list = vi.fn<() => Promise<MagicNotesSnapshot>>()
 const get = vi.fn<(noteId: string) => Promise<MagicNoteDetail>>()
 const listTodos = vi.fn<() => Promise<MagicTodosSnapshot>>()
 const remove = vi.fn<DesktopApi['magicNotes']['remove']>()
-const createTodo = vi.fn<DesktopApi['magicNotes']['createTodo']>()
-const updateTodo = vi.fn<DesktopApi['magicNotes']['updateTodo']>()
-const removeTodo = vi.fn<DesktopApi['magicNotes']['removeTodo']>()
+const createEntry = vi.fn<DesktopApi['magicNotes']['createEntry']>()
+const analyze = vi.fn<DesktopApi['magicNotes']['analyze']>()
 const analyzeTodo = vi.fn<DesktopApi['magicNotes']['analyzeTodo']>()
+const analyzeDraft = vi.fn<DesktopApi['magicNotes']['analyzeDraft']>()
+const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async () => ({
+  checkUpdatesOnStartup: false,
+  magicNotesEnabled: true,
+  magicNoteCommentMode: 'immediate'
+}))
 const onNotify = vi.fn()
 
 beforeEach(() => {
+  getApplicationSettings.mockResolvedValue({
+    checkUpdatesOnStartup: false,
+    magicNotesEnabled: true,
+    magicNoteCommentMode: 'immediate'
+  })
   list.mockResolvedValue({ notes: [detail] })
   get.mockResolvedValue(detail)
   listTodos.mockResolvedValue({ todos: [noteTodo, manualTodo] })
   remove.mockResolvedValue()
-  createTodo.mockResolvedValue({
-    ...manualTodo,
-    id: '00000000-0000-4000-8000-000000000606',
-    title: '新增手动待办',
-    instructions: '新增说明'
+  const createdDetail: MagicNoteDetail = {
+    ...detail,
+    revision: detail.revision + 1,
+    entryCount: 2,
+    entries: [
+      ...detail.entries,
+      {
+        ...detail.entries[0]!,
+        id: createdEntryId,
+        content: {
+          version: 1,
+          ops: [{ insert: '新的句子\n' }]
+        },
+        plainText: '新的句子',
+        comments: [],
+        analyzedAt: undefined,
+        revision: 0,
+        createdAt: '2026-08-01T00:05:00.000Z',
+        updatedAt: '2026-08-01T00:05:00.000Z'
+      }
+    ]
+  }
+  createEntry.mockResolvedValue(createdDetail)
+  analyze.mockResolvedValue({
+    ...createdDetail,
+    entries: createdDetail.entries.map((entry) =>
+      entry.id === createdEntryId
+        ? {
+            ...entry,
+            comments: [
+              {
+                id: '00000000-0000-4000-8000-000000000614',
+                kind: 'suggestion',
+                content: '保存后的自动评论。'
+              }
+            ],
+            analyzedAt: '2026-08-01T00:06:00.000Z',
+            revision: 1
+          }
+        : entry
+    )
   })
-  updateTodo.mockImplementation(async (input) => ({
-    ...(input.todoId === noteTodo.id ? noteTodo : manualTodo),
-    ...input,
-    revision:
-      (input.todoId === noteTodo.id ? noteTodo.revision : manualTodo.revision) +
-      1
-  }))
-  removeTodo.mockResolvedValue()
+  analyzeDraft.mockResolvedValue({
+    id: '00000000-0000-4000-8000-000000000611',
+    comments: [
+      {
+        id: '00000000-0000-4000-8000-000000000612',
+        kind: 'summary',
+        content: '这是最新的草稿评论。'
+      }
+    ],
+    analyzedAt: '2026-08-01T00:05:00.000Z'
+  })
   analyzeTodo.mockResolvedValue({
     ...noteTodo,
     comments: [
@@ -169,16 +244,20 @@ beforeEach(() => {
         get,
         listTodos,
         remove,
-        createTodo,
-        updateTodo,
-        removeTodo,
-        analyzeTodo
+        createEntry,
+        analyze,
+        analyzeTodo,
+        analyzeDraft
+      },
+      updates: {
+        getSettings: getApplicationSettings
       }
     } as unknown as DesktopApi
   })
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   cleanup()
   vi.clearAllMocks()
 })
@@ -188,11 +267,7 @@ describe('MagicNotesWorkspace', () => {
     get.mockRejectedValueOnce(new Error('详情暂时不可用'))
 
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     expect(
@@ -212,11 +287,7 @@ describe('MagicNotesWorkspace', () => {
 
   it('keeps successful data and selection when a refresh fails', async () => {
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     await screen.findByText('记录正文')
@@ -246,13 +317,9 @@ describe('MagicNotesWorkspace', () => {
     )
   })
 
-  it('aggregates note and manual todos without AI-created todo actions', async () => {
+  it('shows note-backed todos with the title above its source', async () => {
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     expect(await screen.findByText('先核对发布材料。')).toBeInTheDocument()
@@ -266,27 +333,69 @@ describe('MagicNotesWorkspace', () => {
     ).toHaveClass('page-tabs--segmented')
     expect(await screen.findAllByText('核对发布材料')).toHaveLength(2)
     expect(screen.getByText('准备演示')).toBeInTheDocument()
-    expect(screen.getByText('笔记：发布笔记')).toBeInTheDocument()
+    const todoTitle = screen.getByRole('heading', {
+      name: '核对发布材料'
+    })
+    const todoSource = todoTitle.parentElement!.querySelector('span')!
+    expect(
+      todoTitle.compareDocumentPosition(todoSource) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '标记为已完成' })
+    expect(screen.getByLabelText('未完成')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '打开原笔记修改' })
+    ).toBeInTheDocument()
+  })
+
+  it('keeps history editing contained and uses standard delete buttons', async () => {
+    const { container } = render(
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
+
+    await screen.findByText('记录正文')
+    const deleteNote = screen.getByRole('button', {
+      name: '删除笔记'
+    })
+    const deleteEntry = screen.getByRole('button', {
+      name: '删除记录'
+    })
+    expect(deleteNote).toHaveClass('danger-button', 'danger-button--quiet')
+    expect(deleteNote).toHaveTextContent('删除笔记')
+    expect(deleteEntry).toHaveClass('danger-button', 'danger-button--quiet')
+    expect(deleteEntry).toHaveTextContent('删除记录')
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     await waitFor(() =>
-      expect(updateTodo).toHaveBeenCalledWith({
-        todoId: noteTodo.id,
-        completed: true,
-        expectedRevision: noteTodo.revision
-      })
+      expect(
+        container.querySelector(
+          '.magic-note-entry__editor > [data-testid="magic-note-editor"]'
+        )
+      ).toBeInTheDocument()
     )
+    expect(
+      container.querySelector(
+        '.magic-note-entry__editor-actions'
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '删除记录' }))
+    expect(
+      screen.getByText('删除这条记录？此操作不可撤销。')
+    ).toBeInTheDocument()
+    expect(
+      container.querySelector('.magic-note-entry__editor')
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    expect(
+      screen.queryByText('删除这条记录？此操作不可撤销。')
+    ).not.toBeInTheDocument()
   })
 
   it('can hide and restore the AI comments pane', async () => {
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     const pane = await screen.findByLabelText('AI 评论')
@@ -323,11 +432,7 @@ describe('MagicNotesWorkspace', () => {
     })
 
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     await screen.findByText('记录正文')
@@ -348,11 +453,7 @@ describe('MagicNotesWorkspace', () => {
     })
 
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     await screen.findByText('记录正文')
@@ -388,53 +489,30 @@ describe('MagicNotesWorkspace', () => {
     )
   })
 
-  it('creates a manual todo with a dedicated title and details form', async () => {
+  it('groups note-backed todos in a directory view', async () => {
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     await screen.findByText('记录正文')
     fireEvent.click(screen.getByRole('tab', { name: '待办' }))
-    fireEvent.click(screen.getByRole('button', { name: '新建待办' }))
-    expect(createTodo).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '创建待办' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('请输入待办标题')
-    expect(onNotify).not.toHaveBeenCalled()
-
-    fireEvent.change(screen.getByLabelText('待办标题'), {
-      target: { value: '新增手动待办' }
-    })
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('说明'), {
-      target: { value: '新增说明' }
-    })
-    fireEvent.click(screen.getByRole('button', { name: '创建待办' }))
-
-    await waitFor(() =>
-      expect(createTodo).toHaveBeenCalledWith({
-        projectId: detail.projectId,
-        title: '新增手动待办',
-        instructions: '新增说明'
-      })
-    )
-    expect(onNotify).toHaveBeenCalledWith({
-      tone: 'success',
-      message: '待办已创建'
-    })
-    expect(screen.queryByText('待办已创建')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '新建待办' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '目录视图' }))
+    expect(screen.getByText('发布笔记')).toBeInTheDocument()
+    expect(screen.getByText('演示笔记')).toBeInTheDocument()
+    expect(screen.getByText('准备演示')).toBeInTheDocument()
   })
 
   it('reuses the AI comments pane for selected todos', async () => {
+    getApplicationSettings.mockResolvedValue({
+      checkUpdatesOnStartup: false,
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-manual'
+    })
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     await screen.findByText('记录正文')
@@ -455,11 +533,7 @@ describe('MagicNotesWorkspace', () => {
       ]
     })
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     await screen.findByText('记录正文')
@@ -482,32 +556,55 @@ describe('MagicNotesWorkspace', () => {
     expect(screen.getAllByText('核对发布材料')).not.toHaveLength(0)
   })
 
-  it('clears delete confirmation before selecting the next todo', async () => {
+  it('automatically comments on a newly saved record in auto mode', async () => {
+    getApplicationSettings.mockResolvedValue({
+      checkUpdatesOnStartup: false,
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-auto'
+    })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+
+    await waitFor(() =>
+      expect(createEntry).toHaveBeenCalledWith({
+        noteId,
+        content: {
+          version: 1,
+          ops: [{ insert: '新的句子\n' }]
+        }
+      })
+    )
+    await waitFor(() =>
+      expect(analyze).toHaveBeenCalledWith(createdEntryId)
+    )
+    expect(
+      await screen.findByText('保存后的自动评论。')
+    ).toBeInTheDocument()
+  })
+
+  it('comments on an unsaved draft five seconds after Enter', async () => {
     render(
-      <MagicNotesWorkspace
-        onNotify={onNotify}
-        projectId={detail.projectId}
-        projectName="默认项目"
-      />
+      <MagicNotesWorkspace onNotify={onNotify} />
     )
 
     await screen.findByText('记录正文')
-    fireEvent.click(screen.getByRole('tab', { name: '待办' }))
-    fireEvent.click(screen.getByText('准备演示').closest('button')!)
-    fireEvent.click(screen.getByRole('button', { name: '删除待办' }))
-    expect(
-      screen.getByText('删除“准备演示”？此操作不可撤销。')
-    ).toBeInTheDocument()
-    listTodos.mockResolvedValue({ todos: [noteTodo] })
-    fireEvent.click(
-      screen.getAllByRole('button', { name: '删除待办' })[1]!
-    )
-
-    await waitFor(() =>
-      expect(removeTodo).toHaveBeenCalledWith(manualTodo.id)
-    )
-    expect(
-      screen.queryByText('删除“核对发布材料”？此操作不可撤销。')
-    ).not.toBeInTheDocument()
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_999)
+    })
+    expect(analyzeDraft).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(analyzeDraft).toHaveBeenCalledWith({
+      version: 1,
+      ops: [{ insert: '新的句子\n' }]
+    })
+    expect(screen.getByText('这是最新的草稿评论。')).toBeInTheDocument()
+    vi.useRealTimers()
   })
 })

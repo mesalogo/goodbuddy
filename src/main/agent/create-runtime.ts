@@ -11,7 +11,10 @@ import {
   defaultRuntimeSettings,
   isAgentRuntimeModelProtocol
 } from '../../shared/contracts'
-import type { ResolvedMcpServer } from '../capabilities/capability-service'
+import type {
+  ResolvedMcpServer,
+  RuntimeSkillPackage
+} from '../capabilities/capability-service'
 import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { ContinueHostLauncher } from './continue-host-adapter'
 import { resolveRuntimeSandbox } from './runtime-sandbox'
@@ -33,6 +36,7 @@ const noSubagentTools: ModelToolProviderLike = {
 
 export type AgentCapabilityContext = {
   skillInstructions?: string
+  skillPackages?: RuntimeSkillPackage[]
   mcpServers?: ResolvedMcpServer[]
   continueHostCacheRoot?: string
   bundledRuntimePaths?: BundledRuntimePaths
@@ -120,6 +124,7 @@ export function createAgentRuntime(
       runtimeSandboxMode: sandboxMode,
       modelProfile: settings?.continueModelProfile,
       skillInstructions: capabilities.skillInstructions,
+      skillPackages: capabilities.skillPackages,
       defaultWorkspace: workspace,
       hostCacheRoot:
         capabilities.continueHostCacheRoot ??

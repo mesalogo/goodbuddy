@@ -110,8 +110,11 @@ describe('magic note analyzer', () => {
     } as AgentRuntime
     const todo: MagicTodoItem = {
       id: '00000000-0000-4000-8000-000000000601',
-      projectId: '00000000-0000-4000-8000-000000000602',
-      source: 'manual',
+      noteId: '00000000-0000-4000-8000-000000000602',
+      entryId: '00000000-0000-4000-8000-000000000603',
+      noteTitle: '发布笔记',
+      sourceIndex: 0,
+      source: 'note',
       title: '整理发布清单',
       instructions: '核对版本、说明和构建产物。',
       completed: false,
@@ -125,7 +128,7 @@ describe('magic note analyzer', () => {
       analyzeMagicTodo(
         runtime,
         todo,
-        '00000000-0000-4000-8000-000000000603'
+        '00000000-0000-4000-8000-000000000604'
       )
     ).resolves.toEqual([
       expect.objectContaining({

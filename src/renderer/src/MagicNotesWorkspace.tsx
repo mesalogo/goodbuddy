@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Circle,
   FileText,
+  FolderTree,
   Lightbulb,
   ListTodo,
   PanelRightClose,
@@ -23,6 +24,7 @@ import {
   useState
 } from 'react'
 import type {
+  MagicNoteDraftAnalysis,
   MagicNoteComment,
   MagicNoteDetail,
   MagicNoteEntry,
@@ -30,6 +32,7 @@ import type {
   MagicNoteSummary,
   MagicTodoItem
 } from '../../shared/magic-notes-contracts'
+import type { MagicNoteCommentMode } from '../../shared/application-settings-contracts'
 import { MagicNoteContent } from './MagicNoteContent'
 import { MagicNoteEditor } from './MagicNoteEditor'
 import type { AppNotificationInput } from './notifications'
@@ -43,17 +46,14 @@ import {
 
 export type MagicNotesWorkspaceProps = {
   onNotify: (notification: AppNotificationInput) => void
-  projectId?: string
-  projectName?: string
 }
 
 type LibraryView = 'notes' | 'todos'
 type TodoFilter = 'active' | 'completed' | 'all'
+type TodoListMode = 'list' | 'directory'
 type LoadStatus = 'loading' | 'ready' | 'error'
 type ValidationTarget =
   | 'create-note'
-  | 'create-todo'
-  | 'edit-todo'
   | 'note-title'
   | 'new-entry'
   | 'edit-entry'
@@ -69,6 +69,11 @@ const todoFilters = [
   { value: 'all', label: '全部' }
 ] as const
 
+const todoListModes = [
+  { value: 'list', label: '待办视图' },
+  { value: 'directory', label: '目录视图' }
+] as const
+
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   month: '2-digit',
   day: '2-digit',
@@ -79,7 +84,6 @@ const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
 function noteSummary(note: MagicNoteDetail): MagicNoteSummary {
   return {
     id: note.id,
-    projectId: note.projectId,
     title: note.title,
     preview: note.preview,
     entryCount: note.entryCount,
@@ -139,15 +143,50 @@ function AiComment({
   )
 }
 
+function TodoListItem({
+  onSelect,
+  selected,
+  todo
+}: {
+  onSelect: () => void
+  selected: boolean
+  todo: MagicTodoItem
+}): React.JSX.Element {
+  return (
+    <button
+      aria-pressed={selected}
+      className={`magic-todo-list-item ${
+        selected ? 'magic-todo-list-item--active' : ''
+      }`}
+      onClick={onSelect}
+      type="button"
+    >
+      <span aria-hidden="true" className="magic-todo-list-item__check">
+        {todo.completed ? (
+          <CheckCircle2 size={16} />
+        ) : (
+          <Circle size={16} />
+        )}
+      </span>
+      <span>
+        <strong>{todo.title}</strong>
+        <small>来自笔记：{todo.noteTitle}</small>
+      </span>
+    </button>
+  )
+}
+
 export function MagicNotesWorkspace({
-  onNotify,
-  projectId,
-  projectName
+  onNotify
 }: MagicNotesWorkspaceProps): React.JSX.Element {
   const [notes, setNotes] = useState<MagicNoteSummary[]>([])
   const [todos, setTodos] = useState<MagicTodoItem[]>([])
   const [libraryView, setLibraryView] = useState<LibraryView>('notes')
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('active')
+  const [todoListMode, setTodoListMode] =
+    useState<TodoListMode>('list')
+  const [commentMode, setCommentMode] =
+    useState<MagicNoteCommentMode>('immediate')
   const [selectedNoteId, setSelectedNoteId] = useState('')
   const [selectedTodoId, setSelectedTodoId] = useState('')
   const [detail, setDetail] = useState<MagicNoteDetail>()
@@ -162,18 +201,16 @@ export function MagicNotesWorkspace({
   const [search, setSearch] = useState('')
   const [creating, setCreating] = useState(false)
   const [newTitle, setNewTitle] = useState('')
-  const [newTodoTitle, setNewTodoTitle] = useState('')
-  const [newTodoInstructions, setNewTodoInstructions] = useState('')
-  const [editingTodo, setEditingTodo] = useState(false)
-  const [todoTitleDraft, setTodoTitleDraft] = useState('')
-  const [todoInstructionsDraft, setTodoInstructionsDraft] = useState('')
-  const [deletingTodo, setDeletingTodo] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [deletingNote, setDeletingNote] = useState(false)
   const [composerKey, setComposerKey] = useState(0)
   const [editingEntry, setEditingEntry] = useState<MagicNoteEntry>()
   const [deletingEntryId, setDeletingEntryId] = useState('')
   const [aiPaneOpen, setAiPaneOpen] = useState(true)
+  const [draftAnalyses, setDraftAnalyses] = useState<
+    MagicNoteDraftAnalysis[]
+  >([])
+  const [draftAnalysisRunning, setDraftAnalysisRunning] = useState(false)
   const [validation, setValidation] = useState<{
     target: ValidationTarget
     message: string
@@ -189,6 +226,18 @@ export function MagicNotesWorkspace({
   const editingContentRef = useRef<MagicNoteRichContent | undefined>(
     undefined
   )
+  const draftAnalysisTimerRef = useRef<number | undefined>(undefined)
+  const draftAnalysisContentRef = useRef<
+    MagicNoteRichContent | undefined
+  >(undefined)
+  const draftAnalysisQueuedRef = useRef(false)
+  const draftAnalysisRunningRef = useRef(false)
+  const draftAnalysisArmedRef = useRef(false)
+  const draftAnalysisContextRef = useRef(0)
+  const lastDraftAnalysisStartedAtRef = useRef(0)
+  const runDraftAnalysisRef = useRef<
+    (content: MagicNoteRichContent) => Promise<void>
+  >(async () => undefined)
 
   const notifyError = useCallback(
     (error: unknown): void =>
@@ -231,6 +280,104 @@ export function MagicNotesWorkspace({
     setBusy('')
   }, [])
 
+  useEffect(() => {
+    let active = true
+    void window.goodbuddy.updates
+      ?.getSettings()
+      .then((settings) => {
+        if (active) {
+          setCommentMode(settings.magicNoteCommentMode)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const runDraftAnalysis = useCallback(
+    async (content: MagicNoteRichContent): Promise<void> => {
+      if (draftAnalysisRunningRef.current) {
+        draftAnalysisContentRef.current = content
+        draftAnalysisQueuedRef.current = true
+        return
+      }
+      draftAnalysisArmedRef.current = false
+      draftAnalysisRunningRef.current = true
+      const analysisContext = draftAnalysisContextRef.current
+      lastDraftAnalysisStartedAtRef.current = Date.now()
+      setDraftAnalysisRunning(true)
+      try {
+        const analysis =
+          await window.goodbuddy.magicNotes.analyzeDraft(content)
+        if (draftAnalysisContextRef.current === analysisContext) {
+          setDraftAnalyses((current) => [analysis, ...current].slice(0, 20))
+        }
+      } catch (analysisError) {
+        if (draftAnalysisContextRef.current === analysisContext) {
+          notifyError(analysisError)
+        }
+      } finally {
+        draftAnalysisRunningRef.current = false
+        setDraftAnalysisRunning(false)
+        if (draftAnalysisQueuedRef.current) {
+          draftAnalysisQueuedRef.current = false
+          const queuedContent = draftAnalysisContentRef.current
+          const delay = Math.max(
+            0,
+            5_000 -
+              (Date.now() - lastDraftAnalysisStartedAtRef.current)
+          )
+          if (queuedContent) {
+            draftAnalysisTimerRef.current = window.setTimeout(() => {
+              void runDraftAnalysisRef.current(queuedContent)
+            }, delay)
+          }
+        }
+      }
+    },
+    [notifyError]
+  )
+  useEffect(() => {
+    runDraftAnalysisRef.current = runDraftAnalysis
+  }, [runDraftAnalysis])
+
+  const scheduleDraftAnalysis = useCallback(
+    (content: MagicNoteRichContent): void => {
+      draftAnalysisContentRef.current = content
+      if (draftAnalysisTimerRef.current !== undefined) {
+        window.clearTimeout(draftAnalysisTimerRef.current)
+      }
+      draftAnalysisTimerRef.current = window.setTimeout(() => {
+        draftAnalysisTimerRef.current = undefined
+        void runDraftAnalysisRef.current(content)
+      }, 5_000)
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (commentMode === 'immediate') {
+      return
+    }
+    draftAnalysisArmedRef.current = false
+    draftAnalysisQueuedRef.current = false
+    if (draftAnalysisTimerRef.current !== undefined) {
+      window.clearTimeout(draftAnalysisTimerRef.current)
+      draftAnalysisTimerRef.current = undefined
+    }
+  }, [commentMode])
+
+  useEffect(
+    () => () => {
+      if (draftAnalysisTimerRef.current !== undefined) {
+        window.clearTimeout(draftAnalysisTimerRef.current)
+      }
+      draftAnalysisQueuedRef.current = false
+    },
+    []
+  )
+
   const applyDetail = useCallback((next: MagicNoteDetail) => {
     setDetail(next)
     setTitleDraft(next.title)
@@ -260,8 +407,6 @@ export function MagicNotesWorkspace({
       )
     )
     setSelectedTodoId(next.id)
-    setTodoTitleDraft(next.title)
-    setTodoInstructionsDraft(next.instructions)
   }, [])
 
   const loadDetail = useCallback(
@@ -272,6 +417,16 @@ export function MagicNotesWorkspace({
       try {
         const nextDetail = await window.goodbuddy.magicNotes.get(noteId)
         if (detailRequestRef.current === requestId) {
+          draftAnalysisArmedRef.current = false
+          draftAnalysisQueuedRef.current = false
+          draftAnalysisContextRef.current += 1
+          setDraftAnalyses([])
+          composerContentRef.current = undefined
+          setComposerKey((current) => current + 1)
+          if (draftAnalysisTimerRef.current !== undefined) {
+            window.clearTimeout(draftAnalysisTimerRef.current)
+            draftAnalysisTimerRef.current = undefined
+          }
           setSelectedNoteId(noteId)
           applyDetail(nextDetail)
         }
@@ -303,8 +458,8 @@ export function MagicNotesWorkspace({
       setRefreshError('')
       try {
         const [snapshot, todoSnapshot] = await Promise.all([
-          window.goodbuddy.magicNotes.list(projectId),
-          window.goodbuddy.magicNotes.listTodos(projectId)
+          window.goodbuddy.magicNotes.list(),
+          window.goodbuddy.magicNotes.listTodos()
         ])
         const nextId =
           preferredId && snapshot.notes.some((note) => note.id === preferredId)
@@ -346,7 +501,7 @@ export function MagicNotesWorkspace({
         }
       }
     },
-    [projectId]
+    []
   )
 
   useEffect(() => {
@@ -387,20 +542,39 @@ export function MagicNotesWorkspace({
     })
   }, [search, todoFilter, todos])
 
+  const todoDirectories = useMemo(() => {
+    const directories = new Map<
+      string,
+      { noteId: string; noteTitle: string; todos: MagicTodoItem[] }
+    >()
+    for (const todo of visibleTodos) {
+      const directory = directories.get(todo.noteId) ?? {
+        noteId: todo.noteId,
+        noteTitle: todo.noteTitle,
+        todos: []
+      }
+      directory.todos.push(todo)
+      directories.set(todo.noteId, directory)
+    }
+    return [...directories.values()].sort((left, right) =>
+      left.noteTitle.localeCompare(right.noteTitle, 'zh-CN')
+    )
+  }, [visibleTodos])
+
   const selectedTodo = useMemo(
     () => todos.find((todo) => todo.id === selectedTodoId),
     [selectedTodoId, todos]
   )
 
   const reloadTodos = useCallback(async (): Promise<void> => {
-    const snapshot = await window.goodbuddy.magicNotes.listTodos(projectId)
+    const snapshot = await window.goodbuddy.magicNotes.listTodos()
     setTodos(snapshot.todos)
     setSelectedTodoId((current) =>
       snapshot.todos.some((todo) => todo.id === current)
         ? current
         : snapshot.todos[0]?.id ?? ''
     )
-  }, [projectId])
+  }, [])
 
   const aiEntries = useMemo(
     () =>
@@ -423,7 +597,6 @@ export function MagicNotesWorkspace({
     }
     try {
       const created = await window.goodbuddy.magicNotes.create({
-        projectId,
         title
       })
       applyDetail(created)
@@ -434,109 +607,6 @@ export function MagicNotesWorkspace({
       notifySuccess('笔记已创建')
     } catch (createError) {
       notifyError(createError)
-    } finally {
-      endBusy(operation)
-    }
-  }
-
-  const createManualTodo = async (): Promise<void> => {
-    const title = newTodoTitle.trim()
-    if (!title) {
-      setValidation({ target: 'create-todo', message: '请输入待办标题' })
-      return
-    }
-    clearValidation('create-todo')
-    const operation = 'create-todo'
-    if (!beginBusy(operation)) {
-      return
-    }
-    try {
-      const created = await window.goodbuddy.magicNotes.createTodo({
-        projectId,
-        title,
-        instructions: newTodoInstructions.trim()
-      })
-      applyTodo(created)
-      setNewTodoTitle('')
-      setNewTodoInstructions('')
-      setCreating(false)
-      notifySuccess('待办已创建')
-    } catch (createError) {
-      notifyError(createError)
-    } finally {
-      endBusy(operation)
-    }
-  }
-
-  const toggleTodo = async (todo: MagicTodoItem): Promise<void> => {
-    const operation = `toggle-todo-${todo.id}`
-    if (!beginBusy(operation)) {
-      return
-    }
-    try {
-      const updated = await window.goodbuddy.magicNotes.updateTodo({
-        todoId: todo.id,
-        completed: !todo.completed,
-        expectedRevision: todo.revision
-      })
-      applyTodo(updated)
-      if (updated.noteId && updated.noteId === detail?.id) {
-        applyDetail(await window.goodbuddy.magicNotes.get(updated.noteId))
-      }
-    } catch (updateError) {
-      notifyError(updateError)
-    } finally {
-      endBusy(operation)
-    }
-  }
-
-  const saveTodo = async (): Promise<void> => {
-    if (!selectedTodo || selectedTodo.source !== 'manual') {
-      return
-    }
-    const title = todoTitleDraft.trim()
-    if (!title) {
-      setValidation({ target: 'edit-todo', message: '待办标题不能为空' })
-      return
-    }
-    clearValidation('edit-todo')
-    const operation = `save-todo-${selectedTodo.id}`
-    if (!beginBusy(operation)) {
-      return
-    }
-    try {
-      applyTodo(
-        await window.goodbuddy.magicNotes.updateTodo({
-          todoId: selectedTodo.id,
-          title,
-          instructions: todoInstructionsDraft.trim(),
-          expectedRevision: selectedTodo.revision
-        })
-      )
-      setEditingTodo(false)
-      notifySuccess('待办已更新')
-    } catch (updateError) {
-      notifyError(updateError)
-    } finally {
-      endBusy(operation)
-    }
-  }
-
-  const removeTodo = async (): Promise<void> => {
-    if (!selectedTodo || selectedTodo.source !== 'manual') {
-      return
-    }
-    const operation = `delete-todo-${selectedTodo.id}`
-    if (!beginBusy(operation)) {
-      return
-    }
-    try {
-      await window.goodbuddy.magicNotes.removeTodo(selectedTodo.id)
-      setDeletingTodo(false)
-      await reloadTodos()
-      notifySuccess('待办已删除')
-    } catch (deleteError) {
-      notifyError(deleteError)
     } finally {
       endBusy(operation)
     }
@@ -599,6 +669,9 @@ export function MagicNotesWorkspace({
       return
     }
     try {
+      const existingEntryIds = new Set(
+        detail.entries.map((entry) => entry.id)
+      )
       const updated = await window.goodbuddy.magicNotes.createEntry({
         noteId: detail.id,
         content: composerContent
@@ -606,8 +679,29 @@ export function MagicNotesWorkspace({
       applyDetail(updated)
       await reloadTodos()
       composerContentRef.current = undefined
+      draftAnalysisArmedRef.current = false
+      draftAnalysisQueuedRef.current = false
+      draftAnalysisContextRef.current += 1
+      setDraftAnalyses([])
+      if (draftAnalysisTimerRef.current !== undefined) {
+        window.clearTimeout(draftAnalysisTimerRef.current)
+        draftAnalysisTimerRef.current = undefined
+      }
       setComposerKey((current) => current + 1)
       notifySuccess('记录已保存')
+      const createdEntry = updated.entries.find(
+        (entry) => !existingEntryIds.has(entry.id)
+      )
+      if (commentMode === 'after-save-auto' && createdEntry) {
+        try {
+          applyDetail(
+            await window.goodbuddy.magicNotes.analyze(createdEntry.id)
+          )
+          notifySuccess('AI 评论已更新')
+        } catch (analysisError) {
+          notifyError(analysisError)
+        }
+      }
     } catch (saveError) {
       notifyError(saveError)
     } finally {
@@ -637,6 +731,16 @@ export function MagicNotesWorkspace({
       setEditingEntry(undefined)
       editingContentRef.current = undefined
       notifySuccess('记录已更新，原 AI 评论已清除')
+      if (commentMode === 'after-save-auto') {
+        try {
+          applyDetail(
+            await window.goodbuddy.magicNotes.analyze(editingEntry.id)
+          )
+          notifySuccess('AI 评论已更新')
+        } catch (analysisError) {
+          notifyError(analysisError)
+        }
+      }
     } catch (updateError) {
       notifyError(updateError)
     } finally {
@@ -678,28 +782,26 @@ export function MagicNotesWorkspace({
               )}
               {aiPaneOpen ? '隐藏 AI 评论' : '显示 AI 评论'}
             </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => {
-                setValidation(undefined)
-                setCreating(true)
-              }}
-            >
-              <Plus aria-hidden="true" size={15} />
-              {libraryView === 'notes' ? '新建笔记' : '新建待办'}
-            </button>
+            {libraryView === 'notes' && (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => {
+                  setValidation(undefined)
+                  setCreating(true)
+                }}
+              >
+                <Plus aria-hidden="true" size={15} />
+                新建笔记
+              </button>
+            )}
           </>
         }
-        description="连续记录富文本、本地图片和待办清单，由 AI 提供只读评论。"
+        description="全局记录富文本、本地图片和待办清单，由 AI 提供只读评论。"
         eyebrow="MAGIC NOTES"
         headingId="magic-notes-title"
         icon={<Sparkles size={20} />}
-        scope={
-          projectId && projectName
-            ? { kind: 'project', projectName }
-            : { kind: 'global' }
-        }
+        scope={{ kind: 'global' }}
         title="魔法笔记"
       />
 
@@ -907,78 +1009,17 @@ export function MagicNotesWorkspace({
                 />
               </label>
               <SegmentedControl
+                ariaLabel="待办列表方式"
+                onChange={setTodoListMode}
+                options={todoListModes}
+                value={todoListMode}
+              />
+              <SegmentedControl
                 ariaLabel="筛选待办"
                 onChange={setTodoFilter}
                 options={todoFilters}
                 value={todoFilter}
               />
-              {creating && (
-                <form
-                  className="magic-notes-create"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    void createManualTodo()
-                  }}
-                >
-                  <label>
-                    <span>待办标题</span>
-                    <input
-                      aria-describedby={
-                        validation?.target === 'create-todo'
-                          ? 'magic-todo-create-error'
-                          : undefined
-                      }
-                      aria-invalid={validation?.target === 'create-todo'}
-                      autoFocus
-                      maxLength={120}
-                      onChange={(event) => {
-                        setNewTodoTitle(event.target.value)
-                        clearValidation('create-todo')
-                      }}
-                      value={newTodoTitle}
-                    />
-                  </label>
-                  {validation?.target === 'create-todo' && (
-                    <small
-                      className="magic-notes-field-error"
-                      id="magic-todo-create-error"
-                      role="alert"
-                    >
-                      {validation.message}
-                    </small>
-                  )}
-                  <label>
-                    <span>说明</span>
-                    <textarea
-                      maxLength={20_000}
-                      onChange={(event) =>
-                        setNewTodoInstructions(event.target.value)
-                      }
-                      rows={3}
-                      value={newTodoInstructions}
-                    />
-                  </label>
-                  <div>
-                    <button
-                      className="secondary-button"
-                      onClick={() => {
-                        setCreating(false)
-                        clearValidation('create-todo')
-                      }}
-                      type="button"
-                    >
-                      取消
-                    </button>
-                    <button
-                      className="primary-button"
-                      disabled={busy === 'create-todo'}
-                      type="submit"
-                    >
-                      创建待办
-                    </button>
-                  </div>
-                </form>
-              )}
               <div className="magic-notes-list">
                 {loadStatus === 'loading' ? (
                   <p className="magic-notes-muted">正在加载待办…</p>
@@ -1006,43 +1047,43 @@ export function MagicNotesWorkspace({
                         </button>
                       )}
                   </>
-                ) : (
+                ) : todoListMode === 'list' ? (
                   visibleTodos.map((todo) => (
-                    <button
-                      aria-pressed={selectedTodoId === todo.id}
-                      className={`magic-todo-list-item ${
-                        selectedTodoId === todo.id
-                          ? 'magic-todo-list-item--active'
-                          : ''
-                      }`}
+                    <TodoListItem
                       key={todo.id}
-                      onClick={() => {
+                      onSelect={() => {
                         setValidation(undefined)
                         setSelectedTodoId(todo.id)
-                        setEditingTodo(false)
-                        setDeletingTodo(false)
                       }}
-                      type="button"
+                      selected={selectedTodoId === todo.id}
+                      todo={todo}
+                    />
+                  ))
+                ) : (
+                  todoDirectories.map((directory) => (
+                    <section
+                      className="magic-todo-directory"
+                      key={directory.noteId}
                     >
-                      <span
-                        aria-hidden="true"
-                        className="magic-todo-list-item__check"
-                      >
-                        {todo.completed ? (
-                          <CheckCircle2 size={16} />
-                        ) : (
-                          <Circle size={16} />
-                        )}
-                      </span>
-                      <span>
-                        <strong>{todo.title}</strong>
-                        <small>
-                          {todo.source === 'note'
-                            ? `笔记：${todo.noteTitle ?? '未命名笔记'}`
-                            : '手动待办'}
-                        </small>
-                      </span>
-                    </button>
+                      <div className="magic-todo-directory__heading">
+                        <FolderTree aria-hidden="true" size={14} />
+                        <strong>{directory.noteTitle}</strong>
+                        <span>{directory.todos.length}</span>
+                      </div>
+                      <div className="magic-todo-directory__items">
+                        {directory.todos.map((todo) => (
+                          <TodoListItem
+                            key={todo.id}
+                            onSelect={() => {
+                              setValidation(undefined)
+                              setSelectedTodoId(todo.id)
+                            }}
+                            selected={selectedTodoId === todo.id}
+                            todo={todo}
+                          />
+                        ))}
+                      </div>
+                    </section>
                   ))
                 )}
               </div>
@@ -1138,12 +1179,12 @@ export function MagicNotesWorkspace({
                   </button>
                   <button
                     aria-label="删除笔记"
-                    className="danger-ghost icon-button"
-                    title="删除笔记"
+                    className="danger-button danger-button--quiet"
                     type="button"
                     onClick={() => setDeletingNote(true)}
                   >
-                    <Trash2 size={15} />
+                    <Trash2 aria-hidden="true" size={14} />
+                    删除笔记
                   </button>
                 </div>
               </header>
@@ -1195,7 +1236,7 @@ export function MagicNotesWorkspace({
 
               <div className="magic-note-composer">
                 <MagicNoteEditor
-                  key={composerKey}
+                  key={`${detail.id}-${composerKey}`}
                   ariaDescribedBy={
                     validation?.target === 'new-entry'
                       ? 'magic-note-entry-create-error'
@@ -1206,10 +1247,25 @@ export function MagicNotesWorkspace({
                   onChange={(content) => {
                     composerContentRef.current = content
                     clearValidation('new-entry')
+                    if (
+                      commentMode === 'immediate' &&
+                      draftAnalysisArmedRef.current
+                    ) {
+                      scheduleDraftAnalysis(content)
+                    }
                   }}
                   onError={(message) =>
                     setValidation({ target: 'new-entry', message })
                   }
+                  onParagraphCommit={(content) => {
+                    if (
+                      commentMode === 'immediate' &&
+                      hasContent(content)
+                    ) {
+                      draftAnalysisArmedRef.current = true
+                      scheduleDraftAnalysis(content)
+                    }
+                  }}
                 />
                 {validation?.target === 'new-entry' && (
                   <p
@@ -1221,7 +1277,11 @@ export function MagicNotesWorkspace({
                   </p>
                 )}
                 <footer>
-                  <span>支持富文本、粘贴或拖入本地图片</span>
+                  <span>
+                    {commentMode === 'immediate'
+                      ? '按回车并停止输入 5 秒后，AI 评论当前草稿'
+                      : '支持富文本、粘贴或拖入本地图片'}
+                  </span>
                   <button
                     className="primary-button"
                     disabled={busy === 'create-entry'}
@@ -1250,24 +1310,27 @@ export function MagicNotesWorkspace({
                           {dateFormatter.format(new Date(entry.createdAt))}
                         </time>
                         <div>
-                          <button
-                            className="secondary-button"
-                            disabled={busy === `analyze-${entry.id}`}
-                            type="button"
-                            onClick={() => void analyzeEntry(entry.id)}
-                          >
-                            <Bot size={14} />
-                            {busy === `analyze-${entry.id}`
-                              ? '分析中…'
-                              : entry.analyzedAt
-                                ? '重新分析'
-                                : 'AI 分析'}
-                          </button>
+                          {commentMode === 'after-save-manual' && (
+                            <button
+                              className="secondary-button"
+                              disabled={busy === `analyze-${entry.id}`}
+                              type="button"
+                              onClick={() => void analyzeEntry(entry.id)}
+                            >
+                              <Bot size={14} />
+                              {busy === `analyze-${entry.id}`
+                                ? '分析中…'
+                                : entry.analyzedAt
+                                  ? '重新分析'
+                                  : 'AI 分析'}
+                            </button>
+                          )}
                           <button
                             className="secondary-button"
                             type="button"
                             onClick={() => {
                               clearValidation('edit-entry')
+                              setDeletingEntryId('')
                               setEditingEntry(entry)
                               editingContentRef.current = entry.content
                             }}
@@ -1276,12 +1339,17 @@ export function MagicNotesWorkspace({
                           </button>
                           <button
                             aria-label="删除记录"
-                            className="danger-ghost icon-button"
-                            title="删除记录"
+                            className="danger-button danger-button--quiet"
                             type="button"
-                            onClick={() => setDeletingEntryId(entry.id)}
+                            onClick={() => {
+                              setEditingEntry(undefined)
+                              editingContentRef.current = undefined
+                              clearValidation('edit-entry')
+                              setDeletingEntryId(entry.id)
+                            }}
                           >
-                            <Trash2 size={14} />
+                            <Trash2 aria-hidden="true" size={14} />
+                            删除记录
                           </button>
                         </div>
                       </header>
@@ -1338,6 +1406,12 @@ export function MagicNotesWorkspace({
                             onChange={(content) => {
                               editingContentRef.current = content
                               clearValidation('edit-entry')
+                              if (
+                                commentMode === 'immediate' &&
+                                draftAnalysisArmedRef.current
+                              ) {
+                                scheduleDraftAnalysis(content)
+                              }
                             }}
                             onError={(message) =>
                               setValidation({
@@ -1345,6 +1419,15 @@ export function MagicNotesWorkspace({
                                 message
                               })
                             }
+                            onParagraphCommit={(content) => {
+                              if (
+                                commentMode === 'immediate' &&
+                                hasContent(content)
+                              ) {
+                                draftAnalysisArmedRef.current = true
+                                scheduleDraftAnalysis(content)
+                              }
+                            }}
                           />
                           {validation?.target === 'edit-entry' && (
                             <p
@@ -1355,7 +1438,7 @@ export function MagicNotesWorkspace({
                               {validation.message}
                             </p>
                           )}
-                          <div>
+                          <div className="magic-note-entry__editor-actions">
                             <button
                               className="secondary-button"
                               type="button"
@@ -1388,7 +1471,7 @@ export function MagicNotesWorkspace({
             )
           ) : !selectedTodo ? (
             <EmptyState
-              description="从左侧选择待办，或新建一个手动待办。"
+              description="从左侧选择待办；待办统一来自笔记中的清单。"
               icon={<ListTodo size={24} />}
               title={
                 loadStatus === 'loading' ? '正在加载' : '还没有选择待办'
@@ -1397,28 +1480,21 @@ export function MagicNotesWorkspace({
           ) : (
             <section className="magic-todo-detail">
               <header>
-                <button
+                <span
                   aria-label={
-                    selectedTodo.completed ? '标记为未完成' : '标记为已完成'
+                    selectedTodo.completed ? '已完成' : '未完成'
                   }
                   className="magic-todo-detail__check"
-                  disabled={busy === `toggle-todo-${selectedTodo.id}`}
-                  onClick={() => void toggleTodo(selectedTodo)}
-                  type="button"
                 >
                   {selectedTodo.completed ? (
                     <CheckCircle2 size={24} />
                   ) : (
                     <Circle size={24} />
                   )}
-                </button>
+                </span>
                 <div>
-                  <span>
-                    {selectedTodo.source === 'note'
-                      ? `来自笔记：${selectedTodo.noteTitle ?? '未命名笔记'}`
-                      : '手动待办'}
-                  </span>
                   <h2>{selectedTodo.title}</h2>
+                  <span>来自笔记：{selectedTodo.noteTitle}</span>
                 </div>
                 <div className="magic-todo-detail__actions">
                   <button
@@ -1434,155 +1510,34 @@ export function MagicNotesWorkspace({
                         ? '重新分析'
                         : 'AI 分析'}
                   </button>
-                  {selectedTodo.source === 'manual' && (
-                    <>
-                      <button
-                        className="secondary-button"
-                        onClick={() => {
-                          clearValidation('edit-todo')
-                          setTodoTitleDraft(selectedTodo.title)
-                          setTodoInstructionsDraft(
-                            selectedTodo.instructions
-                          )
-                          setEditingTodo(true)
-                        }}
-                        type="button"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        aria-label="删除待办"
-                        className="danger-ghost icon-button"
-                        onClick={() => setDeletingTodo(true)}
-                        title="删除待办"
-                        type="button"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </>
-                  )}
                 </div>
               </header>
 
-              {deletingTodo && (
-                <div className="magic-note-delete-confirmation">
-                  <span>删除“{selectedTodo.title}”？此操作不可撤销。</span>
-                  <button
-                    className="secondary-button"
-                    onClick={() => setDeletingTodo(false)}
-                    type="button"
-                  >
-                    取消
-                  </button>
-                  <button
-                    className="danger-solid"
-                    disabled={busy === `delete-todo-${selectedTodo.id}`}
-                    onClick={() => void removeTodo()}
-                    type="button"
-                  >
-                    删除待办
-                  </button>
-                </div>
-              )}
-
-              {editingTodo && selectedTodo.source === 'manual' ? (
-                <form
-                  className="magic-todo-detail__editor"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    void saveTodo()
+              <div className="magic-todo-detail__content">
+                <p>
+                  {selectedTodo.instructions ||
+                    '此待办来自笔记正文中的待办清单。'}
+                </p>
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setLibraryView('notes')
+                    void loadDetail(selectedTodo.noteId).then(() => {
+                      requestAnimationFrame(() =>
+                        document
+                          .getElementById(
+                            `magic-note-entry-${selectedTodo.entryId}`
+                          )
+                          ?.scrollIntoView({ block: 'center' })
+                      )
+                    })
                   }}
+                  type="button"
                 >
-                  <label>
-                    <span>待办标题</span>
-                    <input
-                      aria-describedby={
-                        validation?.target === 'edit-todo'
-                          ? 'magic-todo-edit-error'
-                          : undefined
-                      }
-                      aria-invalid={validation?.target === 'edit-todo'}
-                      maxLength={120}
-                      onChange={(event) => {
-                        setTodoTitleDraft(event.target.value)
-                        clearValidation('edit-todo')
-                      }}
-                      value={todoTitleDraft}
-                    />
-                  </label>
-                  {validation?.target === 'edit-todo' && (
-                    <small
-                      className="magic-notes-field-error"
-                      id="magic-todo-edit-error"
-                      role="alert"
-                    >
-                      {validation.message}
-                    </small>
-                  )}
-                  <label>
-                    <span>说明</span>
-                    <textarea
-                      maxLength={20_000}
-                      onChange={(event) =>
-                        setTodoInstructionsDraft(event.target.value)
-                      }
-                      rows={8}
-                      value={todoInstructionsDraft}
-                    />
-                  </label>
-                  <div>
-                    <button
-                      className="secondary-button"
-                      onClick={() => {
-                        setEditingTodo(false)
-                        clearValidation('edit-todo')
-                      }}
-                      type="button"
-                    >
-                      取消
-                    </button>
-                    <button
-                      className="primary-button"
-                      disabled={busy === `save-todo-${selectedTodo.id}`}
-                      type="submit"
-                    >
-                      保存待办
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <div className="magic-todo-detail__content">
-                  <p>
-                    {selectedTodo.instructions ||
-                      (selectedTodo.source === 'note'
-                        ? '此待办来自笔记正文中的待办清单。'
-                        : '尚未添加说明。')}
-                  </p>
-                  {selectedTodo.source === 'note' &&
-                    selectedTodo.noteId &&
-                    selectedTodo.entryId && (
-                      <button
-                        className="secondary-button"
-                        onClick={() => {
-                          setLibraryView('notes')
-                          void loadDetail(selectedTodo.noteId!).then(() => {
-                            requestAnimationFrame(() =>
-                              document
-                                .getElementById(
-                                  `magic-note-entry-${selectedTodo.entryId}`
-                                )
-                                ?.scrollIntoView({ block: 'center' })
-                            )
-                          })
-                        }}
-                        type="button"
-                      >
-                        <BookOpen size={14} />
-                        打开原笔记
-                      </button>
-                    )}
-                </div>
-              )}
+                  <BookOpen size={14} />
+                  打开原笔记修改
+                </button>
+              </div>
             </section>
           )}
         </section>
@@ -1626,12 +1581,37 @@ export function MagicNotesWorkspace({
             )
           ) : !detail ? (
             <p className="magic-notes-muted">选择笔记后显示 AI 评论。</p>
-          ) : aiEntries.length === 0 ? (
+          ) : aiEntries.length === 0 &&
+            draftAnalyses.length === 0 &&
+            !draftAnalysisRunning ? (
             <p className="magic-notes-muted">
-              在记录上点击“AI 分析”，评论会显示在这里。
+              {commentMode === 'immediate'
+                ? '写完一句后按回车，停止输入 5 秒，评论会显示在这里。'
+                : commentMode === 'after-save-auto'
+                  ? '保存记录后，AI 会自动评论。'
+                  : '在记录上点击“AI 分析”，评论会显示在这里。'}
             </p>
           ) : (
             <div className="magic-notes-ai-feed">
+              {draftAnalysisRunning && (
+                <p className="magic-notes-muted" role="status">
+                  正在评论当前草稿…
+                </p>
+              )}
+              {draftAnalyses.map((analysis) => (
+                <section
+                  className="magic-notes-ai-group"
+                  key={analysis.id}
+                >
+                  <span className="magic-notes-ai-source">
+                    {dateFormatter.format(new Date(analysis.analyzedAt))} ·
+                    未保存草稿
+                  </span>
+                  {analysis.comments.map((comment) => (
+                    <AiComment comment={comment} key={comment.id} />
+                  ))}
+                </section>
+              ))}
               {aiEntries.map((entry) => (
                 <section className="magic-notes-ai-group" key={entry.id}>
                   <a href={`#magic-note-entry-${entry.id}`}>

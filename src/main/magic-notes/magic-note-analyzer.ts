@@ -141,6 +141,24 @@ export async function analyzeMagicNoteEntry(
   )
 }
 
+export async function analyzeMagicNoteDraft(
+  runtime: AgentRuntime,
+  plainText: string,
+  requestId: string,
+  onModelUsage?: (event: RuntimeModelUsageEvent) => void
+): Promise<MagicNoteComment[]> {
+  return analyzeComments(
+    runtime,
+    {
+      source: plainText,
+      conversationId: `magic-note-drafts:${requestId}`,
+      subject: '未保存笔记草稿'
+    },
+    requestId,
+    onModelUsage
+  )
+}
+
 export function analyzeMagicTodo(
   runtime: AgentRuntime,
   todo: MagicTodoItem,

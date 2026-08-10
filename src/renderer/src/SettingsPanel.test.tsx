@@ -14,13 +14,14 @@ import type {
   RuntimeSettings
 } from '../../shared/contracts'
 import type { CapabilitySnapshot } from '../../shared/capability-contracts'
+import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type {
   EmbeddingDiagnosticResult,
   EmbeddingIndexStatus,
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
-import { builtinModelTools } from '../../shared/builtin-model-tools'
+import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import { SettingsPanel } from './SettingsPanel'
 
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
@@ -325,9 +326,10 @@ const onEmbeddingStatus = vi.fn(
     }
   }
 )
-let applicationSettings = {
+let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
-  magicNotesEnabled: false
+  magicNotesEnabled: false,
+  magicNoteCommentMode: 'immediate'
 }
 const getApplicationSettings = vi.fn(async () => ({
   ...applicationSettings
@@ -347,7 +349,8 @@ describe('SettingsPanel runtime files', () => {
     vi.clearAllMocks()
     applicationSettings = {
       checkUpdatesOnStartup: true,
-      magicNotesEnabled: false
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate'
     }
     embeddingStatusListeners.splice(0)
     Object.defineProperty(window, 'goodbuddy', {
@@ -462,6 +465,15 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(onMagicNotesEnabledChange).toHaveBeenCalledWith(true)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存后自动' })
+    )
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        magicNoteCommentMode: 'after-save-auto'
+      })
+    )
   })
 
   it('keeps page navigation beside an independently scrollable panel', () => {
@@ -764,7 +776,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 Continue 可执行文件将以当前用户权限运行/)
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Ask 仅可调用当前授权的知识库搜索/)
+      screen.getByText(/Ask 仅可调用知识库与全局笔记的只读搜索/)
     ).toBeInTheDocument()
     fireEvent.click(within(field).getByRole('button', { name: '清除' }))
     expect(input).toHaveValue('')
@@ -1823,8 +1835,8 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 MCP 当前仅用于直连模型/)
     ).toHaveTextContent('新建时默认分配给直连模型')
     expect(
-      screen.getByText(/内置共享 MCP 当前仅有知识库搜索/)
-    ).toHaveTextContent('直连模型、OpenCode 和 Continue')
+      screen.getByText(/内置共享 MCP 提供知识库与全局笔记只读搜索/)
+    ).toHaveTextContent(/直连模型、\s*OpenCode 和 Continue/u)
     expect(
       screen.getByText(/Runtime 自有 MCP 配置不在此处管理/)
     ).toBeInTheDocument()
@@ -1873,22 +1885,57 @@ describe('SettingsPanel runtime files', () => {
     await waitFor(() =>
       expect(removeBrowserProfile).toHaveBeenCalledWith(browserProfileId)
     )
-    expect(
-      await screen.findByText('读取工作区文本')
-    ).toBeInTheDocument()
-    expect(screen.getByText('列出工作区目录')).toBeInTheDocument()
-    expect(screen.getByText('写入工作区文本')).toBeInTheDocument()
+    expect(await screen.findByText('文件系统操作')).toBeInTheDocument()
+    expect(screen.getByText('浏览器操作')).toBeInTheDocument()
+    expect(screen.queryByText('读取工作区文本')).not.toBeInTheDocument()
     expect(screen.getByText('知识库 MCP')).toBeInTheDocument()
-    expect(screen.getByText('knowledge_search')).toBeInTheDocument()
-    expect(screen.getAllByText('内置 MCP')).toHaveLength(
-      builtinMcpServers.length
+    expect(screen.queryByText('knowledge_search')).not.toBeInTheDocument()
+    expect(screen.queryByText('note_search')).not.toBeInTheDocument()
+    const knowledgeServerToggle = screen.getByRole('button', {
+      name: '展开服务器 知识库 MCP'
+    })
+    expect(knowledgeServerToggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(knowledgeServerToggle)
+    expect(knowledgeServerToggle).toHaveAttribute('aria-expanded', 'true')
+    const knowledgeTools = screen.getByRole('region', {
+      name: '知识库 MCP 工具'
+    })
+    expect(knowledgeTools).toContainElement(
+      screen.getByText('knowledge_search')
     )
+    expect(within(knowledgeTools).queryByText(/可用于：/u))
+      .not.toBeInTheDocument()
+    const noteServerToggle = screen.getByRole('button', {
+      name: '展开服务器 笔记 MCP'
+    })
+    fireEvent.click(noteServerToggle)
+    expect(
+      screen.getByRole('region', { name: '笔记 MCP 工具' })
+    ).toContainElement(screen.getByText('note_search'))
+    expect(
+      screen.getAllByRole('button', { name: /服务器 .* MCP/u })
+    ).toHaveLength(builtinMcpServers.length)
+    expect(
+      screen.getByText('可用于：模型、OpenCode、Continue')
+    ).toBeInTheDocument()
     expect(
       screen.getByText(/不公开服务地址或凭据/)
     ).toBeInTheDocument()
-    expect(screen.getAllByText('直连模型')).toHaveLength(
-      builtinModelTools.length
-    )
+    const filesystemToggle = screen.getByRole('button', {
+      name: '展开工具组 文件系统操作'
+    })
+    const browserToggle = screen.getByRole('button', {
+      name: '展开工具组 浏览器操作'
+    })
+    fireEvent.click(filesystemToggle)
+    expect(screen.getByText('读取工作区文本')).toBeInTheDocument()
+    expect(screen.getByText('列出工作区目录')).toBeInTheDocument()
+    expect(screen.getByText('写入工作区文本')).toBeInTheDocument()
+    fireEvent.click(browserToggle)
+    expect(screen.getByText('浏览器导航')).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('button', { name: /工具组/u })
+    ).toHaveLength(builtinModelToolGroups.length)
     expect(
       await screen.findByText('尚未配置 MCP Server')
     ).toBeInTheDocument()
@@ -2038,6 +2085,62 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByRole('dialog', { name: '编辑 MCP Server' })
     ).not.toBeInTheDocument()
+  })
+
+  it('shows custom MCP tools under their expandable server after testing', async () => {
+    getCapabilitySnapshot.mockResolvedValueOnce({
+      ...capabilitySnapshot,
+      mcpServers: [
+        {
+          id: '00000000-0000-4000-8000-000000000302',
+          name: '团队工具服务',
+          description: '公司内部工具',
+          enabled: true,
+          assignments: ['model'],
+          secretConfigured: false,
+          transport: 'http',
+          url: 'https://mcp.example.com/mcp'
+        }
+      ]
+    })
+    vi.mocked(
+      window.goodbuddy.capabilities.testMcpServer
+    ).mockResolvedValueOnce({
+      serverName: 'Team MCP',
+      serverVersion: '1.2.0',
+      toolCount: 1,
+      tools: [
+        {
+          name: 'team_search',
+          description: '搜索团队资料'
+        }
+      ]
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    const serverToggle = await screen.findByRole('button', {
+      name: '展开服务器 团队工具服务'
+    })
+    expect(serverToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('team_search')).not.toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '测试 团队工具服务' })
+    )
+    expect(await screen.findByText('team_search')).toBeInTheDocument()
+    expect(serverToggle).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      screen.getByRole('region', { name: '团队工具服务 工具' })
+    ).toHaveTextContent('搜索团队资料')
   })
 
   it('creates, updates, and removes roles with system prompts', async () => {

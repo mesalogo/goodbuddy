@@ -98,7 +98,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 15', async () => {
+  it('migrates existing databases to schema version 17', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -127,7 +127,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(16)
+    ).toBe(17)
     expect(
       current
         .prepare(
@@ -231,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(16)
+    ).toBe(17)
     expect(
       current
         .prepare(
@@ -277,9 +277,7 @@ describe('AssistantDatabase', () => {
     const databasePath = join(directory, 'assistant.sqlite')
     const initial = new AssistantDatabase(databasePath)
     initial.initialize('C:\\Workspace')
-    const project = initial.listProjects()[0]!
     const note = initial.createMagicNote({
-      projectId: project.id,
       title: '迁移笔记'
     })
     initial.createMagicNoteEntry({
@@ -304,12 +302,69 @@ describe('AssistantDatabase', () => {
 
     const migrated = new AssistantDatabase(databasePath)
     migrated.initialize('C:\\Workspace')
-    expect(migrated.listMagicTodos(project.id)).toEqual([
+    expect(migrated.listMagicTodos()).toEqual([
       expect.objectContaining({
         noteId: note.id,
         source: 'note',
         title: '迁移待办',
         completed: false
+      })
+    ])
+    migrated.close()
+  })
+
+  it('makes existing notes global and migrates manual todos into one note', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-global-magic-notes-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const project = initial.listProjects()[0]!
+    const note = initial.createMagicNote({ title: '原项目笔记' })
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    const now = '2026-08-10T00:00:00.000Z'
+    legacy
+      .prepare('UPDATE magic_notes SET project_id = ? WHERE id = ?')
+      .run(project.id, note.id)
+    legacy
+      .prepare(
+        `INSERT INTO magic_todos
+          (id, project_id, note_id, entry_id, source_index, source,
+           title, instructions, completed, comments_json, analyzed_at,
+           revision, created_at, updated_at)
+         VALUES (?, ?, NULL, NULL, NULL, 'manual', ?, ?, 1, '[]',
+                 NULL, 0, ?, ?)`
+      )
+      .run(
+        '00000000-0000-4000-8000-000000000099',
+        project.id,
+        '旧手动待办',
+        '保留的说明',
+        now,
+        now
+      )
+    legacy.exec('PRAGMA user_version = 16')
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(migrated.listMagicNotes()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: note.id, title: '原项目笔记' }),
+        expect.objectContaining({ title: '迁入的待办' })
+      ])
+    )
+    expect(migrated.listMagicTodos()).toEqual([
+      expect.objectContaining({
+        source: 'note',
+        title: '旧手动待办',
+        instructions: '保留的说明',
+        completed: true,
+        noteTitle: '迁入的待办'
       })
     ])
     migrated.close()
@@ -1719,26 +1774,24 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('persists scoped magic notes and AI comments without todo proposals', async () => {
+  it('persists global magic notes and AI comments without todo proposals', async () => {
     const database = await createDatabase()
-    const project = database.listProjects()[0]!
     const globalNote = database.createMagicNote({
       title: '全局笔记'
     })
-    const projectNote = database.createMagicNote({
-      projectId: project.id,
-      title: '项目笔记'
+    const secondNote = database.createMagicNote({
+      title: '第二篇笔记'
     })
 
-    expect(database.listMagicNotes()).toEqual([
-      expect.objectContaining({ id: globalNote.id, title: '全局笔记' })
-    ])
-    expect(database.listMagicNotes(project.id)).toEqual([
-      expect.objectContaining({ id: projectNote.id, title: '项目笔记' })
-    ])
+    expect(database.listMagicNotes()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: globalNote.id, title: '全局笔记' }),
+        expect.objectContaining({ id: secondNote.id, title: '第二篇笔记' })
+      ])
+    )
 
     const withEntry = database.createMagicNoteEntry({
-      noteId: projectNote.id,
+      noteId: secondNote.id,
       content: {
         version: 1,
         ops: [
@@ -1753,6 +1806,14 @@ describe('AssistantDatabase', () => {
       entryCount: 1,
       preview: '整理发布清单'
     })
+    expect(database.searchMagicNotes('发布', 5)).toEqual([
+      expect.objectContaining({
+        noteId: secondNote.id,
+        noteTitle: '第二篇笔记',
+        entryId: entry.id,
+        content: '整理发布清单'
+      })
+    ])
 
     const analyzed = database.saveMagicNoteAnalysis({
       entryId: entry.id,
@@ -1775,11 +1836,9 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('synchronizes note checklists and standalone magic todos bidirectionally', async () => {
+  it('synchronizes derived todos when note checklists change', async () => {
     const database = await createDatabase()
-    const project = database.listProjects()[0]!
     const note = database.createMagicNote({
-      projectId: project.id,
       title: '发布笔记'
     })
     const withEntry = database.createMagicNoteEntry({
@@ -1797,7 +1856,7 @@ describe('AssistantDatabase', () => {
     })
     const entry = withEntry.entries[0]!
 
-    const noteTodos = database.listMagicTodos(project.id)
+    const noteTodos = database.listMagicTodos()
     expect(noteTodos).toEqual([
       expect.objectContaining({
         noteId: note.id,
@@ -1812,21 +1871,6 @@ describe('AssistantDatabase', () => {
         completed: true
       })
     ])
-
-    const completed = database.updateMagicTodo({
-      todoId: noteTodos[0]!.id,
-      completed: true,
-      expectedRevision: noteTodos[0]!.revision
-    })
-    expect(completed.completed).toBe(true)
-    expect(database.getMagicNote(note.id).entries[0]!.content.ops).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          insert: '\n',
-          attributes: expect.objectContaining({ list: 'checked' })
-        })
-      ])
-    )
 
     const updatedEntry = database.getMagicNote(note.id).entries[0]!
     database.updateMagicNoteEntry({
@@ -1845,7 +1889,7 @@ describe('AssistantDatabase', () => {
       },
       plainText: '新增首项\n上传构建产物\n核对发布材料'
     })
-    const reordered = database.listMagicTodos(project.id)
+    const reordered = database.listMagicTodos()
     expect(
       reordered.find((todo) => todo.title === '核对发布材料')
     ).toMatchObject({
@@ -1861,30 +1905,6 @@ describe('AssistantDatabase', () => {
       sourceIndex: 1
     })
 
-    const manual = database.createMagicTodo({
-      projectId: project.id,
-      title: '手动待办',
-      instructions: '补充验收说明'
-    })
-    expect(manual).toMatchObject({
-      source: 'manual',
-      completed: false,
-      title: '手动待办'
-    })
-    const edited = database.updateMagicTodo({
-      todoId: manual.id,
-      title: '更新后的手动待办',
-      instructions: '新的说明',
-      expectedRevision: manual.revision
-    })
-    expect(edited).toMatchObject({
-      title: '更新后的手动待办',
-      instructions: '新的说明'
-    })
-    database.deleteMagicTodo(edited.id)
-    expect(
-      database.listMagicTodos(project.id).some((todo) => todo.id === edited.id)
-    ).toBe(false)
     database.close()
   })
 
@@ -1964,7 +1984,6 @@ describe('AssistantDatabase', () => {
       cacheWrite: 1
     })
     database.createMagicNote({
-      projectId: project.id,
       title: '待清除笔记'
     })
     expect(database.getTokenUsageSummary().totals.totalTokens).toBe(15)
@@ -1978,7 +1997,7 @@ describe('AssistantDatabase', () => {
     expect(database.listHeartbeatConfigs(project.id)).toEqual([])
     expect(database.listTasks()).toEqual([])
     expect(database.listArtifacts(project.id)).toEqual([])
-    expect(database.listMagicNotes(project.id)).toEqual([])
+    expect(database.listMagicNotes()).toEqual([])
     expect(database.getTokenUsageSummary()).toEqual({
       totals: {
         callCount: 0,

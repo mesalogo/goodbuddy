@@ -869,7 +869,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         this.usesEmbeddedPermissionMediation() &&
         this.options.knowledgeGateway?.getEndpoint()
       ) {
-        knowledgeMcpName = `goodbuddy-knowledge-${createHash('sha256')
+        knowledgeMcpName = `goodbuddy-data-${createHash('sha256')
           .update(`${request.conversationId}\0${request.requestId}`)
           .digest('hex')
           .slice(0, 20)}`
@@ -887,18 +887,21 @@ export class OpenCodeRuntime implements AgentRuntime {
           }
         })
         if (added.error || !added.data) {
-          throw new Error('OpenCode 知识工具连接失败')
+          throw new Error('OpenCode 内置只读工具连接失败')
         }
         const addedStatus = added.data[knowledgeMcpName]
         if (!addedStatus || addedStatus.status !== 'connected') {
           throw new Error(
-            `OpenCode 知识工具连接失败（${addedStatus?.status ?? 'unknown'}）`
+            `OpenCode 内置只读工具连接失败（${addedStatus?.status ?? 'unknown'}）`
           )
         }
         // OpenCode 1.18.x does not include dynamically added MCP tools in
         // experimental/tool/ids. Its model tool namespace is deterministic:
         // "<MCP server name>_<declared tool name>".
-        knowledgeToolIds = [`${knowledgeMcpName}_knowledge_search`]
+        knowledgeToolIds =
+          this.options.knowledgeGateway
+            .getAvailableToolNames(request.knowledgeCapabilityToken)
+            .map((toolName) => `${knowledgeMcpName}_${toolName}`)
       }
       const permission = this.usesEmbeddedPermissionMediation()
         ? request.workMode === 'execute'

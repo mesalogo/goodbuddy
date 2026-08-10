@@ -37,16 +37,16 @@ import {
   type ExpertUpdateInput
 } from './assistant-contracts'
 import type {
+  MagicNoteDraftAnalysis,
   MagicNoteDetail,
   MagicNoteCreateInput,
   MagicNoteEntryCreateInput,
   MagicNoteEntryUpdateInput,
+  MagicNoteRichContent,
   MagicNotesSnapshot,
   MagicNoteUpdateInput,
-  MagicTodoCreateInput,
   MagicTodoItem,
-  MagicTodosSnapshot,
-  MagicTodoUpdateInput
+  MagicTodosSnapshot
 } from './magic-notes-contracts'
 import type {
   ChannelConnectionTestResult,
@@ -1158,7 +1158,7 @@ export type DesktopApi = {
     remove: (contextId: string) => Promise<void>
   }
   magicNotes: {
-    list: (projectId?: string) => Promise<MagicNotesSnapshot>
+    list: () => Promise<MagicNotesSnapshot>
     get: (noteId: string) => Promise<MagicNoteDetail>
     create: (input: MagicNoteCreateInput) => Promise<MagicNoteDetail>
     update: (input: MagicNoteUpdateInput) => Promise<MagicNoteDetail>
@@ -1171,10 +1171,10 @@ export type DesktopApi = {
     ) => Promise<MagicNoteDetail>
     removeEntry: (entryId: string) => Promise<MagicNoteDetail>
     analyze: (entryId: string) => Promise<MagicNoteDetail>
-    listTodos: (projectId?: string) => Promise<MagicTodosSnapshot>
-    createTodo: (input: MagicTodoCreateInput) => Promise<MagicTodoItem>
-    updateTodo: (input: MagicTodoUpdateInput) => Promise<MagicTodoItem>
-    removeTodo: (todoId: string) => Promise<void>
+    analyzeDraft: (
+      content: MagicNoteRichContent
+    ) => Promise<MagicNoteDraftAnalysis>
+    listTodos: () => Promise<MagicTodosSnapshot>
     analyzeTodo: (todoId: string) => Promise<MagicTodoItem>
   }
   knowledge: {

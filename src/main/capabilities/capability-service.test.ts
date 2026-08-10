@@ -241,6 +241,17 @@ describe('CapabilityService', () => {
     await expect(
       reloaded.getSkillInstructions('model', 10_000)
     ).resolves.toContain('仅用于离线测试')
+    await expect(
+      reloaded.getRuntimeSkillContext('model', 10_000)
+    ).resolves.toMatchObject({
+      instructions: expect.stringContaining('仅用于离线测试'),
+      packages: [
+        {
+          id: 'document-writing',
+          directory: join(builtinRoot, 'document-writing')
+        }
+      ]
+    })
   })
 
   it('imports and removes a managed SKILL.md package', async () => {

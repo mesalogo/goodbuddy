@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeEvent } from './runtime'
-import { ContinueHostRunError } from './continue-host-adapter'
+import {
+  ContinueHostRunError,
+  type ContinueHostAdapterOptions
+} from './continue-host-adapter'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 
 const mocks = vi.hoisted(() => ({
@@ -200,21 +203,34 @@ describe('ContinueAgentRuntime', () => {
     await expect(
       authorize?.({ toolName: 'knowledge_search' })
     ).resolves.toBe('once')
+    await expect(
+      authorize?.({ toolName: 'note_search' })
+    ).resolves.toBe('once')
     await expect(authorize?.({ toolName: 'Bash' })).resolves.toBe('deny')
   })
 
   it('adds assigned Skill instructions to the Continue prompt', async () => {
+    let hostOptions: ContinueHostAdapterOptions | undefined
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',
       configPath: 'C:\\safe config\\continue.yaml',
       defaultWorkspace: process.cwd(),
       hostCacheRoot: 'C:\\safe\\continue-host',
       skillInstructions: '# 周报助手',
-      createHostAdapter: () => ({
-        getPreparedHost: mocks.prepareHost,
-        run: mocks.runHost,
-        dispose: mocks.disposeHost
-      })
+      skillPackages: [
+        {
+          id: 'weekly-report',
+          directory: 'C:\\safe\\skills\\weekly-report'
+        }
+      ],
+      createHostAdapter: (options) => {
+        hostOptions = options
+        return {
+          getPreparedHost: mocks.prepareHost,
+          run: mocks.runHost,
+          dispose: mocks.disposeHost
+        }
+      }
     })
 
     await collectEvents(runtime)
@@ -223,6 +239,12 @@ describe('ContinueAgentRuntime', () => {
     expect(prompt).toContain('SYSTEM CAPABILITY INSTRUCTIONS')
     expect(prompt).toContain('# 周报助手')
     expect(prompt).toContain('test')
+    expect(hostOptions?.skillPackages).toEqual([
+      {
+        id: 'weekly-report',
+        directory: 'C:\\safe\\skills\\weekly-report'
+      }
+    ])
   })
 
   it('keeps a full bundled Skill payload on every platform', async () => {

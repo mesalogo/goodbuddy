@@ -1,6 +1,7 @@
 import spawn from 'cross-spawn'
 import { createHash, randomBytes } from 'node:crypto'
 import {
+  cp,
   copyFile,
   mkdir,
   readFile,
@@ -24,6 +25,7 @@ import { z } from 'zod'
 import type { RuntimeSettings } from '../../shared/contracts'
 import type { RuntimeAuthorizer } from './runtime'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
+import type { RuntimeSkillPackage } from '../capabilities/capability-service'
 import { getAvailableLoopbackPort } from './loopback-port'
 import {
   buildExplicitProfileRuntimeEnvironment,
@@ -182,6 +184,7 @@ export type ContinueHostAdapterOptions = {
   trustedBundleHashes?: string[]
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
+  skillPackages?: RuntimeSkillPackage[]
 }
 
 export type ContinueHostRunOptions = {
@@ -512,14 +515,7 @@ function mergeContinueTools(
 }
 
 function normalizeContinueToolError(value: unknown): string | undefined {
-  const detail = safeToolErrorDetail(value)
-  if (!detail) {
-    return undefined
-  }
-  const replacementCharacters = detail.match(/\uFFFD/gu)?.length ?? 0
-  return replacementCharacters >= 3
-    ? 'PowerShell 输出编码异常，原始错误无法安全显示；请重试该命令'
-    : detail
+  return safeToolErrorDetail(value)
 }
 
 function subtractTokenCount(completed: number, initial: number): number {
@@ -615,6 +611,10 @@ export class ContinueHostAdapter {
       'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}'
     const windowsShellMarker =
       'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-ExecutionPolicy","Bypass","-Command",e]}'
+    const terminalOutputMarker =
+      'let{shell:d,args:p}=Csa(e),f=Esa(d,p),g="",y="",A,S=!1,x=18e4;'
+    const skillDirectoriesMarker =
+      'let r=[eS.join(n,".continue",AKt),eS.join(n,".claude",AKt),eS.join(hu.continueHome,AKt)],o='
     const streamCallbacksMarker =
       'a={onContent:u=>{},onContentComplete:u=>{},onToolStart:(u,l)=>{},onToolResult:(u,l,c)=>{},onToolError:(u,l)=>{},onToolPermissionRequest:'
     const serverStateMarker = 'pendingPermission:null},B='
@@ -681,6 +681,16 @@ export class ContinueHostAdapter {
       patched,
       windowsShellMarker,
       'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-Command",\'[Console]::InputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$OutputEncoding=[Console]::OutputEncoding;\'+e]}'
+    )
+    patched = replaceExactly(
+      patched,
+      terminalOutputMarker,
+      `${terminalOutputMarker}f.stdout.setEncoding("utf8"),f.stderr.setEncoding("utf8");`
+    )
+    patched = replaceExactly(
+      patched,
+      skillDirectoriesMarker,
+      'let r=[eS.join(hu.continueHome,AKt)],o='
     )
     patched = replaceExactly(
       patched,
@@ -970,6 +980,34 @@ export class ContinueHostAdapter {
     })
   }
 
+  private async createRunGlobalDirectory(): Promise<string> {
+    const root = join(
+      this.options.cacheRoot,
+      `isolated-global-${crypto.randomUUID()}`
+    )
+    await mkdir(root, { recursive: false, mode: 0o700 })
+    const skillPackages = this.options.skillPackages ?? []
+    if (skillPackages.length === 0) {
+      return root
+    }
+    const skillsRoot = join(root, 'skills')
+    await mkdir(skillsRoot, { mode: 0o700 })
+    try {
+      for (const skill of skillPackages) {
+        await cp(skill.directory, join(skillsRoot, skill.id), {
+          recursive: true,
+          errorOnExist: true,
+          force: false,
+          verbatimSymlinks: true
+        })
+      }
+      return root
+    } catch (error) {
+      await rm(root, { recursive: true, force: true })
+      throw new Error('Continue Skill 注册失败', { cause: error })
+    }
+  }
+
   async run(
     prompt: string,
     signal: AbortSignal,
@@ -986,6 +1024,7 @@ export class ContinueHostAdapter {
       throw new Error(continueConfigurationRequiredMessage)
     }
     let generatedConfigPath: string | undefined
+    let isolatedGlobalDirectory: string | undefined
     try {
       generatedConfigPath = await this.createRunConfig(runOptions)
     const [{ entryPath }, port] = await Promise.all([
@@ -999,11 +1038,7 @@ export class ContinueHostAdapter {
     })
     const token = randomBytes(32).toString('base64url')
     const origin = `http://127.0.0.1:${port}`
-    const isolatedGlobalDirectory = join(
-      this.options.cacheRoot,
-      'isolated-global'
-    )
-    await mkdir(isolatedGlobalDirectory, { recursive: true, mode: 0o700 })
+    isolatedGlobalDirectory = await this.createRunGlobalDirectory()
     const args: string[] = []
     const configPath =
       generatedConfigPath ?? this.options.configPath.trim()
@@ -1014,7 +1049,14 @@ export class ContinueHostAdapter {
       runOptions.workMode === 'ask' &&
       runOptions.knowledgeCapability
     ) {
-      args.push('--allow', 'knowledge_search', '--exclude', '*')
+      args.push(
+        '--allow',
+        'knowledge_search',
+        '--allow',
+        'note_search',
+        '--exclude',
+        '*'
+      )
     } else if (this.options.mode === 'chat') {
       args.push('--readonly')
     }
@@ -1026,6 +1068,12 @@ export class ContinueHostAdapter {
       CONTINUE_CLI_ENABLE_TELEMETRY: '0',
       CONTINUE_METRICS_ENABLED: '0',
       CONTINUE_GLOBAL_DIR: isolatedGlobalDirectory,
+      ...(process.platform === 'win32'
+        ? {
+            PYTHONIOENCODING: 'utf-8',
+            PYTHONUTF8: '1'
+          }
+        : {}),
       FORCE_NO_TTY: '1',
       GOODBUDDY_CONTINUE_HOST_TOKEN: token,
       GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1'
@@ -1069,6 +1117,10 @@ export class ContinueHostAdapter {
       if (generatedConfigPath) {
         await rm(generatedConfigPath, { force: true })
       }
+      await rm(isolatedGlobalDirectory, {
+        recursive: true,
+        force: true
+      })
       throw error
     }
     this.children.add(child)
@@ -1265,11 +1317,21 @@ export class ContinueHostAdapter {
         if (generatedConfigPath) {
           await rm(generatedConfigPath, { force: true })
         }
+        await rm(isolatedGlobalDirectory, {
+          recursive: true,
+          force: true
+        })
       }
     }
     } finally {
       if (generatedConfigPath) {
         await rm(generatedConfigPath, { force: true })
+      }
+      if (isolatedGlobalDirectory) {
+        await rm(isolatedGlobalDirectory, {
+          recursive: true,
+          force: true
+        })
       }
     }
   }

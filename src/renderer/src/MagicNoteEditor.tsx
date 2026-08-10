@@ -4,7 +4,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent
 } from 'react'
-import Quill from 'quill'
+import Quill, { type Delta, type EmitterSource } from 'quill'
 import 'quill/dist/quill.snow.css'
 import {
   MAGIC_NOTE_MAX_IMAGES,
@@ -28,6 +28,7 @@ export type MagicNoteEditorProps = {
   ariaLabel: string
   onChange: (content: MagicNoteRichContent) => void
   onError: (message: string) => void
+  onParagraphCommit?: (content: MagicNoteRichContent) => void
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -55,7 +56,8 @@ export function MagicNoteEditor({
   ariaInvalid = false,
   ariaLabel,
   onChange,
-  onError
+  onError,
+  onParagraphCommit
 }: MagicNoteEditorProps): React.JSX.Element {
   const toolbarRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -63,11 +65,13 @@ export function MagicNoteEditor({
   const quillRef = useRef<Quill | null>(null)
   const onChangeRef = useRef(onChange)
   const onErrorRef = useRef(onError)
+  const onParagraphCommitRef = useRef(onParagraphCommit)
 
   useEffect(() => {
     onChangeRef.current = onChange
     onErrorRef.current = onError
-  }, [onChange, onError])
+    onParagraphCommitRef.current = onParagraphCommit
+  }, [onChange, onError, onParagraphCommit])
 
   const insertImages = async (files: File[]): Promise<void> => {
     const quill = quillRef.current
@@ -174,11 +178,30 @@ export function MagicNoteEditor({
     if (initialContent) {
       quill.setContents(initialContent.ops, 'silent')
     }
-    const handleChange = (): void => {
-      onChangeRef.current(richContentFromQuill(quill))
+    const emitChange = (): MagicNoteRichContent => {
+      const content = richContentFromQuill(quill)
+      onChangeRef.current(content)
+      return content
+    }
+    const handleChange = (
+      delta: Delta,
+      _oldContent: Delta,
+      source: EmitterSource
+    ): void => {
+      const content = emitChange()
+      if (
+        source === 'user' &&
+        delta.ops.some(
+          (operation) =>
+            typeof operation.insert === 'string' &&
+            operation.insert.includes('\n')
+        )
+      ) {
+        onParagraphCommitRef.current?.(content)
+      }
     }
     quill.on('text-change', handleChange)
-    handleChange()
+    emitChange()
     return () => {
       quill.off('text-change', handleChange)
       quillRef.current = null

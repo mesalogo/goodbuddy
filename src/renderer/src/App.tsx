@@ -5739,12 +5739,7 @@ function App(): React.JSX.Element {
           </PageShell>
         ) : view === 'magic-notes' && magicNotesEnabled ? (
           <PageShell variant="master-detail">
-            <MagicNotesWorkspace
-              key={activeProject?.id ?? 'global'}
-              onNotify={notify}
-              projectId={activeProject?.id}
-              projectName={activeProject?.name}
-            />
+            <MagicNotesWorkspace onNotify={notify} />
           </PageShell>
         ) : view === 'knowledge' ? (
           <PageShell variant="master-detail">

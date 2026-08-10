@@ -1,9 +1,20 @@
 import { z } from 'zod'
 
+export const magicNoteCommentModeSchema = z.enum([
+  'immediate',
+  'after-save-auto',
+  'after-save-manual'
+])
+
+export type MagicNoteCommentMode = z.infer<
+  typeof magicNoteCommentModeSchema
+>
+
 export const applicationSettingsSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
-    magicNotesEnabled: z.boolean()
+    magicNotesEnabled: z.boolean(),
+    magicNoteCommentMode: magicNoteCommentModeSchema
   })
   .strict()
 

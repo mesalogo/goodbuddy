@@ -189,10 +189,18 @@ describe('ModelToolProvider', () => {
     ).resolves.toBe('saved')
   })
 
-  it('exposes only scoped knowledge search in Ask and never lets the model select library IDs', async () => {
+  it('exposes only scoped built-in searches in Ask', async () => {
     const workspace = await createWorkspace()
     const search = vi.fn(async () => [])
-    const gateway = { search } as unknown as KnowledgeMcpGateway
+    const searchMagicNotes = vi.fn(() => [])
+    const gateway = {
+      search,
+      searchMagicNotes,
+      getAvailableToolNames: vi.fn(() => [
+        'knowledge_search',
+        'note_search'
+      ])
+    } as unknown as KnowledgeMcpGateway
     const provider = new ModelToolProvider(
       workspace,
       [],
@@ -208,10 +216,14 @@ describe('ModelToolProvider', () => {
 
     const askTools = await provider.listTools(askContext, signal)
     expect(askTools.map((tool) => tool.name)).toEqual([
-      'knowledge_search'
+      'knowledge_search',
+      'note_search'
     ])
     expect(
-      JSON.stringify(askTools[0]?.inputSchema)
+      JSON.stringify(
+        askTools.find((tool) => tool.name === 'knowledge_search')
+          ?.inputSchema
+      )
     ).not.toContain('library')
     await provider.callTool(
       'knowledge_search',
@@ -222,6 +234,17 @@ describe('ModelToolProvider', () => {
     expect(search).toHaveBeenCalledWith(
       'main-only-token',
       { query: 'scope query', limit: 4 },
+      signal
+    )
+    await provider.callTool(
+      'note_search',
+      { query: '发布计划', limit: 3 },
+      signal,
+      askContext
+    )
+    expect(searchMagicNotes).toHaveBeenCalledWith(
+      'main-only-token',
+      { query: '发布计划', limit: 3 },
       signal
     )
 
@@ -243,15 +266,21 @@ describe('ModelToolProvider', () => {
         'workspace_read_text',
         'workspace_list_directory',
         'workspace_write_text',
-        'knowledge_search'
+        'knowledge_search',
+        'note_search'
       ])
     )
   })
 
-  it('reserves the 100th Execute tool slot for scoped knowledge search', async () => {
+  it('reserves two Execute tool slots for scoped built-in searches', async () => {
     const workspace = await createWorkspace()
     const gateway = {
-      search: vi.fn(async () => [])
+      search: vi.fn(async () => []),
+      searchMagicNotes: vi.fn(() => []),
+      getAvailableToolNames: vi.fn(() => [
+        'knowledge_search',
+        'note_search'
+      ])
     } as unknown as KnowledgeMcpGateway
     const context = {
       conversationId: 'knowledge-capacity',
@@ -270,7 +299,7 @@ describe('ModelToolProvider', () => {
       }))
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(96)
+      tools: createTools(95)
     })
     const validProvider = new ModelToolProvider(
       workspace,
@@ -284,7 +313,7 @@ describe('ModelToolProvider', () => {
     await validProvider.dispose()
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(97)
+      tools: createTools(96)
     })
     const overflowingProvider = new ModelToolProvider(
       workspace,

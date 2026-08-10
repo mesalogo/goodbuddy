@@ -49,6 +49,7 @@ import {
   type MagicNoteDetail,
   type MagicNoteEntry,
   type MagicNoteRichContent,
+  type MagicNoteSearchResult,
   type MagicNoteSummary,
   type MagicTodoItem
 } from '../../shared/magic-notes-contracts'
@@ -56,8 +57,7 @@ import type { ComputerControlAuditEvent } from '../computer-control/audit'
 import {
   magicNoteChecklistItems,
   magicNoteImageBytes,
-  magicNotePreview,
-  setMagicNoteChecklistCompletion
+  magicNotePreview
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
@@ -409,14 +409,22 @@ function toMagicNoteEntry(row: MagicNoteEntryRow): MagicNoteEntry {
 }
 
 function toMagicTodo(row: MagicTodoRow): MagicTodoItem {
+  if (
+    row.source !== 'note' ||
+    !row.note_id ||
+    !row.entry_id ||
+    row.source_index === null ||
+    !row.note_title
+  ) {
+    throw new Error('待办来源数据无效')
+  }
   return {
     id: row.id,
-    projectId: row.project_id ?? undefined,
-    noteId: row.note_id ?? undefined,
-    entryId: row.entry_id ?? undefined,
-    noteTitle: row.note_title ?? undefined,
-    sourceIndex: row.source_index ?? undefined,
-    source: row.source,
+    noteId: row.note_id,
+    entryId: row.entry_id,
+    noteTitle: row.note_title,
+    sourceIndex: row.source_index,
+    source: 'note',
     title: row.title,
     instructions: row.instructions,
     completed: row.completed === 1,
@@ -431,7 +439,6 @@ function toMagicTodo(row: MagicTodoRow): MagicTodoItem {
 function toMagicNoteSummary(row: MagicNoteRow): MagicNoteSummary {
   return {
     id: row.id,
-    projectId: row.project_id ?? undefined,
     title: row.title,
     preview: magicNotePreview(row.latest_plain_text ?? ''),
     entryCount: row.entry_count,
@@ -1774,7 +1781,7 @@ export class AssistantDatabase {
     }))
   }
 
-  listMagicNotes(projectId?: string): MagicNoteSummary[] {
+  listMagicNotes(): MagicNoteSummary[] {
     const database = this.requireDatabase()
     const rows = database
       .prepare(
@@ -1786,11 +1793,10 @@ export class AssistantDatabase {
             ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
              AS latest_plain_text
          FROM magic_notes n
-         WHERE n.project_id IS ?
          ORDER BY n.pinned DESC, n.updated_at DESC, n.rowid DESC
          LIMIT 200`
       )
-      .all(projectId ?? null) as MagicNoteRow[]
+      .all() as MagicNoteRow[]
     return rows.map(toMagicNoteSummary)
   }
 
@@ -1827,7 +1833,6 @@ export class AssistantDatabase {
 
   getMagicNoteContext(noteId: string): {
     id: string
-    projectId?: string
     title: string
   } {
     const row = this.requireDatabase()
@@ -1844,15 +1849,11 @@ export class AssistantDatabase {
     }
     return {
       id: row.id,
-      projectId: row.project_id ?? undefined,
       title: row.title
     }
   }
 
-  createMagicNote(input: {
-    projectId?: string
-    title: string
-  }): MagicNoteDetail {
+  createMagicNote(input: { title: string }): MagicNoteDetail {
     const id = randomUUID()
     const now = new Date().toISOString()
     this.requireDatabase()
@@ -1861,7 +1862,7 @@ export class AssistantDatabase {
           (id, project_id, title, pinned, revision, created_at, updated_at)
          VALUES (?, ?, ?, 0, 0, ?, ?)`
       )
-      .run(id, input.projectId ?? null, input.title, now, now)
+      .run(id, null, input.title, now, now)
     return this.getMagicNote(id)
   }
 
@@ -2090,19 +2091,49 @@ export class AssistantDatabase {
     return this.getMagicNote(existing.note_id)
   }
 
-  listMagicTodos(projectId?: string): MagicTodoItem[] {
+  listMagicTodos(): MagicTodoItem[] {
     return (
       this.requireDatabase()
         .prepare(
           `SELECT t.*, n.title AS note_title
            FROM magic_todos t
            LEFT JOIN magic_notes n ON n.id = t.note_id
-           WHERE t.project_id IS ?
+           WHERE t.source = 'note'
            ORDER BY t.completed ASC, t.updated_at DESC, t.rowid DESC
            LIMIT 500`
         )
-        .all(projectId ?? null) as MagicTodoRow[]
+        .all() as MagicTodoRow[]
     ).map(toMagicTodo)
+  }
+
+  searchMagicNotes(query: string, limit: number): MagicNoteSearchResult[] {
+    const pattern = `%${query.replace(/[\\%_]/gu, '\\$&')}%`
+    return (
+      this.requireDatabase()
+        .prepare(
+          `SELECT n.id AS note_id, n.title AS note_title,
+                  e.id AS entry_id, e.plain_text, e.updated_at
+           FROM magic_note_entries e
+           INNER JOIN magic_notes n ON n.id = e.note_id
+           WHERE n.title LIKE ? ESCAPE '\\'
+              OR e.plain_text LIKE ? ESCAPE '\\'
+           ORDER BY e.updated_at DESC, e.rowid DESC
+           LIMIT ?`
+        )
+        .all(pattern, pattern, limit) as Array<{
+        note_id: string
+        note_title: string
+        entry_id: string
+        plain_text: string
+        updated_at: string
+      }>
+    ).map((row) => ({
+      noteId: row.note_id,
+      noteTitle: row.note_title.slice(0, 100),
+      entryId: row.entry_id,
+      content: row.plain_text.slice(0, 12_000),
+      updatedAt: row.updated_at
+    }))
   }
 
   getMagicTodo(todoId: string): MagicTodoItem {
@@ -2118,129 +2149,6 @@ export class AssistantDatabase {
       throw new Error('待办不存在')
     }
     return toMagicTodo(row)
-  }
-
-  createMagicTodo(input: {
-    projectId?: string
-    title: string
-    instructions: string
-  }): MagicTodoItem {
-    const id = randomUUID()
-    const now = new Date().toISOString()
-    this.requireDatabase()
-      .prepare(
-        `INSERT INTO magic_todos
-          (id, project_id, note_id, entry_id, source_index, source,
-           title, instructions, completed, comments_json, analyzed_at,
-           revision, created_at, updated_at)
-         VALUES (?, ?, NULL, NULL, NULL, 'manual', ?, ?, 0, '[]',
-                 NULL, 0, ?, ?)`
-      )
-      .run(
-        id,
-        input.projectId ?? null,
-        input.title,
-        input.instructions,
-        now,
-        now
-      )
-    return this.getMagicTodo(id)
-  }
-
-  updateMagicTodo(input: {
-    todoId: string
-    title?: string
-    instructions?: string
-    completed?: boolean
-    expectedRevision: number
-  }): MagicTodoItem {
-    const database = this.requireDatabase()
-    const existing = database
-      .prepare('SELECT * FROM magic_todos WHERE id = ?')
-      .get(input.todoId) as Omit<MagicTodoRow, 'note_title'> | undefined
-    if (!existing) {
-      throw new Error('待办不存在')
-    }
-    if (
-      existing.source === 'note' &&
-      (input.title !== undefined || input.instructions !== undefined)
-    ) {
-      throw new Error('笔记待办的内容需要在原笔记中编辑')
-    }
-    const now = new Date().toISOString()
-    database.exec('BEGIN IMMEDIATE')
-    try {
-      const result = database
-        .prepare(
-          `UPDATE magic_todos
-           SET title = COALESCE(?, title),
-               instructions = COALESCE(?, instructions),
-               completed = COALESCE(?, completed),
-               revision = revision + 1,
-               updated_at = ?
-           WHERE id = ? AND revision = ?`
-        )
-        .run(
-          input.title ?? null,
-          input.instructions ?? null,
-          input.completed === undefined ? null : Number(input.completed),
-          now,
-          input.todoId,
-          input.expectedRevision
-        )
-      if (result.changes !== 1) {
-        throw new Error('待办已被更新，请刷新后重试')
-      }
-      if (
-        existing.source === 'note' &&
-        input.completed !== undefined &&
-        existing.entry_id &&
-        existing.note_id &&
-        existing.source_index !== null
-      ) {
-        const entry = database
-          .prepare(
-            'SELECT content_json FROM magic_note_entries WHERE id = ?'
-          )
-          .get(existing.entry_id) as { content_json: string } | undefined
-        if (!entry) {
-          throw new Error('待办来源记录不存在')
-        }
-        const content = setMagicNoteChecklistCompletion(
-          JSON.parse(entry.content_json) as MagicNoteRichContent,
-          existing.source_index,
-          input.completed
-        )
-        database
-          .prepare(
-            `UPDATE magic_note_entries
-             SET content_json = ?, revision = revision + 1, updated_at = ?
-             WHERE id = ?`
-          )
-          .run(JSON.stringify(content), now, existing.entry_id)
-        database
-          .prepare(
-            `UPDATE magic_notes
-             SET revision = revision + 1, updated_at = ?
-             WHERE id = ?`
-          )
-          .run(now, existing.note_id)
-      }
-      database.exec('COMMIT')
-    } catch (error) {
-      database.exec('ROLLBACK')
-      throw error
-    }
-    return this.getMagicTodo(input.todoId)
-  }
-
-  deleteMagicTodo(todoId: string): void {
-    const result = this.requireDatabase()
-      .prepare("DELETE FROM magic_todos WHERE id = ? AND source = 'manual'")
-      .run(todoId)
-    if (result.changes !== 1) {
-      throw new Error('手动待办不存在')
-    }
   }
 
   saveMagicTodoAnalysis(input: {
@@ -4082,8 +3990,8 @@ export class AssistantDatabase {
     now: string
   ): void {
     const note = database
-      .prepare('SELECT project_id FROM magic_notes WHERE id = ?')
-      .get(noteId) as { project_id: string | null } | undefined
+      .prepare('SELECT id FROM magic_notes WHERE id = ?')
+      .get(noteId) as { id: string } | undefined
     if (!note) {
       throw new Error('笔记不存在')
     }
@@ -4197,7 +4105,7 @@ export class AssistantDatabase {
       if (!matched) {
         insertTodo.run(
           randomUUID(),
-          note.project_id,
+          null,
           noteId,
           entryId,
           item.sourceIndex,
@@ -4214,7 +4122,7 @@ export class AssistantDatabase {
       const positionChanged =
         matched.source_index !== item.sourceIndex
       const scopeChanged =
-        matched.project_id !== note.project_id ||
+        matched.project_id !== null ||
         matched.note_id !== noteId
       if (
         !titleChanged &&
@@ -4225,7 +4133,7 @@ export class AssistantDatabase {
         continue
       }
       updateTodo.run(
-        note.project_id,
+        null,
         noteId,
         item.sourceIndex,
         item.title,
@@ -4262,12 +4170,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 16) {
+    if (version.user_version > 17) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 16) {
+    if (version.user_version === 17) {
       return
     }
     if (version.user_version < 1) {
@@ -4992,6 +4900,118 @@ export class AssistantDatabase {
           PRAGMA user_version = 16;
           COMMIT;
         `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 17) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          UPDATE magic_notes SET project_id = NULL
+          WHERE project_id IS NOT NULL;
+          UPDATE magic_todos SET project_id = NULL
+          WHERE source = 'note' AND project_id IS NOT NULL;
+        `)
+        const manualTodos = database
+          .prepare(
+            `SELECT id, title, instructions, completed, comments_json,
+                    analyzed_at, revision, created_at, updated_at
+             FROM magic_todos
+             WHERE source = 'manual'
+             ORDER BY created_at ASC, rowid ASC`
+          )
+          .all() as Array<{
+          id: string
+          title: string
+          instructions: string
+          completed: number
+          comments_json: string
+          analyzed_at: string | null
+          revision: number
+          created_at: string
+          updated_at: string
+        }>
+        if (manualTodos.length > 0) {
+          const noteId = randomUUID()
+          const createdAt = manualTodos[0]!.created_at
+          const updatedAt = manualTodos.at(-1)!.updated_at
+          database
+            .prepare(
+              `INSERT INTO magic_notes
+                (id, project_id, title, pinned, revision,
+                 created_at, updated_at)
+               VALUES (?, NULL, '迁入的待办', 0, 0, ?, ?)`
+            )
+            .run(noteId, createdAt, updatedAt)
+          const insertEntry = database.prepare(
+            `INSERT INTO magic_note_entries
+              (id, note_id, content_json, plain_text, comments_json,
+               actions_json, analyzed_at, revision, created_at, updated_at,
+               image_bytes)
+             VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, 0)`
+          )
+          const updateMigratedTodo = database.prepare(
+            `UPDATE magic_todos
+             SET instructions = ?, comments_json = ?, analyzed_at = ?,
+                 revision = ?
+             WHERE entry_id = ? AND source = 'note'`
+          )
+          const deleteManualTodo = database.prepare(
+            `DELETE FROM magic_todos
+             WHERE id = ? AND source = 'manual'`
+          )
+          for (const todo of manualTodos) {
+            const entryId = randomUUID()
+            const content: MagicNoteRichContent = {
+              version: 1,
+              ops: [
+                { insert: todo.title },
+                {
+                  insert: '\n',
+                  attributes: {
+                    list: todo.completed ? 'checked' : 'unchecked'
+                  }
+                },
+                ...(todo.instructions
+                  ? [
+                      { insert: todo.instructions },
+                      { insert: '\n' }
+                    ]
+                  : [])
+              ]
+            }
+            insertEntry.run(
+              entryId,
+              noteId,
+              JSON.stringify(content),
+              [todo.title, todo.instructions].filter(Boolean).join('\n'),
+              todo.comments_json,
+              todo.analyzed_at,
+              todo.revision,
+              todo.created_at,
+              todo.updated_at
+            )
+            this.syncMagicNoteTodos(
+              database,
+              noteId,
+              entryId,
+              content,
+              todo.updated_at
+            )
+            updateMigratedTodo.run(
+              todo.instructions,
+              todo.comments_json,
+              todo.analyzed_at,
+              todo.revision,
+              entryId
+            )
+            deleteManualTodo.run(todo.id)
+          }
+        }
+        database.exec('PRAGMA user_version = 17')
+        database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

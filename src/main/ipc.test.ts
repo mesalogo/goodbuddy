@@ -2557,9 +2557,7 @@ describe('registerIpcHandlers Magic Notes analysis', () => {
       join(directory, 'assistant.sqlite')
     )
     database.initialize('C:\\Workspace')
-    const project = database.listProjects()[0]!
     const note = database.createMagicNote({
-      projectId: project.id,
       title: 'API 回归测试'
     })
     const withEntry = database.createMagicNoteEntry({

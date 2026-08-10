@@ -266,12 +266,13 @@ export function KnowledgePanel({
                 </div>
                 <button
                   aria-label={`删除 ${document.name}`}
-                  className="icon-button"
+                  className="danger-button danger-button--quiet"
                   disabled={busy}
                   onClick={() => void removeDocument(document.id)}
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={16} />
+                  删除
                 </button>
               </li>
             ))}

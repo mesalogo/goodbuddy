@@ -221,11 +221,13 @@ export function PageTabs<T extends string>({
 
 export function SegmentedControl<T extends string>({
   ariaLabel,
+  disabled = false,
   onChange,
   options,
   value
 }: {
   ariaLabel: string
+  disabled?: boolean
   onChange: (value: T) => void
   options: readonly SegmentedOption<T>[]
   value: T
@@ -244,6 +246,7 @@ export function SegmentedControl<T extends string>({
               ? 'segmented-control__option segmented-control__option--active'
               : 'segmented-control__option'
           }
+          disabled={disabled}
           key={option.value}
           onClick={() => onChange(option.value)}
           onKeyDown={(event) => {
