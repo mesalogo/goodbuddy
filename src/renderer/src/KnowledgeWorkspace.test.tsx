@@ -18,6 +18,7 @@ const g6Mock = vi.hoisted(() => {
   const graph = {
     destroy: vi.fn(),
     draw: vi.fn(async () => undefined),
+    fitView: vi.fn(async () => undefined),
     getElementPosition: vi.fn(() => [240, 320]),
     getZoom: vi.fn(() => 1),
     off: vi.fn((eventName: string) => handlers.delete(eventName)),
@@ -472,9 +473,13 @@ describe('KnowledgeWorkspace', () => {
         },
         layout: expect.objectContaining({
           animate: false,
-          angleRatio: 1,
-          ordering: 'topology',
-          type: 'circular'
+          centerStrength: 0.8,
+          linkDistance: 64,
+          nodeStrength: -70,
+          preventOverlap: true,
+          radialRadius: 0,
+          radialStrength: 0.04,
+          type: 'd3-force'
         }),
         behaviors: expect.arrayContaining([
           'drag-canvas',
@@ -497,6 +502,13 @@ describe('KnowledgeWorkspace', () => {
       {
         'entity-1': [],
         'entity-2': []
+      },
+      false
+    )
+    expect(g6Mock.graph.fitView).toHaveBeenCalledWith(
+      {
+        when: 'always',
+        direction: 'both'
       },
       false
     )
@@ -661,9 +673,13 @@ describe('KnowledgeWorkspace', () => {
         }),
         layout: expect.objectContaining({
           animate: false,
-          nodeSpacing: 20,
-          ordering: 'topology',
-          type: 'circular'
+          linkDistance: 44,
+          nodeSpacing: 10,
+          nodeStrength: -45,
+          preventOverlap: true,
+          radialRadius: 0,
+          radialStrength: 0.055,
+          type: 'd3-force'
         }),
         behaviors: expect.arrayContaining([
           expect.objectContaining({

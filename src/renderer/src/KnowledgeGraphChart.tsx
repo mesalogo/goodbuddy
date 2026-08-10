@@ -176,19 +176,29 @@ function createPresentation(
       }))
     },
     layout: {
-      type: 'circular',
+      type: 'd3-force',
       animate: false,
-      ordering: 'topology',
-      startAngle: -Math.PI / 2,
-      endAngle: Math.PI * 1.5,
-      clockwise: true,
-      divisions: 1,
-      angleRatio: 1,
+      centerStrength: 0.8,
+      linkDistance: dense ? 44 : 64,
+      edgeStrength: dense ? 0.28 : 0.4,
+      edgeIterations: 2,
+      nodeStrength: dense ? -45 : -70,
+      theta: 0.8,
+      preventOverlap: true,
+      collideStrength: 0.9,
+      collideIterations: 2,
       nodeSize: (datum: Record<string, unknown>) => {
         const metadata = datum.data as G6NodeMetadata | undefined
         return metadata?.size ?? 24
       },
-      nodeSpacing: dense ? 20 : 28
+      nodeSpacing: dense ? 10 : 14,
+      x: false,
+      y: false,
+      radialRadius: 0,
+      radialStrength: dense ? 0.055 : 0.04,
+      alphaMin: 0.015,
+      alphaDecay: 0.045,
+      velocityDecay: 0.42
     },
     node: {
       type: 'circle',
@@ -474,6 +484,13 @@ export function KnowledgeGraphChart({
           return
         }
         renderedRevisionRef.current = dataRevision
+        await graph.fitView(
+          {
+            when: 'always',
+            direction: 'both'
+          },
+          false
+        )
         appliedZoomRef.current = graph.getZoom()
         const states = Object.fromEntries(
           nodesRef.current.map((node) => [
