@@ -150,6 +150,38 @@ function createToolProvider(
 }
 
 describe('ModelAgentRuntime', () => {
+  it('rejects images when the model connection disables image input', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      supportsImageInput: false,
+      fetcher
+    })
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'describe',
+        images: [
+          {
+            name: 'screenshot.png',
+            mediaType: 'image/png',
+            data: 'aW1hZ2U='
+          }
+        ]
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).rejects.toThrow(
+      '当前模型连接未启用图像输入'
+    )
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('performs a real minimal request when testing the connection', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json({
@@ -732,6 +764,14 @@ describe('ModelAgentRuntime', () => {
               content: null,
               tool_calls: [
                 {
+                  id: 'knowledge-list-call',
+                  type: 'function',
+                  function: {
+                    name: 'knowledge_list',
+                    arguments: '{}'
+                  }
+                },
+                {
                   id: 'knowledge-call',
                   type: 'function',
                   function: {
@@ -755,6 +795,17 @@ describe('ModelAgentRuntime', () => {
         ]
       }
     ]
+    const knowledgeListTool: ModelToolDefinition = {
+      name: 'knowledge_list',
+      displayName: '知识库列表',
+      description: 'Scoped library metadata',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false
+      },
+      source: 'builtin'
+    }
     const knowledgeTool: ModelToolDefinition = {
       name: 'knowledge_search',
       displayName: '知识库搜索',
@@ -768,7 +819,10 @@ describe('ModelAgentRuntime', () => {
       source: 'builtin'
     }
     const toolProvider = createToolProvider({
-      listTools: vi.fn(async () => [knowledgeTool])
+      listTools: vi.fn(async () => [
+        knowledgeListTool,
+        knowledgeTool
+      ])
     })
     const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json(responses.shift())
@@ -805,6 +859,15 @@ describe('ModelAgentRuntime', () => {
         knowledgeCapabilityToken: 'main-only-token'
       },
       expect.any(AbortSignal)
+    )
+    expect(toolProvider.callTool).toHaveBeenCalledWith(
+      'knowledge_list',
+      {},
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        workMode: 'ask',
+        knowledgeCapabilityToken: 'main-only-token'
+      })
     )
     expect(toolProvider.callTool).toHaveBeenCalledWith(
       'knowledge_search',

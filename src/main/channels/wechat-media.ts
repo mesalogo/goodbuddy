@@ -257,15 +257,9 @@ export async function downloadWechatImage(
   if (!item.media) {
     throw new Error('微信图片缺少媒体引用')
   }
-  const claimedCipherSize = item.hd_size ?? item.mid_size
-  if (
-    claimedCipherSize !== undefined &&
-    (!Number.isSafeInteger(claimedCipherSize) ||
-      claimedCipherSize < 1 ||
-      claimedCipherSize > MAX_ENCRYPTED_BYTES)
-  ) {
-    throw new Error('微信图片超过 12MB 限制')
-  }
+  // The size hints can describe a different image variant, such as the
+  // undownloaded HD image. Enforce the limit on the fetched ciphertext and
+  // decrypted image instead.
   const key = item.aeskey
     ? parseAesKey(item.aeskey, 'hex')
     : item.media.aes_key

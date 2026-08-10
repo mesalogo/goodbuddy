@@ -32,8 +32,16 @@ function createService() {
   const service = {
     database: {
       listKnowledgeBases: () => [
-        { id: firstLibraryId, name: '一号知识库' },
-        { id: secondLibraryId, name: '二号知识库' }
+        {
+          id: firstLibraryId,
+          name: '一号知识库',
+          description: '不应暴露'
+        },
+        {
+          id: secondLibraryId,
+          name: '二号知识库',
+          description: '已授权知识'
+        }
       ]
     },
     searchHybridMany
@@ -59,6 +67,22 @@ describe('KnowledgeMcpGateway', () => {
     )
 
     expect(token).toMatch(/^[A-Za-z0-9_-]{40,}$/u)
+    expect(gateway.getAvailableToolNames(token!)).toEqual([
+      'knowledge_list',
+      'knowledge_search'
+    ])
+    expect(gateway.listLibraries(token!)).toEqual([
+      {
+        id: secondLibraryId,
+        name: '二号知识库',
+        description: '已授权知识'
+      }
+    ])
+    expect(() =>
+      gateway.listLibraries(token!, {
+        libraryIds: [firstLibraryId]
+      })
+    ).toThrow()
     const references = await gateway.search(token!, {
       query: '  要找什么  ',
       limit: 1

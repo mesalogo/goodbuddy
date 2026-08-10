@@ -138,10 +138,24 @@ const version11StoredSettingsSchema = version10StoredSettingsSchema
     version: z.literal(11)
   })
 
-const storedSettingsSchema = version11StoredSettingsSchema
+const version12StoredSettingsSchema = version11StoredSettingsSchema
   .omit({ version: true, intranetCompatibilityEnabled: true })
   .extend({
     version: z.literal(12)
+  })
+
+const currentStoredModelProfileSchema = storedModelProfileSchema.extend({
+  supportsImageInput: z.boolean()
+})
+
+const storedSettingsSchema = version12StoredSettingsSchema
+  .omit({ version: true, modelProfiles: true })
+  .extend({
+    version: z.literal(13),
+    modelProfiles: z
+      .array(currentStoredModelProfileSchema)
+      .min(1)
+      .max(20)
   })
 
 class UnsupportedRuntimeSettingsVersionError extends Error {}
@@ -152,6 +166,9 @@ type Version10StoredSettings = z.infer<
 >
 type Version11StoredSettings = z.infer<
   typeof version11StoredSettingsSchema
+>
+type Version12StoredSettings = z.infer<
+  typeof version12StoredSettingsSchema
 >
 
 const version3StoredSettingsSchema = version4StoredSettingsSchema
@@ -208,6 +225,7 @@ export type ResolvedRuntimeSettings = {
   modelName: string
   modelProtocol: RuntimeSettings['modelProtocol']
   modelAuthentication: RuntimeSettings['modelAuthentication']
+  supportsImageInput?: boolean
   imageGenerationQuality: RuntimeSettings['imageGenerationQuality']
   apiKey?: string
   modelProfiles: ResolvedModelProfile[]
@@ -238,12 +256,13 @@ export type ResolvedModelProfile = {
   modelName: string
   protocol: RuntimeSettings['modelProtocol']
   authentication: RuntimeSettings['modelAuthentication']
+  supportsImageInput?: boolean
   imageGenerationQuality?: RuntimeSettings['imageGenerationQuality']
   apiKey?: string
 }
 
 const defaultSettings: StoredSettings = {
-  version: 12,
+  version: 13,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -253,6 +272,7 @@ const defaultSettings: StoredSettings = {
       modelName: defaultRuntimeSettings.modelName,
       protocol: defaultRuntimeSettings.modelProtocol,
       authentication: defaultRuntimeSettings.modelAuthentication,
+      supportsImageInput: defaultRuntimeSettings.supportsImageInput,
       imageGenerationQuality:
         defaultRuntimeSettings.imageGenerationQuality
     }
@@ -319,9 +339,22 @@ function migrateVersion11(
     ...current
   } = settings
   void _obsolete
-  return {
+  return migrateVersion12({
     ...current,
     version: 12
+  })
+}
+
+function migrateVersion12(
+  settings: Version12StoredSettings
+): StoredSettings {
+  return {
+    ...settings,
+    version: 13,
+    modelProfiles: settings.modelProfiles.map((profile) => ({
+      ...profile,
+      supportsImageInput: false
+    }))
   }
 }
 
@@ -558,7 +591,7 @@ export class RuntimeSettingsStore {
         typeof parsed === 'object' &&
         'version' in parsed &&
         typeof parsed.version === 'number' &&
-        parsed.version > 12
+        parsed.version > 13
       ) {
         throw new UnsupportedRuntimeSettingsVersionError(
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${parsed.version}，请升级应用后重试`
@@ -568,100 +601,106 @@ export class RuntimeSettingsStore {
       if (current.success) {
         this.settings = current.data
       } else {
-        const version11 =
-          version11StoredSettingsSchema.safeParse(parsed)
-        if (version11.success) {
-          this.settings = migrateVersion11(version11.data)
+        const version12 =
+          version12StoredSettingsSchema.safeParse(parsed)
+        if (version12.success) {
+          this.settings = migrateVersion12(version12.data)
         } else {
-          const version10 =
-            version10StoredSettingsSchema.safeParse(parsed)
-          if (version10.success) {
-            this.settings = migrateVersion10(version10.data)
+          const version11 =
+            version11StoredSettingsSchema.safeParse(parsed)
+          if (version11.success) {
+            this.settings = migrateVersion11(version11.data)
           } else {
-            const version9 =
-              version9StoredSettingsSchema.safeParse(parsed)
-            if (version9.success) {
-              this.settings = migrateVersion9(version9.data)
+            const version10 =
+              version10StoredSettingsSchema.safeParse(parsed)
+            if (version10.success) {
+              this.settings = migrateVersion10(version10.data)
             } else {
-              const version8 =
-                version8StoredSettingsSchema.safeParse(parsed)
-              if (version8.success) {
-                this.settings = migrateVersion8(version8.data)
+              const version9 =
+                version9StoredSettingsSchema.safeParse(parsed)
+              if (version9.success) {
+                this.settings = migrateVersion9(version9.data)
               } else {
-                const version7 =
-                  version7StoredSettingsSchema.safeParse(parsed)
-                if (version7.success) {
-                  this.settings = migrateVersion7(version7.data)
+                const version8 =
+                  version8StoredSettingsSchema.safeParse(parsed)
+                if (version8.success) {
+                  this.settings = migrateVersion8(version8.data)
                 } else {
-                  const version6 =
-                    version6StoredSettingsSchema.safeParse(parsed)
-                  if (version6.success) {
-                    this.settings = migrateVersion6(version6.data)
+                  const version7 =
+                    version7StoredSettingsSchema.safeParse(parsed)
+                  if (version7.success) {
+                    this.settings = migrateVersion7(version7.data)
                   } else {
-                    const version5 =
-                      version5StoredSettingsSchema.safeParse(parsed)
-                    if (version5.success) {
-                      this.settings = migrateVersion5(version5.data)
+                    const version6 =
+                      version6StoredSettingsSchema.safeParse(parsed)
+                    if (version6.success) {
+                      this.settings = migrateVersion6(version6.data)
                     } else {
-                      const version4 =
-                        version4StoredSettingsSchema.safeParse(parsed)
-                      if (version4.success) {
-                        this.settings = migrateVersion4(version4.data)
+                      const version5 =
+                        version5StoredSettingsSchema.safeParse(parsed)
+                      if (version5.success) {
+                        this.settings = migrateVersion5(version5.data)
                       } else {
-                        const version3 =
-                          version3StoredSettingsSchema.safeParse(parsed)
-                        if (version3.success) {
-                          this.settings = migrateVersion4({
-                            ...version3.data,
-                            version: 4,
-                            continueMode: 'chat',
-                          })
+                        const version4 =
+                          version4StoredSettingsSchema.safeParse(parsed)
+                        if (version4.success) {
+                          this.settings = migrateVersion4(version4.data)
                         } else {
-                          const version2 =
-                            version2StoredSettingsSchema.safeParse(parsed)
-                          if (version2.success) {
+                          const version3 =
+                            version3StoredSettingsSchema.safeParse(parsed)
+                          if (version3.success) {
                             this.settings = migrateVersion4({
+                              ...version3.data,
                               version: 4,
-                              provider: version2.data.provider,
-                              modelBaseUrl: version2.data.modelBaseUrl,
-                              modelName: version2.data.modelName,
-                              opencodeBaseUrl: version2.data.opencodeBaseUrl,
-                              opencodeEmbedded: version2.data.opencodeEmbedded,
-                              opencodeBinaryPath: '',
-                              opencodeConfigPath: '',
-                              continueBinaryPath: migrateContinueCommand(
-                                version2.data.continueCommand
-                              ),
-                              continueConfigPath: '',
-                              continueMode: 'chat',
-                              workspacePath: version2.data.workspacePath,
-                              credential: version2.data.credential,
-                              toolApproval: version2.data.toolApproval
+                              continueMode: 'chat'
                             })
                           } else {
-                            const legacy =
-                              legacyStoredSettingsSchema.parse(parsed)
-                            this.settings = migrateVersion4({
-                              version: 4,
-                              provider:
-                                legacy.provider === 'bigtoken'
-                                  ? 'model'
-                                  : legacy.provider,
-                              modelBaseUrl: legacy.bigtokenBaseUrl,
-                              modelName: legacy.bigtokenModel,
-                              opencodeBaseUrl: legacy.opencodeBaseUrl,
-                              opencodeEmbedded: legacy.opencodeEmbedded,
-                              opencodeBinaryPath: '',
-                              opencodeConfigPath: '',
-                              continueBinaryPath: migrateContinueCommand(
-                                legacy.continueCommand
-                              ),
-                              continueConfigPath: '',
-                              continueMode: 'chat',
-                              workspacePath: legacy.workspacePath,
-                              credential: legacy.credential,
-                              toolApproval: legacy.toolApproval
-                            })
+                            const version2 =
+                              version2StoredSettingsSchema.safeParse(parsed)
+                            if (version2.success) {
+                              this.settings = migrateVersion4({
+                                version: 4,
+                                provider: version2.data.provider,
+                                modelBaseUrl: version2.data.modelBaseUrl,
+                                modelName: version2.data.modelName,
+                                opencodeBaseUrl: version2.data.opencodeBaseUrl,
+                                opencodeEmbedded: version2.data.opencodeEmbedded,
+                                opencodeBinaryPath: '',
+                                opencodeConfigPath: '',
+                                continueBinaryPath: migrateContinueCommand(
+                                  version2.data.continueCommand
+                                ),
+                                continueConfigPath: '',
+                                continueMode: 'chat',
+                                workspacePath: version2.data.workspacePath,
+                                credential: version2.data.credential,
+                                toolApproval: version2.data.toolApproval
+                              })
+                            } else {
+                              const legacy =
+                                legacyStoredSettingsSchema.parse(parsed)
+                              this.settings = migrateVersion4({
+                                version: 4,
+                                provider:
+                                  legacy.provider === 'bigtoken'
+                                    ? 'model'
+                                    : legacy.provider,
+                                modelBaseUrl: legacy.bigtokenBaseUrl,
+                                modelName: legacy.bigtokenModel,
+                                opencodeBaseUrl: legacy.opencodeBaseUrl,
+                                opencodeEmbedded: legacy.opencodeEmbedded,
+                                opencodeBinaryPath: '',
+                                opencodeConfigPath: '',
+                                continueBinaryPath: migrateContinueCommand(
+                                  legacy.continueCommand
+                                ),
+                                continueConfigPath: '',
+                                continueMode: 'chat',
+                                workspacePath: legacy.workspacePath,
+                                credential: legacy.credential,
+                                toolApproval: legacy.toolApproval
+                              })
+                            }
                           }
                         }
                       }
@@ -765,6 +804,7 @@ export class RuntimeSettingsStore {
     model: string
     protocol: RuntimeSettings['modelProtocol']
     authentication: RuntimeSettings['modelAuthentication']
+    supportsImageInput: boolean
     imageGenerationQuality: RuntimeSettings['imageGenerationQuality']
     credentialSource: RuntimeSettings['credentialSource']
   } {
@@ -801,6 +841,7 @@ export class RuntimeSettingsStore {
       model,
       protocol: profile.protocol,
       authentication: profile.authentication,
+      supportsImageInput: profile.supportsImageInput,
       imageGenerationQuality: profile.imageGenerationQuality,
       credentialSource: environmentApiKey
         ? 'environment'
@@ -829,6 +870,7 @@ export class RuntimeSettingsStore {
         modelName: effective.model,
         protocol: effective.protocol,
         authentication: effective.authentication,
+        supportsImageInput: effective.supportsImageInput,
         imageGenerationQuality: effective.imageGenerationQuality,
         apiKey: effective.apiKey
       }
@@ -840,6 +882,7 @@ export class RuntimeSettingsStore {
       modelName: profile.modelName,
       protocol: profile.protocol,
       authentication: profile.authentication,
+      supportsImageInput: profile.supportsImageInput,
       imageGenerationQuality: profile.imageGenerationQuality,
       apiKey:
         profile.authentication === 'api-key'
@@ -915,6 +958,9 @@ export class RuntimeSettingsStore {
         authentication: isDefault
           ? effective.authentication
           : profile.authentication,
+        supportsImageInput: isDefault
+          ? effective.supportsImageInput
+          : profile.supportsImageInput,
         imageGenerationQuality: isDefault
           ? effective.imageGenerationQuality
           : profile.imageGenerationQuality,
@@ -938,6 +984,7 @@ export class RuntimeSettingsStore {
       modelName: effective.model,
       modelProtocol: effective.protocol,
       modelAuthentication: effective.authentication,
+      supportsImageInput: effective.supportsImageInput,
       imageGenerationQuality: effective.imageGenerationQuality,
       opencodeBaseUrl: agent.opencodeBaseUrl,
       opencodeEmbedded: agent.opencodeEmbedded,
@@ -1004,6 +1051,7 @@ export class RuntimeSettingsStore {
       modelName: effective.model,
       modelProtocol: effective.protocol,
       modelAuthentication: effective.authentication,
+      supportsImageInput: effective.supportsImageInput,
       imageGenerationQuality: effective.imageGenerationQuality,
       apiKey: effective.apiKey,
       modelProfiles: settings.modelProfiles.map((profile) => {
@@ -1060,6 +1108,7 @@ export class RuntimeSettingsStore {
               modelName: input.modelName,
               protocol: input.modelProtocol,
               authentication: input.modelAuthentication,
+              supportsImageInput: profile.supportsImageInput,
               imageGenerationQuality: input.imageGenerationQuality,
               apiKey: input.apiKey
             }
@@ -1070,6 +1119,7 @@ export class RuntimeSettingsStore {
               modelName: profile.modelName,
               protocol: profile.protocol,
               authentication: profile.authentication,
+              supportsImageInput: profile.supportsImageInput,
               imageGenerationQuality: profile.imageGenerationQuality,
               apiKey: { action: 'keep' as const }
             }
@@ -1113,6 +1163,7 @@ export class RuntimeSettingsStore {
           modelName: profile.modelName,
           protocol: profile.protocol,
           authentication: profile.authentication,
+          supportsImageInput: profile.supportsImageInput ?? false,
           imageGenerationQuality: profile.imageGenerationQuality
         }
         if (
@@ -1270,7 +1321,7 @@ export class RuntimeSettingsStore {
 
     const next: StoredSettings = {
       ...current,
-      version: 12,
+      version: 13,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId,

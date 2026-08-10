@@ -245,8 +245,12 @@ export class ContinueAgentRuntime implements AgentRuntime {
         'Continue 宿主暂不支持严格 OS 沙箱，请改用自动模式或嵌入式 OpenCode'
       )
     }
-    if (request.images?.length) {
-      throw new Error('Continue Runtime 暂不支持图片上下文，请切换到视觉模型')
+    if (
+      request.images?.length &&
+      this.options.modelProfile &&
+      this.options.modelProfile.supportsImageInput !== true
+    ) {
+      throw new Error('当前模型连接未启用图像输入')
     }
     if (
       !hasContinueModelConfiguration(
@@ -314,7 +318,8 @@ export class ContinueAgentRuntime implements AgentRuntime {
         execute ||
         (request.workMode === 'ask' &&
           Boolean(knowledgeCapability) &&
-          (approval.toolName === 'knowledge_search' ||
+          (approval.toolName === 'knowledge_list' ||
+            approval.toolName === 'knowledge_search' ||
             approval.toolName === 'note_search'))
           ? 'once' as const
           : 'deny' as const
@@ -335,6 +340,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
           authorize,
           {
             workMode: request.workMode,
+            images: request.images,
             ...(knowledgeCapability ? { knowledgeCapability } : {}),
             onEvent
           }

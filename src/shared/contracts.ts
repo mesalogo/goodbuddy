@@ -231,6 +231,7 @@ export const defaultRuntimeSettings = {
   modelName: 'sonnet-5',
   modelProtocol: 'anthropic-messages',
   modelAuthentication: 'api-key',
+  supportsImageInput: false,
   imageGenerationQuality: 'auto',
   opencodeBaseUrl: '',
   opencodeEmbedded: true,
@@ -321,6 +322,7 @@ const modelProfileInputSchema = z
       .regex(/^[\w./:-]+$/, '模型名称包含不支持的字符'),
     protocol: modelProtocolSchema,
     authentication: modelAuthenticationSchema,
+    supportsImageInput: z.boolean().optional(),
     imageGenerationQuality: imageGenerationQualitySchema,
     apiKey: modelApiKeyUpdateSchema
   })
@@ -524,6 +526,7 @@ export type ModelConnectionSettings = {
   modelName: string
   protocol: ModelProtocol
   authentication: ModelAuthentication
+  supportsImageInput?: boolean
   imageGenerationQuality: ImageGenerationQuality
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment'
@@ -535,6 +538,7 @@ export type RuntimeSettings = {
   modelName: string
   modelProtocol: ModelProtocol
   modelAuthentication: ModelAuthentication
+  supportsImageInput?: boolean
   imageGenerationQuality: ImageGenerationQuality
   opencodeBaseUrl: string
   opencodeEmbedded: boolean
@@ -563,6 +567,23 @@ export type RuntimeSettings = {
 }
 
 export type ContextAttachment = ConversationAttachment
+
+export const maximumPastedImageBytes = 12 * 1024 * 1024
+
+export const pastedImageInputSchema = z
+  .object({
+    data: z
+      .instanceof(Uint8Array)
+      .refine((value) => value.byteLength > 0, '粘贴图片内容为空')
+      .refine(
+        (value) => value.byteLength <= maximumPastedImageBytes,
+        '粘贴图片不能超过 12MB'
+      ),
+    mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp'])
+  })
+  .strict()
+
+export type PastedImageInput = z.infer<typeof pastedImageInputSchema>
 
 export const windowCaptureSourceIdSchema = z
   .string()
@@ -1169,6 +1190,9 @@ export type DesktopApi = {
   }
   context: {
     selectFiles: () => Promise<ContextAttachment[]>
+    addPastedImage: (
+      input: PastedImageInput
+    ) => Promise<ContextAttachment>
     captureScreen: () => Promise<ContextAttachment>
     listWindows: () => Promise<WindowCaptureOption[]>
     captureWindow: (sourceId: string) => Promise<ContextAttachment>

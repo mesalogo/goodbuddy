@@ -535,7 +535,8 @@ describe('OpenCodeRuntime embedded launcher', () => {
           modelName: 'private-model',
           apiKey: 'private-key',
           protocol: 'anthropic-messages',
-          authentication: 'api-key'
+          authentication: 'api-key',
+          supportsImageInput: true
         }
       }),
       deps
@@ -561,6 +562,11 @@ describe('OpenCodeRuntime embedded launcher', () => {
           },
           models: {
             'private-model': {
+              attachment: true,
+              modalities: {
+                input: ['text', 'image'],
+                output: ['text']
+              },
               provider: {
                 npm: '@ai-sdk/anthropic'
               }
@@ -1120,7 +1126,14 @@ describe('OpenCodeRuntime embedded launcher', () => {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
         conversationId: 'conversation-1',
         prompt: 'test',
-        workMode: 'execute'
+        workMode: 'execute',
+        images: [
+          {
+            name: 'screenshot.png',
+            mediaType: 'image/png',
+            data: 'aW1hZ2U='
+          }
+        ]
       },
       new AbortController().signal
     )) {
@@ -1130,7 +1143,15 @@ describe('OpenCodeRuntime embedded launcher', () => {
     expect(promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         system: '# 文档写作',
-        parts: [{ type: 'text', text: 'test' }]
+        parts: [
+          { type: 'text', text: 'test' },
+          {
+            type: 'file',
+            mime: 'image/png',
+            filename: 'screenshot.png',
+            url: 'data:image/png;base64,aW1hZ2U='
+          }
+        ]
       }),
       expect.objectContaining({
         signal: expect.any(AbortSignal)
@@ -1138,6 +1159,45 @@ describe('OpenCodeRuntime embedded launcher', () => {
     )
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
+  })
+
+  it('rejects images when the explicit model connection disables image input', async () => {
+    const child = fakeChild()
+    const { deps, createClient } = dependencies(child)
+    const runtime = new OpenCodeRuntime(
+      options({
+        modelProfile: {
+          id: '00000000-0000-4000-8000-000000000011',
+          name: '文本模型',
+          baseUrl: 'https://model.example',
+          modelName: 'text-model',
+          protocol: 'anthropic-messages',
+          authentication: 'none',
+          supportsImageInput: false
+        }
+      }),
+      deps
+    )
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'describe',
+        images: [
+          {
+            name: 'screenshot.png',
+            mediaType: 'image/png',
+            data: 'aW1hZ2U='
+          }
+        ]
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).rejects.toThrow(
+      '当前模型连接未启用图像输入'
+    )
+    expect(createClient).not.toHaveBeenCalled()
   })
 })
 

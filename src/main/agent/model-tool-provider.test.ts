@@ -193,10 +193,15 @@ describe('ModelToolProvider', () => {
     const workspace = await createWorkspace()
     const search = vi.fn(async () => [])
     const searchMagicNotes = vi.fn(() => [])
+    const listLibraries = vi.fn(() => [
+      { id: 'library-1', name: '产品知识' }
+    ])
     const gateway = {
+      listLibraries,
       search,
       searchMagicNotes,
       getAvailableToolNames: vi.fn(() => [
+        'knowledge_list',
         'knowledge_search',
         'note_search'
       ])
@@ -216,6 +221,7 @@ describe('ModelToolProvider', () => {
 
     const askTools = await provider.listTools(askContext, signal)
     expect(askTools.map((tool) => tool.name)).toEqual([
+      'knowledge_list',
       'knowledge_search',
       'note_search'
     ])
@@ -225,6 +231,16 @@ describe('ModelToolProvider', () => {
           ?.inputSchema
       )
     ).not.toContain('library')
+    await provider.callTool(
+      'knowledge_list',
+      {},
+      signal,
+      askContext
+    )
+    expect(listLibraries).toHaveBeenCalledWith(
+      'main-only-token',
+      {}
+    )
     await provider.callTool(
       'knowledge_search',
       { query: 'scope query', limit: 4 },
@@ -266,18 +282,21 @@ describe('ModelToolProvider', () => {
         'workspace_read_text',
         'workspace_list_directory',
         'workspace_write_text',
+        'knowledge_list',
         'knowledge_search',
         'note_search'
       ])
     )
   })
 
-  it('reserves two Execute tool slots for scoped built-in searches', async () => {
+  it('reserves three Execute tool slots for scoped built-in knowledge tools', async () => {
     const workspace = await createWorkspace()
     const gateway = {
+      listLibraries: vi.fn(() => []),
       search: vi.fn(async () => []),
       searchMagicNotes: vi.fn(() => []),
       getAvailableToolNames: vi.fn(() => [
+        'knowledge_list',
         'knowledge_search',
         'note_search'
       ])
@@ -299,7 +318,7 @@ describe('ModelToolProvider', () => {
       }))
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(95)
+      tools: createTools(94)
     })
     const validProvider = new ModelToolProvider(
       workspace,
@@ -313,7 +332,7 @@ describe('ModelToolProvider', () => {
     await validProvider.dispose()
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(96)
+      tools: createTools(95)
     })
     const overflowingProvider = new ModelToolProvider(
       workspace,

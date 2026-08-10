@@ -521,6 +521,47 @@ describe('SettingsPanel runtime files', () => {
     ).toBeNull()
   })
 
+  it('places explicit configuration actions at the top of the content', () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        presentation="page"
+      />
+    )
+
+    const settings = screen.getByRole('region', {
+      name: '设置中心'
+    })
+    const content = screen.getByRole('tabpanel')
+    const toolbar = content.querySelector(
+      '.settings-panel__content-toolbar'
+    )
+
+    expect(toolbar).toBe(content.firstElementChild)
+    expect(
+      within(toolbar as HTMLElement).getByRole('button', {
+        name: '保存设置'
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(toolbar as HTMLElement).getByRole('button', {
+        name: '保存并测试 OpenCode'
+      })
+    ).toBeInTheDocument()
+    expect(
+      settings.querySelector('.settings-panel__footer')
+    ).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+    expect(
+      screen.queryByRole('button', { name: '保存设置' })
+    ).not.toBeInTheDocument()
+  })
+
   it('uses one first-level heading for the settings page', () => {
     render(
       <SettingsPanel
@@ -1006,6 +1047,19 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('button', { name: '添加自定义' })
     )
     expect(screen.getAllByLabelText('名称')).toHaveLength(1)
+    expect(screen.getByLabelText('模型接口 URL')).toHaveValue('')
+    expect(screen.getByLabelText('模型接口 URL')).toHaveAttribute(
+      'placeholder',
+      'https://api.example.com/v1'
+    )
+    expect(screen.getByLabelText('模型')).toHaveValue('')
+    expect(screen.getByLabelText('模型')).toHaveAttribute(
+      'placeholder',
+      'model-name'
+    )
+    expect(
+      screen.getByLabelText('接口协议 模型连接 2')
+    ).toHaveValue('openai-chat-completions')
     fireEvent.change(screen.getByLabelText('名称'), {
       target: { value: 'OpenCode 独立模型' }
     })
@@ -1139,6 +1193,39 @@ describe('SettingsPanel runtime files', () => {
             kind: 'profile',
             profileId: modelProfileId
           }
+        })
+      )
+    )
+  })
+
+  it('saves the image input capability for a model connection', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    const imageInput = await screen.findByRole('checkbox', {
+      name: '支持图像输入'
+    })
+    expect(imageInput).not.toBeChecked()
+    fireEvent.click(imageInput)
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: [
+            expect.objectContaining({
+              id: modelProfileId,
+              supportsImageInput: true
+            })
+          ]
         })
       )
     )
@@ -1913,6 +2000,7 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('浏览器操作')).toBeInTheDocument()
     expect(screen.queryByText('读取工作区文本')).not.toBeInTheDocument()
     expect(screen.getByText('知识库 MCP')).toBeInTheDocument()
+    expect(screen.queryByText('knowledge_list')).not.toBeInTheDocument()
     expect(screen.queryByText('knowledge_search')).not.toBeInTheDocument()
     expect(screen.queryByText('note_search')).not.toBeInTheDocument()
     const knowledgeServerToggle = screen.getByRole('button', {
@@ -1924,6 +2012,9 @@ describe('SettingsPanel runtime files', () => {
     const knowledgeTools = screen.getByRole('region', {
       name: '知识库 MCP 工具'
     })
+    expect(knowledgeTools).toContainElement(
+      screen.getByText('knowledge_list')
+    )
     expect(knowledgeTools).toContainElement(
       screen.getByText('knowledge_search')
     )

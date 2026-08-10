@@ -27,12 +27,61 @@ GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode �
 
 ### 面向国产化环境交付
 
-- 支持 Windows、macOS 与 Linux。
-- 支持 Linux `x64` 和 `arm64`。
-- 提供适用于麒麟、统信 UOS 等 Debian 系桌面的 `deb` 安装包。
-- 提供 AppImage，便于免安装验证与便携分发。
-- 支持 Anthropic Messages、OpenAI Chat Completions、OpenAI Images 与无认证本机模型。
-- 可连接企业网关、私有模型服务和国产模型适配层。
+GoodBuddy 按操作系统、处理器架构、模型协议、消息通道和内网部署能力提供国产化适配。下表只列当前代码和发布流程已经提供的能力；具体国产操作系统、整机和外设组合仍应在目标环境完成安装、启动、模型调用和桌面集成验收。
+
+#### 操作系统与处理器
+
+| 类别 | 支持范围 | 交付形式 | 说明 |
+| --- | --- | --- | --- |
+| Windows | Windows `x64`、Windows on Arm `arm64` | NSIS 安装包、便携 ZIP | 两种架构均进入正式发布矩阵 |
+| Linux | Linux `x64`、Linux `arm64` | `deb`、AppImage | 适用于采用兼容 Debian 包管理或 AppImage 的桌面发行版 |
+| 国产 Linux | 银河麒麟、统信 UOS、开放麒麟、Deepin 等 | 优先使用 `deb`，也可用 AppImage 免安装验证 | 当前按 Linux 与 Debian/AppImage 兼容性支持，不表示已取得各厂商版本认证 |
+| macOS | Intel `x64`、Apple Silicon `arm64` | DMG、ZIP | 纳入统一跨平台交付矩阵 |
+| x86-64 处理器 | 海光、兆芯及其他兼容 `x86_64` 的处理器 | 对应系统的 `x64` 包 | 依赖操作系统与 Electron 运行时兼容性，需按具体整机验收 |
+| ARM64 处理器 | 鲲鹏、飞腾及其他兼容 `aarch64` 的处理器 | 对应系统的 `arm64` 包 | 依赖操作系统、图形栈与 Electron 运行时兼容性，需按具体整机验收 |
+| LoongArch | 暂无正式发布包 | 无 | 当前发布矩阵不包含 `loong64`，不应使用 `arm64` 包替代 |
+
+#### 国产模型与私有化服务
+
+GoodBuddy 不把模型厂商写死在客户端中，而是通过标准协议连接用户选择的云端、企业网关或本机服务。下列厂商和模型只有在所用服务提供对应兼容接口时才能接入。
+
+| 接入对象 | 支持状态 | 接入方式 | 可用能力 |
+| --- | --- | --- | --- |
+| DeepSeek | 协议兼容 | OpenAI 兼容 Chat Completions，或由网关转换为已支持协议 | 对话、推理、受控工具调用 |
+| 通义千问 / 阿里云百炼 | 协议兼容 | OpenAI 兼容 Chat Completions | 对话、推理、受控工具调用 |
+| 智谱 GLM | 协议兼容 | OpenAI 兼容 Chat Completions | 对话、推理、受控工具调用 |
+| Kimi / Moonshot | 协议兼容 | OpenAI 兼容 Chat Completions | 对话、推理、受控工具调用 |
+| 豆包 / 火山方舟 | 协议兼容 | OpenAI 兼容 Chat Completions | 对话、推理、受控工具调用 |
+| 腾讯混元 | 协议兼容 | OpenAI 兼容接口或企业网关 | 对话、推理、受控工具调用 |
+| 百度千帆 / 文心 | 协议兼容 | OpenAI 兼容接口或企业网关 | 对话、推理、受控工具调用 |
+| 百川、MiniMax | 协议兼容 | OpenAI 兼容接口或企业网关 | 对话、推理、受控工具调用 |
+| 零一万物 Yi、阶跃星辰 Step | 协议兼容 | OpenAI 兼容接口或企业网关 | 对话、推理、受控工具调用 |
+| 讯飞星火、华为盘古、商汤日日新 | 可经适配层接入 | 由企业网关转换为 OpenAI Responses、OpenAI 兼容 Chat Completions 或 Anthropic Messages | 按网关实现提供文本、推理和工具能力 |
+| 硅基流动等聚合服务 | 协议兼容 | OpenAI 兼容 Chat Completions | 使用聚合服务中可用的文本模型 |
+| Ollama | 已验证的本机连接方式 | OpenAI 兼容 Chat Completions，可选择“无需认证” | 本机文本模型，包括 Qwen、DeepSeek、GLM、Yi、MiniCPM 等 Ollama 模型 |
+| Xinference、vLLM、LM Studio、LocalAI 等私有服务 | 协议兼容 | 自定义 OpenAI 兼容地址，可使用 API Key 或无需认证 | 本机或内网文本模型 |
+| 企业模型网关与国产模型适配层 | 支持自定义连接 | OpenAI Responses、OpenAI 兼容 Chat Completions 或 Anthropic Messages | 按网关实现提供文本、推理和工具能力 |
+| 通义万相、豆包图像、智谱 CogView 等国产图像模型 | 可经兼容接口接入 | 服务端或网关提供 OpenAI Images Generations 兼容接口 | 单图生成与本地成果保存 |
+| BGE、GTE、text2vec、Qwen Embedding 等国产向量模型 | 可经兼容接口接入 | 使用 Xinference、vLLM、Ollama 或企业网关提供 OpenAI 兼容 Embeddings 接口 | 知识库语义检索、索引重建和 GraphRAG；失败时回退到 FTS5 与证据图谱 |
+
+#### 国产通信、语音与内网能力
+
+| 类别 | 已支持项 | 说明 |
+| --- | --- | --- |
+| 个人微信 | 微信 ClawBot | 本机扫码绑定；支持私聊文字、图片和文件，单条消息最多 4 个附件、解密后合计不超过 12MB |
+| 企业通信 | 企业微信、钉钉 | 支持加密凭据、环境变量只读覆盖、连接测试、动态启停、发送者范围和状态诊断 |
+| 远程 Runtime | 直连文本模型、OpenCode、Continue | 每个通道使用系统管理项目和独立远程会话，支持 Ask / Execute 与活动审计 |
+| 中文离线语音 | SenseVoiceSmall INT8 | 从 ModelScope 固定版本校验下载；支持中文、粤语、英语、日语和韩语，适合本地 CPU |
+| 多语言离线语音 | Whisper Tiny INT8 | 从 ModelScope 固定版本校验下载；支持中文、英语及其他语言 |
+| 中文界面 | 简体中文、内置 Noto Sans SC Variable | 字体随应用打包，不依赖远程字体服务 |
+| 本地数据 | SQLite、FTS5、本地知识库与知识图谱 | 会话、任务、成果、记忆和知识数据默认保存在本机 |
+| 内网模型与网关 | 自定义 HTTP(S) 地址、API Key 或无需认证 | 可连接本机、局域网、企业网关和私有模型服务 |
+| 内网兼容模式 | HTTP、自签名证书、无效或过期证书 | 默认开启，可关闭并恢复严格校验；微信凭据和媒体端点不适用该放宽策略 |
+| MCP | `stdio`、Streamable HTTP、SSE | 可接入本机或内网 MCP Server；远程连接支持 Bearer Token |
+| Agent Runtime | 内置 OpenCode、Continue | 支持自定义程序路径、配置路径、模型来源和服务地址；Linux 内置 OpenCode 可使用 bubblewrap 严格沙箱 |
+| 发布校验 | 六组系统与架构目标、SHA-256 清单 | Windows、macOS、Linux 的 `x64` / `arm64` 包均由发布流程构建和校验 |
+
+> “协议兼容”表示 GoodBuddy 已实现对应协议，并允许配置自定义服务地址，不等同于对每个厂商、模型版本或套餐逐一完成认证。工具调用、图片输入、思维过程和上下文长度还取决于具体服务端实现。
 
 ## 核心功能
 

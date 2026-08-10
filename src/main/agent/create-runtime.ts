@@ -58,6 +58,7 @@ export function createDefaultModelRuntime(
     model: settings.modelName,
     protocol: settings.modelProtocol,
     authentication: settings.modelAuthentication,
+    supportsImageInput: settings.supportsImageInput,
     defaultWorkspace: settings.workspacePath || defaultWorkspace,
     toolProvider: noSubagentTools
   })
@@ -74,6 +75,7 @@ export function createModelProfileRuntime(
     model: profile.modelName,
     protocol: profile.protocol,
     authentication: profile.authentication,
+    supportsImageInput: profile.supportsImageInput,
     imageGenerationQuality:
       profile.imageGenerationQuality ??
       defaultRuntimeSettings.imageGenerationQuality,

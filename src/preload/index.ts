@@ -13,6 +13,7 @@ import {
   type KnowledgeLibrary,
   type KnowledgeSearchReference,
   type KnowledgeSnapshot,
+  type PastedImageInput,
   type RuntimeSettings,
   type RuntimeSettingsInput,
   type RuntimeConfigActionInput,
@@ -707,6 +708,11 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.contextSelectFiles
       ) as Promise<ContextAttachment[]>,
+    addPastedImage: (input: PastedImageInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.contextAddPastedImage,
+        input
+      ) as Promise<ContextAttachment>,
     captureScreen: () =>
       ipcRenderer.invoke(
         ipcChannels.contextCaptureScreen

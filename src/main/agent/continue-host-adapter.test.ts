@@ -142,6 +142,7 @@ describe('ContinueHostAdapter', () => {
       'isHeadless:e.interactivePermissions?!1:e.headless'
     )
     expect(bundle).toContain('GOODBUDDY_CONTINUE_HOST_TOKEN')
+    expect(bundle).toContain('json({limit:"20mb"})')
     expect(bundle).toContain('listen(i,"127.0.0.1"')
     expect(bundle).toContain(
       'GOODBUDDY_DISABLE_CONTINUE_UPDATES'
@@ -563,6 +564,8 @@ describe('ContinueHostAdapter', () => {
         '--config',
         expect.stringContaining('knowledge-config-'),
         '--allow',
+        'knowledge_list',
+        '--allow',
         'knowledge_search',
         '--allow',
         'note_search',
@@ -688,6 +691,7 @@ describe('ContinueHostAdapter', () => {
       let generatedConfig = ''
       let launchedEnvironment: NodeJS.ProcessEnv | undefined
       let launchedArgs: string[] = []
+      let submittedMessage: unknown
       const launchHost: ContinueHostLauncher = (
         _entryPath,
         args,
@@ -711,7 +715,10 @@ describe('ContinueHostAdapter', () => {
       let stateRequests = 0
       vi.stubGlobal(
         'fetch',
-        vi.fn(async (input: string | URL | Request) => {
+        vi.fn(async (
+          input: string | URL | Request,
+          init?: RequestInit
+        ) => {
           if (String(input).endsWith('/state')) {
             stateRequests += 1
             return Response.json({
@@ -751,6 +758,9 @@ describe('ContinueHostAdapter', () => {
               pendingPermission: null
             })
           }
+          if (String(input).endsWith('/message')) {
+            submittedMessage = JSON.parse(String(init?.body)).message
+          }
           return Response.json({})
         })
       )
@@ -768,6 +778,7 @@ describe('ContinueHostAdapter', () => {
           modelName: 'qwen3',
           protocol,
           authentication,
+          supportsImageInput: true,
           ...(authentication === 'api-key'
             ? { apiKey: 'private-key' }
             : {})
@@ -784,7 +795,14 @@ describe('ContinueHostAdapter', () => {
             knowledgeCapability: {
               endpoint: 'http://127.0.0.1:4567/mcp',
               token: 'main-only-token'
-            }
+            },
+            images: [
+              {
+                name: 'screenshot.png',
+                mediaType: 'image/png',
+                data: 'aW1hZ2U='
+              }
+            ]
           }
         )
       ).resolves.toEqual({
@@ -804,7 +822,8 @@ describe('ContinueHostAdapter', () => {
             provider: 'openai',
             apiBase: 'http://127.0.0.1:11434/v1',
             model: 'qwen3',
-            useResponsesApi
+            useResponsesApi,
+            capabilities: ['image_input']
           }
         ],
         mcpServers: [
@@ -820,8 +839,19 @@ describe('ContinueHostAdapter', () => {
           }
         ]
       })
+      expect(submittedMessage).toEqual([
+        { type: 'text', text: 'hello' },
+        {
+          type: 'imageUrl',
+          imageUrl: {
+            url: 'data:image/png;base64,aW1hZ2U='
+          }
+        }
+      ])
       expect(launchedArgs).toEqual(
         expect.arrayContaining([
+          '--allow',
+          'knowledge_list',
           '--allow',
           'knowledge_search',
           '--allow',

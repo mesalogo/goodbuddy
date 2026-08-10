@@ -4,6 +4,7 @@ import {
   KeyRound,
   LockKeyhole,
   Plus,
+  Save,
   SunMoon,
   TerminalSquare,
   Trash2,
@@ -60,6 +61,7 @@ type SettingsTab =
 type ModelType = 'llm' | 'embedding' | 'speech'
 type AgentRuntimeType = RuntimeConfigActionInput['runtime']
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
+  supportsImageInput: boolean
   apiKey: string
   clearApiKey: boolean
 }
@@ -138,6 +140,7 @@ function toModelProfileDrafts(
 ): ModelProfileDraft[] {
   return settings.modelProfiles.map((profile) => ({
     ...profile,
+    supportsImageInput: profile.supportsImageInput ?? false,
     apiKey: '',
     clearApiKey: false
   }))
@@ -346,11 +349,8 @@ export function SettingsPanel({
     activeTab === 'runtime' ||
     activeTab === 'security' ||
     activeTab === 'roles'
-  const showFooter =
-    presentation !== 'page' ||
-    configurationTab ||
-    Boolean(error) ||
-    saved
+  const showContentActions =
+    configurationTab || Boolean(error) || saved
 
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -515,6 +515,7 @@ export function SettingsPanel({
         modelName: profile.modelName,
         protocol: profile.protocol,
         authentication: profile.authentication,
+        supportsImageInput: profile.supportsImageInput,
         imageGenerationQuality: profile.imageGenerationQuality,
         apiKey: profile.clearApiKey
           ? ({ action: 'clear' } as const)
@@ -780,10 +781,11 @@ export function SettingsPanel({
       {
         id,
         name: `模型连接 ${profiles.length + 1}`,
-        baseUrl: defaultRuntimeSettings.modelBaseUrl,
-        modelName: defaultRuntimeSettings.modelName,
-        protocol: defaultRuntimeSettings.modelProtocol,
+        baseUrl: '',
+        modelName: '',
+        protocol: 'openai-chat-completions',
         authentication: defaultRuntimeSettings.modelAuthentication,
+        supportsImageInput: defaultRuntimeSettings.supportsImageInput,
         imageGenerationQuality:
           defaultRuntimeSettings.imageGenerationQuality,
         apiKeyConfigured: false,
@@ -1176,6 +1178,53 @@ export function SettingsPanel({
             ref={settingsBodyRef}
             role="tabpanel"
           >
+          {showContentActions && (
+            <div className="settings-panel__content-toolbar">
+              <div className="settings-feedback">
+                {error && (
+                  <span className="settings-error" role="alert">
+                    {error}
+                  </span>
+                )}
+                {saved && (
+                  <span className="settings-success" role="status">
+                    <Check aria-hidden="true" size={14} />
+                    {connectionResult ?? '设置已保存'}
+                  </span>
+                )}
+              </div>
+              {configurationTab && (
+                <div className="settings-panel__content-actions">
+                  {(activeTab === 'runtime' ||
+                    (activeTab === 'model' && modelType === 'llm')) && (
+                    <button
+                      className="secondary-button"
+                      disabled={saving || testing}
+                      onClick={() => void testConnection()}
+                      type="button"
+                    >
+                      {testing
+                        ? '测试中…'
+                        : activeTab === 'model'
+                          ? '保存并测试模型'
+                          : agentRuntimeType === 'opencode'
+                            ? '保存并测试 OpenCode'
+                            : '保存并测试 Continue'}
+                    </button>
+                  )}
+                  <button
+                    className="primary-button"
+                    disabled={saving || testing}
+                    onClick={() => void save()}
+                    type="button"
+                  >
+                    <Save aria-hidden="true" size={13} />
+                    {saving ? '保存中…' : '保存设置'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {activeTab === 'appearance' && (
             <div className="settings-section appearance-settings">
               <div className="settings-section__title">
@@ -1815,6 +1864,7 @@ export function SettingsPanel({
                           baseUrl: event.target.value
                         })
                       }
+                      placeholder="https://api.example.com/v1"
                       value={profile.baseUrl}
                     />
                   </label>
@@ -1827,6 +1877,7 @@ export function SettingsPanel({
                           modelName: event.target.value
                         })
                       }
+                      placeholder="model-name"
                       value={profile.modelName}
                     />
                   </label>
@@ -1915,6 +1966,25 @@ export function SettingsPanel({
                       <option value="none">无需认证</option>
                     </select>
                   </label>
+                  {isAgentRuntimeModelProtocol(profile.protocol) && (
+                    <div className="field">
+                      <label className="check-field">
+                        <input
+                          checked={profile.supportsImageInput}
+                          onChange={(event) =>
+                            updateModelProfile(profile.id, {
+                              supportsImageInput: event.target.checked
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        <span>支持图像输入</span>
+                      </label>
+                      <small>
+                        启用后，GoodBuddy 可将图片上下文发送给此模型连接。
+                      </small>
+                    </div>
+                  )}
                   {profile.protocol ===
                     'openai-images-generations' && (
                       <label className="field">
@@ -2301,56 +2371,6 @@ export function SettingsPanel({
           {activeTab === 'about' && <UpdateSettingsSection />}
           </div>
         </div>
-
-        {showFooter && (
-          <footer className="settings-panel__footer">
-            <div className="settings-feedback">
-              {error && <span className="settings-error">{error}</span>}
-              {saved && (
-                <span className="settings-success">
-                  <Check size={14} />
-                  {connectionResult ?? '设置已保存'}
-                </span>
-              )}
-            </div>
-            <button
-              className="secondary-button"
-              onClick={close}
-              type="button"
-            >
-              {configurationTab ? '取消' : '关闭'}
-            </button>
-            {configurationTab && (
-              <>
-                {(activeTab === 'runtime' ||
-                  (activeTab === 'model' && modelType === 'llm')) && (
-                  <button
-                    className="secondary-button"
-                    disabled={saving || testing}
-                    onClick={() => void testConnection()}
-                    type="button"
-                  >
-                    {testing
-                      ? '测试中…'
-                      : activeTab === 'model'
-                        ? '保存并测试模型'
-                        : agentRuntimeType === 'opencode'
-                          ? '保存并测试 OpenCode'
-                          : '保存并测试 Continue'}
-                  </button>
-                )}
-                <button
-                  className="primary-button"
-                  disabled={saving || testing}
-                  onClick={() => void save()}
-                  type="button"
-                >
-                  {saving ? '保存中…' : '保存设置'}
-                </button>
-              </>
-            )}
-          </footer>
-        )}
       </section>
     </div>
   )

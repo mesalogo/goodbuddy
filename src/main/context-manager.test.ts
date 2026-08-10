@@ -39,6 +39,43 @@ afterEach(async () => {
 })
 
 describe('ContextManager', () => {
+  it('stores pasted renderer image bytes without rereading the clipboard', () => {
+    const image = {
+      isEmpty: () => false,
+      getSize: () => ({ width: 640, height: 480 }),
+      resize: vi.fn(),
+      toJPEG: () => Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    }
+    image.resize.mockReturnValue(image)
+    createFromBuffer.mockReturnValue(image)
+    const data = Uint8Array.from([0x89, 0x50, 0x4e, 0x47])
+
+    const attachment = new ContextManager().storePastedImage({
+      data,
+      mimeType: 'image/png'
+    })
+
+    expect(createFromBuffer).toHaveBeenCalledWith(Buffer.from(data))
+    expect(attachment).toMatchObject({
+      name: '粘贴图片.jpg',
+      kind: 'image',
+      preview: '640 × 480',
+      contentUrl: 'data:image/jpeg;base64,/9j/2Q=='
+    })
+  })
+
+  it('rejects empty pasted image input before decoding it', () => {
+    const manager = new ContextManager()
+
+    expect(() =>
+      manager.storePastedImage({
+        data: new Uint8Array(),
+        mimeType: 'image/png'
+      })
+    ).toThrow('粘贴图片大小无效')
+    expect(createFromBuffer).not.toHaveBeenCalled()
+  })
+
   it('ingests bounded remote text and image attachments as untrusted context', async () => {
     const manager = new ContextManager()
     const text = Buffer.from('remote untrusted content', 'utf8')

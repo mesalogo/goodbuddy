@@ -80,6 +80,11 @@ type OpenCodeProviderConfig = {
         string,
         {
           name: string
+          attachment: boolean
+          modalities: {
+            input: Array<'text' | 'image'>
+            output: ['text']
+          }
           provider: {
             npm: string
           }
@@ -166,6 +171,13 @@ function createOpenCodeProviderConfig(
         models: {
           [profile.modelName]: {
             name: profile.name,
+            attachment: profile.supportsImageInput === true,
+            modalities: {
+              input: profile.supportsImageInput === true
+                ? ['text', 'image']
+                : ['text'],
+              output: ['text']
+            },
             provider: {
               npm: provider.npm
             }
@@ -1034,8 +1046,12 @@ export class OpenCodeRuntime implements AgentRuntime {
     signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
-    if (request.images?.length) {
-      throw new Error('OpenCode Runtime 暂不支持图片上下文，请切换到视觉模型')
+    if (
+      request.images?.length &&
+      this.options.modelProfile &&
+      this.options.modelProfile.supportsImageInput !== true
+    ) {
+      throw new Error('当前模型连接未启用图像输入')
     }
     const client = await this.getClient(signal)
     const directory = this.options.defaultWorkspace
@@ -1202,7 +1218,15 @@ export class OpenCodeRuntime implements AgentRuntime {
             ? undefined
             : this.options.skillInstructions || undefined,
         ...(disabledTools ? { tools: disabledTools } : {}),
-        parts: [{ type: 'text', text: promptText }]
+        parts: [
+          { type: 'text' as const, text: promptText },
+          ...(request.images ?? []).map((image) => ({
+            type: 'file' as const,
+            mime: image.mediaType,
+            filename: image.name,
+            url: `data:${image.mediaType};base64,${image.data}`
+          }))
+        ]
       }, { signal })
       prompt.catch(() => undefined)
 

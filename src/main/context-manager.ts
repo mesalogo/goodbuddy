@@ -10,10 +10,12 @@ import {
 } from 'electron'
 import { open, realpath } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
-import type {
-  AgentRequest,
-  ContextAttachment,
-  WindowCaptureOption
+import {
+  maximumPastedImageBytes,
+  type PastedImageInput,
+  type AgentRequest,
+  type ContextAttachment,
+  type WindowCaptureOption
 } from '../shared/contracts'
 import type { ChannelMediaAttachment } from '../shared/channel-contracts'
 import type {
@@ -191,6 +193,26 @@ export class ContextManager {
     this.contexts.set(context.id, context)
     this.totalBytes += context.size
     return this.toPublic(context)
+  }
+
+  storePastedImage(input: PastedImageInput): ContextAttachment {
+    if (
+      input.mimeType !== 'image/jpeg' &&
+      input.mimeType !== 'image/png' &&
+      input.mimeType !== 'image/webp'
+    ) {
+      throw new Error('粘贴图片格式不受支持')
+    }
+    if (
+      input.data.byteLength === 0 ||
+      input.data.byteLength > maximumPastedImageBytes
+    ) {
+      throw new Error('粘贴图片大小无效')
+    }
+    return this.storeImage(
+      '粘贴图片.jpg',
+      nativeImage.createFromBuffer(Buffer.from(input.data))
+    )
   }
 
   async ingestRemoteAttachment(

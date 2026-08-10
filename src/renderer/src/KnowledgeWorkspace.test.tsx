@@ -13,37 +13,46 @@ import {
   type KnowledgeWorkspaceProps
 } from './KnowledgeWorkspace'
 
-const echartsMock = vi.hoisted(() => {
+const g6Mock = vi.hoisted(() => {
   const handlers = new Map<string, (event: unknown) => void>()
-  const chart = {
-    convertFromPixel: vi.fn(() => [240, 320]),
-    dispose: vi.fn(),
-    dispatchAction: vi.fn(),
-    getOption: vi.fn(() => ({
-      series: [{ center: ['50%', '50%'], zoom: 1 }]
-    })),
+  const graph = {
+    destroy: vi.fn(),
+    draw: vi.fn(async () => undefined),
+    getElementPosition: vi.fn(() => [240, 320]),
+    getZoom: vi.fn(() => 1),
     off: vi.fn((eventName: string) => handlers.delete(eventName)),
     on: vi.fn((eventName: string, handler: (event: unknown) => void) => {
       handlers.set(eventName, handler)
     }),
+    render: vi.fn(async () => undefined),
     resize: vi.fn(),
-    setOption: vi.fn()
+    setData: vi.fn(),
+    setEdge: vi.fn(),
+    setElementState: vi.fn(async () => undefined),
+    setLayout: vi.fn(),
+    setNode: vi.fn(),
+    setOptions: vi.fn(),
+    zoomTo: vi.fn(async () => undefined)
   }
   return {
-    chart,
+    graph,
     handlers,
-    init: vi.fn(() => chart),
-    use: vi.fn()
+    Graph: vi.fn(function () {
+      return graph
+    })
   }
 })
 
-vi.mock('echarts/core', () => ({
-  init: echartsMock.init,
-  use: echartsMock.use
+vi.mock('@antv/g6', () => ({
+  Graph: g6Mock.Graph,
+  GraphEvent: {
+    AFTER_TRANSFORM: 'aftertransform'
+  },
+  NodeEvent: {
+    CLICK: 'node:click',
+    DRAG_END: 'node:dragend'
+  }
 }))
-vi.mock('echarts/charts', () => ({ GraphChart: {} }))
-vi.mock('echarts/components', () => ({ TooltipComponent: {} }))
-vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 const library: KnowledgeWorkspaceProps['libraries'][number] = {
   id: 'library-1',
@@ -154,7 +163,9 @@ describe('KnowledgeWorkspace', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
-    echartsMock.handlers.clear()
+    g6Mock.handlers.clear()
+    g6Mock.graph.getZoom.mockReturnValue(1)
+    g6Mock.graph.getElementPosition.mockReturnValue([240, 320])
   })
 
   it('creates a configured knowledge library', async () => {
@@ -215,10 +226,17 @@ describe('KnowledgeWorkspace', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
     expect(screen.getByLabelText('实体关系图')).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: /拓扑/u })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByLabelText('图谱拓扑')).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('选择图谱实体'), {
       target: { value: 'entity-1' }
     })
+    expect(
+      screen.getByRole('tab', { name: '详情' })
+    ).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByLabelText('实体详情')).toBeInTheDocument()
     expect(screen.getByText('跨平台 AI 桌面助手')).toBeInTheDocument()
     expect(screen.getByText('架构说明.md')).toBeInTheDocument()
@@ -319,8 +337,8 @@ describe('KnowledgeWorkspace', () => {
     expect(
       screen.getByRole('option', { name: 'Electron · 技术' })
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByText('可见关系 1 条'))
-    expect(await screen.findByText('使用')).toBeInTheDocument()
+    expect(screen.getByText('可见关系')).toBeInTheDocument()
+    expect(screen.getByText('使用')).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('搜索图谱实体'), {
       target: { value: 'Electron' }
@@ -329,20 +347,17 @@ describe('KnowledgeWorkspace', () => {
       screen.queryByRole('option', { name: 'GoodBuddy · 产品' })
     ).not.toBeInTheDocument()
     expect(screen.queryByText('使用')).not.toBeInTheDocument()
-    expect(echartsMock.chart.setOption).toHaveBeenLastCalledWith(
+    expect(g6Mock.graph.setOptions).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        series: [
-          expect.objectContaining({
-            data: [
-              expect.objectContaining({
-                id: 'entity-2'
-              })
-            ],
-            links: []
-          })
-        ]
-      }),
-      { notMerge: true }
+        data: {
+          nodes: [
+            expect.objectContaining({
+              id: 'entity-2'
+            })
+          ],
+          edges: []
+        }
+      })
     )
 
     fireEvent.change(screen.getByLabelText('搜索图谱实体'), {
@@ -419,7 +434,7 @@ describe('KnowledgeWorkspace', () => {
     )
   })
 
-  it('manages the graph chart, zoom, selection, movement, and cleanup', () => {
+  it('manages the G6 graph, zoom, selection, movement, and cleanup', async () => {
     const onMoveNode = vi.fn()
     const { rerender, unmount } = render(
       <KnowledgeWorkspace {...createProps({ onMoveNode })} />
@@ -428,100 +443,102 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
     const graph = screen.getByLabelText('实体关系图')
     expect(graph).toHaveClass('knowledge-graph__chart')
-    expect(echartsMock.init).toHaveBeenCalledWith(
-      graph,
-      undefined,
-      { renderer: 'canvas' }
-    )
-    expect(echartsMock.chart.setOption).toHaveBeenLastCalledWith(
+    expect(g6Mock.Graph).toHaveBeenCalledWith(
       expect.objectContaining({
-        series: [
-          expect.objectContaining({
-            categories: expect.arrayContaining([
-              expect.objectContaining({ name: '产品' }),
-              expect.objectContaining({ name: '技术' })
-            ]),
-            layout: 'force',
-            symbol: 'circle',
-            type: 'graph',
-            data: expect.arrayContaining([
-              expect.objectContaining({
-                category: '产品',
-                id: 'entity-1',
-                name: 'GoodBuddy'
-              })
-            ]),
-            force: expect.objectContaining({
-              edgeLength: [90, 150],
-              friction: 0.08,
-              gravity: 0.06,
-              layoutAnimation: true,
-              repulsion: 200
-            }),
-            links: [
-              expect.objectContaining({
-                id: 'relation-1',
-                value: '使用'
-              })
-            ]
-          })
-        ]
-      }),
-      { notMerge: true }
+        container: graph,
+        zoomRange: [0.5, 2]
+      })
     )
-    const stableOptionCallCount =
-      echartsMock.chart.setOption.mock.calls.length
+    expect(g6Mock.graph.setOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: {
+          nodes: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'entity-1',
+              data: expect.objectContaining({
+                entityType: '产品',
+                label: 'GoodBuddy'
+              })
+            })
+          ]),
+          edges: [
+            expect.objectContaining({
+              id: 'relation-1',
+              data: expect.objectContaining({
+                label: '使用'
+              })
+            })
+          ]
+        },
+        layout: expect.objectContaining({
+          animate: false,
+          angleRatio: 1,
+          ordering: 'topology',
+          type: 'circular'
+        }),
+        behaviors: expect.arrayContaining([
+          'drag-canvas',
+          'zoom-canvas',
+          'drag-element',
+          expect.objectContaining({ type: 'auto-adapt-label' })
+        ])
+      })
+    )
+    const graphOptions = g6Mock.graph.setOptions.mock.lastCall?.[0]
+    expect(graphOptions?.behaviors).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'hover-activate' })
+      ])
+    )
+    expect(graphOptions?.node.state).not.toHaveProperty('inactive')
+    expect(graphOptions?.edge.state).not.toHaveProperty('inactive')
+    await waitFor(() => expect(g6Mock.graph.render).toHaveBeenCalledTimes(1))
+    expect(g6Mock.graph.setElementState).toHaveBeenCalledWith(
+      {
+        'entity-1': [],
+        'entity-2': []
+      },
+      false
+    )
+    const stableRenderCallCount = g6Mock.graph.render.mock.calls.length
     rerender(<KnowledgeWorkspace {...createProps({ onMoveNode })} />)
-    expect(echartsMock.chart.setOption).toHaveBeenCalledTimes(
-      stableOptionCallCount
+    expect(g6Mock.graph.render).toHaveBeenCalledTimes(stableRenderCallCount)
+    const movedGraphNodes = createProps().graphNodes.map((node) =>
+      node.id === 'entity-1' ? { ...node, x: 240, y: 320 } : node
     )
+    rerender(
+      <KnowledgeWorkspace
+        {...createProps({ graphNodes: movedGraphNodes, onMoveNode })}
+      />
+    )
+    expect(g6Mock.graph.render).toHaveBeenCalledTimes(stableRenderCallCount)
 
     fireEvent.click(screen.getByRole('button', { name: '放大图谱' }))
     expect(screen.getByText('115%')).toBeInTheDocument()
-    expect(echartsMock.chart.setOption).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        series: [
-          expect.objectContaining({
-            zoom: 1.15
-          })
-        ]
-      })
-    )
+    expect(g6Mock.graph.zoomTo).toHaveBeenLastCalledWith(1.15, false)
 
     act(() => {
-      echartsMock.handlers.get('click')?.({
-        dataType: 'node',
-        data: { id: 'entity-1' }
+      g6Mock.handlers.get('node:click')?.({
+        target: { id: 'entity-1' },
+        targetType: 'node'
       })
     })
     expect(screen.getByLabelText('实体详情')).toBeInTheDocument()
-    expect(echartsMock.chart.dispatchAction).toHaveBeenCalledWith({
-      type: 'select',
-      seriesIndex: 0,
-      dataIndex: 0
-    })
+    await waitFor(() =>
+      expect(g6Mock.graph.setElementState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'entity-1': ['selected'],
+          'entity-2': []
+        }),
+        false
+      )
+    )
     expect(onMoveNode).not.toHaveBeenCalled()
 
     act(() => {
-      echartsMock.chart.convertFromPixel
-        .mockReturnValueOnce([100, 100])
-        .mockReturnValueOnce([220, 260])
-        .mockReturnValueOnce([120, 160])
-      echartsMock.handlers.get('mousedown')?.({
-        dataType: 'node',
-        data: { id: 'entity-1' },
-        event: {
-          offsetX: 100,
-          offsetY: 100,
-          target: {
-            transformCoordToGlobal: () => [220, 260]
-          }
-        }
-      })
-      echartsMock.handlers.get('mouseup')?.({
-        dataType: 'node',
-        data: { id: 'entity-1' },
-        event: { offsetX: 120, offsetY: 160 }
+      g6Mock.handlers.get('node:dragend')?.({
+        target: { id: 'entity-1' },
+        targetType: 'node'
       })
     })
     expect(onMoveNode).toHaveBeenCalledWith('entity-1', {
@@ -529,67 +546,59 @@ describe('KnowledgeWorkspace', () => {
       y: 320
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '查看 Electron' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Electron' })
+    )
     expect(
       screen.getByRole('heading', { name: 'Electron' })
     ).toBeInTheDocument()
 
     unmount()
-    expect(echartsMock.chart.off).toHaveBeenCalledWith(
-      'click',
+    expect(g6Mock.graph.off).toHaveBeenCalledWith(
+      'node:click',
       expect.any(Function)
     )
-    expect(echartsMock.chart.off).toHaveBeenCalledWith(
-      'mousedown',
+    expect(g6Mock.graph.off).toHaveBeenCalledWith(
+      'node:dragend',
       expect.any(Function)
     )
-    expect(echartsMock.chart.off).toHaveBeenCalledWith(
-      'mouseup',
+    expect(g6Mock.graph.off).toHaveBeenCalledWith(
+      'aftertransform',
       expect.any(Function)
     )
-    expect(echartsMock.chart.off).toHaveBeenCalledWith(
-      'graphRoam',
-      expect.any(Function)
-    )
-    expect(echartsMock.chart.dispose).toHaveBeenCalled()
+    expect(g6Mock.graph.destroy).toHaveBeenCalled()
   })
 
-  it('preserves the graph viewport and refreshes theme colors', async () => {
+  it('preserves the G6 instance and refreshes theme colors', async () => {
     render(<KnowledgeWorkspace {...createProps()} />)
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
 
-    echartsMock.chart.getOption.mockReturnValueOnce({
-      series: [{ center: ['46%', '54%'], zoom: 1.3 }]
-    })
+    g6Mock.graph.getZoom.mockReturnValueOnce(1.3)
     act(() => {
-      echartsMock.handlers.get('graphRoam')?.({})
+      g6Mock.handlers.get('aftertransform')?.({})
     })
 
     await waitFor(() =>
       expect(screen.getByText('130%')).toBeInTheDocument()
     )
+    const renderCalls = g6Mock.graph.render.mock.calls.length
     fireEvent.change(screen.getByLabelText('搜索图谱实体'), {
       target: { value: 'Electron' }
     })
-    expect(echartsMock.chart.setOption).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        series: [
-          expect.objectContaining({
-            center: ['46%', '54%'],
-            zoom: 1.3
-          })
-        ]
-      }),
-      { notMerge: true }
+    await waitFor(() =>
+      expect(g6Mock.graph.render.mock.calls.length).toBeGreaterThan(
+        renderCalls
+      )
     )
+    expect(g6Mock.Graph).toHaveBeenCalledTimes(1)
 
-    const optionCalls = echartsMock.chart.setOption.mock.calls.length
+    const themeRenderCalls = g6Mock.graph.render.mock.calls.length
     act(() => {
       document.documentElement.dataset.theme = 'dark'
     })
     await waitFor(() =>
-      expect(echartsMock.chart.setOption.mock.calls.length).toBeGreaterThan(
-        optionCalls
+      expect(g6Mock.graph.render.mock.calls.length).toBeGreaterThan(
+        themeRenderCalls
       )
     )
     delete document.documentElement.dataset.theme
@@ -626,45 +635,44 @@ describe('KnowledgeWorkspace', () => {
     )
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
 
-    expect(echartsMock.chart.setOption).toHaveBeenLastCalledWith(
+    expect(g6Mock.graph.setOptions).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        series: [
-          expect.objectContaining({
-            data: expect.arrayContaining([
-              expect.objectContaining({
-                id: 'entity-0',
-                symbolSize: 32,
-                x: 0,
-                y: 0,
-                label: expect.objectContaining({
-                  position: 'right',
-                  show: true
-                })
+        data: expect.objectContaining({
+          nodes: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'entity-0',
+              data: expect.objectContaining({
+                degree: 2,
+                size: 32
               }),
-              expect.objectContaining({
-                id: 'entity-29',
-                symbolSize: 16,
-                label: expect.objectContaining({ show: false })
+              style: expect.objectContaining({
+                x: 0,
+                y: 0
               })
-            ]),
-            edgeLabel: expect.objectContaining({ show: false }),
-            force: expect.objectContaining({
-              edgeLength: [70, 130],
-              friction: 0.08,
-              gravity: 0.06,
-              layoutAnimation: true,
-              repulsion: 280
+            }),
+            expect.objectContaining({
+              id: 'entity-29',
+              data: expect.objectContaining({
+                degree: 0,
+                size: 16
+              })
             })
+          ])
+        }),
+        layout: expect.objectContaining({
+          animate: false,
+          nodeSpacing: 20,
+          ordering: 'topology',
+          type: 'circular'
+        }),
+        behaviors: expect.arrayContaining([
+          expect.objectContaining({
+            sortNode: { type: 'degree' },
+            type: 'auto-adapt-label'
           })
-        ]
-      }),
-      { notMerge: true }
+        ])
+      })
     )
-    const option = echartsMock.chart.setOption.mock.calls.at(-1)?.[0] as {
-      series?: Array<{ data?: Array<Record<string, unknown>> }>
-    }
-    expect(option.series?.[0]?.data?.[0]).toHaveProperty('x', 0)
-    expect(option.series?.[0]?.data?.[0]).toHaveProperty('y', 0)
   })
 
   it('creates relationships, merges entities, and opens graph evidence', async () => {

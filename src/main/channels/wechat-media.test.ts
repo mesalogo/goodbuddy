@@ -3,7 +3,9 @@ import {
   createDecipheriv
 } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CHANNEL_LIMITS } from '../../shared/channel-contracts'
 import {
+  downloadWechatImage,
   downloadWechatFile,
   uploadWechatAttachment
 } from './wechat-media'
@@ -63,6 +65,45 @@ describe('Weixin media transport', () => {
       }),
       expect.objectContaining({ redirect: 'manual' })
     )
+  })
+
+  it('uses the downloaded image size instead of an HD variant size hint', async () => {
+    const data = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from('image content', 'utf8')
+    ])
+    const key = Buffer.from('0123456789abcdef', 'utf8')
+    const encrypted = encrypt(data, key)
+    global.fetch = vi.fn(async () =>
+      new Response(encrypted, {
+        status: 200,
+        headers: {
+          'content-length': String(encrypted.byteLength)
+        }
+      })
+    ) as typeof fetch
+
+    await expect(
+      downloadWechatImage(
+        {
+          media: {
+            full_url:
+              'https://novac2c.cdn.weixin.qq.com/c2c/download?opaque=1'
+          },
+          aeskey: key.toString('hex'),
+          mid_size: encrypted.byteLength,
+          hd_size: CHANNEL_LIMITS.maximumAttachmentBytes + 1
+        },
+        '微信图片-1',
+        new AbortController().signal
+      )
+    ).resolves.toEqual({
+      name: '微信图片-1.png',
+      mimeType: 'image/png',
+      size: data.byteLength,
+      kind: 'image',
+      dataBase64: data.toString('base64')
+    })
   })
 
   it('rejects redirects outside Tencent Weixin hosts', async () => {

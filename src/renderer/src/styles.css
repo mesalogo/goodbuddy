@@ -3321,16 +3321,6 @@ button > svg * {
   color: var(--danger);
 }
 
-.window-capture-backdrop {
-  position: fixed;
-  z-index: 70;
-  display: grid;
-  padding: var(--space-4);
-  background: var(--overlay-backdrop);
-  inset: 38px 0 0;
-  place-items: center;
-}
-
 .image-viewer-backdrop {
   position: fixed;
   z-index: 80;
@@ -3396,77 +3386,6 @@ button > svg * {
   object-fit: contain;
 }
 
-.window-capture-dialog {
-  display: grid;
-  width: min(520px, 100%);
-  max-height: min(680px, calc(100vh - 70px));
-  padding: var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-dialog);
-  gap: var(--space-3);
-}
-
-.window-capture-dialog__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.window-capture-dialog__header > div {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.window-capture-dialog__header strong {
-  color: var(--text-primary);
-  font-size: var(--font-section-title);
-}
-
-.window-capture-dialog__header small {
-  color: var(--text-secondary);
-  font-size: var(--font-body);
-}
-
-.window-capture-dialog__list {
-  display: grid;
-  min-height: 0;
-  padding: var(--space-1);
-  overflow-y: auto;
-  gap: var(--space-2);
-}
-
-.window-capture-dialog__list > button {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  min-height: 40px;
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-control);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
-  color: var(--text-primary);
-  cursor: pointer;
-  gap: var(--space-2);
-  text-align: left;
-}
-
-.window-capture-dialog__list > button:hover {
-  border-color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.window-capture-dialog__list > button span {
-  min-width: 0;
-  overflow: hidden;
-  flex: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .composer:focus-within {
   border-color: var(--accent);
   box-shadow:
@@ -3525,7 +3444,7 @@ button > svg * {
   min-width: 0;
   flex: 1;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-3);
 }
 
@@ -3611,7 +3530,7 @@ button > svg * {
 }
 
 .composer-picker--mode > .model-button {
-  width: 168px;
+  width: 96px;
 }
 
 .composer-picker--ask svg {
@@ -3830,6 +3749,10 @@ button > svg * {
 }
 
 @container (max-width: 700px) {
+  .composer__controls {
+    flex-wrap: wrap;
+  }
+
   .composer__configuration {
     width: 100%;
     padding-left: 0;
@@ -3874,7 +3797,7 @@ button > svg * {
   overflow: hidden;
   background: var(--surface-raised);
   box-shadow: var(--shadow-dialog);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .settings-page .settings-panel {
@@ -4038,6 +3961,29 @@ button > svg * {
   padding-right: var(--space-1);
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+
+.settings-panel__content-toolbar {
+  display: flex;
+  min-height: var(--control-height);
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.settings-panel__content-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.settings-panel__content-actions .primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .settings-page .settings-tabs button {
@@ -5519,15 +5465,6 @@ details.settings-section > :not(summary) + :not(summary) {
   color: var(--success) !important;
 }
 
-.settings-panel__footer {
-  display: flex;
-  align-items: center;
-  padding: 14px 24px;
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-subtle);
-  gap: 8px;
-}
-
 .settings-feedback {
   flex: 1;
   min-width: 0;
@@ -6633,11 +6570,11 @@ details.settings-section > :not(summary) + :not(summary) {
   display: grid;
   min-height: clamp(500px, calc(100dvh - 260px), 780px);
   gap: var(--space-4);
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
 }
 
 .knowledge-graph--with-details {
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
 }
 
 .knowledge-graph__canvas {
@@ -6687,60 +6624,183 @@ details.settings-section > :not(summary) + :not(summary) {
   text-align: center;
 }
 
-.knowledge-graph__chart {
+.knowledge-graph__chart-shell {
+  position: relative;
   width: 100%;
   min-height: clamp(420px, calc(100dvh - 330px), 720px);
+  overflow: hidden;
   background: var(--surface-subtle);
 }
 
-.knowledge-graph__accessible-surface {
-  padding: var(--space-2);
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-raised);
+.knowledge-graph__chart {
+  width: 100%;
+  min-height: inherit;
 }
 
-.knowledge-graph__relation-list {
-  display: flex;
-  min-width: 0;
-  padding: 0;
-  margin: 0;
-  overflow-x: auto;
-  gap: var(--space-2);
-  list-style: none;
-}
-
-.knowledge-graph__accessible-surface > summary {
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-weight: 650;
-}
-
-.knowledge-graph__accessible-surface[open] > summary {
-  margin-bottom: var(--space-2);
-}
-
-.knowledge-graph__relation-list li {
-  display: inline-flex;
-  min-height: 24px;
-  align-items: center;
-  padding: 2px var(--space-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: var(--font-caption);
-  gap: var(--space-1);
-  white-space: nowrap;
-}
-
-.knowledge-graph__relation-list strong {
-  color: var(--text-primary);
+.knowledge-graph__chart-error {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  max-width: min(420px, calc(100% - 48px));
+  padding: var(--space-3);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-control);
+  background: var(--danger-subtle);
+  color: var(--danger);
+  transform: translate(-50%, -50%);
 }
 
 .knowledge-graph__detail {
+  display: flex;
+  min-width: 0;
   max-height: clamp(500px, calc(100dvh - 260px), 780px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
 }
 
-@container (max-width: 1120px) {
+.knowledge-graph__detail > .page-tabs--segmented {
+  width: calc(100% - (var(--space-4) * 2));
+  margin: var(--space-4);
+}
+
+.knowledge-graph__detail > .page-tabs--segmented .page-tabs__tab {
+  min-width: 0;
+  flex: 1;
+  justify-content: center;
+}
+
+.knowledge-graph__detail-panel {
+  min-height: 0;
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.knowledge-graph__panel-heading,
+.knowledge-graph__section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.knowledge-graph__panel-heading {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.knowledge-graph__panel-heading h3 {
+  margin: 0;
+}
+
+.knowledge-graph__panel-heading p,
+.knowledge-graph__relation-card > p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  overflow-wrap: anywhere;
+}
+
+.knowledge-graph__panel-heading > span {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.knowledge-graph__panel-empty {
+  padding: var(--space-6) var(--space-2);
+  margin: 0;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.knowledge-graph__topology-list,
+.knowledge-graph__entity-relations {
+  display: grid;
+  padding: 0;
+  margin: var(--space-3) 0 0;
+  gap: var(--space-3);
+  list-style: none;
+}
+
+.knowledge-graph__relation-card {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+
+.knowledge-graph__relation-path {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.knowledge-graph__entity-link {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+
+.knowledge-graph__entity-link:last-child {
+  padding-left: var(--space-6);
+}
+
+.knowledge-graph__entity-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.knowledge-graph__entity-link:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  text-decoration: none;
+}
+
+.knowledge-graph__relation-type {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.knowledge-graph__entity-actions,
+.knowledge-graph__relation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.knowledge-graph__relation-actions {
+  padding-top: var(--space-3);
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.knowledge-graph__merge {
+  display: grid;
+  min-width: 0;
+  margin-top: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+@container (max-width: 880px) {
   .knowledge-graph--with-details {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -8082,7 +8142,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .sidebar-search,
   .settings-section,
   .settings-tabs,
-  .settings-panel__footer,
   .assistant-sidebar__row,
   .assistant-sidebar__library,
   .assistant-sidebar__diff,
@@ -8117,7 +8176,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .divider,
   .runtime-picker__divider,
   .settings-panel__header,
-  .settings-panel__footer,
   .knowledge-workspace__sidebar,
   .knowledge-workspace__header,
   .knowledge-panel__header,
@@ -8613,12 +8671,17 @@ details.settings-section > :not(summary) + :not(summary) {
     flex-basis: 100%;
   }
 
-  .settings-panel__footer {
+  .settings-panel__content-toolbar {
+    align-items: stretch;
     flex-wrap: wrap;
   }
 
   .settings-feedback {
     flex-basis: 100%;
+  }
+
+  .settings-panel__content-actions {
+    width: 100%;
   }
 
   .mcp-editor {

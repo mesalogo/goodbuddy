@@ -436,6 +436,9 @@ const api: DesktopApi = {
   },
   context: {
     selectFiles: vi.fn(async () => []),
+    addPastedImage: vi.fn(async () => {
+      throw new Error('not used')
+    }),
     captureScreen: vi.fn(async () => {
       throw new Error('not used')
     }),
@@ -1446,48 +1449,82 @@ describe('App', () => {
     )
   })
 
-  it('lists capturable application windows vertically before capture', async () => {
-    vi.mocked(api.context.listWindows).mockResolvedValueOnce([
-      { id: 'window-1', name: 'Visual Studio Code' },
-      { id: 'window-2', name: 'Browser' },
-      { id: 'window-3', name: 'Terminal' }
-    ])
-    vi.mocked(api.context.captureWindow).mockResolvedValueOnce({
+  it('accepts pasted images without intercepting pasted text', async () => {
+    vi.mocked(api.context.addPastedImage).mockResolvedValueOnce({
       id: '00000000-0000-4000-8000-000000000303',
-      name: '窗口-Browser.jpg',
+      name: '粘贴图片.jpg',
       size: 120_000,
       preview: '1280 × 800',
       kind: 'image',
       thumbnailUrl:
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
     })
+    const pastedImage = new File(
+      [Uint8Array.from([0x89, 0x50, 0x4e, 0x47])],
+      'pasted.png',
+      { type: 'image/png' }
+    )
     render(<App />)
 
-    fireEvent.click(await screen.findByLabelText('捕获应用窗口'))
+    const input = await screen.findByLabelText('向 GoodBuddy 提问')
+    expect(
+      fireEvent.paste(input, {
+        clipboardData: {
+          items: [
+            {
+              getAsFile: () => null,
+              kind: 'string',
+              type: 'text/plain'
+            }
+          ]
+        }
+      })
+    ).toBe(true)
+    expect(api.context.addPastedImage).not.toHaveBeenCalled()
 
-    const dialog = await screen.findByRole('dialog', {
-      name: '选择应用窗口'
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [
+          {
+            getAsFile: () => pastedImage,
+            kind: 'file',
+            type: 'image/png'
+          }
+        ]
+      }
     })
-    const list = within(dialog).getByLabelText('可捕获的应用窗口')
-    expect(list).toHaveClass('window-capture-dialog__list')
-    expect(within(list).getAllByRole('button')).toHaveLength(3)
 
-    fireEvent.click(
-      within(list).getByRole('button', { name: 'Browser' })
-    )
     await waitFor(() =>
-      expect(api.context.captureWindow).toHaveBeenCalledWith('window-2')
+      expect(api.context.addPastedImage).toHaveBeenCalledWith({
+        data: Uint8Array.from([0x89, 0x50, 0x4e, 0x47]),
+        mimeType: 'image/png'
+      })
     )
-    const composer = screen
-      .getByLabelText('向 GoodBuddy 提问')
-      .closest<HTMLElement>('.composer')
+    expect(api.context.addPastedImage).toHaveBeenCalledTimes(1)
+    expect(api.context.readClipboard).not.toHaveBeenCalled()
+    const composer = input.closest<HTMLElement>('.composer')
     expect(composer).not.toBeNull()
     if (!composer) {
       return
     }
     expect(
-      await within(composer).findByText('窗口-Browser.jpg')
+      await within(composer).findByText('粘贴图片.jpg')
     ).toBeInTheDocument()
+    expect(
+      within(composer).queryByRole('button', {
+        name: '截取当前屏幕'
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      within(composer).queryByRole('button', {
+        name: '捕获应用窗口'
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      within(composer).queryByRole('button', {
+        name: '读取剪贴板'
+      })
+    ).not.toBeInTheDocument()
   })
 
   it('keeps a draft in chat when Enter is pressed while the runtime loads', async () => {
@@ -2016,9 +2053,14 @@ describe('App', () => {
         name: '工作模式：Ask · 只读问答'
       })
     ).toBeInTheDocument()
+    expect(
+      within(conversationSettings).getByRole('button', {
+        name: '工作模式：Ask · 只读问答'
+      })
+    ).toHaveTextContent(/^Ask$/u)
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
       'placeholder',
-      '给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · 附件仅在选择后发送'
+      '给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本'
     )
     expect(
       within(conversationSettings).getByRole('button', {
@@ -2256,6 +2298,7 @@ describe('App', () => {
     expect(mode).toHaveAccessibleName(
       '工作模式：Execute · 受控执行'
     )
+    expect(mode).toHaveTextContent(/^Execute$/u)
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '执行任务' }
@@ -3219,7 +3262,7 @@ describe('App', () => {
     expect((await screen.findAllByText('生图')).length).toBeGreaterThan(0)
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
       'placeholder',
-      '描述你想生成的图片…\nEnter 发送 · Shift+Enter 换行 · 附件仅在选择后发送'
+      '描述你想生成的图片…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本'
     )
     await waitFor(() =>
       expect(api.artifacts.list).toHaveBeenCalled()

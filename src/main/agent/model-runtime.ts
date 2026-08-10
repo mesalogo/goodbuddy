@@ -105,6 +105,7 @@ export type ModelRuntimeOptions = {
   model: string
   protocol: ModelProtocol
   authentication: ModelAuthentication
+  supportsImageInput?: boolean
   imageGenerationQuality?: ImageGenerationQuality
   skillInstructions?: string
   defaultWorkspace?: string
@@ -1587,7 +1588,8 @@ export class ModelAgentRuntime implements AgentRuntime {
         let decision: ApprovalDecision
         try {
           if (
-            (tool.name === 'knowledge_search' ||
+            (tool.name === 'knowledge_list' ||
+              tool.name === 'knowledge_search' ||
               tool.name === 'note_search') &&
             Boolean(request.knowledgeCapabilityToken)
           ) {
@@ -1755,6 +1757,12 @@ export class ModelAgentRuntime implements AgentRuntime {
     if (this.options.protocol === 'openai-images-generations') {
       yield* this.runImageGeneration(request, signal)
       return
+    }
+    if (
+      request.images?.length &&
+      this.options.supportsImageInput !== true
+    ) {
+      throw new Error('当前模型连接未启用图像输入')
     }
 
     yield {

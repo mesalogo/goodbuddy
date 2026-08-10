@@ -1,20 +1,17 @@
-import { GraphChart } from 'echarts/charts'
-import { TooltipComponent } from 'echarts/components'
 import {
-  init,
-  use as registerECharts,
-  type ECElementEvent,
-  type ECharts,
-  type EChartsCoreOption
-} from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
+  Graph,
+  GraphEvent,
+  NodeEvent,
+  type GraphOptions,
+  type IElementDragEvent,
+  type IElementEvent,
+  type NodeData
+} from '@antv/g6'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   KnowledgeGraphNode,
   KnowledgeGraphRelation
 } from '../../shared/contracts'
-
-registerECharts([GraphChart, TooltipComponent, CanvasRenderer])
 
 type ChartKnowledgeGraphNode = Omit<
   KnowledgeGraphNode,
@@ -41,22 +38,18 @@ type KnowledgeGraphChartProps = {
   onZoomChange: (zoom: number) => void
 }
 
-type GraphViewport = {
-  center?: [number | string, number | string]
-}
-
-type NodeDrag = {
-  id: string
-  pointerX: number
-  pointerY: number
-  x: number
-  y: number
-}
-
 function readToken(name: string): string {
   return getComputedStyle(document.documentElement)
     .getPropertyValue(name)
     .trim()
+}
+
+function graphErrorMessage(error: unknown): string {
+  return (
+    (error instanceof Error ? error.message : '图谱渲染失败')
+      .trim()
+      .slice(0, 500) || '图谱渲染失败'
+  )
 }
 
 function graphTypeStyles(nodes: readonly ChartKnowledgeGraphNode[]): Map<
@@ -82,9 +75,7 @@ function graphRevision(
     nodes: nodes.map((node) => [
       node.id,
       node.label,
-      node.type,
-      node.x,
-      node.y
+      node.type
     ]),
     relations: relations.map((relation) => [
       relation.id,
@@ -95,18 +86,33 @@ function graphRevision(
   })
 }
 
-function createOption({
-  nodes,
-  relations,
-  selectedNodeId,
-  zoom
-}: Pick<
-  KnowledgeGraphChartProps,
-  'nodes' | 'relations' | 'selectedNodeId' | 'zoom'
->): EChartsCoreOption {
+type G6NodeMetadata = {
+  label: string
+  entityType: string
+  degree: number
+  size: number
+  fill: string
+  stroke: string
+}
+
+type G6EdgeMetadata = {
+  label: string
+  description?: string
+}
+
+function nodeMetadata(node: NodeData): G6NodeMetadata {
+  return node.data as G6NodeMetadata
+}
+
+function createPresentation(
+  nodes: readonly ChartKnowledgeGraphNode[],
+  relations: readonly ChartKnowledgeGraphRelation[]
+): Pick<
+  GraphOptions,
+  'data' | 'layout' | 'node' | 'edge' | 'behaviors' | 'plugins'
+> {
   const textPrimary = readToken('--text-primary')
   const textSecondary = readToken('--text-secondary')
-  const textMuted = readToken('--text-muted')
   const accent = readToken('--accent')
   const accentSubtle = readToken('--accent-subtle')
   const surfaceRaised = readToken('--surface-raised')
@@ -125,168 +131,162 @@ function createOption({
     )
   }
   const maximumDegree = Math.max(1, ...degreeByNodeId.values())
-  const keyNodeCount = Math.min(
-    nodes.length,
-    Math.max(8, Math.min(16, Math.round(Math.sqrt(nodes.length) * 1.4)))
-  )
-  const keyNodeIds = new Set(
-    [...nodes]
-      .sort((left, right) => {
-        const degreeDifference =
-          (degreeByNodeId.get(right.id) ?? 0) -
-          (degreeByNodeId.get(left.id) ?? 0)
-        return (
-          degreeDifference ||
-          left.label.localeCompare(right.label, 'zh-CN')
-        )
-      })
-      .slice(0, keyNodeCount)
-      .map((node) => node.id)
-  )
-  const reducedMotion =
-    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
   const showEdgeLabels =
     nodes.length <= 18 && relations.length <= 24
 
   return {
-    animation: !reducedMotion,
-    animationDuration: 220,
-    animationDurationUpdate: 160,
-    tooltip: {
-      trigger: 'item',
-      renderMode: 'richText',
-      backgroundColor: surfaceRaised,
-      borderColor: borderDefault,
-      textStyle: { color: textPrimary },
-      formatter: (params: {
-        dataType?: string
-        data?: { name?: string; type?: string; value?: string }
-      }) => {
-        if (params.dataType === 'edge') {
-          return params.data?.value ?? '关系'
+    data: {
+      nodes: nodes.map((node) => {
+        const typeStyle = typeStyles.get(node.type) ?? {
+          color: accentSubtle,
+          borderColor: accent
         }
-        return [params.data?.name, params.data?.type]
-          .filter(Boolean)
-          .join(' · ')
-      }
-    },
-    series: [
-      {
-        type: 'graph',
-        layout: 'force',
-        roam: true,
-        zoom,
-        scaleLimit: {
-          min: 0.5,
-          max: 2
-        },
-        force: {
-          repulsion: dense
-            ? Math.min(480, 220 + nodes.length * 2)
-            : 200,
-          gravity: 0.06,
-          edgeLength: dense ? [70, 130] : [90, 150],
-          friction: 0.08,
-          layoutAnimation: !reducedMotion
-        },
-        selectedMode: 'single',
-        symbol: 'circle',
-        categories: [...typeStyles.entries()].map(([name, style]) => ({
-          name,
-          itemStyle: style
-        })),
-        data: nodes.map((node) => {
-          const selected = node.id === selectedNodeId
-          const typeStyle = typeStyles.get(node.type) ?? {
-            color: accentSubtle,
-            borderColor: accent
-          }
-          const degree = degreeByNodeId.get(node.id) ?? 0
-          const degreeRatio = Math.sqrt(degree / maximumDegree)
-          const symbolSize = dense
-            ? 16 + degreeRatio * 16
-            : 32 + degreeRatio * 16
-          const showLabel = !dense || keyNodeIds.has(node.id)
-          return {
-            id: node.id,
-            name: node.label,
-            type: node.type,
-            value: degree,
-            category: node.type,
+        const degree = degreeByNodeId.get(node.id) ?? 0
+        const degreeRatio = Math.sqrt(degree / maximumDegree)
+        const size = dense
+          ? 16 + degreeRatio * 16
+          : 32 + degreeRatio * 16
+        return {
+          id: node.id,
+          data: {
+            label:
+              node.label.length > 12
+                ? `${node.label.slice(0, 12)}…`
+                : node.label,
+            entityType: node.type,
+            degree,
+            size,
+            fill: typeStyle.color,
+            stroke: typeStyle.borderColor
+          } satisfies G6NodeMetadata,
+          style: {
             x: node.x,
-            y: node.y,
-            draggable: true,
-            selected,
-            symbolSize: selected ? symbolSize + 4 : symbolSize,
-            itemStyle: {
-              color: typeStyle.color,
-              borderColor: selected ? accent : typeStyle.borderColor,
-              borderWidth: selected ? 2.5 : 1.5
-            },
-            label: {
-              show: showLabel || selected,
-              color: textPrimary,
-              fontSize: dense ? 11 : 12,
-              fontWeight: keyNodeIds.has(node.id) ? 650 : 500,
-              position: dense ? 'right' : 'inside',
-              distance: dense ? 5 : 0,
-              formatter:
-                node.label.length > 8
-                  ? `${node.label.slice(0, 8)}…`
-                  : node.label
-            },
-            emphasis: {
-              focus: 'adjacency',
-              itemStyle: {
-                borderColor: accent,
-                borderWidth: 2.5
-              },
-              label: {
-                show: true
-              }
-            },
-            select: {
-              itemStyle: {
-                color: typeStyle.color,
-                borderColor: accent,
-                borderWidth: 2.5
-              },
-              label: {
-                show: true
-              }
-            }
+            y: node.y
           }
-        }),
-        links: relations.map((relation) => ({
-          id: relation.id,
-          source: relation.sourceId,
-          target: relation.targetId,
-          value: relation.type,
-          description: relation.description,
-          lineStyle: {
-            color: borderDefault,
-            width: 1.2,
-            opacity: 0.72,
-            curveness: 0.06
-          }
-        })),
-        edgeSymbol: ['none', 'arrow'],
-        edgeSymbolSize: 6,
-        edgeLabel: {
-          show: showEdgeLabels,
-          color: textSecondary,
-          fontSize: 11,
-          formatter: (params: { data?: { value?: string } }) =>
-            params.data?.value ?? ''
+        }
+      }),
+      edges: relations.map((relation) => ({
+        id: relation.id,
+        source: relation.sourceId,
+        target: relation.targetId,
+        data: {
+          label: relation.type,
+          description: relation.description
+        } satisfies G6EdgeMetadata
+      }))
+    },
+    layout: {
+      type: 'circular',
+      animate: false,
+      ordering: 'topology',
+      startAngle: -Math.PI / 2,
+      endAngle: Math.PI * 1.5,
+      clockwise: true,
+      divisions: 1,
+      angleRatio: 1,
+      nodeSize: (datum: Record<string, unknown>) => {
+        const metadata = datum.data as G6NodeMetadata | undefined
+        return metadata?.size ?? 24
+      },
+      nodeSpacing: dense ? 20 : 28
+    },
+    node: {
+      type: 'circle',
+      style: {
+        size: (datum) => nodeMetadata(datum).size,
+        fill: (datum) => nodeMetadata(datum).fill,
+        stroke: (datum) => nodeMetadata(datum).stroke,
+        lineWidth: 1.5,
+        label: true,
+        labelText: (datum) => nodeMetadata(datum).label,
+        labelFill: textPrimary,
+        labelFontSize: dense ? 11 : 12,
+        labelFontWeight: 550,
+        labelPlacement: 'right',
+        labelOffsetX: 6,
+        labelMaxWidth: 120
+      },
+      state: {
+        active: {
+          lineWidth: 2.5,
+          stroke: accent,
+          label: true
         },
-        lineStyle: {
-          color: textMuted
-        },
-        emphasis: {
-          focus: 'adjacency',
-          lineStyle: {
-            width: 3
+        selected: {
+          lineWidth: 3,
+          stroke: accent,
+          halo: true,
+          haloStroke: accent,
+          haloLineWidth: 6,
+          haloOpacity: 0.18,
+          label: true
+        }
+      },
+      animation: false
+    },
+    edge: {
+      type: 'line',
+      style: {
+        stroke: borderDefault,
+        lineWidth: 1.2,
+        opacity: 0.72,
+        endArrow: true,
+        endArrowSize: 6,
+        label: showEdgeLabels,
+        labelText: (datum) =>
+          String((datum.data as G6EdgeMetadata | undefined)?.label ?? ''),
+        labelFill: textSecondary,
+        labelFontSize: 11,
+        labelBackground: true,
+        labelBackgroundFill: surfaceRaised,
+        labelPadding: [2, 4]
+      },
+      state: {
+        active: {
+          stroke: accent,
+          lineWidth: 2,
+          opacity: 1
+        }
+      },
+      animation: false
+    },
+    behaviors: [
+      'drag-canvas',
+      'zoom-canvas',
+      'drag-element',
+      {
+        type: 'auto-adapt-label',
+        sortNode: { type: 'degree' },
+        padding: 4,
+        throttle: 80
+      }
+    ],
+    plugins: [
+      {
+        type: 'tooltip',
+        enable: (event: IElementEvent) =>
+          event.targetType === 'node' || event.targetType === 'edge',
+        getContent: (
+          event: IElementEvent,
+          items: Array<{ data?: Record<string, unknown> }>
+        ) => {
+          const content = document.createElement('div')
+          const datum = items[0]
+          if (event.targetType === 'node') {
+            const metadata = datum?.data as
+              | G6NodeMetadata
+              | undefined
+            content.textContent = [metadata?.label, metadata?.entityType]
+              .filter(Boolean)
+              .join(' · ')
+          } else {
+            const metadata = datum?.data as
+              | G6EdgeMetadata
+              | undefined
+            content.textContent =
+              metadata?.description || metadata?.label || '关系'
           }
+          return content
         }
       }
     ]
@@ -303,26 +303,35 @@ export function KnowledgeGraphChart({
   onZoomChange
 }: KnowledgeGraphChartProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<ECharts | null>(null)
+  const graphRef = useRef<Graph | null>(null)
   const onMoveNodeRef = useRef(onMoveNode)
   const onSelectNodeRef = useRef(onSelectNode)
   const onZoomChangeRef = useRef(onZoomChange)
   const nodesRef = useRef(nodes)
   const relationsRef = useRef(relations)
-  const dragRef = useRef<NodeDrag | undefined>(undefined)
-  const viewportRef = useRef<GraphViewport>({})
+  const selectedNodeIdRef = useRef(selectedNodeId)
   const zoomRef = useRef(zoom)
   const appliedZoomRef = useRef<number | undefined>(undefined)
+  const renderVersionRef = useRef(0)
+  const renderedRevisionRef = useRef<string | undefined>(undefined)
+  const pendingRenderRef = useRef<
+    { graph: Graph; promise: Promise<void> } | undefined
+  >(undefined)
   const dataRevision = useMemo(
     () => graphRevision(nodes, relations),
     [nodes, relations]
   )
   const [themeRevision, setThemeRevision] = useState(0)
+  const [renderError, setRenderError] = useState<string>()
 
   useEffect(() => {
     nodesRef.current = nodes
     relationsRef.current = relations
   }, [nodes, relations])
+
+  useEffect(() => {
+    selectedNodeIdRef.current = selectedNodeId
+  }, [selectedNodeId])
 
   useEffect(() => {
     onMoveNodeRef.current = onMoveNode
@@ -354,131 +363,56 @@ export function KnowledgeGraphChart({
       return
     }
 
-    const chart = init(container, undefined, { renderer: 'canvas' })
-    chartRef.current = chart
+    const graph = new Graph({
+      container,
+      animation: false,
+      autoFit: {
+        type: 'view',
+        options: {
+          when: 'overflow',
+          direction: 'both'
+        },
+        animation: false
+      },
+      padding: 40,
+      zoom: zoomRef.current,
+      zoomRange: [0.5, 2]
+    })
+    graphRef.current = graph
 
-    const selectNode = (event: ECElementEvent): void => {
-      const data = event.data as { id?: unknown } | undefined
-      if (event.dataType === 'node' && typeof data?.id === 'string') {
-        onSelectNodeRef.current(data.id)
-      }
+    const selectNode = (event: IElementEvent): void => {
+      onSelectNodeRef.current(String(event.target.id))
     }
-    const beginNodeDrag = (event: ECElementEvent): void => {
-      const data = event.data as { id?: unknown } | undefined
-      const pointerEvent = event.event
+    const persistNodePosition = (event: IElementDragEvent): void => {
+      const id = String(event.target.id)
+      const position = graph.getElementPosition(id)
       if (
-        event.dataType !== 'node' ||
-        typeof data?.id !== 'string' ||
-        !pointerEvent ||
-        !Number.isFinite(pointerEvent.offsetX) ||
-        !Number.isFinite(pointerEvent.offsetY)
+        !Number.isFinite(position[0]) ||
+        !Number.isFinite(position[1])
       ) {
         return
       }
-      const pointer = chart.convertFromPixel(
-        { seriesIndex: 0 },
-        [pointerEvent.offsetX, pointerEvent.offsetY]
-      )
-      const centerPixel =
-        pointerEvent.target?.transformCoordToGlobal(0, 0)
-      const center = centerPixel
-        ? chart.convertFromPixel(
-            { seriesIndex: 0 },
-            centerPixel
-          )
-        : undefined
-      if (
-        Array.isArray(pointer) &&
-        Number.isFinite(pointer[0]) &&
-        Number.isFinite(pointer[1]) &&
-        Array.isArray(center) &&
-        Number.isFinite(center[0]) &&
-        Number.isFinite(center[1])
-      ) {
-        dragRef.current = {
-          id: data.id,
-          pointerX: Number(pointer[0]),
-          pointerY: Number(pointer[1]),
-          x: Number(center[0]),
-          y: Number(center[1])
-        }
-      }
-    }
-    const persistNodePosition = (event: ECElementEvent): void => {
-      const drag = dragRef.current
-      dragRef.current = undefined
-      const pointerEvent = event.event
-      if (
-        !drag ||
-        !pointerEvent ||
-        !Number.isFinite(pointerEvent.offsetX) ||
-        !Number.isFinite(pointerEvent.offsetY)
-      ) {
-        return
-      }
-      const pointer = chart.convertFromPixel(
-        { seriesIndex: 0 },
-        [pointerEvent.offsetX, pointerEvent.offsetY]
-      )
-      if (
-        !Array.isArray(pointer) ||
-        !Number.isFinite(pointer[0]) ||
-        !Number.isFinite(pointer[1])
-      ) {
-        return
-      }
-      const deltaX = Number(pointer[0]) - drag.pointerX
-      const deltaY = Number(pointer[1]) - drag.pointerY
-      if (Math.hypot(deltaX, deltaY) < 2) {
-        return
-      }
-      onMoveNodeRef.current(drag.id, {
-        x: drag.x + deltaX,
-        y: drag.y + deltaY
+      onMoveNodeRef.current(id, {
+        x: Number(position[0]),
+        y: Number(position[1])
       })
     }
     const persistViewport = (): void => {
-      const option = chart.getOption()
-      const series = Array.isArray(option.series)
-        ? option.series[0]
-        : option.series
-      if (!series || typeof series !== 'object') {
-        return
-      }
-      const nextViewport: GraphViewport = {}
+      const nextZoom = graph.getZoom()
       if (
-        'center' in series &&
-        Array.isArray(series.center) &&
-        series.center.length === 2 &&
-        series.center.every(
-          (value: unknown) =>
-            typeof value === 'number' || typeof value === 'string'
-        )
+        Number.isFinite(nextZoom) &&
+        Math.abs(nextZoom - zoomRef.current) >= 0.001
       ) {
-        nextViewport.center = [
-          series.center[0] as number | string,
-          series.center[1] as number | string
-        ]
+        zoomRef.current = nextZoom
+        appliedZoomRef.current = nextZoom
+        onZoomChangeRef.current(nextZoom)
       }
-      if (
-        'zoom' in series &&
-        typeof series.zoom === 'number' &&
-        Number.isFinite(series.zoom)
-      ) {
-        if (Math.abs(series.zoom - zoomRef.current) >= 0.001) {
-          zoomRef.current = series.zoom
-          appliedZoomRef.current = series.zoom
-          onZoomChangeRef.current(series.zoom)
-        }
-      }
-      viewportRef.current = nextViewport
     }
-    const resize = (): void => chart.resize()
+    const resize = (): void => graph.resize()
 
-    chart.on('click', selectNode)
-    chart.on('mousedown', beginNodeDrag)
-    chart.on('mouseup', persistNodePosition)
-    chart.on('graphRoam', persistViewport)
+    graph.on(NodeEvent.CLICK, selectNode)
+    graph.on(NodeEvent.DRAG_END, persistNodePosition)
+    graph.on(GraphEvent.AFTER_TRANSFORM, persistViewport)
 
     let resizeObserver: ResizeObserver | undefined
     if (typeof ResizeObserver === 'function') {
@@ -489,48 +423,97 @@ export function KnowledgeGraphChart({
     }
 
     return () => {
+      renderVersionRef.current += 1
       resizeObserver?.disconnect()
       window.removeEventListener('resize', resize)
-      chart.off('click', selectNode)
-      chart.off('mousedown', beginNodeDrag)
-      chart.off('mouseup', persistNodePosition)
-      chart.off('graphRoam', persistViewport)
-      chart.dispose()
-      chartRef.current = null
+      graph.off(NodeEvent.CLICK, selectNode)
+      graph.off(NodeEvent.DRAG_END, persistNodePosition)
+      graph.off(GraphEvent.AFTER_TRANSFORM, persistViewport)
+      const pendingRender = pendingRenderRef.current
+      if (pendingRender?.graph === graph) {
+        void pendingRender.promise.finally(() => graph.destroy())
+      } else {
+        graph.destroy()
+      }
+      graphRef.current = null
     }
   }, [])
 
   useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) {
+    const graph = graphRef.current
+    if (!graph) {
       return
     }
-    const option = createOption({
-      nodes: nodesRef.current,
-      relations: relationsRef.current,
-      selectedNodeId: undefined,
-      zoom: zoomRef.current
-    })
-    const series = Array.isArray(option.series)
-      ? option.series[0]
-      : option.series
-    if (
-      series &&
-      typeof series === 'object' &&
-      viewportRef.current.center
-    ) {
-      series.center = viewportRef.current.center
-    }
-    chart.setOption(
-      option,
-      { notMerge: true }
+    const presentation = createPresentation(
+      nodesRef.current,
+      relationsRef.current
     )
-    appliedZoomRef.current = zoomRef.current
+    graph.setOptions({
+      ...presentation,
+      animation: false,
+      autoFit: {
+        type: 'view',
+        options: {
+          when: 'overflow',
+          direction: 'both'
+        },
+        animation: false
+      },
+      padding: 40,
+      zoomRange: [0.5, 2]
+    })
+    const renderVersion = ++renderVersionRef.current
+    setRenderError(undefined)
+    const renderPromise = graph
+      .render()
+      .then(async () => {
+        if (
+          graphRef.current !== graph ||
+          renderVersionRef.current !== renderVersion
+        ) {
+          return
+        }
+        renderedRevisionRef.current = dataRevision
+        appliedZoomRef.current = graph.getZoom()
+        const states = Object.fromEntries(
+          nodesRef.current.map((node) => [
+            node.id,
+            node.id === selectedNodeIdRef.current ? ['selected'] : []
+          ])
+        )
+        await graph.setElementState(states, false)
+      })
+      .catch((error: unknown) => {
+        if (
+          graphRef.current === graph &&
+          renderVersionRef.current === renderVersion
+        ) {
+          setRenderError(
+            graphErrorMessage(error)
+          )
+        }
+      })
+    pendingRenderRef.current = {
+      graph,
+      promise: renderPromise
+    }
+    void renderPromise.finally(() => {
+      if (
+        pendingRenderRef.current?.graph === graph &&
+        renderVersionRef.current === renderVersion
+      ) {
+        pendingRenderRef.current = undefined
+      }
+    })
   }, [dataRevision, themeRevision])
 
   useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) {
+    const graph = graphRef.current
+    if (
+      !graph ||
+      renderedRevisionRef.current === undefined ||
+      renderedRevisionRef.current !== dataRevision
+    ) {
       return
     }
     if (
@@ -539,39 +522,48 @@ export function KnowledgeGraphChart({
     ) {
       return
     }
-    chart.setOption({
-      series: [{ zoom }]
+    void graph.zoomTo(zoom, false).catch((error: unknown) => {
+      if (graphRef.current === graph) {
+        setRenderError(graphErrorMessage(error))
+      }
     })
     appliedZoomRef.current = zoom
-  }, [zoom])
+  }, [dataRevision, zoom])
 
   useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) {
+    const graph = graphRef.current
+    if (
+      !graph ||
+      renderedRevisionRef.current !== dataRevision
+    ) {
       return
     }
-    chart.dispatchAction({
-      type: 'unselect',
-      seriesIndex: 0
+    const states = Object.fromEntries(
+      nodesRef.current.map((node) => [
+        node.id,
+        node.id === selectedNodeId ? ['selected'] : []
+      ])
+    )
+    void graph.setElementState(states, false).catch((error: unknown) => {
+      if (graphRef.current === graph) {
+        setRenderError(graphErrorMessage(error))
+      }
     })
-    const dataIndex = selectedNodeId
-      ? nodesRef.current.findIndex((node) => node.id === selectedNodeId)
-      : -1
-    if (dataIndex >= 0) {
-      chart.dispatchAction({
-        type: 'select',
-        seriesIndex: 0,
-        dataIndex
-      })
-    }
-  }, [dataRevision, selectedNodeId, themeRevision])
+  }, [dataRevision, selectedNodeId])
 
   return (
-    <div
-      aria-label="实体关系图"
-      className="knowledge-graph__chart"
-      ref={containerRef}
-      role="img"
-    />
+    <div className="knowledge-graph__chart-shell">
+      <div
+        aria-label="实体关系图"
+        className="knowledge-graph__chart"
+        ref={containerRef}
+        role="img"
+      />
+      {renderError && (
+        <div className="knowledge-graph__chart-error" role="alert">
+          图谱渲染失败：{renderError}
+        </div>
+      )}
+    </div>
   )
 }

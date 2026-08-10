@@ -19,8 +19,13 @@ export const builtinMcpServers = [
     id: 'knowledge-base',
     name: '知识库 MCP',
     description:
-      '搜索当前对话明确选择的知识库，并返回可核验的来源与证据引用。',
+      '列出并搜索当前对话明确选择的知识库，返回可核验的来源与证据引用。',
     tools: [
+      {
+        name: 'knowledge_list',
+        description: '列出当前对话已授权的知识库及其说明。',
+        access: 'read'
+      },
       {
         name: 'knowledge_search',
         description: '搜索当前对话已授权的知识库并返回来源引用。',

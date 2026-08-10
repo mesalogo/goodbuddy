@@ -4,7 +4,6 @@ import {
   ArrowRight,
   BookOpen,
   Check,
-  ChevronRight,
   CirclePause,
   Database,
   FilePlus2,
@@ -241,6 +240,7 @@ export type KnowledgeWorkspaceProps = {
 }
 
 type WorkspaceTab = 'documents' | 'graph' | 'tasks' | 'settings'
+type GraphSidebarTab = 'topology' | 'details'
 
 const storageModeLabels: Record<KnowledgeStorageMode, string> = {
   reference: '引用原文件',
@@ -1831,6 +1831,75 @@ function KnowledgeTasksView({
   )
 }
 
+function GraphRelationPath({
+  nodeMap,
+  onSelectNode,
+  relation
+}: {
+  nodeMap: ReadonlyMap<string, KnowledgeGraphNode>
+  onSelectNode: (nodeId: string) => void
+  relation: KnowledgeGraphRelation
+}): React.JSX.Element {
+  const source = nodeMap.get(relation.sourceId)
+  const target = nodeMap.get(relation.targetId)
+
+  return (
+    <div className="knowledge-graph__relation-path">
+      <button
+        className="knowledge-graph__entity-link"
+        disabled={!source}
+        onClick={() => source && onSelectNode(source.id)}
+        type="button"
+      >
+        {source?.label ?? '未知实体'}
+      </button>
+      <span className="knowledge-graph__relation-type">
+        <ArrowRight aria-hidden="true" size={13} />
+        {relation.type}
+      </span>
+      <button
+        className="knowledge-graph__entity-link"
+        disabled={!target}
+        onClick={() => target && onSelectNode(target.id)}
+        type="button"
+      >
+        {target?.label ?? '未知实体'}
+      </button>
+    </div>
+  )
+}
+
+function GraphSidebarNavigation({
+  onChange,
+  relationCount,
+  value
+}: {
+  onChange: (value: GraphSidebarTab) => void
+  relationCount: number
+  value: GraphSidebarTab
+}): React.JSX.Element {
+  return (
+    <PageTabs
+      ariaLabel="图谱侧栏"
+      idPrefix="knowledge-graph-sidebar"
+      onChange={onChange}
+      tabs={[
+        {
+          id: 'topology',
+          label: '拓扑',
+          count: relationCount
+        },
+        {
+          id: 'details',
+          label: '详情'
+        }
+      ]}
+      value={value}
+      variant="segmented"
+    />
+  )
+}
+
 function GraphView({
   evidence,
   graphNodes,
@@ -1873,7 +1942,8 @@ function GraphView({
     useState<KnowledgeGraphRelation | 'new'>()
   const [mergeTargetId, setMergeTargetId] = useState('')
   const [zoom, setZoom] = useState(1)
-  const [relationsExpanded, setRelationsExpanded] = useState(false)
+  const [sidebarTab, setSidebarTab] =
+    useState<GraphSidebarTab>('topology')
   const [reextracting, setReextracting] = useState(false)
   const [reextractError, setReextractError] = useState<string>()
 
@@ -1929,19 +1999,14 @@ function GraphView({
 
   const selectNode = (nodeId: string): void => {
     setSelectedNodeId(nodeId)
+    setSidebarTab('details')
     setCreatingEntity(false)
     setEditingEntity(false)
     setRelationForm(undefined)
   }
 
   return (
-    <div
-      className={
-        selectedNode || creatingEntity
-          ? 'knowledge-graph knowledge-graph--with-details'
-          : 'knowledge-graph'
-      }
-    >
+    <div className="knowledge-graph knowledge-graph--with-details">
       <section
         aria-label="知识图谱画布"
         className="knowledge-graph__canvas"
@@ -2029,6 +2094,7 @@ function GraphView({
             onClick={() => {
               setSelectedNodeId(undefined)
               setCreatingEntity(true)
+              setSidebarTab('details')
             }}
             style={styles.button}
             type="button"
@@ -2095,84 +2161,119 @@ function GraphView({
             </div>
           </div>
         ) : (
-          <>
-            <KnowledgeGraphChart
-              nodes={visibleNodes}
-              onMoveNode={onMoveNode}
-              onSelectNode={selectNode}
-              onZoomChange={setZoom}
-              relations={visibleRelations}
-              selectedNodeId={selectedNodeId}
-              zoom={zoom}
-            />
-            {visibleRelations.length > 0 && (
-              <details
-                className="knowledge-graph__accessible-surface"
-                onToggle={(event) =>
-                  setRelationsExpanded(event.currentTarget.open)
-                }
-                open={relationsExpanded}
-              >
-                <summary>
-                  可见关系 {visibleRelations.length} 条
-                </summary>
-                {relationsExpanded && (
-                  <ul
-                    aria-label="可见关系列表"
-                    className="knowledge-graph__relation-list"
-                  >
-                    {visibleRelations.map((relation) => (
-                      <li key={relation.id}>
-                        <span>
-                          {nodeMap.get(relation.sourceId)?.label}
-                        </span>
-                        <ArrowRight aria-hidden="true" size={12} />
-                        <strong>{relation.type}</strong>
-                        <ArrowRight aria-hidden="true" size={12} />
-                        <span>
-                          {nodeMap.get(relation.targetId)?.label}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </details>
-            )}
-          </>
+          <KnowledgeGraphChart
+            nodes={visibleNodes}
+            onMoveNode={onMoveNode}
+            onSelectNode={selectNode}
+            onZoomChange={setZoom}
+            relations={visibleRelations}
+            selectedNodeId={selectedNodeId}
+            zoom={zoom}
+          />
         )}
       </section>
 
-      {creatingEntity && (
+      {sidebarTab === 'topology' && (
         <aside
-          aria-label="新增实体面板"
+          aria-label="图谱拓扑"
           className="knowledge-graph__detail"
-          style={{
-            ...styles.surface,
-            padding: 15,
-            overflowY: 'auto'
-          }}
         >
-          <h3 style={{ marginTop: 0 }}>新增实体</h3>
-          <EntityEditor
-            onCancel={() => setCreatingEntity(false)}
-            onSave={async (input) => {
-              await onCreateEntity(input)
-              setCreatingEntity(false)
-            }}
+          <GraphSidebarNavigation
+            onChange={setSidebarTab}
+            relationCount={visibleRelations.length}
+            value={sidebarTab}
           />
+          <section
+            aria-labelledby="knowledge-graph-sidebar-tab-topology"
+            className="knowledge-graph__detail-panel"
+            id="knowledge-graph-sidebar-panel-topology"
+            role="tabpanel"
+          >
+            <div className="knowledge-graph__panel-heading">
+              <div>
+                <h3>可见关系</h3>
+                <p>随当前搜索和类型筛选更新。</p>
+              </div>
+              <span>{visibleRelations.length} 条</span>
+            </div>
+            {visibleRelations.length === 0 ? (
+              <p className="knowledge-graph__panel-empty">
+                当前筛选下没有可见关系。
+              </p>
+            ) : (
+              <ul
+                aria-label="可见关系列表"
+                className="knowledge-graph__topology-list"
+              >
+                {visibleRelations.map((relation) => (
+                  <li
+                    className="knowledge-graph__relation-card"
+                    key={relation.id}
+                  >
+                    <GraphRelationPath
+                      nodeMap={nodeMap}
+                      onSelectNode={selectNode}
+                      relation={relation}
+                    />
+                    {relation.description && (
+                      <p>{relation.description}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </aside>
       )}
 
-      {selectedNode && (
+      {sidebarTab === 'details' && creatingEntity && (
+        <aside
+          aria-label="新增实体面板"
+          className="knowledge-graph__detail"
+        >
+          <GraphSidebarNavigation
+            onChange={setSidebarTab}
+            relationCount={visibleRelations.length}
+            value={sidebarTab}
+          />
+          <section
+            aria-labelledby="knowledge-graph-sidebar-tab-details"
+            className="knowledge-graph__detail-panel"
+            id="knowledge-graph-sidebar-panel-details"
+            role="tabpanel"
+          >
+            <h3 style={{ marginTop: 0 }}>新增实体</h3>
+            <EntityEditor
+              onCancel={() => {
+                setCreatingEntity(false)
+                setSidebarTab('topology')
+              }}
+              onSave={async (input) => {
+                await onCreateEntity(input)
+                setCreatingEntity(false)
+                setSidebarTab('topology')
+              }}
+            />
+          </section>
+        </aside>
+      )}
+
+      {sidebarTab === 'details' && selectedNode && (
         <aside
           aria-label="实体详情"
           className="knowledge-graph__detail"
-          style={{
-            ...styles.surface,
-            padding: 15,
-            overflowY: 'auto'
-          }}
         >
+          <GraphSidebarNavigation
+            onChange={setSidebarTab}
+            relationCount={visibleRelations.length}
+            value={sidebarTab}
+          />
+          <section
+            aria-labelledby="knowledge-graph-sidebar-tab-details"
+            className="knowledge-graph__detail-panel"
+            id="knowledge-graph-sidebar-panel-details"
+            role="tabpanel"
+          >
           <div
             style={{
               display: 'flex',
@@ -2190,7 +2291,10 @@ function GraphView({
             <button
               aria-label="关闭实体详情"
               className="secondary-button"
-              onClick={() => setSelectedNodeId(undefined)}
+              onClick={() => {
+                setSelectedNodeId(undefined)
+                setSidebarTab('topology')
+              }}
               style={{ ...styles.button, padding: 7 }}
               type="button"
             >
@@ -2219,7 +2323,7 @@ function GraphView({
                   别名：{selectedNode.aliases?.join('、')}
                 </div>
               )}
-              <div style={{ display: 'flex', gap: 7 }}>
+              <div className="knowledge-graph__entity-actions">
                 <button
                   className="secondary-button"
                   onClick={() => setEditingEntity(true)}
@@ -2250,11 +2354,7 @@ function GraphView({
             }}
           />
           <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}
+            className="knowledge-graph__section-heading"
           >
             <strong>关系</strong>
             <button
@@ -2286,46 +2386,23 @@ function GraphView({
             />
           )}
           <ul
-            style={{
-              display: 'grid',
-              gap: 8,
-              padding: 0,
-              listStyle: 'none'
-            }}
+            className="knowledge-graph__entity-relations"
           >
             {relatedRelations.map((relation) => {
-              const otherId =
-                relation.sourceId === selectedNode.id
-                  ? relation.targetId
-                  : relation.sourceId
-              const other = nodeMap.get(otherId)
               return (
                 <li
+                  className="knowledge-graph__relation-card"
                   key={relation.id}
-                  style={{ ...styles.surface, padding: 10 }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      fontSize: 13
-                    }}
-                  >
-                    <span>{nodeMap.get(relation.sourceId)?.label}</span>
-                    <ArrowRight
-                      aria-label={relation.type}
-                      size={13}
-                    />
-                    <span>{nodeMap.get(relation.targetId)?.label}</span>
-                  </div>
-                  <div style={{ ...styles.muted, marginTop: 4 }}>
-                    {relation.type}
-                    {relation.description
-                      ? ` · ${relation.description}`
-                      : ''}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
+                  <GraphRelationPath
+                    nodeMap={nodeMap}
+                    onSelectNode={selectNode}
+                    relation={relation}
+                  />
+                  {relation.description && (
+                    <p>{relation.description}</p>
+                  )}
+                  <div className="knowledge-graph__relation-actions">
                     <button
                       aria-label={`编辑关系 ${relation.type}`}
                       className="secondary-button"
@@ -2334,6 +2411,7 @@ function GraphView({
                       type="button"
                     >
                       <Pencil aria-hidden="true" size={13} />
+                      编辑
                     </button>
                     <button
                       aria-label={`删除关系 ${relation.type}`}
@@ -2345,22 +2423,6 @@ function GraphView({
                       <Trash2 aria-hidden="true" size={13} />
                       删除
                     </button>
-                    {other && (
-                      <button
-                        className="secondary-button"
-                        onClick={() => setSelectedNodeId(other.id)}
-                        style={{
-                          ...styles.button,
-                          minHeight: 30,
-                          padding: '5px 8px',
-                          marginLeft: 'auto'
-                        }}
-                        type="button"
-                      >
-                        查看 {other.label}
-                        <ChevronRight aria-hidden="true" size={13} />
-                      </button>
-                    )}
                   </div>
                 </li>
               )
@@ -2368,7 +2430,7 @@ function GraphView({
           </ul>
 
           <strong>合并实体</strong>
-          <div style={{ display: 'flex', gap: 7, marginTop: 8 }}>
+          <div className="knowledge-graph__merge">
             <select
               aria-label="选择合并目标"
               onChange={(event) => setMergeTargetId(event.currentTarget.value)}
@@ -2477,6 +2539,30 @@ function GraphView({
               ))}
             </ol>
           )}
+          </section>
+        </aside>
+      )}
+
+      {sidebarTab === 'details' && !selectedNode && !creatingEntity && (
+        <aside
+          aria-label="图谱详情"
+          className="knowledge-graph__detail"
+        >
+          <GraphSidebarNavigation
+            onChange={setSidebarTab}
+            relationCount={visibleRelations.length}
+            value={sidebarTab}
+          />
+          <section
+            aria-labelledby="knowledge-graph-sidebar-tab-details"
+            className="knowledge-graph__detail-panel"
+            id="knowledge-graph-sidebar-panel-details"
+            role="tabpanel"
+          >
+            <p className="knowledge-graph__panel-empty">
+              点击图谱节点查看实体详情。
+            </p>
+          </section>
         </aside>
       )}
     </div>

@@ -5,7 +5,6 @@ import {
   ChevronDown,
   CircleAlert,
   CircleHelp,
-  ClipboardPaste,
   Copy,
   Download,
   Edit3,
@@ -27,9 +26,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  MonitorUp,
   PanelRightOpen,
-  PanelsTopLeft,
   Sparkles,
   Square,
   Sun,
@@ -57,9 +54,9 @@ import type {
   ContextAttachment,
   KnowledgeSearchReference,
   KnowledgeSnapshot,
-  RuntimeSettings,
-  WindowCaptureOption
+  RuntimeSettings
 } from '../../shared/contracts'
+import { maximumPastedImageBytes } from '../../shared/contracts'
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
@@ -1052,6 +1049,7 @@ function ComposerMenuSelect<T extends string>({
   onChange,
   onOpenChange,
   options,
+  triggerLabel,
   value
 }: {
   ariaLabel: string
@@ -1063,6 +1061,7 @@ function ComposerMenuSelect<T extends string>({
   onChange: (value: T) => void
   onOpenChange: (open: boolean) => void
   options: readonly ComposerMenuOption<T>[]
+  triggerLabel?: string
   value: T
 }): React.JSX.Element {
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -1144,7 +1143,7 @@ function ComposerMenuSelect<T extends string>({
       >
         {icon}
         <span className="model-button__label">
-          {selectedOption?.label}
+          {triggerLabel ?? selectedOption?.label}
         </span>
         <ChevronDown aria-hidden="true" size={14} />
       </button>
@@ -1423,10 +1422,6 @@ function App(): React.JSX.Element {
   const imageViewerTriggerRef = useRef<HTMLElement | undefined>(
     undefined
   )
-  const [windowCaptureOptions, setWindowCaptureOptions] = useState<
-    WindowCaptureOption[]
-  >()
-  const [windowCaptureLoading, setWindowCaptureLoading] = useState(false)
   const [knowledgeSnapshot, setKnowledgeSnapshot] = useState<KnowledgeSnapshot>({
     libraries: [],
     sources: [],
@@ -3999,31 +3994,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  const openWindowCapture = async (): Promise<void> => {
-    setContextError(undefined)
-    setWindowCaptureLoading(true)
-    try {
-      setWindowCaptureOptions(
-        await window.goodbuddy.context.listWindows()
-      )
-    } catch (reason) {
-      setContextError(
-        reason instanceof Error ? reason.message : '读取应用窗口失败'
-      )
-    } finally {
-      setWindowCaptureLoading(false)
-    }
-  }
-
-  const captureSelectedWindow = async (
-    sourceId: string
-  ): Promise<void> => {
-    setWindowCaptureOptions(undefined)
-    await addContext(() =>
-      window.goodbuddy.context.captureWindow(sourceId)
-    )
-  }
-
   const removeAttachment = (attachmentId: string): void => {
     void window.goodbuddy.context.remove(attachmentId)
     updateAttachments((current) =>
@@ -5445,7 +5415,7 @@ function App(): React.JSX.Element {
                   runtime?.capability === 'image-generation'
                     ? '描述你想生成的图片…'
                     : '给 GoodBuddy 发消息…'
-                }\nEnter 发送 · Shift+Enter 换行 · 附件仅在选择后发送`}
+                }\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本`}
                 ref={inputRef}
                 rows={3}
                 value={input}
@@ -5453,6 +5423,41 @@ function App(): React.JSX.Element {
                 onInput={(event) =>
                   resizeComposerTextarea(event.currentTarget)
                 }
+                onPaste={(event) => {
+                  const imageItem = Array.from(
+                    event.clipboardData.items
+                  ).find(
+                    (item) =>
+                      item.kind === 'file' &&
+                      item.type.startsWith('image/')
+                  )
+                  if (!imageItem) {
+                    return
+                  }
+                  const image = imageItem.getAsFile()
+                  const mimeType =
+                    image?.type === 'image/jpeg' ||
+                    image?.type === 'image/png' ||
+                    image?.type === 'image/webp'
+                      ? image.type
+                      : undefined
+                  event.preventDefault()
+                  if (!image || !mimeType) {
+                    setContextError(
+                      '仅支持粘贴 JPEG、PNG 或 WebP 图片'
+                    )
+                    return
+                  }
+                  void addContext(async () => {
+                    if (image.size > maximumPastedImageBytes) {
+                      throw new Error('粘贴图片不能超过 12MB')
+                    }
+                    return window.goodbuddy.context.addPastedImage({
+                      data: new Uint8Array(await image.arrayBuffer()),
+                      mimeType
+                    })
+                  })
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault()
@@ -5479,30 +5484,6 @@ function App(): React.JSX.Element {
                     title="添加附件"
                   >
                     <Paperclip aria-hidden="true" size={18} />
-                  </button>
-                  <button
-                    aria-label="读取剪贴板"
-                    onClick={() =>
-                      void addContext(() =>
-                        window.goodbuddy.context.readClipboard()
-                      )
-                    }
-                    title="添加剪贴板文本或图片"
-                    type="button"
-                  >
-                    <ClipboardPaste aria-hidden="true" size={18} />
-                  </button>
-                  <button
-                    aria-label="截取当前屏幕"
-                    onClick={() =>
-                      void addContext(() =>
-                        window.goodbuddy.context.captureScreen()
-                      )
-                    }
-                    title="截取当前屏幕"
-                    type="button"
-                  >
-                    <MonitorUp aria-hidden="true" size={18} />
                   </button>
                   <button
                     aria-label={
@@ -5538,15 +5519,6 @@ function App(): React.JSX.Element {
                     type="button"
                   >
                     <Mic aria-hidden="true" size={18} />
-                  </button>
-                  <button
-                    aria-label="捕获应用窗口"
-                    disabled={windowCaptureLoading}
-                    onClick={() => void openWindowCapture()}
-                    title="选择一个应用或浏览器窗口，仅捕获当前画面"
-                    type="button"
-                  >
-                    <PanelsTopLeft aria-hidden="true" size={18} />
                   </button>
                 </div>
                 {knowledgeSnapshot.libraries.length > 0 && (
@@ -5627,6 +5599,11 @@ function App(): React.JSX.Element {
                     onChange={setWorkMode}
                     onOpenChange={setModeMenuOpen}
                     options={workModeOptions}
+                    triggerLabel={
+                      effectiveWorkMode === 'execute'
+                        ? 'Execute'
+                        : 'Ask'
+                    }
                     value={effectiveWorkMode}
                   />
                   <div className="runtime-picker">
@@ -6191,66 +6168,6 @@ function App(): React.JSX.Element {
                 src={imageViewerItem.src}
               />
             </div>
-          </section>
-        </div>
-      )}
-      {windowCaptureOptions && (
-        <div
-          className="window-capture-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setWindowCaptureOptions(undefined)
-            }
-          }}
-        >
-          <section
-            aria-labelledby="window-capture-title"
-            aria-modal="true"
-            className="window-capture-dialog"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                setWindowCaptureOptions(undefined)
-              }
-            }}
-            role="dialog"
-          >
-            <div className="window-capture-dialog__header">
-              <div>
-                <strong id="window-capture-title">选择应用窗口</strong>
-                <small>仅捕获所选窗口的当前画面，不会持续监控。</small>
-              </div>
-              <button
-                aria-label="关闭应用窗口选择"
-                className="icon-button"
-                onClick={() => setWindowCaptureOptions(undefined)}
-                type="button"
-              >
-                ×
-              </button>
-            </div>
-            <div
-              aria-label="可捕获的应用窗口"
-              className="window-capture-dialog__list"
-            >
-              {windowCaptureOptions.map((source, index) => (
-                <button
-                  autoFocus={index === 0}
-                  key={source.id}
-                  onClick={() => void captureSelectedWindow(source.id)}
-                  type="button"
-                >
-                  <PanelsTopLeft size={16} />
-                  <span>{source.name}</span>
-                </button>
-              ))}
-            </div>
-            <button
-              className="secondary-button"
-              onClick={() => setWindowCaptureOptions(undefined)}
-              type="button"
-            >
-              取消
-            </button>
           </section>
         </div>
       )}

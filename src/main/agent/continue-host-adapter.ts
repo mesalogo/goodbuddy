@@ -22,7 +22,7 @@ import json5 from 'json5'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import type { RuntimeSettings } from '../../shared/contracts'
-import type { RuntimeAuthorizer } from './runtime'
+import type { AgentImage, RuntimeAuthorizer } from './runtime'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type { RuntimeSkillPackage } from '../capabilities/capability-service'
 import { getAvailableLoopbackPort } from './loopback-port'
@@ -45,6 +45,7 @@ const supportedBundleHashes = new Set([
 ])
 const maximumBundleBytes = 32 * 1024 * 1024
 const maximumStateBytes = 8 * 1024 * 1024
+const maximumMessageBytes = 20 * 1024 * 1024
 const maximumConfigBytes = 1024 * 1024
 const maximumConfiguredMcpServers = 100
 const maximumStreamEvents = 5_000
@@ -189,6 +190,7 @@ export type ContinueHostAdapterOptions = {
 
 export type ContinueHostRunOptions = {
   workMode?: 'ask' | 'plan' | 'execute'
+  images?: AgentImage[]
   knowledgeCapability?: {
     endpoint: string
     token: string
@@ -657,7 +659,7 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       serverMarker,
-      'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"1mb"})),j.get("/state"'
+      'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"20mb"})),j.get("/state"'
     )
     patched = replaceExactly(
       patched,
@@ -961,7 +963,10 @@ export class ContinueHostAdapter {
       apiBase: anthropic
         ? createAnthropicApiBaseUrl(this.options.modelProfile.baseUrl)
         : createOpenAIApiBaseUrl(this.options.modelProfile.baseUrl),
-      roles: ['chat']
+      roles: ['chat'],
+      capabilities: this.options.modelProfile.supportsImageInput === true
+        ? ['image_input']
+        : []
     }
     if (!anthropic) {
       modelConfig.useResponsesApi =
@@ -1043,6 +1048,8 @@ export class ContinueHostAdapter {
       runOptions.knowledgeCapability
     ) {
       args.push(
+        '--allow',
+        'knowledge_list',
         '--allow',
         'knowledge_search',
         '--allow',
@@ -1146,9 +1153,25 @@ export class ContinueHostAdapter {
         signal
       )
       const startIndex = initialState.session.history.length
+      const message =
+        runOptions.images && runOptions.images.length > 0
+          ? [
+              { type: 'text', text: prompt },
+              ...runOptions.images.map((image) => ({
+                type: 'imageUrl',
+                imageUrl: {
+                  url: `data:${image.mediaType};base64,${image.data}`
+                }
+              }))
+            ]
+          : prompt
+      const messageBody = JSON.stringify({ message })
+      if (Buffer.byteLength(messageBody) > maximumMessageBytes) {
+        throw new Error('Continue 图片上下文超过 20 MB 安全大小限制')
+      }
       await this.request(origin, token, '/message', {
         method: 'POST',
-        body: JSON.stringify({ message: prompt }),
+        body: messageBody,
         signal
       })
 

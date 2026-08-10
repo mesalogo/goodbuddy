@@ -120,6 +120,85 @@ describe('ContinueAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it('forwards images to the Continue host when configuration allows them', async () => {
+    const runtime = createRuntime()
+    for await (const _event of runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'describe',
+        images: [
+          {
+            name: 'screenshot.png',
+            mediaType: 'image/png',
+            data: 'aW1hZ2U='
+          }
+        ]
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    expect(mocks.runHost).toHaveBeenCalledWith(
+      'describe',
+      expect.any(AbortSignal),
+      expect.any(Function),
+      expect.objectContaining({
+        images: [
+          {
+            name: 'screenshot.png',
+            mediaType: 'image/png',
+            data: 'aW1hZ2U='
+          }
+        ]
+      })
+    )
+  })
+
+  it('rejects images when the explicit model connection disables image input', async () => {
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: '',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      modelProfile: {
+        id: '00000000-0000-4000-8000-000000000001',
+        name: '文本模型',
+        baseUrl: 'https://model.example',
+        modelName: 'text-model',
+        protocol: 'anthropic-messages',
+        authentication: 'none',
+        supportsImageInput: false
+      },
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'describe',
+        images: [
+          {
+            name: 'screenshot.png',
+            mediaType: 'image/png',
+            data: 'aW1hZ2U='
+          }
+        ]
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).rejects.toThrow(
+      '当前模型连接未启用图像输入'
+    )
+    expect(mocks.detectRuntimeBinary).not.toHaveBeenCalled()
+  })
+
   it('emits one request-scoped host usage event at the end', async () => {
     mocks.runHost.mockResolvedValue({
       text: 'Continue response',
@@ -200,6 +279,9 @@ describe('ContinueAgentRuntime', () => {
       }
     )
     const authorize = mocks.runHost.mock.calls[0]?.[2]
+    await expect(
+      authorize?.({ toolName: 'knowledge_list' })
+    ).resolves.toBe('once')
     await expect(
       authorize?.({ toolName: 'knowledge_search' })
     ).resolves.toBe('once')

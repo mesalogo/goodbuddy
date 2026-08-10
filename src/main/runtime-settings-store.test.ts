@@ -328,7 +328,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(12)
+    expect(persisted.version).toBe(13)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -348,8 +348,66 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(12)
+    expect(persisted.version).toBe(13)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
+  })
+
+  it('keeps image input disabled when migrating version 12 profiles', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const versionTwelve = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    versionTwelve.version = 12
+    for (const profile of versionTwelve.modelProfiles) {
+      delete profile.supportsImageInput
+    }
+    await writeFile(filePath, JSON.stringify(versionTwelve), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      supportsImageInput: false,
+      modelProfiles: [
+        expect.objectContaining({ supportsImageInput: false })
+      ]
+    })
+  })
+
+  it('persists enabled image input for a model profile', async () => {
+    const { filePath, store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000035'
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: profileId,
+            name: '视觉模型',
+            baseUrl: 'https://model.example/v1',
+            modelName: 'vision-model',
+            protocol: 'openai-responses',
+            authentication: 'none',
+            supportsImageInput: true,
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'clear' }
+          }
+        ],
+        defaultModelProfileId: profileId
+      })
+    )
+
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      supportsImageInput: true,
+      modelProfiles: [
+        expect.objectContaining({ supportsImageInput: true })
+      ]
+    })
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    expect(persisted.modelProfiles[0]).toMatchObject({
+      supportsImageInput: true
+    })
   })
 
   it('accepts only supported image quality values', () => {
@@ -600,7 +658,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(12)
+    expect(persisted.version).toBe(13)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -774,7 +832,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 12,
+      version: 13,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -1053,7 +1111,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(12)
+    expect(persisted.version).toBe(13)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 
