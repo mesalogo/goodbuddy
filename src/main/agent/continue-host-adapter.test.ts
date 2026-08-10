@@ -78,6 +78,7 @@ async function createDistribution(version = '1.5.47'): Promise<{
     'async function SCt(e){return n5e||',
     'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}',
     'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}',
+    'function Sin(e,t){let n=[];n.push({role:"system",content:t});let r=oot(e);return n.push(...r),n}',
     'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-ExecutionPolicy","Bypass","-Command",e]}',
     'let{shell:d,args:p}=Csa(e),f=Esa(d,p),g="",y="",A,S=!1,x=18e4;',
     'let r=[eS.join(n,".continue",AKt),eS.join(n,".claude",AKt),eS.join(hu.continueHome,AKt)],o=',
@@ -150,6 +151,9 @@ describe('ContinueHostAdapter', () => {
     )
     expect(bundle).toContain(
       'useResponsesApi:e.useResponsesApi'
+    )
+    expect(bundle).toContain(
+      'let r=oot(e).filter(o=>o.role!=="system")'
     )
     expect(bundle).toContain('"-NoProfile"')
     expect(bundle).toContain('[Console]::OutputEncoding')
@@ -1155,9 +1159,16 @@ describe('ContinueHostAdapter', () => {
       )
       temporaryDirectories.push(root)
       const requestPaths: string[] = []
-      const server = createServer((request, response) => {
+      const requestBodies: unknown[] = []
+      const server = createServer(async (request, response) => {
         requestPaths.push(request.url ?? '')
-        request.resume()
+        let body = ''
+        for await (const chunk of request) {
+          body += chunk
+        }
+        if (body) {
+          requestBodies.push(JSON.parse(body))
+        }
         response.writeHead(400, {
           'content-type': 'application/json'
         })
@@ -1209,6 +1220,24 @@ describe('ContinueHostAdapter', () => {
           .catch(() => undefined)
         expect(requestPaths).toContain(expectedPath)
         expect(requestPaths).not.toContain(unexpectedPath)
+        if (protocol === 'openai-chat-completions') {
+          const chatRequest = requestBodies.find(
+            (body): body is { messages: Array<{ role?: unknown }> } =>
+              Boolean(
+                body &&
+                  typeof body === 'object' &&
+                  'messages' in body &&
+                  Array.isArray(body.messages)
+              )
+          )
+          expect(chatRequest).toBeDefined()
+          expect(chatRequest?.messages[0]?.role).toBe('system')
+          expect(
+            chatRequest?.messages.filter(
+              (message) => message.role === 'system'
+            )
+          ).toHaveLength(1)
+        }
       } finally {
         clearTimeout(timeout)
         adapter.dispose()

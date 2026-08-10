@@ -609,6 +609,8 @@ export class ContinueHostAdapter {
       'shouldUseResponsesEndpoint(t){return this.config.useResponsesApi===!1?!1:this.apiBase==="https://api.openai.com/v1/"&&A0e(t)}'
     const modelConfigurationMarker =
       'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env};return CGn(n)??null}'
+    const messageOrderingMarker =
+      'function Sin(e,t){let n=[];n.push({role:"system",content:t});let r=oot(e);return n.push(...r),n}'
     const windowsShellMarker =
       'function Csa(e){return process.platform==="win32"?{shell:"powershell.exe",args:["-NoLogo","-ExecutionPolicy","Bypass","-Command",e]}'
     const terminalOutputMarker =
@@ -676,6 +678,11 @@ export class ContinueHostAdapter {
       patched,
       modelConfigurationMarker,
       'function uAe(e,t){let n={provider:e.provider,model:e.model,apiKey:e.apiKey,apiBase:e.apiBase,requestOptions:e.requestOptions,env:e.env,useResponsesApi:e.useResponsesApi};return CGn(n)??null}'
+    )
+    patched = replaceExactly(
+      patched,
+      messageOrderingMarker,
+      'function Sin(e,t){let n=[];n.push({role:"system",content:t});let r=oot(e).filter(o=>o.role!=="system");return n.push(...r),n}'
     )
     patched = replaceExactly(
       patched,
