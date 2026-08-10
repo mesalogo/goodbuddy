@@ -6686,6 +6686,13 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: 8px;
 }
 
+.knowledge-source-row__actions > button {
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  align-self: center;
+}
+
 .knowledge-documents__url-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -6804,20 +6811,27 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-graph__detail > .page-tabs--segmented {
-  width: calc(100% - (var(--space-4) * 2));
+  width: auto;
+  min-height: 36px;
   margin: var(--space-4);
+  overflow: hidden;
+  align-self: stretch;
+  flex: 0 0 auto;
 }
 
 .knowledge-graph__detail > .page-tabs--segmented .page-tabs__tab {
   min-width: 0;
+  overflow: hidden;
   flex: 1;
   justify-content: center;
+  text-overflow: ellipsis;
 }
 
 .knowledge-graph__detail-panel {
   min-height: 0;
   padding: 0 var(--space-4) var(--space-4);
   overflow-y: auto;
+  flex: 1 1 auto;
   scrollbar-gutter: stable;
 }
 

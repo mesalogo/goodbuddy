@@ -1300,7 +1300,7 @@ function DocumentsView({
                     onClick={() =>
                       void run(source.id, () => onRemoveSource(source.id))
                     }
-                    style={{ ...styles.button, padding: 8 }}
+                    style={styles.button}
                     type="button"
                   >
                     <Trash2 aria-hidden="true" size={14} />

@@ -108,6 +108,15 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).toMatch(
       /\.page-tabs\s*\{[^}]*overflow-x:\s*auto;[^}]*flex-wrap:\s*nowrap;/u
     )
+    expect(stylesheet).toMatch(
+      /\.knowledge-graph__detail > \.page-tabs--segmented\s*\{[^}]*min-height:\s*36px;[^}]*overflow:\s*hidden;[^}]*flex:\s*0 0 auto;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-graph__detail > \.page-tabs--segmented \.page-tabs__tab\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*flex:\s*1;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-source-row__actions > button\s*\{[^}]*height:\s*var\(--control-height\);[^}]*min-height:\s*var\(--control-height\);[^}]*padding:\s*0 var\(--space-3\);[^}]*align-self:\s*center;/u
+    )
     expect(stylesheet).not.toContain(
       '.heartbeat-center > .page-tabs {\n    display: grid;'
     )

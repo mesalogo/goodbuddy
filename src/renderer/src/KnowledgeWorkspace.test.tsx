@@ -422,6 +422,17 @@ describe('KnowledgeWorkspace', () => {
     expect(screen.queryByTitle('D:\\Private\\架构说明.md')).not
       .toBeInTheDocument()
     expect(screen.queryByTitle('D:\\Private\\产品手册')).not.toBeInTheDocument()
+    const syncSource = screen.getByRole('button', {
+      name: '同步 产品手册'
+    })
+    const removeSource = screen.getByRole('button', {
+      name: '移除来源 产品手册'
+    })
+    expect(syncSource.parentElement).toBe(removeSource.parentElement)
+    expect(syncSource.parentElement).toHaveClass(
+      'knowledge-source-row__actions'
+    )
+    expect(removeSource).not.toHaveStyle({ padding: '8px' })
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
     fireEvent.change(screen.getByLabelText('选择图谱实体'), {
