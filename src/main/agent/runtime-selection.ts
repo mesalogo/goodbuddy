@@ -80,6 +80,7 @@ export function applyRuntimeSelection(
         modelName: profile.modelName,
         modelProtocol: profile.protocol,
         modelAuthentication: profile.authentication,
+        supportsImageInput: profile.supportsImageInput,
         imageGenerationQuality:
           profile.imageGenerationQuality ?? settings.imageGenerationQuality,
         apiKey: profile.apiKey,

@@ -80,6 +80,71 @@ describe('createAgentRuntime model compatibility', () => {
     await runtime.dispose()
   })
 
+  it('forwards the selected profile image capability to direct runtimes', async () => {
+    const visionSettings = settings({
+      supportsImageInput: true
+    })
+    visionSettings.modelProfiles = visionSettings.modelProfiles.map(
+      (profile) => ({
+        ...profile,
+        supportsImageInput: true
+      })
+    )
+    const fetcher = vi.fn(async () =>
+      new Response(
+        [
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: { content: 'OK' },
+                finish_reason: 'stop'
+              }
+            ]
+          })}`,
+          '',
+          'data: [DONE]',
+          '',
+          ''
+        ].join('\n'),
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        }
+      )
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const runtime = createAgentRuntime(process.cwd(), visionSettings)
+
+    try {
+      const events = []
+      for await (const event of runtime.run(
+        {
+          requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+          conversationId: 'wechat-conversation',
+          prompt: '描述图片',
+          images: [
+            {
+              name: '微信图片.png',
+              mediaType: 'image/png',
+              data: 'aW1hZ2U='
+            }
+          ]
+        },
+        new AbortController().signal
+      )) {
+        events.push(event)
+      }
+
+      expect(fetcher).toHaveBeenCalledOnce()
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: 'done' })
+      )
+    } finally {
+      await runtime.dispose()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('shares injected browser service without runtime-owned disposal', async () => {
     const browserService = createBrowserService()
     const first = createAgentRuntime(process.cwd(), settings(), {

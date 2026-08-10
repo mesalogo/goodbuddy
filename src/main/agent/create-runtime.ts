@@ -206,6 +206,10 @@ export function createAgentRuntime(
         settings?.modelProtocol ??
         defaultRuntimeSettings.modelProtocol,
       authentication: modelAuthentication,
+      supportsImageInput:
+        defaultModelProfile?.supportsImageInput ??
+        settings?.supportsImageInput ??
+        defaultRuntimeSettings.supportsImageInput,
       imageGenerationQuality:
         defaultModelProfile?.imageGenerationQuality ??
         settings?.imageGenerationQuality ??

@@ -40,6 +40,7 @@ function settings(
         modelName: 'second-model',
         protocol: 'openai-chat-completions',
         authentication: 'none',
+        supportsImageInput: true,
         imageGenerationQuality: 'auto'
       },
       {
@@ -98,6 +99,7 @@ describe('runtime selection', () => {
       modelName: 'second-model',
       modelProtocol: 'openai-chat-completions',
       modelAuthentication: 'none',
+      supportsImageInput: true,
       defaultModelProfileId: secondProfileId
     })
     expect(original.defaultModelProfileId).toBe(defaultProfileId)
