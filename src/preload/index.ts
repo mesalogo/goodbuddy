@@ -785,6 +785,11 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.magicTodosList
       ) as Promise<MagicTodosSnapshot>,
+    updateTodo: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.magicTodosUpdate,
+        input
+      ) as Promise<MagicTodoItem>,
     analyzeTodo: (todoId, options) =>
       ipcRenderer.invoke(ipcChannels.magicTodosAnalyze, {
         todoId,

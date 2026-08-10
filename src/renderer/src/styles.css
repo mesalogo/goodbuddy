@@ -316,7 +316,6 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
-  cursor: pointer;
   gap: var(--space-2);
   grid-template-columns: auto minmax(0, 1fr);
   text-align: left;
@@ -333,18 +332,34 @@
 
 .magic-todo-list-item__check {
   display: grid;
+  width: 28px;
+  height: 28px;
   padding-top: 1px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--accent);
+  cursor: pointer;
   place-items: center;
 }
 
-.magic-todo-list-item > span:last-child {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-1);
+.magic-todo-list-item__check:hover {
+  background: var(--accent-subtle);
 }
 
-.magic-todo-list-item strong {
+.magic-todo-list-item__content {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  gap: var(--space-1);
+  text-align: left;
+}
+
+.magic-todo-list-item__content strong {
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--font-body);
@@ -352,7 +367,7 @@
   white-space: nowrap;
 }
 
-.magic-todo-list-item small {
+.magic-todo-list-item__content small {
   overflow: hidden;
   color: var(--text-muted);
   font-size: var(--font-caption);
@@ -476,10 +491,17 @@
   display: grid;
   width: 36px;
   height: 36px;
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-control);
   background: var(--accent-subtle);
   color: var(--accent);
+  cursor: pointer;
   place-items: center;
+}
+
+.magic-todo-detail__check:hover {
+  background: var(--accent-selected);
 }
 
 .magic-todo-detail > header > div:nth-child(2) {

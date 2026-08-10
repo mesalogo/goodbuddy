@@ -152,6 +152,7 @@ const listTodos = vi.fn<() => Promise<MagicTodosSnapshot>>()
 const remove = vi.fn<DesktopApi['magicNotes']['remove']>()
 const createEntry = vi.fn<DesktopApi['magicNotes']['createEntry']>()
 const analyze = vi.fn<DesktopApi['magicNotes']['analyze']>()
+const updateTodo = vi.fn<DesktopApi['magicNotes']['updateTodo']>()
 const analyzeTodo = vi.fn<DesktopApi['magicNotes']['analyzeTodo']>()
 const analyzeDraft = vi.fn<DesktopApi['magicNotes']['analyzeDraft']>()
 let analysisEventListener:
@@ -206,6 +207,11 @@ beforeEach(() => {
     ]
   }
   createEntry.mockResolvedValue(createdDetail)
+  updateTodo.mockImplementation(async (input) => ({
+    ...noteTodo,
+    completed: input.completed,
+    revision: noteTodo.revision + 1
+  }))
   analyze.mockResolvedValue({
     ...createdDetail,
     entries: createdDetail.entries.map((entry) =>
@@ -258,6 +264,7 @@ beforeEach(() => {
         remove,
         createEntry,
         analyze,
+        updateTodo,
         analyzeTodo,
         analyzeDraft,
         onAnalysisEvent
@@ -319,8 +326,12 @@ describe('MagicNotesWorkspace', () => {
     ).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('tab', { name: '待办' }))
     expect(screen.getByText('准备演示')).toBeInTheDocument()
+    const selectedTodoButton = screen
+      .getAllByText('核对发布材料')
+      .find((element) => element.tagName === 'STRONG')
+      ?.closest('button')
     expect(
-      screen.getByRole('button', { name: /核对发布材料/ })
+      selectedTodoButton
     ).toHaveAttribute('aria-pressed', 'true')
     expect(onNotify).not.toHaveBeenCalledWith(
       expect.objectContaining({
@@ -355,7 +366,11 @@ describe('MagicNotesWorkspace', () => {
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
 
-    expect(screen.getByLabelText('未完成')).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('button', {
+        name: `标记为已完成：${noteTodo.title}`
+      })
+    ).toHaveLength(2)
     expect(
       screen.getByRole('button', { name: '打开原笔记修改' })
     ).toBeInTheDocument()
@@ -571,7 +586,7 @@ describe('MagicNotesWorkspace', () => {
     )
   })
 
-  it('groups note-backed todos in a directory view', async () => {
+  it('only shows note-backed todos in a directory view', async () => {
     render(
       <MagicNotesWorkspace onNotify={onNotify} />
     )
@@ -581,10 +596,43 @@ describe('MagicNotesWorkspace', () => {
     expect(
       screen.queryByRole('button', { name: '新建待办' })
     ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '目录视图' }))
+    expect(
+      screen.queryByRole('group', { name: '待办列表方式' })
+    ).not.toBeInTheDocument()
     expect(screen.getByText('发布笔记')).toBeInTheDocument()
     expect(screen.getByText('演示笔记')).toBeInTheDocument()
     expect(screen.getByText('准备演示')).toBeInTheDocument()
+  })
+
+  it('marks a todo completed from the standalone todo tab', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByRole('tab', { name: '待办' }))
+    fireEvent.click(
+      screen.getAllByRole('button', {
+        name: `标记为已完成：${noteTodo.title}`
+      })[0]!
+    )
+
+    await waitFor(() =>
+      expect(updateTodo).toHaveBeenCalledWith({
+        todoId: noteTodo.id,
+        completed: true,
+        expectedRevision: noteTodo.revision
+      })
+    )
+    expect(
+      screen.getByRole('button', {
+        name: `标记为未完成：${noteTodo.title}`
+      })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(onNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tone: 'success',
+        message: '待办已完成'
+      })
+    )
   })
 
   it('reuses the AI comments pane for selected todos', async () => {

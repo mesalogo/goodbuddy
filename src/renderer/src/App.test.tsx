@@ -479,6 +479,9 @@ const api: DesktopApi = {
       throw new Error('not used')
     }),
     listTodos: vi.fn(async () => ({ todos: [] })),
+    updateTodo: vi.fn(async () => {
+      throw new Error('not used')
+    }),
     analyzeTodo: vi.fn(async () => {
       throw new Error('not used')
     }),

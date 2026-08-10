@@ -86,7 +86,8 @@ import {
   magicNoteEntryDeleteSchema,
   magicNoteEntryUpdateSchema,
   magicNoteUpdateSchema,
-  magicTodoIdSchema
+  magicTodoIdSchema,
+  magicTodoUpdateSchema
 } from '../shared/magic-notes-contracts'
 import {
   assistantIdSchema,
@@ -3492,6 +3493,16 @@ export function registerIpcHandlers(
     (event) => {
       assertTrustedSender(event, window)
       return { todos: assistantDatabase.listMagicTodos() }
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.magicTodosUpdate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      return assistantDatabase.updateMagicTodo(
+        magicTodoUpdateSchema.parse(input)
+      )
     }
   )
 

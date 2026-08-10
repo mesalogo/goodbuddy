@@ -1932,6 +1932,50 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it('updates a derived todo and its source checklist together', async () => {
+    const database = await createDatabase()
+    const note = database.createMagicNote({ title: '发布笔记' })
+    database.createMagicNoteEntry({
+      noteId: note.id,
+      content: {
+        version: 1,
+        ops: [
+          { insert: '核对发布材料' },
+          { insert: '\n', attributes: { list: 'unchecked' } }
+        ]
+      },
+      plainText: '核对发布材料'
+    })
+    const todo = database.listMagicTodos()[0]!
+
+    const updated = database.updateMagicTodo({
+      todoId: todo.id,
+      completed: true,
+      expectedRevision: todo.revision
+    })
+
+    expect(updated).toMatchObject({
+      id: todo.id,
+      completed: true,
+      revision: todo.revision + 1
+    })
+    expect(
+      database.getMagicNote(note.id).entries[0]!.content.ops
+    ).toEqual([
+      { insert: '核对发布材料' },
+      { insert: '\n', attributes: { list: 'checked' } }
+    ])
+    expect(() =>
+      database.updateMagicTodo({
+        todoId: todo.id,
+        completed: false,
+        expectedRevision: todo.revision
+      })
+    ).toThrow('待办已被更新，请刷新后重试')
+
+    database.close()
+  })
+
   it('protects magic note records from stale revisions', async () => {
     const database = await createDatabase()
     const note = database.createMagicNote({ title: '并发笔记' })

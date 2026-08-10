@@ -54,7 +54,6 @@ export type MagicNotesWorkspaceProps = {
 
 type LibraryView = 'notes' | 'todos'
 type TodoFilter = 'active' | 'completed' | 'all'
-type TodoListMode = 'list' | 'directory'
 type LoadStatus = 'loading' | 'ready' | 'error'
 type ValidationTarget =
   | 'create-note'
@@ -71,11 +70,6 @@ const todoFilters = [
   { value: 'active', label: '未完成' },
   { value: 'completed', label: '已完成' },
   { value: 'all', label: '全部' }
-] as const
-
-const todoListModes = [
-  { value: 'list', label: '待办视图' },
-  { value: 'directory', label: '目录视图' }
 ] as const
 
 const commentDirections: ReadonlyArray<{
@@ -211,35 +205,50 @@ function AiComment({
 }
 
 function TodoListItem({
+  disabled,
   onSelect,
+  onToggle,
   selected,
   todo
 }: {
+  disabled: boolean
   onSelect: () => void
+  onToggle: () => void
   selected: boolean
   todo: MagicTodoItem
 }): React.JSX.Element {
   return (
-    <button
-      aria-pressed={selected}
+    <div
       className={`magic-todo-list-item ${
         selected ? 'magic-todo-list-item--active' : ''
       }`}
-      onClick={onSelect}
-      type="button"
     >
-      <span aria-hidden="true" className="magic-todo-list-item__check">
+      <button
+        aria-label={`${
+          todo.completed ? '标记为未完成' : '标记为已完成'
+        }：${todo.title}`}
+        aria-pressed={todo.completed}
+        className="magic-todo-list-item__check"
+        disabled={disabled}
+        onClick={onToggle}
+        type="button"
+      >
         {todo.completed ? (
           <CheckCircle2 size={16} />
         ) : (
           <Circle size={16} />
         )}
-      </span>
-      <span>
+      </button>
+      <button
+        aria-pressed={selected}
+        className="magic-todo-list-item__content"
+        onClick={onSelect}
+        type="button"
+      >
         <strong>{todo.title}</strong>
         <small>来自笔记：{todo.noteTitle}</small>
-      </span>
-    </button>
+      </button>
+    </div>
   )
 }
 
@@ -250,8 +259,6 @@ export function MagicNotesWorkspace({
   const [todos, setTodos] = useState<MagicTodoItem[]>([])
   const [libraryView, setLibraryView] = useState<LibraryView>('notes')
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('active')
-  const [todoListMode, setTodoListMode] =
-    useState<TodoListMode>('list')
   const [commentMode, setCommentMode] =
     useState<MagicNoteCommentMode>('immediate')
   const [commentDirection, setCommentDirection] =
@@ -873,6 +880,30 @@ export function MagicNotesWorkspace({
     }
   }
 
+  const updateTodoCompletion = async (
+    todo: MagicTodoItem
+  ): Promise<void> => {
+    const operation = `update-todo-${todo.id}`
+    if (!beginBusy(operation)) {
+      return
+    }
+    try {
+      const completed = !todo.completed
+      applyTodo(
+        await window.goodbuddy.magicNotes.updateTodo({
+          todoId: todo.id,
+          completed,
+          expectedRevision: todo.revision
+        })
+      )
+      notifySuccess(completed ? '待办已完成' : '待办已恢复为未完成')
+    } catch (updateError) {
+      notifyError(updateError)
+    } finally {
+      endBusy(operation)
+    }
+  }
+
   const updateTitle = async (): Promise<void> => {
     if (!detail || titleDraft.trim() === detail.title) {
       return
@@ -1309,12 +1340,6 @@ export function MagicNotesWorkspace({
                 />
               </label>
               <SegmentedControl
-                ariaLabel="待办列表方式"
-                onChange={setTodoListMode}
-                options={todoListModes}
-                value={todoListMode}
-              />
-              <SegmentedControl
                 ariaLabel="筛选待办"
                 onChange={setTodoFilter}
                 options={todoFilters}
@@ -1347,18 +1372,6 @@ export function MagicNotesWorkspace({
                         </button>
                       )}
                   </>
-                ) : todoListMode === 'list' ? (
-                  visibleTodos.map((todo) => (
-                    <TodoListItem
-                      key={todo.id}
-                      onSelect={() => {
-                        setValidation(undefined)
-                        setSelectedTodoId(todo.id)
-                      }}
-                      selected={selectedTodoId === todo.id}
-                      todo={todo}
-                    />
-                  ))
                 ) : (
                   todoDirectories.map((directory) => (
                     <section
@@ -1373,11 +1386,15 @@ export function MagicNotesWorkspace({
                       <div className="magic-todo-directory__items">
                         {directory.todos.map((todo) => (
                           <TodoListItem
+                            disabled={busy === `update-todo-${todo.id}`}
                             key={todo.id}
                             onSelect={() => {
                               setValidation(undefined)
                               setSelectedTodoId(todo.id)
                             }}
+                            onToggle={() =>
+                              void updateTodoCompletion(todo)
+                            }
                             selected={selectedTodoId === todo.id}
                             todo={todo}
                           />
@@ -1780,18 +1797,28 @@ export function MagicNotesWorkspace({
           ) : (
             <section className="magic-todo-detail">
               <header>
-                <span
-                  aria-label={
-                    selectedTodo.completed ? '已完成' : '未完成'
-                  }
+                <button
+                  aria-label={`${
+                    selectedTodo.completed
+                      ? '标记为未完成'
+                      : '标记为已完成'
+                  }：${selectedTodo.title}`}
+                  aria-pressed={selectedTodo.completed}
                   className="magic-todo-detail__check"
+                  disabled={
+                    busy === `update-todo-${selectedTodo.id}`
+                  }
+                  onClick={() =>
+                    void updateTodoCompletion(selectedTodo)
+                  }
+                  type="button"
                 >
                   {selectedTodo.completed ? (
                     <CheckCircle2 size={24} />
                   ) : (
                     <Circle size={24} />
                   )}
-                </span>
+                </button>
                 <div>
                   <h2>{selectedTodo.title}</h2>
                   <span>来自笔记：{selectedTodo.noteTitle}</span>

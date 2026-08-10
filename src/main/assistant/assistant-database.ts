@@ -51,13 +51,16 @@ import {
   type MagicNoteRichContent,
   type MagicNoteSearchResult,
   type MagicNoteSummary,
-  type MagicTodoItem
+  type MagicTodoItem,
+  type MagicTodoUpdateInput
 } from '../../shared/magic-notes-contracts'
 import type { ComputerControlAuditEvent } from '../computer-control/audit'
 import {
   magicNoteChecklistItems,
   magicNoteImageBytes,
-  magicNotePreview
+  magicNotePlainText,
+  magicNotePreview,
+  setMagicNoteChecklistCompletion
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
@@ -2162,6 +2165,86 @@ export class AssistantDatabase {
       throw new Error('待办不存在')
     }
     return toMagicTodo(row)
+  }
+
+  updateMagicTodo(input: MagicTodoUpdateInput): MagicTodoItem {
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const existing = database
+        .prepare(
+          `SELECT t.note_id, t.entry_id, t.source_index, t.completed,
+                  t.revision AS todo_revision,
+                  e.content_json, e.revision AS entry_revision
+           FROM magic_todos t
+           INNER JOIN magic_note_entries e ON e.id = t.entry_id
+           WHERE t.id = ? AND t.source = 'note'`
+        )
+        .get(input.todoId) as
+        | {
+            note_id: string
+            entry_id: string
+            source_index: number
+            completed: number
+            todo_revision: number
+            content_json: string
+            entry_revision: number
+          }
+        | undefined
+      if (!existing) {
+        throw new Error('待办不存在')
+      }
+      if (existing.todo_revision !== input.expectedRevision) {
+        throw new Error('待办已被更新，请刷新后重试')
+      }
+      if (Boolean(existing.completed) === input.completed) {
+        database.exec('COMMIT')
+        return this.getMagicTodo(input.todoId)
+      }
+
+      const content = setMagicNoteChecklistCompletion(
+        JSON.parse(existing.content_json) as MagicNoteRichContent,
+        existing.source_index,
+        input.completed
+      )
+      const result = database
+        .prepare(
+          `UPDATE magic_note_entries
+           SET content_json = ?, plain_text = ?, comments_json = '[]',
+               analyzed_at = NULL, revision = revision + 1, updated_at = ?
+           WHERE id = ? AND revision = ?`
+        )
+        .run(
+          JSON.stringify(content),
+          magicNotePlainText(content),
+          now,
+          existing.entry_id,
+          existing.entry_revision
+        )
+      if (result.changes !== 1) {
+        throw new Error('记录已被更新，请刷新后重试')
+      }
+      database
+        .prepare(
+          `UPDATE magic_notes
+           SET revision = revision + 1, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(now, existing.note_id)
+      this.syncMagicNoteTodos(
+        database,
+        existing.note_id,
+        existing.entry_id,
+        content,
+        now
+      )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getMagicTodo(input.todoId)
   }
 
   saveMagicTodoAnalysis(input: {

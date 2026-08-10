@@ -205,6 +205,17 @@ export const magicTodoIdSchema = z
   })
   .strict()
 
+export const magicTodoUpdateSchema = z
+  .object({
+    todoId: magicNoteIdSchema,
+    completed: z.boolean(),
+    expectedRevision: z.number().int().nonnegative()
+  })
+  .strict()
+export type MagicTodoUpdateInput = z.infer<
+  typeof magicTodoUpdateSchema
+>
+
 export type MagicNoteCommentKind =
   | 'narrative'
   | 'summary'

@@ -130,6 +130,7 @@ export const ipcChannels = {
   magicNotesAnalyzeDraft: 'magic-notes:analyze-draft',
   magicNotesAnalysisEvent: 'magic-notes:analysis-event',
   magicTodosList: 'magic-todos:list',
+  magicTodosUpdate: 'magic-todos:update',
   magicTodosAnalyze: 'magic-todos:analyze',
   knowledgeSnapshot: 'knowledge:snapshot',
   knowledgeCreateLibrary: 'knowledge:library:create',
