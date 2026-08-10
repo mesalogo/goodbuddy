@@ -1,7 +1,6 @@
 import {
   FlaskConical,
   FolderOpen,
-  MessageSquare,
   Save,
   Smartphone,
   Unplug
@@ -34,6 +33,7 @@ import type { WeixinBindingSnapshot } from '../../shared/weixin-channel-contract
 import type { AppNotificationInput } from './notifications'
 import { trapTabFocus } from './dialog-focus'
 import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
+import { SettingsCategoryHeader } from './SettingsPrimitives'
 
 type ChannelDraft = {
   enabled: boolean
@@ -1218,40 +1218,44 @@ export function ChannelSettingsSection({
     !dingtalkProject
   ) {
     return (
-      <div className="settings-section">
-        <p className={error ? 'settings-warning' : 'settings-empty'}>
-          {error ?? '正在读取消息通道设置…'}
-        </p>
-      </div>
+      <>
+        <SettingsCategoryHeader
+          category="channels"
+          error={error}
+          headingId="channel-settings-heading"
+        />
+        {!error && (
+          <div className="settings-section">
+            <p className="settings-empty">正在读取消息通道设置…</p>
+          </div>
+        )}
+      </>
     )
   }
 
   return (
-    <section
-      aria-labelledby="channel-settings-heading"
-      className="settings-section channel-settings"
-    >
-      <div className="settings-section__title settings-section__title--actions">
-        <MessageSquare aria-hidden="true" size={17} />
-        <div>
-          <strong id="channel-settings-heading">消息通道</strong>
-          <small>
-            为每个通道配置连接、工作目录、消息处理后端与默认模式
-          </small>
-        </div>
-        <button
-          className="primary-button"
-          disabled={busy}
-          onClick={() => void save()}
-          type="button"
-        >
-          <Save aria-hidden="true" size={13} />
-          {busy ? '保存中…' : '保存通道设置'}
-        </button>
-      </div>
-
+    <>
+      <SettingsCategoryHeader
+        actions={
+          <button
+            className="primary-button"
+            disabled={busy}
+            onClick={() => void save()}
+            type="button"
+          >
+            <Save aria-hidden="true" size={13} />
+            {busy ? '保存中…' : '保存通道设置'}
+          </button>
+        }
+        category="channels"
+        error={error}
+        headingId="channel-settings-heading"
+      />
+      <section
+        aria-label="消息通道配置"
+        className="settings-section channel-settings"
+      >
       {snapshot.warning && <p className="settings-warning">{snapshot.warning}</p>}
-      {error && <p className="settings-warning" role="alert">{error}</p>}
 
       <div className="channel-settings__tabs">
         <PageTabs
@@ -1325,6 +1329,7 @@ export function ChannelSettingsSection({
           />
         )}
       </div>
-    </section>
+      </section>
+    </>
   )
 }

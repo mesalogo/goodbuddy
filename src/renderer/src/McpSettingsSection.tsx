@@ -29,6 +29,7 @@ import type {
   RuntimeTarget
 } from '../../shared/capability-contracts'
 import { trapTabFocus } from './dialog-focus'
+import { SettingsCategoryHeader } from './SettingsPrimitives'
 
 const runtimeLabels: Record<RuntimeTarget, string> = {
   model: '模型',
@@ -318,25 +319,26 @@ export function McpSettingsSection(): React.JSX.Element {
   }
 
   return (
-    <div className="settings-section">
-      <div className="settings-section__title settings-section__title--actions">
-        <Network size={17} />
-        <div>
-          <strong>工具与 MCP</strong>
-          <small>查看内置工具、内置 MCP 并管理外部 MCP Server</small>
-        </div>
-        <button
-          className="secondary-button"
-          disabled={Boolean(busy) || Boolean(editor)}
-          onClick={(event) =>
-            openEditor({ ...emptyEditor }, event.currentTarget)
-          }
-          type="button"
-        >
-          <Plus size={14} />
-          添加 Server
-        </button>
-      </div>
+    <>
+      <SettingsCategoryHeader
+        actions={
+          <button
+            className="secondary-button"
+            disabled={Boolean(busy) || Boolean(editor)}
+            onClick={(event) =>
+              openEditor({ ...emptyEditor }, event.currentTarget)
+            }
+            type="button"
+          >
+            <Plus aria-hidden="true" size={14} />
+            添加 Server
+          </button>
+        }
+        category="mcp"
+        error={!editor ? error : undefined}
+        headingId="mcp-settings-heading"
+      />
+      <section aria-label="MCP 配置" className="settings-section">
 
       <p className="settings-notice">
         自定义 MCP 当前仅用于直连模型，新建时默认分配给直连模型，并仅在 Execute
@@ -348,8 +350,6 @@ export function McpSettingsSection(): React.JSX.Element {
         及其工具具有当前用户权限，请仅添加可信服务；远程访问令牌将由系统安全存储加密，
         工具调用前仍需 GoodBuddy 审批。
       </p>
-      {error && !editor && <p className="settings-warning">{error}</p>}
-
       <section
         aria-labelledby="computer-capabilities-heading"
         className="mcp-tool-section"
@@ -1108,6 +1108,7 @@ export function McpSettingsSection(): React.JSX.Element {
           )
         })}
       </div>
-    </div>
+      </section>
+    </>
   )
 }

@@ -476,6 +476,7 @@ describe('SettingsPanel runtime files', () => {
         magicNoteCommentMode: 'after-save-auto'
       })
     )
+
     expect(
       screen.getByRole('button', { name: '长评 + 要点' })
     ).toHaveAttribute('aria-pressed', 'true')
@@ -532,7 +533,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeNull()
   })
 
-  it('places explicit configuration actions at the top of the content', () => {
+  it('uses one category header for titles and explicit actions', () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -548,18 +549,24 @@ describe('SettingsPanel runtime files', () => {
       name: '设置中心'
     })
     const content = screen.getByRole('tabpanel')
-    const toolbar = content.querySelector(
-      '.settings-panel__content-toolbar'
+    const categoryHeader = content.querySelector(
+      '.settings-category-header'
     )
 
-    expect(toolbar).toBe(content.firstElementChild)
+    expect(categoryHeader).toBe(content.firstElementChild)
     expect(
-      within(toolbar as HTMLElement).getByRole('button', {
+      within(categoryHeader as HTMLElement).getByRole('heading', {
+        level: 2,
+        name: 'Agent Runtime'
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(categoryHeader as HTMLElement).getByRole('button', {
         name: '保存设置'
       })
     ).toBeInTheDocument()
     expect(
-      within(toolbar as HTMLElement).getByRole('button', {
+      within(categoryHeader as HTMLElement).getByRole('button', {
         name: '保存并测试 OpenCode'
       })
     ).toBeInTheDocument()
@@ -571,6 +578,35 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByRole('button', { name: '保存设置' })
     ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '外观' })
+    ).toBeInTheDocument()
+  })
+
+  it('routes save success through the transient app notification', async () => {
+    const onNotify = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onNotify={onNotify}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByDisplayValue('C:\\Workspace')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(onNotify).toHaveBeenCalledWith({
+        tone: 'success',
+        message: '设置已保存',
+        dedupeKey: 'runtime-settings-saved'
+      })
+    )
+    expect(screen.queryByText('设置已保存')).not.toBeInTheDocument()
   })
 
   it('uses one first-level heading for the settings page', () => {
@@ -1386,6 +1422,7 @@ describe('SettingsPanel runtime files', () => {
   })
 
   it('tests the selected model instead of a selected Continue Runtime', async () => {
+    const onNotify = vi.fn()
     getRuntime.mockResolvedValueOnce({
       ...runtimeSettings,
       provider: 'continue',
@@ -1405,6 +1442,7 @@ describe('SettingsPanel runtime files', () => {
         open
         onClearLocalData={vi.fn(async () => {})}
         onClose={vi.fn()}
+        onNotify={onNotify}
         onSaved={vi.fn()}
       />
     )
@@ -1419,7 +1457,14 @@ describe('SettingsPanel runtime files', () => {
       expect(testModelConnection).toHaveBeenCalledWith(modelProfileId)
     )
     expect(testRuntime).not.toHaveBeenCalled()
-    expect(await screen.findByText('连接成功：sonnet-5')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(onNotify).toHaveBeenCalledWith({
+        tone: 'success',
+        message: '连接成功：sonnet-5',
+        dedupeKey: 'model-connection-tested'
+      })
+    )
+    expect(screen.queryByText('连接成功：sonnet-5')).not.toBeInTheDocument()
   })
 
   it('shows an actionable model error without Electron IPC prefixes', async () => {

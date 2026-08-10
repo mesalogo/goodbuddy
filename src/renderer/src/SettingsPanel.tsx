@@ -1,5 +1,4 @@
 import {
-  Check,
   FolderOpen,
   KeyRound,
   LockKeyhole,
@@ -39,6 +38,11 @@ import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSecti
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
+import { SettingsCategoryHeader } from './SettingsPrimitives'
+import {
+  settingsCategoryList,
+  type SettingsCategoryId
+} from './settings-categories'
 import type { AppearanceTheme } from './theme'
 import type { AppNotificationInput } from './notifications'
 import type {
@@ -46,18 +50,6 @@ import type {
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
 
-type SettingsTab =
-  | 'appearance'
-  | 'platform-features'
-  | 'model'
-  | 'runtime'
-  | 'security'
-  | 'automation'
-  | 'channels'
-  | 'roles'
-  | 'skills'
-  | 'mcp'
-  | 'about'
 type ModelType = 'llm' | 'embedding' | 'speech'
 type AgentRuntimeType = RuntimeConfigActionInput['runtime']
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
@@ -66,19 +58,7 @@ type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   clearApiKey: boolean
 }
 
-const settingsTabs: readonly SettingsTab[] = [
-  'appearance',
-  'platform-features',
-  'model',
-  'runtime',
-  'security',
-  'automation',
-  'channels',
-  'roles',
-  'skills',
-  'mcp',
-  'about'
-]
+const settingsTabs = settingsCategoryList.map(({ id }) => id)
 
 type SettingsPanelProps = {
   open: boolean
@@ -253,7 +233,7 @@ export function SettingsPanel({
   presentation = 'modal',
   onClose,
   onSaved,
-  onNotify,
+  onNotify = () => {},
   onClearLocalData,
   heartbeats,
   onCreateHeartbeat,
@@ -333,13 +313,12 @@ export function SettingsPanel({
   const [embeddingDiagnosticRunning, setEmbeddingDiagnosticRunning] =
     useState(false)
   const [error, setError] = useState<string>()
-  const [saved, setSaved] = useState(false)
-  const [connectionResult, setConnectionResult] = useState<string>()
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [clearingLocalData, setClearingLocalData] = useState(false)
   const [detection, setDetection] = useState<AgentRuntimeDetection>()
   const [detecting, setDetecting] = useState(false)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('runtime')
+  const [activeTab, setActiveTab] =
+    useState<SettingsCategoryId>('runtime')
   const [modelType, setModelType] = useState<ModelType>('llm')
   const [agentRuntimeType, setAgentRuntimeType] =
     useState<AgentRuntimeType>('opencode')
@@ -349,12 +328,16 @@ export function SettingsPanel({
     activeTab === 'runtime' ||
     activeTab === 'security' ||
     activeTab === 'roles'
-  const showContentActions =
-    configurationTab || Boolean(error) || saved
+  const categoryRendersOwnHeader =
+    activeTab === 'platform-features' ||
+    activeTab === 'channels' ||
+    activeTab === 'skills' ||
+    activeTab === 'mcp' ||
+    activeTab === 'about'
 
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
-    tab: SettingsTab
+    tab: SettingsCategoryId
   ): void => {
     const currentIndex = settingsTabs.indexOf(tab)
     let nextIndex: number | undefined
@@ -374,6 +357,7 @@ export function SettingsPanel({
     }
     event.preventDefault()
     const nextTab = settingsTabs[nextIndex]!
+    setError(undefined)
     setActiveTab(nextTab)
     event.currentTarget.parentElement
       ?.querySelector<HTMLButtonElement>(
@@ -390,8 +374,6 @@ export function SettingsPanel({
       .getRuntime()
       .then((value) => {
         setError(undefined)
-        setSaved(false)
-        setConnectionResult(undefined)
         setConfirmingClear(false)
         setClearingLocalData(false)
         setModelType('llm')
@@ -496,10 +478,11 @@ export function SettingsPanel({
     onClose()
   }
 
-  const save = async (): Promise<RuntimeSettings | undefined> => {
+  const save = async (
+    notifySuccess = true
+  ): Promise<RuntimeSettings | undefined> => {
     setSaving(true)
     setError(undefined)
-    setSaved(false)
     try {
       const defaultProfile =
         modelProfiles.find(
@@ -605,8 +588,14 @@ export function SettingsPanel({
           )
         }
       }
-      setSaved(true)
       onSaved(value)
+      if (notifySuccess) {
+        onNotify({
+          tone: 'success',
+          message: '设置已保存',
+          dedupeKey: 'runtime-settings-saved'
+        })
+      }
       return value
     } catch (reason) {
       setError(settingsErrorMessage(reason, '保存设置失败'))
@@ -620,8 +609,7 @@ export function SettingsPanel({
     const testingModel = activeTab === 'model' && modelType === 'llm'
     const profileId = selectedModelProfileId
     setTesting(true)
-    setConnectionResult(undefined)
-    const savedSettings = await save()
+    const savedSettings = await save(false)
     if (!savedSettings) {
       setTesting(false)
       return
@@ -644,11 +632,16 @@ export function SettingsPanel({
       if (!status.available) {
         throw new Error(status.detail)
       }
-      setConnectionResult(
-        status.capability === 'image-generation'
-          ? status.detail
-          : `连接成功：${status.label}`
-      )
+      onNotify({
+        tone: 'success',
+        message:
+          status.capability === 'image-generation'
+            ? status.detail
+            : `连接成功：${status.label}`,
+        dedupeKey: testingModel
+          ? 'model-connection-tested'
+          : `runtime-connection-tested-${agentRuntimeType}`
+      })
     } catch (reason) {
       setError(
         settingsErrorMessage(
@@ -671,7 +664,7 @@ export function SettingsPanel({
     setEmbeddingDiagnostic(undefined)
     setError(undefined)
     try {
-      if (!(await save())) {
+      if (!(await save(false))) {
         return
       }
       const diagnostic = await embeddings.diagnose()
@@ -692,7 +685,7 @@ export function SettingsPanel({
     }
     setError(undefined)
     try {
-      if (!(await save())) {
+      if (!(await save(false))) {
         return
       }
       const indexStatus = await embeddings.rebuild()
@@ -993,182 +986,28 @@ export function SettingsPanel({
             className="settings-tabs"
             role="tablist"
           >
-            <button
-              aria-controls="settings-panel-appearance"
-              aria-label="外观"
-              aria-selected={activeTab === 'appearance'}
-              id="settings-tab-appearance"
-              onClick={() => setActiveTab('appearance')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'appearance')
-              }
-              role="tab"
-              tabIndex={activeTab === 'appearance' ? 0 : -1}
-              type="button"
-            >
-              <strong>外观</strong>
-              <small>亮色、暗色与系统主题</small>
-            </button>
-            <button
-              aria-controls="settings-panel-platform-features"
-              aria-label="平台功能"
-              aria-selected={activeTab === 'platform-features'}
-              id="settings-tab-platform-features"
-              onClick={() => setActiveTab('platform-features')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'platform-features')
-              }
-              role="tab"
-              tabIndex={activeTab === 'platform-features' ? 0 : -1}
-              type="button"
-            >
-              <strong>平台功能</strong>
-              <small>功能入口与工作区能力</small>
-            </button>
-            <button
-              aria-controls="settings-panel-model"
-              aria-label="模型连接"
-              aria-selected={activeTab === 'model'}
-              id="settings-tab-model"
-              onClick={() => setActiveTab('model')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'model')
-              }
-              role="tab"
-              tabIndex={activeTab === 'model' ? 0 : -1}
-              type="button"
-            >
-              <strong>模型连接</strong>
-              <small>LLM、向量模型与凭据</small>
-            </button>
-            <button
-              aria-controls="settings-panel-runtime"
-              aria-label="Agent Runtime"
-              aria-selected={activeTab === 'runtime'}
-              id="settings-tab-runtime"
-              onClick={() => setActiveTab('runtime')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'runtime')
-              }
-              role="tab"
-              tabIndex={activeTab === 'runtime' ? 0 : -1}
-              type="button"
-            >
-              <strong>Agent Runtime</strong>
-              <small>OpenCode、Continue 与工作区</small>
-            </button>
-            <button
-              aria-controls="settings-panel-security"
-              aria-label="安全与数据"
-              aria-selected={activeTab === 'security'}
-              id="settings-tab-security"
-              onClick={() => setActiveTab('security')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'security')
-              }
-              role="tab"
-              tabIndex={activeTab === 'security' ? 0 : -1}
-              type="button"
-            >
-              <strong>安全与数据</strong>
-              <small>工具策略与本地隐私</small>
-            </button>
-            <button
-              aria-controls="settings-panel-automation"
-              aria-label="自动化"
-              aria-selected={activeTab === 'automation'}
-              id="settings-tab-automation"
-              onClick={() => setActiveTab('automation')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'automation')
-              }
-              role="tab"
-              tabIndex={activeTab === 'automation' ? 0 : -1}
-              type="button"
-            >
-              <strong>自动化</strong>
-              <small>智能心跳与周期回顾</small>
-            </button>
-            <button
-              aria-controls="settings-panel-channels"
-              aria-label="消息通道"
-              aria-selected={activeTab === 'channels'}
-              id="settings-tab-channels"
-              onClick={() => setActiveTab('channels')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'channels')
-              }
-              role="tab"
-              tabIndex={activeTab === 'channels' ? 0 : -1}
-              type="button"
-            >
-              <strong>消息通道</strong>
-              <small>微信、企业微信与钉钉</small>
-            </button>
-            <button
-              aria-controls="settings-panel-roles"
-              aria-label="角色与提示词"
-              aria-selected={activeTab === 'roles'}
-              id="settings-tab-roles"
-              onClick={() => setActiveTab('roles')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'roles')
-              }
-              role="tab"
-              tabIndex={activeTab === 'roles' ? 0 : -1}
-              type="button"
-            >
-              <strong>角色与提示词</strong>
-              <small>角色、说明与系统提示词</small>
-            </button>
-            <button
-              aria-controls="settings-panel-skills"
-              aria-label="Skills"
-              aria-selected={activeTab === 'skills'}
-              id="settings-tab-skills"
-              onClick={() => setActiveTab('skills')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'skills')
-              }
-              role="tab"
-              tabIndex={activeTab === 'skills' ? 0 : -1}
-              type="button"
-            >
-              <strong>Skills</strong>
-              <small>内置与自定义能力</small>
-            </button>
-            <button
-              aria-controls="settings-panel-mcp"
-              aria-label="MCP"
-              aria-selected={activeTab === 'mcp'}
-              id="settings-tab-mcp"
-              onClick={() => setActiveTab('mcp')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'mcp')
-              }
-              role="tab"
-              tabIndex={activeTab === 'mcp' ? 0 : -1}
-              type="button"
-            >
-              <strong>MCP</strong>
-              <small>工具服务与凭据</small>
-            </button>
-            <button
-              aria-controls="settings-panel-about"
-              aria-label="关于与更新"
-              aria-selected={activeTab === 'about'}
-              id="settings-tab-about"
-              onClick={() => setActiveTab('about')}
-              onKeyDown={(event) =>
-                handleTabKeyDown(event, 'about')
-              }
-              role="tab"
-              tabIndex={activeTab === 'about' ? 0 : -1}
-              type="button"
-            >
-              <strong>关于与更新</strong>
-              <small>版本检查与下载页</small>
-            </button>
+            {settingsCategoryList.map((category) => (
+              <button
+                aria-controls={`settings-panel-${category.id}`}
+                aria-label={category.label}
+                aria-selected={activeTab === category.id}
+                id={`settings-tab-${category.id}`}
+                key={category.id}
+                onClick={() => {
+                  setError(undefined)
+                  setActiveTab(category.id)
+                }}
+                onKeyDown={(event) =>
+                  handleTabKeyDown(event, category.id)
+                }
+                role="tab"
+                tabIndex={activeTab === category.id ? 0 : -1}
+                type="button"
+              >
+                <strong>{category.label}</strong>
+                <small>{category.navigationDescription}</small>
+              </button>
+            ))}
           </nav>
 
           <div
@@ -1178,52 +1017,43 @@ export function SettingsPanel({
             ref={settingsBodyRef}
             role="tabpanel"
           >
-          {showContentActions && (
-            <div className="settings-panel__content-toolbar">
-              <div className="settings-feedback">
-                {error && (
-                  <span className="settings-error" role="alert">
-                    {error}
-                  </span>
-                )}
-                {saved && (
-                  <span className="settings-success" role="status">
-                    <Check aria-hidden="true" size={14} />
-                    {connectionResult ?? '设置已保存'}
-                  </span>
-                )}
-              </div>
-              {configurationTab && (
-                <div className="settings-panel__content-actions">
-                  {(activeTab === 'runtime' ||
-                    (activeTab === 'model' && modelType === 'llm')) && (
+          {!categoryRendersOwnHeader && (
+            <SettingsCategoryHeader
+              actions={
+                configurationTab ? (
+                  <>
+                    {(activeTab === 'runtime' ||
+                      (activeTab === 'model' && modelType === 'llm')) && (
+                      <button
+                        className="secondary-button"
+                        disabled={saving || testing}
+                        onClick={() => void testConnection()}
+                        type="button"
+                      >
+                        {testing
+                          ? '测试中…'
+                          : activeTab === 'model'
+                            ? '保存并测试模型'
+                            : agentRuntimeType === 'opencode'
+                              ? '保存并测试 OpenCode'
+                              : '保存并测试 Continue'}
+                      </button>
+                    )}
                     <button
-                      className="secondary-button"
+                      className="primary-button"
                       disabled={saving || testing}
-                      onClick={() => void testConnection()}
+                      onClick={() => void save()}
                       type="button"
                     >
-                      {testing
-                        ? '测试中…'
-                        : activeTab === 'model'
-                          ? '保存并测试模型'
-                          : agentRuntimeType === 'opencode'
-                            ? '保存并测试 OpenCode'
-                            : '保存并测试 Continue'}
+                      <Save aria-hidden="true" size={13} />
+                      {saving ? '保存中…' : '保存设置'}
                     </button>
-                  )}
-                  <button
-                    className="primary-button"
-                    disabled={saving || testing}
-                    onClick={() => void save()}
-                    type="button"
-                  >
-                    <Save aria-hidden="true" size={13} />
-                    {saving ? '保存中…' : '保存设置'}
-                  </button>
-                </div>
-              )}
-            </div>
+                  </>
+                ) : undefined
+              }
+              category={activeTab}
+              error={error}
+            />
           )}
           {activeTab === 'appearance' && (
             <div className="settings-section appearance-settings">
@@ -2215,7 +2045,8 @@ export function SettingsPanel({
 
           {activeTab === 'security' && (
             <>
-          <label className="field">
+          <div className="settings-section">
+            <label className="field">
             <span>Runtime OS 沙箱</span>
             <select
               aria-label="Runtime OS 沙箱"
@@ -2235,8 +2066,8 @@ export function SettingsPanel({
               首期严格隔离适用于安装 bubblewrap 的 Linux 嵌入式
               OpenCode。外部 Runtime 与 Continue 不会被误标为已沙箱。
             </small>
-          </label>
-          <label className="field">
+            </label>
+            <label className="field">
             <span>直连模型工具安全策略</span>
             <select
               aria-label="直连模型工具安全策略"
@@ -2258,7 +2089,8 @@ export function SettingsPanel({
               不再逐次询问。禁止策略会拒绝所有工具调用。OpenCode 与
               Continue 继续使用各自的工具系统。
             </small>
-          </label>
+            </label>
+          </div>
 
           <div className="settings-section settings-section--danger">
             <div>
@@ -2284,8 +2116,6 @@ export function SettingsPanel({
                   onClick={() => {
                     setClearingLocalData(true)
                     setError(undefined)
-                    setSaved(false)
-                    setConnectionResult(undefined)
                     void onClearLocalData()
                       .then(() => {
                         setConfirmingClear(false)

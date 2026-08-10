@@ -1,10 +1,11 @@
-import { BookOpen, Download, Trash2 } from 'lucide-react'
+import { Download, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type {
   CapabilityAssignments,
   CapabilitySnapshot,
   RuntimeTarget
 } from '../../shared/capability-contracts'
+import { SettingsCategoryHeader } from './SettingsPrimitives'
 
 const runtimeLabels: Record<RuntimeTarget, string> = {
   model: '模型',
@@ -56,46 +57,48 @@ export function SkillsSettingsSection(): React.JSX.Element {
   }
 
   return (
-    <div className="settings-section">
-      <div className="settings-section__title settings-section__title--actions">
-        <BookOpen size={17} />
-        <div>
-          <strong>Skills</strong>
-          <small>支持直连模型、OpenCode 和 Continue</small>
-        </div>
-        <button
-          className="secondary-button"
-          disabled={Boolean(busy)}
-          onClick={() =>
-            void run('import', () =>
-              window.goodbuddy.capabilities.importSkill('directory')
-            )
-          }
-          type="button"
-        >
-          <Download size={14} />
-          导入 Skill 目录
-        </button>
-        <button
-          className="secondary-button"
-          disabled={Boolean(busy)}
-          onClick={() =>
-            void run('import', () =>
-              window.goodbuddy.capabilities.importSkill('zip')
-            )
-          }
-          type="button"
-        >
-          <Download size={14} />
-          导入 Skill ZIP
-        </button>
-      </div>
+    <>
+      <SettingsCategoryHeader
+        actions={
+          <>
+            <button
+              className="secondary-button"
+              disabled={Boolean(busy)}
+              onClick={() =>
+                void run('import', () =>
+                  window.goodbuddy.capabilities.importSkill('directory')
+                )
+              }
+              type="button"
+            >
+              <Download aria-hidden="true" size={14} />
+              导入 Skill 目录
+            </button>
+            <button
+              className="secondary-button"
+              disabled={Boolean(busy)}
+              onClick={() =>
+                void run('import', () =>
+                  window.goodbuddy.capabilities.importSkill('zip')
+                )
+              }
+              type="button"
+            >
+              <Download aria-hidden="true" size={14} />
+              导入 Skill ZIP
+            </button>
+          </>
+        }
+        category="skills"
+        error={error}
+        headingId="skills-settings-heading"
+      />
+      <section aria-label="Skills 列表" className="settings-section">
 
       <p className="settings-notice">
         Skill 以本地能力说明注入所选目标，不会写入 Runtime
         自有配置。新导入的 Skill 默认启用，并分配给直连模型、OpenCode 和 Continue。
       </p>
-      {error && <p className="settings-warning">{error}</p>}
       {!snapshot && !error && <p className="settings-empty">正在读取 Skills…</p>}
       <div className="capability-list">
         {snapshot?.skills.map((skill) => (
@@ -174,6 +177,7 @@ export function SkillsSettingsSection(): React.JSX.Element {
           </article>
         ))}
       </div>
-    </div>
+      </section>
+    </>
   )
 }

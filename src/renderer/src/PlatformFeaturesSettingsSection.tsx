@@ -1,4 +1,3 @@
-import { Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type {
   ApplicationSettings,
@@ -6,6 +5,7 @@ import type {
 } from '../../shared/application-settings-contracts'
 import type { MagicNoteCommentFormat } from '../../shared/magic-notes-contracts'
 import { SegmentedControl } from './WorkspacePrimitives'
+import { SettingsCategoryHeader } from './SettingsPrimitives'
 
 type PlatformFeaturesSettingsSectionProps = {
   onMagicNotesEnabledChange: (enabled: boolean) => void
@@ -108,17 +108,13 @@ export function PlatformFeaturesSettingsSection({
   }
 
   return (
-    <section
-      aria-labelledby="platform-features-heading"
-      className="settings-section"
-    >
-      <div className="settings-section__title">
-        <Sparkles aria-hidden="true" size={17} />
-        <div>
-          <strong id="platform-features-heading">平台功能</strong>
-          <small>控制 GoodBuddy 工作区中显示的功能入口</small>
-        </div>
-      </div>
+    <>
+      <SettingsCategoryHeader
+        category="platform-features"
+        error={error}
+        headingId="platform-features-heading"
+      />
+      <section aria-label="平台功能选项" className="settings-section">
       <article className="capability-card">
         <div className="capability-card__header">
           <div>
@@ -175,11 +171,7 @@ export function PlatformFeaturesSettingsSection({
           </small>
         </div>
       </article>
-      {error && (
-        <p className="settings-warning" role="alert">
-          {error}
-        </p>
-      )}
-    </section>
+      </section>
+    </>
   )
 }

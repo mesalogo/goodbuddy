@@ -1,10 +1,11 @@
-import { ExternalLink, Info, RefreshCw } from 'lucide-react'
+import { ExternalLink, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type {
   ApplicationSettings,
   VersionCheckResult
 } from '../../shared/application-settings-contracts'
 import type { AppInfo } from '../../shared/contracts'
+import { SettingsCategoryHeader } from './SettingsPrimitives'
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
@@ -106,17 +107,16 @@ export function UpdateSettingsSection(): React.JSX.Element {
   }
 
   return (
-    <section
-      aria-labelledby="update-settings-heading"
-      className="settings-section update-settings"
-    >
-      <div className="settings-section__title">
-        <Info aria-hidden="true" size={17} />
-        <div>
-          <strong id="update-settings-heading">关于与更新</strong>
-          <small>只检查 GoodBuddy 官方 GitHub Release，不自动下载安装</small>
-        </div>
-      </div>
+    <>
+      <SettingsCategoryHeader
+        category="about"
+        error={error}
+        headingId="update-settings-heading"
+      />
+      <section
+        aria-label="更新设置"
+        className="settings-section update-settings"
+      >
 
       <article className="capability-card">
         <div className="capability-card__header">
@@ -165,11 +165,6 @@ export function UpdateSettingsSection(): React.JSX.Element {
         </div>
       </article>
 
-      {error && (
-        <p className="settings-warning" role="alert">
-          {error}
-        </p>
-      )}
       {result && (
         <article
           aria-live="polite"
@@ -202,6 +197,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
           </p>
         </article>
       )}
-    </section>
+      </section>
+    </>
   )
 }

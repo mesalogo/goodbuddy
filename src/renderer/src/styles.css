@@ -4065,15 +4065,34 @@ button > svg * {
   scrollbar-gutter: stable;
 }
 
-.settings-panel__content-toolbar {
-  display: flex;
-  min-height: var(--control-height);
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-3);
+.settings-category-header {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3) var(--space-4);
 }
 
-.settings-panel__content-actions {
+.settings-category-header__content {
+  min-width: 0;
+}
+
+.settings-category-header__content h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-section-title);
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.settings-category-header__content p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+
+.settings-category-header__actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -4081,11 +4100,17 @@ button > svg * {
   gap: var(--space-2);
 }
 
-.settings-panel__content-actions .primary-button {
+.settings-category-header__actions .primary-button,
+.settings-category-header__actions .secondary-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
+}
+
+.settings-category-header > .settings-warning {
+  margin: 0;
+  grid-column: 1 / -1;
 }
 
 .settings-page .settings-tabs button {
@@ -5565,12 +5590,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .mcp-test-result {
   color: var(--success) !important;
-}
-
-.settings-feedback {
-  flex: 1;
-  min-width: 0;
-  font-size: 10px;
 }
 
 .settings-error {
@@ -8773,17 +8792,13 @@ details.settings-section > :not(summary) + :not(summary) {
     flex-basis: 100%;
   }
 
-  .settings-panel__content-toolbar {
-    align-items: stretch;
-    flex-wrap: wrap;
+  .settings-category-header {
+    grid-template-columns: 1fr;
   }
 
-  .settings-feedback {
-    flex-basis: 100%;
-  }
-
-  .settings-panel__content-actions {
+  .settings-category-header__actions {
     width: 100%;
+    justify-content: flex-start;
   }
 
   .mcp-editor {
