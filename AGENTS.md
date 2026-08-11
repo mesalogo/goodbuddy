@@ -60,10 +60,17 @@ Keep Electron security boundaries intact:
 
 ## UI Consistency
 
+- Treat `UI-DESIGN.md` as the canonical UI design system. Read and follow it
+  before changing renderer layout, shared controls, interaction feedback,
+  themes, responsive behavior, or accessibility semantics.
 - Reuse the shared `PageTabs` and `SegmentedControl` primitives instead of
   creating page-specific tab or toggle styles. A semantic tab set may use the
   shared segmented visual variant, but it must retain `tablist`, `tab`,
   `tabpanel`, `aria-selected`, roving focus, and arrow-key behavior.
+- Use the shared sliding Switch pattern for persistent binary states and expose
+  `role="switch"` even when it is implemented with a checkbox input. Keep
+  Checkbox visuals and semantics for multi-select, assignment, and explicit
+  confirmation. Do not create page-specific Switch styling.
 - Use the bundled `Inter Variable` and `Noto Sans SC Variable` UI fonts through
   the shared typography tokens. Do not add remote font requests or page-local
   font stacks. Keep redistributed font licenses in packaged resources and
