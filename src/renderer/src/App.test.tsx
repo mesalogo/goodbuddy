@@ -1276,6 +1276,58 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
+  it('keeps a tool failure in details and hides retry after continuing', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '读取演示文稿' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    const toolError =
+      'Cannot read binary file: D:\\workspace\\presentation.pptx'
+    const runtimeError = `OpenCode 工具执行失败（call-1）：${toolError}`
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'tool',
+        callId: 'call-1',
+        name: 'read',
+        state: 'failed',
+        summary: 'OpenCode 工具：read',
+        input: '{"path":"D:\\\\workspace\\\\presentation.pptx"}',
+        error: toolError
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'error',
+        status: 'failed',
+        message: runtimeError
+      })
+    })
+
+    expect(screen.getByText(toolError)).toBeInTheDocument()
+    expect(screen.queryByText(runtimeError)).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '重新编辑并发送' })
+    ).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '继续处理' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+
+    expect(
+      screen.queryByRole('button', { name: '重新编辑并发送' })
+    ).not.toBeInTheDocument()
+  })
+
   it('submits knowledge scope without eager search or prompt injection and merges runtime references', async () => {
     const libraryId = '11111111-1111-4111-8111-111111111111'
     vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({

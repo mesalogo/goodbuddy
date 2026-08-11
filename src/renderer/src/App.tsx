@@ -454,6 +454,20 @@ function terminalizeMessageToolBlocks(
   )
 }
 
+function isErrorRepresentedByFailedTool(
+  tools: ToolActivity[] | undefined,
+  errorMessage: string
+): boolean {
+  return Boolean(
+    tools?.some(
+      (tool) =>
+        tool.state === 'failed' &&
+        ((tool.error && errorMessage.includes(tool.error)) ||
+          (tool.callId && errorMessage.includes(tool.callId)))
+    )
+  )
+}
+
 type MessageBlockRenderItem =
   | {
       kind: 'block'
@@ -2687,6 +2701,12 @@ function App(): React.JSX.Element {
           status: terminalStatus
         })
         updateMessage(run.conversationId, run.messageId, (message) => {
+          const representedToolError =
+            event.type === 'error' &&
+            isErrorRepresentedByFailedTool(
+              message.tools,
+              event.message
+            )
           const toolTerminalState =
             event.type === 'error'
               ? event.status === 'cancelled'
@@ -2694,13 +2714,18 @@ function App(): React.JSX.Element {
                 : ('failed' as const)
               : undefined
           const fallbackError =
-            event.type === 'error' && !message.content
+            event.type === 'error' &&
+            !representedToolError &&
+            !message.content
               ? event.message.slice(0, maxMessageContentLength)
               : ''
           return {
             ...message,
             state: event.type === 'error' ? 'error' : 'complete',
-            status: event.type === 'error' ? event.message : undefined,
+            status:
+              event.type === 'error' && !representedToolError
+                ? event.message
+                : undefined,
             approval: undefined,
             question: undefined,
             tools: toolTerminalState
@@ -5594,7 +5619,9 @@ function App(): React.JSX.Element {
                       {message.status}
                     </div>
                   )}
-                  {message.state === 'error' && (
+                  {message.state === 'error' &&
+                    messageIndex ===
+                      activeConversation.messages.length - 1 && (
                     <button
                       className="message-retry"
                       onClick={() => {
@@ -5609,7 +5636,7 @@ function App(): React.JSX.Element {
                     >
                       {t('chat.retry')}
                     </button>
-                  )}
+                    )}
                 </div>
               </article>
             ))}
