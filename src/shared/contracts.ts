@@ -65,6 +65,7 @@ import type {
   ApplicationSettingsUpdate,
   VersionCheckResult
 } from './application-settings-contracts'
+import type { ReleaseNotesSnapshot } from './release-notes-contracts'
 import type {
   SpeechModelSnapshot,
   SpeechTranscriptionInput,
@@ -1048,6 +1049,10 @@ export type DesktopApi = {
     onResult: (
       listener: (result: VersionCheckResult) => void
     ) => () => void
+  }
+  releaseNotes?: {
+    getPending: () => Promise<ReleaseNotesSnapshot>
+    acknowledge: (version: string) => Promise<void>
   }
   speechModels?: {
     getSnapshot: () => Promise<SpeechModelSnapshot>

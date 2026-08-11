@@ -73,11 +73,12 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 4,
+      version: 5,
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
-      magicNoteCommentFormat: 'combined'
+      magicNoteCommentFormat: 'combined',
+      lastSeenReleaseNotesVersion: null
     })
     expect(
       (await readdir(directory)).filter((name) => name.endsWith('.tmp'))
@@ -163,6 +164,35 @@ describe('ApplicationSettingsStore', () => {
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'combined'
+    })
+  })
+
+  it('migrates version 4 settings with no release notes acknowledged', async () => {
+    const { filePath, store } = await createStore()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 4,
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'after-save-manual',
+        magicNoteCommentFormat: 'narrative'
+      }),
+      'utf8'
+    )
+
+    await expect(store.getLastSeenReleaseNotesVersion()).resolves.toBeNull()
+    await store.setLastSeenReleaseNotesVersion('0.8.18')
+    await expect(
+      new ApplicationSettingsStore(filePath).getLastSeenReleaseNotesVersion()
+    ).resolves.toBe('0.8.18')
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      version: 5,
+      checkUpdatesOnStartup: false,
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-manual',
+      magicNoteCommentFormat: 'narrative',
+      lastSeenReleaseNotesVersion: '0.8.18'
     })
   })
 
@@ -290,11 +320,12 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 4,
+      version: 5,
       checkUpdatesOnStartup: false,
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
-      magicNoteCommentFormat: 'combined'
+      magicNoteCommentFormat: 'combined',
+      lastSeenReleaseNotesVersion: null
     })
   })
 

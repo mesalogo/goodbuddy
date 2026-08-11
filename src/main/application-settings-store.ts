@@ -13,13 +13,14 @@ import {
   applicationSettingsUpdateSchema,
   type ApplicationSettings
 } from '../shared/application-settings-contracts'
+import { releaseVersionSchema } from '../shared/release-notes-contracts'
 export {
   applicationSettingsSchema,
   applicationSettingsUpdateSchema
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 4
+const CURRENT_SETTINGS_VERSION = 5
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -45,9 +46,16 @@ const versionThreeStoredApplicationSettingsSchema = z
   })
   .strict()
 
+const versionFourStoredApplicationSettingsSchema = applicationSettingsSchema
+  .extend({
+    version: z.literal(4)
+  })
+  .strict()
+
 const storedApplicationSettingsSchema = applicationSettingsSchema
   .extend({
-    version: z.literal(CURRENT_SETTINGS_VERSION)
+    version: z.literal(CURRENT_SETTINGS_VERSION),
+    lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
   })
   .strict()
 
@@ -73,6 +81,7 @@ function isMissingFile(error: unknown): boolean {
 
 export class ApplicationSettingsStore {
   private settings?: StoredApplicationSettings
+  private settingsLoad?: Promise<StoredApplicationSettings>
   private updateQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly filePath: string) {}
@@ -97,6 +106,15 @@ export class ApplicationSettingsStore {
     if (this.settings) {
       return this.settings
     }
+    if (!this.settingsLoad) {
+      this.settingsLoad = this.readStored().finally(() => {
+        this.settingsLoad = undefined
+      })
+    }
+    return this.settingsLoad
+  }
+
+  private async readStored(): Promise<StoredApplicationSettings> {
     try {
       const contents = await readFile(this.filePath, 'utf8')
       let parsed: unknown
@@ -106,19 +124,31 @@ export class ApplicationSettingsStore {
         await this.isolateCorruptFile()
         this.settings = {
           version: CURRENT_SETTINGS_VERSION,
+          lastSeenReleaseNotesVersion: null,
           ...defaultApplicationSettings
         }
         return this.settings
       }
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionFourResult =
+          versionFourStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionFourResult.success) {
+          this.settings = {
+            ...versionFourResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            lastSeenReleaseNotesVersion: null
+          }
+          return this.settings
+        }
         const versionThreeResult =
           versionThreeStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionThreeResult.success) {
           this.settings = {
             ...versionThreeResult.data,
             version: CURRENT_SETTINGS_VERSION,
-            magicNoteCommentFormat: 'combined'
+            magicNoteCommentFormat: 'combined',
+            lastSeenReleaseNotesVersion: null
           }
           return this.settings
         }
@@ -129,7 +159,8 @@ export class ApplicationSettingsStore {
             ...versionTwoResult.data,
             version: CURRENT_SETTINGS_VERSION,
             magicNoteCommentMode: 'immediate',
-            magicNoteCommentFormat: 'combined'
+            magicNoteCommentFormat: 'combined',
+            lastSeenReleaseNotesVersion: null
           }
           return this.settings
         }
@@ -142,13 +173,15 @@ export class ApplicationSettingsStore {
               legacyResult.data.checkUpdatesOnStartup,
             magicNotesEnabled: false,
             magicNoteCommentMode: 'immediate',
-            magicNoteCommentFormat: 'combined'
+            magicNoteCommentFormat: 'combined',
+            lastSeenReleaseNotesVersion: null
           }
           return this.settings
         }
         await this.isolateCorruptFile()
         this.settings = {
           version: CURRENT_SETTINGS_VERSION,
+          lastSeenReleaseNotesVersion: null,
           ...defaultApplicationSettings
         }
         return this.settings
@@ -162,6 +195,7 @@ export class ApplicationSettingsStore {
       }
       this.settings = {
         version: CURRENT_SETTINGS_VERSION,
+        lastSeenReleaseNotesVersion: null,
         ...defaultApplicationSettings
       }
     }
@@ -178,6 +212,32 @@ export class ApplicationSettingsStore {
     }
   }
 
+  async getLastSeenReleaseNotesVersion(): Promise<string | null> {
+    return (await this.loadStored()).lastSeenReleaseNotesVersion
+  }
+
+  private async persist(next: StoredApplicationSettings): Promise<void> {
+    await mkdir(dirname(this.filePath), { recursive: true })
+    const temporaryPath =
+      `${this.filePath}.${process.pid}.` +
+      `${randomBytes(6).toString('hex')}.tmp`
+    try {
+      await writeFile(
+        temporaryPath,
+        `${JSON.stringify(next, null, 2)}\n`,
+        {
+          encoding: 'utf8',
+          mode: 0o600,
+          flag: 'wx'
+        }
+      )
+      await rename(temporaryPath, this.filePath)
+    } finally {
+      await rm(temporaryPath, { force: true })
+    }
+    this.settings = next
+  }
+
   update(input: unknown): Promise<ApplicationSettings> {
     const operation = this.updateQueue.then(async () => {
       const updates = applicationSettingsUpdateSchema.parse(input)
@@ -187,31 +247,33 @@ export class ApplicationSettingsStore {
         ...updates,
         version: CURRENT_SETTINGS_VERSION
       }
-      await mkdir(dirname(this.filePath), { recursive: true })
-      const temporaryPath =
-        `${this.filePath}.${process.pid}.` +
-        `${randomBytes(6).toString('hex')}.tmp`
-      try {
-        await writeFile(
-          temporaryPath,
-          `${JSON.stringify(next, null, 2)}\n`,
-          {
-            encoding: 'utf8',
-            mode: 0o600,
-            flag: 'wx'
-          }
-        )
-        await rename(temporaryPath, this.filePath)
-      } finally {
-        await rm(temporaryPath, { force: true })
-      }
-      this.settings = next
+      await this.persist(next)
       return {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         magicNotesEnabled: next.magicNotesEnabled,
         magicNoteCommentMode: next.magicNoteCommentMode,
         magicNoteCommentFormat: next.magicNoteCommentFormat
       }
+    })
+    this.updateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
+  }
+
+  setLastSeenReleaseNotesVersion(version: unknown): Promise<void> {
+    const operation = this.updateQueue.then(async () => {
+      const parsedVersion = releaseVersionSchema.parse(version)
+      const current = await this.loadStored()
+      if (current.lastSeenReleaseNotesVersion === parsedVersion) {
+        return
+      }
+      await this.persist({
+        ...current,
+        version: CURRENT_SETTINGS_VERSION,
+        lastSeenReleaseNotesVersion: parsedVersion
+      })
     })
     this.updateQueue = operation.then(
       () => undefined,

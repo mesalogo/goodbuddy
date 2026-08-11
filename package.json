@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "build": "npm run typecheck && npm run build:bundle",
     "build:bundle": "electron-vite build",
+    "release:notes:verify": "node build/release-notes.cjs",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
     "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64",
@@ -52,6 +53,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/release-notes.json",
+        "to": "release-notes.json"
       },
       {
         "from": "build/icon-taskbar.ico",

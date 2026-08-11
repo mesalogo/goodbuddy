@@ -38,6 +38,7 @@ const portableMarkerName = '.goodbuddy-portable.json'
 const portableRequiredFiles = [
   `${productName}.exe`,
   'resources/app.asar',
+  'resources/release-notes.json',
   'resources/icon.ico',
   'resources/tray-icon.png',
   'resources/runtimes/opencode/opencode.exe',
@@ -380,6 +381,7 @@ function verifyUnpackedOutput(directory, options) {
   )
   assertFile(applicationExecutable, '应用主程序')
   assertFile(join(resources, 'app.asar'), '应用 ASAR')
+  assertFile(join(resources, 'release-notes.json'), '版本更新说明')
   assertFile(runtimeExecutable, 'OpenCode Runtime')
   assertFile(
     join(resources, 'runtimes', 'continue', 'dist', 'index.js'),

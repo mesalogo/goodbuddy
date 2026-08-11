@@ -66,6 +66,7 @@ import {
   weComChannelSettingsInputSchema
 } from '../shared/channel-settings-contracts'
 import { applicationSettingsUpdateSchema } from '../shared/application-settings-contracts'
+import { releaseNotesAcknowledgeSchema } from '../shared/release-notes-contracts'
 import {
   speechModelActionInputSchema,
   speechModelSelectionInputSchema
@@ -189,6 +190,7 @@ import type { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coor
 import type { DocumentParsingService } from './document-parsing-service'
 import type { DocumentOcrModelManager } from './document-ocr-model-manager'
 import type { DocumentOcrBroker } from './document-ocr-broker'
+import type { ReleaseNotesService } from './release-notes-service'
 import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
 import {
   magicNotePlainText,
@@ -600,7 +602,8 @@ export function registerIpcHandlers(
   launchWechatSidecar?: WechatSidecarLauncher,
   documentParsingService?: DocumentParsingService,
   documentOcrModelManager?: DocumentOcrModelManager,
-  documentOcrBroker?: DocumentOcrBroker
+  documentOcrBroker?: DocumentOcrBroker,
+  releaseNotesService?: ReleaseNotesService
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
   const pendingAgentQuestions = new Map<
@@ -2741,6 +2744,27 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     await shell.openExternal(GOODBUDDY_RELEASES_URL)
   })
+
+  ipcMain.handle(ipcChannels.releaseNotesGetPending, (event) => {
+    assertTrustedSender(event, window)
+    if (!releaseNotesService) {
+      throw new Error('版本更新说明服务不可用')
+    }
+    return releaseNotesService.getPending()
+  })
+
+  ipcMain.handle(
+    ipcChannels.releaseNotesAcknowledge,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!releaseNotesService) {
+        throw new Error('版本更新说明服务不可用')
+      }
+      await releaseNotesService.acknowledge(
+        releaseNotesAcknowledgeSchema.parse(input)
+      )
+    }
+  )
 
   const requireEmbeddingProvider = async (): Promise<OpenAIEmbeddingClient> => {
     const settings = await settingsStore.getResolvedSettings()

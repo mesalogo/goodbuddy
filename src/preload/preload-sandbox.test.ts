@@ -59,4 +59,16 @@ describe('sandboxed preload', () => {
     expect(source).toContain('contextFileSelectionProgress')
     expect(source).toContain('ipcRenderer.removeListener(')
   })
+
+  it('exposes only bounded release-note actions', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('releaseNotes: {')
+    expect(source).toContain('getPending:')
+    expect(source).toContain('acknowledge: async (version: string)')
+    expect(source).toContain('ipcChannels.releaseNotesGetPending')
+    expect(source).toContain('ipcChannels.releaseNotesAcknowledge')
+  })
 })

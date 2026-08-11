@@ -71,6 +71,7 @@ import { DocumentParsingSettingsStore } from './document-parsing-settings-store'
 import { DocumentOcrModelManager } from './document-ocr-model-manager'
 import { DocumentOcrBroker } from './document-ocr-broker'
 import { DocumentParsingService } from './document-parsing-service'
+import { ReleaseNotesService } from './release-notes-service'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -346,6 +347,13 @@ if (hasSingleInstanceLock) {
     const applicationSettingsStore = new ApplicationSettingsStore(
       join(app.getPath('userData'), 'application-settings.json')
     )
+    const releaseNotesService = new ReleaseNotesService({
+      currentVersion: app.getVersion(),
+      filePath: app.isPackaged
+        ? join(process.resourcesPath, 'release-notes.json')
+        : join(app.getAppPath(), 'resources', 'release-notes.json'),
+      settingsStore: applicationSettingsStore
+    })
     const documentParsingSettingsStore =
       new DocumentParsingSettingsStore(
         join(app.getPath('userData'), 'document-parsing-settings.json')
@@ -545,7 +553,8 @@ if (hasSingleInstanceLock) {
       launchWechatSidecar,
       documentParsingService,
       documentOcrModelManager,
-      documentOcrBroker
+      documentOcrBroker,
+      releaseNotesService
     )
     loadMainWindow(mainWindow)
 

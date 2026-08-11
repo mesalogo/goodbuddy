@@ -143,6 +143,8 @@ import type {
   AppNotificationInput,
   AppNotificationTone
 } from './notifications'
+import type { ReleaseNotesSnapshot } from '../../shared/release-notes-contracts'
+import { ReleaseNotesDialog } from './ReleaseNotesDialog'
 
 type AppNotification = {
   id: string
@@ -1340,6 +1342,9 @@ function App(): React.JSX.Element {
   const voiceStartingRef = useRef(false)
   const voiceDisposedRef = useRef(false)
   const startupUpdateCheckStartedRef = useRef(false)
+  const startupReleaseNotesStartedRef = useRef(false)
+  const [releaseNotes, setReleaseNotes] =
+    useState<ReleaseNotesSnapshot>()
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
   const [runtimeStatusKey, setRuntimeStatusKey] = useState('')
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
@@ -1642,6 +1647,22 @@ function App(): React.JSX.Element {
       })
       .catch(() => undefined)
   }, [i18n])
+
+  useEffect(() => {
+    const releaseNotesApi = window.goodbuddy.releaseNotes
+    if (!releaseNotesApi || startupReleaseNotesStartedRef.current) {
+      return
+    }
+    startupReleaseNotesStartedRef.current = true
+    void releaseNotesApi
+      .getPending()
+      .then((snapshot) => {
+        if (snapshot.releases.length > 0) {
+          setReleaseNotes(snapshot)
+        }
+      })
+      .catch(() => undefined)
+  }, [])
 
   useEffect(() => {
     applyAppearanceTheme(resolvedAppearanceTheme)
@@ -6544,6 +6565,20 @@ function App(): React.JSX.Element {
         dispatch={notify}
         notifications={notifications}
       />
+      {releaseNotes && (
+        <ReleaseNotesDialog
+          locale={locale}
+          onAcknowledge={async (version) => {
+            const releaseNotesApi = window.goodbuddy.releaseNotes
+            if (!releaseNotesApi) {
+              throw new Error('Release notes service is unavailable')
+            }
+            await releaseNotesApi.acknowledge(version)
+          }}
+          onClose={() => setReleaseNotes(undefined)}
+          snapshot={releaseNotes}
+        />
+      )}
       {imageViewerItem && (
         <div
           className="image-viewer-backdrop"

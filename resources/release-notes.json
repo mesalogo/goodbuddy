@@ -1,0 +1,45 @@
+{
+  "formatVersion": 1,
+  "releases": [
+    {
+      "version": "0.8.18",
+      "releasedAt": "2026-08-11",
+      "notes": {
+        "zh-CN": {
+          "features": [
+            "新增简体中文与英文界面，可在设置中即时切换并跟随系统语言。",
+            "新增统一的文档解析中心，为聊天附件和知识库导入提供原生文本提取、PDF 页面处理与真实文件诊断。",
+            "新增本地 PP-OCRv6 Tiny、Small 和 Medium 模型，支持校验下载、离线识别以及受管 ZIP 导入和导出。",
+            "扩展离线语音模型，新增中英与中粤英 Paraformer，以及 Whisper Small 和 Medium 多语言档位。",
+            "增强魔法笔记，支持富文本、图片、视频、附件、待办状态和可配置的 AI 评论方式。",
+            "支持为每个项目设置新对话的默认 Runtime。",
+            "扩展直连模型工具与文档处理能力，增加联网搜索、网页读取、附件解析进度和当前系统时间上下文。",
+            "新增首次启动版本更新说明，按当前界面语言展示且每个版本仅自动显示一次。"
+          ],
+          "fixes": [
+            "修复 Execute 模式下内置 OpenCode 和 Continue 仍可能阻止已授权工具的问题。",
+            "修复工具失败信息重复显示，并仅为最近一次失败保留重新编辑入口。",
+            "修复共享开关在部分设置布局中尺寸被文本输入样式覆盖的问题。"
+          ]
+        },
+        "en-US": {
+          "features": [
+            "Added Simplified Chinese and English interfaces with instant switching in Settings and system-language support.",
+            "Added a unified document parsing center for chat attachments and knowledge imports, with native text extraction, PDF page handling, and real-file diagnostics.",
+            "Added local PP-OCRv6 Tiny, Small, and Medium models with verified downloads, offline recognition, and managed ZIP import and export.",
+            "Expanded offline speech models with bilingual and Mandarin-Cantonese-English Paraformer options, plus Whisper Small and Medium multilingual tiers.",
+            "Enhanced Magic Notes with rich text, images, videos, attachments, editable todo states, and configurable AI comment modes.",
+            "Added a per-project default Runtime for new conversations.",
+            "Expanded direct-model tools and document handling with web search, webpage reading, attachment parsing progress, and current system-time context.",
+            "Added first-open release notes that follow the current interface language and appear automatically only once per version."
+          ],
+          "fixes": [
+            "Fixed authorized tools still being blocked for bundled OpenCode and Continue in Execute mode.",
+            "Fixed duplicate tool-failure messages and limited the edit-and-retry action to the latest failed response.",
+            "Fixed shared switches inheriting text-input dimensions in some settings layouts."
+          ]
+        }
+      }
+    }
+  ]
+}

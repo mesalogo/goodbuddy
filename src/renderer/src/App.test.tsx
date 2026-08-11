@@ -799,6 +799,51 @@ describe('App', () => {
     }
   })
 
+  it('shows and acknowledges pending release notes on startup', async () => {
+    const acknowledge = vi.fn(async () => {})
+    api.releaseNotes = {
+      getPending: vi.fn(async () => ({
+        currentVersion: '0.8.18',
+        releases: [
+          {
+            version: '0.8.18',
+            releasedAt: '2026-08-11',
+            notes: {
+              'zh-CN': {
+                features: ['新增版本更新说明'],
+                fixes: ['修复重复显示']
+              },
+              'en-US': {
+                features: ['Added release notes'],
+                fixes: ['Fixed repeated display']
+              }
+            }
+          }
+        ]
+      })),
+      acknowledge
+    }
+    try {
+      render(<App />)
+
+      expect(
+        await screen.findByRole('dialog', {
+          name: 'GoodBuddy 0.8.18 更新内容'
+        })
+      ).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '开始使用' }))
+
+      await waitFor(() =>
+        expect(acknowledge).toHaveBeenCalledWith('0.8.18')
+      )
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      )
+    } finally {
+      delete api.releaseNotes
+    }
+  })
+
   it('does not disturb startup when updates are current or offline', async () => {
     const currentResult = {
       updateAvailable: false,

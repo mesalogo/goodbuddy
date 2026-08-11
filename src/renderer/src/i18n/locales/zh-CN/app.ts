@@ -6,6 +6,17 @@ export const app = {
     close: '关闭通知',
     viewport: '应用通知'
   },
+  releaseNotes: {
+    eyebrow: '版本更新',
+    title: 'GoodBuddy {{version}} 更新内容',
+    description: '本次版本带来了以下功能更新与问题修复。',
+    features: '功能更新',
+    fixes: '问题修复',
+    close: '关闭版本更新说明',
+    start: '开始使用',
+    closing: '正在关闭…',
+    acknowledgeFailed: '无法保存已读状态，请重试。'
+  },
   window: {
     minimizeAria: '最小化窗口',
     minimize: '最小化',

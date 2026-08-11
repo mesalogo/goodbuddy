@@ -9,6 +9,18 @@ export const app = {
     close: 'Close notification',
     viewport: 'App notifications'
   },
+  releaseNotes: {
+    eyebrow: 'VERSION UPDATE',
+    title: "What's New in GoodBuddy {{version}}",
+    description:
+      'This release includes the following features and bug fixes.',
+    features: 'Features',
+    fixes: 'Bug Fixes',
+    close: 'Close release notes',
+    start: 'Get Started',
+    closing: 'Closing…',
+    acknowledgeFailed: 'Could not save the read state. Please try again.'
+  },
   window: {
     minimizeAria: 'Minimize window',
     minimize: 'Minimize',

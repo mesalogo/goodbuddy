@@ -122,20 +122,23 @@ not require release notes.
    inspect the complete commit and file diff from that tag to the release
    commit. For the first tagged release, inspect the relevant repository
    history instead.
-3. Draft concise, user-facing Simplified Chinese release notes based only on
-   verified changes in that range. Use the title
-   `GoodBuddy <version> 更新内容` and separate `功能更新` and `问题修复`
-   sections when applicable. Do not expose internal-only details, credentials,
-   private content, or unverified claims.
-4. Show the exact release-note draft to the user and wait for explicit
-   approval. If the release commit or draft changes after approval, inspect
-   the updated tag range and request approval again.
+3. Draft concise, user-facing release notes in both Simplified Chinese and
+   English based only on verified changes in that range. Use the titles
+   `GoodBuddy <version> 更新内容` and
+   `What's New in GoodBuddy <version>`, with corresponding `功能更新` /
+   `Features` and `问题修复` / `Bug Fixes` sections when applicable. The two
+   language versions must describe the same changes. Do not expose
+   internal-only details, credentials, private content, or unverified claims.
+4. Show the exact bilingual release-note draft to the user and wait for
+   explicit approval. If the release commit or either language version changes
+   after approval, inspect the updated tag range and request approval again.
 5. Only after approval, verify that `package.json` and `package-lock.json`
    contain the same release version, verify the candidate tag does not already
    point elsewhere, create `v${package.version}` at the exact approved commit,
    and push the branch and tag according to the synchronized-remote rules.
-6. Keep the approved release notes as the single source for both the GitHub
+6. Keep both approved language versions as the single source for the GitHub
    Release body and the packaged first-open release-notes modal. The modal
+   displays the release notes matching the current interface language and
    contains no button linking to a full release page.
 
 Never create or push a release tag, and never push a previously created

@@ -33,6 +33,10 @@ jobs:
         if: github.ref_type == 'tag'
         run: node -e "const p=require('./package.json'); const expected='v'+p.version; if(process.env.GITHUB_REF_NAME!==expected){throw new Error('Expected tag '+expected+', received '+process.env.GITHUB_REF_NAME)}"
 
+      - name: Verify bilingual release notes
+        if: github.ref_type == 'tag'
+        run: npm run release:notes:verify
+
       - name: Install dependencies
         run: npm ci
 
@@ -153,6 +157,9 @@ jobs:
           test "$GITHUB_REF_NAME" = "$expected"
           test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
 
+      - name: Prepare bilingual release notes
+        run: node build/release-notes.cjs --output release-notes.md
+
       - name: Download Windows packages
         uses: actions/download-artifact@v8
         with:
@@ -181,11 +188,11 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
+          version="$(node -p "require('./package.json').version")"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --draft
+            gh release edit "$tag" --draft --title "GoodBuddy $version" --notes-file release-notes.md
           else
-            version="$(node -p "require('./package.json').version")"
-            gh release create "$tag" --draft --verify-tag --generate-notes --title "GoodBuddy $version"
+            gh release create "$tag" --draft --verify-tag --title "GoodBuddy $version" --notes-file release-notes.md
           fi
           gh release upload "$tag" dist/release-upload/* --clobber
           gh release edit "$tag" --draft=false --latest

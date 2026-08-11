@@ -123,6 +123,7 @@ function portableDirectory(parent: string): string {
   for (const [path, content] of [
     ['GoodBuddy.exe', 'MZ'],
     ['resources/app.asar', 'asar'],
+    ['resources/release-notes.json', '{}'],
     ['resources/icon.ico', 'icon'],
     ['resources/tray-icon.png', 'tray'],
     ['resources/runtimes/opencode/opencode.exe', 'MZ'],

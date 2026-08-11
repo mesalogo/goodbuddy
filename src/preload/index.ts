@@ -67,6 +67,7 @@ import type {
   ApplicationSettingsUpdate,
   VersionCheckResult
 } from '../shared/application-settings-contracts'
+import type { ReleaseNotesSnapshot } from '../shared/release-notes-contracts'
 import type {
   SpeechModelSnapshot,
   SpeechTranscriptionInput,
@@ -329,6 +330,18 @@ const desktopApi: DesktopApi = {
       ipcRenderer.on(ipcChannels.versionCheckResult, handler)
       return () =>
         ipcRenderer.removeListener(ipcChannels.versionCheckResult, handler)
+    }
+  },
+  releaseNotes: {
+    getPending: () =>
+      ipcRenderer.invoke(
+        ipcChannels.releaseNotesGetPending
+      ) as Promise<ReleaseNotesSnapshot>,
+    acknowledge: async (version: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.releaseNotesAcknowledge,
+        { version }
+      )
     }
   },
   speechModels: {
