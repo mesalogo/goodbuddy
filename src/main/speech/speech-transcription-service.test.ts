@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { join } from 'node:path'
 import {
   SPEECH_TRANSCRIPTION_SAMPLE_RATE,
   type SpeechTranscriptionInput
@@ -99,7 +100,7 @@ describe('SpeechTranscriptionService', () => {
       createSherpaRecognizerConfig(paraformerModel()).modelConfig
         .paraformer
     ).toEqual({
-      model: 'C:\\models\\paraformer\\model.int8.onnx'
+      model: join(paraformerModel().directory, 'model.int8.onnx')
     })
   })
 
