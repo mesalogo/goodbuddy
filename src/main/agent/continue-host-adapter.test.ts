@@ -994,7 +994,7 @@ describe('ContinueHostAdapter', () => {
     expect(killed).toBe(true)
   })
 
-  it('returns audit metadata for auto-approved agent tools', async () => {
+  it('uses auto mode and returns audit metadata for agent tools', async () => {
     const distribution = await createDistribution()
     let launchArgs: string[] = []
     const permissionBodies: unknown[] = []
@@ -1115,6 +1115,7 @@ describe('ContinueHostAdapter', () => {
         new AbortController().signal,
         authorize,
         {
+          workMode: 'execute',
           onEvent: (event) => {
             streamEvents.push(event)
           }
@@ -1159,6 +1160,7 @@ describe('ContinueHostAdapter', () => {
       },
       { type: 'text', delta: 'TOOLS_OK' }
     ])
+    expect(launchArgs).toContain('--auto')
     expect(launchArgs).not.toContain('--readonly')
     expect(authorize).toHaveBeenCalledWith(
       expect.objectContaining({ toolName: 'Bash' })

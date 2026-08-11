@@ -1061,6 +1061,8 @@ export class ContinueHostAdapter {
         '--exclude',
         '*'
       )
+    } else if (runOptions.workMode === 'execute') {
+      args.push('--auto')
     } else if (this.options.mode === 'chat') {
       args.push('--readonly')
     }

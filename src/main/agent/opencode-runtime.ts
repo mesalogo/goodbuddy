@@ -113,8 +113,7 @@ type OpenCodeSkillRegistration = {
 }
 
 const executePermissionRules: PermissionRuleset = [
-  { permission: '*', pattern: '*', action: 'ask' },
-  { permission: 'task', pattern: '*', action: 'deny' }
+  { permission: '*', pattern: '*', action: 'allow' }
 ]
 
 const readOnlyPermissionRules: PermissionRuleset = [
@@ -1100,8 +1099,8 @@ export class OpenCodeRuntime implements AgentRuntime {
             .getAvailableToolNames(request.knowledgeCapabilityToken)
             .map((toolName) => `${knowledgeMcpName}_${toolName}`)
       }
-      const permission = this.usesEmbeddedPermissionMediation()
-        ? request.workMode === 'execute'
+      const permission =
+        request.workMode === 'execute'
           ? [
               ...executePermissionRules,
               ...nativeSkillPermissionRules,
@@ -1125,7 +1124,6 @@ export class OpenCodeRuntime implements AgentRuntime {
                 ...readOnlyPermissionRules,
                 ...nativeSkillPermissionRules
               ]
-        : undefined
       let disabledTools: Record<string, boolean> | undefined
       if (request.workMode !== 'execute') {
         const tools = await client.tool.ids({
@@ -1151,7 +1149,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         permission
       )
       const sessionId = session.id
-      if (!session.created && permission) {
+      if (!session.created) {
         const update = await client.session.update({
           sessionID: sessionId,
           directory,

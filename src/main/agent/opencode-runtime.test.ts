@@ -1697,7 +1697,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     }
   })
 
-  it('subscribes before prompting and auto-allows a tool request', async () => {
+  it('configures Execute tools as allowed before prompting', async () => {
     const {
       client,
       callOrder,
@@ -1759,8 +1759,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       title: 'GoodBuddy 对话',
       directory: process.cwd(),
       permission: [
-        { permission: '*', pattern: '*', action: 'ask' },
-        { permission: 'task', pattern: '*', action: 'deny' }
+        { permission: '*', pattern: '*', action: 'allow' }
       ]
     })
     expect(permissionReply).toHaveBeenCalledOnce()
@@ -1830,7 +1829,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it('auto-allows each bounded tool request without GoodBuddy approval', async () => {
+  it('auto-allows bounded fallback permission requests without GoodBuddy approval', async () => {
     const { client, permissionReply } = runClient([
       permissionEvent(),
       permissionEvent({
@@ -2080,7 +2079,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it('leaves trusted external sessions unmodified and skips whole-run approval', async () => {
+  it('configures external Execute sessions without whole-run approval', async () => {
     const { client, session, permissionReply } = runClient([
       permissionEvent(),
       {
@@ -2105,7 +2104,10 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     expect(runtime.requiresToolApproval).toBe(false)
     expect(session.create).toHaveBeenCalledWith({
       title: 'GoodBuddy 对话',
-      directory: process.cwd()
+      directory: process.cwd(),
+      permission: [
+        { permission: '*', pattern: '*', action: 'allow' }
+      ]
     })
     expect(permissionReply).not.toHaveBeenCalled()
     await runtime.dispose()
