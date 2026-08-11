@@ -44,7 +44,7 @@ function paraformerModel(): SelectedSpeechRuntimeModel {
   return {
     id: 'paraformer-bilingual-zh-en-int8',
     family: 'paraformer',
-    directory: 'C:\\models\\paraformer',
+    directory: join('models', 'paraformer'),
     files: [
       {
         name: 'model.int8.onnx',

@@ -14,7 +14,7 @@ describe('packaged release notes', () => {
     const parsed = releaseNotesFileSchema.parse(source)
 
     expect(parsed.releases).toContainEqual(
-      expect.objectContaining({ version: '0.8.18' })
+      expect.objectContaining({ version: '0.8.19' })
     )
     for (const release of parsed.releases) {
       expect(release.notes['zh-CN'].features).toHaveLength(
