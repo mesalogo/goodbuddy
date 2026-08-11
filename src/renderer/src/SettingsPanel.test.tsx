@@ -165,6 +165,12 @@ const capabilitySnapshot = {
     }
   ],
   mcpServers: [] as CapabilitySnapshot['mcpServers'],
+  webSearch: {
+    provider: 'exa' as const,
+    enabled: true,
+    availableIn: ['ask', 'execute'] as const,
+    tools: ['web_search', 'web_fetch'] as const
+  },
   computerCapabilities: [
     {
       id: 'host-browser-control' as const,
@@ -201,6 +207,19 @@ const importSkill = vi.fn<DesktopApi['capabilities']['importSkill']>(
   async () => capabilitySnapshot
 )
 const saveMcpServer = vi.fn(async () => capabilitySnapshot)
+const setWebSearchEnabled = vi.fn(async (enabled: boolean) => ({
+  ...capabilitySnapshot,
+  webSearch: {
+    ...capabilitySnapshot.webSearch,
+    enabled
+  }
+}))
+const testWebSearch = vi.fn(async () => ({
+  provider: 'exa' as const,
+  query: 'GoodBuddy desktop assistant',
+  durationMs: 321,
+  preview: 'GoodBuddy search result'
+}))
 const setSkillEnabled = vi.fn(async (_skillId: string, enabled: boolean) => ({
   ...capabilitySnapshot,
   skills: capabilitySnapshot.skills.map((skill) => ({
@@ -449,6 +468,8 @@ describe('SettingsPanel runtime files', () => {
             toolCount: 0,
             tools: []
           })),
+          setWebSearchEnabled,
+          testWebSearch,
           setComputerCapabilityEnabled,
           setComputerCapabilityBrowserProfile: vi.fn(
             async () => capabilitySnapshot
@@ -784,15 +805,16 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(
       screen.getByRole('button', { name: '语音模型' })
     )
-    const paraformer = await screen.findByRole('radio', {
-      name: '选择 Paraformer 中英双语 INT8'
+    const speechModelSelector = await screen.findByRole('combobox', {
+      name: '当前语音模型'
     })
 
-    fireEvent.click(paraformer)
+    fireEvent.change(speechModelSelector, {
+      target: { value: 'paraformer-bilingual-zh-en-int8' }
+    })
 
     expect(selectSpeechModel).not.toHaveBeenCalled()
     expect(screen.getByText('待保存')).toBeInTheDocument()
-    expect(screen.getByText('正在使用')).toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('button', { name: '保存设置' })
@@ -804,7 +826,10 @@ describe('SettingsPanel runtime files', () => {
       )
     )
     expect(screen.queryByText('待保存')).not.toBeInTheDocument()
-    expect(paraformer).toBeChecked()
+    expect(screen.getByText('正在使用')).toBeInTheDocument()
+    expect(speechModelSelector).toHaveValue(
+      'paraformer-bilingual-zh-en-int8'
+    )
   })
 
   it('keeps a speech model draft when saving the selection fails', async () => {
@@ -826,10 +851,12 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(
       screen.getByRole('button', { name: '语音模型' })
     )
-    const paraformer = await screen.findByRole('radio', {
-      name: '选择 Paraformer 中英双语 INT8'
+    const speechModelSelector = await screen.findByRole('combobox', {
+      name: '当前语音模型'
     })
-    fireEvent.click(paraformer)
+    fireEvent.change(speechModelSelector, {
+      target: { value: 'paraformer-bilingual-zh-en-int8' }
+    })
     fireEvent.click(
       screen.getByRole('button', { name: '保存设置' })
     )
@@ -838,7 +865,9 @@ describe('SettingsPanel runtime files', () => {
       await screen.findByText('语音模型切换失败')
     ).toBeInTheDocument()
     expect(screen.getByText('待保存')).toBeInTheDocument()
-    expect(paraformer).toBeChecked()
+    expect(speechModelSelector).toHaveValue(
+      'paraformer-bilingual-zh-en-int8'
+    )
   })
 
   it('uses one first-level heading for the settings page', () => {
@@ -992,12 +1021,12 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
     expect(
-      screen.queryByRole('checkbox', {
+      screen.queryByRole('switch', {
         name: '启用 Subagent 智能路由'
       })
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '角色与提示词' }))
-    const smartRouting = await screen.findByRole('checkbox', {
+    const smartRouting = await screen.findByRole('switch', {
       name: '启用 Subagent 智能路由'
     })
     expect(smartRouting).not.toBeChecked()
@@ -1489,7 +1518,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
-    const imageInput = await screen.findByRole('checkbox', {
+    const imageInput = await screen.findByRole('switch', {
       name: '支持图像输入'
     })
     expect(imageInput).not.toBeChecked()
@@ -1925,7 +1954,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
     expect(
-      screen.queryByRole('checkbox', { name: '启用向量模型' })
+      screen.queryByRole('switch', { name: '启用向量模型' })
     ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
@@ -1939,7 +1968,7 @@ describe('SettingsPanel runtime files', () => {
     ).not.toBeInTheDocument()
 
     fireEvent.click(
-      screen.getByRole('checkbox', { name: '启用向量模型' })
+      screen.getByRole('switch', { name: '启用向量模型' })
     )
     fireEvent.change(screen.getByLabelText('向量接口 URL'), {
       target: { value: 'https://vectors.example/v1/embeddings' }
@@ -2003,7 +2032,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeDisabled()
 
     fireEvent.click(
-      screen.getByRole('checkbox', { name: '启用向量模型' })
+      screen.getByRole('switch', { name: '启用向量模型' })
     )
     fireEvent.click(
       within(section).getByRole('button', { name: '测试向量模型' })
@@ -2220,7 +2249,9 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('button', { name: '导入 Skill ZIP' })
     )
     await waitFor(() => expect(importSkill).toHaveBeenCalledWith('zip'))
-    fireEvent.click(screen.getByLabelText('启用 文档写作'))
+    fireEvent.click(
+      screen.getByRole('switch', { name: '启用 文档写作' })
+    )
     await waitFor(() =>
       expect(setSkillEnabled).toHaveBeenCalledWith(
         'document-writing',
@@ -2240,8 +2271,14 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/Runtime 自有 MCP 配置不在此处管理/)
     ).toBeInTheDocument()
     expect(screen.getAllByText('托管浏览器配置').length).toBeGreaterThan(0)
-    expect(screen.getByLabelText('启用 Linux 桌面控制')).toBeDisabled()
-    fireEvent.click(screen.getByLabelText('启用 浏览器控制'))
+    expect(
+      screen.getByRole('switch', {
+        name: '启用 Linux 桌面控制'
+      })
+    ).toBeDisabled()
+    fireEvent.click(
+      screen.getByRole('switch', { name: '启用 浏览器控制' })
+    )
     await waitFor(() =>
       expect(setComputerCapabilityEnabled).toHaveBeenCalledWith(
         'host-browser-control',
@@ -2286,19 +2323,41 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(await screen.findByText('文件系统操作')).toBeInTheDocument()
     expect(screen.getByText('浏览器操作')).toBeInTheDocument()
+    expect(screen.getByText('联网搜索')).toBeInTheDocument()
+    expect(screen.getByText('web_search')).toBeInTheDocument()
+    expect(screen.getByText('web_fetch')).toBeInTheDocument()
+    expect(
+      screen.getByText(/查询词和公开网页地址会发送给第三方 Exa/)
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: '启用直连模型联网搜索'
+      })
+    )
+    await waitFor(() =>
+      expect(setWebSearchEnabled).toHaveBeenCalledWith(false)
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '测试真实搜索' })
+    )
+    expect(
+      await screen.findByText('真实搜索成功 · 321 毫秒')
+    ).toBeInTheDocument()
+    expect(screen.getByText('GoodBuddy search result')).toBeInTheDocument()
+    expect(testWebSearch).toHaveBeenCalledOnce()
     expect(screen.queryByText('读取工作区文本')).not.toBeInTheDocument()
-    expect(screen.getByText('知识库 MCP')).toBeInTheDocument()
+    expect(screen.getByText('知识库')).toBeInTheDocument()
     expect(screen.queryByText('knowledge_list')).not.toBeInTheDocument()
     expect(screen.queryByText('knowledge_search')).not.toBeInTheDocument()
     expect(screen.queryByText('note_search')).not.toBeInTheDocument()
     const knowledgeServerToggle = screen.getByRole('button', {
-      name: '展开服务器 知识库 MCP'
+      name: '展开服务器 知识库'
     })
     expect(knowledgeServerToggle).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(knowledgeServerToggle)
     expect(knowledgeServerToggle).toHaveAttribute('aria-expanded', 'true')
     const knowledgeTools = screen.getByRole('region', {
-      name: '知识库 MCP 工具'
+      name: '知识库 工具'
     })
     expect(knowledgeTools).toContainElement(
       screen.getByText('knowledge_list')
@@ -2309,14 +2368,27 @@ describe('SettingsPanel runtime files', () => {
     expect(within(knowledgeTools).queryByText(/可用于：/u))
       .not.toBeInTheDocument()
     const noteServerToggle = screen.getByRole('button', {
-      name: '展开服务器 笔记 MCP'
+      name: '展开服务器 笔记'
     })
+    expect(
+      await screen.findByText(
+        '内置 MCP Server · 未启用 · 需要开启魔法笔记'
+      )
+    ).toBeInTheDocument()
+    expect(noteServerToggle.closest('article')).toHaveClass(
+      'mcp-server-card--disabled'
+    )
     fireEvent.click(noteServerToggle)
     expect(
-      screen.getByRole('region', { name: '笔记 MCP 工具' })
+      screen.getByRole('region', { name: '笔记 工具' })
     ).toContainElement(screen.getByText('note_search'))
     expect(
-      screen.getAllByRole('button', { name: /服务器 .* MCP/u })
+      screen.getByText(/此内置能力当前不会向任何 Runtime 提供工具/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('button', {
+        name: /(?:展开|收起)服务器 (?:知识库|笔记)/u
+      })
     ).toHaveLength(builtinMcpServers.length)
     expect(
       screen.getByText('可用于：模型、OpenCode、Continue')
@@ -2338,7 +2410,9 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('浏览器导航')).toBeInTheDocument()
     expect(
       screen.getAllByRole('button', { name: /工具组/u })
-    ).toHaveLength(builtinModelToolGroups.length)
+    ).toHaveLength(
+      builtinModelToolGroups.filter((group) => group.id !== 'web').length
+    )
     expect(
       await screen.findByText('尚未配置 MCP Server')
     ).toBeInTheDocument()
@@ -2353,6 +2427,11 @@ describe('SettingsPanel runtime files', () => {
     const dialog = screen.getByRole('dialog', {
       name: '添加 MCP Server'
     })
+    expect(
+      within(dialog).getByRole('switch', {
+        name: '启用此 MCP Server'
+      })
+    ).toBeChecked()
     expect(within(dialog).getByLabelText('模型')).toBeChecked()
     expect(
       within(dialog).queryByLabelText('OpenCode')

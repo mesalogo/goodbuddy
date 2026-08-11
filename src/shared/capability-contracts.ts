@@ -303,10 +303,26 @@ export const mcpServerSummarySchema = z.discriminatedUnion('transport', [
 ])
 export type McpServerSummary = z.infer<typeof mcpServerSummarySchema>
 
+export const webSearchCapabilitySchema = z
+  .object({
+    provider: z.literal('exa'),
+    enabled: z.boolean(),
+    availableIn: z.tuple([z.literal('ask'), z.literal('execute')]),
+    tools: z.tuple([
+      z.literal('web_search'),
+      z.literal('web_fetch')
+    ])
+  })
+  .strict()
+export type WebSearchCapability = z.infer<
+  typeof webSearchCapabilitySchema
+>
+
 export const capabilitySnapshotSchema = z
   .object({
     skills: z.array(skillSummarySchema).max(256),
     mcpServers: z.array(mcpServerSummarySchema).max(64),
+    webSearch: webSearchCapabilitySchema.optional(),
     computerCapabilities: z
       .array(computerCapabilityConfigSummarySchema)
       .max(2)
@@ -335,4 +351,16 @@ export const mcpServerTestResultSchema = z
   .strict()
 export type McpServerTestResult = z.infer<
   typeof mcpServerTestResultSchema
+>
+
+export const webSearchTestResultSchema = z
+  .object({
+    provider: z.literal('exa'),
+    query: z.string().min(1).max(120),
+    durationMs: z.number().int().min(0),
+    preview: z.string().min(1).max(500)
+  })
+  .strict()
+export type WebSearchTestResult = z.infer<
+  typeof webSearchTestResultSchema
 >

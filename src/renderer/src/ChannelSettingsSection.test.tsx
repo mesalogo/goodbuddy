@@ -193,7 +193,7 @@ describe('ChannelSettingsSection', () => {
       await screen.findByRole('tab', { name: '企业微信' })
     )
     fireEvent.click(
-      await screen.findByRole('checkbox', {
+      await screen.findByRole('switch', {
         name: '启用企业微信通道'
       })
     )
@@ -206,6 +206,11 @@ describe('ChannelSettingsSection', () => {
     fireEvent.change(screen.getByLabelText('企业微信允许的发送者 ID'), {
       target: { value: 'user-1\nuser-2\nuser-1' }
     })
+    expect(
+      screen.getByRole('switch', {
+        name: '允许群聊中被提及时响应'
+      })
+    ).not.toBeChecked()
     fireEvent.change(screen.getByLabelText('企业微信 默认工作目录'), {
       target: { value: 'C:\\RemoteWorkspace' }
     })
@@ -595,7 +600,7 @@ describe('ChannelSettingsSection', () => {
     expect(wecomTab).toHaveAttribute('tabindex', '-1')
     expect(dingtalkTab).toHaveAttribute('tabindex', '-1')
     expect(
-      screen.queryByRole('checkbox', { name: '启用企业微信通道' })
+      screen.queryByRole('switch', { name: '启用企业微信通道' })
     ).not.toBeInTheDocument()
 
     fireEvent.keyDown(weixinTab, { key: 'ArrowRight' })
@@ -607,7 +612,7 @@ describe('ChannelSettingsSection', () => {
       'channel-settings-tab-wecom'
     )
     expect(
-      screen.getByRole('checkbox', { name: '启用企业微信通道' })
+      screen.getByRole('switch', { name: '启用企业微信通道' })
     ).toBeInTheDocument()
   })
 

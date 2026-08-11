@@ -734,30 +734,30 @@ export function DocumentParsingSettingsSection({
               </button>
             </div>
 
-            <div className="document-ocr-model__state">
-              <span
-                className={`document-ocr-model__status${
-                  installedModel
-                    ? ' document-ocr-model__status--installed'
-                    : ''
-                }`}
-              >
-                {installedModel && (
-                  <CheckCircle2 aria-hidden="true" size={13} />
-                )}
-                {modelOperation
-                  ? t(
-                      modelOperation.phase === 'installing'
-                        ? 'documentParsing.ocr.operations.installing'
-                        : modelOperation.kind === 'import'
-                          ? 'documentParsing.ocr.operations.importing'
-                          : 'documentParsing.ocr.operations.downloading'
-                    )
-                  : installedModel
-                    ? t('documentParsing.ocr.installed')
-                    : t('documentParsing.ocr.availableToDownload')}
-              </span>
-            </div>
+            {(modelOperation || installedModel) && (
+              <div className="document-ocr-model__state">
+                <span
+                  className={`document-ocr-model__status${
+                    installedModel
+                      ? ' document-ocr-model__status--installed'
+                      : ''
+                  }`}
+                >
+                  {installedModel && (
+                    <CheckCircle2 aria-hidden="true" size={13} />
+                  )}
+                  {modelOperation
+                    ? t(
+                        modelOperation.phase === 'installing'
+                          ? 'documentParsing.ocr.operations.installing'
+                          : modelOperation.kind === 'import'
+                            ? 'documentParsing.ocr.operations.importing'
+                            : 'documentParsing.ocr.operations.downloading'
+                      )
+                    : t('documentParsing.ocr.installed')}
+                </span>
+              </div>
+            )}
 
             <div className="document-ocr-model__actions">
               {modelOperation ? (
@@ -909,15 +909,16 @@ export function DocumentParsingSettingsSection({
         )}
 
         <div className="document-ocr-settings__options">
-          <label className="settings-checkbox">
+          <label className="toggle-row">
             <input
               checked={draft.localOcrEnabled}
               onChange={(event) =>
                 updateDraft('localOcrEnabled', event.target.checked)
               }
+              role="switch"
               type="checkbox"
             />
-            <span>
+            <span className="field">
               <strong>{t('documentParsing.ocr.enabled')}</strong>
               <small>
                 {t('documentParsing.ocr.enabledDescription')}

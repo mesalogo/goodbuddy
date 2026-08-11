@@ -423,7 +423,12 @@ if (hasSingleInstanceLock) {
       settings: ResolvedRuntimeSettings,
       target: SelectedRuntimeTarget
     ): Promise<AgentRuntime> => {
-      const [skillContext, mcpServers, browserCapability] =
+      const [
+        skillContext,
+        mcpServers,
+        browserCapability,
+        webSearchCapability
+      ] =
         await Promise.all([
           capabilityService.getRuntimeSkillContext(target),
           target === 'model'
@@ -433,6 +438,9 @@ if (hasSingleInstanceLock) {
             ? capabilityService.getComputerCapabilityStatus(
                 'host-browser-control'
               )
+            : Promise.resolve(undefined),
+          target === 'model'
+            ? capabilityService.getWebSearchCapabilityStatus()
             : Promise.resolve(undefined)
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
@@ -449,7 +457,8 @@ if (hasSingleInstanceLock) {
           browserCapability?.enabled && browserCapability.supported
             ? browserService
             : undefined,
-        knowledgeGateway
+        knowledgeGateway,
+        webSearchEnabled: webSearchCapability?.enabled
       })
     }
     const createConfiguredRuntime = async (): Promise<AgentRuntime> => {

@@ -43,6 +43,7 @@ export type AgentCapabilityContext = {
   continueHostLauncher?: ContinueHostLauncher
   browserService?: BrowserToolService
   knowledgeGateway?: KnowledgeMcpGateway
+  webSearchEnabled?: boolean
 }
 
 export function createDefaultModelRuntime(
@@ -218,7 +219,8 @@ export function createAgentRuntime(
       defaultWorkspace: workspace,
       mcpServers: capabilities.mcpServers,
       browserService: capabilities.browserService,
-      knowledgeGateway: capabilities.knowledgeGateway
+      knowledgeGateway: capabilities.knowledgeGateway,
+      webSearchEnabled: capabilities.webSearchEnabled
     })
   }
 

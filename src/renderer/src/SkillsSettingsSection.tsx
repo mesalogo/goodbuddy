@@ -121,30 +121,31 @@ export function SkillsSettingsSection(): React.JSX.Element {
                   · {skill.version ?? t('skills.versionMissing')}
                 </small>
               </div>
-              <label className="capability-switch">
-                <input
-                  aria-label={t('skills.enableAria', {
-                    name: skill.name
-                  })}
-                  checked={skill.enabled}
-                  disabled={Boolean(busy)}
-                  onChange={(event) =>
-                    void run(`toggle:${skill.id}`, () =>
-                      window.goodbuddy.capabilities.setSkillEnabled(
-                        skill.id,
-                        event.target.checked
-                      )
-                    )
-                  }
-                  type="checkbox"
-                />
-                <span>
-                  {skill.enabled
-                    ? t('skills.enabled')
-                    : t('skills.disabled')}
-                </span>
-              </label>
             </div>
+            <label className="toggle-row">
+              <input
+                aria-label={t('skills.enableAria', {
+                  name: skill.name
+                })}
+                checked={skill.enabled}
+                disabled={Boolean(busy)}
+                onChange={(event) =>
+                  void run(`toggle:${skill.id}`, () =>
+                    window.goodbuddy.capabilities.setSkillEnabled(
+                      skill.id,
+                      event.target.checked
+                    )
+                  )
+                }
+                role="switch"
+                type="checkbox"
+              />
+              <span>
+                {skill.enabled
+                  ? t('skills.enabled')
+                  : t('skills.disabled')}
+              </span>
+            </label>
             <p>{skill.description}</p>
             <div className="capability-tags">
               {skill.tags.map((tag) => (

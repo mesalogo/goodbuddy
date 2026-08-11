@@ -9,6 +9,7 @@ import {
   type AppInfo,
   type BrowserLiveState,
   type ContextAttachment,
+  type ContextFileSelectionProgress,
   type DesktopApi,
   type KnowledgeLibrary,
   type KnowledgeSearchReference,
@@ -27,7 +28,8 @@ import type {
   CapabilityDiagnosticReport,
   CapabilitySnapshot,
   ComputerCapabilityId,
-  McpServerTestResult
+  McpServerTestResult,
+  WebSearchTestResult
 } from '../shared/capability-contracts'
 import type {
   AssistantProject,
@@ -766,6 +768,15 @@ const desktopApi: DesktopApi = {
         ipcChannels.capabilitiesTestMcp,
         serverId
       ) as Promise<McpServerTestResult>,
+    setWebSearchEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke(
+        ipcChannels.capabilitiesToggleWebSearch,
+        enabled
+      ) as Promise<CapabilitySnapshot>,
+    testWebSearch: () =>
+      ipcRenderer.invoke(
+        ipcChannels.capabilitiesTestWebSearch
+      ) as Promise<WebSearchTestResult>,
     setComputerCapabilityEnabled: (
       capabilityId: ComputerCapabilityId,
       enabled: boolean
@@ -811,6 +822,18 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.contextSelectFiles
       ) as Promise<ContextAttachment[]>,
+    onFileSelectionProgress: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        progress: ContextFileSelectionProgress
+      ): void => listener(progress)
+      ipcRenderer.on(ipcChannels.contextFileSelectionProgress, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.contextFileSelectionProgress,
+          handler
+        )
+    },
     addPastedImage: (input: PastedImageInput) =>
       ipcRenderer.invoke(
         ipcChannels.contextAddPastedImage,

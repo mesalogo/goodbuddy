@@ -49,4 +49,14 @@ describe('sandboxed preload', () => {
     expect(source).not.toContain('importLocalDirectory:')
     expect(source).not.toContain('importOcrModel:')
   })
+
+  it('exposes a removable attachment parsing progress listener', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('onFileSelectionProgress:')
+    expect(source).toContain('contextFileSelectionProgress')
+    expect(source).toContain('ipcRenderer.removeListener(')
+  })
 })

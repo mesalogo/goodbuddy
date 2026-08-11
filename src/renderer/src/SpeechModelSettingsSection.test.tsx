@@ -66,6 +66,7 @@ afterEach(() => {
 describe('SpeechModelSettingsSection', () => {
   it('renders speech model controls and metadata in English', async () => {
     await changeUiLocale('en-US')
+    const openRepository = vi.fn()
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
@@ -77,7 +78,7 @@ describe('SpeechModelSettingsSection', () => {
           select: vi.fn(),
           importArchive: vi.fn(),
           exportArchive: vi.fn(),
-          openRepository: vi.fn(),
+          openRepository,
           openModelsDirectory: vi.fn()
         }
       } as unknown as DesktopApi
@@ -88,6 +89,11 @@ describe('SpeechModelSettingsSection', () => {
     expect(
       await screen.findByText('Speech models')
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('combobox', {
+        name: 'Current speech model'
+      })
+    ).toHaveValue('sensevoice-small-int8')
     expect(screen.getByText('Recommended')).toBeInTheDocument()
     expect(screen.getByText('Chinese / Cantonese')).toBeInTheDocument()
     expect(
@@ -95,7 +101,14 @@ describe('SpeechModelSettingsSection', () => {
         name: 'Download SenseVoiceSmall INT8'
       })
     ).toBeInTheDocument()
-    expect(screen.getByText(/使用前请阅读许可。/u)).toBeInTheDocument()
+    expect(screen.getByText('模型仓库自定义许可')).toBeInTheDocument()
+    expect(screen.queryByText('Model details')).not.toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open the SenseVoiceSmall INT8 model repository'
+      })
+    )
+    expect(openRepository).toHaveBeenCalledWith('sensevoice-small-int8')
   })
 
   it('lists downloadable models and starts a verified download', async () => {
@@ -393,12 +406,12 @@ describe('SpeechModelSettingsSection', () => {
         expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
         expect(screen.getByText('已安装')).toBeInTheDocument()
       },
-      { timeout: 1_000 }
+      { timeout: 1_500 }
     )
     expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(3)
   })
 
-  it('keeps a radio choice pending until the parent saves it', async () => {
+  it('keeps a dropdown choice pending until the parent saves it', async () => {
     const installedSenseVoice = {
       id: entry.id,
       displayName: entry.displayName,
@@ -449,15 +462,84 @@ describe('SpeechModelSettingsSection', () => {
     })
 
     render(<SpeechModelSettingsSection />)
-    const choice = await screen.findByRole('radio', {
-      name: '选择 Paraformer 中英双语 INT8'
+    const selector = await screen.findByRole('combobox', {
+      name: '当前语音模型'
     })
-    expect(choice).not.toBeChecked()
+    expect(selector).toHaveValue('sensevoice-small-int8')
+    expect(screen.getAllByRole('article')).toHaveLength(1)
     expect(screen.getByText('正在使用')).toBeInTheDocument()
 
-    fireEvent.click(choice)
+    fireEvent.change(selector, {
+      target: { value: 'paraformer-bilingual-zh-en-int8' }
+    })
     expect(select).not.toHaveBeenCalled()
     expect(screen.getByText('待保存')).toBeInTheDocument()
-    expect(choice).toBeChecked()
+    expect(selector).toHaveValue('paraformer-bilingual-zh-en-int8')
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+  })
+
+  it('synchronizes the card when a controlled selection is reset', async () => {
+    const paraformerEntry = {
+      ...entry,
+      id: 'paraformer-bilingual-zh-en-int8',
+      displayName: 'Paraformer 中英双语 INT8',
+      family: 'paraformer' as const
+    }
+    const installed = [entry, paraformerEntry].map((model) => ({
+      id: model.id,
+      displayName: model.displayName,
+      source: 'download' as const,
+      installedAt: '2026-08-06T00:00:00.000Z',
+      files: [
+        {
+          name: 'model.int8.onnx',
+          role: 'model' as const,
+          size: 1_000,
+          sha256: 'a'.repeat(64)
+        }
+      ]
+    }))
+    const installedSnapshot: SpeechModelSnapshot = {
+      ...snapshot,
+      catalog: [entry, paraformerEntry],
+      installed,
+      selectedModelId: entry.id
+    }
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        speechModels: {
+          getSnapshot: vi.fn(async () => installedSnapshot),
+          install: vi.fn(),
+          cancel: vi.fn(async () => true),
+          remove: vi.fn(),
+          select: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
+          openRepository: vi.fn(),
+          openModelsDirectory: vi.fn()
+        }
+      } as unknown as DesktopApi
+    })
+
+    const view = render(
+      <SpeechModelSettingsSection
+        persistedSelectedModelId={entry.id}
+        selectedModelId={paraformerEntry.id}
+      />
+    )
+    const selector = await screen.findByRole('combobox', {
+      name: '当前语音模型'
+    })
+    expect(selector).toHaveValue(paraformerEntry.id)
+
+    view.rerender(
+      <SpeechModelSettingsSection
+        persistedSelectedModelId={entry.id}
+        selectedModelId={entry.id}
+      />
+    )
+
+    await waitFor(() => expect(selector).toHaveValue(entry.id))
   })
 })

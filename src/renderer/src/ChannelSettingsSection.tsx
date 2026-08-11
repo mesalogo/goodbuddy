@@ -482,6 +482,7 @@ function ChannelEditor({
           onChange={(event) =>
             onChange({ ...draft, enabled: event.target.checked })
           }
+          role="switch"
           type="checkbox"
         />
         <span>{t('channels.credential.enable', { channel: title })}</span>
@@ -527,7 +528,7 @@ function ChannelEditor({
       </label>
 
       {settings.secretConfigured && !settings.readOnly && (
-        <label className="toggle-row">
+        <label className="check-field">
           <input
             checked={draft.clearSecret}
             onChange={(event) =>
@@ -578,6 +579,7 @@ function ChannelEditor({
               allowGroupMessages: event.target.checked
             })
           }
+          role="switch"
           type="checkbox"
         />
         <span>{t('channels.credential.groupMessages')}</span>
@@ -899,6 +901,7 @@ function WeixinChannelEditor({
             onChange={(event) =>
               onEnabledChange(event.target.checked)
             }
+            role="switch"
             type="checkbox"
           />
           <span>{t('channels.weixin.enable')}</span>

@@ -10,6 +10,7 @@ import type {
   DocumentOcrRequest,
   DocumentOcrResult
 } from '../../shared/document-parsing-contracts'
+import { createWorkerPdfLoadingParameters } from './document-ocr-pdf'
 
 type InitializeMessage = {
   type: 'initialize'
@@ -117,17 +118,24 @@ async function renderPdfPage(
     willReadFrequently: true
   })
   if (!context) {
+    canvas.width = 0
+    canvas.height = 0
     throw new Error('无法创建 PDF 页面渲染画布')
   }
-  await page.render({
-    canvas: canvas as unknown as HTMLCanvasElement,
-    canvasContext: context as unknown as CanvasRenderingContext2D,
-    viewport
-  }).promise
-  const blob = await canvas.convertToBlob({
-    type: 'image/png'
-  })
-  return blob.arrayBuffer()
+  try {
+    await page.render({
+      canvas: canvas as unknown as HTMLCanvasElement,
+      canvasContext: context as unknown as CanvasRenderingContext2D,
+      viewport
+    }).promise
+    const blob = await canvas.convertToBlob({
+      type: 'image/png'
+    })
+    return await blob.arrayBuffer()
+  } finally {
+    canvas.width = 0
+    canvas.height = 0
+  }
 }
 
 async function recognizePdf(
@@ -135,9 +143,9 @@ async function recognizePdf(
 ): Promise<DocumentOcrResult> {
   const pdfjs = await import('pdfjs-dist')
   pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(request.data)
-  })
+  const loadingTask = pdfjs.getDocument(
+    createWorkerPdfLoadingParameters(request.data)
+  )
   const document = await loadingTask.promise
   const selectedPages = new Set(
     request.pageNumbers ??

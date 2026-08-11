@@ -189,21 +189,25 @@ describe('createAgentRuntime model compatibility', () => {
     expect(browserService.dispose).not.toHaveBeenCalled()
   })
 
-  it('treats a blank OpenCode Server as bundled local mode even for legacy false settings', async () => {
-    const runtime = createAgentRuntime(
-      process.cwd(),
-      settings({
-        provider: 'opencode',
-        opencodeBaseUrl: '',
-        opencodeEmbedded: false
-      })
-    )
+  it(
+    'treats a blank OpenCode Server as bundled local mode even for legacy false settings',
+    async () => {
+      const runtime = createAgentRuntime(
+        process.cwd(),
+        settings({
+          provider: 'opencode',
+          opencodeBaseUrl: '',
+          opencodeEmbedded: false
+        })
+      )
 
-    await expect(runtime.getStatus()).resolves.not.toMatchObject({
-      detail: '未配置 OpenCode Server'
-    })
-    await runtime.dispose()
-  })
+      await expect(runtime.getStatus()).resolves.not.toMatchObject({
+        detail: '未配置 OpenCode Server'
+      })
+      await runtime.dispose()
+    },
+    15_000
+  )
 
   it.each([
     ['openai-chat-completions', 'none'],

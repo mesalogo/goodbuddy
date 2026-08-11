@@ -103,6 +103,37 @@ Keep Electron security boundaries intact:
   CommonJS macOS icon tool.
 - Tag builds must use `v${package.version}`. The workflow also supports manual
   dispatch and main-branch changes to release tooling.
+
+### Tagged Release Process
+
+Every version-tag release must follow this sequence. A branch-only push does
+not require release notes.
+
+1. Confirm that the user wants a release tag and identify the exact release
+   commit and the new `package.json` version.
+2. Find the latest stable version tag reachable before the release commit and
+   inspect the complete commit and file diff from that tag to the release
+   commit. For the first tagged release, inspect the relevant repository
+   history instead.
+3. Draft concise, user-facing Simplified Chinese release notes based only on
+   verified changes in that range. Use the title
+   `GoodBuddy <version> 更新内容` and separate `功能更新` and `问题修复`
+   sections when applicable. Do not expose internal-only details, credentials,
+   private content, or unverified claims.
+4. Show the exact release-note draft to the user and wait for explicit
+   approval. If the release commit or draft changes after approval, inspect
+   the updated tag range and request approval again.
+5. Only after approval, verify that `package.json` and `package-lock.json`
+   contain the same release version, verify the candidate tag does not already
+   point elsewhere, create `v${package.version}` at the exact approved commit,
+   and push the branch and tag according to the synchronized-remote rules.
+6. Keep the approved release notes as the single source for both the GitHub
+   Release body and the packaged first-open release-notes modal. The modal
+   contains no button linking to a full release page.
+
+Never create or push a release tag, and never push a previously created
+release tag, before the release-note draft has received explicit approval.
+
 - Before a push that updates the `github` remote, ask whether the user wants a
   release tag unless they already specified that choice. A branch-only push
   does not require a version bump or tag. When the user requests a release,

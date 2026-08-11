@@ -93,6 +93,7 @@ describe('registerIpcHandlers computer capabilities', () => {
     const webContents = {
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
       send: vi.fn()
     }
     const window = {
@@ -111,6 +112,7 @@ describe('registerIpcHandlers computer capabilities', () => {
     const capabilityService = {
       importSkill: vi.fn(async () => snapshot),
       setComputerCapabilityEnabled: vi.fn(async () => snapshot),
+      setWebSearchEnabled: vi.fn(async () => snapshot),
       createBrowserProfile: vi.fn(async () => snapshot),
       diagnoseComputerCapability: vi.fn(async () => ({
         capabilityId: 'host-browser-control',
@@ -122,6 +124,25 @@ describe('registerIpcHandlers computer capabilities', () => {
     const onRuntimeSettingsChanged = vi.fn(async () => {})
     const interact = vi.fn(async () => {})
     const releaseConversation = vi.fn(async () => {})
+    const selectFiles = vi.fn(
+      async (
+        _window: unknown,
+        onProgress: (progress: {
+          phase: 'parsing'
+          fileName: string
+          fileNumber: number
+          fileCount: number
+        }) => void
+      ) => {
+        onProgress({
+          phase: 'parsing',
+          fileName: 'scan.pdf',
+          fileNumber: 1,
+          fileCount: 1
+        })
+        return []
+      }
+    )
     let browserStateListener:
       | ((state: BrowserLiveState) => void)
       | undefined
@@ -131,7 +152,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       'CommandOrControl+Shift+Space',
       {} as never,
       capabilityService as never,
-      { clear: vi.fn() } as never,
+      { clear: vi.fn(), selectFiles } as never,
       {} as never,
       { claimDueSchedules: vi.fn(() => []) } as never,
       { clear: vi.fn() } as never,
@@ -153,6 +174,20 @@ describe('registerIpcHandlers computer capabilities', () => {
     }
 
     await expect(
+      electronMocks.handlers.get(ipcChannels.contextSelectFiles)?.(event)
+    ).resolves.toEqual([])
+    expect(selectFiles).toHaveBeenCalledWith(window, expect.any(Function))
+    expect(webContents.send).toHaveBeenCalledWith(
+      ipcChannels.contextFileSelectionProgress,
+      {
+        phase: 'parsing',
+        fileName: 'scan.pdf',
+        fileNumber: 1,
+        fileCount: 1
+      }
+    )
+
+    await expect(
       electronMocks.handlers.get(
         ipcChannels.capabilitiesToggleComputer
       )?.(event, {
@@ -164,6 +199,14 @@ describe('registerIpcHandlers computer capabilities', () => {
       capabilityService.setComputerCapabilityEnabled
     ).toHaveBeenCalledWith('host-browser-control', true)
     expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesToggleWebSearch
+      )?.(event, false)
+    ).resolves.toEqual(snapshot)
+    expect(capabilityService.setWebSearchEnabled).toHaveBeenCalledWith(false)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(2)
 
     electronMocks.showOpenDialog.mockResolvedValueOnce({
       canceled: false,

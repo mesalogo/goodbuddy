@@ -232,6 +232,15 @@ export const app = {
       'Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本',
     addContent: '添加内容',
     addAttachment: '添加附件',
+    attachmentProgress: {
+      selecting: '正在选择附件…',
+      reading: '正在读取 {{name}}',
+      parsing: '正在解析 {{name}}',
+      waiting: '选择文件后将自动读取并解析',
+      fileCount: '第 {{current}} / {{total}} 个文件',
+      progressLabel: '附件读取与解析进度',
+      waitBeforeSending: '附件仍在解析，请等待完成后再发送'
+    },
     removeAttachment: '移除 {{name}}',
     settings: '对话设置',
     expertLabel: '专家角色',

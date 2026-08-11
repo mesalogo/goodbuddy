@@ -12,6 +12,7 @@ import {
   HeartPulse,
   Info,
   Library,
+  LoaderCircle,
   Maximize2,
   MessageSquarePlus,
   MessageSquare,
@@ -54,6 +55,7 @@ import type {
   AppInfo,
   BrowserLiveState,
   ContextAttachment,
+  ContextFileSelectionProgress,
   KnowledgeSearchReference,
   KnowledgeSnapshot,
   RuntimeSettings
@@ -1493,10 +1495,24 @@ function App(): React.JSX.Element {
     []
   )
   const [contextError, setContextError] = useState<string>()
+  const [fileSelectionProgress, setFileSelectionProgress] =
+    useState<ContextFileSelectionProgress>()
+  const [selectingContextFiles, setSelectingContextFiles] =
+    useState(false)
+  const selectingContextFilesRef = useRef(false)
   const [imageViewerItem, setImageViewerItem] =
     useState<ImageViewerItem>()
   const imageViewerTriggerRef = useRef<HTMLElement | undefined>(
     undefined
+  )
+  useEffect(
+    () =>
+      window.goodbuddy.context.onFileSelectionProgress((progress) => {
+        if (selectingContextFilesRef.current) {
+          setFileSelectionProgress(progress)
+        }
+      }),
+    []
   )
   const [knowledgeSnapshot, setKnowledgeSnapshot] = useState<KnowledgeSnapshot>({
     libraries: [],
@@ -3922,6 +3938,13 @@ function App(): React.JSX.Element {
     if (!prompt || !activeConversation) {
       return
     }
+    if (selectingContextFilesRef.current) {
+      notify({
+        tone: 'info',
+        message: t('composer.attachmentProgress.waitBeforeSending')
+      })
+      return
+    }
     if (activeConversation.remote) {
       notify({
         tone: 'info',
@@ -4229,6 +4252,22 @@ function App(): React.JSX.Element {
           ? reason.message
           : t('composer.errors.addContext')
       )
+    }
+  }
+
+  const selectContextFiles = async (): Promise<void> => {
+    if (selectingContextFilesRef.current) {
+      return
+    }
+    selectingContextFilesRef.current = true
+    setSelectingContextFiles(true)
+    setFileSelectionProgress(undefined)
+    try {
+      await addContext(() => window.goodbuddy.context.selectFiles())
+    } finally {
+      selectingContextFilesRef.current = false
+      setSelectingContextFiles(false)
+      setFileSelectionProgress(undefined)
     }
   }
 
@@ -5687,8 +5726,11 @@ function App(): React.JSX.Element {
           ) : (
           <>
           <div className="composer">
-            {attachments.length > 0 && (
-              <div className="context-list">
+            {(attachments.length > 0 || selectingContextFiles) && (
+              <div
+                aria-busy={selectingContextFiles}
+                className="context-list"
+              >
                 {attachments.map((attachment) => (
                   <div
                     className="context-chip"
@@ -5729,6 +5771,53 @@ function App(): React.JSX.Element {
                     </button>
                   </div>
                 ))}
+                {selectingContextFiles && (
+                  <div
+                    aria-live="polite"
+                    className="context-chip context-chip--processing"
+                    role="status"
+                  >
+                    <LoaderCircle
+                      aria-hidden="true"
+                      className="context-chip__spinner"
+                      size={16}
+                    />
+                    <span>
+                      <strong>
+                        {fileSelectionProgress
+                          ? t(
+                              `composer.attachmentProgress.${fileSelectionProgress.phase}`,
+                              {
+                                name: fileSelectionProgress.fileName
+                              }
+                            )
+                          : t(
+                              'composer.attachmentProgress.selecting'
+                            )}
+                      </strong>
+                      <small>
+                        {fileSelectionProgress
+                          ? t(
+                              'composer.attachmentProgress.fileCount',
+                              {
+                                current:
+                                  fileSelectionProgress.fileNumber,
+                                total:
+                                  fileSelectionProgress.fileCount
+                              }
+                            )
+                          : t(
+                              'composer.attachmentProgress.waiting'
+                            )}
+                      </small>
+                    </span>
+                    <progress
+                      aria-label={t(
+                        'composer.attachmentProgress.progressLabel'
+                      )}
+                    />
+                  </div>
+                )}
               </div>
             )}
             <div className="composer__input">
@@ -5799,11 +5888,8 @@ function App(): React.JSX.Element {
                   <button
                     type="button"
                     aria-label={t('composer.addAttachment')}
-                    onClick={() =>
-                      void addContext(() =>
-                        window.goodbuddy.context.selectFiles()
-                      )
-                    }
+                    disabled={selectingContextFiles}
+                    onClick={() => void selectContextFiles()}
                     title={t('composer.addAttachment')}
                   >
                     <Paperclip aria-hidden="true" size={18} />
@@ -6161,6 +6247,7 @@ function App(): React.JSX.Element {
                   aria-label={t('composer.send')}
                   disabled={
                     !input.trim() ||
+                    selectingContextFiles ||
                     !runtime?.available ||
                     runtimeSwitching ||
                     runtimeStatusKey !== activeRuntimeSelectionKey

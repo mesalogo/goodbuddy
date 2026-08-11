@@ -27,7 +27,8 @@ import type {
   McpServerSummary,
   McpServerTestResult,
   McpTransport,
-  RuntimeTarget
+  RuntimeTarget,
+  WebSearchTestResult
 } from '../../shared/capability-contracts'
 import { trapTabFocus } from './dialog-focus'
 import { SettingsCategoryHeader } from './SettingsPrimitives'
@@ -100,12 +101,15 @@ export function McpSettingsSection(): React.JSX.Element {
     disabled: t('mcp.diagnosticStatuses.disabled')
   }
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>()
+  const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
   const [editor, setEditor] = useState<McpEditor>()
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [testResults, setTestResults] = useState<
     Record<string, McpServerTestResult>
   >({})
+  const [webSearchTestResult, setWebSearchTestResult] =
+    useState<WebSearchTestResult>()
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
     () => new Set()
   )
@@ -144,6 +148,20 @@ export function McpSettingsSection(): React.JSX.Element {
             ? reason.message
             : tRef.current('mcp.errors.load')
         )
+      })
+  }, [])
+
+  useEffect(() => {
+    const getSettings = window.goodbuddy.updates?.getSettings
+    if (!getSettings) {
+      return
+    }
+    void getSettings()
+      .then((settings) => {
+        setMagicNotesEnabled(settings.magicNotesEnabled)
+      })
+      .catch(() => {
+        setMagicNotesEnabled(false)
       })
   }, [])
 
@@ -284,6 +302,27 @@ export function McpSettingsSection(): React.JSX.Element {
     }
   }
 
+  const testDirectModelWebSearch = async (): Promise<void> => {
+    setBusy('test:web-search')
+    setError(undefined)
+    try {
+      const testCapability =
+        window.goodbuddy.capabilities.testWebSearch
+      if (!testCapability) {
+        throw new Error(t('mcp.webSearch.unsupported'))
+      }
+      setWebSearchTestResult(await testCapability())
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : t('mcp.webSearch.testFailed')
+      )
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
   const updateAssignment = (
     target: RuntimeTarget,
     checked: boolean
@@ -334,6 +373,12 @@ export function McpSettingsSection(): React.JSX.Element {
   const browserProfiles = snapshot?.browserProfiles ?? {
     profiles: [],
     defaultProfileId: null
+  }
+  const webSearch = snapshot?.webSearch ?? {
+    provider: 'exa' as const,
+    enabled: true,
+    availableIn: ['ask', 'execute'] as const,
+    tools: ['web_search', 'web_fetch'] as const
   }
 
   return (
@@ -398,35 +443,36 @@ export function McpSettingsSection(): React.JSX.Element {
                         : t('mcp.computer.disabled')}
                     </small>
                   </div>
-                  <label className="capability-switch">
-                    <input
-                      aria-label={t('mcp.computer.enableAriaLabel', {
-                        name: capability.name
-                      })}
-                      checked={capability.enabled}
-                      disabled={Boolean(busy) || !capability.supported}
-                      onChange={(event) =>
-                        void run(`computer:${capability.id}`, () =>
-                          window.goodbuddy.capabilities.setComputerCapabilityEnabled?.(
-                            capability.id,
-                            event.target.checked
-                          ) ??
-                          Promise.reject(
-                            new Error(
-                              t('mcp.errors.unsupportedComputerControl')
-                            )
+                </div>
+                <label className="toggle-row">
+                  <input
+                    aria-label={t('mcp.computer.enableAriaLabel', {
+                      name: capability.name
+                    })}
+                    checked={capability.enabled}
+                    disabled={Boolean(busy) || !capability.supported}
+                    onChange={(event) =>
+                      void run(`computer:${capability.id}`, () =>
+                        window.goodbuddy.capabilities.setComputerCapabilityEnabled?.(
+                          capability.id,
+                          event.target.checked
+                        ) ??
+                        Promise.reject(
+                          new Error(
+                            t('mcp.errors.unsupportedComputerControl')
                           )
                         )
-                      }
-                      type="checkbox"
-                    />
-                    <span>
-                      {capability.enabled
-                        ? t('mcp.computer.enabled')
-                        : t('mcp.computer.disabled')}
-                    </span>
-                  </label>
-                </div>
+                      )
+                    }
+                    role="switch"
+                    type="checkbox"
+                  />
+                  <span>
+                    {capability.enabled
+                      ? t('mcp.computer.enabled')
+                      : t('mcp.computer.disabled')}
+                  </span>
+                </label>
                 <p>{capability.description}</p>
                 <p className="computer-capability-risk">
                   <CircleAlert aria-hidden="true" size={13} />
@@ -679,8 +725,16 @@ export function McpSettingsSection(): React.JSX.Element {
             const expansionId = `builtin:${server.id}`
             const expanded = expandedItemIds.has(expansionId)
             const panelId = `mcp-server-tools-${server.id}`
+            const enabled =
+              !('requiresFeature' in server) ||
+              magicNotesEnabled === true
             return (
-              <article className="mcp-server-card" key={server.id}>
+              <article
+                className={`mcp-server-card${
+                  enabled ? '' : ' mcp-server-card--disabled'
+                }`}
+                key={server.id}
+              >
                 <button
                   aria-controls={panelId}
                   aria-expanded={expanded}
@@ -697,7 +751,9 @@ export function McpSettingsSection(): React.JSX.Element {
                   <div>
                     <strong>{server.name}</strong>
                     <small>
-                      {server.access === 'mixed'
+                      {!enabled
+                        ? t('mcp.builtin.serverSummaryDisabled')
+                        : server.access === 'mixed'
                         ? t('mcp.builtin.serverSummaryMixed')
                         : t('mcp.builtin.serverSummaryReadOnly')}
                     </small>
@@ -719,6 +775,11 @@ export function McpSettingsSection(): React.JSX.Element {
                 </button>
                 {expanded && (
                   <div className="mcp-server-card__body" id={panelId}>
+                    {!enabled && (
+                      <p className="mcp-server-card__disabled-notice">
+                        {t('mcp.builtin.featureDisabled')}
+                      </p>
+                    )}
                     <p>{server.description}</p>
                     <section
                       aria-label={t('mcp.builtin.toolsAriaLabel', {
@@ -771,7 +832,92 @@ export function McpSettingsSection(): React.JSX.Element {
           </small>
         </div>
         <div className="mcp-server-list">
-          {builtinModelToolGroups.map((group) => {
+          <article className="capability-card">
+            <div className="capability-card__header">
+              <div>
+                <strong>{t('mcp.webSearch.title')}</strong>
+                <small>{t('mcp.webSearch.subtitle')}</small>
+              </div>
+            </div>
+            <label className="toggle-row">
+              <input
+                aria-label={t('mcp.webSearch.enableAriaLabel')}
+                checked={webSearch.enabled}
+                disabled={Boolean(busy)}
+                onChange={(event) =>
+                  void run('web-search:toggle', () =>
+                    window.goodbuddy.capabilities.setWebSearchEnabled?.(
+                      event.target.checked
+                    ) ??
+                    Promise.reject(
+                      new Error(t('mcp.webSearch.unsupported'))
+                    )
+                  )
+                }
+                role="switch"
+                type="checkbox"
+              />
+              <span>
+                {webSearch.enabled
+                  ? t('mcp.webSearch.enabled')
+                  : t('mcp.webSearch.disabled')}
+              </span>
+            </label>
+            <p>{t('mcp.webSearch.description')}</p>
+            <p className="computer-capability-risk">
+              <CircleAlert aria-hidden="true" size={13} />
+              {t('mcp.webSearch.privacy')}
+            </p>
+            <div className="capability-card__actions">
+              <button
+                className="secondary-button"
+                disabled={Boolean(busy)}
+                onClick={() => void testDirectModelWebSearch()}
+                type="button"
+              >
+                <FlaskConical aria-hidden="true" size={13} />
+                {busy === 'test:web-search'
+                  ? t('mcp.webSearch.testing')
+                  : t('mcp.webSearch.test')}
+              </button>
+            </div>
+            {webSearchTestResult && (
+              <div
+                aria-label={t('mcp.webSearch.resultAriaLabel')}
+                className="capability-diagnostic__result"
+              >
+                <strong>
+                  {t('mcp.webSearch.result', {
+                    duration: webSearchTestResult.durationMs
+                  })}
+                </strong>
+                <p>{webSearchTestResult.preview}</p>
+              </div>
+            )}
+            <section
+              aria-label={t('mcp.webSearch.toolsAriaLabel')}
+              className="mcp-server-tools"
+            >
+              <ul>
+                {builtinModelToolGroups
+                  .find((group) => group.id === 'web')
+                  ?.tools.map((tool) => (
+                    <li key={tool.name}>
+                      <div>
+                        <code>{tool.name}</code>
+                        <span className="builtin-tool-badge">
+                          {t('mcp.builtin.readOnly')}
+                        </span>
+                      </div>
+                      <p>{tool.description}</p>
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          </article>
+          {builtinModelToolGroups
+            .filter((group) => group.id !== 'web')
+            .map((group) => {
             const expansionId = `model-tools:${group.id}`
             const expanded = expandedItemIds.has(expansionId)
             const panelId = `model-tool-group-${group.id}`
@@ -1010,7 +1156,7 @@ export function McpSettingsSection(): React.JSX.Element {
               )}
             </>
           )}
-          <label className="check-field">
+          <label className="toggle-row">
             <input
               checked={editor.enabled}
               onChange={(event) =>
@@ -1019,6 +1165,7 @@ export function McpSettingsSection(): React.JSX.Element {
                   enabled: event.target.checked
                 })
               }
+              role="switch"
               type="checkbox"
             />
             <span>{t('mcp.editor.enable')}</span>

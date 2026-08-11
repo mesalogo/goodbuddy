@@ -161,6 +161,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
             onChange={(event) =>
               void changeStartupCheck(event.target.checked)
             }
+            role="switch"
             type="checkbox"
           />
           <span>{t('updates.checkOnStartup')}</span>

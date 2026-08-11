@@ -1987,7 +1987,7 @@ export function SettingsPanel({
                   </label>
                   {isAgentRuntimeModelProtocol(profile.protocol) && (
                     <div className="field">
-                      <label className="check-field">
+                      <label className="toggle-row">
                         <input
                           checked={profile.supportsImageInput}
                           onChange={(event) =>
@@ -1995,6 +1995,7 @@ export function SettingsPanel({
                               supportsImageInput: event.target.checked
                             })
                           }
+                          role="switch"
                           type="checkbox"
                         />
                         <span>{t('model.profile.supportsImageInput')}</span>
@@ -2132,12 +2133,13 @@ export function SettingsPanel({
                 </div>
               </div>
               <div className="runtime-note">
-                <label className="check-field">
+                <label className="toggle-row">
                   <input
                     checked={knowledgeEmbeddingEnabled}
                     onChange={(event) =>
                       setKnowledgeEmbeddingEnabled(event.target.checked)
                     }
+                    role="switch"
                     type="checkbox"
                   />
                   <span>{t('model.embedding.enabled')}</span>
@@ -2398,13 +2400,14 @@ export function SettingsPanel({
                     </small>
                   </div>
                 </div>
-                <label className="check-field">
+                <label className="toggle-row">
                   <input
                     aria-describedby="subagent-smart-routing-help"
                     checked={subagentSmartRoutingEnabled}
                     onChange={(event) =>
                       setSubagentSmartRoutingEnabled(event.target.checked)
                     }
+                    role="switch"
                     type="checkbox"
                   />
                   <span>{t('roles.smartRouting.enabled')}</span>

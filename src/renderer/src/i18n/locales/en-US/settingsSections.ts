@@ -12,7 +12,14 @@ export const settingsSections = {
     storagePrefix: 'Models are stored in',
     storageSuffix:
       '. Automatic downloads pin the source revision and verify SHA-256 hashes. Export a ZIP on an online device and import it directly on an offline device.',
-    availableModels: 'Available speech models',
+    modelSelector: 'Current speech model',
+    modelSelectorDescription:
+      'Choose an installed model, then select Save settings to switch speech recognition models.',
+    modelSelectorDownloadDescription:
+      'This model is not installed. Download it or import it from a ZIP archive first.',
+    pendingSelection:
+      'The model change is pending. Select Save settings to apply it.',
+    catalogUnavailable: 'No speech model catalog is available.',
     loading: 'Loading speech models…',
     errors: {
       serviceUnavailable:
@@ -60,13 +67,9 @@ export const settingsSections = {
       confirmDelete: 'Confirm delete',
       download: 'Download',
       importZip: 'Import ZIP',
-      exportZip: 'Export ZIP',
-      modelDetails: 'Model details',
-      openRepository: 'Open model repository'
+      exportZip: 'Export ZIP'
     },
     accessibility: {
-      selectModel: 'Select {{name}}',
-      notInstalled: '{{name}} is not installed',
       cancelOperation: 'Cancel the {{name}} operation',
       deleteModel: 'Delete {{name}}',
       downloadModel: 'Download {{name}}',
@@ -80,10 +83,6 @@ export const settingsSections = {
       importedZip: '{{name}} imported from ZIP',
       exportedZip: '{{name}} exported as ZIP',
       removed: 'Speech model deleted'
-    },
-    details: {
-      license: 'License: ',
-      licenseSeparator: '. '
     },
     languages: {
       中文: 'Chinese',

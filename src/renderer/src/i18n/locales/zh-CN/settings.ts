@@ -286,7 +286,6 @@ export const settings = {
         }
       },
       installed: '已安装并校验',
-      availableToDownload: '可从 ModelScope 下载',
       download: '下载',
       importZip: '导入 ZIP',
       exportZip: '导出 ZIP',

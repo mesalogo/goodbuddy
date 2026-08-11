@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   AgentEvent,
   BrowserLiveState,
+  ContextAttachment,
   DesktopApi
 } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
@@ -33,6 +34,11 @@ import { UiLocaleProvider } from './i18n/UiLocaleProvider'
 
 let agentListener: ((event: AgentEvent) => void) | undefined
 let browserListener: ((state: BrowserLiveState) => void) | undefined
+let fileSelectionProgressListener:
+  | Parameters<
+      DesktopApi['context']['onFileSelectionProgress']
+    >[0]
+  | undefined
 let newConversationListener: (() => void) | undefined
 let maximizedChangedListener: ((maximized: boolean) => void) | undefined
 const removeMaximizedChangedListener = vi.fn()
@@ -438,6 +444,12 @@ const api: DesktopApi = {
   },
   context: {
     selectFiles: vi.fn(async () => []),
+    onFileSelectionProgress: vi.fn((listener) => {
+      fileSelectionProgressListener = listener
+      return () => {
+        fileSelectionProgressListener = undefined
+      }
+    }),
     addPastedImage: vi.fn(async () => {
       throw new Error('not used')
     }),
@@ -565,6 +577,7 @@ describe('App', () => {
     vi.clearAllMocks()
     newConversationListener = undefined
     browserListener = undefined
+    fileSelectionProgressListener = undefined
     maximizedChangedListener = undefined
     speechRecognitionMocks.startPcmRecording.mockResolvedValue({
       result: Promise.resolve({
@@ -1568,6 +1581,61 @@ describe('App', () => {
         ),
       { timeout: 2_000 }
     )
+  })
+
+  it('shows attachment parsing progress and prevents duplicate selection', async () => {
+    const attachment = {
+      id: '00000000-0000-4000-8000-000000000309',
+      name: '扫描材料.pdf',
+      size: 8_705_692,
+      preview: '解析后的文档',
+      kind: 'text' as const
+    }
+    let resolveSelection:
+      | ((attachments: ContextAttachment[]) => void)
+      | undefined
+    vi.mocked(api.context.selectFiles).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSelection = resolve
+        })
+    )
+    render(<App />)
+
+    const addButton = await screen.findByLabelText('添加附件')
+    fireEvent.click(addButton)
+
+    expect(addButton).toBeDisabled()
+    expect(
+      screen.getByRole('progressbar', {
+        name: '附件读取与解析进度'
+      })
+    ).toBeInTheDocument()
+    expect(screen.getByText('正在选择附件…')).toBeInTheDocument()
+
+    act(() => {
+      fileSelectionProgressListener?.({
+        phase: 'parsing',
+        fileName: '扫描材料.pdf',
+        fileNumber: 1,
+        fileCount: 1
+      })
+    })
+    expect(screen.getByText('正在解析 扫描材料.pdf')).toBeInTheDocument()
+    expect(screen.getByText('第 1 / 1 个文件')).toBeInTheDocument()
+    fireEvent.click(addButton)
+    expect(api.context.selectFiles).toHaveBeenCalledOnce()
+
+    act(() => resolveSelection?.([attachment]))
+    expect(await screen.findByText('扫描材料.pdf')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(addButton).toBeEnabled()
+      expect(
+        screen.queryByRole('progressbar', {
+          name: '附件读取与解析进度'
+        })
+      ).not.toBeInTheDocument()
+    })
   })
 
   it('sends and renders five selected images together', async () => {

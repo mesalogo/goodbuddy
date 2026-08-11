@@ -539,6 +539,160 @@ describe('ModelToolProvider', () => {
     })
   })
 
+  it('exposes only allowlisted read-only Exa tools in Ask and Execute', async () => {
+    const workspace = await createWorkspace()
+    mocks.client.listTools.mockResolvedValue({
+      tools: [
+        {
+          name: 'web_search_exa',
+          inputSchema: { type: 'object' },
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false
+          }
+        },
+        {
+          name: 'web_fetch_exa',
+          inputSchema: { type: 'object' },
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false
+          }
+        },
+        {
+          name: 'future_untrusted_tool',
+          inputSchema: { type: 'object' },
+          annotations: { readOnlyHint: false }
+        }
+      ]
+    })
+    const provider = new ModelToolProvider(
+      workspace,
+      [],
+      undefined,
+      undefined,
+      true
+    )
+    const signal = new AbortController().signal
+    const askContext = {
+      conversationId: 'web-search-ask',
+      workMode: 'ask'
+    } satisfies ModelToolCallContext
+
+    await expect(provider.listTools(askContext, signal)).resolves.toEqual([
+      expect.objectContaining({
+        name: 'web_search',
+        displayName: '联网搜索',
+        source: 'builtin'
+      }),
+      expect.objectContaining({
+        name: 'web_fetch',
+        displayName: '读取网页',
+        source: 'builtin'
+      })
+    ])
+    await expect(
+      provider.listTools(
+        { ...askContext, workMode: 'plan' },
+        signal
+      )
+    ).resolves.toEqual([])
+
+    await provider.callTool(
+      'web_search',
+      { query: 'GoodBuddy current release', numResults: 3 },
+      signal,
+      askContext
+    )
+    expect(mocks.client.callTool).toHaveBeenCalledWith(
+      {
+        name: 'web_search_exa',
+        arguments: {
+          query: 'GoodBuddy current release',
+          numResults: 3
+        }
+      },
+      undefined,
+      expect.objectContaining({ signal })
+    )
+
+    await provider.callTool(
+      'web_fetch',
+      {
+        urls: ['https://example.com/article'],
+        maxCharacters: 2_000
+      },
+      signal,
+      { ...askContext, workMode: 'execute' }
+    )
+    expect(mocks.client.callTool).toHaveBeenLastCalledWith(
+      {
+        name: 'web_fetch_exa',
+        arguments: {
+          urls: ['https://example.com/article'],
+          maxCharacters: 2_000
+        }
+      },
+      undefined,
+      expect.objectContaining({ signal })
+    )
+    await expect(
+      provider.callTool(
+        'web_fetch',
+        { urls: ['http://localhost/private'] },
+        signal,
+        askContext
+      )
+    ).rejects.toThrow('公开 HTTP(S) URL')
+  })
+
+  it('fails closed when an Exa search tool is not marked read-only', async () => {
+    const workspace = await createWorkspace()
+    mocks.client.listTools.mockResolvedValue({
+      tools: [
+        {
+          name: 'web_search_exa',
+          inputSchema: { type: 'object' },
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false
+          }
+        },
+        {
+          name: 'web_fetch_exa',
+          inputSchema: { type: 'object' },
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false
+          }
+        }
+      ]
+    })
+    const provider = new ModelToolProvider(
+      workspace,
+      [],
+      undefined,
+      undefined,
+      true
+    )
+
+    await expect(
+      provider.callTool(
+        'web_search',
+        { query: 'test', numResults: 1 },
+        new AbortController().signal,
+        {
+          conversationId: 'web-search-invalid',
+          workMode: 'ask'
+        }
+      )
+    ).rejects.toMatchObject({
+      name: 'RecoverableModelToolError',
+      message: '联网搜索暂时不可用'
+    })
+    expect(mocks.client.close).toHaveBeenCalledOnce()
+  })
+
   it('loads and invokes configured MCP tools through provider-safe names', async () => {
     const workspace = await createWorkspace()
     mocks.client.listTools.mockResolvedValue({

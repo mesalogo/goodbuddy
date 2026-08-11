@@ -201,6 +201,34 @@ describe('CapabilityService', () => {
     ).resolves.toEqual({ enabled: true, supported: true })
   })
 
+  it('enables direct-model web search by default and persists its switch', async () => {
+    const { filePath, builtinRoot, importedRoot, service } =
+      await createService()
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      webSearch: {
+        provider: 'exa',
+        enabled: true,
+        availableIn: ['ask', 'execute'],
+        tools: ['web_search', 'web_fetch']
+      }
+    })
+    await service.setWebSearchEnabled(false)
+    await expect(
+      service.getWebSearchCapabilityStatus()
+    ).resolves.toEqual({ enabled: false })
+
+    const reloaded = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+    await expect(reloaded.getSnapshot()).resolves.toMatchObject({
+      webSearch: { enabled: false }
+    })
+  })
+
   it('discovers built-in skills and persists enablement and assignments', async () => {
     const { filePath, builtinRoot, importedRoot, service } =
       await createService()
@@ -641,7 +669,7 @@ describe('CapabilityService', () => {
     await expect(service.getResolvedMcpServers('model')).resolves.toHaveLength(1)
   })
 
-  it('migrates v1 to v2 without losing skills, MCP configuration, or encrypted secrets', async () => {
+  it('migrates v1 to v3 without losing skills, MCP configuration, or encrypted secrets', async () => {
     const { filePath, builtinRoot, importedRoot } = await createService()
     const credential = Buffer.from(
       'encrypted:{"version":1,"serverId":"d2ef774b-146c-4467-a909-6feb112a9c2c","secret":"preserved-secret"}'
@@ -713,12 +741,50 @@ describe('CapabilityService', () => {
           id: 'linux-desktop-control',
           enabled: false
         })
-      ]
+      ],
+      webSearch: {
+        provider: 'exa',
+        enabled: true
+      }
     })
     const persisted = await readFile(filePath, 'utf8')
-    expect(persisted).toContain('"version": 2')
+    expect(persisted).toContain('"version": 3')
     expect(persisted).toContain(credential)
     expect(persisted).not.toContain('preserved-secret')
+  })
+
+  it('migrates v2 capabilities with web search enabled by default', async () => {
+    const { filePath, builtinRoot, importedRoot } = await createService()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 2,
+        skills: {},
+        mcpServers: [],
+        computerCapabilities: {
+          'host-browser-control': {
+            enabled: false,
+            browserProfileId: null
+          },
+          'linux-desktop-control': {
+            enabled: false,
+            browserProfileId: null
+          }
+        }
+      }),
+      'utf8'
+    )
+    const service = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      webSearch: { enabled: true }
+    })
+    expect(await readFile(filePath, 'utf8')).toContain('"version": 3')
   })
 
   it('gates enablement on the supported platform and architecture', async () => {

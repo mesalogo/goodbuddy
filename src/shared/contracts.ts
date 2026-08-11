@@ -8,7 +8,8 @@ import type {
   ComputerCapabilityId,
   McpServerInput,
   McpServerTestResult,
-  SkillImportKind
+  SkillImportKind,
+  WebSearchTestResult
 } from './capability-contracts'
 import {
   assistantIdSchema,
@@ -579,6 +580,13 @@ export type RuntimeSettings = {
 }
 
 export type ContextAttachment = ConversationAttachment
+
+export type ContextFileSelectionProgress = {
+  phase: 'reading' | 'parsing'
+  fileName: string
+  fileNumber: number
+  fileCount: number
+}
 
 export const maximumPastedImageBytes = 12 * 1024 * 1024
 
@@ -1211,6 +1219,10 @@ export type DesktopApi = {
     ) => Promise<CapabilitySnapshot>
     removeMcpServer: (serverId: string) => Promise<CapabilitySnapshot>
     testMcpServer: (serverId: string) => Promise<McpServerTestResult>
+    setWebSearchEnabled?: (
+      enabled: boolean
+    ) => Promise<CapabilitySnapshot>
+    testWebSearch?: () => Promise<WebSearchTestResult>
     setComputerCapabilityEnabled?: (
       capabilityId: ComputerCapabilityId,
       enabled: boolean
@@ -1237,6 +1249,9 @@ export type DesktopApi = {
   }
   context: {
     selectFiles: () => Promise<ContextAttachment[]>
+    onFileSelectionProgress: (
+      listener: (progress: ContextFileSelectionProgress) => void
+    ) => () => void
     addPastedImage: (
       input: PastedImageInput
     ) => Promise<ContextAttachment>

@@ -197,6 +197,10 @@ export const integrations = {
         '内置 MCP 由 GoodBuddy 在主进程按当前对话签发短期权限，不公开服务地址或凭据。',
       serverSummaryMixed: '内置 MCP Server · 按模式读写 · 按对话授权',
       serverSummaryReadOnly: '内置 MCP Server · 只读 · 按对话授权',
+      serverSummaryDisabled:
+        '内置 MCP Server · 未启用 · 需要开启魔法笔记',
+      featureDisabled:
+        '魔法笔记功能已关闭，此内置能力当前不会向任何 Runtime 提供工具。',
       collapseServer: '收起服务器 {{name}}',
       expandServer: '展开服务器 {{name}}',
       toolCount: '{{count}} 个工具',
@@ -211,6 +215,24 @@ export const integrations = {
       collapseGroup: '收起工具组 {{name}}',
       expandGroup: '展开工具组 {{name}}',
       summary: 'GoodBuddy 直连模型内置能力'
+    },
+    webSearch: {
+      title: '联网搜索',
+      subtitle: '直连模型工具 · Exa MCP · Ask / Execute',
+      description:
+        '提供 web_search 和 web_fetch，只允许搜索及读取公开网页；Plan 模式不会加载。',
+      privacy:
+        '查询词和公开网页地址会发送给第三方 Exa 服务，不会发送模型 API Key、本地文件或知识库内容。',
+      enableAriaLabel: '启用直连模型联网搜索',
+      enabled: '已启用',
+      disabled: '已停用',
+      test: '测试真实搜索',
+      testing: '正在搜索…',
+      unsupported: '当前版本不支持联网搜索设置',
+      testFailed: '联网搜索测试失败',
+      resultAriaLabel: '联网搜索测试结果',
+      result: '真实搜索成功 · {{duration}} 毫秒',
+      toolsAriaLabel: '直连模型联网搜索工具'
     },
     editor: {
       editTitle: '编辑 MCP Server',

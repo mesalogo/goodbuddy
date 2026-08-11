@@ -3,7 +3,7 @@ export type BuiltinModelToolSummary = {
   displayName: string
   description: string
   access: 'read' | 'write'
-  group: 'filesystem' | 'browser'
+  group: 'filesystem' | 'browser' | 'web'
 }
 
 export const builtinModelTools = [
@@ -77,6 +77,22 @@ export const builtinModelTools = [
     description: '截取当前可见页面区域、约 200KB 的有界 JPEG 图片。',
     access: 'read',
     group: 'browser'
+  },
+  {
+    name: 'web_search',
+    displayName: '联网搜索',
+    description:
+      '通过 Exa 托管 MCP 搜索公开网页，查询词会发送给第三方服务。',
+    access: 'read',
+    group: 'web'
+  },
+  {
+    name: 'web_fetch',
+    displayName: '读取网页',
+    description:
+      '通过 Exa 托管 MCP 读取公开 HTTP 或 HTTPS 网页的有界正文。',
+    access: 'read',
+    group: 'web'
   }
 ] as const satisfies readonly BuiltinModelToolSummary[]
 
@@ -94,5 +110,12 @@ export const builtinModelToolGroups = [
     description:
       '启用“浏览器控制”后，在 Execute 模式下操作 GoodBuddy 隔离浏览器。',
     tools: builtinModelTools.filter((tool) => tool.group === 'browser')
+  },
+  {
+    id: 'web',
+    name: '联网搜索',
+    description:
+      '启用后，直连模型可在 Ask 和 Execute 模式搜索并读取公开网页。',
+    tools: builtinModelTools.filter((tool) => tool.group === 'web')
   }
 ] as const

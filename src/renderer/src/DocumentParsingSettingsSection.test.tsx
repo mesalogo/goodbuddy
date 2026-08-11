@@ -213,6 +213,9 @@ describe('DocumentParsingSettingsSection', () => {
     expect(screen.getByText('速度：快')).toBeInTheDocument()
     expect(screen.getByText('旧版 Office 转换')).toBeInTheDocument()
     expect(
+      screen.getByRole('switch', { name: /启用本地 OCR/u })
+    ).toBeChecked()
+    expect(
       screen.getByRole('button', { name: '本地模型' })
     ).toHaveAttribute('aria-pressed', 'true')
     expect(
@@ -223,6 +226,9 @@ describe('DocumentParsingSettingsSection', () => {
     expect(screen.queryByText('隐私与云端处理')).not.toBeInTheDocument()
     expect(
       screen.queryByText('模型详情与手动导入')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('可从 ModelScope 下载')
     ).not.toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', {

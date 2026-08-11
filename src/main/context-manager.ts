@@ -15,6 +15,7 @@ import {
   type PastedImageInput,
   type AgentRequest,
   type ContextAttachment,
+  type ContextFileSelectionProgress,
   type WindowCaptureOption
 } from '../shared/contracts'
 import type { ChannelMediaAttachment } from '../shared/channel-contracts'
@@ -288,7 +289,10 @@ export class ContextManager {
     return this.storeText(name, content)
   }
 
-  async selectFiles(window: BrowserWindow): Promise<ContextAttachment[]> {
+  async selectFiles(
+    window: BrowserWindow,
+    onProgress?: (progress: ContextFileSelectionProgress) => void
+  ): Promise<ContextAttachment[]> {
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile', 'multiSelections'],
       filters: [
@@ -317,12 +321,24 @@ export class ContextManager {
     }
 
     const attachments: ContextAttachment[] = []
-    for (const selectedPath of result.filePaths.slice(
+    const selectedPaths = result.filePaths.slice(
       0,
       maximumAttachmentsPerMessage
-    )) {
+    )
+    for (const [index, selectedPath] of selectedPaths.entries()) {
       try {
         const canonicalPath = await realpath(selectedPath)
+        const fileName = basename(canonicalPath)
+        const reportProgress = (
+          phase: ContextFileSelectionProgress['phase']
+        ): void =>
+          onProgress?.({
+            phase,
+            fileName,
+            fileNumber: index + 1,
+            fileCount: selectedPaths.length
+          })
+        reportProgress('reading')
         const extension = extname(canonicalPath).toLowerCase()
         if (
           !supportedExtensions.has(extension) &&
@@ -362,14 +378,15 @@ export class ContextManager {
             ) {
               throw new Error('PDF 或 Office 文档必须小于 20MB 且不能是目录')
             }
+            reportProgress('parsing')
             const parsed = await this.documentParser(
-              basename(canonicalPath),
+              fileName,
               await handle.readFile(),
               'chat-attachment'
             )
             attachments.push(
               this.storeText(
-                basename(canonicalPath),
+                fileName,
                 truncateUtf8(
                   formatParsedDocument(parsed.sections),
                   maximumFileSize

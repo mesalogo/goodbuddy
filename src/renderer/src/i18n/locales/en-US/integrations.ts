@@ -212,6 +212,10 @@ export const integrations = {
         'Built-in MCP server · Access depends on mode · Authorized per conversation',
       serverSummaryReadOnly:
         'Built-in MCP server · Read-only · Authorized per conversation',
+      serverSummaryDisabled:
+        'Built-in MCP server · Disabled · Enable Magic Notes first',
+      featureDisabled:
+        'Magic Notes is disabled, so this built-in capability does not provide tools to any runtime.',
       collapseServer: 'Collapse server {{name}}',
       expandServer: 'Expand server {{name}}',
       toolCount: '{{count}} tools',
@@ -226,6 +230,24 @@ export const integrations = {
       collapseGroup: 'Collapse tool group {{name}}',
       expandGroup: 'Expand tool group {{name}}',
       summary: 'Built-in GoodBuddy capability for direct models'
+    },
+    webSearch: {
+      title: 'Web search',
+      subtitle: 'Direct-model tool · Exa MCP · Ask / Execute',
+      description:
+        'Provides web_search and web_fetch for public web search and reading only. The tools are unavailable in Plan mode.',
+      privacy:
+        'Queries and public webpage addresses are sent to the third-party Exa service. Model API keys, local files, and knowledge content are not sent.',
+      enableAriaLabel: 'Enable direct-model web search',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      test: 'Run real search test',
+      testing: 'Searching…',
+      unsupported: 'Web search settings are unavailable in this version',
+      testFailed: 'Web search test failed',
+      resultAriaLabel: 'Web search test result',
+      result: 'Real search succeeded · {{duration}} ms',
+      toolsAriaLabel: 'Direct-model web search tools'
     },
     editor: {
       editTitle: 'Edit MCP server',

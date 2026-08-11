@@ -316,7 +316,6 @@ export const settings = {
         }
       },
       installed: 'Installed and verified',
-      availableToDownload: 'Available from ModelScope',
       download: 'Download',
       importZip: 'Import ZIP',
       exportZip: 'Export ZIP',

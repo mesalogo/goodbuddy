@@ -883,6 +883,92 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it('runs enabled web search in Ask without per-call approval', async () => {
+    const responses = [
+      {
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'web-search-call',
+                  type: 'function',
+                  function: {
+                    name: 'web_search',
+                    arguments: '{"query":"current release","numResults":2}'
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '基于联网搜索结果回答。'
+            }
+          }
+        ]
+      }
+    ]
+    const webSearchTool: ModelToolDefinition = {
+      name: 'web_search',
+      displayName: '联网搜索',
+      description: 'Search public web',
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+        additionalProperties: false
+      },
+      source: 'builtin'
+    }
+    const toolProvider = createToolProvider({
+      listTools: vi.fn(async () => [webSearchTool])
+    })
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        Response.json(responses.shift())
+      ),
+      toolProvider,
+      webSearchEnabled: true
+    })
+    const authorize = vi.fn(async () => 'deny' as const)
+
+    const events = []
+    for await (const event of runtime.run(
+      {
+        requestId: 'f0370284-5933-4743-892c-98263b8a44ae',
+        conversationId: 'conversation-web-search-ask',
+        prompt: '查找当前版本',
+        workMode: 'ask'
+      },
+      new AbortController().signal,
+      authorize
+    )) {
+      events.push(event)
+    }
+
+    expect(toolProvider.callTool).toHaveBeenCalledWith(
+      'web_search',
+      { query: 'current release', numResults: 2 },
+      expect.any(AbortSignal),
+      expect.objectContaining({ workMode: 'ask' })
+    )
+    expect(authorize).not.toHaveBeenCalled()
+    expect(toolProvider.getApproval).not.toHaveBeenCalled()
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
   it('returns recoverable tool failures to the model instead of aborting the run', async () => {
     const responses = [
       {

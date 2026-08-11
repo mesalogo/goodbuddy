@@ -27,6 +27,7 @@ import {
   mcpServerSummarySchema,
   skillIdSchema,
   skillSummarySchema,
+  webSearchCapabilitySchema,
   type CapabilityAssignments,
   type CapabilityDiagnosticReport,
   type CapabilitySnapshot,
@@ -146,11 +147,32 @@ const computerCapabilityStateSchema = z
   })
   .strict()
 
-const storedCapabilitiesSchema = z
+const storedCapabilitiesV2Schema = z
   .object({
     version: z.literal(2),
     skills: z.record(skillIdSchema, skillStateSchema),
     mcpServers: z.array(storedMcpServerSchema).max(64),
+    computerCapabilities: z
+      .object({
+        'host-browser-control': computerCapabilityStateSchema,
+        'linux-desktop-control': computerCapabilityStateSchema
+      })
+      .strict()
+  })
+  .strict()
+
+const webSearchStateSchema = z
+  .object({
+    enabled: z.boolean()
+  })
+  .strict()
+
+const storedCapabilitiesSchema = z
+  .object({
+    version: z.literal(3),
+    skills: z.record(skillIdSchema, skillStateSchema),
+    mcpServers: z.array(storedMcpServerSchema).max(64),
+    webSearch: webSearchStateSchema,
     computerCapabilities: z
       .object({
         'host-browser-control': computerCapabilityStateSchema,
@@ -216,9 +238,10 @@ function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabili
 
 function emptyStoredCapabilities(): StoredCapabilities {
   return {
-    version: 2,
+    version: 3,
     skills: {},
     mcpServers: [],
+    webSearch: { enabled: true },
     computerCapabilities: defaultComputerCapabilityStates()
   }
 }
@@ -608,17 +631,32 @@ export class CapabilityService {
     try {
       const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
       const version = z
-        .object({ version: z.union([z.literal(1), z.literal(2)]) })
+        .object({
+          version: z.union([
+            z.literal(1),
+            z.literal(2),
+            z.literal(3)
+          ])
+        })
         .passthrough()
         .parse(raw).version
       if (version === 1) {
         const legacy: StoredCapabilitiesV1 =
           storedCapabilitiesV1Schema.parse(raw)
         loaded = {
-          version: 2,
+          version: 3,
           skills: legacy.skills,
           mcpServers: legacy.mcpServers,
+          webSearch: { enabled: true },
           computerCapabilities: defaultComputerCapabilityStates()
+        }
+        shouldPersist = true
+      } else if (version === 2) {
+        const legacy = storedCapabilitiesV2Schema.parse(raw)
+        loaded = {
+          ...legacy,
+          version: 3,
+          webSearch: { enabled: true }
         }
         shouldPersist = true
       } else {
@@ -749,6 +787,12 @@ export class CapabilityService {
       mcpServers: state.mcpServers.map((server) =>
         this.toMcpSummary(server)
       ),
+      webSearch: webSearchCapabilitySchema.parse({
+        provider: 'exa',
+        enabled: state.webSearch.enabled,
+        availableIn: ['ask', 'execute'],
+        tools: ['web_search', 'web_fetch']
+      }),
       computerCapabilities: computerCapabilityCatalog.map((capability) =>
         computerCapabilityConfigSummarySchema.parse({
           id: capability.id,
@@ -768,6 +812,22 @@ export class CapabilityService {
       ),
       browserProfiles: this.toBrowserProfilesSummary(browserProfileState)
     }
+  }
+
+  async getWebSearchCapabilityStatus(): Promise<{ enabled: boolean }> {
+    const state = await this.load()
+    return { enabled: state.webSearch.enabled }
+  }
+
+  setWebSearchEnabled(enabled: boolean): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      const state = await this.load()
+      await this.persist({
+        ...state,
+        webSearch: { enabled }
+      })
+      return this.getSnapshot()
+    })
   }
 
   async getComputerCapabilityStatus(

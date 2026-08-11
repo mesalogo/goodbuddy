@@ -236,6 +236,16 @@ export const app = {
       'Enter to send · Shift+Enter for a new line · Ctrl+V to paste an image or text',
     addContent: 'Add content',
     addAttachment: 'Add attachment',
+    attachmentProgress: {
+      selecting: 'Selecting attachments…',
+      reading: 'Reading {{name}}',
+      parsing: 'Parsing {{name}}',
+      waiting: 'Files will be read and parsed after selection',
+      fileCount: 'File {{current}} of {{total}}',
+      progressLabel: 'Attachment reading and parsing progress',
+      waitBeforeSending:
+        'Attachments are still being parsed. Wait for them to finish before sending.'
+    },
     removeAttachment: 'Remove {{name}}',
     settings: 'Conversation settings',
     expertLabel: 'Expert role',

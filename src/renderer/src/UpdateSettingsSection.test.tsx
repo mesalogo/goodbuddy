@@ -76,7 +76,7 @@ describe('UpdateSettingsSection', () => {
     })
 
     render(<UpdateSettingsSection />)
-    const startup = await screen.findByRole('checkbox', {
+    const startup = await screen.findByRole('switch', {
       name: '启动时检查新版本'
     })
     expect(startup).toBeChecked()

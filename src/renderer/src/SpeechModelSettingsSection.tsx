@@ -1,6 +1,5 @@
 import {
   CheckCircle2,
-  ChevronDown,
   Download,
   ExternalLink,
   FolderOpen,
@@ -85,10 +84,14 @@ export function SpeechModelSettingsSection({
   const [localSelectedModelId, setLocalSelectedModelId] = useState<
     string | null | undefined
   >()
+  const [viewedModelId, setViewedModelId] = useState<string>()
   const [busyModelId, setBusyModelId] = useState<string>()
   const [confirmingRemove, setConfirmingRemove] = useState<string>()
   const [error, setError] = useState<string>()
   const mountedRef = useRef(false)
+  const synchronizedSelectionRef = useRef<string | null | undefined>(
+    undefined
+  )
 
   const refresh = useCallback(async (): Promise<void> => {
     const api = window.goodbuddy.speechModels
@@ -138,16 +141,28 @@ export function SpeechModelSettingsSection({
     if (!shouldPoll) {
       return
     }
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined)
-    }, 300)
-    return () => window.clearInterval(timer)
+    let active = true
+    let timer: number | undefined
+    const poll = async (): Promise<void> => {
+      await refresh().catch(() => undefined)
+      if (active) {
+        timer = window.setTimeout(poll, 750)
+      }
+    }
+    timer = window.setTimeout(poll, 750)
+    return () => {
+      active = false
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+      }
+    }
   }, [refresh, shouldPoll])
 
   const run = async (
     modelId: string,
     operation: () => Promise<SpeechModelSnapshot | undefined>,
-    successMessage: string
+    successMessage: string,
+    selectAfterSuccess = false
   ): Promise<void> => {
     setBusyModelId(modelId)
     setError(undefined)
@@ -160,6 +175,19 @@ export function SpeechModelSettingsSection({
             ? localSelectedModelId
             : selectedModelId
         if (
+          selectAfterSuccess &&
+          next.installed.some((model) => model.id === modelId)
+        ) {
+          const effectivePersistedModelId =
+            persistedSelectedModelId === undefined
+              ? next.selectedModelId
+              : persistedSelectedModelId
+          setLocalSelectedModelId(modelId)
+          onSelectedModelIdChange?.(
+            modelId,
+            modelId !== effectivePersistedModelId
+          )
+        } else if (
           draftSelectedModelId &&
           !next.installed.some(
             (model) => model.id === draftSelectedModelId
@@ -207,6 +235,27 @@ export function SpeechModelSettingsSection({
     )
   }
 
+  const draftSelectedModelId =
+    selectedModelId === undefined
+      ? localSelectedModelId
+      : selectedModelId
+  const effectiveSelectedModelId =
+    draftSelectedModelId === undefined
+      ? snapshot?.selectedModelId
+      : draftSelectedModelId
+
+  useEffect(() => {
+    if (
+      !snapshot ||
+      effectiveSelectedModelId === undefined ||
+      synchronizedSelectionRef.current === effectiveSelectedModelId
+    ) {
+      return
+    }
+    synchronizedSelectionRef.current = effectiveSelectedModelId
+    setViewedModelId(effectiveSelectedModelId ?? undefined)
+  }, [effectiveSelectedModelId, snapshot])
+
   if (!snapshot) {
     return (
       <div className="settings-section">
@@ -226,6 +275,54 @@ export function SpeechModelSettingsSection({
       operation
     ])
   )
+  const effectivePersistedModelId =
+    persistedSelectedModelId === undefined
+      ? snapshot.selectedModelId
+      : persistedSelectedModelId
+  const model =
+    snapshot.catalog.find((entry) => entry.id === viewedModelId) ??
+    snapshot.catalog.find((entry) => operationsById.has(entry.id)) ??
+    snapshot.catalog.find(
+      (entry) => entry.id === effectiveSelectedModelId
+    ) ??
+    snapshot.catalog[0]
+  const displayName = model
+    ? t(`speech.catalog.${model.id}.displayName`, {
+        defaultValue: model.displayName
+      })
+    : ''
+  const description = model
+    ? t(`speech.catalog.${model.id}.description`, {
+        defaultValue: model.description
+      })
+    : ''
+  const installed = model
+    ? installedById.get(model.id)
+    : undefined
+  const operation = model
+    ? operationsById.get(model.id)
+    : undefined
+  const percent = operation
+    ? progressPercent(operation)
+    : undefined
+  const size = model ? catalogSize(model) : undefined
+  const selected = model?.id === effectiveSelectedModelId
+  const inUse = model?.id === effectivePersistedModelId
+  const pendingSelection =
+    Boolean(selected) &&
+    draftSelectedModelId !== undefined &&
+    draftSelectedModelId !== effectivePersistedModelId
+  const status = operation
+    ? operationLabel(operation, t)
+    : pendingSelection
+      ? t('speech.status.pendingSave')
+      : inUse
+        ? t('speech.status.inUse')
+        : installed
+          ? t('speech.status.installed')
+          : model?.manualOnly
+            ? t('speech.status.manualImport')
+            : t('speech.status.availableToDownload')
 
   return (
     <section
@@ -259,315 +356,277 @@ export function SpeechModelSettingsSection({
       </p>
       {error && <p className="settings-warning" role="alert">{error}</p>}
 
-      <div
-        aria-label={t('speech.availableModels')}
-        className="speech-model-settings__list"
-        role="list"
-      >
-        {snapshot.catalog.map((entry) => {
-          const displayName = t(
-            `speech.catalog.${entry.id}.displayName`,
-            { defaultValue: entry.displayName }
-          )
-          const description = t(
-            `speech.catalog.${entry.id}.description`,
-            { defaultValue: entry.description }
-          )
-          const installed = installedById.get(entry.id)
-          const operation = operationsById.get(entry.id)
-          const percent = operation
-            ? progressPercent(operation)
-            : undefined
-          const size = catalogSize(entry)
-          const draftSelectedModelId =
-            selectedModelId === undefined
-              ? localSelectedModelId
-              : selectedModelId
-          const effectiveSelectedModelId =
-            draftSelectedModelId === undefined
-              ? snapshot.selectedModelId
-              : draftSelectedModelId
-          const selected = effectiveSelectedModelId === entry.id
-          const effectivePersistedModelId =
-            persistedSelectedModelId === undefined
-              ? snapshot.selectedModelId
-              : persistedSelectedModelId
-          const inUse = effectivePersistedModelId === entry.id
-          const pendingSelection =
-            selected &&
-            draftSelectedModelId !== undefined &&
-            draftSelectedModelId !== effectivePersistedModelId
-          const status = operation
-            ? operationLabel(operation, t)
-            : pendingSelection
-              ? t('speech.status.pendingSave')
-              : inUse
-              ? t('speech.status.inUse')
-              : installed
-                ? t('speech.status.installed')
-                : entry.manualOnly
-                  ? t('speech.status.manualImport')
-                  : t('speech.status.availableToDownload')
-          return (
-            <article
-              className={`speech-model-row${selected ? ' speech-model-row--selected' : ''}`}
-              key={entry.id}
-              role="listitem"
-            >
-              <div className="speech-model-row__selection">
-                <input
-                  aria-label={
-                    installed
-                      ? t('speech.accessibility.selectModel', {
-                          name: displayName
-                        })
-                      : t('speech.accessibility.notInstalled', {
-                          name: displayName
-                        })
-                  }
-                  checked={selected}
-                  disabled={!installed || operation !== undefined}
-                  name="selected-speech-model"
-                  onChange={() => {
-                    setLocalSelectedModelId(entry.id)
-                    onSelectedModelIdChange?.(
-                      entry.id,
-                      entry.id !== effectivePersistedModelId
-                    )
-                  }}
-                  type="radio"
-                />
-              </div>
+      <label className="field document-ocr-model-selector">
+        <span>{t('speech.modelSelector')}</span>
+        <select
+          aria-label={t('speech.modelSelector')}
+          onChange={(event) => {
+            const modelId = event.target.value
+            setViewedModelId(modelId)
+            if (installedById.has(modelId)) {
+              setLocalSelectedModelId(modelId)
+              onSelectedModelIdChange?.(
+                modelId,
+                modelId !== effectivePersistedModelId
+              )
+            }
+          }}
+          value={model?.id ?? ''}
+        >
+          {snapshot.catalog.map((entry) => {
+            const optionName = t(
+              'speech.catalog.' + entry.id + '.displayName',
+              { defaultValue: entry.displayName }
+            )
+            return (
+              <option key={entry.id} value={entry.id}>
+                {optionName} ·{' '}
+                {installedById.has(entry.id)
+                  ? t('speech.status.installed')
+                  : t('speech.status.availableToDownload')}
+              </option>
+            )
+          })}
+        </select>
+        <small>
+          {pendingSelection
+            ? t('speech.pendingSelection')
+            : installed
+              ? t('speech.modelSelectorDescription')
+              : t('speech.modelSelectorDownloadDescription')}
+        </small>
+      </label>
 
-              <div className="speech-model-row__summary">
-                <div className="speech-model-row__name">
-                  <strong>{displayName}</strong>
-                  {entry.recommended && (
-                    <span className="speech-model-tag speech-model-tag--recommended">
-                      {t('speech.tags.recommended')}
-                    </span>
-                  )}
-                </div>
-                <p>{description}</p>
-                <div className="speech-model-row__tags">
-                  <span className="speech-model-tag">
-                    {t(`speech.family.${entry.family}`)}
+      {model ? (
+        <article className="document-ocr-model speech-model-card">
+          <div className="document-ocr-model__header">
+            <div className="document-ocr-model__summary">
+              <div className="document-ocr-model__name">
+                <strong>{displayName}</strong>
+                {model.recommended && (
+                  <span className="speech-model-tag speech-model-tag--recommended">
+                    {t('speech.tags.recommended')}
                   </span>
-                  <span className="speech-model-tag">
-                    {entry.languages
-                      .map((language) =>
-                        t(`speech.languages.${language}`, {
-                          defaultValue: language
-                        })
-                      )
-                      .join(' / ')}
-                  </span>
-                  <span className="speech-model-tag">
-                    {entry.quantization.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-
-              <div className="speech-model-row__profile">
-                <span>{t(`speech.quality.${entry.quality}`)}</span>
-                <span>{t(`speech.speed.${entry.speed}`)}</span>
-                <span>
-                  {size ? formatBytes(size) : t('speech.status.unknownSize')}
-                </span>
-              </div>
-
-              <div className="speech-model-row__state">
-                <span
-                  className={`speech-model-status${
-                    selected || inUse
-                      ? ' speech-model-status--selected'
-                      : installed
-                        ? ' speech-model-status--installed'
-                        : ''
-                  }`}
-                >
-                  {inUse && <CheckCircle2 aria-hidden="true" size={13} />}
-                  {status}
-                </span>
-              </div>
-
-              <div className="speech-model-row__actions">
-                {operation ? (
-                  <button
-                    aria-label={t('speech.accessibility.cancelOperation', {
-                      name: displayName
-                    })}
-                    className="secondary-button"
-                    onClick={() =>
-                      void window.goodbuddy.speechModels
-                        ?.cancel(entry.id)
-                        .then(() => refresh())
-                    }
-                    type="button"
-                  >
-                    <Square aria-hidden="true" size={12} />
-                    {t('speech.actions.cancel')}
-                  </button>
-                ) : installed ? (
-                  <>
-                    <button
-                      aria-label={t(
-                        'speech.accessibility.exportModelZip',
-                        { name: displayName }
-                      )}
-                      className="secondary-button"
-                      disabled={busyModelId === entry.id}
-                      onClick={() =>
-                        void run(
-                          entry.id,
-                          () =>
-                            window.goodbuddy.speechModels!
-                              .exportArchive(entry.id),
-                          t('speech.notifications.exportedZip', {
-                            name: displayName
-                          })
-                        )
-                      }
-                      type="button"
-                    >
-                      <Download aria-hidden="true" size={13} />
-                      {t('speech.actions.exportZip')}
-                    </button>
-                    <button
-                      aria-label={t('speech.accessibility.deleteModel', {
-                        name: displayName
-                      })}
-                      className={
-                        confirmingRemove === entry.id
-                          ? 'danger-button'
-                          : 'danger-ghost'
-                      }
-                      disabled={busyModelId === entry.id}
-                      onClick={() => void remove(entry.id)}
-                      type="button"
-                    >
-                      <Trash2 aria-hidden="true" size={12} />
-                      {confirmingRemove === entry.id
-                        ? t('speech.actions.confirmDelete')
-                        : t('speech.actions.delete')}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {!entry.manualOnly && (
-                      <button
-                        aria-label={t(
-                          'speech.accessibility.downloadModel',
-                          { name: displayName }
-                        )}
-                        className="primary-button"
-                        disabled={busyModelId === entry.id}
-                        onClick={() =>
-                          void run(
-                            entry.id,
-                            () =>
-                              window.goodbuddy.speechModels!.install(
-                                entry.id
-                              ),
-                            t('speech.notifications.installed', {
-                              name: displayName
-                            })
-                          )
-                        }
-                        type="button"
-                      >
-                        <Download aria-hidden="true" size={13} />
-                        {t('speech.actions.download')}
-                      </button>
-                    )}
-                    <button
-                      aria-label={t('speech.accessibility.importModelZip', {
-                        name: displayName
-                      })}
-                      className="secondary-button"
-                      disabled={busyModelId === entry.id}
-                      onClick={() =>
-                        void run(
-                          entry.id,
-                          () =>
-                            window.goodbuddy.speechModels!
-                              .importArchive(entry.id),
-                          t('speech.notifications.importedZip', {
-                            name: displayName
-                          })
-                        )
-                      }
-                      type="button"
-                    >
-                      <Upload aria-hidden="true" size={13} />
-                      {t('speech.actions.importZip')}
-                    </button>
-                  </>
                 )}
+                <button
+                  aria-label={t(
+                    'speech.accessibility.openRepository',
+                    { name: displayName }
+                  )}
+                  className="icon-button speech-model-card__repository"
+                  onClick={() =>
+                    void window.goodbuddy.speechModels?.openRepository(
+                      model.id
+                    )
+                  }
+                  title={t(
+                    'speech.accessibility.openRepository',
+                    { name: displayName }
+                  )}
+                  type="button"
+                >
+                  <ExternalLink aria-hidden="true" size={13} />
+                </button>
               </div>
+              <p>{description}</p>
+              <div className="document-ocr-model__tags">
+                <span className="speech-model-tag">
+                  {t('speech.family.' + model.family)}
+                </span>
+                <span className="speech-model-tag">
+                  {model.languages
+                    .map((language) =>
+                      t('speech.languages.' + language, {
+                        defaultValue: language
+                      })
+                    )
+                    .join(' / ')}
+                </span>
+                <span className="speech-model-tag">
+                  {model.quantization.toUpperCase()}
+                </span>
+                <span className="speech-model-tag">
+                  {t('speech.quality.' + model.quality)}
+                </span>
+                <span className="speech-model-tag">
+                  {t('speech.speed.' + model.speed)}
+                </span>
+                <span className="speech-model-tag">
+                  {size
+                    ? formatBytes(size)
+                    : t('speech.status.unknownSize')}
+                </span>
+                <span className="speech-model-tag">
+                  {model.license.name}
+                </span>
+              </div>
+            </div>
+          </div>
 
-              {operation && (
-                <div aria-live="polite" className="speech-model-operation">
-                  <progress
-                    aria-label={t(
-                      'speech.accessibility.downloadProgress',
-                      { name: displayName }
-                    )}
-                    max={100}
-                    {...(percent === undefined ? {} : { value: percent })}
-                  />
-                  <small>
-                    {operation.currentFile
-                      ? t('speech.operations.processingFile', {
-                          file: operation.currentFile
-                        })
-                      : `${operationLabel(operation, t)}…`}
-                    {percent === undefined
-                      ? ''
-                      : ` · ${percent.toFixed(0)}%`}
-                  </small>
-                </div>
-              )}
+          <div className="document-ocr-model__state">
+            <span
+              className={
+                'document-ocr-model__status' +
+                (installed
+                  ? ' document-ocr-model__status--installed'
+                  : '')
+              }
+            >
+              {installed && <CheckCircle2 aria-hidden="true" size={13} />}
+              {status}
+            </span>
+          </div>
 
-              <details className="speech-model-row__details">
-                <summary>
-                  <ChevronDown aria-hidden="true" size={13} />
-                  {t('speech.actions.modelDetails')}
-                </summary>
-                <div>
-                  {entry.manualOnly &&
-                    entry.manualReason &&
-                    !installed && (
-                      <p>{entry.manualReason}</p>
-                    )}
-                  <p>
-                    {t('speech.details.license')}
-                    <strong>{entry.license.name}</strong>
-                    {t('speech.details.licenseSeparator')}
-                    {entry.license.notice}
-                  </p>
+          <div className="document-ocr-model__actions">
+            {operation ? (
+              <button
+                aria-label={t('speech.accessibility.cancelOperation', {
+                  name: displayName
+                })}
+                className="secondary-button"
+                onClick={() =>
+                  void window.goodbuddy.speechModels
+                    ?.cancel(model.id)
+                    .then(() => refresh())
+                }
+                type="button"
+              >
+                <Square aria-hidden="true" size={12} />
+                {t('speech.actions.cancel')}
+              </button>
+            ) : installed ? (
+              <>
+                <button
+                  aria-label={t(
+                    'speech.accessibility.exportModelZip',
+                    { name: displayName }
+                  )}
+                  className="secondary-button"
+                  disabled={busyModelId === model.id}
+                  onClick={() =>
+                    void run(
+                      model.id,
+                      () =>
+                        window.goodbuddy.speechModels!
+                          .exportArchive(model.id),
+                      t('speech.notifications.exportedZip', {
+                        name: displayName
+                      })
+                    )
+                  }
+                  type="button"
+                >
+                  <Download aria-hidden="true" size={13} />
+                  {t('speech.actions.exportZip')}
+                </button>
+                <button
+                  aria-label={t('speech.accessibility.deleteModel', {
+                    name: displayName
+                  })}
+                  className={
+                    confirmingRemove === model.id
+                      ? 'danger-button'
+                      : 'danger-ghost'
+                  }
+                  disabled={busyModelId === model.id}
+                  onClick={() => void remove(model.id)}
+                  type="button"
+                >
+                  <Trash2 aria-hidden="true" size={12} />
+                  {confirmingRemove === model.id
+                    ? t('speech.actions.confirmDelete')
+                    : t('speech.actions.delete')}
+                </button>
+              </>
+            ) : (
+              <>
+                {!model.manualOnly && (
                   <button
                     aria-label={t(
-                      'speech.accessibility.openRepository',
+                      'speech.accessibility.downloadModel',
                       { name: displayName }
                     )}
-                    className="secondary-button"
+                    className="primary-button"
+                    disabled={busyModelId === model.id}
                     onClick={() =>
-                      void window.goodbuddy.speechModels?.openRepository(
-                        entry.id
+                      void run(
+                        model.id,
+                        () =>
+                          window.goodbuddy.speechModels!.install(
+                            model.id
+                          ),
+                        t('speech.notifications.installed', {
+                          name: displayName
+                        }),
+                        true
                       )
                     }
                     type="button"
                   >
-                    <ExternalLink aria-hidden="true" size={13} />
-                    {t('speech.actions.openRepository')}
+                    <Download aria-hidden="true" size={13} />
+                    {t('speech.actions.download')}
                   </button>
-                </div>
-              </details>
-            </article>
-          )
-        })}
-      </div>
+                )}
+                <button
+                  aria-label={t(
+                    'speech.accessibility.importModelZip',
+                    { name: displayName }
+                  )}
+                  className="secondary-button"
+                  disabled={busyModelId === model.id}
+                  onClick={() =>
+                    void run(
+                      model.id,
+                      () =>
+                        window.goodbuddy.speechModels!.importArchive(
+                          model.id
+                        ),
+                      t('speech.notifications.importedZip', {
+                        name: displayName
+                      }),
+                      true
+                    )
+                  }
+                  type="button"
+                >
+                  <Upload aria-hidden="true" size={13} />
+                  {t('speech.actions.importZip')}
+                </button>
+              </>
+            )}
+          </div>
+
+          {operation && (
+            <div
+              aria-live="polite"
+              className="document-ocr-model__operation"
+            >
+              <progress
+                aria-label={t(
+                  'speech.accessibility.downloadProgress',
+                  { name: displayName }
+                )}
+                max={100}
+                {...(percent === undefined ? {} : { value: percent })}
+              />
+              <small>
+                {operation.currentFile
+                  ? t('speech.operations.processingFile', {
+                      file: operation.currentFile
+                    })
+                  : operationLabel(operation, t) + '…'}
+                {percent === undefined
+                  ? ''
+                  : ' · ' + percent.toFixed(0) + '%'}
+              </small>
+            </div>
+          )}
+        </article>
+      ) : (
+        <p className="settings-warning">
+          {t('speech.catalogUnavailable')}
+        </p>
+      )}
     </section>
   )
 }

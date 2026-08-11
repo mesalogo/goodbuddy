@@ -117,6 +117,7 @@ export type ModelRuntimeOptions = {
   mcpServers?: ResolvedMcpServer[]
   browserService?: BrowserToolService
   knowledgeGateway?: KnowledgeMcpGateway
+  webSearchEnabled?: boolean
   toolProvider?: ModelToolProviderLike
   fetcher?: typeof fetch
 }
@@ -976,7 +977,8 @@ export class ModelAgentRuntime implements AgentRuntime {
         options.defaultWorkspace ?? process.cwd(),
         options.mcpServers,
         options.browserService,
-        options.knowledgeGateway
+        options.knowledgeGateway,
+        options.webSearchEnabled
       )
   }
 
@@ -1593,8 +1595,10 @@ export class ModelAgentRuntime implements AgentRuntime {
         let decision: ApprovalDecision
         try {
           if (
-            scopedReadToolNameSet.has(tool.name) &&
-            Boolean(request.knowledgeCapabilityToken)
+            (scopedReadToolNameSet.has(tool.name) &&
+              Boolean(request.knowledgeCapabilityToken)) ||
+            tool.name === 'web_search' ||
+            tool.name === 'web_fetch'
           ) {
             decision = 'once'
           } else {
@@ -1784,7 +1788,8 @@ export class ModelAgentRuntime implements AgentRuntime {
     if (
       request.workMode === 'execute' ||
       (request.workMode === 'ask' &&
-        Boolean(request.knowledgeCapabilityToken))
+        (Boolean(request.knowledgeCapabilityToken) ||
+          this.options.webSearchEnabled === true))
     ) {
       yield* this.runToolExecution(request, signal, authorize, system)
       return

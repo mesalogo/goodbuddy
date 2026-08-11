@@ -6,7 +6,13 @@ export const settingsSections = {
     storagePrefix: '模型保存在',
     storageSuffix:
       '。自动下载会固定来源版本并校验 SHA-256；外网设备可导出 ZIP，内网设备可直接导入。',
-    availableModels: '可用语音模型',
+    modelSelector: '当前语音模型',
+    modelSelectorDescription:
+      '选择已安装模型后，点击“保存设置”切换语音识别模型。',
+    modelSelectorDownloadDescription:
+      '当前模型尚未安装，可先下载或从 ZIP 导入。',
+    pendingSelection: '模型选择尚未生效，点击“保存设置”后切换。',
+    catalogUnavailable: '当前没有可用的语音模型目录。',
     loading: '正在读取语音模型…',
     errors: {
       serviceUnavailable: '当前版本未提供语音模型服务',
@@ -53,13 +59,9 @@ export const settingsSections = {
       confirmDelete: '确认删除',
       download: '下载',
       importZip: '导入 ZIP',
-      exportZip: '导出 ZIP',
-      modelDetails: '模型详情',
-      openRepository: '打开模型仓库'
+      exportZip: '导出 ZIP'
     },
     accessibility: {
-      selectModel: '选择 {{name}}',
-      notInstalled: '{{name}} 尚未安装',
       cancelOperation: '取消 {{name}} 操作',
       deleteModel: '删除 {{name}}',
       downloadModel: '下载 {{name}}',
@@ -73,10 +75,6 @@ export const settingsSections = {
       importedZip: '{{name}} 已从 ZIP 导入',
       exportedZip: '{{name}} 已导出为 ZIP',
       removed: '语音模型已删除'
-    },
-    details: {
-      license: '许可证：',
-      licenseSeparator: '。'
     },
     languages: {
       中文: '中文',

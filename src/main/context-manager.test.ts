@@ -277,8 +277,12 @@ describe('ContextManager', () => {
       filePaths: [filePath]
     })
     const manager = new ContextManager()
+    const onProgress = vi.fn()
 
-    const [attachment] = await manager.selectFiles({} as BrowserWindow)
+    const [attachment] = await manager.selectFiles(
+      {} as BrowserWindow,
+      onProgress
+    )
 
     expect(attachment).toMatchObject({
       name: '需求说明.docx',
@@ -301,6 +305,20 @@ describe('ContextManager', () => {
         ])
       })
     )
+    expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+      {
+        phase: 'reading',
+        fileName: '需求说明.docx',
+        fileNumber: 1,
+        fileCount: 1
+      },
+      {
+        phase: 'parsing',
+        fileName: '需求说明.docx',
+        fileNumber: 1,
+        fileCount: 1
+      }
+    ])
     const prompt = manager.enrichRequest({
       requestId: '1f6a37b6-e0a3-449f-8878-b10d353fbfb4',
       conversationId: 'conversation-1',

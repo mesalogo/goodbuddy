@@ -635,6 +635,7 @@ function CreateLibraryWizard({
         ))}
       </fieldset>
       <label
+        className="toggle-row"
         style={{
           ...styles.surface,
           display: 'flex',
@@ -647,6 +648,7 @@ function CreateLibraryWizard({
         <input
           checked={graphEnabled}
           onChange={(event) => setGraphEnabled(event.currentTarget.checked)}
+          role="switch"
           type="checkbox"
         />
         <span>
@@ -1841,7 +1843,7 @@ function KnowledgeSettingsView({
           </p>
         </div>
         <label
-          className="knowledge-settings__toggle"
+          className="knowledge-settings__toggle toggle-row"
           style={{ ...styles.surface, cursor: saving ? 'wait' : 'pointer' }}
         >
           <input
@@ -1850,6 +1852,7 @@ function KnowledgeSettingsView({
             onChange={(event) =>
               void update({ graphEnabled: event.currentTarget.checked })
             }
+            role="switch"
             type="checkbox"
           />
           <span>

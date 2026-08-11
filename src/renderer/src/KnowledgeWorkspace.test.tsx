@@ -186,6 +186,9 @@ describe('KnowledgeWorkspace', () => {
       target: { value: '访谈与反馈' }
     })
     fireEvent.click(screen.getByLabelText(/引用原文件/))
+    expect(
+      screen.getByRole('switch', { name: /启用知识图谱/u })
+    ).toBeChecked()
     fireEvent.change(screen.getByLabelText('图谱生成策略'), {
       target: { value: 'rules' }
     })
@@ -269,11 +272,11 @@ describe('KnowledgeWorkspace', () => {
     expect(within(tabs).getAllByRole('tab').map((item) => item.textContent))
       .toEqual(['文档与来源', '知识图谱', '任务中心', '设置'])
     expect(
-      screen.queryByRole('checkbox', { name: '知识图谱' })
+      screen.queryByRole('switch', { name: '知识图谱' })
     ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: /启用知识图谱/u }))
+    fireEvent.click(screen.getByRole('switch', { name: /启用知识图谱/u }))
     expect(onUpdateLibrary).toHaveBeenCalledWith('library-1', {
       graphEnabled: false
     })
