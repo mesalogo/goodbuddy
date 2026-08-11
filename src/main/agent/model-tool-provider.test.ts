@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
   const client = {
     connect: vi.fn(),
     listTools: vi.fn(),
+    getServerCapabilities: vi.fn(),
     callTool: vi.fn(),
     experimental: { tasks },
     close: vi.fn()
@@ -28,7 +29,12 @@ const mocks = vi.hoisted(() => {
   return {
     client,
     tasks,
-    Client: vi.fn(function Client() {
+    Client: vi.fn(function Client(
+      _info: unknown,
+      _options?: unknown
+    ) {
+      void _info
+      void _options
       return client
     }),
     createMcpTransport: vi.fn(() => ({ kind: 'test-transport' }))
@@ -87,12 +93,15 @@ function createBrowserService(): BrowserToolService {
   }
 }
 
-function createMcpServer(): ResolvedMcpServer {
+function createMcpServer(
+  allowDynamicTools = false
+): ResolvedMcpServer {
   return {
     id: 'd2ef774b-146c-4467-a909-6feb112a9c2c',
     name: 'Search MCP',
     description: '',
     enabled: true,
+    allowDynamicTools,
     assignments: ['model'],
     secretConfigured: false,
     transport: 'stdio',
@@ -112,6 +121,9 @@ describe('ModelToolProvider', () => {
     vi.clearAllMocks()
     mocks.client.connect.mockResolvedValue(undefined)
     mocks.client.listTools.mockResolvedValue({ tools: [] })
+    mocks.client.getServerCapabilities.mockReturnValue({
+      tools: { listChanged: false }
+    })
     mocks.client.callTool.mockResolvedValue({
       content: [{ type: 'text', text: 'MCP result' }]
     })
@@ -746,6 +758,116 @@ describe('ModelToolProvider', () => {
 
     await provider.dispose()
     expect(mocks.client.close).toHaveBeenCalledOnce()
+  })
+
+  it('refreshes opted-in dynamic MCP tools between model rounds', async () => {
+    const workspace = await createWorkspace()
+    mocks.client.getServerCapabilities.mockReturnValue({
+      tools: { listChanged: true }
+    })
+    mocks.client.listTools
+      .mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'crmtools_load_tools',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                groups: {
+                  type: 'array',
+                  items: { type: 'string' }
+                }
+              },
+              required: ['groups']
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'crmtools_load_tools',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                groups: {
+                  type: 'array',
+                  items: { type: 'string' }
+                }
+              },
+              required: ['groups']
+            }
+          },
+          {
+            name: 'crmtools_list_opportunities',
+            inputSchema: { type: 'object' }
+          }
+        ]
+      })
+    const provider = new ModelToolProvider(
+      workspace,
+      [createMcpServer(true)]
+    )
+    const signal = new AbortController().signal
+
+    const initialTools = await provider.listTools(toolContext, signal)
+    const loadTool = initialTools.find(
+      (tool) => tool.displayName ===
+        'Search MCP / crmtools_load_tools'
+    )
+    expect(loadTool).toBeDefined()
+    const clientOptions = mocks.Client.mock.calls[0]?.[1] as
+      | {
+      listChanged: {
+        tools: {
+          onChanged: (
+            error: Error | null,
+            tools: unknown[] | null
+          ) => void
+        }
+      }
+      }
+      | undefined
+    expect(clientOptions).toBeDefined()
+    if (!clientOptions) {
+      throw new Error('Expected dynamic MCP client options')
+    }
+    clientOptions.listChanged.tools.onChanged(null, null)
+    await provider.callTool(
+      loadTool?.name ?? '',
+      { groups: ['opportunity'] },
+      signal,
+      toolContext
+    )
+    const refreshedTools = await provider.listTools(
+      toolContext,
+      signal
+    )
+
+    expect(mocks.Client).toHaveBeenCalledWith(
+      {
+        name: 'goodbuddy-direct-model',
+        version: '0.1.0'
+      },
+      expect.objectContaining({
+        listChanged: {
+          tools: expect.objectContaining({
+            autoRefresh: false,
+            debounceMs: 0,
+            onChanged: expect.any(Function)
+          })
+        }
+      })
+    )
+    expect(mocks.client.listTools).toHaveBeenCalledTimes(2)
+    expect(refreshedTools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName:
+            'Search MCP / crmtools_list_opportunities'
+        })
+      ])
+    )
   })
 
   it('preserves ordered bounded MCP text, image, and unsupported audio parts', async () => {

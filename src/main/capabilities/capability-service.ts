@@ -103,6 +103,7 @@ const storedMcpCommonShape = {
   name: z.string(),
   description: z.string(),
   enabled: z.boolean(),
+  allowDynamicTools: z.boolean().default(false),
   assignments: capabilityAssignmentsSchema,
   credential: encryptedSecretSchema
 }
@@ -167,7 +168,7 @@ const webSearchStateSchema = z
   })
   .strict()
 
-const storedCapabilitiesSchema = z
+const storedCapabilitiesV3Schema = z
   .object({
     version: z.literal(3),
     skills: z.record(skillIdSchema, skillStateSchema),
@@ -181,6 +182,10 @@ const storedCapabilitiesSchema = z
       .strict()
   })
   .strict()
+
+const storedCapabilitiesSchema = storedCapabilitiesV3Schema.extend({
+  version: z.literal(4)
+})
 
 type StoredCapabilitiesV1 = z.infer<typeof storedCapabilitiesV1Schema>
 type StoredCapabilities = z.infer<typeof storedCapabilitiesSchema>
@@ -238,7 +243,7 @@ function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabili
 
 function emptyStoredCapabilities(): StoredCapabilities {
   return {
-    version: 3,
+    version: 4,
     skills: {},
     mcpServers: [],
     webSearch: { enabled: true },
@@ -635,7 +640,8 @@ export class CapabilityService {
           version: z.union([
             z.literal(1),
             z.literal(2),
-            z.literal(3)
+            z.literal(3),
+            z.literal(4)
           ])
         })
         .passthrough()
@@ -644,7 +650,7 @@ export class CapabilityService {
         const legacy: StoredCapabilitiesV1 =
           storedCapabilitiesV1Schema.parse(raw)
         loaded = {
-          version: 3,
+          version: 4,
           skills: legacy.skills,
           mcpServers: legacy.mcpServers,
           webSearch: { enabled: true },
@@ -655,8 +661,15 @@ export class CapabilityService {
         const legacy = storedCapabilitiesV2Schema.parse(raw)
         loaded = {
           ...legacy,
-          version: 3,
+          version: 4,
           webSearch: { enabled: true }
+        }
+        shouldPersist = true
+      } else if (version === 3) {
+        const legacy = storedCapabilitiesV3Schema.parse(raw)
+        loaded = {
+          ...legacy,
+          version: 4
         }
         shouldPersist = true
       } else {
@@ -1319,6 +1332,7 @@ export class CapabilityService {
               name: value.name,
               description: value.description,
               enabled: value.enabled,
+              allowDynamicTools: value.allowDynamicTools,
               assignments: value.assignments,
               transport: 'stdio',
               command: value.command,
@@ -1329,6 +1343,7 @@ export class CapabilityService {
               name: value.name,
               description: value.description,
               enabled: value.enabled,
+              allowDynamicTools: value.allowDynamicTools,
               assignments: value.assignments,
               credential,
               transport: value.transport,

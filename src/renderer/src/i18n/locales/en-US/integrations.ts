@@ -275,6 +275,9 @@ export const integrations = {
       optional: 'Optional',
       clearToken: 'Clear the saved Bearer Token when saving',
       enable: 'Enable this MCP server',
+      allowDynamicTools: 'Allow dynamic tool-list updates',
+      allowDynamicToolsDescription:
+        'Applies only when a trusted server advertises support. Updated tools are revalidated and used in the next model round, and existing approval controls still apply.',
       assignTo: 'Assign to',
       cancel: 'Cancel',
       saving: 'Saving…',
@@ -291,6 +294,10 @@ export const integrations = {
       enabled: 'Enabled',
       disabled: 'Disabled',
       encryptedToken: ' · Encrypted token',
+      dynamicToolsEnabled: ' · Dynamic tools allowed',
+      dynamicToolsSupported: 'Server supports dynamic tool-list updates',
+      dynamicToolsUnsupported:
+        'Server does not advertise dynamic tool-list updates',
       toolsUndetected: 'Tools not checked',
       testAriaLabel: 'Test {{name}}',
       test: 'Test',

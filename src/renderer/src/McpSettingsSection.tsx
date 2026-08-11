@@ -42,6 +42,7 @@ type McpEditor = {
   name: string
   description: string
   enabled: boolean
+  allowDynamicTools: boolean
   assignments: CapabilityAssignments
   transport: McpTransport
   command: string
@@ -55,6 +56,7 @@ const emptyEditor: McpEditor = {
   name: '',
   description: '',
   enabled: true,
+  allowDynamicTools: false,
   assignments: ['model'],
   transport: 'stdio',
   command: '',
@@ -70,6 +72,7 @@ function editorFromServer(server: McpServerSummary): McpEditor {
     name: server.name,
     description: server.description,
     enabled: server.enabled,
+    allowDynamicTools: server.allowDynamicTools,
     assignments: server.assignments.includes('model')
       ? ['model']
       : [],
@@ -255,6 +258,7 @@ export function McpSettingsSection(): React.JSX.Element {
       name: editor.name,
       description: editor.description,
       enabled: editor.enabled,
+      allowDynamicTools: editor.allowDynamicTools,
       assignments: editor.assignments,
       secret
     }
@@ -1223,6 +1227,24 @@ export function McpSettingsSection(): React.JSX.Element {
             />
             <span>{t('mcp.editor.enable')}</span>
           </label>
+          <label className="toggle-row">
+            <input
+              aria-label={t('mcp.editor.allowDynamicTools')}
+              checked={editor.allowDynamicTools}
+              onChange={(event) =>
+                setEditor({
+                  ...editor,
+                  allowDynamicTools: event.target.checked
+                })
+              }
+              role="switch"
+              type="checkbox"
+            />
+            <span>{t('mcp.editor.allowDynamicTools')}</span>
+          </label>
+          <p className="settings-notice">
+            {t('mcp.editor.allowDynamicToolsDescription')}
+          </p>
           <div className="runtime-assignments">
             <small>{t('mcp.editor.assignTo')}</small>
             {configurableMcpTargets.map(
@@ -1316,6 +1338,9 @@ export function McpSettingsSection(): React.JSX.Element {
                       {server.secretConfigured
                         ? t('mcp.custom.encryptedToken')
                         : ''}
+                      {server.allowDynamicTools
+                        ? t('mcp.custom.dynamicToolsEnabled')
+                        : ''}
                     </small>
                   </div>
                   <span className="mcp-server-card__summary">
@@ -1400,44 +1425,51 @@ export function McpSettingsSection(): React.JSX.Element {
                     </span>
                   </div>
                   {result ? (
-                    <section
-                      aria-label={t('mcp.builtin.toolsAriaLabel', {
-                        name: server.name
-                      })}
-                      className="mcp-server-tools"
-                    >
-                      <div className="mcp-server-tools__heading">
-                        <strong>
-                          {result.serverName || server.name}
-                          {result.serverVersion
-                            ? ` ${result.serverVersion}`
-                            : ''}
-                        </strong>
-                        <small>
-                          {t('mcp.builtin.toolCount', {
-                            count: result.toolCount
-                          })}
-                        </small>
-                      </div>
-                      {result.tools.length > 0 ? (
-                        <ul>
-                          {result.tools.map((tool) => (
-                            <li key={tool.name}>
-                              <div>
-                                <code>{tool.name}</code>
-                              </div>
-                              {tool.description && (
-                                <p>{tool.description}</p>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="settings-empty">
-                          {t('mcp.custom.noTools')}
-                        </p>
-                      )}
-                    </section>
+                    <>
+                      <p>
+                        {result.dynamicToolsSupported
+                          ? t('mcp.custom.dynamicToolsSupported')
+                          : t('mcp.custom.dynamicToolsUnsupported')}
+                      </p>
+                      <section
+                        aria-label={t('mcp.builtin.toolsAriaLabel', {
+                          name: server.name
+                        })}
+                        className="mcp-server-tools"
+                      >
+                        <div className="mcp-server-tools__heading">
+                          <strong>
+                            {result.serverName || server.name}
+                            {result.serverVersion
+                              ? ` ${result.serverVersion}`
+                              : ''}
+                          </strong>
+                          <small>
+                            {t('mcp.builtin.toolCount', {
+                              count: result.toolCount
+                            })}
+                          </small>
+                        </div>
+                        {result.tools.length > 0 ? (
+                          <ul>
+                            {result.tools.map((tool) => (
+                              <li key={tool.name}>
+                                <div>
+                                  <code>{tool.name}</code>
+                                </div>
+                                {tool.description && (
+                                  <p>{tool.description}</p>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="settings-empty">
+                            {t('mcp.custom.noTools')}
+                          </p>
+                        )}
+                      </section>
+                    </>
                   ) : (
                     <p className="settings-empty">
                       {t('mcp.custom.testHelp')}

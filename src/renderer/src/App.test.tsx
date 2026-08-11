@@ -438,6 +438,7 @@ const api: DesktopApi = {
       mcpServers: []
     })),
     testMcpServer: vi.fn(async () => ({
+      dynamicToolsSupported: false,
       toolCount: 0,
       tools: []
     }))

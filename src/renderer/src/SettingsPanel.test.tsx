@@ -465,6 +465,7 @@ describe('SettingsPanel runtime files', () => {
           saveMcpServer,
           removeMcpServer: vi.fn(async () => capabilitySnapshot),
           testMcpServer: vi.fn(async () => ({
+            dynamicToolsSupported: false,
             toolCount: 0,
             tools: []
           })),
@@ -2461,6 +2462,11 @@ describe('SettingsPanel runtime files', () => {
         name: '启用此 MCP Server'
       })
     ).toBeChecked()
+    expect(
+      within(dialog).getByRole('switch', {
+        name: '允许动态更新工具列表'
+      })
+    ).not.toBeChecked()
     expect(within(dialog).getByLabelText('模型')).toBeChecked()
     expect(
       within(dialog).queryByLabelText('OpenCode')
@@ -2519,6 +2525,11 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.change(within(dialog).getByLabelText('Bearer Token'), {
       target: { value: ' token-with-significant-spaces ' }
     })
+    fireEvent.click(
+      within(dialog).getByRole('switch', {
+        name: '允许动态更新工具列表'
+      })
+    )
     fireEvent.click(saveButton)
     await waitFor(() =>
       expect(saveMcpServer).toHaveBeenCalledWith(
@@ -2527,6 +2538,7 @@ describe('SettingsPanel runtime files', () => {
           name: '本地文件工具',
           transport: 'http',
           url: 'https://mcp.example.com/mcp',
+          allowDynamicTools: true,
           secret: {
             action: 'replace',
             value: ' token-with-significant-spaces '
@@ -2563,6 +2575,7 @@ describe('SettingsPanel runtime files', () => {
           name: '团队知识服务',
           description: '公司内部 MCP',
           enabled: true,
+          allowDynamicTools: true,
           assignments: ['model'],
           secretConfigured: true,
           transport: 'http',
@@ -2593,6 +2606,11 @@ describe('SettingsPanel runtime files', () => {
       '团队知识服务'
     )
     expect(within(dialog).getByLabelText('Bearer Token')).toHaveValue('')
+    expect(
+      within(dialog).getByRole('switch', {
+        name: '允许动态更新工具列表'
+      })
+    ).toBeChecked()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(editButton).toHaveFocus())
     expect(
@@ -2609,6 +2627,7 @@ describe('SettingsPanel runtime files', () => {
           name: '团队工具服务',
           description: '公司内部工具',
           enabled: true,
+          allowDynamicTools: true,
           assignments: ['model'],
           secretConfigured: false,
           transport: 'http',
@@ -2621,6 +2640,7 @@ describe('SettingsPanel runtime files', () => {
     ).mockResolvedValueOnce({
       serverName: 'Team MCP',
       serverVersion: '1.2.0',
+      dynamicToolsSupported: true,
       toolCount: 1,
       tools: [
         {
@@ -2651,6 +2671,9 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('button', { name: '测试 团队工具服务' })
     )
     expect(await screen.findByText('team_search')).toBeInTheDocument()
+    expect(
+      screen.getByText('服务端支持动态更新工具列表')
+    ).toBeInTheDocument()
     expect(serverToggle).toHaveAttribute('aria-expanded', 'true')
     expect(
       screen.getByRole('region', { name: '团队工具服务 工具' })

@@ -757,6 +757,108 @@ describe('ModelAgentRuntime', () => {
     expect(toolProvider.dispose).toHaveBeenCalledOnce()
   })
 
+  it('uses refreshed tool definitions in subsequent model rounds', async () => {
+    const loadTool: ModelToolDefinition = {
+      name: 'mcp_load_tools',
+      displayName: 'CRM / load tools',
+      description: 'Load CRM tools',
+      inputSchema: { type: 'object' },
+      source: 'mcp',
+      serverName: 'CRM'
+    }
+    const dynamicTool: ModelToolDefinition = {
+      name: 'mcp_list_opportunities',
+      displayName: 'CRM / list opportunities',
+      description: 'List opportunities',
+      inputSchema: { type: 'object' },
+      source: 'mcp',
+      serverName: 'CRM'
+    }
+    const listTools = vi
+      .fn<ModelToolProviderLike['listTools']>()
+      .mockResolvedValueOnce([loadTool])
+      .mockResolvedValueOnce([loadTool, dynamicTool])
+      .mockResolvedValueOnce([loadTool, dynamicTool])
+    const toolProvider = createToolProvider({ listTools })
+    const responses = [
+      {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call-load',
+              type: 'function',
+              function: {
+                name: loadTool.name,
+                arguments: '{}'
+              }
+            }]
+          }
+        }]
+      },
+      {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call-list',
+              type: 'function',
+              function: {
+                name: dynamicTool.name,
+                arguments: '{}'
+              }
+            }]
+          }
+        }]
+      },
+      {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: '已读取商机。'
+          }
+        }]
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed139',
+        conversationId: 'conversation-dynamic-tools',
+        prompt: '列出商机',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      vi.fn(async () => 'once' as const)
+    )) {
+      void _event
+    }
+
+    expect(listTools).toHaveBeenCalledTimes(3)
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as {
+      tools: Array<{ function: { name: string } }>
+    }
+    expect(secondBody.tools.map((tool) => tool.function.name)).toContain(
+      dynamicTool.name
+    )
+    expect(toolProvider.callTool).toHaveBeenCalledTimes(2)
+  })
+
   it('runs only scoped knowledge in Ask without requesting approval', async () => {
     const responses = [
       {

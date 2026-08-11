@@ -1442,32 +1442,41 @@ export class ModelAgentRuntime implements AgentRuntime {
       workMode: request.workMode ?? 'ask',
       knowledgeCapabilityToken: request.knowledgeCapabilityToken
     }
-    const tools = await this.toolProvider.listTools(toolContext, signal)
-    if (tools.length === 0 || tools.length > 100) {
-      throw new Error('直连模型工具数量无效')
-    }
-    const toolPayload = JSON.stringify(
-      tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema
-      }))
-    )
-    if (Buffer.byteLength(toolPayload) > 512 * 1024) {
-      throw new Error('直连模型工具定义超过 512KB 安全限制')
-    }
-    const toolsByName = new Map(tools.map((tool) => [tool.name, tool]))
-    if (
-      toolsByName.size !== tools.length ||
-      tools.some(
-        (tool) =>
-          !/^[a-zA-Z0-9_-]{1,64}$/u.test(tool.name) ||
-          !tool.displayName ||
-          tool.displayName.length > 200
+    const loadToolSnapshot = async (): Promise<{
+      tools: ModelToolDefinition[]
+      toolsByName: Map<string, ModelToolDefinition>
+    }> => {
+      const tools = await this.toolProvider.listTools(toolContext, signal)
+      if (tools.length === 0 || tools.length > 100) {
+        throw new Error('直连模型工具数量无效')
+      }
+      const toolPayload = JSON.stringify(
+        tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema
+        }))
       )
-    ) {
-      throw new Error('直连模型工具定义包含无效或重复名称')
+      if (Buffer.byteLength(toolPayload) > 512 * 1024) {
+        throw new Error('直连模型工具定义超过 512KB 安全限制')
+      }
+      const toolsByName = new Map(
+        tools.map((tool) => [tool.name, tool])
+      )
+      if (
+        toolsByName.size !== tools.length ||
+        tools.some(
+          (tool) =>
+            !/^[a-zA-Z0-9_-]{1,64}$/u.test(tool.name) ||
+            !tool.displayName ||
+            tool.displayName.length > 200
+        )
+      ) {
+        throw new Error('直连模型工具定义包含无效或重复名称')
+      }
+      return { tools, toolsByName }
     }
+    let toolSnapshot = await loadToolSnapshot()
     const baseMessages = anthropic
       ? (this.getAnthropicMessages(request) as Array<Record<string, unknown>>)
       : responses
@@ -1484,9 +1493,12 @@ export class ModelAgentRuntime implements AgentRuntime {
 
     for (let round = 0; round < maxToolRounds; round += 1) {
       signal.throwIfAborted()
+      if (round > 0) {
+        toolSnapshot = await loadToolSnapshot()
+      }
       const response = await this.requestToolModel(
         messages,
-        tools,
+        toolSnapshot.tools,
         system,
         anthropic,
         signal
@@ -1584,7 +1596,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           throw new Error('模型重复使用了工具调用 ID')
         }
         seenCallIds.add(call.id)
-        const tool = toolsByName.get(call.name)
+        const tool = toolSnapshot.toolsByName.get(call.name)
         const displayName = tool?.displayName ?? call.name.slice(0, 128)
         const input = boundedToolDetail(call.arguments, 4_000)
         yield {

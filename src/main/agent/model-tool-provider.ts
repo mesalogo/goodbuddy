@@ -53,6 +53,7 @@ const EXA_MCP_SERVER: ResolvedMcpServer = {
   name: 'Exa Web Search',
   description: 'GoodBuddy 直连模型内置联网搜索',
   enabled: true,
+  allowDynamicTools: false,
   assignments: ['model'],
   secretConfigured: false,
   transport: 'http',
@@ -255,7 +256,10 @@ type McpToolBinding = {
 
 type ConnectedMcp = {
   client: Client
+  server: ResolvedMcpServer
   tools: McpToolBinding[]
+  dynamicToolsSupported: boolean
+  dynamicToolsChanged: boolean
 }
 
 function boundedJson(value: unknown, errorMessage: string): string {
@@ -490,7 +494,7 @@ function normalizeMcpResult(result: unknown): ModelToolResult {
 
 export class ModelToolProvider implements ModelToolProviderLike {
   private canonicalWorkspace?: Promise<string>
-  private mcpBindings?: Promise<Map<string, McpToolBinding>>
+  private mcpConnections?: Promise<ConnectedMcp[]>
   private webSearchBindings?: Promise<Map<string, McpToolBinding>>
   private readonly clients = new Set<Client>()
   private readonly customMcpClients = new Set<Client>()
@@ -982,10 +986,28 @@ export class ModelToolProvider implements ModelToolProviderLike {
     signal: AbortSignal,
     clientScope: Set<Client> = this.customMcpClients
   ): Promise<ConnectedMcp> {
-    const client = new Client({
-      name: 'goodbuddy-direct-model',
-      version: '0.1.0'
-    })
+    let connection: ConnectedMcp | undefined
+    const client = new Client(
+      {
+        name: 'goodbuddy-direct-model',
+        version: '0.1.0'
+      },
+      server.allowDynamicTools
+        ? {
+            listChanged: {
+              tools: {
+                autoRefresh: false,
+                debounceMs: 0,
+                onChanged: (error) => {
+                  if (!error && connection) {
+                    connection.dynamicToolsChanged = true
+                  }
+                }
+              }
+            }
+          }
+        : undefined
+    )
     this.clients.add(client)
     clientScope.add(client)
     try {
@@ -997,48 +1019,16 @@ export class ModelToolProvider implements ModelToolProviderLike {
         timeout: MCP_TIMEOUT_MS,
         signal
       })
-      const reservedToolCount = this.getReservedToolCount()
-      if (result.tools.length > MAX_MODEL_TOOLS - reservedToolCount) {
-        throw new Error(
-          `MCP Server「${server.name}」提供的工具数量超过安全限制`
-        )
-      }
-      const tools = result.tools.map((tool): McpToolBinding => ({
+      connection = {
         client,
-        originalName: tool.name,
-        readOnly:
-          tool.annotations?.readOnlyHint === true &&
-          tool.annotations?.destructiveHint !== true,
-        definition: {
-          name: createMcpToolName(server.id, tool.name),
-          displayName: `${server.name} / ${tool.name}`.slice(0, 200),
-          description: [
-            `MCP Server「${server.name}」提供的工具。`,
-            tool.description
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .slice(0, 1_000),
-          inputSchema: normalizeToolSchema(tool.inputSchema),
-          source: 'mcp',
-          serverName: server.name,
-          taskSupport: tool.execution?.taskSupport
-        }
-      }))
-      if (
-        tools.some(
-          (tool) =>
-            !tool.originalName ||
-            tool.originalName.length > 128 ||
-            [...tool.originalName].some((character) => {
-              const code = character.charCodeAt(0)
-              return code <= 31 || code === 127
-            })
-        )
-      ) {
-        throw new Error(`MCP Server「${server.name}」返回了无效工具名称`)
+        server,
+        tools: this.createMcpBindings(client, server, result.tools),
+        dynamicToolsSupported:
+          server.allowDynamicTools &&
+          client.getServerCapabilities()?.tools?.listChanged === true,
+        dynamicToolsChanged: false
       }
-      return { client, tools }
+      return connection
     } catch (error) {
       this.clients.delete(client)
       clientScope.delete(client)
@@ -1049,33 +1039,67 @@ export class ModelToolProvider implements ModelToolProviderLike {
     }
   }
 
+  private createMcpBindings(
+    client: Client,
+    server: ResolvedMcpServer,
+    tools: Awaited<ReturnType<Client['listTools']>>['tools']
+  ): McpToolBinding[] {
+    const reservedToolCount = this.getReservedToolCount()
+    if (tools.length > MAX_MODEL_TOOLS - reservedToolCount) {
+      throw new Error(
+        `MCP Server「${server.name}」提供的工具数量超过安全限制`
+      )
+    }
+    const bindings = tools.map((tool): McpToolBinding => ({
+      client,
+      originalName: tool.name,
+      readOnly:
+        tool.annotations?.readOnlyHint === true &&
+        tool.annotations?.destructiveHint !== true,
+      definition: {
+        name: createMcpToolName(server.id, tool.name),
+        displayName: `${server.name} / ${tool.name}`.slice(0, 200),
+        description: [
+          `MCP Server「${server.name}」提供的工具。`,
+          tool.description
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .slice(0, 1_000),
+        inputSchema: normalizeToolSchema(tool.inputSchema),
+        source: 'mcp',
+        serverName: server.name,
+        taskSupport: tool.execution?.taskSupport
+      }
+    }))
+    if (
+      bindings.some(
+        (tool) =>
+          !tool.originalName ||
+          tool.originalName.length > 128 ||
+          [...tool.originalName].some((character) => {
+            const code = character.charCodeAt(0)
+            return code <= 31 || code === 127
+          })
+      )
+    ) {
+      throw new Error(`MCP Server「${server.name}」返回了无效工具名称`)
+    }
+    return bindings
+  }
+
   private async getMcpBindings(
-    signal: AbortSignal
+    signal: AbortSignal,
+    refreshDynamic = false
   ): Promise<Map<string, McpToolBinding>> {
     if (this.mcpServers.length > MAX_MCP_SERVERS) {
       throw new Error('直连模型最多可加载 16 个 MCP Server')
     }
-    this.mcpBindings ??= Promise.all(
+    this.mcpConnections ??= Promise.all(
       this.mcpServers.map((server) => this.connectMcpServer(server, signal))
     )
-      .then((connections) => {
-        const bindings = new Map<string, McpToolBinding>()
-        const reservedToolCount = this.getReservedToolCount()
-        for (const connection of connections) {
-          for (const binding of connection.tools) {
-            if (bindings.size + reservedToolCount >= MAX_MODEL_TOOLS) {
-              throw new Error('直连模型工具总数超过 100 个安全限制')
-            }
-            if (bindings.has(binding.definition.name)) {
-              throw new Error('MCP 工具名称发生冲突')
-            }
-            bindings.set(binding.definition.name, binding)
-          }
-        }
-        return bindings
-      })
       .catch(async (error) => {
-        this.mcpBindings = undefined
+        this.mcpConnections = undefined
         const clients = [...this.customMcpClients]
         this.customMcpClients.clear()
         clients.forEach((client) => this.clients.delete(client))
@@ -1084,7 +1108,51 @@ export class ModelToolProvider implements ModelToolProviderLike {
         )
         throw error
       })
-    return this.mcpBindings
+    const connections = await this.mcpConnections
+    if (refreshDynamic) {
+      await Promise.all(
+        connections.map(async (connection) => {
+          if (
+            !connection.dynamicToolsSupported ||
+            !connection.dynamicToolsChanged
+          ) {
+            return
+          }
+          connection.dynamicToolsChanged = false
+          try {
+            const result = await connection.client.listTools(undefined, {
+              timeout: MCP_TIMEOUT_MS,
+              signal
+            })
+            connection.tools = this.createMcpBindings(
+              connection.client,
+              connection.server,
+              result.tools
+            )
+          } catch (error) {
+            connection.dynamicToolsChanged = true
+            throw new Error(
+              `无法刷新 MCP Server「${connection.server.name}」的工具`,
+              { cause: error }
+            )
+          }
+        })
+      )
+    }
+    const bindings = new Map<string, McpToolBinding>()
+    const reservedToolCount = this.getReservedToolCount()
+    for (const connection of connections) {
+      for (const binding of connection.tools) {
+        if (bindings.size + reservedToolCount >= MAX_MODEL_TOOLS) {
+          throw new Error('直连模型工具总数超过 100 个安全限制')
+        }
+        if (bindings.has(binding.definition.name)) {
+          throw new Error('MCP 工具名称发生冲突')
+        }
+        bindings.set(binding.definition.name, binding)
+      }
+    }
+    return bindings
   }
 
   private async getWebSearchBindings(
@@ -1157,7 +1225,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     if (context.workMode !== 'execute') {
       return [...webTools, ...scopedTools]
     }
-    const bindings = await this.getMcpBindings(signal)
+    const bindings = await this.getMcpBindings(signal, true)
     const browserTools = this.getBrowserTools(context)
     return [
       ...this.getBuiltinTools(),
@@ -1631,7 +1699,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     this.clients.clear()
     this.customMcpClients.clear()
     this.webSearchClients.clear()
-    this.mcpBindings = undefined
+    this.mcpConnections = undefined
     this.webSearchBindings = undefined
     await Promise.allSettled(clients.map((client) => client.close()))
   }

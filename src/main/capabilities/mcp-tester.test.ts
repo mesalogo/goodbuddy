@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
     connect: vi.fn(),
     listTools: vi.fn(),
     getServerVersion: vi.fn(),
+    getServerCapabilities: vi.fn(),
     close: vi.fn()
   }
   return {
@@ -55,6 +56,7 @@ const common = {
   name: 'Test MCP',
   description: '',
   enabled: true,
+  allowDynamicTools: false,
   assignments: ['model'] as Array<'model' | 'opencode' | 'continue'>,
   secretConfigured: false
 }
@@ -74,6 +76,9 @@ describe('testMcpServer', () => {
     mocks.client.getServerVersion.mockReturnValue({
       name: 'test-server',
       version: '1.0.0'
+    })
+    mocks.client.getServerCapabilities.mockReturnValue({
+      tools: { listChanged: false }
     })
     mocks.client.close.mockResolvedValue(undefined)
   })
@@ -98,8 +103,26 @@ describe('testMcpServer', () => {
     expect(result).toEqual({
       serverName: 'test-server',
       serverVersion: '1.0.0',
+      dynamicToolsSupported: false,
       toolCount: 1,
       tools: [{ name: 'search', description: 'Search documents' }]
+    })
+  })
+
+  it('reports support for dynamic tool-list notifications', async () => {
+    mocks.client.getServerCapabilities.mockReturnValue({
+      tools: { listChanged: true }
+    })
+
+    await expect(
+      testMcpServer({
+        ...common,
+        transport: 'stdio',
+        command: 'node',
+        args: ['server.js']
+      } satisfies ResolvedMcpServer)
+    ).resolves.toMatchObject({
+      dynamicToolsSupported: true
     })
   })
 

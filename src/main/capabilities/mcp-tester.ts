@@ -56,9 +56,12 @@ export async function testMcpServer(
       })
     )
     const version = client.getServerVersion()
+    const capabilities = client.getServerCapabilities()
     return {
       serverName: version?.name.slice(0, 120),
       serverVersion: version?.version.slice(0, 64),
+      dynamicToolsSupported:
+        capabilities?.tools?.listChanged === true,
       toolCount: result.tools.length,
       tools: result.tools.slice(0, 100).map((tool) => ({
         name: tool.name.slice(0, 128),

@@ -471,6 +471,7 @@ describe('CapabilityService', () => {
       name: 'Remote MCP',
       description: 'Remote test server',
       enabled: true,
+      allowDynamicTools: true,
       assignments: ['model'],
       secret: { action: 'replace', value: 'secret-token-value' },
       transport: 'http',
@@ -480,6 +481,7 @@ describe('CapabilityService', () => {
     expect(server).toMatchObject({
       name: 'Remote MCP',
       transport: 'http',
+      allowDynamicTools: true,
       secretConfigured: true
     })
     expect(JSON.stringify(snapshot)).not.toContain('secret-token-value')
@@ -502,6 +504,7 @@ describe('CapabilityService', () => {
       name: 'Local MCP',
       description: '',
       enabled: true,
+      allowDynamicTools: false,
       assignments: ['model'],
       secret: { action: 'keep' },
       transport: 'stdio',
@@ -524,6 +527,7 @@ describe('CapabilityService', () => {
         name: 'Loopback MCP',
         description: '',
         enabled: true,
+        allowDynamicTools: false,
         assignments: ['model'],
         secret: { action: 'replace', value: 'secret-token-value' },
         transport: 'http',
@@ -546,6 +550,7 @@ describe('CapabilityService', () => {
       name: 'Intranet MCP',
       description: '',
       enabled: true,
+      allowDynamicTools: false,
       assignments: ['model'],
       secret: { action: 'replace', value: 'secret-token-value' },
       transport: 'http',
@@ -577,6 +582,7 @@ describe('CapabilityService', () => {
         name: 'Public plaintext MCP',
         description: '',
         enabled: true,
+        allowDynamicTools: false,
         assignments: ['model'],
         secret: { action: 'replace', value: 'secret-token-value' },
         transport: 'http',
@@ -596,6 +602,7 @@ describe('CapabilityService', () => {
         name: 'Public MCP without token',
         description: '',
         enabled: true,
+        allowDynamicTools: false,
         assignments: ['model'],
         secret: { action: 'clear' },
         transport: 'http',
@@ -619,6 +626,7 @@ describe('CapabilityService', () => {
         name: 'Agent MCP',
         description: '',
         enabled: true,
+        allowDynamicTools: false,
         assignments: ['opencode'],
         secret: { action: 'keep' },
         transport: 'stdio',
@@ -729,6 +737,7 @@ describe('CapabilityService', () => {
       mcpServers: [
         expect.objectContaining({
           name: 'Preserved MCP',
+          allowDynamicTools: false,
           secretConfigured: true
         })
       ],
@@ -748,7 +757,7 @@ describe('CapabilityService', () => {
       }
     })
     const persisted = await readFile(filePath, 'utf8')
-    expect(persisted).toContain('"version": 3')
+    expect(persisted).toContain('"version": 4')
     expect(persisted).toContain(credential)
     expect(persisted).not.toContain('preserved-secret')
   })
@@ -784,7 +793,58 @@ describe('CapabilityService', () => {
     await expect(service.getSnapshot()).resolves.toMatchObject({
       webSearch: { enabled: true }
     })
-    expect(await readFile(filePath, 'utf8')).toContain('"version": 3')
+    expect(await readFile(filePath, 'utf8')).toContain('"version": 4')
+  })
+
+  it('migrates v3 MCP servers with dynamic tools disabled', async () => {
+    const { filePath, builtinRoot, importedRoot } = await createService()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 3,
+        skills: {},
+        mcpServers: [
+          {
+            id: 'd2ef774b-146c-4467-a909-6feb112a9c2c',
+            name: 'Legacy dynamic MCP',
+            description: '',
+            enabled: true,
+            assignments: ['model'],
+            transport: 'http',
+            url: 'https://mcp.example.com/mcp'
+          }
+        ],
+        webSearch: { enabled: true },
+        computerCapabilities: {
+          'host-browser-control': {
+            enabled: false,
+            browserProfileId: null
+          },
+          'linux-desktop-control': {
+            enabled: false,
+            browserProfileId: null
+          }
+        }
+      }),
+      'utf8'
+    )
+    const service = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      mcpServers: [
+        expect.objectContaining({
+          allowDynamicTools: false
+        })
+      ]
+    })
+    const persisted = await readFile(filePath, 'utf8')
+    expect(persisted).toContain('"version": 4')
+    expect(persisted).toContain('"allowDynamicTools": false')
   })
 
   it('gates enablement on the supported platform and architecture', async () => {

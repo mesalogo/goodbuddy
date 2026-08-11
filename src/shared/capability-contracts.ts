@@ -232,6 +232,7 @@ const mcpCommonInputShape = {
   name: mcpServerNameSchema,
   description: mcpServerDescriptionSchema,
   enabled: z.boolean(),
+  allowDynamicTools: z.boolean(),
   assignments: capabilityAssignmentsSchema,
   secret: secretActionSchema
 }
@@ -269,6 +270,7 @@ export const mcpServerSummarySchema = z.discriminatedUnion('transport', [
       name: mcpServerNameSchema,
       description: mcpServerDescriptionSchema,
       enabled: z.boolean(),
+      allowDynamicTools: z.boolean(),
       assignments: capabilityAssignmentsSchema,
       secretConfigured: z.boolean(),
       transport: z.literal('stdio'),
@@ -282,6 +284,7 @@ export const mcpServerSummarySchema = z.discriminatedUnion('transport', [
       name: mcpServerNameSchema,
       description: mcpServerDescriptionSchema,
       enabled: z.boolean(),
+      allowDynamicTools: z.boolean(),
       assignments: capabilityAssignmentsSchema,
       secretConfigured: z.boolean(),
       transport: z.literal('http'),
@@ -294,6 +297,7 @@ export const mcpServerSummarySchema = z.discriminatedUnion('transport', [
       name: mcpServerNameSchema,
       description: mcpServerDescriptionSchema,
       enabled: z.boolean(),
+      allowDynamicTools: z.boolean(),
       assignments: capabilityAssignmentsSchema,
       secretConfigured: z.boolean(),
       transport: z.literal('sse'),
@@ -336,6 +340,7 @@ export const mcpServerTestResultSchema = z
   .object({
     serverName: z.string().min(1).max(120).optional(),
     serverVersion: z.string().min(1).max(64).optional(),
+    dynamicToolsSupported: z.boolean(),
     toolCount: z.number().int().min(0).max(10_000),
     tools: z
       .array(
