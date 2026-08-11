@@ -163,13 +163,21 @@ export const integrations = {
     },
     addServer: 'Add server',
     sectionAriaLabel: 'MCP configuration',
+    tabs: {
+      ariaLabel: 'MCP settings categories',
+      builtin: 'Built-in capabilities',
+      computer: 'Computer control',
+      custom: 'Custom MCP'
+    },
     customNotice:
-      'Custom MCP currently works only with direct models. New servers are assigned to direct models by default and loaded only in Execute mode. Built-in shared MCP provides knowledge reading and global note management to direct models, OpenCode, and Continue. Ask is read-only, and note writes are available only in Execute mode. Runtime-owned MCP configuration is not managed here.',
+      'Custom MCP currently works only with direct models. New servers are assigned to direct models by default and loaded only in Execute mode. Runtime-owned MCP configuration is not managed here.',
     securityNotice:
       'Built-in tools are provided by GoodBuddy and are not MCP servers. Custom MCP servers and tools run with the current user’s permissions, so add only trusted services. Remote access tokens are encrypted in secure system storage, and tool calls still require GoodBuddy approval.',
     computer: {
       title: 'Computer control capabilities',
       subtitle: 'Off by default; approval still applies when enabled',
+      browserTitle: 'Browser capabilities',
+      browserSubtitle: 'Managed browser and built-in browser tools',
       supported: 'Supported on this device',
       unsupported: 'Not supported on this device',
       enabled: 'Enabled',

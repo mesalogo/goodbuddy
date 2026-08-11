@@ -2260,22 +2260,27 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
-    expect(await screen.findByText('电脑控制能力')).toBeInTheDocument()
+    const mcpTabs = screen.getByRole('tablist', {
+      name: 'MCP 设置分类'
+    })
     expect(
-      screen.getByText(/自定义 MCP 当前仅用于直连模型/)
-    ).toHaveTextContent('新建时默认分配给直连模型')
+      within(mcpTabs)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent)
+    ).toEqual(['内置能力', '电脑控制', '自定义 MCP'])
     expect(
-      screen.getByText(/内置共享 MCP 提供知识库读取与全局笔记管理/)
-    ).toHaveTextContent(/直连模型、\s*OpenCode 和 Continue/u)
-    expect(
-      screen.getByText(/Runtime 自有 MCP 配置不在此处管理/)
-    ).toBeInTheDocument()
+      within(mcpTabs).getByRole('tab', { name: '内置能力' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByText('浏览器能力')).toBeInTheDocument()
     expect(screen.getAllByText('托管浏览器配置').length).toBeGreaterThan(0)
     expect(
-      screen.getByRole('switch', {
+      screen.queryByRole('switch', {
         name: '启用 Linux 桌面控制'
       })
-    ).toBeDisabled()
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /添加 Server/ })
+    ).not.toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('switch', { name: '启用 浏览器控制' })
     )
@@ -2320,6 +2325,21 @@ describe('SettingsPanel runtime files', () => {
     )
     await waitFor(() =>
       expect(removeBrowserProfile).toHaveBeenCalledWith(browserProfileId)
+    )
+    fireEvent.click(
+      within(mcpTabs).getByRole('tab', { name: '电脑控制' })
+    )
+    expect(await screen.findByText('电脑控制能力')).toBeInTheDocument()
+    expect(
+      screen.getByRole('switch', {
+        name: '启用 Linux 桌面控制'
+      })
+    ).toBeDisabled()
+    expect(
+      screen.queryByRole('switch', { name: '启用 浏览器控制' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(
+      within(mcpTabs).getByRole('tab', { name: '内置能力' })
     )
     expect(await screen.findByText('文件系统操作')).toBeInTheDocument()
     expect(screen.getByText('浏览器操作')).toBeInTheDocument()
@@ -2413,6 +2433,15 @@ describe('SettingsPanel runtime files', () => {
     ).toHaveLength(
       builtinModelToolGroups.filter((group) => group.id !== 'web').length
     )
+    fireEvent.click(
+      within(mcpTabs).getByRole('tab', { name: '自定义 MCP' })
+    )
+    expect(
+      screen.getByText(/自定义 MCP 当前仅用于直连模型/)
+    ).toHaveTextContent('新建时默认分配给直连模型')
+    expect(
+      screen.getByText(/Runtime 自有 MCP 配置不在此处管理/)
+    ).toBeInTheDocument()
     expect(
       await screen.findByText('尚未配置 MCP Server')
     ).toBeInTheDocument()
@@ -2458,6 +2487,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const addServer = await screen.findByRole('button', {
       name: '添加 Server'
     })
@@ -2551,6 +2581,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const editButton = await screen.findByRole('button', {
       name: '编辑 团队知识服务'
     })
@@ -2609,6 +2640,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const serverToggle = await screen.findByRole('button', {
       name: '展开服务器 团队工具服务'
     })

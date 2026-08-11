@@ -32,8 +32,10 @@ import type {
 } from '../../shared/capability-contracts'
 import { trapTabFocus } from './dialog-focus'
 import { SettingsCategoryHeader } from './SettingsPrimitives'
+import { PageTabs } from './WorkspacePrimitives'
 
 const configurableMcpTargets: RuntimeTarget[] = ['model']
+type McpSettingsTab = 'builtin' | 'computer' | 'custom'
 
 type McpEditor = {
   id?: string
@@ -120,6 +122,8 @@ export function McpSettingsSection(): React.JSX.Element {
   const [profileNames, setProfileNames] = useState<Record<string, string>>(
     {}
   )
+  const [activeTab, setActiveTab] =
+    useState<McpSettingsTab>('builtin')
   const editorDialogRef = useRef<HTMLDivElement>(null)
   const editorNameRef = useRef<HTMLInputElement>(null)
   const editorTriggerRef = useRef<HTMLButtonElement | undefined>(
@@ -370,6 +374,12 @@ export function McpSettingsSection(): React.JSX.Element {
   }
 
   const computerCapabilities = snapshot?.computerCapabilities ?? []
+  const visibleComputerCapabilities = computerCapabilities.filter(
+    (capability) =>
+      activeTab === 'builtin'
+        ? capability.id === 'host-browser-control'
+        : capability.id !== 'host-browser-control'
+  )
   const browserProfiles = snapshot?.browserProfiles ?? {
     profiles: [],
     defaultProfileId: null
@@ -385,48 +395,86 @@ export function McpSettingsSection(): React.JSX.Element {
     <>
       <SettingsCategoryHeader
         actions={
-          <button
-            className="secondary-button"
-            disabled={Boolean(busy) || Boolean(editor)}
-            onClick={(event) =>
-              openEditor({ ...emptyEditor }, event.currentTarget)
-            }
-            type="button"
-          >
-            <Plus aria-hidden="true" size={14} />
-            {t('mcp.addServer')}
-          </button>
+          activeTab === 'custom' ? (
+            <button
+              className="secondary-button"
+              disabled={Boolean(busy) || Boolean(editor)}
+              onClick={(event) =>
+                openEditor({ ...emptyEditor }, event.currentTarget)
+              }
+              type="button"
+            >
+              <Plus aria-hidden="true" size={14} />
+              {t('mcp.addServer')}
+            </button>
+          ) : undefined
         }
         category="mcp"
         error={!editor ? error : undefined}
         headingId="mcp-settings-heading"
       />
+      <PageTabs
+        ariaLabel={t('mcp.tabs.ariaLabel')}
+        idPrefix="mcp-settings"
+        onChange={(tab) => {
+          setError(undefined)
+          setActiveTab(tab)
+        }}
+        tabs={[
+          { id: 'builtin', label: t('mcp.tabs.builtin') },
+          { id: 'computer', label: t('mcp.tabs.computer') },
+          { id: 'custom', label: t('mcp.tabs.custom') }
+        ]}
+        value={activeTab}
+        variant="segmented"
+      />
       <section
-        aria-label={t('mcp.sectionAriaLabel')}
+        aria-labelledby={`mcp-settings-tab-${activeTab}`}
         className="settings-section"
+        id={`mcp-settings-panel-${activeTab}`}
+        role="tabpanel"
       >
 
-      <p className="settings-notice">
-        {t('mcp.customNotice')}
-      </p>
-      <p className="settings-notice">
-        {t('mcp.securityNotice')}
-      </p>
-      <section
+      {activeTab === 'custom' && (
+        <>
+          <p className="settings-notice">
+            {t('mcp.customNotice')}
+          </p>
+          <p className="settings-notice">
+            {t('mcp.securityNotice')}
+          </p>
+        </>
+      )}
+      {activeTab !== 'custom' && (
+        <section
         aria-labelledby="computer-capabilities-heading"
         className="mcp-tool-section"
       >
         <div className="mcp-subsection-heading">
           <div>
-            <MonitorCog size={15} />
+            {activeTab === 'builtin' ? (
+              <Globe2 size={15} />
+            ) : (
+              <MonitorCog size={15} />
+            )}
             <strong id="computer-capabilities-heading">
-              {t('mcp.computer.title')}
+              {t(
+                activeTab === 'builtin'
+                  ? 'mcp.computer.browserTitle'
+                  : 'mcp.computer.title'
+              )}
             </strong>
           </div>
-          <small>{t('mcp.computer.subtitle')}</small>
+          <small>
+            {t(
+              activeTab === 'builtin'
+                ? 'mcp.computer.browserSubtitle'
+                : 'mcp.computer.subtitle'
+            )}
+          </small>
         </div>
         <div className="capability-list">
-          {computerCapabilities.map((capability) => {
+          {visibleComputerCapabilities.map((capability) => {
             const report = diagnostics[capability.id]
             return (
               <article className="capability-card" key={capability.id}>
@@ -550,8 +598,11 @@ export function McpSettingsSection(): React.JSX.Element {
           })}
         </div>
       </section>
+      )}
 
-      <section
+      {activeTab === 'builtin' && (
+        <>
+        <section
         aria-labelledby="browser-profiles-heading"
         className="mcp-tool-section"
       >
@@ -998,6 +1049,8 @@ export function McpSettingsSection(): React.JSX.Element {
           })}
         </div>
       </div>
+        </>
+      )}
 
       {editor &&
         createPortal(
@@ -1212,7 +1265,9 @@ export function McpSettingsSection(): React.JSX.Element {
           document.body
         )}
 
-      <div className="mcp-subsection-heading">
+      {activeTab === 'custom' && (
+        <>
+        <div className="mcp-subsection-heading">
         <div>
           <Network size={15} />
           <strong>{t('mcp.custom.title')}</strong>
@@ -1394,6 +1449,8 @@ export function McpSettingsSection(): React.JSX.Element {
           )
         })}
       </div>
+        </>
+      )}
       </section>
     </>
   )

@@ -6975,6 +6975,7 @@ details.settings-section > :not(summary) + :not(summary) {
   display: flex;
   max-width: 100%;
   overflow-x: auto;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   gap: var(--space-1);
 }

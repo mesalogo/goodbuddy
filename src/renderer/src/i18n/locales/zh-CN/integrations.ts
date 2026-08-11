@@ -150,13 +150,21 @@ export const integrations = {
     },
     addServer: '添加 Server',
     sectionAriaLabel: 'MCP 配置',
+    tabs: {
+      ariaLabel: 'MCP 设置分类',
+      builtin: '内置能力',
+      computer: '电脑控制',
+      custom: '自定义 MCP'
+    },
     customNotice:
-      '自定义 MCP 当前仅用于直连模型，新建时默认分配给直连模型，并仅在 Execute 模式加载。内置共享 MCP 提供知识库读取与全局笔记管理，可供直连模型、OpenCode 和 Continue 使用；Ask 只读，笔记写入仅在 Execute 模式开放。Runtime 自有 MCP 配置不在此处管理。',
+      '自定义 MCP 当前仅用于直连模型，新建时默认分配给直连模型，并仅在 Execute 模式加载。Runtime 自有 MCP 配置不在此处管理。',
     securityNotice:
       '内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server 及其工具具有当前用户权限，请仅添加可信服务；远程访问令牌将由系统安全存储加密，工具调用前仍需 GoodBuddy 审批。',
     computer: {
       title: '电脑控制能力',
       subtitle: '默认停用，启用后仍遵循审批',
+      browserTitle: '浏览器能力',
+      browserSubtitle: '托管浏览器与内置浏览器工具',
       supported: '当前设备支持',
       unsupported: '当前设备不支持',
       enabled: '已启用',
