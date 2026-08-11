@@ -5,12 +5,17 @@ import { extname } from 'node:path'
 export type ParsedSection = {
   locator: string
   content: string
+  method?: 'native' | 'ocr' | 'converted' | 'vision'
+  confidence?: number
 }
 
 export type ParsedDocument = {
   title: string
+  sourceFormat: string
   content: string
   sections: ParsedSection[]
+  warnings: string[]
+  pageCount?: number
 }
 
 export type DocumentChunk = {
@@ -160,12 +165,43 @@ function parseOfficeArchive(
 }
 
 async function parsePdf(buffer: Buffer): Promise<ParsedSection[]> {
+  const pages = await extractPdfTextPages(buffer)
+  return pages
+    .filter((page) => page.content.length > 0)
+    .map((page) => ({
+      locator: `第 ${page.pageNumber} 页`,
+      content: page.content
+    }))
+}
+
+export type PdfTextPage = {
+  pageNumber: number
+  content: string
+}
+
+export class DocumentTextUnavailableError extends Error {
+  constructor(message = '文档中没有可索引的文本内容') {
+    super(message)
+    this.name = 'DocumentTextUnavailableError'
+  }
+}
+
+export async function extractPdfTextPages(
+  buffer: Buffer
+): Promise<PdfTextPage[]> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(buffer)
+    data: new Uint8Array(buffer),
+    // Electron's main process identifies itself as process.type ===
+    // "browser", so PDF.js otherwise selects DOM font factories even
+    // though no document exists there.
+    disableFontFace: true,
+    isOffscreenCanvasSupported: false,
+    useSystemFonts: false,
+    useWorkerFetch: false
   })
   const document = await loadingTask.promise
-  const sections: ParsedSection[] = []
+  const pages: PdfTextPage[] = []
   try {
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       const page = await document.getPage(pageNumber)
@@ -175,18 +211,13 @@ async function parsePdf(buffer: Buffer): Promise<ParsedSection[]> {
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim()
-      if (content) {
-        sections.push({
-          locator: `第 ${pageNumber} 页`,
-          content
-        })
-      }
+      pages.push({ pageNumber, content })
       page.cleanup()
     }
   } finally {
     await loadingTask.destroy()
   }
-  return sections
+  return pages
 }
 
 export async function parseDocument(
@@ -227,12 +258,14 @@ export async function parseDocument(
     .join('\n\n')
     .slice(0, maximumExtractedCharacters)
   if (!content) {
-    throw new Error('文档中没有可索引的文本内容')
+    throw new DocumentTextUnavailableError()
   }
   return {
     title: name.replace(/\.[^.]+$/, ''),
+    sourceFormat: extension || 'unknown',
     content,
-    sections
+    sections,
+    warnings: []
   }
 }
 

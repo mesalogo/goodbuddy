@@ -38,6 +38,7 @@ import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
+import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
 import { SettingsCategoryHeader } from './SettingsPrimitives'
 import {
@@ -346,6 +347,7 @@ export function SettingsPanel({
     activeTab === 'roles'
   const categoryRendersOwnHeader =
     activeTab === 'platform-features' ||
+    activeTab === 'document-parsing' ||
     activeTab === 'channels' ||
     activeTab === 'skills' ||
     activeTab === 'mcp' ||
@@ -2256,6 +2258,10 @@ export function SettingsPanel({
             />
           )}
             </>
+          )}
+
+          {activeTab === 'document-parsing' && (
+            <DocumentParsingSettingsSection onNotify={onNotify} />
           )}
 
           {activeTab === 'security' && (

@@ -98,6 +98,18 @@
       {
         "from": "node_modules/@fontsource-variable/noto-sans-sc/LICENSE",
         "to": "licenses/noto-sans-sc-OFL-1.1.txt"
+      },
+      {
+        "from": "node_modules/ppu-paddle-ocr/LICENSE",
+        "to": "licenses/ppu-paddle-ocr-MIT.txt"
+      },
+      {
+        "from": "node_modules/ppu-ocv/LICENSE",
+        "to": "licenses/ppu-ocv-MIT.txt"
+      },
+      {
+        "from": "node_modules/onnxruntime-web/LICENSE",
+        "to": "licenses/onnxruntime-web-MIT.txt"
       }
     ],
     "win": {
@@ -148,7 +160,9 @@
     "i18next": "^25.10.10",
     "json5": "^2.2.3",
     "lucide-react": "^1.27.0",
+    "onnxruntime-web": "^1.23.2",
     "pdfjs-dist": "^6.2.108",
+    "ppu-paddle-ocr": "^6.4.0",
     "qrcode": "^1.5.4",
     "quill": "^2.0.3",
     "react": "^19.2.8",

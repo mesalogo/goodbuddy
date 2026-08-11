@@ -75,7 +75,8 @@ describe('SpeechModelSettingsSection', () => {
           cancel: vi.fn(async () => true),
           remove: vi.fn(),
           select: vi.fn(),
-          importLocalDirectory: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
         }
@@ -128,7 +129,8 @@ describe('SpeechModelSettingsSection', () => {
           cancel: vi.fn(async () => true),
           remove: vi.fn(),
           select: vi.fn(),
-          importLocalDirectory: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
         }
@@ -181,7 +183,8 @@ describe('SpeechModelSettingsSection', () => {
           cancel: vi.fn(async () => true),
           remove: vi.fn(),
           select: vi.fn(),
-          importLocalDirectory: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
         }
@@ -197,6 +200,86 @@ describe('SpeechModelSettingsSection', () => {
 
     await waitFor(() =>
       expect(install).toHaveBeenCalledWith('whisper-tiny-multilingual')
+    )
+  })
+
+  it('imports and exports verified speech model ZIP archives', async () => {
+    const installedSnapshot: SpeechModelSnapshot = {
+      ...snapshot,
+      installed: [
+        {
+          id: entry.id,
+          displayName: entry.displayName,
+          source: 'local',
+          installedAt: '2026-08-11T00:00:00.000Z',
+          files: [
+            {
+              name: 'model.int8.onnx',
+              role: 'model',
+              size: 1_000,
+              sha256: 'a'.repeat(64)
+            }
+          ]
+        }
+      ]
+    }
+    const importArchive = vi.fn(async () => installedSnapshot)
+    const exportArchive = vi.fn(async () => installedSnapshot)
+    const select = vi.fn()
+    const onNotify = vi.fn()
+    const getSnapshot = vi
+      .fn<() => Promise<SpeechModelSnapshot>>()
+      .mockResolvedValueOnce(snapshot)
+      .mockResolvedValue(installedSnapshot)
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        speechModels: {
+          getSnapshot,
+          install: vi.fn(),
+          cancel: vi.fn(async () => true),
+          remove: vi.fn(),
+          select,
+          importArchive,
+          exportArchive,
+          openRepository: vi.fn(),
+          openModelsDirectory: vi.fn()
+        }
+      } as unknown as DesktopApi
+    })
+
+    render(<SpeechModelSettingsSection onNotify={onNotify} />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '从 ZIP 导入 SenseVoiceSmall INT8'
+      })
+    )
+    await waitFor(() =>
+      expect(importArchive).toHaveBeenCalledWith(
+        'sensevoice-small-int8'
+      )
+    )
+    expect(onNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'SenseVoiceSmall INT8 已从 ZIP 导入'
+      })
+    )
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '将 SenseVoiceSmall INT8 导出为 ZIP'
+      })
+    )
+    await waitFor(() =>
+      expect(exportArchive).toHaveBeenCalledWith(
+        'sensevoice-small-int8'
+      )
+    )
+    expect(select).not.toHaveBeenCalled()
+    expect(onNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'SenseVoiceSmall INT8 已导出为 ZIP'
+      })
     )
   })
 
@@ -224,7 +307,8 @@ describe('SpeechModelSettingsSection', () => {
           cancel,
           remove: vi.fn(),
           select: vi.fn(),
-          importLocalDirectory: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
         }
@@ -290,7 +374,8 @@ describe('SpeechModelSettingsSection', () => {
           cancel: vi.fn(async () => true),
           remove: vi.fn(),
           select: vi.fn(),
-          importLocalDirectory: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
         }
@@ -355,7 +440,8 @@ describe('SpeechModelSettingsSection', () => {
           cancel: vi.fn(async () => true),
           remove: vi.fn(),
           select,
-          importLocalDirectory: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
         }

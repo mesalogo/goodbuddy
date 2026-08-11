@@ -22,6 +22,11 @@ export const settings = {
       navigationDescription: 'LLM、向量模型与凭据',
       description: 'LLM、向量模型与凭据'
     },
+    documentParsing: {
+      label: '文档解析',
+      navigationDescription: '附件、知识库与本地 OCR',
+      description: '统一配置聊天附件和知识库使用的提取、转换与 OCR 策略'
+    },
     runtime: {
       label: 'Agent Runtime',
       navigationDescription: 'OpenCode、Continue 与工作区',
@@ -69,6 +74,8 @@ export const settings = {
     saveAndTestRuntime: '保存并测试 {{runtime}}',
     saving: '保存中…',
     saveSettings: '保存设置',
+    testParsing: '测试解析',
+    testingParsing: '正在解析…',
     select: '选择',
     selectFile: '选择文件',
     clear: '清除',
@@ -105,11 +112,18 @@ export const settings = {
     openRuntimeConfig: '打开 Runtime 配置失败',
     selectWorkspace: '选择工作区目录失败',
     retainModelConnection: '请至少保留一个模型连接',
-    clearLocalData: '本地数据清除失败'
+    clearLocalData: '本地数据清除失败',
+    documentParsingUnavailable: '文档解析服务不可用',
+    readDocumentParsing: '读取文档解析设置失败',
+    saveDocumentParsing: '保存文档解析设置失败',
+    testDocumentParsing: '测试文档解析失败',
+    manageDocumentOcrModel: 'OCR 模型操作失败'
   },
   notifications: {
     settingsSaved: '设置已保存',
-    connectionSucceeded: '连接成功：{{label}}'
+    connectionSucceeded: '连接成功：{{label}}',
+    documentParsingSaved: '文档解析设置已保存',
+    documentParsingTestSucceeded: '文档解析测试完成'
   },
   credentials: {
     none: '尚未配置',
@@ -195,6 +209,149 @@ export const settings = {
         '未指定配置文件时 Continue 将保持不可用，不会匿名加载远程默认模型。'
     }
   },
+  documentParsing: {
+    status: {
+      title: '运行状态',
+      description: '显示当前设备实际可用的解析能力',
+      available: '可用',
+      unavailable: '不可用',
+      verified: '已校验',
+      native: '原生文档解析',
+      nativeDetail: '文本、HTML、文本型 PDF 和新式 Office 文档',
+      conversion: '旧版 Office 转换',
+      conversionUnavailable: '尚未实现，DOC、XLS、PPT 暂不可用',
+      localOcr: '本地 OCR',
+      ocrReady: '模型已安装并通过 SHA-256 校验，可离线使用',
+      ocrUnavailable: '模型尚未安装或校验失败，请从 ModelScope 下载',
+      partialNotice:
+        '基础文档解析可用。旧版 Office 转换尚未实现；扫描 PDF 使用本地 OCR。'
+    },
+    workflows: {
+      title: '使用场景',
+      description: '为聊天附件和知识库选择不同的解析深度',
+      chat: '聊天附件',
+      chatDescription: '控制附件加入当前请求前的解析方式',
+      knowledge: '知识库导入',
+      knowledgeDescription: '控制文档分块、索引和来源定位前的解析方式',
+      chatOptions: {
+        auto: '自动解析（推荐）',
+        fastText: '快速文本',
+        highFidelity: '高保真解析'
+      },
+      knowledgeOptions: {
+        completeIndex: '完整索引（推荐）',
+        fastIndex: '快速索引',
+        highFidelity: '高保真索引'
+      }
+    },
+    ocr: {
+      title: 'OCR 识别',
+      description: '按需安装本地模型，在设备上识别扫描 PDF',
+      enabled: '启用本地 OCR',
+      enabledDescription:
+        '模型安装后仅在本机通过 ONNX Runtime WebAssembly 运行，识别时不会上传文档。',
+      model: '本地模型',
+      runtime: '运行时',
+      provider: {
+        title: 'OCR 来源',
+        description: '本地模型与远程服务二选一，切换后保存设置生效。',
+        local: '本地模型',
+        remote: '远程服务（即将支持）',
+        remoteDescription:
+          '远程服务将支持 MinerU、PaddleOCR-VL 等接口，当前版本暂不可选。'
+      },
+      modelSelector: '当前 OCR 模型',
+      modelSelectorDescription: '选择已保存，聊天附件和知识库将使用此模型。',
+      pendingSelection: '模型选择尚未生效，点击“保存设置”后切换。',
+      installedOption: '已安装',
+      downloadableOption: '可下载',
+      openModelsDirectory: '打开模型目录',
+      storagePrefix: '模型按需安装到',
+      storageSuffix: '。可导出 ZIP，并在内网设备直接导入。',
+      recommended: '推荐',
+      quality: {
+        label: '质量：{{value}}',
+        values: {
+          basic: '基础',
+          balanced: '均衡',
+          high: '高'
+        }
+      },
+      speed: {
+        label: '速度：{{value}}',
+        values: {
+          fast: '快',
+          balanced: '均衡',
+          slow: '慢'
+        }
+      },
+      installed: '已安装并校验',
+      availableToDownload: '可从 ModelScope 下载',
+      download: '下载',
+      importZip: '导入 ZIP',
+      exportZip: '导出 ZIP',
+      delete: '删除',
+      confirmDelete: '确认删除',
+      cancel: '取消',
+      openRepository: '打开 ModelScope',
+      catalogUnavailable: '当前版本没有可用的 OCR 模型目录。',
+      mode: 'PDF OCR 策略',
+      modes: {
+        auto: '自动，仅识别无有效文本的页面',
+        always: '始终识别所有页面',
+        disabled: '仅使用 PDF 文本层'
+      },
+      modelLicense:
+        '模型采用 Apache License 2.0，并在加载前校验 SHA-256。',
+      operations: {
+        preparing: '正在准备模型文件',
+        downloading: '正在从 ModelScope 下载',
+        importing: '正在导入模型 ZIP',
+        installing: '正在校验并安装'
+      },
+      accessibility: {
+        downloadModel: '下载 {{name}}',
+        importModelZip: '从 ZIP 导入 {{name}}',
+        exportModelZip: '将 {{name}} 导出为 ZIP',
+        deleteModel: '删除 {{name}}',
+        cancelOperation: '取消 {{name}} 操作',
+        downloadProgress: '{{name}} 下载进度',
+        openRepository: '打开 {{name}} 的 ModelScope 页面'
+      },
+      notifications: {
+        installed: '{{name}} 已安装',
+        importedZip: '{{name}} 已从 ZIP 导入',
+        exportedZip: '{{name}} 已导出为 ZIP',
+        removed: 'OCR 模型已删除'
+      }
+    },
+    advanced: {
+      title: '高级解析设置',
+      maximumPages: '单文档最大 OCR 页数',
+      concurrency: 'OCR 并发数',
+      timeout: '每页 OCR 时间预算（秒）',
+      concurrencyHint:
+        '当前 WASM 基线按页串行执行；该值为后续批处理和硬件加速保留。'
+    },
+    diagnostic: {
+      title: '解析测试结果',
+      file: '文件',
+      format: '格式',
+      method: '处理方式',
+      pages: '页数',
+      ocrPages: 'OCR 页数',
+      characters: '提取字符',
+      duration: '耗时',
+      preview: '文本预览',
+      warnings: '警告',
+      methods: {
+        native: '原生解析',
+        ocr: '本地 OCR',
+        mixed: '原生解析与 OCR'
+      },
+      close: '关闭结果'
+    }
+  },
   model: {
     typeAriaLabel: '模型类型',
     types: {
@@ -209,7 +366,7 @@ export const settings = {
       speech: {
         label: '语音模型',
         description:
-          '选择已安装模型后保存设置生效；模型可按需下载或从本地目录导入。'
+          '选择已安装模型后保存设置生效；模型可按需下载或通过 ZIP 离线迁移。'
       }
     },
     profile: {

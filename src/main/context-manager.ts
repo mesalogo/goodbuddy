@@ -24,6 +24,7 @@ import type {
 } from './agent/runtime'
 import { encodeBoundedJpeg } from './bounded-jpeg'
 import { parseDocument } from './knowledge/document-parser'
+import type { ParsedDocument } from './knowledge/document-parser'
 
 type StoredTextContext = ContextAttachment & {
   kind: 'text'
@@ -94,7 +95,7 @@ function truncateUtf8(value: string, maximumBytes: number): string {
 }
 
 function formatParsedDocument(
-  sections: Awaited<ReturnType<typeof parseDocument>>['sections']
+  sections: ParsedDocument['sections']
 ): string {
   return sections
     .map(
@@ -121,6 +122,23 @@ function remoteAttachmentName(value: string): string {
 export class ContextManager {
   private readonly contexts = new Map<string, StoredContext>()
   private totalBytes = 0
+  private readonly documentParser: (
+    name: string,
+    buffer: Buffer,
+    purpose: 'chat-attachment'
+  ) => Promise<ParsedDocument>
+
+  constructor(options?: {
+    parseDocument?: (
+      name: string,
+      buffer: Buffer,
+      purpose: 'chat-attachment'
+    ) => Promise<ParsedDocument>
+  }) {
+    this.documentParser =
+      options?.parseDocument ??
+      ((name, buffer) => parseDocument(name, buffer))
+  }
 
   private toPublic(context: StoredContext): ContextAttachment {
     return {
@@ -245,7 +263,11 @@ export class ContextManager {
       )
     }
     if (supportedDocumentExtensions.has(extension)) {
-      const parsed = await parseDocument(name, data)
+      const parsed = await this.documentParser(
+        name,
+        data,
+        'chat-attachment'
+      )
       return this.storeText(
         name,
         truncateUtf8(
@@ -340,9 +362,10 @@ export class ContextManager {
             ) {
               throw new Error('PDF 或 Office 文档必须小于 20MB 且不能是目录')
             }
-            const parsed = await parseDocument(
+            const parsed = await this.documentParser(
               basename(canonicalPath),
-              await handle.readFile()
+              await handle.readFile(),
+              'chat-attachment'
             )
             attachments.push(
               this.storeText(

@@ -373,6 +373,47 @@ describe('SpeechModelManager downloads', () => {
       operations: []
     })
   })
+
+  it('round-trips a verified model through an offline ZIP archive', async () => {
+    const userData = await temporaryDirectory()
+    const modelBytes = new TextEncoder().encode('verified model bytes')
+    const tokenBytes = new TextEncoder().encode('verified tokens')
+    const catalog = downloadableCatalog(modelBytes, tokenBytes)
+    const manager = new SpeechModelManager({
+      userDataDirectory: userData,
+      catalog,
+      fetch: vi.fn<typeof fetch>(async (input) => {
+        const bytes = String(input).endsWith('model.onnx')
+          ? modelBytes
+          : tokenBytes
+        return new Response(bytes, {
+          headers: { 'content-length': String(bytes.byteLength) }
+        })
+      })
+    })
+    const archive = join(userData, 'speech-model.zip')
+
+    await manager.install('download-test-model')
+    await manager.exportArchive('download-test-model', archive)
+    await manager.remove('download-test-model')
+
+    await expect(
+      manager.importArchive('download-test-model', archive)
+    ).resolves.toMatchObject({
+      id: 'download-test-model',
+      source: 'local',
+      files: [
+        {
+          name: 'model.onnx',
+          sha256: sha256(modelBytes)
+        },
+        {
+          name: 'tokens.txt',
+          sha256: sha256(tokenBytes)
+        }
+      ]
+    })
+  })
 })
 
 describe('SpeechModelManager local import', () => {

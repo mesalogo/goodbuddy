@@ -34,6 +34,9 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
+    worker: {
+      format: 'es'
+    },
     plugins: [react()]
   }
 })

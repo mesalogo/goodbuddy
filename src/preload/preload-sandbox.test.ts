@@ -36,4 +36,17 @@ describe('sandboxed preload', () => {
       /(?:setComputerCapability|BrowserProfile).{0,80}(?:executablePath|command|env|args)/su
     )
   })
+
+  it('exposes model ZIP dialogs without renderer-controlled paths', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('importArchive: (modelId: string)')
+    expect(source).toContain('exportArchive: (modelId: string)')
+    expect(source).toContain('importOcrModelArchive: (modelId: string)')
+    expect(source).toContain('exportOcrModelArchive: (modelId: string)')
+    expect(source).not.toContain('importLocalDirectory:')
+    expect(source).not.toContain('importOcrModel:')
+  })
 })

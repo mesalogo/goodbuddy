@@ -6,7 +6,8 @@ import {
   FolderOpen,
   Mic,
   Square,
-  Trash2
+  Trash2,
+  Upload
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -408,24 +409,49 @@ export function SpeechModelSettingsSection({
                     {t('speech.actions.cancel')}
                   </button>
                 ) : installed ? (
-                  <button
-                    aria-label={t('speech.accessibility.deleteModel', {
-                      name: displayName
-                    })}
-                    className={
-                      confirmingRemove === entry.id
-                        ? 'danger-button'
-                        : 'danger-ghost'
-                    }
-                    disabled={busyModelId === entry.id}
-                    onClick={() => void remove(entry.id)}
-                    type="button"
-                  >
-                    <Trash2 aria-hidden="true" size={12} />
-                    {confirmingRemove === entry.id
-                      ? t('speech.actions.confirmDelete')
-                      : t('speech.actions.delete')}
-                  </button>
+                  <>
+                    <button
+                      aria-label={t(
+                        'speech.accessibility.exportModelZip',
+                        { name: displayName }
+                      )}
+                      className="secondary-button"
+                      disabled={busyModelId === entry.id}
+                      onClick={() =>
+                        void run(
+                          entry.id,
+                          () =>
+                            window.goodbuddy.speechModels!
+                              .exportArchive(entry.id),
+                          t('speech.notifications.exportedZip', {
+                            name: displayName
+                          })
+                        )
+                      }
+                      type="button"
+                    >
+                      <Download aria-hidden="true" size={13} />
+                      {t('speech.actions.exportZip')}
+                    </button>
+                    <button
+                      aria-label={t('speech.accessibility.deleteModel', {
+                        name: displayName
+                      })}
+                      className={
+                        confirmingRemove === entry.id
+                          ? 'danger-button'
+                          : 'danger-ghost'
+                      }
+                      disabled={busyModelId === entry.id}
+                      onClick={() => void remove(entry.id)}
+                      type="button"
+                    >
+                      <Trash2 aria-hidden="true" size={12} />
+                      {confirmingRemove === entry.id
+                        ? t('speech.actions.confirmDelete')
+                        : t('speech.actions.delete')}
+                    </button>
+                  </>
                 ) : (
                   <>
                     {!entry.manualOnly && (
@@ -455,7 +481,7 @@ export function SpeechModelSettingsSection({
                       </button>
                     )}
                     <button
-                      aria-label={t('speech.accessibility.importModel', {
+                      aria-label={t('speech.accessibility.importModelZip', {
                         name: displayName
                       })}
                       className="secondary-button"
@@ -465,16 +491,16 @@ export function SpeechModelSettingsSection({
                           entry.id,
                           () =>
                             window.goodbuddy.speechModels!
-                              .importLocalDirectory(entry.id),
-                          t('speech.notifications.imported', {
+                              .importArchive(entry.id),
+                          t('speech.notifications.importedZip', {
                             name: displayName
                           })
                         )
                       }
                       type="button"
                     >
-                      <FolderOpen aria-hidden="true" size={13} />
-                      {t('speech.actions.import')}
+                      <Upload aria-hidden="true" size={13} />
+                      {t('speech.actions.importZip')}
                     </button>
                   </>
                 )}

@@ -26,6 +26,12 @@ export const settings = {
       navigationDescription: 'LLMs, embedding models, and credentials',
       description: 'LLMs, embedding models, and credentials'
     },
+    documentParsing: {
+      label: 'Document parsing',
+      navigationDescription: 'Attachments, knowledge, and local OCR',
+      description:
+        'Configure extraction, conversion, and OCR for chat attachments and knowledge imports'
+    },
     runtime: {
       label: 'Agent Runtime',
       navigationDescription: 'OpenCode, Continue, and workspace settings',
@@ -76,6 +82,8 @@ export const settings = {
     saveAndTestRuntime: 'Save and test {{runtime}}',
     saving: 'Saving…',
     saveSettings: 'Save settings',
+    testParsing: 'Test parsing',
+    testingParsing: 'Parsing…',
     select: 'Select',
     selectFile: 'Select file',
     clear: 'Clear',
@@ -115,11 +123,18 @@ export const settings = {
     openRuntimeConfig: 'Could not open the Runtime configuration',
     selectWorkspace: 'Could not select the workspace folder',
     retainModelConnection: 'Keep at least one model connection',
-    clearLocalData: 'Could not clear local data'
+    clearLocalData: 'Could not clear local data',
+    documentParsingUnavailable: 'Document parsing is unavailable',
+    readDocumentParsing: 'Could not load document parsing settings',
+    saveDocumentParsing: 'Could not save document parsing settings',
+    testDocumentParsing: 'Document parsing test failed',
+    manageDocumentOcrModel: 'OCR model operation failed'
   },
   notifications: {
     settingsSaved: 'Settings saved',
-    connectionSucceeded: 'Connected: {{label}}'
+    connectionSucceeded: 'Connected: {{label}}',
+    documentParsingSaved: 'Document parsing settings saved',
+    documentParsingTestSucceeded: 'Document parsing test completed'
   },
   credentials: {
     none: 'Not configured',
@@ -212,6 +227,162 @@ export const settings = {
         'Continue remains unavailable without a configuration file and will not load a remote default model anonymously.'
     }
   },
+  documentParsing: {
+    status: {
+      title: 'Runtime status',
+      description: 'Capabilities currently available on this device',
+      available: 'Available',
+      unavailable: 'Unavailable',
+      verified: 'Verified',
+      native: 'Native document parsing',
+      nativeDetail:
+        'Text, HTML, text PDFs, and modern Office documents',
+      conversion: 'Legacy Office conversion',
+      conversionUnavailable:
+        'Not implemented yet; DOC, XLS, and PPT are currently unavailable',
+      localOcr: 'Local OCR',
+      ocrReady:
+        'The model is installed, SHA-256 verified, and available offline',
+      ocrUnavailable:
+        'The model is not installed or failed verification. Download it from ModelScope.',
+      partialNotice:
+        'Basic document parsing is available. Legacy Office conversion is not implemented yet; scanned PDFs use local OCR.'
+    },
+    workflows: {
+      title: 'Usage scenarios',
+      description:
+        'Choose different parsing depth for chat attachments and knowledge imports',
+      chat: 'Chat attachments',
+      chatDescription:
+        'Controls parsing before an attachment is added to the current request',
+      knowledge: 'Knowledge imports',
+      knowledgeDescription:
+        'Controls parsing before chunking, indexing, and source location',
+      chatOptions: {
+        auto: 'Automatic parsing (recommended)',
+        fastText: 'Fast text',
+        highFidelity: 'High-fidelity parsing'
+      },
+      knowledgeOptions: {
+        completeIndex: 'Complete indexing (recommended)',
+        fastIndex: 'Fast indexing',
+        highFidelity: 'High-fidelity indexing'
+      }
+    },
+    ocr: {
+      title: 'OCR recognition',
+      description:
+        'Install a local model on demand to recognize scanned PDFs on this device',
+      enabled: 'Enable local OCR',
+      enabledDescription:
+        'After installation, the model runs only on this device through ONNX Runtime WebAssembly. Documents are not uploaded for recognition.',
+      model: 'Local model',
+      runtime: 'Runtime',
+      provider: {
+        title: 'OCR source',
+        description:
+          'Choose either a local model or a remote service, then save settings to switch.',
+        local: 'Local model',
+        remote: 'Remote service (coming soon)',
+        remoteDescription:
+          'Remote integrations will support services such as MinerU and PaddleOCR-VL. They are disabled in this version.'
+      },
+      modelSelector: 'Current OCR model',
+      modelSelectorDescription:
+        'This saved model is used for chat attachments and knowledge imports.',
+      pendingSelection:
+        'This model selection is not active yet. Save settings to switch.',
+      installedOption: 'Installed',
+      downloadableOption: 'Available to download',
+      openModelsDirectory: 'Open model folder',
+      storagePrefix: 'Models are installed on demand in',
+      storageSuffix:
+        ' and can be exported as ZIP archives for offline devices.',
+      recommended: 'Recommended',
+      quality: {
+        label: 'Quality: {{value}}',
+        values: {
+          basic: 'Basic',
+          balanced: 'Balanced',
+          high: 'High'
+        }
+      },
+      speed: {
+        label: 'Speed: {{value}}',
+        values: {
+          fast: 'Fast',
+          balanced: 'Balanced',
+          slow: 'Slow'
+        }
+      },
+      installed: 'Installed and verified',
+      availableToDownload: 'Available from ModelScope',
+      download: 'Download',
+      importZip: 'Import ZIP',
+      exportZip: 'Export ZIP',
+      delete: 'Delete',
+      confirmDelete: 'Confirm delete',
+      cancel: 'Cancel',
+      openRepository: 'Open ModelScope',
+      catalogUnavailable:
+        'No OCR model catalog is available in this version.',
+      mode: 'PDF OCR strategy',
+      modes: {
+        auto: 'Automatic; recognize only pages without useful text',
+        always: 'Always recognize every page',
+        disabled: 'Use only the PDF text layer'
+      },
+      modelLicense:
+        'The model uses Apache License 2.0 and is SHA-256 verified before loading.',
+      operations: {
+        preparing: 'Preparing model files',
+        downloading: 'Downloading from ModelScope',
+        importing: 'Importing model ZIP',
+        installing: 'Verifying and installing'
+      },
+      accessibility: {
+        downloadModel: 'Download {{name}}',
+        importModelZip: 'Import {{name}} from a ZIP archive',
+        exportModelZip: 'Export {{name}} as a ZIP archive',
+        deleteModel: 'Delete {{name}}',
+        cancelOperation: 'Cancel {{name}} operation',
+        downloadProgress: '{{name}} download progress',
+        openRepository: 'Open the ModelScope page for {{name}}'
+      },
+      notifications: {
+        installed: '{{name}} installed',
+        importedZip: '{{name}} imported from ZIP',
+        exportedZip: '{{name}} exported as ZIP',
+        removed: 'OCR model deleted'
+      }
+    },
+    advanced: {
+      title: 'Advanced parsing settings',
+      maximumPages: 'Maximum OCR pages per document',
+      concurrency: 'OCR concurrency',
+      timeout: 'OCR time budget per page (seconds)',
+      concurrencyHint:
+        'The WASM baseline currently processes pages serially; this value is reserved for batching and hardware acceleration.'
+    },
+    diagnostic: {
+      title: 'Parsing test result',
+      file: 'File',
+      format: 'Format',
+      method: 'Method',
+      pages: 'Pages',
+      ocrPages: 'OCR pages',
+      characters: 'Extracted characters',
+      duration: 'Duration',
+      preview: 'Text preview',
+      warnings: 'Warnings',
+      methods: {
+        native: 'Native parsing',
+        ocr: 'Local OCR',
+        mixed: 'Native parsing and OCR'
+      },
+      close: 'Close result'
+    }
+  },
   model: {
     typeAriaLabel: 'Model type',
     types: {
@@ -228,7 +399,7 @@ export const settings = {
       speech: {
         label: 'Speech model',
         description:
-          'Select an installed model and save Settings to apply it; models can be downloaded or imported from a local folder.'
+          'Select an installed model and save Settings to apply it; models can be downloaded or moved offline with ZIP archives.'
       }
     },
     profile: {

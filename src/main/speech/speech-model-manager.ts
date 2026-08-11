@@ -25,12 +25,18 @@ import {
   type SpeechModelSnapshot
 } from '../../shared/speech-model-contracts'
 import { SPEECH_MODEL_CATALOG } from './speech-model-catalog'
+import {
+  exportModelArchive,
+  extractModelArchive
+} from '../model-archive'
 
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_REDIRECTS = 3
 const MANIFEST_FILE_NAME = 'manifest.json'
 const SELECTION_FILE_NAME = '.selection.json'
 const PARTIAL_SUFFIX = '.partial'
+const MAXIMUM_ARCHIVE_BYTES = 4 * 1024 * 1024 * 1024 - 1
+const ARCHIVE_OVERHEAD_BYTES = 1024 * 1024
 
 const selectionSchema = z
   .object({
@@ -373,6 +379,143 @@ export class SpeechModelManager {
       return installed
     } finally {
       detachExternalAbort()
+      this.operations.delete(entry.id)
+      if (stagingDirectory) {
+        await rm(stagingDirectory, { recursive: true, force: true })
+      }
+    }
+  }
+
+  async exportArchive(
+    modelId: string,
+    destinationPath: string
+  ): Promise<void> {
+    const entry = this.requireCatalogEntry(modelId)
+    await this.ensureRoot()
+    const installed = (await this.readInstalled()).find(
+      (model) => model.id === entry.id
+    )
+    if (!installed) {
+      throw new Error('只能导出已安装的语音模型')
+    }
+    const directory = this.modelDirectory(entry.id)
+    const files = []
+    for (const expected of entry.files) {
+      const recorded = installed.files.find(
+        (file) =>
+          file.name === expected.name && file.role === expected.role
+      )
+      if (
+        !recorded ||
+        recorded.size <= 0 ||
+        recorded.size > this.maxFileBytes ||
+        (expected.download &&
+          (recorded.size !== expected.download.size ||
+            recorded.sha256 !== expected.download.sha256))
+      ) {
+        throw new Error(`语音模型文件不可导出：${expected.name}`)
+      }
+      files.push({
+        name: expected.name,
+        role: expected.role,
+        size: recorded.size,
+        sha256: recorded.sha256
+      })
+    }
+    await exportModelArchive({
+      destinationPath,
+      sourceDirectory: directory,
+      descriptor: {
+        kind: 'speech',
+        modelId: entry.id,
+        displayName: entry.displayName,
+        files
+      }
+    })
+  }
+
+  async importArchive(
+    modelId: string,
+    archivePath: string
+  ): Promise<InstalledSpeechModel> {
+    const entry = this.requireCatalogEntry(modelId)
+    const expectedTotal = entry.files.reduce(
+      (total, file) =>
+        total + (file.download?.size ?? this.maxFileBytes),
+      0
+    )
+    const maximumTotalBytes = Math.min(
+      MAXIMUM_ARCHIVE_BYTES,
+      expectedTotal + ARCHIVE_OVERHEAD_BYTES
+    )
+    const operation = this.beginOperation(
+      entry.id,
+      'import',
+      expectedTotal
+    )
+    let stagingDirectory: string | undefined
+    try {
+      await this.ensureRoot()
+      await this.assertNotInstalled(entry.id)
+      stagingDirectory = await this.createStagingDirectory(entry.id)
+      operation.progress.phase = 'transferring'
+      const descriptor = await extractModelArchive({
+        archivePath,
+        destinationDirectory: stagingDirectory,
+        expectedKind: 'speech',
+        expectedModelId: entry.id,
+        expectedFiles: entry.files.map((file) => ({
+          name: file.name,
+          role: file.role
+        })),
+        maximumArchiveBytes: Math.min(
+          MAXIMUM_ARCHIVE_BYTES,
+          maximumTotalBytes + ARCHIVE_OVERHEAD_BYTES
+        ),
+        maximumFileBytes: this.maxFileBytes,
+        maximumTotalBytes,
+        signal: operation.controller.signal,
+        onProgress: (completedBytes) => {
+          operation.progress.completedBytes = completedBytes
+        }
+      })
+      for (const expected of entry.files) {
+        const archived = descriptor.files.find(
+          (file) =>
+            file.name === expected.name &&
+            file.role === expected.role
+        )
+        if (
+          !archived ||
+          archived.size > this.maxFileBytes ||
+          (expected.download &&
+            (archived.size !== expected.download.size ||
+              archived.sha256 !== expected.download.sha256))
+        ) {
+          throw new Error(
+            `语音模型 ZIP 与当前模型目录不匹配：${expected.name}`
+          )
+        }
+      }
+      operation.progress.phase = 'installing'
+      operation.progress.currentFile = null
+      const installed = installedSpeechModelSchema.parse({
+        id: entry.id,
+        displayName: entry.displayName,
+        source: 'local',
+        installedAt: new Date().toISOString(),
+        files: descriptor.files
+      })
+      await writeFile(
+        safeChild(stagingDirectory, MANIFEST_FILE_NAME),
+        `${JSON.stringify(installed, null, 2)}\n`,
+        { encoding: 'utf8', flag: 'wx' }
+      )
+      ensureNotAborted(operation.controller.signal)
+      await rename(stagingDirectory, this.modelDirectory(entry.id))
+      stagingDirectory = undefined
+      return installed
+    } finally {
       this.operations.delete(entry.id)
       if (stagingDirectory) {
         await rm(stagingDirectory, { recursive: true, force: true })

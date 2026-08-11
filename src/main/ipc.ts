@@ -74,6 +74,12 @@ import {
   embeddingSettingsSnapshotSchema
 } from '../shared/embedding-contracts'
 import {
+  documentOcrModelActionInputSchema,
+  documentOcrFailureSchema,
+  documentOcrResultSchema,
+  documentParsingSettingsUpdateSchema
+} from '../shared/document-parsing-contracts'
+import {
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
 } from '../shared/runtime-selection-contracts'
@@ -178,6 +184,9 @@ import type { VersionChecker } from './version-checker'
 import type { SpeechModelManager } from './speech/speech-model-manager'
 import type { SpeechTranscriptionService } from './speech/speech-transcription-service'
 import type { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinator'
+import type { DocumentParsingService } from './document-parsing-service'
+import type { DocumentOcrModelManager } from './document-ocr-model-manager'
+import type { DocumentOcrBroker } from './document-ocr-broker'
 import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
 import {
   magicNotePlainText,
@@ -321,6 +330,17 @@ const taskStatusRequestSchema = z
     status: z.enum(['completed', 'cancelled'])
   })
   .strict()
+
+const modelArchiveDialogFilters = [
+  {
+    name: 'GoodBuddy 模型 ZIP',
+    extensions: ['zip']
+  }
+]
+
+function ensureZipExtension(path: string): string {
+  return extname(path).toLowerCase() === '.zip' ? path : `${path}.zip`
+}
 const expertUpdateRequestSchema = z
   .object({
     expertId: assistantIdSchema,
@@ -575,7 +595,10 @@ export function registerIpcHandlers(
   selectedRuntimes?: SelectedRuntimeResolver,
   speechTranscriptionService?: SpeechTranscriptionService,
   knowledgeGateway?: KnowledgeMcpGateway,
-  launchWechatSidecar?: WechatSidecarLauncher
+  launchWechatSidecar?: WechatSidecarLauncher,
+  documentParsingService?: DocumentParsingService,
+  documentOcrModelManager?: DocumentOcrModelManager,
+  documentOcrBroker?: DocumentOcrBroker
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
   const pendingAgentQuestions = new Map<
@@ -2463,6 +2486,233 @@ export function registerIpcHandlers(
     }
   )
 
+  ipcMain.handle(ipcChannels.documentParsingGet, (event) => {
+    assertTrustedSender(event, window)
+    if (!documentParsingService) {
+      throw new Error('文档解析设置服务不可用')
+    }
+    return documentParsingService.snapshot()
+  })
+
+  ipcMain.handle(
+    ipcChannels.documentParsingUpdate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentParsingService) {
+        throw new Error('文档解析设置服务不可用')
+      }
+      return documentParsingService.update(
+        documentParsingSettingsUpdateSchema.parse(input)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentParsingTest,
+    async (event) => {
+      assertTrustedSender(event, window)
+      if (!documentParsingService) {
+        throw new Error('文档解析设置服务不可用')
+      }
+      const result = await dialog.showOpenDialog(window, {
+        title: '选择测试文档',
+        properties: ['openFile'],
+        filters: [
+          {
+            name: '支持的文档',
+            extensions: supportedDocumentExtensions.map((extension) =>
+              extension.slice(1)
+            )
+          }
+        ]
+      })
+      const selectedPath = result.filePaths[0]
+      if (result.canceled || !selectedPath) {
+        return undefined
+      }
+      try {
+        const canonicalPath = await realpath(selectedPath)
+        const fileStat = await stat(canonicalPath)
+        if (!fileStat.isFile() || fileStat.size > 20 * 1024 * 1024) {
+          throw new Error('测试文档必须小于 20MB 且不能是目录')
+        }
+        return documentParsingService.diagnose(
+          basename(canonicalPath),
+          await readFile(canonicalPath)
+        )
+      } catch (error) {
+        if (error instanceof Error && !('code' in error)) {
+          throw error
+        }
+        throw new Error('无法读取测试文档，请检查文件权限和状态', {
+          cause: error
+        })
+      }
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentOcrModelsInstall,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager || !documentParsingService) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      const { modelId } =
+        documentOcrModelActionInputSchema.parse(input)
+      return trackExecution(
+        documentOcrModelManager
+          .install(modelId)
+          .then(() => documentParsingService.snapshot())
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentOcrModelsCancel,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      const { modelId } =
+        documentOcrModelActionInputSchema.parse(input)
+      return documentOcrModelManager.cancel(modelId)
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentOcrModelsRemove,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager || !documentParsingService) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      const { modelId } =
+        documentOcrModelActionInputSchema.parse(input)
+      await documentOcrModelManager.remove(modelId)
+      return documentParsingService.snapshot()
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentOcrModelsImportArchive,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager || !documentParsingService) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      const { modelId } =
+        documentOcrModelActionInputSchema.parse(input)
+      const result = await dialog.showOpenDialog(window, {
+        title: '导入 OCR 模型 ZIP',
+        properties: ['openFile'],
+        filters: modelArchiveDialogFilters
+      })
+      const archivePath = result.filePaths[0]
+      if (result.canceled || !archivePath) {
+        return undefined
+      }
+      return trackExecution(
+        documentOcrModelManager
+          .importArchive(modelId, archivePath)
+          .then(() => documentParsingService.snapshot())
+      )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentOcrModelsExportArchive,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager || !documentParsingService) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      const { modelId } =
+        documentOcrModelActionInputSchema.parse(input)
+      const result = await dialog.showSaveDialog(window, {
+        title: '导出 OCR 模型 ZIP',
+        defaultPath: `${modelId}.zip`,
+        filters: modelArchiveDialogFilters
+      })
+      if (result.canceled || !result.filePath) {
+        return undefined
+      }
+      const destination = ensureZipExtension(result.filePath)
+      await documentOcrModelManager.exportArchive(
+        modelId,
+        destination
+      )
+      return documentParsingService.snapshot()
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentOcrModelsOpenRepository,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      const { modelId } =
+        documentOcrModelActionInputSchema.parse(input)
+      const snapshot = await documentOcrModelManager.getSnapshot()
+      const entry = snapshot.catalog.find(
+        (candidate) => candidate.id === modelId
+      )
+      if (!entry) {
+        throw new Error('未知的 OCR 模型')
+      }
+      await shell.openExternal(entry.repositoryUrl)
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentOcrModelsOpenDirectory,
+    async (event) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      await documentOcrModelManager.getSnapshot()
+      const error = await shell.openPath(
+        documentOcrModelManager.rootDirectory
+      )
+      if (error) {
+        throw new Error('无法打开 OCR 模型目录')
+      }
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentParsingOcrAssets,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrModelManager) {
+        throw new Error('本地 OCR 模型服务不可用')
+      }
+      const { modelId } =
+        documentOcrModelActionInputSchema.parse(input)
+      return documentOcrModelManager.getAssets(modelId)
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.documentParsingOcrRespond,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!documentOcrBroker) {
+        throw new Error('本地 OCR 任务服务不可用')
+      }
+      const result = documentOcrResultSchema.safeParse(input)
+      documentOcrBroker.respond(
+        result.success
+          ? result.data
+          : documentOcrFailureSchema.parse(input)
+      )
+    }
+  )
+
   ipcMain.handle(ipcChannels.versionCheck, async (event) => {
     assertTrustedSender(event, window)
     if (!versionChecker) {
@@ -2610,7 +2860,7 @@ export function registerIpcHandlers(
   )
 
   ipcMain.handle(
-    ipcChannels.speechModelsImportLocal,
+    ipcChannels.speechModelsImportArchive,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       if (!speechModelManager) {
@@ -2618,17 +2868,41 @@ export function registerIpcHandlers(
       }
       const { modelId } = speechModelActionInputSchema.parse(input)
       const result = await dialog.showOpenDialog(window, {
-        properties: ['openDirectory']
+        title: '导入语音模型 ZIP',
+        properties: ['openFile'],
+        filters: modelArchiveDialogFilters
       })
-      const directory = result.filePaths[0]
-      if (result.canceled || !directory) {
+      const archivePath = result.filePaths[0]
+      if (result.canceled || !archivePath) {
         return undefined
       }
       return trackExecution(
         speechModelManager
-          .registerLocalDirectory(modelId, directory)
+          .importArchive(modelId, archivePath)
           .then(() => speechModelManager.getSnapshot())
       )
+    }
+  )
+
+  ipcMain.handle(
+    ipcChannels.speechModelsExportArchive,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!speechModelManager) {
+        throw new Error('语音模型服务不可用')
+      }
+      const { modelId } = speechModelActionInputSchema.parse(input)
+      const result = await dialog.showSaveDialog(window, {
+        title: '导出语音模型 ZIP',
+        defaultPath: `${modelId}.zip`,
+        filters: modelArchiveDialogFilters
+      })
+      if (result.canceled || !result.filePath) {
+        return undefined
+      }
+      const destination = ensureZipExtension(result.filePath)
+      await speechModelManager.exportArchive(modelId, destination)
+      return speechModelManager.getSnapshot()
     }
   )
 

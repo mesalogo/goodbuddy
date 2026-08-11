@@ -67,6 +67,10 @@ import { KnowledgeEmbeddingIndexRepository } from './knowledge/knowledge-embeddi
 import { GlobalTlsPolicy } from './global-tls-policy'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import { waitForCleanup } from './shutdown'
+import { DocumentParsingSettingsStore } from './document-parsing-settings-store'
+import { DocumentOcrModelManager } from './document-ocr-model-manager'
+import { DocumentOcrBroker } from './document-ocr-broker'
+import { DocumentParsingService } from './document-parsing-service'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -98,6 +102,8 @@ let knowledgeGateway: KnowledgeMcpGateway | undefined
 let assistantDatabase: AssistantDatabase | undefined
 let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
+let documentOcrBroker: DocumentOcrBroker | undefined
+let documentOcrModelManager: DocumentOcrModelManager | undefined
 
 function createEmbeddingProvider(
   settings: ResolvedRuntimeSettings
@@ -340,6 +346,20 @@ if (hasSingleInstanceLock) {
     const applicationSettingsStore = new ApplicationSettingsStore(
       join(app.getPath('userData'), 'application-settings.json')
     )
+    const documentParsingSettingsStore =
+      new DocumentParsingSettingsStore(
+        join(app.getPath('userData'), 'document-parsing-settings.json')
+      )
+    documentOcrModelManager = new DocumentOcrModelManager({
+      userDataDirectory: app.getPath('userData'),
+      fetch: globalThis.fetch
+    })
+    documentOcrBroker = new DocumentOcrBroker(mainWindow)
+    const documentParsingService = new DocumentParsingService(
+      documentParsingSettingsStore,
+      documentOcrModelManager,
+      documentOcrBroker
+    )
     const versionChecker = new VersionChecker({
       fetch: globalThis.fetch,
       currentVersion: app.getVersion(),
@@ -362,7 +382,8 @@ if (hasSingleInstanceLock) {
     knowledgeService = new KnowledgeService({
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
-      extractStructured: createModelGraphExtractor(settingsStore)
+      extractStructured: createModelGraphExtractor(settingsStore),
+      parseDocument: documentParsingService.parse
     })
     await knowledgeService.initialize()
     const embeddingIndexCoordinator = new EmbeddingIndexCoordinator(
@@ -459,7 +480,9 @@ if (hasSingleInstanceLock) {
     selectedRuntimeManager = new SelectedRuntimeManager(
       createSelectedRuntime
     )
-    const contextManager = new ContextManager()
+    const contextManager = new ContextManager({
+      parseDocument: documentParsingService.parse
+    })
     const approvalBroker = new ToolApprovalBroker()
 
     const shortcutRegistered = globalShortcut.register(shortcut, () => {
@@ -510,7 +533,10 @@ if (hasSingleInstanceLock) {
       selectedRuntimeManager,
       speechTranscriptionService,
       knowledgeGateway,
-      launchWechatSidecar
+      launchWechatSidecar,
+      documentParsingService,
+      documentOcrModelManager,
+      documentOcrBroker
     )
     loadMainWindow(mainWindow)
 
@@ -550,7 +576,9 @@ app.on('before-quit', (event) => {
         Promise.resolve().then(() => knowledgeGateway?.dispose()),
         Promise.resolve().then(() => knowledgeService?.dispose()),
         Promise.resolve().then(() => browserService?.dispose()),
-        Promise.resolve().then(() => globalTlsPolicy?.dispose())
+        Promise.resolve().then(() => globalTlsPolicy?.dispose()),
+        Promise.resolve().then(() => documentOcrModelManager?.dispose()),
+        Promise.resolve().then(() => documentOcrBroker?.dispose())
       ])
       globalShortcut.unregisterAll()
       tray?.destroy()

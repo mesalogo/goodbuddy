@@ -24,6 +24,10 @@ const electronMocks = vi.hoisted(() => {
       canceled: true,
       filePaths: [] as string[]
     })),
+    showSaveDialog: vi.fn(async () => ({
+      canceled: true,
+      filePath: undefined as string | undefined
+    })),
     openPath: vi.fn(async () => ''),
     showItemInFolder: vi.fn(),
     openExternal: vi.fn(async () => undefined)
@@ -248,7 +252,8 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: class {},
   dialog: {
-    showOpenDialog: electronMocks.showOpenDialog
+    showOpenDialog: electronMocks.showOpenDialog,
+    showSaveDialog: electronMocks.showSaveDialog
   },
   ipcMain: {
     handle: electronMocks.handle,
@@ -289,6 +294,180 @@ vi.mock('./channels/channel-env', () => ({
     }
   )
 }))
+
+describe('registerIpcHandlers model ZIP dialogs', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('imports and exports speech and OCR ZIPs through trusted dialogs', async () => {
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const speechSnapshot = {
+      catalog: [],
+      installed: [],
+      operations: []
+    }
+    const speechModelManager = {
+      rootDirectory: 'C:\\models\\speech',
+      importArchive: vi.fn(async () => speechSnapshot),
+      exportArchive: vi.fn(async () => undefined),
+      getSnapshot: vi.fn(async () => speechSnapshot),
+      cancel: vi.fn()
+    }
+    const ocrSnapshot = {
+      settings: {},
+      models: {
+        catalog: [],
+        installed: [],
+        operations: []
+      }
+    }
+    const documentParsingService = {
+      snapshot: vi.fn(async () => ocrSnapshot)
+    }
+    const documentOcrModelManager = {
+      importArchive: vi.fn(async () => undefined),
+      exportArchive: vi.fn(async () => undefined)
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      speechModelManager as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      documentParsingService as never,
+      documentOcrModelManager as never
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.speechModelsImportArchive
+      )?.(event, { modelId: 'speech-model' })
+    ).resolves.toBeUndefined()
+    expect(speechModelManager.importArchive).not.toHaveBeenCalled()
+
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['C:\\transfer\\speech.zip']
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.speechModelsImportArchive
+      )?.(event, { modelId: 'speech-model' })
+    ).resolves.toBe(speechSnapshot)
+    expect(electronMocks.showOpenDialog).toHaveBeenLastCalledWith(
+      window,
+      expect.objectContaining({
+        properties: ['openFile'],
+        filters: [
+          {
+            name: 'GoodBuddy 模型 ZIP',
+            extensions: ['zip']
+          }
+        ]
+      })
+    )
+    expect(speechModelManager.importArchive).toHaveBeenCalledWith(
+      'speech-model',
+      'C:\\transfer\\speech.zip'
+    )
+
+    electronMocks.showSaveDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePath: 'C:\\transfer\\speech-model'
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.speechModelsExportArchive
+      )?.(event, { modelId: 'speech-model' })
+    ).resolves.toBe(speechSnapshot)
+    expect(speechModelManager.exportArchive).toHaveBeenCalledWith(
+      'speech-model',
+      'C:\\transfer\\speech-model.zip'
+    )
+
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['C:\\transfer\\ocr.zip']
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentOcrModelsImportArchive
+      )?.(event, { modelId: 'ocr-model' })
+    ).resolves.toBe(ocrSnapshot)
+    expect(documentOcrModelManager.importArchive).toHaveBeenCalledWith(
+      'ocr-model',
+      'C:\\transfer\\ocr.zip'
+    )
+
+    electronMocks.showSaveDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePath: 'C:\\transfer\\ocr-model.ZIP'
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentOcrModelsExportArchive
+      )?.(event, { modelId: 'ocr-model' })
+    ).resolves.toBe(ocrSnapshot)
+    expect(documentOcrModelManager.exportArchive).toHaveBeenCalledWith(
+      'ocr-model',
+      'C:\\transfer\\ocr-model.ZIP'
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.speechModelsExportArchive
+      )?.(
+        {
+          sender: {},
+          senderFrame: webContents.mainFrame
+        },
+        { modelId: 'speech-model' }
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentOcrModelsImportArchive
+      )?.(event, {})
+    ).rejects.toThrow()
+
+    await dispose()
+  })
+})
 
 describe('registerIpcHandlers connection tests', () => {
   afterEach(() => {

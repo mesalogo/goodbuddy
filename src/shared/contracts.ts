@@ -74,6 +74,15 @@ import type {
   EmbeddingIndexStatus,
   EmbeddingSettingsSnapshot
 } from './embedding-contracts'
+import type {
+  DocumentOcrAssets,
+  DocumentOcrFailure,
+  DocumentOcrRequest,
+  DocumentOcrResult,
+  DocumentParsingDiagnostic,
+  DocumentParsingSettings,
+  DocumentParsingSnapshot
+} from './document-parsing-contracts'
 import type { WeixinBindingSnapshot } from './weixin-channel-contracts'
 import type { RemoteChannelActivity } from './remote-channel-contracts'
 import {
@@ -1038,7 +1047,10 @@ export type DesktopApi = {
     cancel: (modelId: string) => Promise<boolean>
     remove: (modelId: string) => Promise<SpeechModelSnapshot>
     select: (modelId: string | null) => Promise<SpeechModelSnapshot>
-    importLocalDirectory: (
+    importArchive: (
+      modelId: string
+    ) => Promise<SpeechModelSnapshot | undefined>
+    exportArchive: (
       modelId: string
     ) => Promise<SpeechModelSnapshot | undefined>
     openRepository: (modelId: string) => Promise<void>
@@ -1057,6 +1069,38 @@ export type DesktopApi = {
     cancel: (jobId: string) => Promise<boolean>
     onStatus: (
       listener: (status: EmbeddingIndexStatus) => void
+    ) => () => void
+  }
+  documentParsing?: {
+    getSnapshot: () => Promise<DocumentParsingSnapshot>
+    update: (
+      input: DocumentParsingSettings
+    ) => Promise<DocumentParsingSnapshot>
+    test: () => Promise<DocumentParsingDiagnostic | undefined>
+    installOcrModel: (
+      modelId: string
+    ) => Promise<DocumentParsingSnapshot>
+    cancelOcrModelOperation: (modelId: string) => Promise<boolean>
+    removeOcrModel: (
+      modelId: string
+    ) => Promise<DocumentParsingSnapshot>
+    importOcrModelArchive: (
+      modelId: string
+    ) => Promise<DocumentParsingSnapshot | undefined>
+    exportOcrModelArchive: (
+      modelId: string
+    ) => Promise<DocumentParsingSnapshot | undefined>
+    openOcrModelRepository: (modelId: string) => Promise<void>
+    openOcrModelsDirectory: () => Promise<void>
+    getOcrAssets: (modelId: string) => Promise<DocumentOcrAssets>
+    respondOcr: (
+      response: DocumentOcrResult | DocumentOcrFailure
+    ) => Promise<void>
+    onOcrRequest: (
+      listener: (request: DocumentOcrRequest) => void
+    ) => () => void
+    onOcrCancel: (
+      listener: (requestId: string) => void
     ) => () => void
   }
   projects: {

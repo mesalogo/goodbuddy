@@ -14,6 +14,10 @@ export const settingsCategoryList = [
     translationKey: 'model'
   },
   {
+    id: 'document-parsing',
+    translationKey: 'documentParsing'
+  },
+  {
     id: 'runtime',
     translationKey: 'runtime'
   },

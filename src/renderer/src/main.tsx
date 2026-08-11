@@ -17,6 +17,7 @@ import {
   loadAppearanceTheme,
   resolveAppearanceTheme
 } from './theme'
+import { installDocumentOcrBridge } from './document-ocr-bridge'
 import './styles.css'
 
 const root = document.getElementById('root')
@@ -42,6 +43,8 @@ applyAppearanceTheme(
       window.matchMedia('(prefers-color-scheme: dark)').matches
   )
 )
+
+installDocumentOcrBridge()
 
 createRoot(root).render(
   <StrictMode>

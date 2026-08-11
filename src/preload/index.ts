@@ -75,6 +75,15 @@ import type {
   EmbeddingIndexStatus,
   EmbeddingSettingsSnapshot
 } from '../shared/embedding-contracts'
+import type {
+  DocumentOcrAssets,
+  DocumentOcrFailure,
+  DocumentOcrRequest,
+  DocumentOcrResult,
+  DocumentParsingDiagnostic,
+  DocumentParsingSettings,
+  DocumentParsingSnapshot
+} from '../shared/document-parsing-contracts'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
 import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
@@ -345,9 +354,14 @@ const desktopApi: DesktopApi = {
         ipcChannels.speechModelsSelect,
         { modelId }
       ) as Promise<SpeechModelSnapshot>,
-    importLocalDirectory: (modelId: string) =>
+    importArchive: (modelId: string) =>
       ipcRenderer.invoke(
-        ipcChannels.speechModelsImportLocal,
+        ipcChannels.speechModelsImportArchive,
+        { modelId }
+      ) as Promise<SpeechModelSnapshot | undefined>,
+    exportArchive: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.speechModelsExportArchive,
         { modelId }
       ) as Promise<SpeechModelSnapshot | undefined>,
     openRepository: async (modelId: string) => {
@@ -399,6 +413,94 @@ const desktopApi: DesktopApi = {
       return () =>
         ipcRenderer.removeListener(
           ipcChannels.embeddingIndexStatusChanged,
+          handler
+        )
+    }
+  },
+  documentParsing: {
+    getSnapshot: () =>
+      ipcRenderer.invoke(
+        ipcChannels.documentParsingGet
+      ) as Promise<DocumentParsingSnapshot>,
+    update: (input: DocumentParsingSettings) =>
+      ipcRenderer.invoke(
+        ipcChannels.documentParsingUpdate,
+        input
+      ) as Promise<DocumentParsingSnapshot>,
+    test: () =>
+      ipcRenderer.invoke(
+        ipcChannels.documentParsingTest
+      ) as Promise<DocumentParsingDiagnostic | undefined>,
+    installOcrModel: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsInstall,
+        { modelId }
+      ) as Promise<DocumentParsingSnapshot>,
+    cancelOcrModelOperation: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsCancel,
+        { modelId }
+      ) as Promise<boolean>,
+    removeOcrModel: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsRemove,
+        { modelId }
+      ) as Promise<DocumentParsingSnapshot>,
+    importOcrModelArchive: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsImportArchive,
+        { modelId }
+      ) as Promise<DocumentParsingSnapshot | undefined>,
+    exportOcrModelArchive: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsExportArchive,
+        { modelId }
+      ) as Promise<DocumentParsingSnapshot | undefined>,
+    openOcrModelRepository: async (modelId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsOpenRepository,
+        { modelId }
+      )
+    },
+    openOcrModelsDirectory: async () => {
+      await ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsOpenDirectory
+      )
+    },
+    getOcrAssets: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.documentParsingOcrAssets,
+        { modelId }
+      ) as Promise<DocumentOcrAssets>,
+    respondOcr: async (
+      response: DocumentOcrResult | DocumentOcrFailure
+    ) => {
+      await ipcRenderer.invoke(
+        ipcChannels.documentParsingOcrRespond,
+        response
+      )
+    },
+    onOcrRequest: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        request: DocumentOcrRequest
+      ): void => listener(request)
+      ipcRenderer.on(ipcChannels.documentParsingOcrRequest, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.documentParsingOcrRequest,
+          handler
+        )
+    },
+    onOcrCancel: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        requestId: string
+      ): void => listener(requestId)
+      ipcRenderer.on(ipcChannels.documentParsingOcrCancel, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.documentParsingOcrCancel,
           handler
         )
     }

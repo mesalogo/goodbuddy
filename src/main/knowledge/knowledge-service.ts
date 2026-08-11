@@ -18,7 +18,12 @@ import {
   relative,
   resolve
 } from 'node:path'
-import { chunkDocument, parseDocument, supportedDocumentExtensions } from './document-parser'
+import {
+  chunkDocument,
+  parseDocument,
+  supportedDocumentExtensions,
+  type ParsedDocument
+} from './document-parser'
 import { classifyEmbeddingError } from './embedding-errors'
 import {
   extractKnowledgeGraph,
@@ -99,6 +104,12 @@ export type KnowledgeServiceOptions = {
   urlImporter?: UrlImporter
   embeddingProvider?: EmbeddingProvider
   embeddingBatchSize?: number
+  parseDocument?: (
+    name: string,
+    buffer: Buffer,
+    purpose: 'knowledge-index',
+    signal?: AbortSignal
+  ) => Promise<ParsedDocument>
 }
 
 const supportedExtensions = new Set<string>(supportedDocumentExtensions)
@@ -118,6 +129,9 @@ export class KnowledgeService {
   private readonly managedRoot: string
   private readonly extractStructured?: ExtractStructured
   private readonly urlImporter: UrlImporter
+  private readonly documentParser: NonNullable<
+    KnowledgeServiceOptions['parseDocument']
+  >
   private embeddingProvider?: EmbeddingProvider
   private readonly embeddingBatchSize: number
   private readonly watchers = new Map<string, FSWatcher>()
@@ -131,6 +145,9 @@ export class KnowledgeService {
     this.managedRoot = resolve(options.managedRoot)
     this.extractStructured = options.extractStructured
     this.urlImporter = options.urlImporter ?? new UrlImporter()
+    this.documentParser =
+      options.parseDocument ??
+      ((name, buffer) => parseDocument(name, buffer))
     this.embeddingProvider = options.embeddingProvider
     const embeddingBatchSize = options.embeddingBatchSize ?? 16
     if (
@@ -839,9 +856,11 @@ export class KnowledgeService {
           })
           continue
         }
-        const parsed = await parseDocument(
+        const parsed = await this.documentParser(
           basename(file.absolutePath),
-          buffer
+          buffer,
+          'knowledge-index',
+          this.lifecycleController.signal
         )
         this.updateKnowledgeTask(parsingTask.id, {
           progress: 75,

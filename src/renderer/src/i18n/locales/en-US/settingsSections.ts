@@ -7,11 +7,11 @@ export const settingsSections = {
   speech: {
     title: 'Speech models',
     description:
-      'Model weights are not bundled. Download them as needed or import them from a local directory.',
+      'Model weights are not bundled. Download them as needed or move them offline with ZIP archives.',
     openModelsDirectory: 'Open models directory',
     storagePrefix: 'Models are stored in',
     storageSuffix:
-      '. Automatic downloads pin the source revision and verify file sizes and SHA-256 hashes. You can also download models from their repositories and import them.',
+      '. Automatic downloads pin the source revision and verify SHA-256 hashes. Export a ZIP on an online device and import it directly on an offline device.',
     availableModels: 'Available speech models',
     loading: 'Loading speech models…',
     errors: {
@@ -59,7 +59,8 @@ export const settingsSections = {
       delete: 'Delete',
       confirmDelete: 'Confirm delete',
       download: 'Download',
-      import: 'Import',
+      importZip: 'Import ZIP',
+      exportZip: 'Export ZIP',
       modelDetails: 'Model details',
       openRepository: 'Open model repository'
     },
@@ -69,13 +70,15 @@ export const settingsSections = {
       cancelOperation: 'Cancel the {{name}} operation',
       deleteModel: 'Delete {{name}}',
       downloadModel: 'Download {{name}}',
-      importModel: 'Import {{name}} from a local directory',
+      importModelZip: 'Import {{name}} from a ZIP archive',
+      exportModelZip: 'Export {{name}} as a ZIP archive',
       downloadProgress: '{{name}} download progress',
       openRepository: 'Open the {{name}} model repository'
     },
     notifications: {
       installed: '{{name}} installed',
-      imported: '{{name}} imported from a local directory',
+      importedZip: '{{name}} imported from ZIP',
+      exportedZip: '{{name}} exported as ZIP',
       removed: 'Speech model deleted'
     },
     details: {

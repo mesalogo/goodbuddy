@@ -30,6 +30,7 @@ export type PageTab<T extends string> = {
 export type SegmentedOption<T extends string> = {
   value: T
   label: string
+  disabled?: boolean
 }
 
 function nextControlIndex(
@@ -258,16 +259,35 @@ export function SegmentedControl<T extends string>({
               ? 'segmented-control__option segmented-control__option--active'
               : 'segmented-control__option'
           }
-          disabled={disabled}
+          disabled={disabled || option.disabled}
           key={option.value}
           onClick={() => onChange(option.value)}
           onKeyDown={(event) => {
-            const nextIndex = nextControlIndex(
+            let nextIndex = nextControlIndex(
               event,
               index,
               options.length
             )
             if (nextIndex === undefined) {
+              return
+            }
+            const direction =
+              event.key === 'ArrowLeft' ||
+              event.key === 'ArrowUp' ||
+              event.key === 'End'
+                ? -1
+                : 1
+            for (
+              let attempts = 0;
+              attempts < options.length &&
+              options[nextIndex]?.disabled;
+              attempts += 1
+            ) {
+              nextIndex =
+                (nextIndex + direction + options.length) %
+                options.length
+            }
+            if (options[nextIndex]?.disabled) {
               return
             }
             event.preventDefault()

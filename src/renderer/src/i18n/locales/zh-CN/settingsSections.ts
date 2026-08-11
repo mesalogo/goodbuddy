@@ -1,11 +1,11 @@
 export const settingsSections = {
   speech: {
     title: '语音模型',
-    description: '应用不内置模型权重，按需下载或从本地目录导入',
+    description: '应用不内置模型权重，按需下载或通过 ZIP 离线迁移',
     openModelsDirectory: '打开模型目录',
     storagePrefix: '模型保存在',
     storageSuffix:
-      '。自动下载会固定来源版本，并校验文件大小和 SHA-256；也可以从模型仓库手动下载后导入。',
+      '。自动下载会固定来源版本并校验 SHA-256；外网设备可导出 ZIP，内网设备可直接导入。',
     availableModels: '可用语音模型',
     loading: '正在读取语音模型…',
     errors: {
@@ -52,7 +52,8 @@ export const settingsSections = {
       delete: '删除',
       confirmDelete: '确认删除',
       download: '下载',
-      import: '导入',
+      importZip: '导入 ZIP',
+      exportZip: '导出 ZIP',
       modelDetails: '模型详情',
       openRepository: '打开模型仓库'
     },
@@ -62,13 +63,15 @@ export const settingsSections = {
       cancelOperation: '取消 {{name}} 操作',
       deleteModel: '删除 {{name}}',
       downloadModel: '下载 {{name}}',
-      importModel: '从本地目录导入 {{name}}',
+      importModelZip: '从 ZIP 导入 {{name}}',
+      exportModelZip: '将 {{name}} 导出为 ZIP',
       downloadProgress: '{{name}}下载进度',
       openRepository: '打开 {{name}} 模型仓库'
     },
     notifications: {
       installed: '{{name}} 已安装',
-      imported: '{{name}} 已从本地目录导入',
+      importedZip: '{{name}} 已从 ZIP 导入',
+      exportedZip: '{{name}} 已导出为 ZIP',
       removed: '语音模型已删除'
     },
     details: {

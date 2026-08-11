@@ -478,7 +478,8 @@ describe('SettingsPanel runtime files', () => {
           cancel: vi.fn(async () => true),
           remove: vi.fn(),
           select: selectSpeechModel,
-          importLocalDirectory: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
         },
