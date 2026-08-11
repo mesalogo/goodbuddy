@@ -1,5 +1,6 @@
 import { Download, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   CapabilityAssignments,
   CapabilitySnapshot,
@@ -7,13 +8,8 @@ import type {
 } from '../../shared/capability-contracts'
 import { SettingsCategoryHeader } from './SettingsPrimitives'
 
-const runtimeLabels: Record<RuntimeTarget, string> = {
-  model: '模型',
-  opencode: 'OpenCode',
-  continue: 'Continue'
-}
-
 export function SkillsSettingsSection(): React.JSX.Element {
+  const { t } = useTranslation('settingsSections')
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>()
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
@@ -23,9 +19,13 @@ export function SkillsSettingsSection(): React.JSX.Element {
       .getSnapshot()
       .then(setSnapshot)
       .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : '读取 Skills 失败')
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : t('skills.errors.readFailed')
+        )
       })
-  }, [])
+  }, [t])
 
   const run = async (
     key: string,
@@ -36,7 +36,11 @@ export function SkillsSettingsSection(): React.JSX.Element {
     try {
       setSnapshot(await operation())
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Skill 操作失败')
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : t('skills.errors.operationFailed')
+      )
     } finally {
       setBusy(undefined)
     }
@@ -72,7 +76,7 @@ export function SkillsSettingsSection(): React.JSX.Element {
               type="button"
             >
               <Download aria-hidden="true" size={14} />
-              导入 Skill 目录
+              {t('skills.actions.importDirectory')}
             </button>
             <button
               className="secondary-button"
@@ -85,7 +89,7 @@ export function SkillsSettingsSection(): React.JSX.Element {
               type="button"
             >
               <Download aria-hidden="true" size={14} />
-              导入 Skill ZIP
+              {t('skills.actions.importZip')}
             </button>
           </>
         }
@@ -93,13 +97,17 @@ export function SkillsSettingsSection(): React.JSX.Element {
         error={error}
         headingId="skills-settings-heading"
       />
-      <section aria-label="Skills 列表" className="settings-section">
+      <section
+        aria-label={t('skills.listLabel')}
+        className="settings-section"
+      >
 
       <p className="settings-notice">
-        Skill 以本地能力说明注入所选目标，不会写入 Runtime
-        自有配置。新导入的 Skill 默认启用，并分配给直连模型、OpenCode 和 Continue。
+        {t('skills.notice')}
       </p>
-      {!snapshot && !error && <p className="settings-empty">正在读取 Skills…</p>}
+      {!snapshot && !error && (
+        <p className="settings-empty">{t('skills.loading')}</p>
+      )}
       <div className="capability-list">
         {snapshot?.skills.map((skill) => (
           <article className="capability-card" key={skill.id}>
@@ -107,13 +115,17 @@ export function SkillsSettingsSection(): React.JSX.Element {
               <div>
                 <strong>{skill.name}</strong>
                 <small>
-                  {skill.source === 'builtin' ? '内置' : '已导入'} ·{' '}
-                  {skill.version ?? '未标注版本'}
+                  {skill.source === 'builtin'
+                    ? t('skills.source.builtin')
+                    : t('skills.source.imported')}{' '}
+                  · {skill.version ?? t('skills.versionMissing')}
                 </small>
               </div>
               <label className="capability-switch">
                 <input
-                  aria-label={`启用 ${skill.name}`}
+                  aria-label={t('skills.enableAria', {
+                    name: skill.name
+                  })}
                   checked={skill.enabled}
                   disabled={Boolean(busy)}
                   onChange={(event) =>
@@ -126,7 +138,11 @@ export function SkillsSettingsSection(): React.JSX.Element {
                   }
                   type="checkbox"
                 />
-                <span>{skill.enabled ? '已启用' : '已停用'}</span>
+                <span>
+                  {skill.enabled
+                    ? t('skills.enabled')
+                    : t('skills.disabled')}
+                </span>
               </label>
             </div>
             <p>{skill.description}</p>
@@ -136,8 +152,8 @@ export function SkillsSettingsSection(): React.JSX.Element {
               ))}
             </div>
             <div className="runtime-assignments">
-              <small>分配给</small>
-              {(Object.keys(runtimeLabels) as RuntimeTarget[]).map(
+              <small>{t('skills.assignedTo')}</small>
+              {(['model', 'opencode', 'continue'] as RuntimeTarget[]).map(
                 (target) => (
                   <label key={target}>
                     <input
@@ -153,13 +169,15 @@ export function SkillsSettingsSection(): React.JSX.Element {
                       }
                       type="checkbox"
                     />
-                    {runtimeLabels[target]}
+                    {t(`skills.runtimeLabels.${target}`)}
                   </label>
                 )
               )}
               {skill.source === 'imported' && (
                 <button
-                  aria-label={`删除 ${skill.name}`}
+                  aria-label={t('skills.deleteAria', {
+                    name: skill.name
+                  })}
                   className="capability-remove"
                   disabled={Boolean(busy)}
                   onClick={() =>
@@ -170,7 +188,7 @@ export function SkillsSettingsSection(): React.JSX.Element {
                   type="button"
                 >
                   <Trash2 size={13} />
-                  删除
+                  {t('skills.actions.delete')}
                 </button>
               )}
             </div>

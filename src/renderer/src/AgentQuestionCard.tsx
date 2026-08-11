@@ -1,5 +1,6 @@
 import { CircleHelp } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   AgentEvent,
   AgentQuestionAnswer
@@ -18,6 +19,7 @@ export function AgentQuestionCard({
   onReject,
   onSubmit
 }: AgentQuestionCardProps): React.JSX.Element {
+  const { t } = useTranslation('workspace')
   const [selected, setSelected] = useState<string[][]>(
     value.questions.map(() => [])
   )
@@ -49,7 +51,7 @@ export function AgentQuestionCard({
       await action()
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '回答提交失败，请重试'
+        reason instanceof Error ? reason.message : t('question.error')
       )
       setSubmitting(false)
     }
@@ -67,7 +69,7 @@ export function AgentQuestionCard({
     >
       <header>
         <CircleHelp aria-hidden="true" size={18} />
-        <strong>OpenCode 需要补充信息</strong>
+        <strong>{t('question.title')}</strong>
       </header>
       {value.questions.map((question, questionIndex) => (
         <fieldset key={`${question.header}:${questionIndex}`}>
@@ -117,7 +119,7 @@ export function AgentQuestionCard({
           })}
           {(question.custom || question.options.length === 0) && (
             <label className="agent-question-card__custom">
-              <span>其他回答</span>
+              <span>{t('question.otherAnswer')}</span>
               <input
                 disabled={submitting}
                 maxLength={2_000}
@@ -136,7 +138,7 @@ export function AgentQuestionCard({
                     )
                   }
                 }}
-                placeholder="输入你的回答"
+                placeholder={t('question.answerPlaceholder')}
                 type="text"
                 value={custom[questionIndex] ?? ''}
               />
@@ -156,14 +158,16 @@ export function AgentQuestionCard({
           onClick={() => void run(onReject)}
           type="button"
         >
-          跳过
+          {t('question.skip')}
         </button>
         <button
           className="primary-button"
           disabled={submitting || !complete}
           type="submit"
         >
-          {submitting ? '提交中…' : '提交回答'}
+          {submitting
+            ? t('question.submitting')
+            : t('question.submit')}
         </button>
       </footer>
     </form>

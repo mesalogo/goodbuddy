@@ -32,6 +32,8 @@ import {
   useRef,
   useState
 } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
   EmptyState,
   PageHeader,
@@ -242,32 +244,98 @@ export type KnowledgeWorkspaceProps = {
 type WorkspaceTab = 'documents' | 'graph' | 'tasks' | 'settings'
 type GraphSidebarTab = 'topology' | 'details'
 
-const storageModeLabels: Record<KnowledgeStorageMode, string> = {
-  reference: '引用原文件',
-  managed: '托管副本'
+const storageModeLabelKeys = {
+  reference: 'storageModes.reference.label',
+  managed: 'storageModes.managed.label'
+} as const satisfies Record<KnowledgeStorageMode, string>
+
+const strategyLabelKeys = {
+  rules: 'strategies.rules',
+  model: 'strategies.model',
+  hybrid: 'strategies.hybrid',
+  ask: 'strategies.ask'
+} as const satisfies Record<KnowledgeGraphStrategy, string>
+
+const sourceStatusLabelKeys = {
+  queued: 'sourceStatuses.queued',
+  syncing: 'sourceStatuses.syncing',
+  paused: 'sourceStatuses.paused',
+  ready: 'sourceStatuses.ready',
+  failed: 'sourceStatuses.failed'
+} as const satisfies Record<KnowledgeSourceStatus, string>
+
+const documentStatusLabelKeys = {
+  queued: 'documentStatuses.queued',
+  parsing: 'documentStatuses.parsing',
+  indexing: 'documentStatuses.indexing',
+  ready: 'documentStatuses.ready',
+  failed: 'documentStatuses.failed'
+} as const satisfies Record<KnowledgeDocumentStatus, string>
+
+const taskKindLabelKeys = {
+  parsing: 'taskKinds.parsing',
+  embedding: 'taskKinds.embedding',
+  graph: 'taskKinds.graph'
+} as const satisfies Record<KnowledgeTaskItem['kind'], string>
+
+const taskStatusLabelKeys = {
+  queued: 'taskStatuses.queued',
+  running: 'taskStatuses.running',
+  succeeded: 'taskStatuses.succeeded',
+  failed: 'taskStatuses.failed',
+  skipped: 'taskStatuses.skipped'
+} as const satisfies Record<KnowledgeTaskItem['status'], string>
+
+function resolvedLocale(language: string): string {
+  return language || 'zh-CN'
 }
 
-const strategyLabels: Record<KnowledgeGraphStrategy, string> = {
-  rules: '规则抽取',
-  model: '模型抽取',
-  hybrid: '规则与模型',
-  ask: '按需询问'
+type LocaleFormatters = {
+  compactDateTime: Intl.DateTimeFormat
+  dateTime: Intl.DateTimeFormat
+  decimal: Intl.NumberFormat
+  integer: Intl.NumberFormat
+  percent: Intl.NumberFormat
 }
 
-const sourceStatusLabels: Record<KnowledgeSourceStatus, string> = {
-  queued: '等待同步',
-  syncing: '同步中',
-  paused: '已暂停',
-  ready: '已同步',
-  failed: '同步失败'
+const localeFormatters = new Map<string, LocaleFormatters>()
+
+function getLocaleFormatters(locale: string): LocaleFormatters {
+  const existing = localeFormatters.get(locale)
+  if (existing) {
+    return existing
+  }
+  const formatters: LocaleFormatters = {
+    compactDateTime: new Intl.DateTimeFormat(locale, {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }),
+    dateTime: new Intl.DateTimeFormat(locale, {
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    }),
+    decimal: new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1
+    }),
+    integer: new Intl.NumberFormat(locale),
+    percent: new Intl.NumberFormat(locale, {
+      style: 'percent',
+      maximumFractionDigits: 0
+    })
+  }
+  localeFormatters.set(locale, formatters)
+  return formatters
 }
 
-const documentStatusLabels: Record<KnowledgeDocumentStatus, string> = {
-  queued: '等待处理',
-  parsing: '解析中',
-  indexing: '索引中',
-  ready: '索引完成',
-  failed: '处理失败'
+function formatNumber(value: number, locale: string): string {
+  return getLocaleFormatters(locale).integer.format(value)
+}
+
+function formatPercent(value: number, locale: string): string {
+  return getLocaleFormatters(locale).percent.format(value)
 }
 
 const styles = {
@@ -322,37 +390,55 @@ function clampProgress(progress: number | undefined): number {
   return Math.min(100, Math.max(0, progress ?? 0))
 }
 
-function formatTime(value: string | undefined): string {
+function formatTime(
+  value: string | undefined,
+  locale: string,
+  t: TFunction<'knowledge'>
+): string {
   if (!value) {
-    return '尚未同步'
+    return t('format.neverSynced')
   }
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
-    return '时间未知'
+    return t('format.unknownTime')
   }
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date)
+  return getLocaleFormatters(locale).compactDateTime.format(date)
 }
 
-function formatSize(size: number | undefined): string {
+function formatDateTime(
+  value: string,
+  locale: string,
+  t: TFunction<'knowledge'>
+): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? t('format.unknownTime')
+    : getLocaleFormatters(locale).dateTime.format(date)
+}
+
+function formatSize(
+  size: number | undefined,
+  locale: string,
+  t: TFunction<'knowledge'>
+): string {
   if (!Number.isFinite(size) || (size ?? 0) < 0) {
-    return '大小未知'
+    return t('format.unknownSize')
   }
   const value = size ?? 0
+  const formatters = getLocaleFormatters(locale)
   if (value < 1024) {
-    return `${value} B`
+    return `${formatters.integer.format(value)} B`
   }
   if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(1)} KB`
+    return `${formatters.decimal.format(value / 1024)} KB`
   }
-  return `${(value / 1024 / 1024).toFixed(1)} MB`
+  return `${formatters.decimal.format(value / 1024 / 1024)} MB`
 }
 
-function formatDocumentLocation(value: string): string {
+function formatDocumentLocation(
+  value: string,
+  t: TFunction<'knowledge'>
+): string {
   try {
     const url = new URL(value)
     if (url.protocol === 'http:' || url.protocol === 'https:') {
@@ -362,13 +448,18 @@ function formatDocumentLocation(value: string): string {
     // Local paths are intentionally reduced below.
   }
   const filename = value.split(/[\\/]/u).filter(Boolean).at(-1)
-  return filename ? `本地文件 · ${filename}` : '本地文件'
+  return filename
+    ? t('format.localFileNamed', { filename })
+    : t('format.localFile')
 }
 
-function toErrorMessage(reason: unknown): string {
+function toErrorMessage(
+  reason: unknown,
+  t: TFunction<'knowledge'>
+): string {
   return reason instanceof Error && reason.message
     ? reason.message
-    : '操作未完成，请重试。'
+    : t('errors.operationFailed')
 }
 
 function ProgressBar({
@@ -378,10 +469,13 @@ function ProgressBar({
   label: string
   progress: number | undefined
 }): React.JSX.Element {
+  const { i18n } = useTranslation('knowledge')
+  const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
   const value = clampProgress(progress)
+  const formattedProgress = formatPercent(value / 100, locale)
   return (
     <div
-      aria-label={`${label} ${Math.round(value)}%`}
+      aria-label={`${label} ${formattedProgress}`}
       aria-valuemax={100}
       aria-valuemin={0}
       aria-valuenow={value}
@@ -414,6 +508,7 @@ function CreateLibraryWizard({
   onCancel: () => void
   onCreate: KnowledgeWorkspaceProps['onCreateLibrary']
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [storageMode, setStorageMode] =
@@ -429,7 +524,7 @@ function CreateLibraryWizard({
   ): Promise<void> => {
     event.preventDefault()
     if (!name.trim()) {
-      setError('请输入知识库名称。')
+      setError(t('validation.libraryNameRequired'))
       return
     }
     setSaving(true)
@@ -444,7 +539,7 @@ function CreateLibraryWizard({
       })
       onCancel()
     } catch (reason) {
-      setError(toErrorMessage(reason))
+      setError(toErrorMessage(reason, t))
     } finally {
       setSaving(false)
     }
@@ -452,7 +547,7 @@ function CreateLibraryWizard({
 
   return (
     <form
-      aria-label="创建知识库"
+      aria-label={t('create.ariaLabel')}
       onSubmit={(event) => void submit(event)}
       style={{
         ...styles.surface,
@@ -464,12 +559,14 @@ function CreateLibraryWizard({
     >
       <div>
         <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800 }}>
-          新建知识库
+          {t('create.eyebrow')}
         </span>
-        <h2 style={{ margin: '5px 0 0', fontSize: 22 }}>创建知识库</h2>
+        <h2 style={{ margin: '5px 0 0', fontSize: 22 }}>
+          {t('create.title')}
+        </h2>
       </div>
       <label style={styles.label}>
-        名称
+        {t('fields.name')}
         <input
           autoFocus
           onChange={(event) => setName(event.currentTarget.value)}
@@ -478,7 +575,7 @@ function CreateLibraryWizard({
         />
       </label>
       <label style={styles.label}>
-        描述
+        {t('fields.description')}
         <textarea
           onChange={(event) =>
             setDescription(event.currentTarget.value)
@@ -497,18 +594,20 @@ function CreateLibraryWizard({
           border: 0
         }}
       >
-        <legend style={{ ...styles.label, marginBottom: 8 }}>存储方式</legend>
+        <legend style={{ ...styles.label, marginBottom: 8 }}>
+          {t('fields.storageMode')}
+        </legend>
         {(
           [
             [
               'reference',
-              '引用原文件',
-              '仅记录文件位置；删除知识库不会删除原文件。'
+              t('storageModes.reference.label'),
+              t('storageModes.reference.description')
             ],
             [
               'managed',
-              '托管副本',
-              '将内容复制到应用管理的存储空间。'
+              t('storageModes.managed.label'),
+              t('storageModes.managed.description')
             ]
           ] as const
         ).map(([value, title, detail]) => (
@@ -551,13 +650,15 @@ function CreateLibraryWizard({
           type="checkbox"
         />
         <span>
-          <strong style={{ display: 'block' }}>启用知识图谱</strong>
-          <span style={styles.muted}>从文档中提取实体、关系与证据。</span>
+          <strong style={{ display: 'block' }}>
+            {t('graph.enable')}
+          </strong>
+          <span style={styles.muted}>{t('graph.enableDescription')}</span>
         </span>
       </label>
       {graphEnabled && (
         <label style={styles.label}>
-          图谱生成策略
+          {t('fields.graphGenerationStrategy')}
           <select
             onChange={(event) =>
               setGraphStrategy(
@@ -567,9 +668,9 @@ function CreateLibraryWizard({
             style={styles.input}
             value={graphStrategy}
           >
-            {Object.entries(strategyLabels).map(([value, label]) => (
+            {Object.entries(strategyLabelKeys).map(([value, key]) => (
               <option key={value} value={value}>
-                {label}
+                {t(key)}
               </option>
             ))}
           </select>
@@ -591,7 +692,7 @@ function CreateLibraryWizard({
           style={styles.button}
           type="button"
         >
-          取消
+          {t('actions.cancel')}
         </button>
         <button
           className="primary-button"
@@ -604,7 +705,7 @@ function CreateLibraryWizard({
           ) : (
             <Check aria-hidden="true" size={16} />
           )}
-          {saving ? '创建中…' : '创建知识库'}
+          {saving ? t('actions.creating') : t('actions.createLibrary')}
         </button>
       </div>
     </form>
@@ -623,6 +724,7 @@ function EditLibraryDialog({
     description: string
   }) => void | Promise<void>
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   const [name, setName] = useState(library.name)
   const [description, setDescription] = useState(library.description ?? '')
   const [saving, setSaving] = useState(false)
@@ -640,7 +742,7 @@ function EditLibraryDialog({
     event.preventDefault()
     const normalizedName = name.trim()
     if (!normalizedName) {
-      setError('请输入知识库名称')
+      setError(t('validation.libraryNameRequired'))
       return
     }
     setSaving(true)
@@ -652,7 +754,7 @@ function EditLibraryDialog({
       })
       onCancel()
     } catch (reason) {
-      setError(toErrorMessage(reason))
+      setError(toErrorMessage(reason, t))
     } finally {
       setSaving(false)
     }
@@ -660,7 +762,7 @@ function EditLibraryDialog({
 
   return (
     <div
-      aria-label="编辑知识库"
+      aria-label={t('edit.ariaLabel')}
       aria-modal="true"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !saving) {
@@ -683,7 +785,7 @@ function EditLibraryDialog({
       }}
     >
       <form
-        aria-label="编辑知识库表单"
+        aria-label={t('edit.formAriaLabel')}
         onSubmit={(event) => void submit(event)}
         style={{
           ...styles.surface,
@@ -695,13 +797,13 @@ function EditLibraryDialog({
         }}
       >
         <div>
-          <h2 style={{ margin: 0 }}>编辑知识库</h2>
+          <h2 style={{ margin: 0 }}>{t('edit.title')}</h2>
           <p style={{ ...styles.muted, margin: '6px 0 0' }}>
-            修改名称和说明不会改变来源、索引或知识图谱。
+            {t('edit.description')}
           </p>
         </div>
         <label style={styles.label}>
-          名称
+          {t('fields.name')}
           <input
             onChange={(event) => setName(event.currentTarget.value)}
             ref={nameRef}
@@ -710,7 +812,7 @@ function EditLibraryDialog({
           />
         </label>
         <label style={styles.label}>
-          描述
+          {t('fields.description')}
           <textarea
             onChange={(event) => setDescription(event.currentTarget.value)}
             rows={4}
@@ -731,7 +833,7 @@ function EditLibraryDialog({
             style={styles.button}
             type="button"
           >
-            取消
+            {t('actions.cancel')}
           </button>
           <button
             className="primary-button"
@@ -744,7 +846,7 @@ function EditLibraryDialog({
             ) : (
               <Check aria-hidden="true" size={15} />
             )}
-            {saving ? '保存中…' : '保存修改'}
+            {saving ? t('actions.saving') : t('actions.saveChanges')}
           </button>
         </div>
       </form>
@@ -761,6 +863,7 @@ function DeleteLibraryDialog({
   onCancel: () => void
   onConfirm: () => void | Promise<void>
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string>()
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -777,7 +880,7 @@ function DeleteLibraryDialog({
       await onConfirm()
       onCancel()
     } catch (reason) {
-      setError(toErrorMessage(reason))
+      setError(toErrorMessage(reason, t))
     } finally {
       setDeleting(false)
     }
@@ -785,7 +888,7 @@ function DeleteLibraryDialog({
 
   return (
     <div
-      aria-label="删除知识库确认"
+      aria-label={t('delete.ariaLabel')}
       aria-modal="true"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !deleting) {
@@ -816,11 +919,13 @@ function DeleteLibraryDialog({
         }}
       >
         <AlertCircle color="var(--danger)" aria-hidden="true" size={26} />
-        <h2 style={{ margin: '12px 0 8px' }}>删除“{library.name}”？</h2>
+        <h2 style={{ margin: '12px 0 8px' }}>
+          {t('delete.title', { name: library.name })}
+        </h2>
         <p style={{ ...styles.muted, margin: 0 }}>
           {library.storageMode === 'managed'
-            ? '此知识库使用托管存储。删除后，应用保存的托管副本、索引和图谱都会被永久删除。'
-            : '此知识库引用原文件。删除后只会移除索引和图谱，不会删除磁盘上的原文件。'}
+            ? t('delete.managedDescription')
+            : t('delete.referenceDescription')}
         </p>
         {error && (
           <p
@@ -847,7 +952,7 @@ function DeleteLibraryDialog({
             style={styles.button}
             type="button"
           >
-            取消
+            {t('actions.cancel')}
           </button>
           <button
             className="danger-button"
@@ -857,7 +962,7 @@ function DeleteLibraryDialog({
             type="button"
           >
             <Trash2 aria-hidden="true" size={15} />
-            {deleting ? '删除中…' : '确认删除'}
+            {deleting ? t('actions.deleting') : t('actions.confirmDelete')}
           </button>
         </div>
       </div>
@@ -890,6 +995,8 @@ function DocumentsView({
 > & {
   library: KnowledgeLibrary
 }): React.JSX.Element {
+  const { i18n, t } = useTranslation('knowledge')
+  const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [urlOpen, setUrlOpen] = useState(false)
   const [url, setUrl] = useState('')
@@ -912,7 +1019,7 @@ function DocumentsView({
       await action()
       return true
     } catch (reason) {
-      setError(toErrorMessage(reason))
+      setError(toErrorMessage(reason, t))
       return false
     } finally {
       setPending(undefined)
@@ -929,16 +1036,16 @@ function DocumentsView({
   }
 
   const filteredDocuments = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase('zh-CN')
+    const normalized = query.trim().toLocaleLowerCase(locale)
     if (!normalized) {
       return documents
     }
     return documents.filter((document) =>
       `${document.name} ${document.path ?? ''}`
-        .toLocaleLowerCase('zh-CN')
+        .toLocaleLowerCase(locale)
         .includes(normalized)
     )
-  }, [documents, query])
+  }, [documents, locale, query])
 
   return (
     <div className="knowledge-documents" style={{ display: 'grid', gap: 18 }}>
@@ -948,10 +1055,10 @@ function DocumentsView({
         >
           <div>
             <h3 id="sources-title" style={{ margin: 0 }}>
-              内容来源
+              {t('documents.sources.title')}
             </h3>
             <p style={{ ...styles.muted, margin: '5px 0 0' }}>
-              导入内容后会自动解析、建立索引并更新图谱。
+              {t('documents.sources.description')}
             </p>
           </div>
           <div className="knowledge-documents__import-actions">
@@ -962,7 +1069,7 @@ function DocumentsView({
               type="button"
             >
               <FilePlus2 aria-hidden="true" size={15} />
-              导入文件
+              {t('actions.importFiles')}
             </button>
             <button
               className="secondary-button"
@@ -979,7 +1086,7 @@ function DocumentsView({
               type="button"
             >
               <FolderOpen aria-hidden="true" size={15} />
-              导入目录
+              {t('actions.importDirectory')}
             </button>
             <button
               className="secondary-button"
@@ -988,7 +1095,7 @@ function DocumentsView({
               type="button"
             >
               <Link2 aria-hidden="true" size={15} />
-              导入 URL
+              {t('actions.importUrl')}
             </button>
             <input
               hidden
@@ -1011,7 +1118,7 @@ function DocumentsView({
               marginTop: 14
             }}
           >
-            本次导入的图谱抽取策略
+            {t('documents.importStrategy')}
             <select
               onChange={(event) =>
                 setAskStrategy(
@@ -1024,33 +1131,39 @@ function DocumentsView({
               style={styles.input}
               value={askStrategy}
             >
-              <option value="rules">仅本地规则</option>
-              <option value="model">仅使用模型</option>
-              <option value="hybrid">规则优先并由模型补全</option>
+              <option value="rules">
+                {t('documents.importStrategies.rules')}
+              </option>
+              <option value="model">
+                {t('documents.importStrategies.model')}
+              </option>
+              <option value="hybrid">
+                {t('documents.importStrategies.hybrid')}
+              </option>
             </select>
           </label>
         )}
 
         {urlOpen && (
           <form
-            aria-label="导入 URL"
+            aria-label={t('documents.urlImport.ariaLabel')}
             className="knowledge-documents__url-form"
             onSubmit={(event) => {
               event.preventDefault()
               const value = url.trim()
               if (!value) {
-                setError('请输入 URL。')
+                setError(t('validation.urlRequired'))
                 return
               }
               let parsed: URL
               try {
                 parsed = new URL(value)
               } catch {
-                setError('请输入有效的 URL。')
+                setError(t('validation.urlInvalid'))
                 return
               }
               if (!['http:', 'https:'].includes(parsed.protocol)) {
-                setError('仅支持 HTTP 或 HTTPS URL。')
+                setError(t('validation.urlProtocol'))
                 return
               }
               void run(
@@ -1075,7 +1188,7 @@ function DocumentsView({
             }}
           >
             <input
-              aria-label="URL 地址"
+              aria-label={t('documents.urlImport.addressAriaLabel')}
               onChange={(event) => setUrl(event.currentTarget.value)}
               placeholder="https://"
               style={styles.input}
@@ -1088,10 +1201,10 @@ function DocumentsView({
               style={styles.button}
               type="submit"
             >
-              导入
+              {t('actions.import')}
             </button>
             <button
-              aria-label="关闭 URL 导入"
+              aria-label={t('documents.urlImport.closeAriaLabel')}
               className="secondary-button"
               onClick={() => setUrlOpen(false)}
               style={styles.button}
@@ -1134,7 +1247,7 @@ function DocumentsView({
         >
           <UploadCloud aria-hidden="true" size={22} />
           <div style={{ marginTop: 5 }}>
-            将文件拖到这里，加入“{library.name}”
+            {t('documents.dropFiles', { name: library.name })}
           </div>
         </div>
 
@@ -1150,14 +1263,14 @@ function DocumentsView({
 
         {sources.length === 0 ? (
           <div style={{ ...styles.surface, marginTop: 12, padding: 18 }}>
-            <strong>尚未连接内容来源</strong>
+            <strong>{t('documents.sources.emptyTitle')}</strong>
             <p style={{ ...styles.muted, marginBottom: 0 }}>
-              可选择文件、目录或 URL；也可以直接将文件拖入上方区域。
+              {t('documents.sources.emptyDescription')}
             </p>
           </div>
         ) : (
           <ul
-            aria-label="内容来源列表"
+            aria-label={t('documents.sources.listAriaLabel')}
             style={{
               display: 'grid',
               gap: 9,
@@ -1222,17 +1335,21 @@ function DocumentsView({
                         fontSize: 12
                       }}
                     >
-                      {sourceStatusLabels[source.status]}
+                      {t(sourceStatusLabelKeys[source.status])}
                     </span>
                   </div>
                   <div style={{ ...styles.muted, marginTop: 5 }}>
-                    {source.documentCount} 个文档 ·{' '}
-                    {formatTime(source.lastSyncedAt)}
+                    {t('documents.sourceMeta', {
+                      count: formatNumber(source.documentCount, locale),
+                      time: formatTime(source.lastSyncedAt, locale, t)
+                    })}
                   </div>
                   {source.status === 'syncing' && (
                     <div style={{ marginTop: 8 }}>
                       <ProgressBar
-                        label={`${source.name} 同步进度`}
+                        label={t('documents.syncProgress', {
+                          name: source.name
+                        })}
                         progress={source.progress}
                       />
                     </div>
@@ -1252,7 +1369,9 @@ function DocumentsView({
                 <div className="knowledge-source-row__actions">
                   {source.status === 'syncing' ? (
                     <button
-                      aria-label={`暂停 ${source.name}`}
+                      aria-label={t('documents.actions.pauseSource', {
+                        name: source.name
+                      })}
                       className="secondary-button"
                       disabled={pending === source.id}
                       onClick={() =>
@@ -1262,11 +1381,13 @@ function DocumentsView({
                       type="button"
                     >
                       <CirclePause aria-hidden="true" size={14} />
-                      暂停
+                      {t('actions.pause')}
                     </button>
                   ) : source.status === 'failed' ? (
                     <button
-                      aria-label={`重试 ${source.name}`}
+                      aria-label={t('documents.actions.retrySource', {
+                        name: source.name
+                      })}
                       className="secondary-button"
                       disabled={pending === source.id}
                       onClick={() =>
@@ -1276,11 +1397,13 @@ function DocumentsView({
                       type="button"
                     >
                       <RotateCcw aria-hidden="true" size={14} />
-                      重试
+                      {t('actions.retry')}
                     </button>
                   ) : (
                     <button
-                      aria-label={`同步 ${source.name}`}
+                      aria-label={t('documents.actions.syncSource', {
+                        name: source.name
+                      })}
                       className="secondary-button"
                       disabled={pending === source.id}
                       onClick={() =>
@@ -1290,11 +1413,13 @@ function DocumentsView({
                       type="button"
                     >
                       <RefreshCw aria-hidden="true" size={14} />
-                      同步
+                      {t('actions.sync')}
                     </button>
                   )}
                   <button
-                    aria-label={`移除来源 ${source.name}`}
+                    aria-label={t('documents.actions.removeSource', {
+                      name: source.name
+                    })}
                     className="danger-button danger-button--quiet"
                     disabled={pending === source.id}
                     onClick={() =>
@@ -1304,7 +1429,7 @@ function DocumentsView({
                     type="button"
                   >
                     <Trash2 aria-hidden="true" size={14} />
-                    移除
+                    {t('actions.remove')}
                   </button>
                 </div>
               </li>
@@ -1318,7 +1443,7 @@ function DocumentsView({
           className="knowledge-documents__section-heading"
         >
           <h3 id="documents-title" style={{ margin: 0 }}>
-            文档与索引
+            {t('documents.table.title')}
           </h3>
           <label
             className="knowledge-documents__search"
@@ -1338,12 +1463,12 @@ function DocumentsView({
               }}
             />
             <span style={{ position: 'absolute', clip: 'rect(0 0 0 0)' }}>
-              搜索文档
+              {t('documents.search.label')}
             </span>
             <input
-              aria-label="搜索文档"
+              aria-label={t('documents.search.label')}
               onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="搜索名称或路径"
+              placeholder={t('documents.search.placeholder')}
               style={{ ...styles.input, paddingLeft: 34 }}
               type="search"
               value={query}
@@ -1353,8 +1478,8 @@ function DocumentsView({
         {filteredDocuments.length === 0 ? (
           <div style={{ ...styles.surface, marginTop: 12, padding: 18 }}>
             {documents.length === 0
-              ? '尚无文档。导入内容来源后，处理状态会显示在这里。'
-              : '没有与搜索条件匹配的文档。'}
+              ? t('documents.table.empty')
+              : t('documents.table.noResults')}
           </div>
         ) : (
           <div className="knowledge-documents__table-scroll">
@@ -1373,11 +1498,21 @@ function DocumentsView({
                 }}
               >
                 <tr>
-                  <th style={{ padding: '9px 10px' }}>文档</th>
-                  <th style={{ padding: '9px 10px' }}>状态</th>
-                  <th style={{ padding: '9px 10px' }}>索引进度</th>
-                  <th style={{ padding: '9px 10px' }}>分块</th>
-                  <th style={{ padding: '9px 10px' }}>大小</th>
+                  <th style={{ padding: '9px 10px' }}>
+                    {t('documents.table.columns.document')}
+                  </th>
+                  <th style={{ padding: '9px 10px' }}>
+                    {t('documents.table.columns.status')}
+                  </th>
+                  <th style={{ padding: '9px 10px' }}>
+                    {t('documents.table.columns.indexProgress')}
+                  </th>
+                  <th style={{ padding: '9px 10px' }}>
+                    {t('documents.table.columns.chunks')}
+                  </th>
+                  <th style={{ padding: '9px 10px' }}>
+                    {t('documents.table.columns.size')}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1400,7 +1535,7 @@ function DocumentsView({
                             whiteSpace: 'nowrap'
                           }}
                         >
-                          {formatDocumentLocation(document.path)}
+                          {formatDocumentLocation(document.path, t)}
                         </div>
                       )}
                     </td>
@@ -1417,7 +1552,7 @@ function DocumentsView({
                                   : 'var(--warning)'
                         }}
                       >
-                        {documentStatusLabels[document.status]}
+                        {t(documentStatusLabelKeys[document.status])}
                       </span>
                       {document.error && (
                         <div
@@ -1429,7 +1564,9 @@ function DocumentsView({
                     </td>
                     <td style={{ minWidth: 140, padding: 10 }}>
                       <ProgressBar
-                        label={`${document.name} 索引进度`}
+                        label={t('documents.indexProgress', {
+                          name: document.name
+                        })}
                         progress={
                           document.status === 'ready'
                             ? 100
@@ -1438,9 +1575,13 @@ function DocumentsView({
                       />
                     </td>
                     <td style={{ padding: 10 }}>
-                      {document.chunkCount ?? '—'}
+                      {document.chunkCount === undefined
+                        ? '—'
+                        : formatNumber(document.chunkCount, locale)}
                     </td>
-                    <td style={{ padding: 10 }}>{formatSize(document.size)}</td>
+                    <td style={{ padding: 10 }}>
+                      {formatSize(document.size, locale, t)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1461,14 +1602,19 @@ function EntityEditor({
   onCancel: () => void
   onSave: (update: KnowledgeEntityUpdate) => void | Promise<void>
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   const [label, setLabel] = useState(node?.label ?? '')
   const [type, setType] = useState(node?.type ?? '')
   const [description, setDescription] = useState(node?.description ?? '')
-  const [aliases, setAliases] = useState((node?.aliases ?? []).join('、'))
+  const [aliases, setAliases] = useState(
+    (node?.aliases ?? []).join(t('format.listSeparator'))
+  )
 
   return (
     <form
-      aria-label={node ? '编辑实体' : '新增实体'}
+      aria-label={
+        node ? t('entityEditor.editAriaLabel') : t('entityEditor.addAriaLabel')
+      }
       onSubmit={(event) => {
         event.preventDefault()
         void onSave({
@@ -1484,7 +1630,7 @@ function EntityEditor({
       style={{ display: 'grid', gap: 10 }}
     >
       <label style={styles.label}>
-        名称
+        {t('fields.name')}
         <input
           onChange={(event) => setLabel(event.currentTarget.value)}
           required
@@ -1493,7 +1639,7 @@ function EntityEditor({
         />
       </label>
       <label style={styles.label}>
-        类型
+        {t('fields.type')}
         <input
           onChange={(event) => setType(event.currentTarget.value)}
           required
@@ -1502,7 +1648,7 @@ function EntityEditor({
         />
       </label>
       <label style={styles.label}>
-        描述
+        {t('fields.description')}
         <textarea
           onChange={(event) => setDescription(event.currentTarget.value)}
           rows={3}
@@ -1511,7 +1657,7 @@ function EntityEditor({
         />
       </label>
       <label style={styles.label}>
-        别名（使用逗号分隔）
+        {t('fields.aliases')}
         <input
           onChange={(event) => setAliases(event.currentTarget.value)}
           style={styles.input}
@@ -1520,7 +1666,7 @@ function EntityEditor({
       </label>
       <div style={{ display: 'flex', gap: 8 }}>
         <button className="primary-button" style={styles.button}>
-          {node ? '保存实体' : '新增实体'}
+          {node ? t('actions.saveEntity') : t('actions.addEntity')}
         </button>
         <button
           className="secondary-button"
@@ -1528,7 +1674,7 @@ function EntityEditor({
           style={styles.button}
           type="button"
         >
-          取消
+          {t('actions.cancel')}
         </button>
       </div>
     </form>
@@ -1550,6 +1696,7 @@ function RelationForm({
   relation?: KnowledgeGraphRelation
   sourceId: string
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   const [source, setSource] = useState(relation?.sourceId ?? sourceId)
   const [target, setTarget] = useState(
     relation?.targetId ??
@@ -1563,7 +1710,11 @@ function RelationForm({
 
   return (
     <form
-      aria-label={relation ? '编辑关系' : '新增关系'}
+      aria-label={
+        relation
+          ? t('relationEditor.editAriaLabel')
+          : t('relationEditor.addAriaLabel')
+      }
       onSubmit={(event) => {
         event.preventDefault()
         void onSave({
@@ -1582,7 +1733,7 @@ function RelationForm({
       }}
     >
       <label style={styles.label}>
-        起点
+        {t('fields.source')}
         <select
           onChange={(event) => setSource(event.currentTarget.value)}
           required
@@ -1597,7 +1748,7 @@ function RelationForm({
         </select>
       </label>
       <label style={styles.label}>
-        终点
+        {t('fields.target')}
         <select
           onChange={(event) => setTarget(event.currentTarget.value)}
           required
@@ -1605,7 +1756,7 @@ function RelationForm({
           value={target}
         >
           <option disabled value="">
-            选择实体
+            {t('graph.selectEntity')}
           </option>
           {nodes.map((node) => (
             <option key={node.id} value={node.id}>
@@ -1615,7 +1766,7 @@ function RelationForm({
         </select>
       </label>
       <label style={styles.label}>
-        关系类型
+        {t('fields.relationType')}
         <input
           onChange={(event) => setType(event.currentTarget.value)}
           required
@@ -1624,7 +1775,7 @@ function RelationForm({
         />
       </label>
       <label style={styles.label}>
-        说明
+        {t('fields.notes')}
         <input
           onChange={(event) =>
             setDescription(event.currentTarget.value)
@@ -1635,7 +1786,7 @@ function RelationForm({
       </label>
       <div style={{ display: 'flex', gap: 7 }}>
         <button className="primary-button" style={styles.button}>
-          {relation ? '保存关系' : '新增关系'}
+          {relation ? t('actions.saveRelation') : t('actions.addRelation')}
         </button>
         <button
           className="secondary-button"
@@ -1643,7 +1794,7 @@ function RelationForm({
           style={styles.button}
           type="button"
         >
-          取消
+          {t('actions.cancel')}
         </button>
       </div>
     </form>
@@ -1657,6 +1808,7 @@ function KnowledgeSettingsView({
   library: KnowledgeLibrary
   onUpdateLibrary: KnowledgeWorkspaceProps['onUpdateLibrary']
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
 
@@ -1668,7 +1820,7 @@ function KnowledgeSettingsView({
     try {
       await onUpdateLibrary(library.id, change)
     } catch (reason) {
-      setError(toErrorMessage(reason))
+      setError(toErrorMessage(reason, t))
     } finally {
       setSaving(false)
     }
@@ -1682,10 +1834,10 @@ function KnowledgeSettingsView({
       >
         <div>
           <h3 id="knowledge-graph-settings-title" style={{ margin: 0 }}>
-            知识图谱
+            {t('graph.title')}
           </h3>
           <p style={{ ...styles.muted, margin: '6px 0 0' }}>
-            控制是否从知识库文档中抽取实体、关系和证据。
+            {t('settings.description')}
           </p>
         </div>
         <label
@@ -1701,16 +1853,16 @@ function KnowledgeSettingsView({
             type="checkbox"
           />
           <span>
-            <strong style={{ display: 'block' }}>启用知识图谱</strong>
+            <strong style={{ display: 'block' }}>{t('graph.enable')}</strong>
             <span style={styles.muted}>
-              启用后，新导入和重新同步的文档会按所选策略抽取图谱。
+              {t('settings.enableDescription')}
             </span>
           </span>
         </label>
         <label style={styles.label}>
-          图谱抽取策略
+          {t('fields.graphExtractionStrategy')}
           <select
-            aria-label="知识图谱抽取策略"
+            aria-label={t('settings.strategyAriaLabel')}
             disabled={!library.graphEnabled || saving}
             onChange={(event) =>
               void update({
@@ -1721,14 +1873,14 @@ function KnowledgeSettingsView({
             style={styles.input}
             value={library.graphStrategy}
           >
-            {Object.entries(strategyLabels).map(([value, label]) => (
+            {Object.entries(strategyLabelKeys).map(([value, key]) => (
               <option key={value} value={value}>
-                {label}
+                {t(key)}
               </option>
             ))}
           </select>
           <span style={styles.muted}>
-            “按需询问”不会自动生成图谱，也不能执行重新抽取。
+            {t('settings.askDescription')}
           </span>
         </label>
         {error && (
@@ -1741,25 +1893,13 @@ function KnowledgeSettingsView({
   )
 }
 
-const taskKindLabels: Record<KnowledgeTaskItem['kind'], string> = {
-  parsing: '文档解析',
-  embedding: '向量化',
-  graph: '图谱抽取'
-}
-
-const taskStatusLabels: Record<KnowledgeTaskItem['status'], string> = {
-  queued: '等待中',
-  running: '进行中',
-  succeeded: '已完成',
-  failed: '失败',
-  skipped: '已跳过'
-}
-
 function KnowledgeTasksView({
   tasks
 }: {
   tasks: readonly KnowledgeTaskItem[]
 }): React.JSX.Element {
+  const { i18n, t } = useTranslation('knowledge')
+  const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
   const activeCount = tasks.filter(
     (task) => task.status === 'queued' || task.status === 'running'
   ).length
@@ -1770,10 +1910,10 @@ function KnowledgeTasksView({
   if (tasks.length === 0) {
     return (
       <EmptyState
-        description="导入或同步文档后，可以在这里查看解析、向量化和图谱抽取进度。"
+        description={t('tasks.emptyDescription')}
         icon={<ListChecks size={30} />}
         level="section"
-        title="还没有知识任务"
+        title={t('tasks.emptyTitle')}
       />
     )
   }
@@ -1783,15 +1923,25 @@ function KnowledgeTasksView({
       <div className="knowledge-tasks__summary">
         <div>
           <h3 id="knowledge-tasks-title" style={{ margin: 0 }}>
-            任务中心
+            {t('tasks.title')}
           </h3>
           <p style={{ ...styles.muted, margin: '5px 0 0' }}>
-            最近 {tasks.length} 个任务
+            {t('tasks.recentCount', {
+              count: formatNumber(tasks.length, locale)
+            })}
           </p>
         </div>
         <div className="knowledge-tasks__metrics">
-          <span>进行中 {activeCount}</span>
-          <span>失败 {failedCount}</span>
+          <span>
+            {t('tasks.activeCount', {
+              count: formatNumber(activeCount, locale)
+            })}
+          </span>
+          <span>
+            {t('tasks.failedCount', {
+              count: formatNumber(failedCount, locale)
+            })}
+          </span>
         </div>
       </div>
       <ol className="knowledge-task-list">
@@ -1800,28 +1950,35 @@ function KnowledgeTasksView({
             <div className="knowledge-task__heading">
               <div>
                 <strong>{task.documentName}</strong>
-                <span>{taskKindLabels[task.kind]}</span>
+                <span>{t(taskKindLabelKeys[task.kind])}</span>
               </div>
               <span
                 className={`knowledge-task__status knowledge-task__status--${task.status}`}
               >
-                {taskStatusLabels[task.status]}
+                {t(taskStatusLabelKeys[task.status])}
               </span>
             </div>
             <div className="knowledge-task__progress">
               <progress
-                aria-label={`${task.documentName} ${taskKindLabels[task.kind]}进度`}
+                aria-label={t('tasks.progressAriaLabel', {
+                  name: task.documentName,
+                  kind: t(taskKindLabelKeys[task.kind])
+                })}
                 max={100}
                 value={task.progress}
               />
-              <span>{task.progress}%</span>
+              <span>
+                {formatPercent(task.progress / 100, locale)}
+              </span>
             </div>
             <div className="knowledge-task__meta">
-              <span>{task.message || '等待处理'}</span>
+              <span>{task.message || t('tasks.waiting')}</span>
               <time dateTime={task.completedAt ?? task.startedAt ?? task.createdAt}>
-                {new Date(
-                  task.completedAt ?? task.startedAt ?? task.createdAt
-                ).toLocaleString('zh-CN')}
+                {formatDateTime(
+                  task.completedAt ?? task.startedAt ?? task.createdAt,
+                  locale,
+                  t
+                )}
               </time>
             </div>
           </li>
@@ -1840,6 +1997,7 @@ function GraphRelationPath({
   onSelectNode: (nodeId: string) => void
   relation: KnowledgeGraphRelation
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   const source = nodeMap.get(relation.sourceId)
   const target = nodeMap.get(relation.targetId)
 
@@ -1851,7 +2009,7 @@ function GraphRelationPath({
         onClick={() => source && onSelectNode(source.id)}
         type="button"
       >
-        {source?.label ?? '未知实体'}
+        {source?.label ?? t('graph.unknownEntity')}
       </button>
       <span className="knowledge-graph__relation-type">
         <ArrowRight aria-hidden="true" size={13} />
@@ -1863,7 +2021,7 @@ function GraphRelationPath({
         onClick={() => target && onSelectNode(target.id)}
         type="button"
       >
-        {target?.label ?? '未知实体'}
+        {target?.label ?? t('graph.unknownEntity')}
       </button>
     </div>
   )
@@ -1878,20 +2036,21 @@ function GraphSidebarNavigation({
   relationCount: number
   value: GraphSidebarTab
 }): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
   return (
     <PageTabs
-      ariaLabel="图谱侧栏"
+      ariaLabel={t('graph.sidebar.ariaLabel')}
       idPrefix="knowledge-graph-sidebar"
       onChange={onChange}
       tabs={[
         {
           id: 'topology',
-          label: '拓扑',
+          label: t('graph.sidebar.topology'),
           count: relationCount
         },
         {
           id: 'details',
-          label: '详情'
+          label: t('graph.sidebar.details')
         }
       ]}
       value={value}
@@ -1933,6 +2092,8 @@ function GraphView({
 > & {
   libraryId: string
 }): React.JSX.Element {
+  const { i18n, t } = useTranslation('knowledge')
+  const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [selectedNodeId, setSelectedNodeId] = useState<string>()
@@ -1952,20 +2113,23 @@ function GraphView({
     [graphNodes]
   )
   const types = useMemo(
-    () => Array.from(new Set(graphNodes.map((node) => node.type))).sort(),
-    [graphNodes]
+    () =>
+      Array.from(new Set(graphNodes.map((node) => node.type))).sort(
+        (left, right) => left.localeCompare(right, locale)
+      ),
+    [graphNodes, locale]
   )
   const visibleNodes = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase('zh-CN')
+    const normalized = query.trim().toLocaleLowerCase(locale)
     return graphNodes.filter(
       (node) =>
         (typeFilter === 'all' || node.type === typeFilter) &&
         (!normalized ||
           `${node.label} ${node.type} ${node.description ?? ''} ${(node.aliases ?? []).join(' ')}`
-            .toLocaleLowerCase('zh-CN')
+            .toLocaleLowerCase(locale)
             .includes(normalized))
     )
-  }, [graphNodes, query, typeFilter])
+  }, [graphNodes, locale, query, typeFilter])
   const visibleIds = useMemo(
     () => new Set(visibleNodes.map((node) => node.id)),
     [visibleNodes]
@@ -2008,7 +2172,7 @@ function GraphView({
   return (
     <div className="knowledge-graph knowledge-graph--with-details">
       <section
-        aria-label="知识图谱画布"
+        aria-label={t('graph.canvasAriaLabel')}
         className="knowledge-graph__canvas"
         style={{
           ...styles.surface,
@@ -2030,22 +2194,22 @@ function GraphView({
               style={{ position: 'absolute', left: 11, top: 12 }}
             />
             <input
-              aria-label="搜索图谱实体"
+              aria-label={t('graph.searchAriaLabel')}
               onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="搜索实体"
+              placeholder={t('graph.searchPlaceholder')}
               style={{ ...styles.input, paddingLeft: 34 }}
               type="search"
               value={query}
             />
           </label>
           <select
-            aria-label="筛选实体类型"
+            aria-label={t('graph.typeFilterAriaLabel')}
             className="knowledge-graph__filter"
             onChange={(event) => setTypeFilter(event.currentTarget.value)}
             style={styles.input}
             value={typeFilter}
           >
-            <option value="all">全部类型</option>
+            <option value="all">{t('graph.allTypes')}</option>
             {types.map((type) => (
               <option key={type} value={type}>
                 {type}
@@ -2053,7 +2217,7 @@ function GraphView({
             ))}
           </select>
           <select
-            aria-label="选择图谱实体"
+            aria-label={t('graph.entityPickerAriaLabel')}
             className="knowledge-graph__entity-picker"
             onChange={(event) => {
               if (event.currentTarget.value) {
@@ -2066,7 +2230,7 @@ function GraphView({
                 : ''
             }
           >
-            <option value="">选择实体</option>
+            <option value="">{t('graph.selectEntity')}</option>
             {visibleNodes.map((node) => (
               <option key={node.id} value={node.id}>
                 {node.label} · {node.type}
@@ -2080,14 +2244,18 @@ function GraphView({
               setReextracting(true)
               setReextractError(undefined)
               void Promise.resolve(onReextractGraph(libraryId))
-                .catch((reason) => setReextractError(toErrorMessage(reason)))
+                .catch((reason) =>
+                  setReextractError(toErrorMessage(reason, t))
+                )
                 .finally(() => setReextracting(false))
             }}
             style={styles.button}
             type="button"
           >
             <RefreshCw aria-hidden="true" size={15} />
-            {reextracting ? '重新抽取中…' : '重新抽取'}
+            {reextracting
+              ? t('actions.reextracting')
+              : t('actions.reextract')}
           </button>
           <button
             className="secondary-button"
@@ -2100,10 +2268,10 @@ function GraphView({
             type="button"
           >
             <Plus aria-hidden="true" size={15} />
-            新增实体
+            {t('actions.addEntity')}
           </button>
           <button
-            aria-label="缩小图谱"
+            aria-label={t('graph.zoomOutAriaLabel')}
             className="secondary-button"
             disabled={zoom <= 0.5}
             onClick={() =>
@@ -2122,10 +2290,10 @@ function GraphView({
               color: 'var(--text-muted)'
             }}
           >
-            {Math.round(zoom * 100)}%
+            {formatPercent(zoom, locale)}
           </span>
           <button
-            aria-label="放大图谱"
+            aria-label={t('graph.zoomInAriaLabel')}
             className="secondary-button"
             disabled={zoom >= 2}
             onClick={() =>
@@ -2157,7 +2325,7 @@ function GraphView({
           >
             <div>
               <Network aria-hidden="true" size={30} />
-              <p>当前知识库尚未生成实体关系。</p>
+              <p>{t('graph.empty')}</p>
             </div>
           </div>
         ) : (
@@ -2175,7 +2343,7 @@ function GraphView({
 
       {sidebarTab === 'topology' && (
         <aside
-          aria-label="图谱拓扑"
+          aria-label={t('graph.topologyAriaLabel')}
           className="knowledge-graph__detail"
         >
           <GraphSidebarNavigation
@@ -2191,18 +2359,22 @@ function GraphView({
           >
             <div className="knowledge-graph__panel-heading">
               <div>
-                <h3>可见关系</h3>
-                <p>随当前搜索和类型筛选更新。</p>
+                <h3>{t('graph.visibleRelations.title')}</h3>
+                <p>{t('graph.visibleRelations.description')}</p>
               </div>
-              <span>{visibleRelations.length} 条</span>
+              <span>
+                {t('graph.visibleRelations.count', {
+                  count: formatNumber(visibleRelations.length, locale)
+                })}
+              </span>
             </div>
             {visibleRelations.length === 0 ? (
               <p className="knowledge-graph__panel-empty">
-                当前筛选下没有可见关系。
+                {t('graph.visibleRelations.empty')}
               </p>
             ) : (
               <ul
-                aria-label="可见关系列表"
+                aria-label={t('graph.visibleRelations.listAriaLabel')}
                 className="knowledge-graph__topology-list"
               >
                 {visibleRelations.map((relation) => (
@@ -2228,7 +2400,7 @@ function GraphView({
 
       {sidebarTab === 'details' && creatingEntity && (
         <aside
-          aria-label="新增实体面板"
+          aria-label={t('graph.addEntityPanelAriaLabel')}
           className="knowledge-graph__detail"
         >
           <GraphSidebarNavigation
@@ -2242,7 +2414,7 @@ function GraphView({
             id="knowledge-graph-sidebar-panel-details"
             role="tabpanel"
           >
-            <h3 style={{ marginTop: 0 }}>新增实体</h3>
+            <h3 style={{ marginTop: 0 }}>{t('actions.addEntity')}</h3>
             <EntityEditor
               onCancel={() => {
                 setCreatingEntity(false)
@@ -2260,7 +2432,7 @@ function GraphView({
 
       {sidebarTab === 'details' && selectedNode && (
         <aside
-          aria-label="实体详情"
+          aria-label={t('graph.entityDetailsAriaLabel')}
           className="knowledge-graph__detail"
         >
           <GraphSidebarNavigation
@@ -2289,7 +2461,7 @@ function GraphView({
               <h3 style={{ margin: '4px 0 0' }}>{selectedNode.label}</h3>
             </div>
             <button
-              aria-label="关闭实体详情"
+              aria-label={t('graph.closeEntityDetailsAriaLabel')}
               className="secondary-button"
               onClick={() => {
                 setSelectedNodeId(undefined)
@@ -2316,11 +2488,15 @@ function GraphView({
           ) : (
             <>
               <p style={styles.muted}>
-                {selectedNode.description || '该实体没有附加描述。'}
+                {selectedNode.description || t('graph.noEntityDescription')}
               </p>
               {(selectedNode.aliases?.length ?? 0) > 0 && (
                 <div style={{ ...styles.muted, marginBottom: 12 }}>
-                  别名：{selectedNode.aliases?.join('、')}
+                  {t('graph.aliases', {
+                    aliases: selectedNode.aliases?.join(
+                      t('format.listSeparator')
+                    )
+                  })}
                 </div>
               )}
               <div className="knowledge-graph__entity-actions">
@@ -2331,7 +2507,7 @@ function GraphView({
                   type="button"
                 >
                   <Pencil aria-hidden="true" size={14} />
-                  编辑
+                  {t('actions.edit')}
                 </button>
                 <button
                   className="danger-button danger-button--quiet"
@@ -2340,7 +2516,7 @@ function GraphView({
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={14} />
-                  删除
+                  {t('actions.delete')}
                 </button>
               </div>
             </>
@@ -2356,7 +2532,7 @@ function GraphView({
           <div
             className="knowledge-graph__section-heading"
           >
-            <strong>关系</strong>
+            <strong>{t('graph.relations')}</strong>
             <button
               className="secondary-button"
               onClick={() => setRelationForm('new')}
@@ -2364,7 +2540,7 @@ function GraphView({
               type="button"
             >
               <Plus aria-hidden="true" size={14} />
-              新增
+              {t('actions.add')}
             </button>
           </div>
           {relationForm && (
@@ -2404,24 +2580,28 @@ function GraphView({
                   )}
                   <div className="knowledge-graph__relation-actions">
                     <button
-                      aria-label={`编辑关系 ${relation.type}`}
+                      aria-label={t('graph.editRelationAriaLabel', {
+                        type: relation.type
+                      })}
                       className="secondary-button"
                       onClick={() => setRelationForm(relation)}
                       style={{ ...styles.button, padding: 6 }}
                       type="button"
                     >
                       <Pencil aria-hidden="true" size={13} />
-                      编辑
+                      {t('actions.edit')}
                     </button>
                     <button
-                      aria-label={`删除关系 ${relation.type}`}
+                      aria-label={t('graph.deleteRelationAriaLabel', {
+                        type: relation.type
+                      })}
                       className="danger-button danger-button--quiet"
                       onClick={() => void onDeleteRelation(relation.id)}
                       style={{ ...styles.button, padding: 6 }}
                       type="button"
                     >
                       <Trash2 aria-hidden="true" size={13} />
-                      删除
+                      {t('actions.delete')}
                     </button>
                   </div>
                 </li>
@@ -2429,15 +2609,15 @@ function GraphView({
             })}
           </ul>
 
-          <strong>合并实体</strong>
+          <strong>{t('graph.merge.title')}</strong>
           <div className="knowledge-graph__merge">
             <select
-              aria-label="选择合并目标"
+              aria-label={t('graph.merge.targetAriaLabel')}
               onChange={(event) => setMergeTargetId(event.currentTarget.value)}
               style={styles.input}
               value={mergeTargetId}
             >
-              <option value="">选择保留的实体</option>
+              <option value="">{t('graph.merge.targetPlaceholder')}</option>
               {graphNodes
                 .filter((node) => node.id !== selectedNode.id)
                 .map((node) => (
@@ -2447,7 +2627,7 @@ function GraphView({
                 ))}
             </select>
             <button
-              aria-label="合并到目标实体"
+              aria-label={t('graph.merge.actionAriaLabel')}
               className="secondary-button"
               disabled={!mergeTargetId}
               onClick={() => {
@@ -2468,9 +2648,13 @@ function GraphView({
               borderTop: '1px solid var(--border-subtle)'
             }}
           />
-          <strong>证据 ({selectedEvidence.length})</strong>
+          <strong>
+            {t('graph.evidence.title', {
+              count: formatNumber(selectedEvidence.length, locale)
+            })}
+          </strong>
           {selectedEvidence.length === 0 ? (
-            <p style={styles.muted}>此实体和相关关系没有关联证据。</p>
+            <p style={styles.muted}>{t('graph.evidence.empty')}</p>
           ) : (
             <ol
               style={{
@@ -2545,7 +2729,7 @@ function GraphView({
 
       {sidebarTab === 'details' && !selectedNode && !creatingEntity && (
         <aside
-          aria-label="图谱详情"
+          aria-label={t('graph.detailsAriaLabel')}
           className="knowledge-graph__detail"
         >
           <GraphSidebarNavigation
@@ -2560,7 +2744,7 @@ function GraphView({
             role="tabpanel"
           >
             <p className="knowledge-graph__panel-empty">
-              点击图谱节点查看实体详情。
+              {t('graph.detailsPrompt')}
             </p>
           </section>
         </aside>
@@ -2603,6 +2787,8 @@ export function KnowledgeWorkspace({
   onDeleteRelation,
   onOpenEvidence
 }: KnowledgeWorkspaceProps): React.JSX.Element {
+  const { i18n, t } = useTranslation('knowledge')
+  const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
   const [creating, setCreating] = useState(false)
   const [mobileListOpen, setMobileListOpen] = useState(false)
   const [tab, setTab] = useState<WorkspaceTab>('documents')
@@ -2639,22 +2825,22 @@ export function KnowledgeWorkspace({
   const workspaceTabs: ReadonlyArray<PageTab<WorkspaceTab>> = [
     {
       id: 'documents',
-      label: '文档与来源',
+      label: t('tabs.documents'),
       icon: <FileText aria-hidden="true" size={15} />
     },
     {
       id: 'graph',
-      label: '知识图谱',
+      label: t('tabs.graph'),
       icon: <Network aria-hidden="true" size={15} />
     },
     {
       id: 'tasks',
-      label: '任务中心',
+      label: t('tabs.tasks'),
       icon: <ListChecks aria-hidden="true" size={15} />
     },
     {
       id: 'settings',
-      label: '设置',
+      label: t('tabs.settings'),
       icon: <Settings2 aria-hidden="true" size={15} />
     }
   ]
@@ -2686,19 +2872,19 @@ export function KnowledgeWorkspace({
             type="button"
           >
             <Plus aria-hidden="true" size={16} />
-            新建知识库
+            {t('actions.newLibrary')}
           </button>
         }
-        description="集中组织文件、目录和网页来源，建立可追溯、可跨项目使用的索引与图谱。"
-        eyebrow="KNOWLEDGE"
+        description={t('page.description')}
+        eyebrow={t('page.eyebrow')}
         headingId="knowledge-workspace-title"
         icon={<Database size={20} />}
         scope={{ kind: 'global' }}
-        title="知识库"
+        title={t('page.title')}
       />
       <section
         aria-busy={loading}
-        aria-label="知识工作区"
+        aria-label={t('workspace.ariaLabel')}
         className={`knowledge-workspace${
           mobileListOpen ? ' knowledge-workspace--mobile-list' : ''
         }`}
@@ -2708,12 +2894,14 @@ export function KnowledgeWorkspace({
           <div className="knowledge-workspace__sidebar-heading">
             <span>
               <BookOpen aria-hidden="true" size={16} />
-              <strong>知识库列表</strong>
+              <strong>{t('workspace.libraryList')}</strong>
             </span>
-            <small>{libraries.length}</small>
+            <small>
+              {formatNumber(libraries.length, locale)}
+            </small>
           </div>
           <nav
-            aria-label="知识库列表"
+            aria-label={t('workspace.libraryList')}
             className="knowledge-workspace__library-nav"
             style={{ flex: 1 }}
           >
@@ -2727,7 +2915,7 @@ export function KnowledgeWorkspace({
                   lineHeight: 1.55
                 }}
               >
-                创建知识库，集中管理可跨项目使用的来源、索引和实体关系。
+                {t('workspace.libraryListEmpty')}
               </div>
             ) : (
               <ul
@@ -2795,8 +2983,15 @@ export function KnowledgeWorkspace({
                             marginTop: 5
                           }}
                         >
-                          {library.documentCount} 个文档 ·{' '}
-                          {storageModeLabels[library.storageMode]}
+                          {t('workspace.libraryMeta', {
+                            count: formatNumber(
+                              library.documentCount,
+                              locale
+                            ),
+                            storageMode: t(
+                              storageModeLabelKeys[library.storageMode]
+                            )
+                          })}
                         </span>
                       </button>
                     </li>
@@ -2808,7 +3003,7 @@ export function KnowledgeWorkspace({
         </aside>
 
       <section
-        aria-label="知识库详情"
+        aria-label={t('workspace.detailsAriaLabel')}
         className="knowledge-workspace__main"
         style={{ minWidth: 0, background: 'var(--surface-raised)' }}
       >
@@ -2822,7 +3017,7 @@ export function KnowledgeWorkspace({
               color: 'var(--danger)'
             }}
           >
-            <strong>知识库刷新失败</strong>
+            <strong>{t('errors.refreshTitle')}</strong>
             <p style={{ margin: 'var(--space-2) 0' }}>{loadError}</p>
             <button
               className="secondary-button"
@@ -2830,7 +3025,7 @@ export function KnowledgeWorkspace({
               type="button"
             >
               <RefreshCw aria-hidden="true" size={14} />
-              重试
+              {t('actions.retry')}
             </button>
           </div>
         )}
@@ -2841,15 +3036,15 @@ export function KnowledgeWorkspace({
             type="button"
           >
             <ArrowLeft aria-hidden="true" size={15} />
-            返回知识库列表
+            {t('actions.backToLibraryList')}
           </button>
         )}
         {loading && libraries.length === 0 ? (
           <EmptyState
-            description="正在读取知识库、来源和索引状态。"
+            description={t('loading.description')}
             icon={<LoaderCircle size={28} />}
             level="page"
-            title="正在加载知识库"
+            title={t('loading.title')}
           />
         ) : loadError && libraries.length === 0 ? (
           <EmptyState
@@ -2861,13 +3056,13 @@ export function KnowledgeWorkspace({
                 type="button"
               >
                 <RefreshCw aria-hidden="true" size={14} />
-                重试
+                {t('actions.retry')}
               </button>
             }
             description={loadError}
             icon={<AlertCircle size={28} />}
             level="page"
-            title="知识库加载失败"
+            title={t('errors.loadTitle')}
           />
         ) : creating ? (
           <CreateLibraryWizard
@@ -2884,13 +3079,13 @@ export function KnowledgeWorkspace({
                 type="button"
               >
                 <Plus aria-hidden="true" size={16} />
-                创建知识库
+                {t('actions.createLibrary')}
               </button>
             }
-            description="集中组织文件、目录和网页来源，并生成可追溯、可跨项目使用的索引与图谱。"
+            description={t('empty.description')}
             icon={<BookOpen size={34} />}
             level="page"
-            title="建立第一个知识库"
+            title={t('empty.title')}
           />
         ) : (
           <>
@@ -2909,16 +3104,32 @@ export function KnowledgeWorkspace({
                   }}
                 >
                   <Database aria-hidden="true" size={13} />
-                  全局 · {storageModeLabels[selectedLibrary.storageMode]}
+                  {t('workspace.scopeGlobal')} ·{' '}
+                  {t(storageModeLabelKeys[selectedLibrary.storageMode])}
                   {selectedLibrary.graphEnabled &&
-                    ` · ${strategyLabels[selectedLibrary.graphStrategy]}`}
+                    ` · ${t(
+                      strategyLabelKeys[selectedLibrary.graphStrategy]
+                    )}`}
                 </span>
                 <h2 style={{ margin: '6px 0 3px' }}>
                   {selectedLibrary.name}
                 </h2>
                 <p style={{ ...styles.muted, margin: 0 }}>
                   {selectedLibrary.description ||
-                    `${selectedLibrary.sourceCount} 个来源，${selectedLibrary.indexedDocumentCount}/${selectedLibrary.documentCount} 个文档已完成索引。`}
+                    t('workspace.librarySummary', {
+                      sourceCount: formatNumber(
+                        selectedLibrary.sourceCount,
+                        locale
+                      ),
+                      indexedCount: formatNumber(
+                        selectedLibrary.indexedDocumentCount,
+                        locale
+                      ),
+                      documentCount: formatNumber(
+                        selectedLibrary.documentCount,
+                        locale
+                      )
+                    })}
                 </p>
               </div>
               <div
@@ -2932,10 +3143,12 @@ export function KnowledgeWorkspace({
                   type="button"
                 >
                   <Pencil aria-hidden="true" size={15} />
-                  编辑
+                  {t('actions.edit')}
                 </button>
                 <button
-                  aria-label={`删除知识库 ${selectedLibrary.name}`}
+                  aria-label={t('delete.triggerAriaLabel', {
+                    name: selectedLibrary.name
+                  })}
                   className="danger-button danger-button--quiet"
                   onClick={() => setDeletingLibrary(selectedLibrary)}
                   ref={deleteLibraryTriggerRef}
@@ -2943,13 +3156,13 @@ export function KnowledgeWorkspace({
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={15} />
-                  删除
+                  {t('actions.delete')}
                 </button>
               </div>
             </header>
             <div className="knowledge-workspace__tabs">
               <PageTabs
-                ariaLabel="知识库视图"
+                ariaLabel={t('workspace.tabsAriaLabel')}
                 idPrefix="knowledge"
                 onChange={setTab}
                 tabs={workspaceTabs}
@@ -3003,13 +3216,13 @@ export function KnowledgeWorkspace({
                       type="button"
                     >
                       <Settings2 aria-hidden="true" size={15} />
-                      前往设置
+                      {t('actions.goToSettings')}
                     </button>
                   }
-                  description="在“设置”中启用知识图谱后，可以查看实体关系并重新抽取。"
+                  description={t('graph.disabledDescription')}
                   icon={<Network size={30} />}
                   level="section"
-                  title="知识图谱未启用"
+                  title={t('graph.disabledTitle')}
                 />
               ) : visibleTab === 'tasks' ? (
                 <KnowledgeTasksView tasks={libraryTasks} />

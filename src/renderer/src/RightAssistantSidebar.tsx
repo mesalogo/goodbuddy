@@ -13,7 +13,8 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   AssistantHeartbeatConfig,
   AssistantMemory,
@@ -103,36 +104,12 @@ type RightAssistantSidebarProps = {
   onTabChange: (tab: AssistantSidebarTab) => void
 }
 
-const tabs: Array<{
-  id: AssistantSidebarTab
-  label: string
-  description: string
-}> = [
-  {
-    id: 'tasks',
-    label: '任务中心',
-    description: '处理待审批操作并管理自动化'
-  },
-  {
-    id: 'context',
-    label: '上下文',
-    description: '查看本次对话使用的附件、知识库与记忆'
-  },
-  {
-    id: 'workspace',
-    label: '工作区',
-    description: '浏览项目文件、Git 变更与文件内容'
-  },
-  {
-    id: 'browser',
-    label: '浏览器',
-    description: '查看 Agent 操作网页时的实时画面'
-  },
-  {
-    id: 'results',
-    label: '成果',
-    description: '查看对话生成或手动导入的内容'
-  }
+const tabIds: AssistantSidebarTab[] = [
+  'tasks',
+  'context',
+  'workspace',
+  'browser',
+  'results'
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
 const defaultSidebarWidth = 350
@@ -141,11 +118,6 @@ const maximumSidebarWidth = 640
 const minimumRemainingAppWidth = 520
 const compactSidebarBreakpoint = 720
 const keyboardResizeStep = 16
-const sidebarTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
-  hour: '2-digit',
-  minute: '2-digit'
-})
-
 function getSidebarWidthLimits(viewportWidth: number): {
   minimum: number
   maximum: number
@@ -200,6 +172,25 @@ export function RightAssistantSidebar({
   onSetHeartbeatPaused,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
+  const { i18n, t } = useTranslation('workspace')
+  const locale = i18n.resolvedLanguage || 'zh-CN'
+  const sidebarTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+    [locale]
+  )
+  const tabs = useMemo(
+    () =>
+      tabIds.map((id) => ({
+        id,
+        label: t(`sidebar.tabs.${id}.label`),
+        description: t(`sidebar.tabs.${id}.description`)
+      })),
+    [t]
+  )
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth)
   const [isResizing, setIsResizing] = useState(false)
@@ -356,7 +347,7 @@ export function RightAssistantSidebar({
             error:
               reason instanceof Error
                 ? reason.message
-                : '工作区文件预览失败'
+                : t('sidebar.errors.workspacePreview')
           })
         }
       })
@@ -410,7 +401,7 @@ export function RightAssistantSidebar({
   return (
     <aside
       ref={sidebarRef}
-      aria-label="助手工作栏"
+      aria-label={t('sidebar.ariaLabel')}
       aria-hidden={!open}
       className={
         open
@@ -426,12 +417,14 @@ export function RightAssistantSidebar({
     >
       <div
         aria-controls="assistant-sidebar-panel"
-        aria-label="调整助手工作栏宽度"
+        aria-label={t('sidebar.resizeAriaLabel')}
         aria-orientation="vertical"
         aria-valuemax={sidebarWidthLimits.maximum}
         aria-valuemin={sidebarWidthLimits.minimum}
         aria-valuenow={sidebarWidth}
-        aria-valuetext={`${sidebarWidth} 像素`}
+        aria-valuetext={t('sidebar.resizeValue', {
+          width: sidebarWidth
+        })}
         aria-disabled={!canResize}
         className="assistant-sidebar__resize-handle"
         onKeyDown={resizeWithKeyboard}
@@ -469,9 +462,9 @@ export function RightAssistantSidebar({
         tabIndex={canResize ? 0 : -1}
       />
       <header className="assistant-sidebar__header">
-        <strong>工作栏</strong>
+        <strong>{t('sidebar.title')}</strong>
         <button
-          aria-label="关闭助手工作栏"
+          aria-label={t('sidebar.close')}
           className="icon-button"
           onClick={onClose}
           type="button"
@@ -481,7 +474,7 @@ export function RightAssistantSidebar({
       </header>
 
       <nav
-        aria-label="工作栏分类"
+        aria-label={t('sidebar.categoriesAriaLabel')}
         className="assistant-sidebar__tabs"
         role="tablist"
       >
@@ -530,15 +523,15 @@ export function RightAssistantSidebar({
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
             <p className="assistant-sidebar__section-description">
-              处理当前待审批操作，并创建和管理自动化任务。
+              {t('sidebar.tasks.description')}
             </p>
             <h3>
               <ShieldAlert size={15} />
-              等待审批
+              {t('sidebar.tasks.approvalsTitle')}
             </h3>
             {approvals.length === 0 ? (
               <p className="assistant-sidebar__empty">
-                当前没有等待审批的操作。
+                {t('sidebar.tasks.noApprovals')}
               </p>
             ) : (
               approvals.map((approval) => (
@@ -557,7 +550,7 @@ export function RightAssistantSidebar({
                       }
                       type="button"
                     >
-                      拒绝
+                      {t('sidebar.tasks.deny')}
                     </button>
                     <button
                       className="primary-button"
@@ -566,7 +559,7 @@ export function RightAssistantSidebar({
                       }
                       type="button"
                     >
-                      仅此次允许
+                      {t('sidebar.tasks.allowOnce')}
                     </button>
                   </div>
                 </article>
@@ -575,32 +568,44 @@ export function RightAssistantSidebar({
 
             <h3>
               <Hourglass size={15} />
-              自动化
+              {t('sidebar.tasks.automationTitle')}
             </h3>
             <div className="assistant-sidebar__schedule-form">
               <input
-                aria-label="定时任务标题"
+                aria-label={t(
+                  'sidebar.tasks.schedule.titleAriaLabel'
+                )}
                 maxLength={120}
                 onChange={(event) => setScheduleTitle(event.target.value)}
-                placeholder="任务标题"
+                placeholder={t(
+                  'sidebar.tasks.schedule.titlePlaceholder'
+                )}
                 value={scheduleTitle}
               />
               <textarea
-                aria-label="定时任务内容"
+                aria-label={t(
+                  'sidebar.tasks.schedule.promptAriaLabel'
+                )}
                 maxLength={100_000}
                 onChange={(event) => setSchedulePrompt(event.target.value)}
-                placeholder="要定时完成的只读任务"
+                placeholder={t(
+                  'sidebar.tasks.schedule.promptPlaceholder'
+                )}
                 rows={3}
                 value={schedulePrompt}
               />
               <input
-                aria-label="定时任务时间"
+                aria-label={t(
+                  'sidebar.tasks.schedule.timeAriaLabel'
+                )}
                 onChange={(event) => setScheduleTime(event.target.value)}
                 type="datetime-local"
                 value={scheduleTime}
               />
               <select
-                aria-label="定时任务重复规则"
+                aria-label={t(
+                  'sidebar.tasks.schedule.recurrenceAriaLabel'
+                )}
                 onChange={(event) =>
                   setScheduleRecurrence(
                     event.target.value as ScheduleCreateInput['recurrence']
@@ -608,9 +613,15 @@ export function RightAssistantSidebar({
                 }
                 value={scheduleRecurrence}
               >
-                <option value="once">仅一次</option>
-                <option value="daily">每天</option>
-                <option value="weekly">每周</option>
+                <option value="once">
+                  {t('sidebar.tasks.schedule.recurrence.once')}
+                </option>
+                <option value="daily">
+                  {t('sidebar.tasks.schedule.recurrence.daily')}
+                </option>
+                <option value="weekly">
+                  {t('sidebar.tasks.schedule.recurrence.weekly')}
+                </option>
               </select>
               <button
                 className="primary-button"
@@ -629,7 +640,7 @@ export function RightAssistantSidebar({
                         recurrence: scheduleRecurrence,
                         nextRunAt: new Date(scheduleTime).toISOString()
                       }),
-                    '添加定时任务失败',
+                    t('sidebar.errors.addSchedule'),
                     () => {
                       setScheduleTitle('')
                       setSchedulePrompt('')
@@ -639,7 +650,7 @@ export function RightAssistantSidebar({
                 }}
                 type="button"
               >
-                添加定时任务
+                {t('sidebar.tasks.schedule.add')}
               </button>
             </div>
             {schedules.map((schedule) => (
@@ -650,8 +661,10 @@ export function RightAssistantSidebar({
                 <span>
                   <strong>{schedule.title}</strong>
                   <small>
-                    {new Date(schedule.nextRunAt).toLocaleString('zh-CN')} ·{' '}
-                    {schedule.recurrence}
+                    {new Date(schedule.nextRunAt).toLocaleString(locale)} ·{' '}
+                    {t(
+                      `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`
+                    )}
                   </small>
                 </span>
                 <div>
@@ -659,23 +672,23 @@ export function RightAssistantSidebar({
                     onClick={() =>
                       runAction(
                         () => onRunSchedule(schedule.id),
-                        '运行定时任务失败'
+                        t('sidebar.errors.runSchedule')
                       )
                     }
                     type="button"
                   >
-                    立即运行
+                    {t('sidebar.tasks.schedule.runNow')}
                   </button>
                   <button
                     onClick={() =>
                       runAction(
                         () => onRemoveSchedule(schedule.id),
-                        '删除定时任务失败'
+                        t('sidebar.errors.deleteSchedule')
                       )
                     }
                     type="button"
                   >
-                    删除
+                    {t('sidebar.tasks.schedule.delete')}
                   </button>
                 </div>
               </article>
@@ -694,15 +707,15 @@ export function RightAssistantSidebar({
         {tab === 'context' && (
           <section className="assistant-sidebar__section">
             <p className="assistant-sidebar__section-description">
-              查看当前对话实际使用的附件、知识库与已确认记忆。
+              {t('sidebar.context.description')}
             </p>
             <h3>
               <FileText size={15} />
-              本次附件
+              {t('sidebar.context.attachmentsTitle')}
             </h3>
             {attachments.length === 0 ? (
               <p className="assistant-sidebar__empty">
-                尚未添加文件、截图或剪贴板内容。
+                {t('sidebar.context.noAttachments')}
               </p>
             ) : (
               attachments.map((attachment) => (
@@ -713,11 +726,18 @@ export function RightAssistantSidebar({
                   <span>
                     <strong>{attachment.name}</strong>
                     <small>
-                      {attachment.kind} · {attachment.size} 字节
+                      {t('sidebar.context.attachmentDetails', {
+                        kind: attachment.kind,
+                        formattedSize:
+                          attachment.size.toLocaleString(locale)
+                      })}
                     </small>
                   </span>
                   <button
-                    aria-label={`移除上下文 ${attachment.name}`}
+                    aria-label={t(
+                      'sidebar.context.removeAttachment',
+                      { name: attachment.name }
+                    )}
                     className="icon-button"
                     onClick={() => onRemoveAttachment(attachment.id)}
                     type="button"
@@ -729,27 +749,32 @@ export function RightAssistantSidebar({
             )}
             <h3>
               <FolderTree size={15} />
-              已启用知识库
+              {t('sidebar.context.librariesTitle')}
             </h3>
             {enabledLibraries.length === 0 ? (
               <p className="assistant-sidebar__empty">
-                当前对话未启用知识库。
+                {t('sidebar.context.noLibraries')}
               </p>
             ) : (
               enabledLibraries.map((library) => (
                 <div className="assistant-sidebar__library" key={library.id}>
                   <strong>{library.name}</strong>
-                  <small>{library.documentCount} 个文档</small>
+                  <small>
+                    {t('sidebar.context.documentCount', {
+                      formattedCount:
+                        library.documentCount.toLocaleString(locale)
+                    })}
+                  </small>
                 </div>
               ))
             )}
             <h3>
               <CheckCircle2 size={15} />
-              已确认记忆
+              {t('sidebar.context.memoriesTitle')}
             </h3>
             {activeMemories.length === 0 ? (
               <p className="assistant-sidebar__empty">
-                当前范围没有已确认的长期记忆。
+                {t('sidebar.context.noMemories')}
               </p>
             ) : (
               activeMemories.map((memory) => (
@@ -769,7 +794,7 @@ export function RightAssistantSidebar({
             <section className="assistant-sidebar__preview">
               <header>
                 <button
-                  aria-label="返回工作区"
+                  aria-label={t('sidebar.workspace.back')}
                   className="assistant-sidebar__back"
                   onClick={() => {
                     workspacePreviewRequest.current += 1
@@ -779,20 +804,25 @@ export function RightAssistantSidebar({
                   type="button"
                 >
                   <ChevronLeft size={14} />
-                  工作区
+                  {t('sidebar.workspace.title')}
                 </button>
                 <span>
                   <strong>{currentWorkspacePreview.path}</strong>
                   <small>
                     {currentWorkspacePreview.state === 'ready'
-                      ? `${currentWorkspacePreview.file.size.toLocaleString('zh-CN')} 字节`
-                      : '项目工作区文件'}
+                      ? t('sidebar.workspace.fileSize', {
+                          formattedSize:
+                            currentWorkspacePreview.file.size.toLocaleString(
+                              locale
+                            )
+                        })
+                      : t('sidebar.workspace.fileFallback')}
                   </small>
                 </span>
               </header>
               {currentWorkspacePreview.state === 'loading' ? (
                 <p className="assistant-sidebar__empty">
-                  正在读取文件…
+                  {t('sidebar.workspace.reading')}
                 </p>
               ) : currentWorkspacePreview.state === 'error' ? (
                 <p className="assistant-sidebar__empty" role="alert">
@@ -814,23 +844,23 @@ export function RightAssistantSidebar({
           ) : (
             <section className="assistant-sidebar__section">
               <p className="assistant-sidebar__section-description">
-                浏览当前项目文件与 Git 变更；选择文件后在当前工作区内预览。
+                {t('sidebar.workspace.description')}
               </p>
               <h3>
                 <FolderTree size={15} />
-                项目工作区
+                {t('sidebar.workspace.projectTitle')}
                 <button
-                  aria-label="刷新工作区文件"
+                  aria-label={t('sidebar.workspace.refreshAriaLabel')}
                   className="icon-button"
                   disabled={!workspaceProjectId}
                   onClick={() => {
                     setWorkspaceRefreshVersion((current) => current + 1)
                     runAction(
                       onRefreshChanges,
-                      '刷新工作区文件失败'
+                      t('sidebar.errors.refreshWorkspace')
                     )
                   }}
-                  title="刷新"
+                  title={t('sidebar.workspace.refresh')}
                   type="button"
                 >
                   <RefreshCw size={14} />
@@ -846,16 +876,18 @@ export function RightAssistantSidebar({
               />
               {workspaceChanges?.error && (
                 <p className="workspace-files__status">
-                  Git 状态不可用：{workspaceChanges.error}
+                  {t('sidebar.workspace.gitUnavailable', {
+                    error: workspaceChanges.error
+                  })}
                 </p>
               )}
               {workspaceChanges?.patch && (
                 <details className="assistant-sidebar__diff-details">
-                  <summary>查看完整 Git diff</summary>
+                  <summary>{t('sidebar.workspace.fullDiff')}</summary>
                   <pre className="assistant-sidebar__diff">
                     {workspaceChanges.patch}
                     {workspaceChanges.truncated
-                      ? '\n\n[输出超过安全限制，已截断]'
+                      ? t('sidebar.workspace.truncatedDiff')
                       : ''}
                   </pre>
                 </details>
@@ -869,7 +901,7 @@ export function RightAssistantSidebar({
             <section className="assistant-sidebar__preview">
               <header>
                 <button
-                  aria-label="返回成果列表"
+                  aria-label={t('sidebar.results.back')}
                   className="assistant-sidebar__back"
                   onClick={() => {
                     setSelectedArtifactId(undefined)
@@ -878,7 +910,7 @@ export function RightAssistantSidebar({
                   type="button"
                 >
                   <ChevronLeft size={14} />
-                  成果
+                  {t('sidebar.results.title')}
                 </button>
                 <span>
                   <strong>{artifactPreview.title}</strong>
@@ -899,7 +931,7 @@ export function RightAssistantSidebar({
                     />
                   ) : (
                     <p className="assistant-sidebar__empty">
-                      正在加载图片…
+                      {t('sidebar.results.loadingImage')}
                     </p>
                   )
                 ) : artifactPreview.mimeType === 'text/html' ? (
@@ -921,28 +953,28 @@ export function RightAssistantSidebar({
           ) : (
             <section className="assistant-sidebar__section">
               <p className="assistant-sidebar__section-description">
-                查看并预览由对话生成或手动导入的文本、图片、PDF 与网页内容。
+                {t('sidebar.results.description')}
               </p>
               <h3>
                 <FileText size={15} />
-                对话与导入成果
+                {t('sidebar.results.sectionTitle')}
               </h3>
               <button
                 className="secondary-button assistant-sidebar__import"
                 onClick={() =>
                   runAction(
                     onImportArtifacts,
-                    '导入成果失败'
+                    t('sidebar.errors.importResult')
                   )
                 }
                 type="button"
               >
                 <Upload size={13} />
-                导入 PDF、图片或网页
+                {t('sidebar.results.import')}
               </button>
               {artifacts.length === 0 ? (
                 <p className="assistant-sidebar__empty">
-                  完成的回复会作为可预览成果显示在这里。
+                  {t('sidebar.results.empty')}
                 </p>
               ) : (
                 artifacts.map((artifact) => (
@@ -954,7 +986,7 @@ export function RightAssistantSidebar({
                       setActionError('')
                       runAction(
                         () => onLoadArtifact(artifact.id),
-                        '加载成果失败'
+                        t('sidebar.errors.loadResult')
                       )
                     }}
                     type="button"
@@ -981,7 +1013,7 @@ export function RightAssistantSidebar({
             <header>
               <span>
                 <Monitor size={15} />
-                <strong>实时浏览器</strong>
+                <strong>{t('sidebar.browser.title')}</strong>
               </span>
               {browserState &&
                 browserState.status !== 'stopped' && (
@@ -995,34 +1027,34 @@ export function RightAssistantSidebar({
                       onClick={() =>
                         runAction(
                           onInteractBrowser,
-                          '打开浏览器交互窗口失败'
+                          t('sidebar.errors.interactBrowser')
                         )
                       }
                       type="button"
                     >
                       <ExternalLink aria-hidden="true" size={12} />
                       {browserState.status === 'interactive'
-                        ? '交互中'
-                        : '交互'}
+                        ? t('sidebar.browser.interacting')
+                        : t('sidebar.browser.interact')}
                     </button>
                     <button
                       className="secondary-button"
                       onClick={() =>
                         runAction(
                           onStopBrowser,
-                          '停止浏览器失败'
+                          t('sidebar.errors.stopBrowser')
                         )
                       }
                       type="button"
                     >
-                      停止浏览器
+                      {t('sidebar.browser.stop')}
                     </button>
                   </div>
                 )}
             </header>
             {!browserState ? (
               <p className="assistant-sidebar__empty">
-                Agent 打开网页后，实时画面会显示在这里。
+                {t('sidebar.browser.empty')}
               </p>
             ) : (
               <>
@@ -1032,18 +1064,21 @@ export function RightAssistantSidebar({
                   role="status"
                 >
                   {browserState.status === 'creating'
-                    ? '正在启动浏览器…'
+                    ? t('sidebar.browser.statuses.creating')
                     : browserState.status === 'loading'
-                      ? '正在加载页面…'
+                      ? t('sidebar.browser.statuses.loading')
                       : browserState.status === 'acting'
-                        ? 'Agent 正在操作页面…'
+                        ? t('sidebar.browser.statuses.acting')
                         : browserState.status === 'interactive'
-                          ? '用户正在辅助操作页面…'
+                          ? t(
+                              'sidebar.browser.statuses.interactive'
+                            )
                         : browserState.status === 'ready'
-                          ? '浏览器已就绪'
+                          ? t('sidebar.browser.statuses.ready')
                           : browserState.status === 'failed'
-                            ? browserState.error ?? '浏览器操作失败'
-                            : '浏览器已停止'}
+                            ? browserState.error ??
+                              t('sidebar.browser.statuses.failed')
+                            : t('sidebar.browser.statuses.stopped')}
                 </div>
                 {browserState.url && (
                   <div
@@ -1055,7 +1090,7 @@ export function RightAssistantSidebar({
                 )}
                 {browserState.frameDataUrl ? (
                   <img
-                    alt="Agent 实时浏览器画面"
+                    alt={t('sidebar.browser.frameAlt')}
                     className="assistant-sidebar__browser-frame"
                     src={browserState.frameDataUrl}
                   />
@@ -1064,8 +1099,8 @@ export function RightAssistantSidebar({
                     <Monitor size={28} />
                     <span>
                       {browserState.status === 'failed'
-                        ? '未能获取页面画面'
-                        : '等待首个页面画面…'}
+                        ? t('sidebar.browser.noFrame')
+                        : t('sidebar.browser.waitingFrame')}
                     </span>
                   </div>
                 )}

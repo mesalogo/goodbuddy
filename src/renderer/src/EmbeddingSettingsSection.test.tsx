@@ -10,6 +10,7 @@ import type {
   EmbeddingIndexStatus
 } from '../../shared/embedding-contracts'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
+import { changeUiLocale } from './i18n'
 
 const configuration: EmbeddingConfigurationSummary = {
   provider: 'openai-compatible',
@@ -27,6 +28,34 @@ afterEach(() => {
 })
 
 describe('EmbeddingSettingsSection', () => {
+  it('renders embedding settings in English without translating model data', async () => {
+    await changeUiLocale('en-US')
+    render(
+      <EmbeddingSettingsSection
+        configuration={configuration}
+        indexStatus={idleIndex}
+        onRebuild={vi.fn()}
+        onTest={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'Embeddings and knowledge retrieval'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Current embedding model' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument()
+    expect(screen.getByText('Provider: openai-compatible'))
+      .toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Test embedding model' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('No rebuild history yet')).toBeInTheDocument()
+  })
+
   it('uses supplied callbacks without depending on a preload API', () => {
     const onTest = vi.fn()
     const onRebuild = vi.fn()

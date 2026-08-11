@@ -20,9 +20,12 @@ import type {
   EmbeddingIndexStatus,
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
+import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import { SettingsPanel } from './SettingsPanel'
+import { changeUiLocale } from './i18n'
+import { UiLocaleProvider } from './i18n/UiLocaleProvider'
 
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const browserProfileId = '00000000-0000-4000-8000-000000000201'
@@ -344,16 +347,82 @@ const updateApplicationSettings = vi.fn<
   }
   return { ...applicationSettings }
 })
+const speechCatalog: SpeechModelSnapshot['catalog'] = [
+  {
+    id: 'sensevoice-small-int8',
+    displayName: 'SenseVoiceSmall INT8',
+    description: 'Fast multilingual local speech recognition.',
+    languages: ['中文', '英语'],
+    family: 'sensevoice',
+    quantization: 'int8',
+    quality: 'high',
+    speed: 'fast',
+    recommended: true,
+    repositoryUrl: 'https://example.com/sensevoice',
+    license: {
+      name: 'Model License',
+      notice: 'Review the model license before use.',
+      url: 'https://example.com/license'
+    },
+    manualOnly: false,
+    files: []
+  },
+  {
+    id: 'paraformer-bilingual-zh-en-int8',
+    displayName: 'Paraformer 中英双语 INT8',
+    description: 'Fast local Mandarin and English recognition.',
+    languages: ['中文', '英语'],
+    family: 'paraformer',
+    quantization: 'int8',
+    quality: 'high',
+    speed: 'fast',
+    recommended: true,
+    repositoryUrl: 'https://example.com/paraformer',
+    license: {
+      name: 'MIT License',
+      notice: 'Review the model license before use.',
+      url: 'https://example.com/license'
+    },
+    manualOnly: false,
+    files: []
+  }
+]
+const createSpeechModelSnapshot = (
+  selectedModelId: string | null = 'sensevoice-small-int8'
+): SpeechModelSnapshot => ({
+  rootDirectory: 'C:\\Users\\test\\models\\speech',
+  catalog: speechCatalog,
+  installed: speechCatalog.map((model) => ({
+    id: model.id,
+    displayName: model.displayName,
+    source: 'download',
+    installedAt: '2026-08-11T00:00:00.000Z',
+    files: []
+  })),
+  operations: [],
+  selectedModelId
+})
+let speechModelSnapshot = createSpeechModelSnapshot()
+const getSpeechModelSnapshot = vi.fn(async () => speechModelSnapshot)
+const selectSpeechModel = vi.fn<
+  NonNullable<DesktopApi['speechModels']>['select']
+>(async (modelId) => {
+  speechModelSnapshot = createSpeechModelSnapshot(modelId)
+  return speechModelSnapshot
+})
 
 describe('SettingsPanel runtime files', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    localStorage.removeItem('goodbuddy.ui-locale')
+    await changeUiLocale('zh-CN')
     applicationSettings = {
       checkUpdatesOnStartup: true,
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     }
+    speechModelSnapshot = createSpeechModelSnapshot()
     embeddingStatusListeners.splice(0)
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
@@ -403,6 +472,16 @@ describe('SettingsPanel runtime files', () => {
           cancel: cancelEmbeddingIndex,
           onStatus: onEmbeddingStatus
         },
+        speechModels: {
+          getSnapshot: getSpeechModelSnapshot,
+          install: vi.fn(),
+          cancel: vi.fn(async () => true),
+          remove: vi.fn(),
+          select: selectSpeechModel,
+          importLocalDirectory: vi.fn(),
+          openRepository: vi.fn(),
+          openModelsDirectory: vi.fn()
+        },
         updates: {
           getSettings: getApplicationSettings,
           updateSettings: updateApplicationSettings,
@@ -433,11 +512,90 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+    const themeOptions = screen.getByRole('radiogroup', {
+      name: '界面主题'
+    })
     expect(
-      screen.getByRole('radio', { name: /跟随系统/u })
+      within(themeOptions).getByRole('radio', { name: /跟随系统/u })
     ).toBeChecked()
-    fireEvent.click(screen.getByRole('radio', { name: /暗色/u }))
+    fireEvent.click(
+      within(themeOptions).getByRole('radio', { name: /暗色/u })
+    )
     expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
+  })
+
+  it('applies and persists an English interface language immediately', async () => {
+    render(
+      <UiLocaleProvider initialPreference="zh-CN">
+        <SettingsPanel
+          {...heartbeatSettingsProps}
+          open
+          onClearLocalData={vi.fn(async () => {})}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+          presentation="page"
+        />
+      </UiLocaleProvider>
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+    fireEvent.click(
+      screen.getByRole('radio', {
+        name: /^English/u
+      })
+    )
+
+    await waitFor(() => {
+      expect(localStorage.getItem('goodbuddy.ui-locale')).toBe('en-US')
+      expect(document.documentElement.lang).toBe('en-US')
+    })
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Settings' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Close settings' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tablist', { name: 'Settings categories' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'Appearance' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'Appearance' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('radiogroup', { name: 'Interface theme' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('radio', { name: /Use system theme/u })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('radiogroup', { name: 'Interface language' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('radio', { name: /Use system language/u })
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Agent Runtime' })
+    )
+    expect(
+      screen.getByRole('heading', {
+        level: 2,
+        name: 'Agent Runtime'
+      })
+    ).toBeInTheDocument()
+    expect(screen.getByText('Default workspace')).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('Default workspace folder')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Save settings' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/OpenCode and Continue are bundled with GoodBuddy/u)
+    ).toBeInTheDocument()
   })
 
   it('toggles the Magic Notes platform entry setting', async () => {
@@ -607,6 +765,79 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(screen.queryByText('设置已保存')).not.toBeInTheDocument()
+  })
+
+  it('applies a speech model draft only when Settings is saved', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(
+      screen.getByRole('button', { name: '语音模型' })
+    )
+    const paraformer = await screen.findByRole('radio', {
+      name: '选择 Paraformer 中英双语 INT8'
+    })
+
+    fireEvent.click(paraformer)
+
+    expect(selectSpeechModel).not.toHaveBeenCalled()
+    expect(screen.getByText('待保存')).toBeInTheDocument()
+    expect(screen.getByText('正在使用')).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存设置' })
+    )
+
+    await waitFor(() =>
+      expect(selectSpeechModel).toHaveBeenCalledWith(
+        'paraformer-bilingual-zh-en-int8'
+      )
+    )
+    expect(screen.queryByText('待保存')).not.toBeInTheDocument()
+    expect(paraformer).toBeChecked()
+  })
+
+  it('keeps a speech model draft when saving the selection fails', async () => {
+    selectSpeechModel.mockRejectedValueOnce(
+      new Error('语音模型切换失败')
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(
+      screen.getByRole('button', { name: '语音模型' })
+    )
+    const paraformer = await screen.findByRole('radio', {
+      name: '选择 Paraformer 中英双语 INT8'
+    })
+    fireEvent.click(paraformer)
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存设置' })
+    )
+
+    expect(
+      await screen.findByText('语音模型切换失败')
+    ).toBeInTheDocument()
+    expect(screen.getByText('待保存')).toBeInTheDocument()
+    expect(paraformer).toBeChecked()
   })
 
   it('uses one first-level heading for the settings page', () => {

@@ -1,6 +1,9 @@
 import {
+  MAGIC_NOTE_MAX_ATTACHMENT_BYTES,
   MAGIC_NOTE_MAX_IMAGE_BYTES,
-  magicNoteImageDataBytes,
+  MAGIC_NOTE_MAX_VIDEO_BYTES,
+  MAGIC_NOTE_VIDEO_TYPES,
+  magicNoteDataBytes,
   magicNoteRichContentSchema,
   type MagicNoteRichContent
 } from '../../shared/magic-notes-contracts'
@@ -52,6 +55,67 @@ function validateImage(dataUrl: string): void {
   }
 }
 
+type EmbeddedFile = {
+  name: string
+  mimeType: string
+  size: number
+  dataUrl: string
+}
+
+function decodeEmbeddedFile(
+  file: EmbeddedFile,
+  maxBytes: number
+): Buffer {
+  const separatorIndex = file.dataUrl.indexOf(',')
+  const prefix = file.dataUrl.slice(0, separatorIndex)
+  const payload = file.dataUrl.slice(separatorIndex + 1)
+  if (prefix !== `data:${file.mimeType};base64`) {
+    throw new Error('附件内容与声明的类型不一致')
+  }
+  const bytes = Buffer.from(payload, 'base64')
+  if (
+    bytes.length === 0 ||
+    bytes.length > maxBytes ||
+    bytes.length !== file.size
+  ) {
+    throw new Error('附件内容与声明的大小不一致')
+  }
+  if (bytes.toString('base64') !== payload) {
+    throw new Error('附件数据格式无效')
+  }
+  return bytes
+}
+
+function validateVideo(file: EmbeddedFile): void {
+  const bytes = decodeEmbeddedFile(file, MAGIC_NOTE_MAX_VIDEO_BYTES)
+  const hasIsoBaseMediaSignature =
+    bytes.length >= 12 &&
+    bytes.subarray(4, 8).toString('ascii') === 'ftyp'
+  const signatureMatches =
+    (file.mimeType === 'video/mp4' && hasIsoBaseMediaSignature) ||
+    (file.mimeType === 'video/quicktime' && hasIsoBaseMediaSignature) ||
+    (file.mimeType === 'video/webm' &&
+      bytes.length >= 4 &&
+      bytes.subarray(0, 4).equals(
+        Buffer.from([0x1a, 0x45, 0xdf, 0xa3])
+      )) ||
+    (file.mimeType === 'video/ogg' &&
+      bytes.length >= 4 &&
+      bytes.subarray(0, 4).toString('ascii') === 'OggS')
+  if (
+    !MAGIC_NOTE_VIDEO_TYPES.includes(
+      file.mimeType as (typeof MAGIC_NOTE_VIDEO_TYPES)[number]
+    ) ||
+    !signatureMatches
+  ) {
+    throw new Error('视频内容与声明的格式不一致')
+  }
+}
+
+function validateAttachment(file: EmbeddedFile): void {
+  decodeEmbeddedFile(file, MAGIC_NOTE_MAX_ATTACHMENT_BYTES)
+}
+
 export function validateMagicNoteRichContent(
   input: unknown
 ): MagicNoteRichContent {
@@ -61,9 +125,15 @@ export function validateMagicNoteRichContent(
       continue
     }
     if (operation.attributes !== undefined) {
-      throw new Error('图片嵌入不支持行内格式')
+      throw new Error('嵌入内容不支持行内格式')
     }
-    validateImage(operation.insert.image)
+    if ('image' in operation.insert) {
+      validateImage(operation.insert.image)
+    } else if ('localVideo' in operation.insert) {
+      validateVideo(operation.insert.localVideo)
+    } else {
+      validateAttachment(operation.insert.attachment)
+    }
   }
   return content
 }
@@ -75,7 +145,11 @@ export function magicNotePlainText(
     .map((operation) =>
       typeof operation.insert === 'string'
         ? operation.insert
-        : '[图片]'
+        : 'image' in operation.insert
+          ? '[图片]'
+          : 'localVideo' in operation.insert
+            ? `[视频：${operation.insert.localVideo.name}]`
+            : `[附件：${operation.insert.attachment.name}]`
     )
     .join('')
     .replace(/\n{3,}/g, '\n\n')
@@ -89,7 +163,29 @@ export function magicNoteImageBytes(
     if (typeof operation.insert === 'string') {
       return total
     }
-    return total + magicNoteImageDataBytes(operation.insert.image)
+    return (
+      total +
+      ('image' in operation.insert
+        ? magicNoteDataBytes(operation.insert.image)
+        : 0)
+    )
+  }, 0)
+}
+
+export function magicNoteEmbeddedBytes(
+  content: MagicNoteRichContent
+): number {
+  return content.ops.reduce((total, operation) => {
+    if (typeof operation.insert === 'string') {
+      return total
+    }
+    if ('image' in operation.insert) {
+      return total + magicNoteDataBytes(operation.insert.image)
+    }
+    if ('localVideo' in operation.insert) {
+      return total + magicNoteDataBytes(operation.insert.localVideo.dataUrl)
+    }
+    return total + magicNoteDataBytes(operation.insert.attachment.dataUrl)
   }, 0)
 }
 
@@ -119,7 +215,12 @@ export function magicNoteChecklistItems(
   let sourceIndex = 0
   for (const operation of content.ops) {
     if (typeof operation.insert !== 'string') {
-      line += '[图片]'
+      line +=
+        'image' in operation.insert
+          ? '[图片]'
+          : 'localVideo' in operation.insert
+            ? `[视频：${operation.insert.localVideo.name}]`
+            : `[附件：${operation.insert.attachment.name}]`
       continue
     }
     const segments = operation.insert.split(/(\n)/u)

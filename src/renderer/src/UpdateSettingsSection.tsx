@@ -1,5 +1,6 @@
 import { ExternalLink, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   ApplicationSettings,
   VersionCheckResult
@@ -16,7 +17,8 @@ function formatBytes(bytes: number): string {
 
 function updateErrorMessage(
   reason: unknown,
-  fallback: string
+  fallback: string,
+  networkMessage: string
 ): string {
   if (!(reason instanceof Error)) {
     return fallback
@@ -29,12 +31,13 @@ function updateErrorMessage(
     .replace(/^(?:TypeError|Error):\s*/, '')
     .trim()
   if (/fetch failed/i.test(message)) {
-    return `${fallback}：无法连接 GoodBuddy 官方 GitHub Release，请检查网络或代理后重试`
+    return networkMessage
   }
   return message || fallback
 }
 
 export function UpdateSettingsSection(): React.JSX.Element {
+  const { t } = useTranslation('settingsSections')
   const [settings, setSettings] = useState<ApplicationSettings>()
   const [appInfo, setAppInfo] = useState<AppInfo>()
   const [result, setResult] = useState<VersionCheckResult>()
@@ -47,7 +50,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
     let active = true
     void (async () => {
       if (!updates) {
-        throw new Error('当前版本未提供版本检查服务')
+        throw new Error(t('updates.errors.serviceUnavailable'))
       }
       return Promise.all([
         updates.getSettings(),
@@ -62,13 +65,20 @@ export function UpdateSettingsSection(): React.JSX.Element {
       })
       .catch((reason: unknown) => {
         if (active) {
-          setError(updateErrorMessage(reason, '读取应用设置失败'))
+          const fallback = t('updates.errors.readSettingsFailed')
+          setError(
+            updateErrorMessage(
+              reason,
+              fallback,
+              t('updates.errors.network', { fallback })
+            )
+          )
         }
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [t])
 
   const changeStartupCheck = async (enabled: boolean): Promise<void> => {
     const updates = window.goodbuddy.updates
@@ -84,7 +94,14 @@ export function UpdateSettingsSection(): React.JSX.Element {
         })
       )
     } catch (reason) {
-      setError(updateErrorMessage(reason, '保存更新设置失败'))
+      const fallback = t('updates.errors.saveSettingsFailed')
+      setError(
+        updateErrorMessage(
+          reason,
+          fallback,
+          t('updates.errors.network', { fallback })
+        )
+      )
     } finally {
       setSaving(false)
     }
@@ -100,7 +117,14 @@ export function UpdateSettingsSection(): React.JSX.Element {
     try {
       setResult(await updates.check())
     } catch (reason) {
-      setError(updateErrorMessage(reason, '版本检查失败'))
+      const fallback = t('updates.errors.checkFailed')
+      setError(
+        updateErrorMessage(
+          reason,
+          fallback,
+          t('updates.errors.network', { fallback })
+        )
+      )
     } finally {
       setChecking(false)
     }
@@ -114,7 +138,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
         headingId="update-settings-heading"
       />
       <section
-        aria-label="更新设置"
+        aria-label={t('updates.label')}
         className="settings-section update-settings"
       >
 
@@ -125,7 +149,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
             <small>
               {appInfo
                 ? `${appInfo.platform} · ${appInfo.arch}`
-                : '正在读取应用信息…'}
+                : t('updates.loadingAppInfo')}
             </small>
           </div>
         </div>
@@ -139,7 +163,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
             }
             type="checkbox"
           />
-          <span>启动时检查新版本</span>
+          <span>{t('updates.checkOnStartup')}</span>
         </label>
 
         <div className="update-settings__actions">
@@ -150,7 +174,9 @@ export function UpdateSettingsSection(): React.JSX.Element {
             type="button"
           >
             <RefreshCw aria-hidden="true" size={13} />
-            {checking ? '正在检查…' : '立即检查更新'}
+            {checking
+              ? t('updates.actions.checking')
+              : t('updates.actions.checkNow')}
           </button>
           <button
             className="secondary-button"
@@ -160,7 +186,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
             type="button"
           >
             <ExternalLink aria-hidden="true" size={13} />
-            打开官方下载页
+            {t('updates.actions.openDownloadPage')}
           </button>
         </div>
       </article>
@@ -174,12 +200,17 @@ export function UpdateSettingsSection(): React.JSX.Element {
             <div>
               <strong>
                 {result.updateAvailable
-                  ? `发现新版本 ${result.latestVersion}`
-                  : '当前已是最新版本'}
+                  ? t('updates.result.available', {
+                      version: result.latestVersion
+                    })
+                  : t('updates.result.current')}
               </strong>
               <small>
-                当前 {result.currentVersion} · {result.target.platform}/
-                {result.target.arch}
+                {t('updates.result.target', {
+                  version: result.currentVersion,
+                  platform: result.target.platform,
+                  arch: result.target.arch
+                })}
               </small>
             </div>
           </div>
@@ -192,8 +223,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
             ))}
           </ul>
           <p>
-            下载前请在发布页核对文件名和 SHA-256。GoodBuddy
-            不会自动下载或执行安装包。
+            {t('updates.result.safety')}
           </p>
         </article>
       )}

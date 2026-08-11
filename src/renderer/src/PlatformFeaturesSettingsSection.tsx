@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   ApplicationSettings,
   MagicNoteCommentMode
@@ -14,12 +15,13 @@ type PlatformFeaturesSettingsSectionProps = {
 export function PlatformFeaturesSettingsSection({
   onMagicNotesEnabledChange
 }: PlatformFeaturesSettingsSectionProps): React.JSX.Element {
+  const { t } = useTranslation('settingsSections')
   const [settings, setSettings] = useState<ApplicationSettings>()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | undefined>(() =>
     window.goodbuddy.updates
       ? undefined
-      : '当前版本未提供应用设置服务'
+      : t('platformFeatures.errors.serviceUnavailable')
   )
 
   useEffect(() => {
@@ -39,13 +41,13 @@ export function PlatformFeaturesSettingsSection({
       })
       .catch(() => {
         if (active) {
-          setError('读取平台功能设置失败')
+          setError(t('platformFeatures.errors.readFailed'))
         }
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [t])
 
   const changeMagicNotes = async (enabled: boolean): Promise<void> => {
     const updates = window.goodbuddy.updates
@@ -61,7 +63,7 @@ export function PlatformFeaturesSettingsSection({
       setSettings(nextSettings)
       onMagicNotesEnabledChange(nextSettings.magicNotesEnabled)
     } catch {
-      setError('保存魔法笔记设置失败，请重试')
+      setError(t('platformFeatures.errors.saveMagicNotesFailed'))
     } finally {
       setSaving(false)
     }
@@ -81,7 +83,7 @@ export function PlatformFeaturesSettingsSection({
         await updates.updateSettings({ magicNoteCommentMode })
       )
     } catch {
-      setError('保存 AI 评论方式失败，请重试')
+      setError(t('platformFeatures.errors.saveCommentModeFailed'))
     } finally {
       setSaving(false)
     }
@@ -101,7 +103,7 @@ export function PlatformFeaturesSettingsSection({
         await updates.updateSettings({ magicNoteCommentFormat })
       )
     } catch {
-      setError('保存 AI 评论形式失败，请重试')
+      setError(t('platformFeatures.errors.saveCommentFormatFailed'))
     } finally {
       setSaving(false)
     }
@@ -114,14 +116,15 @@ export function PlatformFeaturesSettingsSection({
         error={error}
         headingId="platform-features-heading"
       />
-      <section aria-label="平台功能选项" className="settings-section">
+      <section
+        aria-label={t('platformFeatures.label')}
+        className="settings-section"
+      >
       <article className="capability-card">
         <div className="capability-card__header">
           <div>
-            <strong>魔法笔记</strong>
-            <small>
-              默认关闭；开启后可记录笔记与待办，并使用 AI 分析内容
-            </small>
+            <strong>{t('platformFeatures.magicNotes.title')}</strong>
+            <small>{t('platformFeatures.magicNotes.description')}</small>
           </div>
         </div>
         <label className="toggle-row">
@@ -134,40 +137,60 @@ export function PlatformFeaturesSettingsSection({
             role="switch"
             type="checkbox"
           />
-          <span>显示魔法笔记入口</span>
+          <span>{t('platformFeatures.magicNotes.showEntry')}</span>
         </label>
         <div className="platform-feature-option">
-          <span>AI 评论方式</span>
+          <span>{t('platformFeatures.magicNotes.commentMode')}</span>
           <SegmentedControl
-            ariaLabel="魔法笔记 AI 评论方式"
+            ariaLabel={t('platformFeatures.magicNotes.commentModeAria')}
             disabled={!settings || saving}
             onChange={(value) => void changeCommentMode(value)}
             options={[
-              { value: 'immediate', label: '即时' },
-              { value: 'after-save-auto', label: '保存后自动' },
-              { value: 'after-save-manual', label: '保存后手动' }
+              {
+                value: 'immediate',
+                label: t('platformFeatures.magicNotes.modes.immediate')
+              },
+              {
+                value: 'after-save-auto',
+                label: t('platformFeatures.magicNotes.modes.afterSaveAuto')
+              },
+              {
+                value: 'after-save-manual',
+                label: t(
+                  'platformFeatures.magicNotes.modes.afterSaveManual'
+                )
+              }
             ]}
             value={settings?.magicNoteCommentMode ?? 'immediate'}
           />
           <small>
-            即时模式会在按回车并停止输入 5 秒后评论未保存草稿；自动模式在保存后评论；手动模式仅在点击 AI 分析后评论。
+            {t('platformFeatures.magicNotes.commentModeHelp')}
           </small>
         </div>
         <div className="platform-feature-option">
-          <span>AI 评论形式</span>
+          <span>{t('platformFeatures.magicNotes.commentFormat')}</span>
           <SegmentedControl
-            ariaLabel="魔法笔记 AI 评论形式"
+            ariaLabel={t('platformFeatures.magicNotes.commentFormatAria')}
             disabled={!settings || saving}
             onChange={(value) => void changeCommentFormat(value)}
             options={[
-              { value: 'combined', label: '长评 + 要点' },
-              { value: 'narrative', label: '长评' },
-              { value: 'structured', label: '要点' }
+              {
+                value: 'combined',
+                label: t('platformFeatures.magicNotes.formats.combined')
+              },
+              {
+                value: 'narrative',
+                label: t('platformFeatures.magicNotes.formats.narrative')
+              },
+              {
+                value: 'structured',
+                label: t('platformFeatures.magicNotes.formats.structured')
+              }
             ]}
             value={settings?.magicNoteCommentFormat ?? 'combined'}
           />
           <small>
-            默认同时生成流式长评和结构化要点；也可以只保留其中一种。
+            {t('platformFeatures.magicNotes.commentFormatHelp')}
           </small>
         </div>
       </article>

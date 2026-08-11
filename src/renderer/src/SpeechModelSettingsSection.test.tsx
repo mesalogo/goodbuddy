@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
 import type { DesktopApi } from '../../shared/contracts'
+import { changeUiLocale } from './i18n'
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 
 const entry = {
@@ -63,6 +64,39 @@ afterEach(() => {
 })
 
 describe('SpeechModelSettingsSection', () => {
+  it('renders speech model controls and metadata in English', async () => {
+    await changeUiLocale('en-US')
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        speechModels: {
+          getSnapshot: vi.fn(async () => snapshot),
+          install: vi.fn(),
+          cancel: vi.fn(async () => true),
+          remove: vi.fn(),
+          select: vi.fn(),
+          importLocalDirectory: vi.fn(),
+          openRepository: vi.fn(),
+          openModelsDirectory: vi.fn()
+        }
+      } as unknown as DesktopApi
+    })
+
+    render(<SpeechModelSettingsSection />)
+
+    expect(
+      await screen.findByText('Speech models')
+    ).toBeInTheDocument()
+    expect(screen.getByText('Recommended')).toBeInTheDocument()
+    expect(screen.getByText('Chinese / Cantonese')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Download SenseVoiceSmall INT8'
+      })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/使用前请阅读许可。/u)).toBeInTheDocument()
+  })
+
   it('lists downloadable models and starts a verified download', async () => {
     const installedSnapshot: SpeechModelSnapshot = {
       ...snapshot,
@@ -279,8 +313,8 @@ describe('SpeechModelSettingsSection', () => {
     expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(3)
   })
 
-  it('shows installed and selected states and switches with a radio choice', async () => {
-    const installed = {
+  it('keeps a radio choice pending until the parent saves it', async () => {
+    const installedSenseVoice = {
       id: entry.id,
       displayName: entry.displayName,
       source: 'download' as const,
@@ -294,24 +328,29 @@ describe('SpeechModelSettingsSection', () => {
         }
       ]
     }
+    const paraformerEntry = {
+      ...entry,
+      id: 'paraformer-bilingual-zh-en-int8',
+      displayName: 'Paraformer 中英双语 INT8',
+      family: 'paraformer' as const
+    }
+    const installedParaformer = {
+      ...installedSenseVoice,
+      id: paraformerEntry.id,
+      displayName: paraformerEntry.displayName
+    }
     const installedSnapshot: SpeechModelSnapshot = {
       ...snapshot,
-      installed: [installed]
-    }
-    const selectedSnapshot: SpeechModelSnapshot = {
-      ...installedSnapshot,
+      catalog: [entry, paraformerEntry],
+      installed: [installedSenseVoice, installedParaformer],
       selectedModelId: entry.id
     }
-    let currentSnapshot = installedSnapshot
-    const select = vi.fn(async () => {
-      currentSnapshot = selectedSnapshot
-      return selectedSnapshot
-    })
+    const select = vi.fn()
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
         speechModels: {
-          getSnapshot: vi.fn(async () => currentSnapshot),
+          getSnapshot: vi.fn(async () => installedSnapshot),
           install: vi.fn(),
           cancel: vi.fn(async () => true),
           remove: vi.fn(),
@@ -325,16 +364,14 @@ describe('SpeechModelSettingsSection', () => {
 
     render(<SpeechModelSettingsSection />)
     const choice = await screen.findByRole('radio', {
-      name: '使用 SenseVoiceSmall INT8'
+      name: '选择 Paraformer 中英双语 INT8'
     })
     expect(choice).not.toBeChecked()
-    expect(screen.getByText('已安装')).toBeInTheDocument()
+    expect(screen.getByText('正在使用')).toBeInTheDocument()
 
     fireEvent.click(choice)
-    await waitFor(() =>
-      expect(select).toHaveBeenCalledWith('sensevoice-small-int8')
-    )
-    expect(await screen.findByText('正在使用')).toBeInTheDocument()
+    expect(select).not.toHaveBeenCalled()
+    expect(screen.getByText('待保存')).toBeInTheDocument()
     expect(choice).toBeChecked()
   })
 })

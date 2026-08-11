@@ -16,6 +16,7 @@ import type {
   AssistantTask
 } from '../../shared/assistant-contracts'
 import { HeartbeatCenter, type HeartbeatCenterProps } from './HeartbeatCenter'
+import i18n from './i18n'
 
 const config: AssistantHeartbeatConfig = {
   id: 'heartbeat-1',
@@ -119,8 +120,41 @@ function createProps(
 }
 
 describe('HeartbeatCenter', () => {
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
+    await i18n.changeLanguage('zh-CN')
+  })
+
+  it('renders English interface copy while preserving heartbeat content', async () => {
+    await i18n.changeLanguage('en-US')
+    render(<HeartbeatCenter {...createProps()} />)
+
+    expect(
+      screen.getByRole('heading', {
+        level: 1,
+        name: 'Smart Heartbeat'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Run heartbeat now' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(entry.summary)).toBeInTheDocument()
+    const englishDate = new Intl.DateTimeFormat('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(new Date(config.nextRunAt))
+    expect(screen.getAllByText(englishDate).length).toBeGreaterThan(0)
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: /Pending suggestions/ })
+    )
+    expect(screen.getByText(task.title)).toBeInTheDocument()
+    expect(screen.getByText(task.instructions)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Handle in conversation/ })
+    ).toBeInTheDocument()
   })
 
   it('shows heartbeat health, growth dimensions, and the latest report', () => {

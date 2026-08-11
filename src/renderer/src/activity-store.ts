@@ -1,3 +1,5 @@
+import i18n from './i18n'
+
 import type { AssistantTask } from '../../shared/assistant-contracts'
 
 export const ACTIVITY_STORAGE_KEY = 'goodbuddy.activity-records.v1'
@@ -222,7 +224,10 @@ export function reconcileActivityRecords(
           : terminalStatus,
       detail:
         terminalStatus === 'interrupted'
-          ? `${record.detail}\n应用重启时此活动尚未结束。`.slice(
+          ? `${record.detail}\n${i18n.t(
+              'records.interruptedOnRestart',
+              { ns: 'activity' }
+            )}`.slice(
               0,
               MAX_ACTIVITY_DETAIL_LENGTH
             )

@@ -44,6 +44,8 @@ import {
   useState,
   type ReactNode
 } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import type {
   ApprovalDecision,
   AgentEvent,
@@ -110,8 +112,7 @@ import {
   ScopeBadge
 } from './WorkspacePrimitives'
 import {
-  ProjectSwitcher,
-  workModeLabels
+  ProjectSwitcher
 } from './ProjectSwitcher'
 import {
   RightAssistantSidebar,
@@ -196,6 +197,8 @@ function AppNotificationItem({
   notification: AppNotification
   dispatch: React.Dispatch<AppNotificationAction>
 }): React.JSX.Element {
+  const { t } = useTranslation('app')
+
   useEffect(() => {
     if (notification.tone === 'error') {
       return
@@ -213,10 +216,10 @@ function AppNotificationItem({
 
   const label =
     notification.tone === 'success'
-      ? '成功'
+      ? t('notifications.success')
       : notification.tone === 'error'
-        ? '错误'
-        : '提示'
+        ? t('notifications.error')
+        : t('notifications.info')
   const Icon =
     notification.tone === 'success'
       ? CheckCircle2
@@ -235,7 +238,7 @@ function AppNotificationItem({
         <span>{notification.message}</span>
       </div>
       <button
-        aria-label="关闭通知"
+        aria-label={t('notifications.close')}
         onClick={() => dispatch({ dismiss: notification.id })}
         type="button"
       >
@@ -252,12 +255,14 @@ function AppNotificationViewport({
   notifications: AppNotification[]
   dispatch: React.Dispatch<AppNotificationAction>
 }): React.JSX.Element | null {
+  const { t } = useTranslation('app')
+
   if (notifications.length === 0) {
     return null
   }
   return (
     <section
-      aria-label="应用通知"
+      aria-label={t('notifications.viewport')}
       className="app-notification-viewport"
     >
       {notifications.map((notification) => (
@@ -365,42 +370,6 @@ const emptyTokenUsage: TokenUsageSummary = {
 const storageKey = 'goodbuddy.conversations.v1'
 
 const activeProjectStorageKey = 'goodbuddy.active-project.v1'
-
-const quickActions = [
-  {
-    title: '总结一段内容',
-    description: '提炼重点并输出行动项',
-    prompt: '请帮我总结下面的内容，并列出重点和行动项：\n'
-  },
-  {
-    title: '分析错误信息',
-    description: '定位原因并给出排查步骤',
-    prompt: '请分析下面的错误信息，给出可能原因和排查步骤：\n'
-  },
-  {
-    title: '编写工作内容',
-    description: '起草邮件、周报或方案',
-    prompt: '请帮我起草一份清晰、专业的工作内容：\n'
-  }
-]
-
-const toolStateLabels: Record<ToolActivity['state'], string> = {
-  pending: '等待中',
-  running: '进行中',
-  completed: '已完成',
-  failed: '失败',
-  recoverable: '可重试',
-  cancelled: '已取消',
-  interrupted: '已中断'
-}
-
-const subagentStateLabels: Record<SubagentActivity['state'], string> = {
-  queued: '等待中',
-  running: '进行中',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已取消'
-}
 
 const maxMessageContentLength = 1_000_000
 const maxMessageBlocks = 500
@@ -524,15 +493,17 @@ function ToolExecutionList({
 }: {
   tools: ToolActivity[]
 }): React.JSX.Element {
+  const { t } = useTranslation('app')
+
   return (
     <section
-      aria-label={`工具执行，共 ${tools.length} 项`}
+      aria-label={t('chat.tools.region', { count: tools.length })}
       className="tool-execution-list"
     >
       <header className="tool-execution-list__header">
         <TerminalSquare aria-hidden="true" size={15} />
-        <strong>工具执行</strong>
-        <small>{tools.length} 项</small>
+        <strong>{t('chat.tools.title')}</strong>
+        <small>{t('chat.tools.count', { count: tools.length })}</small>
       </header>
       <ol>
         {tools.map((tool) => {
@@ -554,28 +525,28 @@ function ToolExecutionList({
                     <strong>{tool.name}</strong>
                     <span>{tool.summary}</span>
                   </span>
-                  <small>{toolStateLabels[tool.state]}</small>
+                  <small>{t(`chat.tools.states.${tool.state}`)}</small>
                 </summary>
                 <div className="tool-execution__details">
                   {tool.input && (
                     <section>
-                      <strong>调用参数</strong>
+                      <strong>{t('chat.tools.input')}</strong>
                       <pre>{tool.input}</pre>
                     </section>
                   )}
                   {tool.output && (
                     <section>
-                      <strong>执行结果</strong>
+                      <strong>{t('chat.tools.output')}</strong>
                       <pre>{tool.output}</pre>
                     </section>
                   )}
                   {tool.error && (
                     <section className="tool-execution__error">
-                      <strong>错误详情</strong>
+                      <strong>{t('chat.tools.error')}</strong>
                       <pre>{tool.error}</pre>
                     </section>
                   )}
-                  {!hasDetails && <p>暂时没有可显示的执行详情。</p>}
+                  {!hasDetails && <p>{t('chat.tools.noDetails')}</p>}
                 </div>
               </details>
             </li>
@@ -588,7 +559,9 @@ function ToolExecutionList({
 
 function createConversation(
   projectId?: string,
-  runtimeSelection?: AgentRuntimeSelection
+  runtimeSelection?: AgentRuntimeSelection,
+  greeting =
+    '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件或使用知识库。启用 Agent Runtime 后，我也可以在你的授权下调用工具。'
 ): Conversation {
   const now = Date.now()
   return {
@@ -601,8 +574,7 @@ function createConversation(
       {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content:
-          '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件或使用知识库。启用 Agent Runtime 后，我也可以在你的授权下调用工具。',
+        content: greeting,
         createdAt: now,
         state: 'complete'
       }
@@ -631,24 +603,36 @@ function isUnusedConversation(conversation: Conversation): boolean {
   )
 }
 
+function getConversationDisplayTitle(
+  conversation: Conversation,
+  defaultTitle: string
+): string {
+  return isUnusedConversation(conversation)
+    ? defaultTitle
+    : conversation.title
+}
+
 function isConversationAttachment(
   value: unknown
 ): value is ConversationAttachment {
   return conversationAttachmentSchema.safeParse(value).success
 }
 
-function loadConversations(): Conversation[] {
+function loadConversations(
+  greeting: string,
+  interruptedStatus: string
+): Conversation[] {
   try {
     const value = localStorage.getItem(storageKey)
     if (!value) {
-      return [createConversation()]
+      return [createConversation(undefined, undefined, greeting)]
     }
     if (value.length > 50_000_000) {
-      return [createConversation()]
+      return [createConversation(undefined, undefined, greeting)]
     }
     const parsed: unknown = JSON.parse(value)
     if (!Array.isArray(parsed)) {
-      return [createConversation()]
+      return [createConversation(undefined, undefined, greeting)]
     }
     const conversations = parsed
       .filter(isConversation)
@@ -660,14 +644,16 @@ function loadConversations(): Conversation[] {
             ? {
                 ...message,
                 state: 'error' as const,
-                status: '上次运行意外中断，可以重新发送问题'
+                status: interruptedStatus
               }
             : message
         )
       }))
-    return conversations.length > 0 ? conversations : [createConversation()]
+    return conversations.length > 0
+      ? conversations
+      : [createConversation(undefined, undefined, greeting)]
   } catch {
-    return [createConversation()]
+    return [createConversation(undefined, undefined, greeting)]
   }
 }
 
@@ -821,7 +807,12 @@ function getDefaultRuntimeSelection(
 function getRuntimeSelectionLabel(
   selection: AgentRuntimeSelection | undefined,
   settings: RuntimeSettings | undefined,
-  status: AgentRuntimeStatus | undefined
+  status: AgentRuntimeStatus | undefined,
+  labels: {
+    directModel: string
+    automatic: string
+    automaticSelection: string
+  }
 ): string {
   if (!selection || !settings) {
     return status?.label ?? 'Runtime'
@@ -835,7 +826,7 @@ function getRuntimeSelectionLabel(
   if (selection.provider === 'model') {
     return profile
       ? `${profile.name} · ${profile.modelName}`
-      : status?.label ?? '直连模型'
+      : status?.label ?? labels.directModel
   }
   if (selection.provider === 'opencode') {
     return profile ? `OpenCode · ${profile.name}` : 'OpenCode'
@@ -843,7 +834,9 @@ function getRuntimeSelectionLabel(
   if (selection.provider === 'continue') {
     return profile ? `Continue · ${profile.name}` : 'Continue'
   }
-  return status ? `自动 · ${status.label}` : '自动选择'
+  return status
+    ? `${labels.automatic} · ${status.label}`
+    : labels.automaticSelection
 }
 
 function getConfiguredAgentRuntimeSelection(
@@ -862,7 +855,13 @@ function getConfiguredAgentRuntimeSelection(
 
 function getConfiguredAgentRuntimeSource(
   settings: RuntimeSettings,
-  provider: 'opencode' | 'continue'
+  provider: 'opencode' | 'continue',
+  labels: {
+    modelUnavailable: string
+    selectModel: string
+    ownConfiguration: string
+    useOwnConfiguration: (runtime: string) => string
+  }
 ): { label: string; detail: string } {
   const selection = getConfiguredAgentRuntimeSelection(settings, provider)
   const profile =
@@ -874,18 +873,18 @@ function getConfiguredAgentRuntimeSource(
   const runtimeLabel = provider === 'opencode' ? 'OpenCode' : 'Continue'
   if ('profileId' in selection) {
     return {
-      label: `${runtimeLabel} · ${profile?.name ?? '模型配置不可用'}`,
-      detail: profile?.modelName ?? '请在设置中重新选择模型'
+      label: `${runtimeLabel} · ${profile?.name ?? labels.modelUnavailable}`,
+      detail: profile?.modelName ?? labels.selectModel
     }
   }
   return {
-    label: `${runtimeLabel} · 自身配置`,
-    detail: `使用 ${runtimeLabel} 自身配置`
+    label: `${runtimeLabel} · ${labels.ownConfiguration}`,
+    detail: labels.useOwnConfiguration(runtimeLabel)
   }
 }
 
-function formatTime(timestamp: number): string {
-  return new Intl.DateTimeFormat('zh-CN', {
+function formatTime(timestamp: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     hour: '2-digit',
     minute: '2-digit'
   }).format(timestamp)
@@ -914,25 +913,33 @@ function resizeComposerTextarea(
 const imageDataUrlPattern =
   /^data:image\/(png|jpeg|webp);base64,/u
 
-function getImageDownloadName(title: string, src: string): string {
+function getImageDownloadName(
+  title: string,
+  src: string,
+  fallbackTitle: string
+): string {
   const extension = imageDataUrlPattern.exec(src)?.[1] ?? 'png'
   const normalizedExtension = extension === 'jpeg' ? 'jpg' : extension
   const safeTitle =
     title
       .replace(/\.(?:jpe?g|png|webp)$/iu, '')
       .replace(/[\\/:*?"<>|]/gu, '_')
-      .trim() || 'GoodBuddy 图片'
+      .trim() || fallbackTitle
   return `${safeTitle}.${normalizedExtension}`
 }
 
 function formatAttachmentList(
-  attachments: ConversationAttachment[] | undefined
+  attachments: ConversationAttachment[] | undefined,
+  t: TFunction<'app'>
 ): string {
   return attachments?.length
-    ? `\n\n附件：\n${attachments
+    ? `\n\n${t('chat.attachments.exportHeading')}\n${attachments
         .map(
           (attachment) =>
-            `- ${attachment.name}（${formatAttachmentSize(attachment.size)}）`
+            t('chat.attachments.exportItem', {
+              name: attachment.name,
+              size: formatAttachmentSize(attachment.size)
+            })
         )
         .join('\n')}`
     : ''
@@ -963,6 +970,11 @@ function WindowControls({
 }: {
   onError: (message: string) => void
 }): React.JSX.Element {
+  const { t } = useTranslation('app')
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
   const [maximized, setMaximized] = useState(false)
 
   useEffect(() => {
@@ -976,7 +988,7 @@ function WindowControls({
       })
       .catch(() => {
         if (active) {
-          onError('窗口状态读取失败')
+          onError(tRef.current('window.errors.readState'))
         }
       })
     const removeListener =
@@ -990,40 +1002,42 @@ function WindowControls({
   return (
     <div className="window-controls">
       <button
-        aria-label="最小化窗口"
+        aria-label={t('window.minimizeAria')}
         className="window-control"
         onClick={() =>
           void window.goodbuddy.app
             .minimize()
-            .catch(() => onError('窗口最小化失败'))
+            .catch(() => onError(t('window.errors.minimize')))
         }
-        title="最小化"
+        title={t('window.minimize')}
         type="button"
       >
         <Minus size={17} />
       </button>
       <button
-        aria-label={maximized ? '还原窗口' : '最大化窗口'}
+        aria-label={
+          maximized ? t('window.restoreAria') : t('window.maximizeAria')
+        }
         className="window-control"
         onClick={() =>
           void window.goodbuddy.app
             .toggleMaximize()
-            .catch(() => onError('窗口大小切换失败'))
+            .catch(() => onError(t('window.errors.resize')))
         }
-        title={maximized ? '还原' : '最大化'}
+        title={maximized ? t('window.restore') : t('window.maximize')}
         type="button"
       >
         {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
       </button>
       <button
-        aria-label="关闭窗口"
+        aria-label={t('window.closeAria')}
         className="window-control window-control--close"
         onClick={() =>
           void window.goodbuddy.app
             .close()
-            .catch(() => onError('窗口关闭失败'))
+            .catch(() => onError(t('window.errors.close')))
         }
-        title="关闭"
+        title={t('window.close')}
         type="button"
       >
         <X size={17} />
@@ -1064,10 +1078,15 @@ function ComposerMenuSelect<T extends string>({
   triggerLabel?: string
   value: T
 }): React.JSX.Element {
+  const { t } = useTranslation('app')
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const selectedOption =
     options.find((option) => option.value === value) ?? options[0]
+  const selectionLabel = t('composer.menuSelection', {
+    label: ariaLabel,
+    selection: selectedOption?.label ?? ''
+  })
 
   useEffect(() => {
     if (!menuOpen) {
@@ -1122,7 +1141,7 @@ function ComposerMenuSelect<T extends string>({
         aria-describedby={describedBy}
         aria-expanded={menuOpen}
         aria-haspopup="menu"
-        aria-label={`${ariaLabel}：${selectedOption?.label ?? ''}`}
+        aria-label={selectionLabel}
         className="model-button composer-picker__button"
         disabled={disabled}
         onClick={() => onOpenChange(!menuOpen)}
@@ -1138,7 +1157,7 @@ function ComposerMenuSelect<T extends string>({
           }
         }}
         ref={buttonRef}
-        title={`${ariaLabel}：${selectedOption?.label ?? ''}`}
+        title={selectionLabel}
         type="button"
       >
         {icon}
@@ -1215,7 +1234,18 @@ function ComposerMenuSelect<T extends string>({
 }
 
 function App(): React.JSX.Element {
-  const [conversations, setConversations] = useState(loadConversations)
+  const { i18n, t } = useTranslation('app')
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
+  const locale = i18n.resolvedLanguage === 'en-US' ? 'en-US' : 'zh-CN'
+  const [conversations, setConversations] = useState(() =>
+    loadConversations(
+      t('conversation.greeting'),
+      t('conversation.interrupted')
+    )
+  )
   const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? '')
   const activeConversationIdRef = useRef(activeId)
   const conversationsRef = useRef(conversations)
@@ -1283,6 +1313,7 @@ function App(): React.JSX.Element {
   const voiceRequestIdRef = useRef<string | undefined>(undefined)
   const voiceStartingRef = useRef(false)
   const voiceDisposedRef = useRef(false)
+  const startupUpdateCheckStartedRef = useRef(false)
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
   const [runtimeStatusKey, setRuntimeStatusKey] = useState('')
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
@@ -1333,21 +1364,22 @@ function App(): React.JSX.Element {
     () => [
       {
         value: '',
-        label: '通用助手',
-        description: '默认单助手'
+        label: t('composer.experts.general'),
+        description: t('composer.experts.generalDescription')
       },
       {
         value: 'team',
-        label: '专家团队（并行）',
-        description: '多个专家并行协作'
+        label: t('composer.experts.team'),
+        description: t('composer.experts.teamDescription')
       },
       ...assistantExperts.map((expert) => ({
         value: expert.id,
         label: expert.name,
-        description: expert.description || '自定义专家角色'
+        description:
+          expert.description || t('composer.experts.customDescription')
       }))
     ],
-    [assistantExperts]
+    [assistantExperts, t]
   )
   const workModeOptions = useMemo<
     ComposerMenuOption<InteractiveWorkMode>[]
@@ -1355,15 +1387,35 @@ function App(): React.JSX.Element {
     () =>
       interactiveWorkModes.map((value) => ({
         value,
-        label: workModeLabels[value],
+        label: t(`composer.modes.${value}.label`),
         description:
           value === 'execute'
-            ? '通过审批后执行工具操作'
-            : '只读问答，不修改文件',
+            ? t('composer.modes.execute.description')
+            : t('composer.modes.ask.description'),
         disabled:
           value === 'execute' && !runtime?.supportsToolExecution
       })),
-    [runtime?.supportsToolExecution]
+    [runtime?.supportsToolExecution, t]
+  )
+  const quickActions = useMemo(
+    () => [
+      {
+        title: t('chat.quickActions.summarize.title'),
+        description: t('chat.quickActions.summarize.description'),
+        prompt: t('chat.quickActions.summarize.prompt')
+      },
+      {
+        title: t('chat.quickActions.analyzeError.title'),
+        description: t('chat.quickActions.analyzeError.description'),
+        prompt: t('chat.quickActions.analyzeError.prompt')
+      },
+      {
+        title: t('chat.quickActions.write.title'),
+        description: t('chat.quickActions.write.description'),
+        prompt: t('chat.quickActions.write.prompt')
+      }
+    ],
+    [t]
   )
   const [appInfo, setAppInfo] = useState<AppInfo>()
   const [narrowWindow, setNarrowWindow] = useState(
@@ -1520,15 +1572,18 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const updates = window.goodbuddy.updates
-    if (!updates) {
+    if (!updates || startupUpdateCheckStartedRef.current) {
       return
     }
+    startupUpdateCheckStartedRef.current = true
     void updates
       .getSettings()
       .then(async (settings) => {
         setMagicNotesEnabled(settings.magicNotesEnabled)
         if (!settings.magicNotesEnabled) {
-          setView('chat')
+          setView((current) =>
+            current === 'magic-notes' ? 'chat' : current
+          )
         }
         if (!settings.checkUpdatesOnStartup) {
           return
@@ -1537,13 +1592,16 @@ function App(): React.JSX.Element {
         if (result.updateAvailable) {
           notify({
             tone: 'info',
-            message: `发现 GoodBuddy ${result.latestVersion}，可在“关于与更新”中查看`,
+            message: i18n.t('notices.updateAvailable', {
+              ns: 'app',
+              version: result.latestVersion
+            }),
             dedupeKey: 'update-available'
           })
         }
       })
       .catch(() => undefined)
-  }, [])
+  }, [i18n])
 
   useEffect(() => {
     applyAppearanceTheme(resolvedAppearanceTheme)
@@ -1618,10 +1676,29 @@ function App(): React.JSX.Element {
   useEffect(() => {
     activeRuntimeSelectionRef.current = activeRuntimeSelection
   }, [activeRuntimeSelection])
+  const runtimeLabels = useMemo(
+    () => ({
+      directModel: t('runtime.directModel'),
+      automatic: t('runtime.automatic'),
+      automaticSelection: t('runtime.automaticSelection')
+    }),
+    [t]
+  )
+  const configuredRuntimeLabels = useMemo(
+    () => ({
+      modelUnavailable: t('runtime.modelUnavailable'),
+      selectModel: t('runtime.selectModel'),
+      ownConfiguration: t('runtime.ownConfiguration'),
+      useOwnConfiguration: (runtimeLabel: string) =>
+        t('runtime.useOwnConfiguration', { runtime: runtimeLabel })
+    }),
+    [t]
+  )
   const activeRuntimeLabel = getRuntimeSelectionLabel(
     activeRuntimeSelection,
     runtimeSettings,
-    runtime
+    runtime,
+    runtimeLabels
   )
   const openCodeMenuSelection = runtimeSettings
     ? getConfiguredAgentRuntimeSelection(runtimeSettings, 'opencode')
@@ -1630,10 +1707,18 @@ function App(): React.JSX.Element {
     ? getConfiguredAgentRuntimeSelection(runtimeSettings, 'continue')
     : undefined
   const openCodeMenuSource = runtimeSettings
-    ? getConfiguredAgentRuntimeSource(runtimeSettings, 'opencode')
+    ? getConfiguredAgentRuntimeSource(
+        runtimeSettings,
+        'opencode',
+        configuredRuntimeLabels
+      )
     : undefined
   const continueMenuSource = runtimeSettings
-    ? getConfiguredAgentRuntimeSource(runtimeSettings, 'continue')
+    ? getConfiguredAgentRuntimeSource(
+        runtimeSettings,
+        'continue',
+        configuredRuntimeLabels
+      )
     : undefined
   useEffect(() => {
     if (!runtimeMenuOpen) {
@@ -1770,13 +1855,13 @@ function App(): React.JSX.Element {
         }
         setRuntime({
           id: 'setup',
-          label: 'Runtime 不可用',
+          label: tRef.current('runtime.unavailable'),
           available: false,
           supportsToolExecution: false,
           detail:
             reason instanceof Error
               ? reason.message
-              : 'Agent Runtime 状态读取失败'
+              : tRef.current('runtime.errors.readStatus')
         })
         setRuntimeStatusKey(activeRuntimeSelectionKey)
       })
@@ -1794,7 +1879,7 @@ function App(): React.JSX.Element {
         setView('chat')
         notify({
           tone: 'info',
-          message: '通道项目的会话由客户端收到新消息后自动创建',
+          message: tRef.current('notices.channelConversationAutomatic'),
           dedupeKey: 'channel-project-new-conversation'
         })
         return false
@@ -1816,7 +1901,8 @@ function App(): React.JSX.Element {
         projectId,
         runtimeSettings
           ? getDefaultRuntimeSelection(runtimeSettings)
-          : undefined
+          : undefined,
+        tRef.current('conversation.greeting')
       )
       const nextConversations = [
         conversation,
@@ -1912,13 +1998,14 @@ function App(): React.JSX.Element {
             message.content
               .split(/\r?\n/, 1)[0]
               ?.replace(/^#+\s*/, '')
-              .slice(0, 48) || `助手成果 ${index + 1}`,
+              .slice(0, 48) ||
+            t('chat.assistantResult', { index: index + 1 }),
           content: message.content,
           createdAt: message.createdAt,
           mimeType: 'text/markdown'
         }))
     },
-    [activeConversation, activeProjectId, assistantArtifacts]
+    [activeConversation, activeProjectId, assistantArtifacts, t]
   )
   const enabledSidebarLibraries = useMemo(
     () =>
@@ -2091,7 +2178,10 @@ function App(): React.JSX.Element {
         }
         failedKnowledgeLibraryIdRef.current = libraryId
         setKnowledgeLoadError(
-          displayErrorMessage(reason, '本地知识库读取失败')
+          displayErrorMessage(
+            reason,
+            tRef.current('notices.knowledgeReadFailed')
+          )
         )
         throw reason
       }
@@ -2134,7 +2224,8 @@ function App(): React.JSX.Element {
         const label = getRuntimeSelectionLabel(
           selection,
           runtimeSettings,
-          status
+          status,
+          runtimeLabels
         )
         setConversations((current) =>
           current.map((conversation) =>
@@ -2152,8 +2243,11 @@ function App(): React.JSX.Element {
         notify({
           tone: status.available ? 'success' : 'error',
           message: status.available
-            ? `当前对话已切换到 ${label}`
-            : `${label} 当前不可用：${status.detail}`,
+            ? tRef.current('runtime.switched', { label })
+            : tRef.current('runtime.selectionUnavailable', {
+                label,
+                detail: status.detail
+              }),
           dedupeKey: 'runtime-switch'
         })
       } catch (reason) {
@@ -2165,7 +2259,7 @@ function App(): React.JSX.Element {
           message:
             reason instanceof Error
               ? reason.message
-              : 'Runtime 切换失败',
+              : tRef.current('runtime.errors.switch'),
           dedupeKey: 'runtime-switch'
         })
       } finally {
@@ -2177,7 +2271,12 @@ function App(): React.JSX.Element {
         }
       }
     },
-    [activeConversation, runtimeSettings, runtimeSwitching]
+    [
+      activeConversation,
+      runtimeLabels,
+      runtimeSettings,
+      runtimeSwitching
+    ]
   )
 
   const refreshTokenUsage = useCallback(async (): Promise<void> => {
@@ -2237,7 +2336,9 @@ function App(): React.JSX.Element {
           void loadWorkspaceChanges(run.projectId).catch(() =>
             notify({
               tone: 'error',
-              message: '工作区文件更改读取失败'
+              message: tRef.current(
+                'notices.workspaceChangesReadFailed'
+              )
             })
           )
         }
@@ -2245,7 +2346,7 @@ function App(): React.JSX.Element {
           void refreshTokenUsage().catch(() =>
             notify({
               tone: 'error',
-              message: 'Token 用量读取失败'
+              message: tRef.current('notices.tokenUsageReadFailed')
             })
           )
         }
@@ -2257,7 +2358,10 @@ function App(): React.JSX.Element {
             )
           )
           .catch(() =>
-            notify({ tone: 'error', message: '成果列表刷新失败' })
+            notify({
+              tone: 'error',
+              message: tRef.current('notices.resultsRefreshFailed')
+            })
           )
       } else if (event.type === 'artifact') {
         hydratingArtifactIds.current.add(event.artifactId)
@@ -2269,7 +2373,12 @@ function App(): React.JSX.Element {
             )
           )
           .catch(() =>
-            notify({ tone: 'error', message: '生成图片读取失败' })
+            notify({
+              tone: 'error',
+              message: tRef.current(
+                'notices.generatedImageReadFailed'
+              )
+            })
           )
           .finally(() => {
             hydratingArtifactIds.current.delete(event.artifactId)
@@ -2293,7 +2402,7 @@ function App(): React.JSX.Element {
             ),
             status:
               event.delta.length > remaining
-                ? '回答过长，已在本地截断显示'
+                ? tRef.current('chat.status.responseTruncated')
                 : undefined
           }
         })
@@ -2388,7 +2497,10 @@ function App(): React.JSX.Element {
             routingMode: event.routingMode,
             title: event.expertName,
             instructions:
-              event.reason ?? `${event.expertName} 子专家任务`,
+              event.reason ??
+              tRef.current('chat.subagents.fallbackTask', {
+                name: event.expertName
+              }),
             origin: 'subagent',
             status: childStatus,
             createdAt:
@@ -2413,7 +2525,9 @@ function App(): React.JSX.Element {
           kind: 'subagent',
           title: event.expertName,
           detail: [
-            event.routingMode === 'smart' ? '智能路由' : '手动指定',
+            event.routingMode === 'smart'
+              ? tRef.current('chat.subagents.smart')
+              : tRef.current('chat.subagents.manual'),
             event.reason,
             event.error
           ]
@@ -2480,7 +2594,7 @@ function App(): React.JSX.Element {
           artifactIds: [
             ...new Set([...(message.artifactIds ?? []), event.artifactId])
           ].slice(-8),
-          status: '图片已生成，正在保存结果'
+          status: tRef.current('chat.status.savingImage')
         }))
       } else if (event.type === 'source-references') {
         updateMessage(run.conversationId, run.messageId, (message) => {
@@ -2535,7 +2649,9 @@ function App(): React.JSX.Element {
         updateRequestActivity(
           event.requestId,
           terminalStatus,
-          event.type === 'error' ? event.message : '任务执行完成'
+          event.type === 'error'
+            ? event.message
+            : tRef.current('chat.status.taskCompleted')
         )
         if (event.type === 'error') {
           setActivityRecords((current) =>
@@ -2560,11 +2676,14 @@ function App(): React.JSX.Element {
           conversationId: run.conversationId,
           requestId: event.requestId,
           kind: 'result',
-          title: event.type === 'error' ? '任务执行失败' : '任务执行完成',
+          title:
+            event.type === 'error'
+              ? tRef.current('chat.status.taskFailed')
+              : tRef.current('chat.status.taskCompleted'),
           detail:
             event.type === 'error'
               ? event.message.slice(0, 4_000)
-              : 'Agent Runtime 已完成响应',
+              : tRef.current('chat.status.runtimeCompleted'),
           status: terminalStatus
         })
         updateMessage(run.conversationId, run.messageId, (message) => {
@@ -2645,7 +2764,9 @@ function App(): React.JSX.Element {
         .catch(() => {
           notify({
             tone: 'error',
-            message: '会话持久化失败，请检查本地存储',
+            message: tRef.current(
+              'notices.conversationPersistenceFailed'
+            ),
             dedupeKey: 'conversation-persistence'
           })
         })
@@ -2697,11 +2818,12 @@ function App(): React.JSX.Element {
             })
             notify({
               tone: 'info',
-              message: `${
-                projectChannelLabels[
-                  unread[0]!.remote!.channel
-                ]
-              } 收到新消息`,
+              message: tRef.current('notices.remoteMessage', {
+                channel:
+                  projectChannelLabels[
+                    unread[0]!.remote!.channel
+                  ]
+              }),
               dedupeKey: 'remote-channel-message'
             })
           }
@@ -2718,7 +2840,9 @@ function App(): React.JSX.Element {
           if (active) {
             notify({
               tone: 'error',
-              message: '远程通道会话刷新失败',
+              message: tRef.current(
+                'notices.remoteConversationRefreshFailed'
+              ),
               dedupeKey: 'remote-conversation-refresh'
             })
           }
@@ -2769,7 +2893,11 @@ function App(): React.JSX.Element {
               conversation.remote !== undefined)
         )
         if (!projectConversation && project.kind !== 'channel') {
-          projectConversation = createConversation(project.id)
+          projectConversation = createConversation(
+            project.id,
+            undefined,
+            tRef.current('conversation.greeting')
+          )
           nextConversations = [
             projectConversation,
             ...nextConversations
@@ -2793,7 +2921,9 @@ function App(): React.JSX.Element {
           notify({
             tone: 'error',
             message:
-              reason instanceof Error ? reason.message : '项目读取失败'
+              reason instanceof Error
+                ? reason.message
+                : tRef.current('notices.projectReadFailed')
           })
         }
       })
@@ -2807,7 +2937,10 @@ function App(): React.JSX.Element {
       .list(activeProjectId || undefined)
       .then(setAssistantMemories)
       .catch(() =>
-        notify({ tone: 'error', message: '长期记忆读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('notices.memoryReadFailed')
+        })
       )
   }, [activeProjectId])
 
@@ -2823,7 +2956,7 @@ function App(): React.JSX.Element {
   const listWorkspaceDirectory = useCallback(
     async (path: string) => {
       if (!activeProjectId) {
-        throw new Error('请先选择项目')
+        throw new Error(tRef.current('notices.selectProject'))
       }
       return window.goodbuddy.workspace.listDirectory(activeProjectId, path)
     },
@@ -2833,7 +2966,7 @@ function App(): React.JSX.Element {
   const loadWorkspaceFile = useCallback(
     async (path: string) => {
       if (!activeProjectId) {
-        throw new Error('请先选择项目')
+        throw new Error(tRef.current('notices.selectProject'))
       }
       return window.goodbuddy.workspace.readFile(activeProjectId, path)
     },
@@ -2845,7 +2978,7 @@ function App(): React.JSX.Element {
       type: 'file' | 'directory'
     ): Promise<void> => {
       if (!activeProjectId) {
-        throw new Error('请先选择项目')
+        throw new Error(tRef.current('notices.selectProject'))
       }
       await window.goodbuddy.workspace.openPath(
         activeProjectId,
@@ -2864,7 +2997,7 @@ function App(): React.JSX.Element {
       void refreshWorkspaceChanges().catch(() => {
         notify({
           tone: 'error',
-          message: '工作区文件更改读取失败'
+          message: tRef.current('notices.workspaceChangesReadFailed')
         })
       })
     }, 0)
@@ -2876,7 +3009,10 @@ function App(): React.JSX.Element {
       .list()
       .then(setAssistantExperts)
       .catch(() =>
-        notify({ tone: 'error', message: '专家角色读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('notices.expertsReadFailed')
+        })
       )
   }, [])
 
@@ -2885,7 +3021,10 @@ function App(): React.JSX.Element {
       .list(activeProjectId || undefined)
       .then(setAssistantSchedules)
       .catch(() =>
-        notify({ tone: 'error', message: '定时任务读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('notices.schedulesReadFailed')
+        })
       )
   }, [activeProjectId])
 
@@ -2954,7 +3093,10 @@ function App(): React.JSX.Element {
             return
           }
           setHeartbeatLoadError(
-            displayErrorMessage(reason, '智能心跳读取失败')
+            displayErrorMessage(
+              reason,
+              tRef.current('notices.heartbeatReadFailed')
+            )
           )
         })
         .finally(() => {
@@ -2997,7 +3139,10 @@ function App(): React.JSX.Element {
       setHeartbeatLoadError(undefined)
     } catch (reason) {
       setHeartbeatLoadError(
-        displayErrorMessage(reason, '智能心跳读取失败')
+        displayErrorMessage(
+          reason,
+          tRef.current('notices.heartbeatReadFailed')
+        )
       )
     } finally {
       setHeartbeatLoading(false)
@@ -3066,7 +3211,10 @@ function App(): React.JSX.Element {
         .then(() => setHeartbeatLoadError(undefined))
         .catch((reason: unknown) =>
           setHeartbeatLoadError(
-            displayErrorMessage(reason, '智能心跳刷新失败')
+            displayErrorMessage(
+              reason,
+              tRef.current('notices.heartbeatRefreshFailed')
+            )
           )
         )
         .finally(() => {
@@ -3095,7 +3243,10 @@ function App(): React.JSX.Element {
         )
       })
       .catch(() =>
-        notify({ tone: 'error', message: '历史任务读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('notices.taskHistoryReadFailed')
+        })
       )
   }, [])
 
@@ -3105,7 +3256,10 @@ function App(): React.JSX.Element {
     }
     const timeout = setTimeout(() => {
       void refreshTokenUsage().catch(() =>
-        notify({ tone: 'error', message: 'Token 用量读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('notices.tokenUsageReadFailed')
+        })
       )
     }, 0)
     return () => clearTimeout(timeout)
@@ -3120,7 +3274,10 @@ function App(): React.JSX.Element {
         )
       )
       .catch(() =>
-        notify({ tone: 'error', message: '历史成果读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('notices.resultHistoryReadFailed')
+        })
       )
   }, [])
 
@@ -3215,13 +3372,19 @@ function App(): React.JSX.Element {
         }
       })
       .catch(() =>
-        notify({ tone: 'error', message: 'Runtime 设置读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('runtime.errors.readSettings')
+        })
       )
     void window.goodbuddy.app
       .getInfo()
       .then(setAppInfo)
       .catch(() =>
-        notify({ tone: 'error', message: '应用信息读取失败' })
+        notify({
+          tone: 'error',
+          message: tRef.current('notices.appInfoReadFailed')
+        })
       )
     const removeAgentListener =
       window.goodbuddy.agent.onEvent(handleAgentEvent)
@@ -3333,7 +3496,8 @@ function App(): React.JSX.Element {
         projectId,
         runtimeSettings
           ? getDefaultRuntimeSelection(runtimeSettings)
-          : undefined
+          : undefined,
+        t('conversation.greeting')
       )
       setConversations((current) => [created, ...current])
       setActiveId(created.id)
@@ -3352,7 +3516,8 @@ function App(): React.JSX.Element {
       project.id,
       runtimeSettings
         ? getDefaultRuntimeSelection(runtimeSettings)
-        : undefined
+        : undefined,
+      t('conversation.greeting')
     )
     setConversations((current) => [conversation, ...current])
     setActiveId(conversation.id)
@@ -3446,7 +3611,8 @@ function App(): React.JSX.Element {
           next.id,
           runtimeSettings
             ? getDefaultRuntimeSelection(runtimeSettings)
-            : undefined
+            : undefined,
+          t('conversation.greeting')
         )
         setConversations((current) => [created, ...current])
         setActiveId(created.id)
@@ -3480,14 +3646,14 @@ function App(): React.JSX.Element {
     setWorkMode('ask')
     setInput(
       [
-        '请根据以下智能心跳建议制定可执行方案：',
+        t('notices.heartbeatTaskPrompt'),
         task.title,
         task.instructions
       ].join('\n\n')
     )
     notify({
       tone: 'info',
-      message: `已将“${task.title}”带入对话，请确认后发送`
+      message: t('notices.heartbeatTaskAdded', { title: task.title })
     })
     requestAnimationFrame(() => inputRef.current?.focus())
   }
@@ -3529,7 +3695,7 @@ function App(): React.JSX.Element {
     } catch {
       notify({
         tone: 'error',
-        message: '停止会话中的运行任务失败，尚未删除对话'
+        message: t('notices.deleteConversationCancelFailed')
       })
       setDeletingConversationId('')
       return
@@ -3547,7 +3713,7 @@ function App(): React.JSX.Element {
       void browserStop.catch(() => {
         notify({
           tone: 'error',
-          message: '关闭已删除对话的浏览器失败'
+          message: t('notices.deletedConversationBrowserCloseFailed')
         })
       })
     }
@@ -3577,7 +3743,8 @@ function App(): React.JSX.Element {
       activeProjectId || undefined,
       runtimeSettings
         ? getDefaultRuntimeSelection(runtimeSettings)
-        : undefined
+        : undefined,
+      t('conversation.greeting')
     )
     setConversations((current) => [replacement, ...current])
     setActiveId(replacement.id)
@@ -3614,16 +3781,26 @@ function App(): React.JSX.Element {
     const transcript = conversation.messages
       .map(
         (message) =>
-          `${message.role === 'user' ? '用户' : 'GoodBuddy'}：\n${message.content}${formatAttachmentList(message.attachments)}`
+          t('chat.exportSpeaker', {
+            speaker:
+              message.role === 'user' ? t('chat.user') : 'GoodBuddy',
+            content: `${message.content}${formatAttachmentList(
+              message.attachments,
+              t
+            )}`
+          })
       )
       .join('\n\n')
     try {
       await navigator.clipboard.writeText(transcript)
-      notify({ tone: 'success', message: '对话已复制到剪贴板' })
+      notify({
+        tone: 'success',
+        message: t('notices.conversationCopied')
+      })
     } catch {
       notify({
         tone: 'error',
-        message: '无法访问剪贴板，请检查系统权限'
+        message: t('notices.clipboardUnavailable')
       })
     }
   }
@@ -3635,9 +3812,12 @@ function App(): React.JSX.Element {
       `# ${conversation.title}`,
       '',
       ...conversation.messages.flatMap((message) => [
-        `## ${message.role === 'user' ? '用户' : 'GoodBuddy'}`,
+        `## ${message.role === 'user' ? t('chat.user') : 'GoodBuddy'}`,
         '',
-        `${message.content}${formatAttachmentList(message.attachments)}`,
+        `${message.content}${formatAttachmentList(
+          message.attachments,
+          t
+        )}`,
         ''
       ])
     ].join('\n')
@@ -3647,10 +3827,13 @@ function App(): React.JSX.Element {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `${conversation.title.replace(/[\\/:*?"<>|]/g, '_') || 'GoodBuddy 对话'}.md`
+    anchor.download = `${
+      conversation.title.replace(/[\\/:*?"<>|]/g, '_') ||
+      t('conversation.exportFallbackName')
+    }.md`
     anchor.click()
     URL.revokeObjectURL(url)
-    notify({ tone: 'success', message: '对话已导出' })
+    notify({ tone: 'success', message: t('notices.conversationExported') })
   }
 
   const openImageViewer = (
@@ -3658,7 +3841,7 @@ function App(): React.JSX.Element {
     trigger: HTMLElement
   ): void => {
     if (!imageDataUrlPattern.test(item.src)) {
-      notify({ tone: 'error', message: '图片内容不可用' })
+      notify({ tone: 'error', message: t('notices.imageUnavailable') })
       return
     }
     imageViewerTriggerRef.current = trigger
@@ -3675,15 +3858,19 @@ function App(): React.JSX.Element {
 
   const downloadImage = (item: ImageViewerItem): void => {
     if (!imageDataUrlPattern.test(item.src)) {
-      notify({ tone: 'error', message: '图片内容不可用' })
+      notify({ tone: 'error', message: t('notices.imageUnavailable') })
       return
     }
     const anchor = document.createElement('a')
     anchor.href = item.src
-    anchor.download = getImageDownloadName(item.title, item.src)
+    anchor.download = getImageDownloadName(
+      item.title,
+      item.src,
+      t('chat.images.fallbackTitle')
+    )
     anchor.rel = 'noopener'
     anchor.click()
-    notify({ tone: 'info', message: '图片下载已开始' })
+    notify({ tone: 'info', message: t('notices.imageDownloadStarted') })
   }
 
   const submit = async (): Promise<void> => {
@@ -3694,14 +3881,14 @@ function App(): React.JSX.Element {
     if (activeConversation.remote) {
       notify({
         tone: 'info',
-        message: '远程通道会话只能从对应消息应用继续发起'
+        message: t('notices.remoteConversationReadOnly')
       })
       return
     }
     if (!runtime) {
       notify({
         tone: 'info',
-        message: 'Agent Runtime 正在加载，请稍后重试'
+        message: t('runtime.loadingRetry')
       })
       return
     }
@@ -3711,7 +3898,7 @@ function App(): React.JSX.Element {
     ) {
       notify({
         tone: 'info',
-        message: 'Agent Runtime 状态正在更新，请稍后重试'
+        message: t('runtime.updatingRetry')
       })
       return
     }
@@ -3726,7 +3913,7 @@ function App(): React.JSX.Element {
     ) {
       notify({
         tone: 'info',
-        message: '当前对话已有任务正在运行，请等待完成或先停止'
+        message: t('notices.conversationAlreadyRunning')
       })
       return
     }
@@ -3738,7 +3925,7 @@ function App(): React.JSX.Element {
     const projectIdSnapshot = activeProjectId || undefined
     const runtimeSelectionSnapshot = activeRuntimeSelection
     if (!runtimeSelectionSnapshot) {
-      notify({ tone: 'info', message: '当前对话尚未选择 Runtime' })
+      notify({ tone: 'info', message: t('runtime.notSelected') })
       return
     }
     const selectedExpertSnapshot =
@@ -3788,7 +3975,7 @@ function App(): React.JSX.Element {
       blocks: [],
       createdAt: Date.now(),
       state: 'streaming',
-      status: '正在连接 Agent Runtime'
+      status: t('runtime.connecting')
     }
 
     activeRuns.current.set(requestId, {
@@ -3819,7 +4006,7 @@ function App(): React.JSX.Element {
       requestId,
       kind: 'request',
       title: prompt.slice(0, 120),
-      detail: '用户发起对话任务',
+      detail: t('notices.userStartedTask'),
       status: 'running'
     })
     setConversations((current) =>
@@ -3883,7 +4070,8 @@ function App(): React.JSX.Element {
         requestId,
         type: 'error',
         status: 'failed',
-        message: error instanceof Error ? error.message : '发送失败'
+        message:
+          error instanceof Error ? error.message : t('notices.sendFailed')
       })
     }
   }
@@ -3896,7 +4084,7 @@ function App(): React.JSX.Element {
       try {
         await window.goodbuddy.agent.cancel(requestId)
       } catch {
-        notify({ tone: 'error', message: '停止生成失败，请重试' })
+        notify({ tone: 'error', message: t('notices.stopFailed') })
       }
     }
   }
@@ -3911,10 +4099,10 @@ function App(): React.JSX.Element {
       await window.goodbuddy.agent.respondApproval(approvalId, decision)
       const approved = decision !== 'deny'
       const decisionLabel = {
-        deny: '拒绝',
-        once: '仅此次允许',
-        session: '此会话允许',
-        permanent: '永久允许'
+        deny: t('chat.approval.decisionDeny'),
+        once: t('chat.approval.decisionOnce'),
+        session: t('chat.approval.decisionSession'),
+        permanent: t('chat.approval.decisionPermanent')
       }[decision]
       setActivityRecords((current) => {
         let updated = false
@@ -3929,7 +4117,9 @@ function App(): React.JSX.Element {
             return {
               ...record,
               status: approved ? ('completed' as const) : ('denied' as const),
-              detail: `${record.detail}\n用户选择了${decisionLabel}`
+              detail: `${record.detail}\n${t('notices.userDecision', {
+                decision: decisionLabel
+              })}`
             }
           }
           return record
@@ -3939,13 +4129,13 @@ function App(): React.JSX.Element {
         ...message,
         approval: undefined,
         status: approved
-          ? `${decisionLabel}，Agent 正在执行`
-          : '已拒绝工具执行'
+          ? t('chat.approval.executing', { decision: decisionLabel })
+          : t('chat.approval.denied')
       }))
     } catch {
       updateMessage(conversationId, messageId, (message) => ({
         ...message,
-        status: '审批响应失败，请重试'
+        status: t('chat.approval.responseFailed')
       }))
     }
   }
@@ -3960,7 +4150,9 @@ function App(): React.JSX.Element {
     updateMessage(conversationId, messageId, (message) => ({
       ...message,
       question: undefined,
-      status: answers ? '回答已提交，OpenCode 正在继续执行' : '已跳过问题'
+      status: answers
+        ? t('chat.status.answerSubmitted')
+        : t('chat.status.questionSkipped')
     }))
   }
 
@@ -3985,11 +4177,13 @@ function App(): React.JSX.Element {
       }
       updateAttachments([...current, ...accepted])
       if (accepted.length < unique.length) {
-        setContextError('单次消息最多添加 8 个附件')
+        setContextError(t('composer.errors.attachmentLimit'))
       }
     } catch (reason) {
       setContextError(
-        reason instanceof Error ? reason.message : '添加上下文失败'
+        reason instanceof Error
+          ? reason.message
+          : t('composer.errors.addContext')
       )
     }
   }
@@ -4007,7 +4201,7 @@ function App(): React.JSX.Element {
     if (!SpeechRecognition) {
       notify({
         tone: 'info',
-        message: '当前系统不支持内置语音识别，可继续使用键盘输入'
+        message: t('composer.voice.unsupported')
       })
       return
     }
@@ -4021,7 +4215,7 @@ function App(): React.JSX.Element {
         () => {
           notify({
             tone: 'info',
-            message: '正在下载中文离线语音包，完成后将自动开始听写',
+            message: t('composer.voice.downloadingPack'),
             dedupeKey: 'speech-status'
           })
         }
@@ -4035,7 +4229,7 @@ function App(): React.JSX.Element {
           )
           notify({
             tone: 'success',
-            message: '语音已转为文字，可编辑后发送',
+            message: t('composer.voice.transcribed'),
             dedupeKey: 'speech-status'
           })
         }
@@ -4059,8 +4253,8 @@ function App(): React.JSX.Element {
       notify({
         tone: 'info',
         message: prepared.local
-          ? '正在使用本地语音识别听写'
-          : '正在使用系统语音服务听写',
+          ? t('composer.voice.localListening')
+          : t('composer.voice.systemListening'),
         dedupeKey: 'speech-status'
       })
     } catch (reason) {
@@ -4069,7 +4263,7 @@ function App(): React.JSX.Element {
         message:
           reason instanceof Error
             ? reason.message
-            : '无法启动语音识别，请检查系统语音设置',
+            : t('composer.voice.startFailed'),
         dedupeKey: 'speech-status'
       })
     } finally {
@@ -4094,7 +4288,7 @@ function App(): React.JSX.Element {
     if (!navigator.mediaDevices?.getUserMedia || !AudioContextType) {
       notify({
         tone: 'error',
-        message: '当前系统无法访问麦克风，请检查系统录音设备和权限',
+        message: t('composer.voice.microphoneUnavailable'),
         dedupeKey: 'speech-status'
       })
       return
@@ -4117,7 +4311,7 @@ function App(): React.JSX.Element {
       setVoiceRecording(true)
       notify({
         tone: 'info',
-        message: '正在录音，再次点击语音按钮即可结束并识别',
+        message: t('composer.voice.recording'),
         dedupeKey: 'speech-status'
       })
       void recording.result
@@ -4128,7 +4322,7 @@ function App(): React.JSX.Element {
           voiceRequestIdRef.current = requestId
           notify({
             tone: 'info',
-            message: '正在使用本地语音模型识别',
+            message: t('composer.voice.localRecognizing'),
             dedupeKey: 'speech-status'
           })
           const result = await speech.transcribe({
@@ -4143,7 +4337,7 @@ function App(): React.JSX.Element {
           if (!transcript) {
             notify({
               tone: 'info',
-              message: '没有识别到语音，请靠近麦克风后重试',
+              message: t('composer.voice.noSpeech'),
               dedupeKey: 'speech-status'
             })
             return
@@ -4153,7 +4347,7 @@ function App(): React.JSX.Element {
           )
           notify({
             tone: 'success',
-            message: '语音已转为文字，可编辑后发送',
+            message: t('composer.voice.transcribed'),
             dedupeKey: 'speech-status'
           })
         })
@@ -4167,10 +4361,10 @@ function App(): React.JSX.Element {
             message:
               reason instanceof Error &&
               reason.name === 'AbortError'
-                ? '语音识别已取消'
+                ? t('composer.voice.cancelled')
                 : reason instanceof Error
                   ? reason.message
-                  : '本地语音识别失败',
+                  : t('composer.voice.localFailed'),
             dedupeKey: 'speech-status'
           })
         })
@@ -4188,10 +4382,10 @@ function App(): React.JSX.Element {
         message:
           reason instanceof Error &&
           reason.name === 'NotAllowedError'
-            ? '麦克风权限被拒绝，请在系统隐私设置中允许 GoodBuddy 使用麦克风'
+            ? t('composer.voice.permissionDenied')
             : reason instanceof Error
               ? reason.message
-              : '无法开始录音',
+              : t('composer.voice.recordingStartFailed'),
         dedupeKey: 'speech-status'
       })
     }
@@ -4207,7 +4401,7 @@ function App(): React.JSX.Element {
       recording.stop()
       notify({
         tone: 'info',
-        message: '录音完成，正在准备本地识别',
+        message: t('composer.voice.preparing'),
         dedupeKey: 'speech-status'
       })
       return
@@ -4218,7 +4412,7 @@ function App(): React.JSX.Element {
       void window.goodbuddy.speech?.cancel(requestId)
       notify({
         tone: 'info',
-        message: '语音识别已取消',
+        message: t('composer.voice.cancelled'),
         dedupeKey: 'speech-status'
       })
       setVoiceListening(false)
@@ -4268,7 +4462,10 @@ function App(): React.JSX.Element {
       (candidate) => candidate.id === conversationId
     )
     if (!conversation) {
-      notify({ tone: 'info', message: '对应对话已被删除' })
+      notify({
+        tone: 'info',
+        message: t('notices.conversationDeleted')
+      })
       return
     }
     if (conversation.projectId) {
@@ -4310,7 +4507,8 @@ function App(): React.JSX.Element {
       activeProjectId || undefined,
       runtimeSettings
         ? getDefaultRuntimeSelection(runtimeSettings)
-        : undefined
+        : undefined,
+      t('conversation.greeting')
     )
     setConversations([conversation])
     setActiveId(conversation.id)
@@ -4337,7 +4535,7 @@ function App(): React.JSX.Element {
     setView('chat')
     notify({
       tone: 'success',
-      message: '本地对话、任务、记忆、心跳、自动化和知识库索引已清除'
+      message: t('notices.localDataCleared')
     })
   }
 
@@ -4349,7 +4547,9 @@ function App(): React.JSX.Element {
   return (
     <div className="app-shell">
       <aside
-        aria-label={narrowWindow && sidebarOpen ? '主侧栏' : undefined}
+        aria-label={
+          narrowWindow && sidebarOpen ? t('sidebar.label') : undefined
+        }
         aria-hidden={!sidebarOpen}
         aria-modal={narrowWindow && sidebarOpen ? 'true' : undefined}
         className={sidebarOpen ? 'sidebar' : 'sidebar sidebar--closed'}
@@ -4395,7 +4595,7 @@ function App(): React.JSX.Element {
             type="button"
           >
             <MessageSquarePlus size={17} />
-            <span>新建对话</span>
+            <span>{t('sidebar.newConversation')}</span>
             <kbd>Ctrl N</kbd>
           </button>
         )}
@@ -4403,14 +4603,14 @@ function App(): React.JSX.Element {
         <div className="sidebar-search">
           <Search size={15} />
           <input
-            aria-label="搜索对话"
+            aria-label={t('sidebar.searchLabel')}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="搜索标题或消息"
+            placeholder={t('sidebar.searchPlaceholder')}
             value={searchQuery}
           />
         </div>
 
-        <nav className="primary-nav" aria-label="主导航">
+        <nav className="primary-nav" aria-label={t('navigation.label')}>
           <button
             aria-current={view === 'chat' ? 'page' : undefined}
             className={
@@ -4420,7 +4620,7 @@ function App(): React.JSX.Element {
             type="button"
           >
             <MessageSquare aria-hidden="true" size={17} />
-            <span>对话</span>
+            <span>{t('navigation.chat')}</span>
           </button>
           {magicNotesEnabled && (
             <button
@@ -4434,7 +4634,7 @@ function App(): React.JSX.Element {
               type="button"
             >
               <Sparkles aria-hidden="true" size={17} />
-              <span>魔法笔记</span>
+              <span>{t('navigation.magicNotes')}</span>
             </button>
           )}
           <button
@@ -4448,7 +4648,7 @@ function App(): React.JSX.Element {
             type="button"
           >
             <Library aria-hidden="true" size={17} />
-            <span>知识库</span>
+            <span>{t('navigation.knowledge')}</span>
           </button>
           <button
             aria-current={view === 'heartbeat' ? 'page' : undefined}
@@ -4461,10 +4661,12 @@ function App(): React.JSX.Element {
             type="button"
           >
             <HeartPulse aria-hidden="true" size={17} />
-            <span>智能心跳</span>
+            <span>{t('navigation.heartbeat')}</span>
             {pendingHeartbeatSuggestionCount > 0 && (
               <span
-                aria-label={`${pendingHeartbeatSuggestionCount} 条待处理建议`}
+                aria-label={t('navigation.pendingSuggestions', {
+                  count: pendingHeartbeatSuggestionCount
+                })}
                 className="nav-item__badge"
               >
                 {pendingHeartbeatSuggestionCount}
@@ -4482,12 +4684,12 @@ function App(): React.JSX.Element {
             type="button"
           >
             <TerminalSquare aria-hidden="true" size={17} />
-            <span>任务与活动</span>
+            <span>{t('navigation.activity')}</span>
           </button>
         </nav>
 
         <div className="conversation-list">
-          <p className="section-label">最近会话</p>
+          <p className="section-label">{t('sidebar.recent')}</p>
           {filteredConversations.map((conversation) => (
             <div className="conversation-entry" key={conversation.id}>
               <div
@@ -4528,23 +4730,31 @@ function App(): React.JSX.Element {
                         }
                       </b>
                     )}
-                    {conversation.title}
+                    {getConversationDisplayTitle(
+                      conversation,
+                      t('conversation.defaultTitle')
+                    )}
                     {unreadConversationIds.has(conversation.id) && (
                       <i
-                        aria-label="未读"
+                        aria-label={t('conversation.unread')}
                         className="conversation-unread"
-                        title="未读远程消息"
+                        title={t('conversation.unreadRemote')}
                       />
                     )}
                   </span>
-                  <small>{formatTime(conversation.updatedAt)}</small>
+                  <small>{formatTime(conversation.updatedAt, locale)}</small>
                 </button>
                 <button
                   aria-controls={`conversation-actions-${conversation.id}`}
                   aria-expanded={
                     conversationActionsId === conversation.id
                   }
-                  aria-label={`更多会话操作 ${conversation.title}`}
+                  aria-label={t('conversation.actions.more', {
+                    title: getConversationDisplayTitle(
+                      conversation,
+                      t('conversation.defaultTitle')
+                    )
+                  })}
                   className="conversation-more"
                   onClick={() => {
                     setRenamingConversationId('')
@@ -4572,7 +4782,12 @@ function App(): React.JSX.Element {
               </div>
               {conversationActionsId === conversation.id && (
                 <div
-                  aria-label={`${conversation.title} 的会话操作`}
+                  aria-label={t('conversation.actions.region', {
+                    title: getConversationDisplayTitle(
+                      conversation,
+                      t('conversation.defaultTitle')
+                    )
+                  })}
                   className="conversation-actions"
                   id={`conversation-actions-${conversation.id}`}
                 >
@@ -4585,7 +4800,7 @@ function App(): React.JSX.Element {
                       type="button"
                     >
                       <Edit3 size={14} />
-                      重命名会话
+                      {t('conversation.actions.rename')}
                     </button>
                   )}
                   <button
@@ -4598,7 +4813,7 @@ function App(): React.JSX.Element {
                     type="button"
                   >
                     <Copy size={14} />
-                    复制完整会话
+                    {t('conversation.actions.copy')}
                   </button>
                   <button
                     onClick={() => {
@@ -4609,13 +4824,23 @@ function App(): React.JSX.Element {
                     type="button"
                   >
                     <Download size={14} />
-                    导出 Markdown
+                    {t('conversation.actions.export')}
                   </button>
                   {!conversation.remote && (
                     <DestructiveConfirmActions
-                      cancelAriaLabel={`取消删除对话 ${conversation.title}`}
-                      confirmAriaLabel={`确认永久删除对话 ${conversation.title}`}
-                      confirmLabel="永久删除对话"
+                      cancelAriaLabel={t('conversation.delete.cancelAria', {
+                        title: getConversationDisplayTitle(
+                          conversation,
+                          t('conversation.defaultTitle')
+                        )
+                      })}
+                      confirmAriaLabel={t('conversation.delete.confirmAria', {
+                        title: getConversationDisplayTitle(
+                          conversation,
+                          t('conversation.defaultTitle')
+                        )
+                      })}
+                      confirmLabel={t('conversation.delete.confirm')}
                       confirming={
                         confirmingConversationId === conversation.id
                       }
@@ -4623,7 +4848,7 @@ function App(): React.JSX.Element {
                         deletingConversationId === conversation.id
                       }
                       icon={<Trash2 aria-hidden="true" size={14} />}
-                      message="将永久删除此会话的全部内容；如果此会话有正在运行的任务，也会同时停止。此操作不可恢复。"
+                      message={t('conversation.delete.message')}
                       onCancel={() => setConfirmingConversationId('')}
                       onConfirm={() =>
                         void deleteConversation(conversation.id)
@@ -4631,8 +4856,13 @@ function App(): React.JSX.Element {
                       onRequestConfirm={() =>
                         setConfirmingConversationId(conversation.id)
                       }
-                      triggerAriaLabel={`删除对话 ${conversation.title}`}
-                      triggerLabel="删除对话"
+                      triggerAriaLabel={t('conversation.delete.triggerAria', {
+                        title: getConversationDisplayTitle(
+                          conversation,
+                          t('conversation.defaultTitle')
+                        )
+                      })}
+                      triggerLabel={t('conversation.delete.trigger')}
                     />
                   )}
                 </div>
@@ -4651,7 +4881,12 @@ function App(): React.JSX.Element {
                   }}
                 >
                   <input
-                    aria-label={`重命名会话 ${conversation.title}`}
+                    aria-label={t('conversation.renameAria', {
+                      title: getConversationDisplayTitle(
+                        conversation,
+                        t('conversation.defaultTitle')
+                      )
+                    })}
                     autoFocus
                     defaultValue={conversation.title}
                     maxLength={80}
@@ -4666,13 +4901,13 @@ function App(): React.JSX.Element {
                     required
                   />
                   <button
-                    aria-label="保存会话名称"
+                    aria-label={t('conversation.saveName')}
                     type="submit"
                   >
                     <Check size={14} />
                   </button>
                   <button
-                    aria-label="取消重命名"
+                    aria-label={t('conversation.cancelRename')}
                     onClick={() => {
                       setRenamingConversationId('')
                       focusConversationActions(conversation.id)
@@ -4689,8 +4924,8 @@ function App(): React.JSX.Element {
             <p className="conversation-empty">
               {activeProject?.kind === 'channel' &&
               !searchQuery.trim()
-                ? '尚无远程会话'
-                : '没有匹配的对话'}
+                ? t('conversation.noRemote')
+                : t('conversation.noMatches')}
             </p>
           )}
         </div>
@@ -4703,8 +4938,12 @@ function App(): React.JSX.Element {
           >
             <span className="avatar">GB</span>
             <span className="user-card__copy">
-              <strong>本地工作区</strong>
-              <small>{appInfo ? `${appInfo.platform} · ${appInfo.arch}` : '加载中'}</small>
+              <strong>{t('sidebar.localWorkspace')}</strong>
+              <small>
+                {appInfo
+                  ? `${appInfo.platform} · ${appInfo.arch}`
+                  : t('sidebar.loading')}
+              </small>
             </span>
             <Settings size={16} />
           </button>
@@ -4712,7 +4951,7 @@ function App(): React.JSX.Element {
       </aside>
       {sidebarOpen && (
         <button
-          aria-label="关闭侧栏"
+          aria-label={t('sidebar.close')}
           className="sidebar-backdrop"
           onClick={closeNarrowSidebar}
           type="button"
@@ -4728,7 +4967,7 @@ function App(): React.JSX.Element {
           <button
             className="icon-button sidebar-toggle"
             type="button"
-            aria-label="切换侧栏"
+            aria-label={t('sidebar.toggle')}
             onClick={() => setSidebarOpen((open) => !open)}
             ref={sidebarToggleRef}
           >
@@ -4741,10 +4980,15 @@ function App(): React.JSX.Element {
                 title={activeConversation?.title}
               >
                 <span>
-                  {activeConversation?.title ??
+                  {activeConversation
+                    ? getConversationDisplayTitle(
+                        activeConversation,
+                        t('conversation.defaultTitle')
+                      )
+                    :
                     (activeProject?.kind === 'channel'
-                      ? '远程会话'
-                      : '新对话')}
+                      ? t('conversation.remoteTitle')
+                      : t('conversation.defaultTitle'))}
                 </span>
                 {activeConversation?.remote && (
                   <b className="conversation-source-badge">
@@ -4765,7 +5009,7 @@ function App(): React.JSX.Element {
                       }
                     : {
                         kind: 'unavailable',
-                        explanation: '当前项目尚未加载。'
+                        explanation: t('notices.projectNotLoaded')
                       }
                 }
               />
@@ -4782,15 +5026,17 @@ function App(): React.JSX.Element {
             >
               <span className="runtime-status__dot" />
               <span className="runtime-status__label">
-                {runtime?.label ?? '正在检测运行时'}
+                {runtime?.label ?? t('runtime.detecting')}
               </span>
               {runtime?.capability === 'image-generation' && (
-                <span className="runtime-capability-badge">生图</span>
+                <span className="runtime-capability-badge">
+                  {t('runtime.imageGeneration')}
+                </span>
               )}
             </span>
             {view === 'chat' && (
               <button
-                aria-label="切换助手工作栏"
+                aria-label={t('topbar.toggleAssistantSidebar')}
                 aria-pressed={assistantSidebarOpen}
                 className={
                   assistantSidebarOpen
@@ -4808,16 +5054,16 @@ function App(): React.JSX.Element {
             <button
               aria-label={
                 resolvedAppearanceTheme === 'dark'
-                  ? '切换浅色主题'
-                  : '切换深色主题'
+                  ? t('topbar.switchLight')
+                  : t('topbar.switchDark')
               }
               aria-pressed={resolvedAppearanceTheme === 'dark'}
               className="icon-button theme-toggle-button"
               onClick={toggleAppearanceTheme}
               title={
                 resolvedAppearanceTheme === 'dark'
-                  ? '切换浅色主题'
-                  : '切换深色主题'
+                  ? t('topbar.switchLight')
+                  : t('topbar.switchDark')
               }
               type="button"
             >
@@ -4845,13 +5091,15 @@ function App(): React.JSX.Element {
                     onClick={() => setView('settings')}
                     type="button"
                   >
-                    打开设置
+                    {t('chat.remote.openSettings')}
                   </button>
                 }
-                description={`请先连接${activeProject.name}，远程用户发送第一条消息后，会话会自动出现在这里。`}
+                description={t('chat.remote.emptyDescription', {
+                  project: activeProject.name
+                })}
                 icon={<MessageSquare size={28} />}
                 level="page"
-                title="尚无远程会话"
+                title={t('conversation.noRemote')}
               />
             )}
           {activeConversation && isUnusedConversation(activeConversation) && (
@@ -4860,9 +5108,9 @@ function App(): React.JSX.Element {
                 <Sparkles size={18} />
               </div>
               <p className="eyebrow">GOODBUDDY WORKSPACE</p>
-              <h1>今天想一起完成什么？</h1>
+              <h1>{t('chat.welcome.title')}</h1>
               <p className="welcome__description">
-                快速提问、梳理信息，或连接 OpenCode 使用文件搜索和开发工具。
+                {t('chat.welcome.description')}
               </p>
               <div className="quick-actions">
                 {quickActions.map((action) => (
@@ -4903,14 +5151,14 @@ function App(): React.JSX.Element {
                     <strong>
                       {message.role === 'assistant'
                         ? 'GoodBuddy'
-                        : '用户'}
+                        : t('chat.user')}
                     </strong>
-                    <span>{formatTime(message.createdAt)}</span>
+                    <span>{formatTime(message.createdAt, locale)}</span>
                   </div>
                   {message.attachments &&
                     message.attachments.length > 0 && (
                       <div
-                        aria-label="消息附件"
+                        aria-label={t('chat.attachments.region')}
                         className="message-attachments"
                       >
                         {message.attachments.map((attachment) => {
@@ -4933,7 +5181,9 @@ function App(): React.JSX.Element {
                             >
                               {imageItem ? (
                                 <button
-                                  aria-label={`查看图片 ${attachment.name}`}
+                                  aria-label={t('chat.images.viewNamed', {
+                                    title: attachment.name
+                                  })}
                                   className="message-image-button"
                                   onClick={(event) =>
                                     openImageViewer(
@@ -4973,17 +5223,19 @@ function App(): React.JSX.Element {
                                       }
                                       type="button"
                                     >
-                                      查看
+                                      {t('chat.images.view')}
                                     </button>
                                     <button
-                                      aria-label={`下载图片 ${attachment.name}`}
+                                      aria-label={t('chat.images.downloadNamed', {
+                                        title: attachment.name
+                                      })}
                                       onClick={() =>
                                         downloadImage(imageItem)
                                       }
                                       type="button"
                                     >
                                       <Download size={12} />
-                                      下载
+                                      {t('chat.images.download')}
                                     </button>
                                   </span>
                                 )}
@@ -5013,8 +5265,8 @@ function App(): React.JSX.Element {
                           >
                             <summary>
                               {message.state === 'streaming'
-                                ? '正在推理'
-                                : '推理过程'}
+                                ? t('chat.reasoning.streaming')
+                                : t('chat.reasoning.complete')}
                             </summary>
                             <div className="markdown-content message-reasoning__content">
                               <MarkdownRenderer>
@@ -5044,8 +5296,8 @@ function App(): React.JSX.Element {
                         >
                           <summary>
                             {message.state === 'streaming'
-                              ? '正在推理'
-                              : '推理过程'}
+                              ? t('chat.reasoning.streaming')
+                              : t('chat.reasoning.complete')}
                           </summary>
                           <div className="markdown-content message-reasoning__content">
                             <MarkdownRenderer>
@@ -5057,7 +5309,11 @@ function App(): React.JSX.Element {
                       {message.content && (
                         <div className="markdown-content message__content">
                           <MarkdownRenderer>
-                            {message.content}
+                            {messageIndex === 0 &&
+                            activeConversation &&
+                            isUnusedConversation(activeConversation)
+                              ? t('conversation.greeting')
+                              : message.content}
                           </MarkdownRenderer>
                         </div>
                       )}
@@ -5080,7 +5336,9 @@ function App(): React.JSX.Element {
                         key={artifact.id}
                       >
                         <button
-                          aria-label={`查看图片 ${artifact.title}`}
+                          aria-label={t('chat.images.viewNamed', {
+                            title: artifact.title
+                          })}
                           className="message-image-button"
                           onClick={(event) =>
                             openImageViewer(
@@ -5113,10 +5371,12 @@ function App(): React.JSX.Element {
                             }
                             type="button"
                           >
-                            查看
+                            {t('chat.images.view')}
                           </button>
                           <button
-                            aria-label={`下载图片 ${artifact.title}`}
+                            aria-label={t('chat.images.downloadNamed', {
+                              title: artifact.title
+                            })}
                             onClick={() =>
                               downloadImage({
                                 src: artifact.content!,
@@ -5126,7 +5386,7 @@ function App(): React.JSX.Element {
                             type="button"
                           >
                             <Download size={12} />
-                            下载
+                            {t('chat.images.download')}
                           </button>
                         </div>
                       </figure>
@@ -5136,7 +5396,11 @@ function App(): React.JSX.Element {
                     <div className="message-sources">
                       <Library size={14} />
                       <span>
-                        来源：{[...new Set(message.sources)].join('、')}
+                        {t('chat.sources', {
+                          sources: [...new Set(message.sources)].join(
+                            locale === 'zh-CN' ? '、' : ', '
+                          )
+                        })}
                       </span>
                     </div>
                   )}
@@ -5144,7 +5408,9 @@ function App(): React.JSX.Element {
                     message.sourceReferences.length > 0 && (
                       <details className="message-citations">
                         <summary>
-                          查看 {message.sourceReferences.length} 条证据引用
+                          {t('chat.citations.view', {
+                            count: message.sourceReferences.length
+                          })}
                         </summary>
                         <ol>
                           {message.sourceReferences.map(
@@ -5162,14 +5428,14 @@ function App(): React.JSX.Element {
                                 <p>{reference.snippet}</p>
                                 {reference.retrievalChannels && (
                                   <small>
-                                    检索：
+                                    {t('chat.citations.retrieval')}
                                     {reference.retrievalChannels
                                       .map((channel) =>
                                         channel === 'fts'
-                                          ? '全文'
+                                          ? t('chat.citations.fullText')
                                           : channel === 'vector'
-                                            ? '向量'
-                                            : '图谱'
+                                            ? t('chat.citations.vector')
+                                            : t('chat.citations.graph')
                                       )
                                       .join(' + ')}
                                   </small>
@@ -5187,7 +5453,7 @@ function App(): React.JSX.Element {
                     )}
                   {message.subagents && message.subagents.length > 0 && (
                     <section
-                      aria-label="子专家状态"
+                      aria-label={t('chat.subagents.region')}
                       className="subagent-status-list"
                     >
                       {message.subagents.slice(0, 3).map((subagent) => (
@@ -5200,8 +5466,8 @@ function App(): React.JSX.Element {
                             <strong>{subagent.expertName}</strong>
                             <small>
                               {subagent.routingMode === 'smart'
-                                ? '智能路由'
-                                : '手动指定'}
+                                ? t('chat.subagents.smart')
+                                : t('chat.subagents.manual')}
                             </small>
                             {(subagent.error || subagent.reason) &&
                               (subagent.state === 'failed' ||
@@ -5212,7 +5478,7 @@ function App(): React.JSX.Element {
                               )}
                           </div>
                           <span>
-                            {subagentStateLabels[subagent.state]}
+                            {t(`chat.subagents.states.${subagent.state}`)}
                           </span>
                         </article>
                       ))}
@@ -5240,7 +5506,7 @@ function App(): React.JSX.Element {
                         }
                         type="button"
                       >
-                        拒绝
+                        {t('chat.approval.deny')}
                       </button>
                       <button
                         className="approval-card__allow"
@@ -5254,7 +5520,7 @@ function App(): React.JSX.Element {
                         }
                         type="button"
                       >
-                        仅此次
+                        {t('chat.approval.once')}
                       </button>
                       <button
                         className="approval-card__allow"
@@ -5268,7 +5534,7 @@ function App(): React.JSX.Element {
                         }
                         type="button"
                       >
-                        此会话
+                        {t('chat.approval.session')}
                       </button>
                       {message.approval.allowPermanent && (
                         <button
@@ -5283,7 +5549,7 @@ function App(): React.JSX.Element {
                           }
                           type="button"
                         >
-                          永久允许
+                          {t('chat.approval.permanent')}
                         </button>
                       )}
                     </div>
@@ -5341,7 +5607,7 @@ function App(): React.JSX.Element {
                       }}
                       type="button"
                     >
-                      重新编辑并发送
+                      {t('chat.retry')}
                     </button>
                   )}
                 </div>
@@ -5355,11 +5621,16 @@ function App(): React.JSX.Element {
             <div className="remote-conversation-notice">
               <MessageSquare aria-hidden="true" size={18} />
               <div>
-                <strong>远程通道会话</strong>
+                <strong>{t('chat.remote.title')}</strong>
                 <span>
                   {activeConversation?.remote
-                    ? `请在 ${projectChannelLabels[activeConversation.remote.channel]} 客户端继续发送消息。本窗口用于查看历史、任务与执行结果。`
-                    : '远程用户发送消息后，会话会自动出现在这里。'}
+                    ? t('chat.remote.continueInClient', {
+                        client:
+                          projectChannelLabels[
+                            activeConversation.remote.channel
+                          ]
+                      })
+                    : t('chat.remote.waiting')}
                 </span>
               </div>
             </div>
@@ -5391,7 +5662,9 @@ function App(): React.JSX.Element {
                       </small>
                     </span>
                     <button
-                      aria-label={`移除 ${attachment.name}`}
+                      aria-label={t('composer.removeAttachment', {
+                        name: attachment.name
+                      })}
                       onClick={() => {
                         void window.goodbuddy.context.remove(attachment.id)
                         updateAttachments((current) =>
@@ -5410,12 +5683,12 @@ function App(): React.JSX.Element {
             )}
             <div className="composer__input">
               <textarea
-                aria-label="向 GoodBuddy 提问"
+                aria-label={t('composer.inputLabel')}
                 placeholder={`${
                   runtime?.capability === 'image-generation'
-                    ? '描述你想生成的图片…'
-                    : '给 GoodBuddy 发消息…'
-                }\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本`}
+                    ? t('composer.imagePlaceholder')
+                    : t('composer.placeholder')
+                }\n${t('composer.keyboardHint')}`}
                 ref={inputRef}
                 rows={3}
                 value={input}
@@ -5444,13 +5717,13 @@ function App(): React.JSX.Element {
                   event.preventDefault()
                   if (!image || !mimeType) {
                     setContextError(
-                      '仅支持粘贴 JPEG、PNG 或 WebP 图片'
+                      t('composer.errors.pasteImageType')
                     )
                     return
                   }
                   void addContext(async () => {
                     if (image.size > maximumPastedImageBytes) {
-                      throw new Error('粘贴图片不能超过 12MB')
+                      throw new Error(t('composer.errors.pasteImageSize'))
                     }
                     return window.goodbuddy.context.addPastedImage({
                       data: new Uint8Array(await image.arrayBuffer()),
@@ -5469,29 +5742,29 @@ function App(): React.JSX.Element {
             <div className="composer__toolbar">
               <div className="composer__controls">
                 <div
-                  aria-label="添加内容"
+                  aria-label={t('composer.addContent')}
                   className="composer__tool-group"
                   role="group"
                 >
                   <button
                     type="button"
-                    aria-label="添加附件"
+                    aria-label={t('composer.addAttachment')}
                     onClick={() =>
                       void addContext(() =>
                         window.goodbuddy.context.selectFiles()
                       )
                     }
-                    title="添加附件"
+                    title={t('composer.addAttachment')}
                   >
                     <Paperclip aria-hidden="true" size={18} />
                   </button>
                   <button
                     aria-label={
                       voiceRecording
-                        ? '停止录音'
+                        ? t('composer.voice.stopRecording')
                         : voiceListening
-                          ? '取消语音识别'
-                          : '语音输入'
+                          ? t('composer.voice.cancel')
+                          : t('composer.voice.input')
                     }
                     aria-pressed={voiceRecording}
                     className={
@@ -5511,10 +5784,10 @@ function App(): React.JSX.Element {
                     onClick={toggleVoiceInput}
                     title={
                       voiceRecording
-                        ? '停止录音并开始识别'
+                        ? t('composer.voice.stopAndRecognize')
                         : voiceListening
-                          ? '取消语音识别'
-                          : '语音转文字，转写后可编辑再发送'
+                          ? t('composer.voice.cancel')
+                          : t('composer.voice.description')
                     }
                     type="button"
                   >
@@ -5524,23 +5797,25 @@ function App(): React.JSX.Element {
                 {knowledgeSnapshot.libraries.length > 0 && (
                   <div className="knowledge-scope">
                     <button
-                      aria-label={`选择知识库，本次已启用 ${enabledKnowledgeLibraryIds.length} 个`}
+                      aria-label={t('composer.knowledge.select', {
+                        count: enabledKnowledgeLibraryIds.length
+                      })}
                       aria-expanded={knowledgeScopeOpen}
                       onClick={() =>
                         setKnowledgeScopeOpen((current) => !current)
                       }
-                      title="选择本次对话检索的知识库"
+                      title={t('composer.knowledge.title')}
                       type="button"
                     >
                       <Library aria-hidden="true" size={16} />
                       <span>
-                        知识库
+                        {t('navigation.knowledge')}
                         <strong>{enabledKnowledgeLibraryIds.length}</strong>
                       </span>
                     </button>
                     {knowledgeScopeOpen && (
                       <div className="knowledge-scope__popover">
-                        <strong>本次对话检索范围</strong>
+                        <strong>{t('composer.knowledge.scope')}</strong>
                         {knowledgeSnapshot.libraries.map((library) => (
                           <label key={library.id}>
                             <input
@@ -5559,7 +5834,11 @@ function App(): React.JSX.Element {
                               type="checkbox"
                             />
                             <span>{library.name}</span>
-                            <small>{library.documentCount} 个文档</small>
+                            <small>
+                              {t('composer.knowledge.documents', {
+                                count: library.documentCount
+                              })}
+                            </small>
                           </label>
                         ))}
                       </div>
@@ -5567,12 +5846,12 @@ function App(): React.JSX.Element {
                   </div>
                 )}
                 <div
-                  aria-label="对话设置"
+                  aria-label={t('composer.settings')}
                   className="composer__configuration"
                   role="group"
                 >
                   <ComposerMenuSelect
-                    ariaLabel="专家角色"
+                    ariaLabel={t('composer.expertLabel')}
                     className="composer-picker--expert"
                     disabled={
                       runtime?.capability === 'image-generation'
@@ -5585,7 +5864,7 @@ function App(): React.JSX.Element {
                     value={selectedExpertId}
                   />
                   <ComposerMenuSelect
-                    ariaLabel="工作模式"
+                    ariaLabel={t('composer.modeLabel')}
                     className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
                     describedBy="work-mode-hint"
                     icon={
@@ -5629,25 +5908,27 @@ function App(): React.JSX.Element {
                         }
                       }}
                       ref={runtimeMenuButtonRef}
-                      title={`Runtime 和模型：${activeRuntimeLabel}`}
+                      title={t('runtime.pickerTitle', {
+                        label: activeRuntimeLabel
+                      })}
                       type="button"
                     >
                       <Sparkles aria-hidden="true" size={15} />
                       <span className="model-button__label">
                         {runtimeSwitching
-                          ? '切换中…'
+                          ? t('runtime.switching')
                           : activeRuntimeLabel}
                       </span>
                       {runtime?.capability === 'image-generation' && (
                         <span className="runtime-capability-badge">
-                          生图
+                          {t('runtime.imageGeneration')}
                         </span>
                       )}
                       <ChevronDown aria-hidden="true" size={14} />
                     </button>
                     {runtimeMenuOpen && (
                       <div
-                        aria-label="Runtime 和模型"
+                        aria-label={t('runtime.picker')}
                         className="runtime-picker__menu"
                         onKeyDown={(event) => {
                           const items = Array.from(
@@ -5691,7 +5972,7 @@ function App(): React.JSX.Element {
                         <strong
                           role="presentation"
                         >
-                          直连模型
+                          {t('runtime.directModels')}
                         </strong>
                         {runtimeSettings?.modelProfiles.map((profile) => (
                         <button
@@ -5720,7 +6001,7 @@ function App(): React.JSX.Element {
                             {profile.protocol ===
                               'openai-images-generations' && (
                               <span className="runtime-capability-badge">
-                                生图
+                                {t('runtime.imageGeneration')}
                               </span>
                             )}
                           </span>
@@ -5802,7 +6083,7 @@ function App(): React.JSX.Element {
                           tabIndex={-1}
                           type="button"
                         >
-                          <span>管理 Runtime 和模型连接</span>
+                          <span>{t('runtime.manage')}</span>
                         </button>
                       </div>
                     )}
@@ -5813,9 +6094,9 @@ function App(): React.JSX.Element {
                 <button
                   className="send-button send-button--stop"
                   type="button"
-                  aria-label="停止生成"
+                  aria-label={t('composer.stop')}
                   onClick={() => void stop()}
-                  title="停止生成"
+                  title={t('composer.stop')}
                 >
                   <Square
                     aria-hidden="true"
@@ -5827,7 +6108,7 @@ function App(): React.JSX.Element {
                 <button
                   className="send-button"
                   type="button"
-                  aria-label="发送"
+                  aria-label={t('composer.send')}
                   disabled={
                     !input.trim() ||
                     !runtime?.available ||
@@ -5835,7 +6116,7 @@ function App(): React.JSX.Element {
                     runtimeStatusKey !== activeRuntimeSelectionKey
                   }
                   onClick={() => void submit()}
-                  title="发送消息"
+                  title={t('composer.sendTitle')}
                 >
                   <Send aria-hidden="true" size={17} />
                 </button>
@@ -5853,20 +6134,25 @@ function App(): React.JSX.Element {
             <span>
               {contextError ??
                 (!runtime?.available
-                  ? '请先配置可用的模型或 Agent Runtime。'
+                  ? t('composer.hints.configureRuntime')
                   : runtime.capability === 'image-generation'
-                    ? '图像生成模型：输入画面描述后，生成结果会直接显示并保存到成果。'
+                    ? t('composer.hints.imageGeneration')
                     : agentRuntimeSelected
                       ? effectiveWorkMode === 'ask'
-                        ? `${runtime.label} Ask 模式：只允许搜索当前启用的知识库，不会修改文件。`
-                        : `${runtime.label} Execute 模式：工具调用不会弹出 GoodBuddy 审批，并会记录到活动。`
+                        ? t('composer.hints.agentAsk', {
+                            runtime: runtime.label
+                          })
+                        : t('composer.hints.agentExecute', {
+                            runtime: runtime.label
+                          })
                     : effectiveWorkMode === 'ask'
-                      ? 'Ask 模式：只读问答，不会调用工具或修改文件。'
-                      : 'Execute 模式：已启用工具自动授权，调用仍会记录到活动。')}
+                      ? t('composer.hints.ask')
+                      : t('composer.hints.execute'))}
             </span>
             {appInfo?.shortcut && (
               <span className="composer-hint__shortcut">
-                快捷唤起：<kbd>{appInfo.shortcut}</kbd>
+                {t('composer.shortcut')}
+                <kbd>{appInfo.shortcut}</kbd>
               </span>
             )}
           </p>
@@ -5892,7 +6178,7 @@ function App(): React.JSX.Element {
               onCreateEntity={async (input) => {
                 const libraryId = knowledgeSnapshot.selectedLibraryId
                 if (!libraryId) {
-                  throw new Error('请先选择知识库')
+                  throw new Error(t('notices.selectKnowledgeBase'))
                 }
                 await runKnowledgeSourceAction(() =>
                   window.goodbuddy.knowledge.createEntity(
@@ -5904,7 +6190,7 @@ function App(): React.JSX.Element {
               onCreateRelation={async (input) => {
                 const libraryId = knowledgeSnapshot.selectedLibraryId
                 if (!libraryId) {
-                  throw new Error('请先选择知识库')
+                  throw new Error(t('notices.selectKnowledgeBase'))
                 }
                 await runKnowledgeSourceAction(() =>
                   window.goodbuddy.knowledge.createRelation(
@@ -5925,7 +6211,7 @@ function App(): React.JSX.Element {
                 )
                 notify({
                   tone: 'success',
-                  message: '知识图谱已重新抽取',
+                  message: t('notices.knowledgeGraphRebuilt'),
                   dedupeKey: `knowledge-graph:${libraryId}`
                 })
               }}
@@ -5938,7 +6224,7 @@ function App(): React.JSX.Element {
                 })
                 notify({
                   tone: 'success',
-                  message: '知识库设置已更新',
+                  message: t('notices.knowledgeSettingsUpdated'),
                   dedupeKey: `knowledge-library:${libraryId}`
                 })
               }}
@@ -5998,9 +6284,12 @@ function App(): React.JSX.Element {
               onOpenEvidence={(evidence) =>
                 notify({
                   tone: 'info',
-                  message: `${evidence.documentName}${
-                    evidence.location ? ` · ${evidence.location}` : ''
-                  }：${evidence.excerpt}`.slice(0, 500)
+                  message: t('notices.evidenceExcerpt', {
+                    source: `${evidence.documentName}${
+                      evidence.location ? ` · ${evidence.location}` : ''
+                    }`,
+                    excerpt: evidence.excerpt
+                  }).slice(0, 500)
                 })
               }
               onPauseSource={(sourceId) =>
@@ -6149,10 +6438,10 @@ function App(): React.JSX.Element {
                   type="button"
                 >
                   <Download size={14} />
-                  下载图片
+                  {t('chat.images.downloadImage')}
                 </button>
                 <button
-                  aria-label="关闭图片查看器"
+                  aria-label={t('chat.images.closeViewer')}
                   autoFocus
                   className="icon-button"
                   onClick={closeImageViewer}
@@ -6189,7 +6478,7 @@ function App(): React.JSX.Element {
           if (!browserApi) {
             notify({
               tone: 'error',
-              message: '浏览器控制组件尚未加载，请重启 GoodBuddy'
+              message: t('notices.browserControlUnavailable')
             })
             return
           }
@@ -6203,7 +6492,7 @@ function App(): React.JSX.Element {
           if (!browserApi) {
             notify({
               tone: 'error',
-              message: '浏览器控制组件尚未加载，请重启 GoodBuddy'
+              message: t('notices.browserControlUnavailable')
             })
             return
           }
@@ -6212,7 +6501,7 @@ function App(): React.JSX.Element {
           } catch {
             notify({
               tone: 'error',
-              message: '停止浏览器失败，请重试'
+              message: t('notices.browserStopFailed')
             })
           }
         }}
@@ -6266,7 +6555,10 @@ function App(): React.JSX.Element {
         onRunHeartbeat={runHeartbeat}
         onRunSchedule={async (scheduleId) => {
           await window.goodbuddy.schedules.runNow(scheduleId)
-          notify({ tone: 'success', message: '定时任务已开始执行' })
+          notify({
+            tone: 'success',
+            message: t('notices.scheduleStarted')
+          })
         }}
         onSetHeartbeatPaused={setHeartbeatPaused}
         onListWorkspaceDirectory={listWorkspaceDirectory}

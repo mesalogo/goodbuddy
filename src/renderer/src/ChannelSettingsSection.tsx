@@ -5,7 +5,9 @@ import {
   Smartphone,
   Unplug
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
 import type {
   ChannelConnectionTestResult,
@@ -54,11 +56,6 @@ type ChannelProjectDraft = {
 }
 
 const channelOrder: readonly ProjectChannel[] = projectChannels
-const channelTabs = [
-  { id: 'weixin', label: '微信 ClawBot' },
-  { id: 'wecom', label: '企业微信' },
-  { id: 'dingtalk', label: '钉钉' }
-] as const
 
 const emptyDraft: ChannelDraft = {
   enabled: false,
@@ -67,17 +64,6 @@ const emptyDraft: ChannelDraft = {
   clearSecret: false,
   allowedSenderIdsText: '',
   allowGroupMessages: false
-}
-
-const statusLabels: Record<
-  ChannelSettingsSnapshot['wecom']['status']['state'],
-  string
-> = {
-  disabled: '未启用',
-  stopped: '已停止',
-  starting: '正在连接',
-  running: '已连接',
-  error: '连接失败'
 }
 
 function allowedSenderIds(value: string): string[] {
@@ -214,32 +200,38 @@ function configuredRuntimeSelection(
 
 function runtimeSelectionDescription(
   selection: AgentRuntimeSelection,
-  settings: RuntimeSettings
+  settings: RuntimeSettings,
+  t: TFunction<'integrations'>
 ): string {
   if (selection.provider === 'model') {
     const profile = settings.modelProfiles.find(
       (candidate) => candidate.id === selection.profileId
     )
     if (!profile) {
-      return '所选直连模型已不存在，请重新选择。'
+      return t('channels.project.missingSelection')
     }
     if (profile.protocol === 'openai-images-generations') {
-      return '所选连接仅支持图片生成，请选择文本模型或 Agent Runtime。'
+      return t('channels.project.imageOnlySelection')
     }
     if (
       profile.authentication === 'api-key' &&
       !profile.apiKeyConfigured
     ) {
-      return '所选直连模型尚未配置密钥，请先到模型连接中完成配置。'
+      return t('channels.project.missingCredential')
     }
-    return `直接使用 ${profile.name}（${profile.modelName}）处理消息。`
+    return t('channels.project.directDescription', {
+      name: profile.name,
+      modelName: profile.modelName
+    })
   }
   if (selection.provider === 'auto') {
-    return '使用模型设置中的默认直连模型处理消息。'
+    return t('channels.project.automaticDescription')
   }
   const runtimeLabel =
     selection.provider === 'opencode' ? 'OpenCode' : 'Continue'
-  return `通过 ${runtimeLabel} Agent Runtime 运行，并跟随“Agent Runtime”设置中的全局 ${runtimeLabel} 配置。`
+  return t('channels.project.runtimeDescription', {
+    runtime: runtimeLabel
+  })
 }
 
 function ChannelProjectControls({
@@ -253,6 +245,7 @@ function ChannelProjectControls({
   onSelectRoot: () => void
   runtimeSettings: RuntimeSettings
 }): React.JSX.Element {
+  const { t } = useTranslation('integrations')
   const openCodeSelection = configuredRuntimeSelection(
     'opencode'
   )
@@ -288,18 +281,22 @@ function ChannelProjectControls({
   )
   return (
     <section
-      aria-label={`${draft.name} 通道项目设置`}
+      aria-label={t('channels.project.sectionAriaLabel', {
+        name: draft.name
+      })}
       className="channel-project-settings"
     >
       <div className="channel-project-settings__identity">
-        <span>通道项目</span>
+        <span>{t('channels.project.identity')}</span>
         <strong>{draft.name}</strong>
       </div>
       <label className="field">
-        <span>默认工作目录</span>
+        <span>{t('channels.project.rootLabel')}</span>
         <div className="channel-project-settings__root">
           <input
-            aria-label={`${draft.name} 默认工作目录`}
+            aria-label={t('channels.project.rootAriaLabel', {
+              name: draft.name
+            })}
             maxLength={4_096}
             onChange={(event) =>
               onChange({ ...draft, rootPath: event.target.value })
@@ -307,21 +304,25 @@ function ChannelProjectControls({
             value={draft.rootPath}
           />
           <button
-            aria-label={`选择 ${draft.name} 默认工作目录`}
+            aria-label={t('channels.project.selectRootAriaLabel', {
+              name: draft.name
+            })}
             className="secondary-button"
             onClick={onSelectRoot}
             type="button"
           >
             <FolderOpen aria-hidden="true" size={14} />
-            选择
+            {t('channels.project.select')}
           </button>
         </div>
-        <small>远程 Execute 只能在此项目目录范围内运行。</small>
+        <small>{t('channels.project.rootHelp')}</small>
       </label>
       <label className="field">
-        <span>消息处理后端</span>
+        <span>{t('channels.project.backendLabel')}</span>
         <select
-          aria-label={`${draft.name} 消息处理后端`}
+          aria-label={t('channels.project.backendAriaLabel', {
+            name: draft.name
+          })}
           onChange={(event) => {
             const runtimeSelection = selectionByKey.get(
               event.target.value
@@ -332,20 +333,23 @@ function ChannelProjectControls({
           }}
           value={agentRuntimeSelectionKey(draft.runtimeSelection)}
         >
-          <optgroup label="直连模型">
+          <optgroup label={t('channels.project.directModels')}>
             {selectedDirectUnavailable && (
               <option
                 disabled
                 value={agentRuntimeSelectionKey(draft.runtimeSelection)}
               >
                 {selectedDirectProfile
-                  ? `${selectedDirectProfile.name} · ${selectedDirectProfile.modelName}（不可用）`
-                  : '原直连模型已不存在'}
+                  ? t('channels.project.unavailableProfile', {
+                      name: selectedDirectProfile.name,
+                      modelName: selectedDirectProfile.modelName
+                    })
+                  : t('channels.project.missingProfile')}
               </option>
             )}
             {directProfiles.length === 0 && (
               <option disabled value="model:unavailable">
-                暂无可用文本模型
+                {t('channels.project.noTextModels')}
               </option>
             )}
             {directProfiles.map((profile) => {
@@ -375,32 +379,38 @@ function ChannelProjectControls({
         <small>
           {runtimeSelectionDescription(
             draft.runtimeSelection,
-            runtimeSettings
+            runtimeSettings,
+            t
           )}
         </small>
       </label>
       <fieldset className="channel-work-mode">
-        <legend>默认模式</legend>
+        <legend>{t('channels.project.defaultMode')}</legend>
         <SegmentedControl
-          ariaLabel={`${draft.name} 默认模式`}
+          ariaLabel={t('channels.project.defaultModeAriaLabel', {
+            name: draft.name
+          })}
           onChange={(defaultWorkMode) =>
             onChange({ ...draft, defaultWorkMode })
           }
           options={[
-            { value: 'ask', label: '对话' },
-            { value: 'execute', label: '执行' }
+            { value: 'ask', label: t('channels.project.modes.ask') },
+            {
+              value: 'execute',
+              label: t('channels.project.modes.execute')
+            }
           ]}
           value={draft.defaultWorkMode}
         />
         <small>
-          可在消息前加 /ask、/execute、对话：或执行：临时覆盖。
+          {t('channels.project.overrideHelp')}
         </small>
       </fieldset>
       <p className="channel-project-settings__risk">
         {draft.defaultWorkMode === 'execute'
-          ? '执行消息会立即交给所选后端，不再逐次弹窗确认。'
-          : '默认对话时，白名单发送者仍可用 /execute 临时发起执行，且不会弹窗确认。'}
-        请只连接可信账号，并将工作目录限制在必要范围。
+          ? t('channels.project.executeRisk')
+          : t('channels.project.askRisk')}{' '}
+        {t('channels.project.riskSuffix')}
       </p>
     </section>
   )
@@ -429,9 +439,12 @@ function ChannelEditor({
   settings: ChannelSettingsSnapshot[CredentialChannel]
   testing: boolean
 }): React.JSX.Element {
-  const title = channel === 'wecom' ? '企业微信' : '钉钉'
-  const identifierLabel = channel === 'wecom' ? '机器人 ID' : 'Client ID'
-  const secretLabel = channel === 'wecom' ? 'Secret' : 'Client Secret'
+  const { t } = useTranslation('integrations')
+  const title = t(`channels.tabs.${channel}`)
+  const identifierLabel = t(
+    `channels.credential.identifiers.${channel}`
+  )
+  const secretLabel = t(`channels.credential.secrets.${channel}`)
   const prefix = `channel-${channel}`
 
   return (
@@ -441,18 +454,18 @@ function ChannelEditor({
           <strong>{title}</strong>
           <small>
             {settings.source === 'environment'
-              ? '由环境变量提供'
+              ? t('channels.credential.environmentSource')
               : settings.secretConfigured
-                ? 'Secret 已加密保存'
-                : 'Secret 尚未配置'}
+                ? t('channels.credential.secretSaved')
+                : t('channels.credential.secretMissing')}
           </small>
         </div>
-        <span>{statusLabels[settings.status.state]}</span>
+        <span>{t(`channels.status.${settings.status.state}`)}</span>
       </div>
 
       {settings.readOnly && (
         <p className="settings-notice">
-          当前通道由环境变量管理。请在启动环境中修改配置后重启应用。
+          {t('channels.credential.readOnly')}
         </p>
       )}
       {settings.status.lastError && (
@@ -471,13 +484,16 @@ function ChannelEditor({
           }
           type="checkbox"
         />
-        <span>启用{title}通道</span>
+        <span>{t('channels.credential.enable', { channel: title })}</span>
       </label>
 
       <label className="field">
         <span>{identifierLabel}</span>
         <input
-          aria-label={`${title}${identifierLabel}`}
+          aria-label={t('channels.credential.fieldAriaLabel', {
+            channel: title,
+            field: identifierLabel
+          })}
           disabled={settings.readOnly}
           maxLength={256}
           onChange={(event) =>
@@ -490,7 +506,10 @@ function ChannelEditor({
       <label className="field">
         <span>{secretLabel}</span>
         <input
-          aria-label={`${title}${secretLabel}`}
+          aria-label={t('channels.credential.fieldAriaLabel', {
+            channel: title,
+            field: secretLabel
+          })}
           autoComplete="off"
           disabled={settings.readOnly || draft.clearSecret}
           maxLength={4_096}
@@ -498,7 +517,9 @@ function ChannelEditor({
             onChange({ ...draft, secret: event.target.value })
           }
           placeholder={
-            settings.secretConfigured ? '留空以保留现有 Secret' : '请输入 Secret'
+            settings.secretConfigured
+              ? t('channels.credential.keepSecret')
+              : t('channels.credential.enterSecret')
           }
           type="password"
           value={draft.secret}
@@ -518,14 +539,17 @@ function ChannelEditor({
             }
             type="checkbox"
           />
-          <span>保存时清除现有 Secret</span>
+          <span>{t('channels.credential.clearSecret')}</span>
         </label>
       )}
 
       <label className="field">
-        <span>允许的发送者 ID</span>
+        <span>{t('channels.credential.allowedSenders')}</span>
         <textarea
-          aria-label={`${title}允许的发送者 ID`}
+          aria-label={t(
+            'channels.credential.allowedSendersAriaLabel',
+            { channel: title }
+          )}
           disabled={settings.readOnly}
           onChange={(event) =>
             onChange({
@@ -533,12 +557,14 @@ function ChannelEditor({
               allowedSenderIdsText: event.target.value
             })
           }
-          placeholder="每行一个 ID，最多 100 个"
+          placeholder={t(
+            'channels.credential.allowedSendersPlaceholder'
+          )}
           rows={4}
           value={draft.allowedSenderIdsText}
         />
         <small>
-          只有白名单内的发送者可以向 GoodBuddy 发消息；留空时不会处理任何发送者。
+          {t('channels.credential.allowedSendersHelp')}
         </small>
       </label>
 
@@ -554,7 +580,7 @@ function ChannelEditor({
           }
           type="checkbox"
         />
-        <span>允许群聊中被提及时响应</span>
+        <span>{t('channels.credential.groupMessages')}</span>
       </label>
 
       <ChannelProjectControls
@@ -571,7 +597,11 @@ function ChannelEditor({
         type="button"
       >
         <FlaskConical aria-hidden="true" size={13} />
-        {testing ? '正在测试…' : `测试${title}连接`}
+        {testing
+          ? t('channels.credential.testing')
+          : t('channels.credential.testConnection', {
+              channel: title
+            })}
       </button>
     </article>
   )
@@ -592,6 +622,7 @@ function WeixinQrDialog({
   onRestart: () => void
   onVerify: (code: string) => void
 }): React.JSX.Element {
+  const { t } = useTranslation('integrations')
   const [qrImage, setQrImage] = useState<{
     payload: string
     image: string
@@ -680,13 +711,15 @@ function WeixinQrDialog({
       >
         <header>
           <div>
-            <strong id="channel-qr-title">绑定微信 ClawBot</strong>
+            <strong id="channel-qr-title">
+              {t('channels.qr.title')}
+            </strong>
             <small>
-              请在微信中依次打开“设置 → ClawBot → 开始扫一扫”，扫描下方二维码。二维码不会发送到第三方页面。
+              {t('channels.qr.instructions')}
             </small>
           </div>
           <button
-            aria-label="关闭微信绑定"
+            aria-label={t('channels.qr.close')}
             className="icon-button"
             disabled={busy}
             onClick={onClose}
@@ -704,23 +737,25 @@ function WeixinQrDialog({
           <div className="channel-qr-dialog__content">
             {qrImage && qrImage.payload === binding.qrPayload ? (
               <img
-                alt="微信 ClawBot 绑定二维码"
+                alt={t('channels.qr.imageAlt')}
                 src={qrImage.image}
               />
             ) : (
               <div className="channel-qr-dialog__placeholder">
-                正在生成二维码…
+                {t('channels.qr.generating')}
               </div>
             )}
             <strong>
               {binding.status === 'scanned'
-                ? '已扫码，正在确认…'
+                ? t('channels.qr.scanned')
                 : binding.status === 'verification_required'
-                  ? '需要输入微信验证码'
-                  : '等待扫码'}
+                  ? t('channels.qr.verificationRequired')
+                  : t('channels.qr.waiting')}
             </strong>
             {remaining !== undefined && (
-              <small>二维码剩余 {remaining} 秒</small>
+              <small>
+                {t('channels.qr.remaining', { seconds: remaining })}
+              </small>
             )}
           </div>
         )}
@@ -734,7 +769,7 @@ function WeixinQrDialog({
             }}
           >
             <label className="field">
-              <span>验证码</span>
+              <span>{t('channels.qr.verificationCode')}</span>
               <input
                 aria-describedby={
                   error ? 'channel-verification-error' : undefined
@@ -766,7 +801,7 @@ function WeixinQrDialog({
               disabled={busy || !verificationCode}
               type="submit"
             >
-              提交验证码
+              {t('channels.qr.submitVerification')}
             </button>
           </form>
         )}
@@ -776,17 +811,17 @@ function WeixinQrDialog({
           <div className="channel-qr-dialog__failure" role="alert">
             <strong>
               {binding.status === 'expired'
-                ? '二维码已过期'
-                : '绑定失败'}
+                ? t('channels.qr.expired')
+                : t('channels.qr.failed')}
             </strong>
-            <p>{binding.detail ?? '请重新生成二维码后再试。'}</p>
+            <p>{binding.detail ?? t('channels.qr.retryFallback')}</p>
             <button
               className="primary-button"
               disabled={busy}
               onClick={onRestart}
               type="button"
             >
-              重新生成二维码
+              {t('channels.qr.regenerate')}
             </button>
           </div>
         )}
@@ -830,19 +865,24 @@ function WeixinChannelEditor({
   runtimeSettings: RuntimeSettings
   settings: ChannelSettingsSnapshot['weixin']
 }): React.JSX.Element {
+  const { t } = useTranslation('integrations')
   return (
     <>
       <article className="capability-card channel-settings-card">
         <div className="capability-card__header">
           <div>
-            <strong>微信 ClawBot</strong>
+            <strong>{t('channels.tabs.weixin')}</strong>
             <small>
               {settings.bindingConfigured
-                ? `${settings.accountDisplay ?? '微信账号'} · 凭据已加密保存`
-                : '尚未绑定个人微信'}
+                ? t('channels.weixin.bindingSaved', {
+                    account:
+                      settings.accountDisplay ??
+                      t('channels.weixin.accountFallback')
+                  })
+                : t('channels.weixin.unbound')}
             </small>
           </div>
-          <span>{statusLabels[settings.status.state]}</span>
+          <span>{t(`channels.status.${settings.status.state}`)}</span>
         </div>
 
         {settings.status.lastError && (
@@ -861,7 +901,7 @@ function WeixinChannelEditor({
             }
             type="checkbox"
           />
-          <span>启用微信 ClawBot 通道</span>
+          <span>{t('channels.weixin.enable')}</span>
         </label>
 
         <div className="channel-binding-actions">
@@ -877,7 +917,9 @@ function WeixinChannelEditor({
             type="button"
           >
             <Smartphone aria-hidden="true" size={14} />
-            {settings.bindingConfigured ? '重新绑定' : '扫码绑定'}
+            {settings.bindingConfigured
+              ? t('channels.weixin.rebind')
+              : t('channels.weixin.bind')}
           </button>
           {settings.bindingConfigured && (
             <button
@@ -887,17 +929,17 @@ function WeixinChannelEditor({
               type="button"
             >
               <Unplug aria-hidden="true" size={14} />
-              断开本机绑定
+              {t('channels.weixin.disconnect')}
             </button>
           )}
         </div>
         {settings.bindingConfigured && (
           <small>
-            断开会删除本机保存的绑定，不保证解除微信服务端授权。
+            {t('channels.weixin.disconnectHelp')}
           </small>
         )}
         <small>
-          处理已绑定账号发给 ClawBot 的私聊文字、图片和文件，不响应群聊；单条消息最多 4 个附件、合计 12MB。
+          {t('channels.weixin.behaviorHelp')}
         </small>
 
         <ChannelProjectControls
@@ -926,6 +968,16 @@ export function ChannelSettingsSection({
 }: {
   onNotify?: (notification: AppNotificationInput) => void
 }): React.JSX.Element {
+  const { t } = useTranslation('integrations')
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
+  const channelTabs = [
+    { id: 'weixin', label: t('channels.tabs.weixin') },
+    { id: 'wecom', label: t('channels.tabs.wecom') },
+    { id: 'dingtalk', label: t('channels.tabs.dingtalk') }
+  ] as const
   const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot>()
   const [runtimeSettings, setRuntimeSettings] =
     useState<RuntimeSettings>()
@@ -970,7 +1022,7 @@ export function ChannelSettingsSection({
     let active = true
     void (async () => {
       if (!api) {
-        throw new Error('当前版本未提供消息通道设置服务')
+        throw new Error(tRef.current('channels.unavailableService'))
       }
       return Promise.all([
         api.getSnapshot(),
@@ -992,7 +1044,9 @@ export function ChannelSettingsSection({
       .catch((reason: unknown) => {
         if (active) {
           setError(
-            reason instanceof Error ? reason.message : '读取消息通道设置失败'
+            reason instanceof Error
+              ? reason.message
+              : tRef.current('channels.loadError')
           )
         }
       })
@@ -1022,7 +1076,7 @@ export function ChannelSettingsSection({
       (channel) => projects[channel]
     )
     if (channelProjects.some((project) => !project)) {
-      setError('通道项目尚未加载')
+      setError(t('channels.projectsLoadingError'))
       return
     }
     const invalidRootIndex = channelProjects.findIndex(
@@ -1032,7 +1086,9 @@ export function ChannelSettingsSection({
       const invalidChannel = channelOrder[invalidRootIndex]!
       setActiveChannel(invalidChannel)
       setError(
-        `${channelTabs[invalidRootIndex]!.label} 必须设置默认工作目录`
+        t('channels.rootRequired', {
+          channel: channelTabs[invalidRootIndex]!.label
+        })
       )
       return
     }
@@ -1070,11 +1126,13 @@ export function ChannelSettingsSection({
       }
       onNotify({
         tone: 'success',
-        message: '消息通道设置已保存并应用',
+        message: t('channels.saved'),
         dedupeKey: 'channel-settings-saved'
       })
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存消息通道设置失败')
+      setError(
+        reason instanceof Error ? reason.message : t('channels.saveError')
+      )
     } finally {
       setBusy(false)
     }
@@ -1101,7 +1159,9 @@ export function ChannelSettingsSection({
       }
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '选择工作目录失败'
+        reason instanceof Error
+          ? reason.message
+          : t('channels.selectRootError')
       )
     }
   }
@@ -1119,12 +1179,16 @@ export function ChannelSettingsSection({
       setBinding(await api.startWeixinBinding())
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '启动微信绑定失败'
+        reason instanceof Error
+          ? reason.message
+          : t('channels.startBindingError')
       )
       setBinding({
         status: 'failed',
         detail:
-          reason instanceof Error ? reason.message : '启动微信绑定失败'
+          reason instanceof Error
+            ? reason.message
+            : t('channels.startBindingError')
       })
     } finally {
       setBusy(false)
@@ -1143,7 +1207,9 @@ export function ChannelSettingsSection({
       setBinding(await api.submitWeixinVerification(code))
     } catch (reason) {
       setBindingError(
-        reason instanceof Error ? reason.message : '提交微信验证码失败'
+        reason instanceof Error
+          ? reason.message
+          : t('channels.verifyBindingError')
       )
     } finally {
       setBusy(false)
@@ -1162,12 +1228,14 @@ export function ChannelSettingsSection({
       applySnapshot(await api.getSnapshot())
       onNotify({
         tone: 'success',
-        message: '已删除本机保存的微信绑定',
+        message: t('channels.disconnected'),
         dedupeKey: 'weixin-binding-disconnected'
       })
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '断开微信绑定失败'
+        reason instanceof Error
+          ? reason.message
+          : t('channels.disconnectError')
       )
     } finally {
       setBusy(false)
@@ -1194,14 +1262,15 @@ export function ChannelSettingsSection({
       }
       onNotify({
         tone: 'success',
-        message:
-          channel === 'wecom'
-            ? '企业微信连接成功'
-            : '钉钉连接成功',
+        message: t('channels.connectionSuccess', {
+          channel: t(`channels.tabs.${channel}`)
+        }),
         dedupeKey: `channel-test-${channel}`
       })
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '通道连接测试失败')
+      setError(
+        reason instanceof Error ? reason.message : t('channels.testError')
+      )
     } finally {
       setTesting(undefined)
     }
@@ -1226,7 +1295,7 @@ export function ChannelSettingsSection({
         />
         {!error && (
           <div className="settings-section">
-            <p className="settings-empty">正在读取消息通道设置…</p>
+            <p className="settings-empty">{t('channels.loading')}</p>
           </div>
         )}
       </>
@@ -1244,7 +1313,7 @@ export function ChannelSettingsSection({
             type="button"
           >
             <Save aria-hidden="true" size={13} />
-            {busy ? '保存中…' : '保存通道设置'}
+            {busy ? t('channels.saving') : t('channels.save')}
           </button>
         }
         category="channels"
@@ -1252,14 +1321,14 @@ export function ChannelSettingsSection({
         headingId="channel-settings-heading"
       />
       <section
-        aria-label="消息通道配置"
+        aria-label={t('channels.sectionAriaLabel')}
         className="settings-section channel-settings"
       >
       {snapshot.warning && <p className="settings-warning">{snapshot.warning}</p>}
 
       <div className="channel-settings__tabs">
         <PageTabs
-          ariaLabel="消息通道配置"
+          ariaLabel={t('channels.sectionAriaLabel')}
           idPrefix="channel-settings"
           onChange={setActiveChannel}
           tabs={channelTabs}

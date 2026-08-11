@@ -7,6 +7,7 @@ import {
   waitFor
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from './i18n'
 import type { DesktopApi } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type {
@@ -843,5 +844,34 @@ describe('MagicNotesWorkspace', () => {
     )
     expect(screen.getByText('这是最新的草稿评论。')).toBeInTheDocument()
     vi.useRealTimers()
+  })
+
+  it('switches to English without reloading notes', async () => {
+    await i18n.changeLanguage('zh-CN')
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByRole('heading', { name: '魔法笔记' })
+    expect(list).toHaveBeenCalledOnce()
+
+    try {
+      await i18n.changeLanguage('en-US')
+
+      expect(
+        await screen.findByRole('heading', { name: 'Magic Notes' })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('tab', { name: 'Notes' })
+      ).toHaveAttribute('aria-selected', 'true')
+      expect(
+        screen.getByRole('button', { name: 'New note' })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('combobox', { name: 'AI comment direction' })
+      ).toHaveValue('general')
+      expect(screen.getByText(detail.title)).toBeInTheDocument()
+      expect(screen.getByText('先核对发布材料。')).toBeInTheDocument()
+      expect(list).toHaveBeenCalledOnce()
+    } finally {
+      await i18n.changeLanguage('zh-CN')
+    }
   })
 })

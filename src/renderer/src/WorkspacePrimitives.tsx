@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode
 } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export type WorkspaceScope =
   | { kind: 'global' }
@@ -72,26 +73,37 @@ export function ScopeBadge({
 }: {
   scope: WorkspaceScope
 }): React.JSX.Element {
+  const { t } = useTranslation('workspace')
   const content =
     scope.kind === 'global'
-      ? { icon: <Globe2 size={12} />, label: '全局' }
+      ? {
+          icon: <Globe2 size={12} />,
+          label: t('primitives.scope.global')
+        }
       : scope.kind === 'all-projects'
-        ? { icon: <Layers3 size={12} />, label: '全部项目' }
+        ? {
+            icon: <Layers3 size={12} />,
+            label: t('primitives.scope.allProjects')
+          }
         : scope.kind === 'project'
           ? {
               icon: <FolderKanban size={12} />,
-              label: `项目：${scope.projectName}`
+              label: t('primitives.scope.project', {
+                projectName: scope.projectName
+              })
             }
           : scope.kind === 'mixed'
             ? {
                 icon: <Layers3 size={12} />,
                 label: scope.projectName
-                  ? `项目：${scope.projectName} + 全局`
-                  : '当前项目 + 全局'
+                  ? t('primitives.scope.mixedProject', {
+                      projectName: scope.projectName
+                    })
+                  : t('primitives.scope.mixedCurrent')
               }
             : {
                 icon: <TriangleAlert size={12} />,
-                label: '范围不可用'
+                label: t('primitives.scope.unavailable')
               }
 
   return (
@@ -329,6 +341,7 @@ export function DestructiveConfirmActions({
   triggerAriaLabel?: string
   triggerLabel: string
 }): React.JSX.Element {
+  const { t } = useTranslation('workspace')
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -419,7 +432,10 @@ export function DestructiveConfirmActions({
         {confirmAriaLabel ?? confirmLabel}
       </span>
       <span className={message ? undefined : 'sr-only'} id={descriptionId}>
-        {message ?? `确认${triggerLabel}操作。`}
+        {message ??
+          t('primitives.destructive.defaultMessage', {
+            triggerLabel
+          })}
       </span>
       <button
         aria-label={cancelAriaLabel}
@@ -429,7 +445,7 @@ export function DestructiveConfirmActions({
         ref={cancelRef}
         type="button"
       >
-        取消
+        {t('primitives.destructive.cancel')}
       </button>
       <button
         aria-label={confirmAriaLabel}

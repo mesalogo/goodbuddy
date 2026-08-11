@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { changeUiLocale } from './i18n'
 import { MarkdownRenderer } from './MarkdownRenderer'
 
 describe('MarkdownRenderer', () => {
@@ -70,5 +71,21 @@ const ready = true
     ).toBeInTheDocument()
     expect(screen.getByText('第一步')).toBeInTheDocument()
     expect(container.querySelector('pre')).not.toBeInTheDocument()
+  })
+
+  it('updates table accessibility copy when the locale changes', async () => {
+    render(
+      <MarkdownRenderer>{`| Name |
+| --- |
+| GoodBuddy |`}</MarkdownRenderer>
+    )
+
+    await changeUiLocale('en-US')
+    expect(
+      screen.getByRole('region', {
+        name: 'Table, horizontally scrollable'
+      })
+    ).toBeInTheDocument()
+    await changeUiLocale('zh-CN')
   })
 })

@@ -1,0 +1,224 @@
+export const workspace = {
+  projectSwitcher: {
+    workModes: {
+      ask: 'Ask · 只读问答',
+      execute: 'Execute · 受控执行'
+    },
+    selector: {
+      ariaLabel: '当前项目',
+      userProjects: '普通项目',
+      channelProjects: '远程通道',
+      create: '新建项目',
+      settings: '项目设置'
+    },
+    dialog: {
+      createTitle: '新建项目',
+      settingsTitle: '项目设置',
+      closeCreate: '关闭新建项目',
+      closeSettings: '关闭项目设置',
+      fields: {
+        name: '名称',
+        description: '说明',
+        rootPath: '根目录',
+        defaultMode: '默认模式'
+      },
+      channelManaged: '通道项目名称由 GoodBuddy 管理。',
+      selectRoot: '选择项目根目录',
+      danger: {
+        title: '危险操作',
+        description:
+          '删除项目会永久移除 GoodBuddy 中的项目、对话、任务、计划、心跳、记忆和成果，但不会删除磁盘上的项目目录或文件。',
+        delete: '删除项目',
+        confirmation: '输入“{{projectName}}”确认删除',
+        cancel: '取消删除',
+        deleting: '删除中',
+        permanentlyDelete: '永久删除项目',
+        keepOne: '至少需要保留一个可用项目。'
+      },
+      archive: '归档项目',
+      archiving: '归档中',
+      cancel: '取消',
+      create: '创建',
+      creating: '创建中',
+      save: '保存项目',
+      saving: '保存中'
+    },
+    errors: {
+      save: '保存项目失败',
+      create: '创建项目失败',
+      selectRoot: '选择项目根目录失败',
+      archive: '归档项目失败',
+      delete: '删除项目失败'
+    }
+  },
+  sidebar: {
+    ariaLabel: '助手工作栏',
+    resizeAriaLabel: '调整助手工作栏宽度',
+    resizeValue: '{{width}} 像素',
+    title: '工作栏',
+    close: '关闭助手工作栏',
+    categoriesAriaLabel: '工作栏分类',
+    tabs: {
+      tasks: {
+        label: '任务中心',
+        description: '处理待审批操作并管理自动化'
+      },
+      context: {
+        label: '上下文',
+        description: '查看本次对话使用的附件、知识库与记忆'
+      },
+      workspace: {
+        label: '工作区',
+        description: '浏览项目文件、Git 变更与文件内容'
+      },
+      browser: {
+        label: '浏览器',
+        description: '查看 Agent 操作网页时的实时画面'
+      },
+      results: {
+        label: '成果',
+        description: '查看对话生成或手动导入的内容'
+      }
+    },
+    tasks: {
+      description: '处理当前待审批操作，并创建和管理自动化任务。',
+      approvalsTitle: '等待审批',
+      noApprovals: '当前没有等待审批的操作。',
+      deny: '拒绝',
+      allowOnce: '仅此次允许',
+      automationTitle: '自动化',
+      schedule: {
+        titleAriaLabel: '定时任务标题',
+        titlePlaceholder: '任务标题',
+        promptAriaLabel: '定时任务内容',
+        promptPlaceholder: '要定时完成的只读任务',
+        timeAriaLabel: '定时任务时间',
+        recurrenceAriaLabel: '定时任务重复规则',
+        recurrence: {
+          once: '仅一次',
+          daily: '每天',
+          weekly: '每周'
+        },
+        add: '添加定时任务',
+        runNow: '立即运行',
+        delete: '删除'
+      }
+    },
+    context: {
+      description: '查看当前对话实际使用的附件、知识库与已确认记忆。',
+      attachmentsTitle: '本次附件',
+      noAttachments: '尚未添加文件、截图或剪贴板内容。',
+      attachmentDetails: '{{kind}} · {{formattedSize}} 字节',
+      removeAttachment: '移除上下文 {{name}}',
+      librariesTitle: '已启用知识库',
+      noLibraries: '当前对话未启用知识库。',
+      documentCount: '{{formattedCount}} 个文档',
+      memoriesTitle: '已确认记忆',
+      noMemories: '当前范围没有已确认的长期记忆。'
+    },
+    workspace: {
+      back: '返回工作区',
+      title: '工作区',
+      fileSize: '{{formattedSize}} 字节',
+      fileFallback: '项目工作区文件',
+      reading: '正在读取文件…',
+      description:
+        '浏览当前项目文件与 Git 变更；选择文件后在当前工作区内预览。',
+      projectTitle: '项目工作区',
+      refreshAriaLabel: '刷新工作区文件',
+      refresh: '刷新',
+      gitUnavailable: 'Git 状态不可用：{{error}}',
+      fullDiff: '查看完整 Git diff',
+      truncatedDiff: '\n\n[输出超过安全限制，已截断]'
+    },
+    results: {
+      back: '返回成果列表',
+      title: '成果',
+      loadingImage: '正在加载图片…',
+      description:
+        '查看并预览由对话生成或手动导入的文本、图片、PDF 与网页内容。',
+      sectionTitle: '对话与导入成果',
+      import: '导入 PDF、图片或网页',
+      empty: '完成的回复会作为可预览成果显示在这里。'
+    },
+    browser: {
+      title: '实时浏览器',
+      interact: '交互',
+      interacting: '交互中',
+      stop: '停止浏览器',
+      empty: 'Agent 打开网页后，实时画面会显示在这里。',
+      statuses: {
+        creating: '正在启动浏览器…',
+        loading: '正在加载页面…',
+        acting: 'Agent 正在操作页面…',
+        interactive: '用户正在辅助操作页面…',
+        ready: '浏览器已就绪',
+        failed: '浏览器操作失败',
+        stopped: '浏览器已停止'
+      },
+      frameAlt: 'Agent 实时浏览器画面',
+      noFrame: '未能获取页面画面',
+      waitingFrame: '等待首个页面画面…'
+    },
+    errors: {
+      workspacePreview: '工作区文件预览失败',
+      addSchedule: '添加定时任务失败',
+      runSchedule: '运行定时任务失败',
+      deleteSchedule: '删除定时任务失败',
+      refreshWorkspace: '刷新工作区文件失败',
+      importResult: '导入成果失败',
+      loadResult: '加载成果失败',
+      interactBrowser: '打开浏览器交互窗口失败',
+      stopBrowser: '停止浏览器失败'
+    }
+  },
+  files: {
+    statuses: {
+      added: '新增',
+      deleted: '删除',
+      renamed: '重命名',
+      modified: '修改'
+    },
+    errors: {
+      read: '工作区文件读取失败',
+      openFolder: '打开文件夹失败',
+      openFile: '打开文件失败'
+    },
+    openFolderAriaLabel: '在系统资源管理器中打开文件夹 {{name}}',
+    openFolder: '打开文件夹',
+    openFileAriaLabel: '使用默认应用打开文件 {{name}}',
+    openFile: '打开文件',
+    reading: '正在读取…',
+    directoryTruncated: '目录项目超过 500 项，仅显示前 500 项。',
+    selectProject: '选择项目后可浏览项目工作区。',
+    changedTitle: '未提交更改',
+    changesTruncated: '仅显示前 50 个未提交更改。',
+    currentWorkspace: '当前工作区',
+    readingWorkspace: '正在读取工作区…',
+    rootTruncated: '根目录项目超过 500 项，仅显示前 500 项。',
+    empty: '工作区为空。'
+  },
+  question: {
+    title: 'OpenCode 需要补充信息',
+    otherAnswer: '其他回答',
+    answerPlaceholder: '输入你的回答',
+    skip: '跳过',
+    submitting: '提交中…',
+    submit: '提交回答',
+    error: '回答提交失败，请重试'
+  },
+  primitives: {
+    scope: {
+      global: '全局',
+      allProjects: '全部项目',
+      project: '项目：{{projectName}}',
+      mixedProject: '项目：{{projectName}} + 全局',
+      mixedCurrent: '当前项目 + 全局',
+      unavailable: '范围不可用'
+    },
+    destructive: {
+      defaultMessage: '确认{{triggerLabel}}操作。',
+      cancel: '取消'
+    }
+  }
+} as const

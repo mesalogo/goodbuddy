@@ -8,7 +8,9 @@ import {
   Square,
   Trash2
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   SpeechModelCatalogEntry,
   SpeechModelOperation,
@@ -18,24 +20,13 @@ import type { AppNotificationInput } from './notifications'
 
 type SpeechModelSettingsSectionProps = {
   onNotify?: (notification: AppNotificationInput) => void
-}
-
-const qualityLabels: Record<SpeechModelCatalogEntry['quality'], string> = {
-  basic: '基础质量',
-  balanced: '均衡质量',
-  high: '高质量'
-}
-
-const speedLabels: Record<SpeechModelCatalogEntry['speed'], string> = {
-  fast: '快速',
-  balanced: '均衡速度',
-  slow: '较慢'
-}
-
-const familyLabels: Record<SpeechModelCatalogEntry['family'], string> = {
-  sensevoice: 'SenseVoice',
-  paraformer: 'Paraformer',
-  whisper: 'Whisper'
+  persistedSelectedModelId?: string | null
+  selectedModelId?: string | null
+  onSelectedModelIdChange?: (
+    modelId: string,
+    changed: boolean
+  ) => void
+  onSelectionInvalidated?: (modelId: string | null) => void
 }
 
 function formatBytes(bytes: number): string {
@@ -64,20 +55,35 @@ function progressPercent(operation: SpeechModelOperation): number | undefined {
     : undefined
 }
 
-function operationLabel(operation: SpeechModelOperation): string {
+function operationLabel(
+  operation: SpeechModelOperation,
+  t: TFunction<'settingsSections'>
+): string {
   if (operation.phase === 'installing') {
-    return '正在校验并安装'
+    return t('speech.operations.installing')
   }
   if (operation.phase === 'preparing') {
-    return operation.kind === 'import' ? '正在准备导入' : '正在准备下载'
+    return operation.kind === 'import'
+      ? t('speech.operations.preparingImport')
+      : t('speech.operations.preparingDownload')
   }
-  return operation.kind === 'import' ? '正在导入' : '正在下载'
+  return operation.kind === 'import'
+    ? t('speech.operations.importing')
+    : t('speech.operations.downloading')
 }
 
 export function SpeechModelSettingsSection({
-  onNotify
+  onNotify,
+  persistedSelectedModelId,
+  selectedModelId,
+  onSelectedModelIdChange,
+  onSelectionInvalidated
 }: SpeechModelSettingsSectionProps): React.JSX.Element {
+  const { t } = useTranslation('settingsSections')
   const [snapshot, setSnapshot] = useState<SpeechModelSnapshot>()
+  const [localSelectedModelId, setLocalSelectedModelId] = useState<
+    string | null | undefined
+  >()
   const [busyModelId, setBusyModelId] = useState<string>()
   const [confirmingRemove, setConfirmingRemove] = useState<string>()
   const [error, setError] = useState<string>()
@@ -86,13 +92,13 @@ export function SpeechModelSettingsSection({
   const refresh = useCallback(async (): Promise<void> => {
     const api = window.goodbuddy.speechModels
     if (!api) {
-      throw new Error('当前版本未提供语音模型服务')
+      throw new Error(t('speech.errors.serviceUnavailable'))
     }
     const next = await api.getSnapshot()
     if (mountedRef.current) {
       setSnapshot(next)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     const api = window.goodbuddy.speechModels
@@ -100,7 +106,7 @@ export function SpeechModelSettingsSection({
     mountedRef.current = true
     void (async () => {
       if (!api) {
-        throw new Error('当前版本未提供语音模型服务')
+        throw new Error(t('speech.errors.serviceUnavailable'))
       }
       return api.getSnapshot()
     })()
@@ -112,7 +118,9 @@ export function SpeechModelSettingsSection({
       .catch((reason: unknown) => {
         if (active) {
           setError(
-            reason instanceof Error ? reason.message : '读取语音模型失败'
+            reason instanceof Error
+              ? reason.message
+              : t('speech.errors.readFailed')
           )
         }
       })
@@ -120,7 +128,7 @@ export function SpeechModelSettingsSection({
       active = false
       mountedRef.current = false
     }
-  }, [])
+  }, [t])
 
   const shouldPoll =
     busyModelId !== undefined || Boolean(snapshot?.operations.length)
@@ -146,6 +154,19 @@ export function SpeechModelSettingsSection({
       const next = await operation()
       if (next && mountedRef.current) {
         setSnapshot(next)
+        const draftSelectedModelId =
+          selectedModelId === undefined
+            ? localSelectedModelId
+            : selectedModelId
+        if (
+          draftSelectedModelId &&
+          !next.installed.some(
+            (model) => model.id === draftSelectedModelId
+          )
+        ) {
+          setLocalSelectedModelId(next.selectedModelId)
+          onSelectionInvalidated?.(next.selectedModelId)
+        }
         onNotify?.({
           tone: 'success',
           message: successMessage,
@@ -155,7 +176,9 @@ export function SpeechModelSettingsSection({
     } catch (reason) {
       if (mountedRef.current) {
         setError(
-          reason instanceof Error ? reason.message : '语音模型操作失败'
+          reason instanceof Error
+            ? reason.message
+            : t('speech.errors.operationFailed')
         )
       }
     } finally {
@@ -179,7 +202,7 @@ export function SpeechModelSettingsSection({
     await run(
       modelId,
       () => api.remove(modelId),
-      '语音模型已删除'
+      t('speech.notifications.removed')
     )
   }
 
@@ -187,7 +210,7 @@ export function SpeechModelSettingsSection({
     return (
       <div className="settings-section">
         <p className={error ? 'settings-warning' : 'settings-empty'}>
-          {error ?? '正在读取语音模型…'}
+          {error ?? t('speech.loading')}
         </p>
       </div>
     )
@@ -211,8 +234,10 @@ export function SpeechModelSettingsSection({
       <div className="settings-section__title settings-section__title--actions">
         <Mic aria-hidden="true" size={17} />
         <div>
-          <strong id="speech-model-settings-heading">语音模型</strong>
-          <small>应用不内置模型权重，按需下载或从本地目录导入</small>
+          <strong id="speech-model-settings-heading">
+            {t('speech.title')}
+          </strong>
+          <small>{t('speech.description')}</small>
         </div>
         <button
           className="secondary-button"
@@ -222,38 +247,66 @@ export function SpeechModelSettingsSection({
           type="button"
         >
           <FolderOpen aria-hidden="true" size={13} />
-          打开模型目录
+          {t('speech.openModelsDirectory')}
         </button>
       </div>
 
       <p className="settings-notice">
-        模型保存在 <code>{snapshot.rootDirectory}</code>。自动下载会固定来源版本，
-        并校验文件大小和 SHA-256；也可以从模型仓库手动下载后导入。
+        {t('speech.storagePrefix')}{' '}
+        <code>{snapshot.rootDirectory}</code>
+        {t('speech.storageSuffix')}
       </p>
       {error && <p className="settings-warning" role="alert">{error}</p>}
 
       <div
-        aria-label="可用语音模型"
+        aria-label={t('speech.availableModels')}
         className="speech-model-settings__list"
         role="list"
       >
         {snapshot.catalog.map((entry) => {
+          const displayName = t(
+            `speech.catalog.${entry.id}.displayName`,
+            { defaultValue: entry.displayName }
+          )
+          const description = t(
+            `speech.catalog.${entry.id}.description`,
+            { defaultValue: entry.description }
+          )
           const installed = installedById.get(entry.id)
           const operation = operationsById.get(entry.id)
           const percent = operation
             ? progressPercent(operation)
             : undefined
           const size = catalogSize(entry)
-          const selected = snapshot.selectedModelId === entry.id
+          const draftSelectedModelId =
+            selectedModelId === undefined
+              ? localSelectedModelId
+              : selectedModelId
+          const effectiveSelectedModelId =
+            draftSelectedModelId === undefined
+              ? snapshot.selectedModelId
+              : draftSelectedModelId
+          const selected = effectiveSelectedModelId === entry.id
+          const effectivePersistedModelId =
+            persistedSelectedModelId === undefined
+              ? snapshot.selectedModelId
+              : persistedSelectedModelId
+          const inUse = effectivePersistedModelId === entry.id
+          const pendingSelection =
+            selected &&
+            draftSelectedModelId !== undefined &&
+            draftSelectedModelId !== effectivePersistedModelId
           const status = operation
-            ? operationLabel(operation)
-            : selected
-              ? '正在使用'
+            ? operationLabel(operation, t)
+            : pendingSelection
+              ? t('speech.status.pendingSave')
+              : inUse
+              ? t('speech.status.inUse')
               : installed
-                ? '已安装'
+                ? t('speech.status.installed')
                 : entry.manualOnly
-                  ? '手动导入'
-                  : '可下载'
+                  ? t('speech.status.manualImport')
+                  : t('speech.status.availableToDownload')
           return (
             <article
               className={`speech-model-row${selected ? ' speech-model-row--selected' : ''}`}
@@ -264,40 +317,49 @@ export function SpeechModelSettingsSection({
                 <input
                   aria-label={
                     installed
-                      ? `使用 ${entry.displayName}`
-                      : `${entry.displayName} 尚未安装`
+                      ? t('speech.accessibility.selectModel', {
+                          name: displayName
+                        })
+                      : t('speech.accessibility.notInstalled', {
+                          name: displayName
+                        })
                   }
                   checked={selected}
                   disabled={!installed || operation !== undefined}
                   name="selected-speech-model"
-                  onChange={() =>
-                    void run(
+                  onChange={() => {
+                    setLocalSelectedModelId(entry.id)
+                    onSelectedModelIdChange?.(
                       entry.id,
-                      () =>
-                        window.goodbuddy.speechModels!.select(entry.id),
-                      `已切换到 ${entry.displayName}`
+                      entry.id !== effectivePersistedModelId
                     )
-                  }
+                  }}
                   type="radio"
                 />
               </div>
 
               <div className="speech-model-row__summary">
                 <div className="speech-model-row__name">
-                  <strong>{entry.displayName}</strong>
+                  <strong>{displayName}</strong>
                   {entry.recommended && (
                     <span className="speech-model-tag speech-model-tag--recommended">
-                      推荐
+                      {t('speech.tags.recommended')}
                     </span>
                   )}
                 </div>
-                <p>{entry.description}</p>
+                <p>{description}</p>
                 <div className="speech-model-row__tags">
                   <span className="speech-model-tag">
-                    {familyLabels[entry.family]}
+                    {t(`speech.family.${entry.family}`)}
                   </span>
                   <span className="speech-model-tag">
-                    {entry.languages.join(' / ')}
+                    {entry.languages
+                      .map((language) =>
+                        t(`speech.languages.${language}`, {
+                          defaultValue: language
+                        })
+                      )
+                      .join(' / ')}
                   </span>
                   <span className="speech-model-tag">
                     {entry.quantization.toUpperCase()}
@@ -306,22 +368,24 @@ export function SpeechModelSettingsSection({
               </div>
 
               <div className="speech-model-row__profile">
-                <span>{qualityLabels[entry.quality]}</span>
-                <span>{speedLabels[entry.speed]}</span>
-                <span>{size ? formatBytes(size) : '大小未知'}</span>
+                <span>{t(`speech.quality.${entry.quality}`)}</span>
+                <span>{t(`speech.speed.${entry.speed}`)}</span>
+                <span>
+                  {size ? formatBytes(size) : t('speech.status.unknownSize')}
+                </span>
               </div>
 
               <div className="speech-model-row__state">
                 <span
                   className={`speech-model-status${
-                    selected
+                    selected || inUse
                       ? ' speech-model-status--selected'
                       : installed
                         ? ' speech-model-status--installed'
                         : ''
                   }`}
                 >
-                  {selected && <CheckCircle2 aria-hidden="true" size={13} />}
+                  {inUse && <CheckCircle2 aria-hidden="true" size={13} />}
                   {status}
                 </span>
               </div>
@@ -329,7 +393,9 @@ export function SpeechModelSettingsSection({
               <div className="speech-model-row__actions">
                 {operation ? (
                   <button
-                    aria-label={`取消 ${entry.displayName} 操作`}
+                    aria-label={t('speech.accessibility.cancelOperation', {
+                      name: displayName
+                    })}
                     className="secondary-button"
                     onClick={() =>
                       void window.goodbuddy.speechModels
@@ -339,11 +405,13 @@ export function SpeechModelSettingsSection({
                     type="button"
                   >
                     <Square aria-hidden="true" size={12} />
-                    取消
+                    {t('speech.actions.cancel')}
                   </button>
                 ) : installed ? (
                   <button
-                    aria-label={`删除 ${entry.displayName}`}
+                    aria-label={t('speech.accessibility.deleteModel', {
+                      name: displayName
+                    })}
                     className={
                       confirmingRemove === entry.id
                         ? 'danger-button'
@@ -355,14 +423,17 @@ export function SpeechModelSettingsSection({
                   >
                     <Trash2 aria-hidden="true" size={12} />
                     {confirmingRemove === entry.id
-                      ? '确认删除'
-                      : '删除'}
+                      ? t('speech.actions.confirmDelete')
+                      : t('speech.actions.delete')}
                   </button>
                 ) : (
                   <>
                     {!entry.manualOnly && (
                       <button
-                        aria-label={`下载 ${entry.displayName}`}
+                        aria-label={t(
+                          'speech.accessibility.downloadModel',
+                          { name: displayName }
+                        )}
                         className="primary-button"
                         disabled={busyModelId === entry.id}
                         onClick={() =>
@@ -372,17 +443,21 @@ export function SpeechModelSettingsSection({
                               window.goodbuddy.speechModels!.install(
                                 entry.id
                               ),
-                            `${entry.displayName} 已安装`
+                            t('speech.notifications.installed', {
+                              name: displayName
+                            })
                           )
                         }
                         type="button"
                       >
                         <Download aria-hidden="true" size={13} />
-                        下载
+                        {t('speech.actions.download')}
                       </button>
                     )}
                     <button
-                      aria-label={`从本地目录导入 ${entry.displayName}`}
+                      aria-label={t('speech.accessibility.importModel', {
+                        name: displayName
+                      })}
                       className="secondary-button"
                       disabled={busyModelId === entry.id}
                       onClick={() =>
@@ -391,13 +466,15 @@ export function SpeechModelSettingsSection({
                           () =>
                             window.goodbuddy.speechModels!
                               .importLocalDirectory(entry.id),
-                          `${entry.displayName} 已从本地目录导入`
+                          t('speech.notifications.imported', {
+                            name: displayName
+                          })
                         )
                       }
                       type="button"
                     >
                       <FolderOpen aria-hidden="true" size={13} />
-                      导入
+                      {t('speech.actions.import')}
                     </button>
                   </>
                 )}
@@ -406,14 +483,19 @@ export function SpeechModelSettingsSection({
               {operation && (
                 <div aria-live="polite" className="speech-model-operation">
                   <progress
-                    aria-label={`${entry.displayName}下载进度`}
+                    aria-label={t(
+                      'speech.accessibility.downloadProgress',
+                      { name: displayName }
+                    )}
                     max={100}
                     {...(percent === undefined ? {} : { value: percent })}
                   />
                   <small>
                     {operation.currentFile
-                      ? `正在处理 ${operation.currentFile}`
-                      : `${operationLabel(operation)}…`}
+                      ? t('speech.operations.processingFile', {
+                          file: operation.currentFile
+                        })
+                      : `${operationLabel(operation, t)}…`}
                     {percent === undefined
                       ? ''
                       : ` · ${percent.toFixed(0)}%`}
@@ -424,7 +506,7 @@ export function SpeechModelSettingsSection({
               <details className="speech-model-row__details">
                 <summary>
                   <ChevronDown aria-hidden="true" size={13} />
-                  模型详情
+                  {t('speech.actions.modelDetails')}
                 </summary>
                 <div>
                   {entry.manualOnly &&
@@ -433,11 +515,16 @@ export function SpeechModelSettingsSection({
                       <p>{entry.manualReason}</p>
                     )}
                   <p>
-                    许可证：<strong>{entry.license.name}</strong>。
+                    {t('speech.details.license')}
+                    <strong>{entry.license.name}</strong>
+                    {t('speech.details.licenseSeparator')}
                     {entry.license.notice}
                   </p>
                   <button
-                    aria-label={`打开 ${entry.displayName} 模型仓库`}
+                    aria-label={t(
+                      'speech.accessibility.openRepository',
+                      { name: displayName }
+                    )}
                     className="secondary-button"
                     onClick={() =>
                       void window.goodbuddy.speechModels?.openRepository(
@@ -447,7 +534,7 @@ export function SpeechModelSettingsSection({
                     type="button"
                   >
                     <ExternalLink aria-hidden="true" size={13} />
-                    打开模型仓库
+                    {t('speech.actions.openRepository')}
                   </button>
                 </div>
               </details>

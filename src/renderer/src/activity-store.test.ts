@@ -9,6 +9,7 @@ import {
   upsertActivityRecord,
   type ActivityRecord
 } from './activity-store'
+import { changeUiLocale } from './i18n'
 
 function makeRecord(index: number): ActivityRecord {
   return {
@@ -215,5 +216,27 @@ describe('activity-store', () => {
       'cancelled',
       'interrupted'
     ])
+  })
+
+  it('localizes interrupted activity details after restart', async () => {
+    await changeUiLocale('en-US')
+    try {
+      const [record] = reconcileActivityRecords(
+        [
+          {
+            ...makeRecord(1),
+            requestId: 'missing-task',
+            status: 'running'
+          }
+        ],
+        []
+      )
+
+      expect(record?.detail).toContain(
+        'This activity had not finished when the app restarted.'
+      )
+    } finally {
+      await changeUiLocale('zh-CN')
+    }
   })
 })

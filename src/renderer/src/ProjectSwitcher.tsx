@@ -7,9 +7,9 @@ import {
   X
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   AssistantProject,
-  InteractiveWorkMode,
   ProjectCreateInput,
   WorkMode
 } from '../../shared/assistant-contracts'
@@ -33,11 +33,6 @@ type ProjectSwitcherProps = {
   ) => Promise<AssistantProject>
 }
 
-export const workModeLabels: Record<InteractiveWorkMode, string> = {
-  ask: 'Ask · 只读问答',
-  execute: 'Execute · 受控执行'
-}
-
 export function ProjectSwitcher({
   projects,
   activeProjectId,
@@ -48,6 +43,7 @@ export function ProjectSwitcher({
   onSelectRoot,
   onUpdate
 }: ProjectSwitcherProps): React.JSX.Element {
+  const { t } = useTranslation('workspace')
   const [dialogMode, setDialogMode] = useState<
     'create' | 'settings'
   >()
@@ -126,8 +122,8 @@ export function ProjectSwitcher({
         reason instanceof Error
           ? reason.message
           : dialogMode === 'settings'
-            ? '保存项目失败'
-            : '创建项目失败'
+            ? t('projectSwitcher.errors.save')
+            : t('projectSwitcher.errors.create')
       )
     } finally {
       setSaving(false)
@@ -148,7 +144,7 @@ export function ProjectSwitcher({
       setError(
         reason instanceof Error
           ? reason.message
-          : '选择项目根目录失败'
+          : t('projectSwitcher.errors.selectRoot')
       )
     }
   }
@@ -161,7 +157,9 @@ export function ProjectSwitcher({
       closeDialog()
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '归档项目失败'
+        reason instanceof Error
+          ? reason.message
+          : t('projectSwitcher.errors.archive')
       )
     } finally {
       setArchiving(false)
@@ -179,7 +177,9 @@ export function ProjectSwitcher({
       closeDialog()
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '删除项目失败'
+        reason instanceof Error
+          ? reason.message
+          : t('projectSwitcher.errors.delete')
       )
     } finally {
       setDeleting(false)
@@ -190,12 +190,12 @@ export function ProjectSwitcher({
     <div className="project-switcher">
       <div className="project-switcher__row">
         <select
-          aria-label="当前项目"
+          aria-label={t('projectSwitcher.selector.ariaLabel')}
           onChange={(event) => onSelect(event.target.value)}
           value={activeProjectId}
         >
           {userProjects.length > 0 && (
-            <optgroup label="普通项目">
+            <optgroup label={t('projectSwitcher.selector.userProjects')}>
               {userProjects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
@@ -204,7 +204,9 @@ export function ProjectSwitcher({
             </optgroup>
           )}
           {channelProjects.length > 0 && (
-            <optgroup label="远程通道">
+            <optgroup
+              label={t('projectSwitcher.selector.channelProjects')}
+            >
               {channelProjects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
@@ -214,7 +216,7 @@ export function ProjectSwitcher({
           )}
         </select>
         <button
-          aria-label="新建项目"
+          aria-label={t('projectSwitcher.selector.create')}
           className="icon-button"
           onClick={() => {
             setError(undefined)
@@ -235,7 +237,7 @@ export function ProjectSwitcher({
           <Plus size={15} />
         </button>
         <button
-          aria-label="项目设置"
+          aria-label={t('projectSwitcher.selector.settings')}
           className="icon-button"
           disabled={!activeProject}
           onClick={() => {
@@ -280,13 +282,15 @@ export function ProjectSwitcher({
           >
             <header>
               <strong id="project-dialog-title">
-                {dialogMode === 'create' ? '新建项目' : '项目设置'}
+                {dialogMode === 'create'
+                  ? t('projectSwitcher.dialog.createTitle')
+                  : t('projectSwitcher.dialog.settingsTitle')}
               </strong>
               <button
                 aria-label={
                   dialogMode === 'create'
-                    ? '关闭新建项目'
-                    : '关闭项目设置'
+                    ? t('projectSwitcher.dialog.closeCreate')
+                    : t('projectSwitcher.dialog.closeSettings')
                 }
                 className="icon-button"
                 disabled={busy}
@@ -297,7 +301,7 @@ export function ProjectSwitcher({
               </button>
             </header>
             <label>
-              <span>名称</span>
+              <span>{t('projectSwitcher.dialog.fields.name')}</span>
               <input
                 autoFocus={!confirmingDelete}
                 disabled={busy || activeProject?.kind === 'channel'}
@@ -311,11 +315,15 @@ export function ProjectSwitcher({
                 value={draft.name}
               />
               {activeProject?.kind === 'channel' && (
-                <small>通道项目名称由 GoodBuddy 管理。</small>
+                <small>
+                  {t('projectSwitcher.dialog.channelManaged')}
+                </small>
               )}
             </label>
             <label>
-              <span>说明</span>
+              <span>
+                {t('projectSwitcher.dialog.fields.description')}
+              </span>
               <textarea
                 maxLength={2_000}
                 onChange={(event) =>
@@ -329,11 +337,13 @@ export function ProjectSwitcher({
               />
             </label>
             <label>
-              <span>根目录</span>
+              <span>
+                {t('projectSwitcher.dialog.fields.rootPath')}
+              </span>
               <div className="project-create-card__path">
                 <input readOnly value={draft.rootPath} />
                 <button
-                  aria-label="选择项目根目录"
+                  aria-label={t('projectSwitcher.dialog.selectRoot')}
                   className="secondary-button"
                   disabled={busy}
                   onClick={() => void selectRoot()}
@@ -344,7 +354,9 @@ export function ProjectSwitcher({
               </div>
             </label>
             <label>
-              <span>默认模式</span>
+              <span>
+                {t('projectSwitcher.dialog.fields.defaultMode')}
+              </span>
               <select
                 onChange={(event) =>
                   setDraft((current) => ({
@@ -356,7 +368,7 @@ export function ProjectSwitcher({
               >
                 {interactiveWorkModes.map((value) => (
                   <option key={value} value={value}>
-                    {workModeLabels[value]}
+                    {t(`projectSwitcher.workModes.${value}`)}
                   </option>
                 ))}
               </select>
@@ -373,10 +385,11 @@ export function ProjectSwitcher({
                   className="project-danger-zone"
                 >
                   <div>
-                    <strong id="project-danger-title">危险操作</strong>
+                    <strong id="project-danger-title">
+                      {t('projectSwitcher.dialog.danger.title')}
+                    </strong>
                     <p>
-                      删除项目会永久移除 GoodBuddy
-                      中的项目、对话、任务、计划、心跳、记忆和成果，但不会删除磁盘上的项目目录或文件。
+                      {t('projectSwitcher.dialog.danger.description')}
                     </p>
                   </div>
                   {!confirmingDelete ? (
@@ -391,13 +404,16 @@ export function ProjectSwitcher({
                       type="button"
                     >
                       <Trash2 size={13} />
-                      删除项目
+                      {t('projectSwitcher.dialog.danger.delete')}
                     </button>
                   ) : (
                     <div className="project-delete-confirmation">
                       <label>
                         <span>
-                          输入“{activeProject?.name}”确认删除
+                          {t(
+                            'projectSwitcher.dialog.danger.confirmation',
+                            { projectName: activeProject?.name }
+                          )}
                         </span>
                         <input
                           autoFocus
@@ -419,7 +435,7 @@ export function ProjectSwitcher({
                           }}
                           type="button"
                         >
-                          取消删除
+                          {t('projectSwitcher.dialog.danger.cancel')}
                         </button>
                         <button
                           className="danger-button"
@@ -431,13 +447,21 @@ export function ProjectSwitcher({
                           type="button"
                         >
                           <Trash2 size={13} />
-                          {deleting ? '删除中' : '永久删除项目'}
+                          {deleting
+                            ? t(
+                                'projectSwitcher.dialog.danger.deleting'
+                              )
+                            : t(
+                                'projectSwitcher.dialog.danger.permanentlyDelete'
+                              )}
                         </button>
                       </div>
                     </div>
                   )}
                   {userProjects.length <= 1 && (
-                    <small>至少需要保留一个可用项目。</small>
+                    <small>
+                      {t('projectSwitcher.dialog.danger.keepOne')}
+                    </small>
                   )}
                 </section>
               )}
@@ -453,7 +477,9 @@ export function ProjectSwitcher({
                     type="button"
                   >
                     <Archive size={13} />
-                    {archiving ? '归档中' : '归档项目'}
+                    {archiving
+                      ? t('projectSwitcher.dialog.archiving')
+                      : t('projectSwitcher.dialog.archive')}
                   </button>
                 )}
               <button
@@ -462,7 +488,7 @@ export function ProjectSwitcher({
                 onClick={closeDialog}
                 type="button"
               >
-                取消
+                {t('projectSwitcher.dialog.cancel')}
               </button>
               <button
                 className="primary-button"
@@ -474,11 +500,11 @@ export function ProjectSwitcher({
               >
                 {saving
                   ? dialogMode === 'create'
-                    ? '创建中'
-                    : '保存中'
+                    ? t('projectSwitcher.dialog.creating')
+                    : t('projectSwitcher.dialog.saving')
                   : dialogMode === 'create'
-                    ? '创建'
-                    : '保存项目'}
+                    ? t('projectSwitcher.dialog.create')
+                    : t('projectSwitcher.dialog.save')}
               </button>
             </div>
           </div>

@@ -749,6 +749,13 @@
   color: var(--text-secondary);
 }
 
+.magic-note-editor__toolbar.ql-toolbar
+  .magic-note-editor__attachment-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .magic-note-editor__content.ql-container.ql-snow {
   min-height: 132px;
   border: 0;
@@ -769,6 +776,46 @@
   max-height: 520px;
   border-radius: var(--radius-control);
   object-fit: contain;
+}
+
+.magic-note-editor .ql-editor .magic-note-local-video,
+.magic-note-content .ql-editor .magic-note-local-video {
+  display: block;
+  width: min(100%, 720px);
+  max-height: 520px;
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.magic-note-editor .ql-editor .magic-note-attachment,
+.magic-note-content .ql-editor .magic-note-attachment {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  min-height: 36px;
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  color: var(--accent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.magic-note-editor .ql-editor .magic-note-attachment::before,
+.magic-note-content .ql-editor .magic-note-attachment::before {
+  content: '↧';
+  margin-right: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.magic-note-editor .ql-editor .magic-note-attachment:focus-visible,
+.magic-note-content .ql-editor .magic-note-attachment:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .magic-note-content.ql-container.ql-snow {
@@ -4223,7 +4270,13 @@ button > svg * {
   gap: var(--space-3);
 }
 
+.model-type-navigation > .segmented-control {
+  flex-shrink: 0;
+}
+
 .model-type-navigation > small {
+  flex: 1 1 220px;
+  min-width: 0;
   color: var(--text-muted);
   font-size: var(--font-caption);
   line-height: 1.5;
@@ -7307,15 +7360,6 @@ details.settings-section > :not(summary) + :not(summary) {
   }
 }
 
-.knowledge-panel {
-  display: flex;
-  width: 100%;
-  max-width: var(--content-standard);
-  min-height: 100%;
-  flex-direction: column;
-  margin: 0 auto;
-}
-
 .activity-panel {
   display: flex;
   width: 100%;
@@ -7323,98 +7367,10 @@ details.settings-section > :not(summary) + :not(summary) {
   flex-direction: column;
 }
 
-.knowledge-panel__limits {
-  margin: 14px 0;
-  color: var(--text-secondary);
-  font-size: 10px;
-}
-
-.knowledge-panel__error {
-  padding: 10px 12px;
-  border: 1px solid var(--danger-border);
-  border-radius: 9px;
-  background: var(--danger-subtle);
-  color: var(--danger);
-  font-size: 10px;
-}
-
-.knowledge-panel__empty,
-.knowledge-panel__loading {
-  display: grid;
-  min-height: 260px;
-  place-content: center;
-  justify-items: center;
-  color: var(--text-muted);
-  gap: 8px;
-  text-align: center;
-}
-
-.knowledge-panel__empty strong {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.knowledge-panel__empty span {
-  margin: 0;
-  font-size: 10px;
-}
-
-.knowledge-panel__summary {
-  display: flex;
-  align-items: center;
-  margin: 4px 0 12px;
-  color: var(--text-secondary);
-  font-size: 10px;
-}
-
-.knowledge-panel__summary > span:first-child {
-  flex: 1;
-}
-
-.knowledge-panel__clear-confirm {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.knowledge-panel__list,
 .activity-list {
   padding: 0;
   margin: 0;
   list-style: none;
-}
-
-.knowledge-panel__document {
-  display: flex;
-  align-items: center;
-  padding: 13px 12px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  margin-bottom: 8px;
-  background: var(--surface-raised);
-  color: var(--accent);
-  gap: 10px;
-}
-
-.knowledge-panel__document-info {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.knowledge-panel__document-info strong {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.knowledge-panel__document-info span {
-  color: var(--text-muted);
-  font-size: 9px;
 }
 
 .token-usage {
@@ -8484,7 +8440,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .settings-panel,
   .runtime-picker__menu,
   .knowledge-scope__popover,
-  .knowledge-panel__document,
   .token-usage,
   .activity-item,
   .heartbeat-center__section,
@@ -8571,7 +8526,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .settings-panel__header,
   .knowledge-workspace__sidebar,
   .knowledge-workspace__header,
-  .knowledge-panel__header,
   .heartbeat-center__config-card,
   .heartbeat-center__suggestion,
   .heartbeat-center__run
@@ -8591,7 +8545,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .settings-section__title strong,
   .field,
   .capability-card strong,
-  .knowledge-panel__document-info strong,
   .token-usage__header h3,
   .activity-item h3,
   .heartbeat-center__latest > p,
@@ -8619,8 +8572,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .capability-card p,
   .secondary-button,
   .check-field,
-  .knowledge-panel__limits,
-  .knowledge-panel__summary,
   .token-usage th,
   .token-usage td,
   .activity-item p,
@@ -8649,8 +8600,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .field small,
   .settings-notice,
   .settings-empty,
-  .knowledge-panel__empty,
-  .knowledge-panel__loading,
   .heartbeat-center__live,
   .heartbeat-center__legend
 ) {

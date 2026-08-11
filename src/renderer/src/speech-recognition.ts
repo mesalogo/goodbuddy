@@ -1,3 +1,5 @@
+import i18n from './i18n'
+
 export type SpeechRecognitionErrorCode =
   | 'aborted'
   | 'audio-capture'
@@ -105,7 +107,9 @@ export async function prepareSpeechRecognition(
   userAgent = navigator.userAgent
 ): Promise<PreparedSpeechRecognition> {
   if (isElectronUserAgent(userAgent)) {
-    throw new Error('本地语音识别服务未加载，请重启 GoodBuddy 后重试')
+    throw new Error(
+      i18n.t('composer.voice.serviceNotLoaded', { ns: 'app' })
+    )
   }
   const recognition = new Recognition()
   const options: LocalSpeechOptions = {
@@ -118,7 +122,7 @@ export async function prepareSpeechRecognition(
     const availability = await withTimeout(
       Recognition.available(options),
       timeouts.availabilityMs ?? 5_000,
-      '检查中文离线语音包超时，请确认网络后重试'
+      i18n.t('composer.voice.availabilityTimeout', { ns: 'app' })
     )
     if (availability === 'available') {
       local = true
@@ -130,10 +134,12 @@ export async function prepareSpeechRecognition(
       local = await withTimeout(
         Recognition.install(options),
         timeouts.installMs ?? 120_000,
-        '中文离线语音包下载超时，请检查网络后重试'
+        i18n.t('composer.voice.downloadTimeout', { ns: 'app' })
       )
     } else if (availability === 'downloading') {
-      throw new Error('中文离线语音包正在下载，请稍后重试')
+      throw new Error(
+        i18n.t('composer.voice.packDownloading', { ns: 'app' })
+      )
     }
   }
 
@@ -160,7 +166,9 @@ export type PcmRecording = {
 type AudioContextConstructor = new () => AudioContext
 
 function recordingAbortError(): Error {
-  const error = new Error('语音录音已取消')
+  const error = new Error(
+    i18n.t('composer.voice.recordingCancelled', { ns: 'app' })
+  )
   error.name = 'AbortError'
   return error
 }
@@ -248,7 +256,9 @@ export async function startPcmRecording(
     settled = true
     cleanup()
     if (!context || sampleCount === 0) {
-      rejectResult(new Error('没有录到声音，请检查麦克风后重试'))
+      rejectResult(
+        new Error(i18n.t('composer.voice.noRecording', { ns: 'app' }))
+      )
       return
     }
     const combined = new Float32Array(sampleCount)
@@ -315,23 +325,29 @@ export function describeSpeechRecognitionError(
 ): string {
   switch (event.error) {
     case 'aborted':
-      return '语音识别已取消'
+      return i18n.t('composer.voice.errors.aborted', { ns: 'app' })
     case 'audio-capture':
-      return '未检测到可用麦克风，请检查设备连接和系统输入设置'
+      return i18n.t('composer.voice.errors.audioCapture', {
+        ns: 'app'
+      })
     case 'language-not-supported':
-      return '当前系统没有可用的中文语音识别包'
+      return i18n.t('composer.voice.errors.languageNotSupported', {
+        ns: 'app'
+      })
     case 'network':
-      return 'Electron 在线语音服务不可用，请安装中文离线语音包后重试'
+      return i18n.t('composer.voice.errors.network', { ns: 'app' })
     case 'no-speech':
-      return '没有检测到语音，请靠近麦克风后重试'
+      return i18n.t('composer.voice.errors.noSpeech', { ns: 'app' })
     case 'not-allowed':
     case 'service-not-allowed':
-      return '麦克风权限被拒绝，请在系统隐私设置中允许 GoodBuddy 使用麦克风'
+      return i18n.t('composer.voice.errors.permission', { ns: 'app' })
     case 'phrases-not-supported':
-      return '当前语音识别服务不支持短语增强'
+      return i18n.t('composer.voice.errors.phrasesNotSupported', {
+        ns: 'app'
+      })
     case 'bad-grammar':
-      return '当前语音识别服务无法处理语法配置'
+      return i18n.t('composer.voice.errors.badGrammar', { ns: 'app' })
     default:
-      return '语音识别失败，请检查麦克风和系统语音设置'
+      return i18n.t('composer.voice.errors.generic', { ns: 'app' })
   }
 }

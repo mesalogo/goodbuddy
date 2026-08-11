@@ -6,11 +6,20 @@ import {
 } from 'react'
 import Quill, { type Delta, type EmitterSource } from 'quill'
 import 'quill/dist/quill.snow.css'
+import { Paperclip } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import './magic-note-embeds'
 import {
+  MAGIC_NOTE_MAX_ATTACHMENTS,
+  MAGIC_NOTE_MAX_ATTACHMENT_BYTES,
   MAGIC_NOTE_MAX_IMAGES,
   MAGIC_NOTE_MAX_IMAGE_BYTES,
+  MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES,
   MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES,
-  magicNoteImageDataBytes,
+  MAGIC_NOTE_MAX_VIDEOS,
+  MAGIC_NOTE_MAX_VIDEO_BYTES,
+  MAGIC_NOTE_VIDEO_TYPES,
+  magicNoteDataBytes,
   type MagicNoteRichContent
 } from '../../shared/magic-notes-contracts'
 
@@ -20,6 +29,7 @@ const supportedImageTypes = new Set([
   'image/gif',
   'image/webp'
 ])
+const supportedVideoTypes = new Set<string>(MAGIC_NOTE_VIDEO_TYPES)
 
 export type MagicNoteEditorProps = {
   initialContent?: MagicNoteRichContent
@@ -31,15 +41,75 @@ export type MagicNoteEditorProps = {
   onParagraphCommit?: (content: MagicNoteRichContent) => void
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
+function readFileAsDataUrl(
+  file: File,
+  mimeType: string,
+  readFailedMessage: string
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = () =>
-      typeof reader.result === 'string'
-        ? resolve(reader.result)
-        : reject(new Error('图片读取失败'))
-    reader.onerror = () => reject(new Error('图片读取失败'))
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error(readFailedMessage))
+        return
+      }
+      const separatorIndex = reader.result.indexOf(',')
+      if (separatorIndex < 0) {
+        reject(new Error(readFailedMessage))
+        return
+      }
+      resolve(
+        `data:${mimeType};base64,${reader.result.slice(separatorIndex + 1)}`
+      )
+    }
+    reader.onerror = () => reject(new Error(readFailedMessage))
     reader.readAsDataURL(file)
+  })
+}
+
+function safeEmbeddedFileName(file: File): string {
+  const fallback = file.type.startsWith('video/')
+    ? 'video'
+    : file.type.startsWith('image/')
+      ? 'image'
+      : 'attachment'
+  return (
+    [...file.name]
+      .map((character) => {
+        const code = character.charCodeAt(0)
+        return code < 32 ||
+          code === 127 ||
+          /[<>:"/\\|?*]/u.test(character)
+          ? '_'
+          : character
+      })
+      .join('')
+      .trim()
+      .slice(0, 255) || fallback
+  )
+}
+
+function embeddedMimeType(file: File): string {
+  const normalized = file.type.trim().toLowerCase()
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/u.test(
+    normalized
+  )
+    ? normalized
+    : 'application/octet-stream'
+}
+
+function embeddedData(content: MagicNoteRichContent): string[] {
+  return content.ops.flatMap((operation) => {
+    if (typeof operation.insert === 'string') {
+      return []
+    }
+    if ('image' in operation.insert) {
+      return [operation.insert.image]
+    }
+    if ('localVideo' in operation.insert) {
+      return [operation.insert.localVideo.dataUrl]
+    }
+    return [operation.insert.attachment.dataUrl]
   })
 }
 
@@ -59,83 +129,199 @@ export function MagicNoteEditor({
   onError,
   onParagraphCommit
 }: MagicNoteEditorProps): React.JSX.Element {
+  const { t } = useTranslation('magicNotes')
   const toolbarRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
   const quillRef = useRef<Quill | null>(null)
   const onChangeRef = useRef(onChange)
   const onErrorRef = useRef(onError)
   const onParagraphCommitRef = useRef(onParagraphCommit)
+  const translateRef = useRef(t)
+  const initialPlaceholderRef = useRef(t('editor.placeholder'))
 
   useEffect(() => {
     onChangeRef.current = onChange
     onErrorRef.current = onError
     onParagraphCommitRef.current = onParagraphCommit
-  }, [onChange, onError, onParagraphCommit])
+    translateRef.current = t
+  }, [onChange, onError, onParagraphCommit, t])
 
-  const insertImages = async (files: File[]): Promise<void> => {
+  const insertFiles = async (
+    files: File[],
+    imagesOnly = false
+  ): Promise<void> => {
     const quill = quillRef.current
     if (!quill || files.length === 0) {
       return
     }
-    const currentImageData = quill
-      .getContents()
-      .ops.filter(
-        (operation) =>
-          typeof operation.insert === 'object' &&
-          operation.insert !== null &&
-          'image' in operation.insert
-      )
-      .map((operation) => {
-        const insert = operation.insert as { image?: unknown }
-        return typeof insert.image === 'string' ? insert.image : ''
-      })
-      .filter(Boolean)
-    if (currentImageData.length + files.length > MAGIC_NOTE_MAX_IMAGES) {
+    const content = richContentFromQuill(quill)
+    const imageCount = content.ops.filter(
+      (operation) =>
+        typeof operation.insert === 'object' &&
+        'image' in operation.insert
+    ).length
+    const videoCount = content.ops.filter(
+      (operation) =>
+        typeof operation.insert === 'object' &&
+        'localVideo' in operation.insert
+    ).length
+    const attachmentCount = content.ops.filter(
+      (operation) =>
+        typeof operation.insert === 'object' &&
+        'attachment' in operation.insert
+    ).length
+    const classified = files.map((file) => {
+      const mimeType = embeddedMimeType(file)
+      const kind =
+        supportedImageTypes.has(mimeType)
+          ? 'image'
+          : supportedVideoTypes.has(mimeType)
+            ? 'localVideo'
+            : 'attachment'
+      return { file, kind, mimeType }
+    })
+    if (
+      imagesOnly &&
+      classified.some(({ kind }) => kind !== 'image')
+    ) {
+      onErrorRef.current(translateRef.current('editor.unsupportedImage'))
+      return
+    }
+    const addedImageCount = classified.filter(
+      ({ kind }) => kind === 'image'
+    ).length
+    const addedVideoCount = classified.filter(
+      ({ kind }) => kind === 'localVideo'
+    ).length
+    const addedAttachmentCount = classified.filter(
+      ({ kind }) => kind === 'attachment'
+    ).length
+    if (imageCount + addedImageCount > MAGIC_NOTE_MAX_IMAGES) {
       onErrorRef.current(
-        `每条记录最多包含 ${MAGIC_NOTE_MAX_IMAGES} 张图片`
+        translateRef.current('editor.maxImages', {
+          count: MAGIC_NOTE_MAX_IMAGES
+        })
+      )
+      return
+    }
+    if (videoCount + addedVideoCount > MAGIC_NOTE_MAX_VIDEOS) {
+      onErrorRef.current(
+        translateRef.current('editor.maxVideos', {
+          count: MAGIC_NOTE_MAX_VIDEOS
+        })
       )
       return
     }
     if (
-      files.some(
-        (file) =>
-          !supportedImageTypes.has(file.type) ||
-          file.size <= 0 ||
-          file.size > MAGIC_NOTE_MAX_IMAGE_BYTES
-      )
+      attachmentCount + addedAttachmentCount >
+      MAGIC_NOTE_MAX_ATTACHMENTS
     ) {
       onErrorRef.current(
-        '只支持小于 2 MB 的 JPEG、PNG、GIF 或 WebP 图片'
+        translateRef.current('editor.maxAttachments', {
+          count: MAGIC_NOTE_MAX_ATTACHMENTS
+        })
       )
       return
     }
-    const currentImageBytes = currentImageData.reduce((total, dataUrl) => {
-      return total + magicNoteImageDataBytes(dataUrl)
+    if (
+      classified.some(
+        ({ file, kind }) =>
+          file.size <= 0 ||
+          (kind === 'image' && file.size > MAGIC_NOTE_MAX_IMAGE_BYTES) ||
+          (kind === 'localVideo' &&
+            file.size > MAGIC_NOTE_MAX_VIDEO_BYTES) ||
+          (kind === 'attachment' &&
+            file.size > MAGIC_NOTE_MAX_ATTACHMENT_BYTES)
+      )
+    ) {
+      onErrorRef.current(
+        translateRef.current('editor.unsupportedFile')
+      )
+      return
+    }
+    const currentData = embeddedData(content)
+    const currentImageBytes = content.ops.reduce((total, operation) => {
+      if (
+        typeof operation.insert !== 'object' ||
+        !('image' in operation.insert)
+      ) {
+        return total
+      }
+      return total + magicNoteDataBytes(operation.insert.image)
     }, 0)
     if (
       currentImageBytes +
-        files.reduce((total, file) => total + file.size, 0) >
+        classified
+          .filter(({ kind }) => kind === 'image')
+          .reduce((total, { file }) => total + file.size, 0) >
       MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES
     ) {
-      onErrorRef.current('本次添加的图片总大小不能超过 8 MB')
+      onErrorRef.current(translateRef.current('editor.totalImageSize'))
+      return
+    }
+    if (
+      currentData.reduce(
+        (total, dataUrl) => total + magicNoteDataBytes(dataUrl),
+        0
+      ) +
+        files.reduce((total, file) => total + file.size, 0) >
+      MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES
+    ) {
+      onErrorRef.current(translateRef.current('editor.totalEmbedSize'))
       return
     }
     try {
-      const dataUrls = await Promise.all(files.map(readFileAsDataUrl))
+      const readFailedMessage = translateRef.current(
+        'editor.fileReadFailed'
+      )
+      const embeds = await Promise.all(
+        classified.map(async ({ file, kind, mimeType }) => ({
+          kind,
+          file: {
+            name: safeEmbeddedFileName(file),
+            mimeType,
+            size: file.size,
+            dataUrl: await readFileAsDataUrl(
+              file,
+              mimeType,
+              readFailedMessage
+            )
+          }
+        }))
+      )
       let index = quill.getSelection(true)?.index ?? quill.getLength() - 1
-      for (const dataUrl of dataUrls) {
-        quill.insertEmbed(index, 'image', dataUrl, 'user')
+      for (const embed of embeds) {
+        if (embed.kind === 'image') {
+          quill.insertEmbed(index, 'image', embed.file.dataUrl, 'user')
+        } else {
+          quill.insertEmbed(index, embed.kind, embed.file, 'user')
+        }
         quill.insertText(index + 1, '\n', 'user')
         index += 2
       }
       quill.setSelection(index, 0, 'silent')
     } catch (error) {
       onErrorRef.current(
-        error instanceof Error ? error.message : '图片读取失败'
+        error instanceof Error
+          ? error.message
+          : translateRef.current('editor.fileReadFailed')
       )
     }
   }
+
+  const filesFromClipboard = (
+    event: ReactClipboardEvent<HTMLDivElement>
+  ): File[] =>
+    [...event.clipboardData.items]
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null)
+
+  const filesFromDrop = (
+    event: ReactDragEvent<HTMLDivElement>
+  ): File[] => [...event.dataTransfer.files]
 
   useEffect(() => {
     const toolbar = toolbarRef.current
@@ -145,9 +331,11 @@ export function MagicNoteEditor({
     }
     const quill = new Quill(editor, {
       theme: 'snow',
-      placeholder: '记录想法、会议内容或待办线索…',
+      placeholder: initialPlaceholderRef.current,
       formats: [
         'header',
+        'size',
+        'color',
         'bold',
         'italic',
         'underline',
@@ -158,13 +346,15 @@ export function MagicNoteEditor({
         'list',
         'indent',
         'align',
-        'image'
+        'image',
+        'localVideo',
+        'attachment'
       ],
       modules: {
         toolbar: {
           container: toolbar,
           handlers: {
-            image: () => inputRef.current?.click()
+            image: () => imageInputRef.current?.click()
           }
         },
         history: {
@@ -173,6 +363,11 @@ export function MagicNoteEditor({
           userOnly: true
         }
       }
+    })
+    toolbar.querySelectorAll('select').forEach((select) => {
+      select.removeAttribute('aria-label')
+      select.setAttribute('aria-hidden', 'true')
+      select.tabIndex = -1
     })
     quillRef.current = quill
     if (initialContent) {
@@ -209,6 +404,13 @@ export function MagicNoteEditor({
   }, [initialContent])
 
   useEffect(() => {
+    quillRef.current?.root.setAttribute(
+      'data-placeholder',
+      t('editor.placeholder')
+    )
+  }, [t])
+
+  useEffect(() => {
     const root = quillRef.current?.root
     if (!root) {
       return
@@ -226,83 +428,128 @@ export function MagicNoteEditor({
     }
   }, [ariaDescribedBy, ariaInvalid, ariaLabel])
 
-  const imageFilesFromClipboard = (
-    event: ReactClipboardEvent<HTMLDivElement>
-  ): File[] =>
-    [...event.clipboardData.items]
-      .filter((item) => item.kind === 'file')
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null)
-
-  const imageFilesFromDrop = (
-    event: ReactDragEvent<HTMLDivElement>
-  ): File[] => [...event.dataTransfer.files]
-
   return (
     <div
       className="magic-note-editor"
-      onDragOver={(event) => {
+      onDragOverCapture={(event) => {
         if (event.dataTransfer.types.includes('Files')) {
           event.preventDefault()
           event.dataTransfer.dropEffect = 'copy'
         }
       }}
-      onDrop={(event) => {
-        const files = imageFilesFromDrop(event)
+      onDropCapture={(event) => {
+        const files = filesFromDrop(event)
         if (files.length > 0) {
           event.preventDefault()
-          void insertImages(files)
+          event.stopPropagation()
+          void insertFiles(files)
         }
       }}
-      onPaste={(event) => {
-        const files = imageFilesFromClipboard(event)
+      onPasteCapture={(event) => {
+        const files = filesFromClipboard(event)
         if (files.length > 0) {
           event.preventDefault()
-          void insertImages(files)
+          event.stopPropagation()
+          void insertFiles(files)
         }
       }}
     >
       <div ref={toolbarRef} className="magic-note-editor__toolbar">
-        <select aria-label="段落样式" className="ql-header" defaultValue="">
-          <option value="1">标题 1</option>
-          <option value="2">标题 2</option>
-          <option value="3">标题 3</option>
-          <option value="">正文</option>
+        <select
+          aria-label={t('editor.paragraphStyle')}
+          className="ql-header"
+          defaultValue=""
+        >
+          <option value="1">{t('editor.heading1')}</option>
+          <option value="2">{t('editor.heading2')}</option>
+          <option value="3">{t('editor.heading3')}</option>
+          <option value="">{t('editor.body')}</option>
         </select>
-        <button aria-label="粗体" className="ql-bold" type="button" />
-        <button aria-label="斜体" className="ql-italic" type="button" />
-        <button aria-label="下划线" className="ql-underline" type="button" />
-        <button aria-label="删除线" className="ql-strike" type="button" />
+        <select
+          aria-label={t('editor.fontSize')}
+          className="ql-size"
+          defaultValue=""
+        >
+          <option value="small">{t('editor.fontSizeSmall')}</option>
+          <option value="">{t('editor.fontSizeNormal')}</option>
+          <option value="large">{t('editor.fontSizeLarge')}</option>
+          <option value="huge">{t('editor.fontSizeHuge')}</option>
+        </select>
+        <select
+          aria-label={t('editor.textColor')}
+          className="ql-color"
+          defaultValue=""
+        />
         <button
-          aria-label="待办清单"
+          aria-label={t('editor.bold')}
+          className="ql-bold"
+          type="button"
+        />
+        <button
+          aria-label={t('editor.italic')}
+          className="ql-italic"
+          type="button"
+        />
+        <button
+          aria-label={t('editor.underline')}
+          className="ql-underline"
+          type="button"
+        />
+        <button
+          aria-label={t('editor.strike')}
+          className="ql-strike"
+          type="button"
+        />
+        <button
+          aria-label={t('editor.todoList')}
           className="ql-list"
           type="button"
           value="check"
         />
         <button
-          aria-label="项目符号列表"
+          aria-label={t('editor.bulletList')}
           className="ql-list"
           type="button"
           value="bullet"
         />
         <button
-          aria-label="编号列表"
+          aria-label={t('editor.numberedList')}
           className="ql-list"
           type="button"
           value="ordered"
         />
-        <button aria-label="引用" className="ql-blockquote" type="button" />
-        <button aria-label="代码块" className="ql-code-block" type="button" />
-        <button aria-label="插入本地图片" className="ql-image" type="button" />
         <button
-          aria-label="撤销"
+          aria-label={t('editor.blockquote')}
+          className="ql-blockquote"
+          type="button"
+        />
+        <button
+          aria-label={t('editor.codeBlock')}
+          className="ql-code-block"
+          type="button"
+        />
+        <button
+          aria-label={t('editor.insertImage')}
+          className="ql-image"
+          type="button"
+        />
+        <button
+          aria-label={t('editor.uploadAttachment')}
+          className="magic-note-editor__attachment-button"
+          type="button"
+          onClick={() => attachmentInputRef.current?.click()}
+        >
+          <Paperclip aria-hidden="true" size={16} />
+        </button>
+        <button
+          aria-label={t('editor.undo')}
           type="button"
           onClick={() => quillRef.current?.history.undo()}
         >
           ↶
         </button>
         <button
-          aria-label="重做"
+          aria-label={t('editor.redo')}
           type="button"
           onClick={() => quillRef.current?.history.redo()}
         >
@@ -311,7 +558,7 @@ export function MagicNoteEditor({
       </div>
       <div ref={editorRef} className="magic-note-editor__content" />
       <input
-        ref={inputRef}
+        ref={imageInputRef}
         hidden
         multiple
         accept="image/jpeg,image/png,image/gif,image/webp"
@@ -321,7 +568,20 @@ export function MagicNoteEditor({
             ? [...event.target.files]
             : []
           event.target.value = ''
-          void insertImages(files)
+          void insertFiles(files, true)
+        }}
+      />
+      <input
+        ref={attachmentInputRef}
+        hidden
+        multiple
+        type="file"
+        onChange={(event) => {
+          const files = event.target.files
+            ? [...event.target.files]
+            : []
+          event.target.value = ''
+          void insertFiles(files)
         }}
       />
     </div>

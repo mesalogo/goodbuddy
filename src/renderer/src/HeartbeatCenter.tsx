@@ -12,6 +12,7 @@ import {
   XCircle
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   AssistantHeartbeatConfig,
   AssistantHeartbeatEntry,
@@ -59,65 +60,6 @@ export type HeartbeatCenterProps = {
   onRetryLoad: () => void | Promise<void>
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit'
-})
-
-const weekdayLabels = [
-  '周日',
-  '周一',
-  '周二',
-  '周三',
-  '周四',
-  '周五',
-  '周六'
-]
-
-const runStatusLabels: Record<AssistantHeartbeatRun['status'], string> = {
-  claimed: '运行中',
-  completed: '已完成',
-  failed: '失败',
-  skipped: '已跳过'
-}
-
-const taskStatusLabels: Record<AssistantTask['status'], string> = {
-  queued: '等待中',
-  running: '运行中',
-  waiting_approval: '等待审批',
-  paused: '待处理',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已忽略',
-  interrupted: '已中断'
-}
-
-const memoryTypeLabels: Record<AssistantMemory['type'], string> = {
-  preference: '偏好',
-  fact: '事实',
-  summary: '总结',
-  procedure: '流程'
-}
-
-function formatDateTime(value?: string): string {
-  if (!value) {
-    return '暂无'
-  }
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? '时间未知'
-    : dateTimeFormatter.format(date)
-}
-
-function recurrenceLabel(config: AssistantHeartbeatConfig): string {
-  if (config.recurrence.type === 'weekly') {
-    return `${weekdayLabels[config.recurrence.weekday]} ${config.recurrence.localTime}`
-  }
-  return `每天 ${config.recurrence.localTime}`
-}
-
 function percentage(numerator: number, denominator: number): number {
   if (denominator <= 0) {
     return 0
@@ -146,11 +88,12 @@ export function HeartbeatCenter({
   onSetMemoryStatus,
   onSetTaskStatus,
   onUseFollowUpTask,
-  currentProjectName = '当前项目',
+  currentProjectName,
   loading = false,
   loadError,
   onRetryLoad
 }: HeartbeatCenterProps): React.JSX.Element {
+  const { t, i18n } = useTranslation('heartbeat')
   const [tab, setTab] = useState<HeartbeatCenterTab>('overview')
   const [pendingAction, setPendingAction] = useState<string>()
   const [error, setError] = useState<string>()
@@ -159,6 +102,88 @@ export function HeartbeatCenter({
     useState<string>()
   const [visibleEntryCount, setVisibleEntryCount] = useState(20)
   const [visibleRunCount, setVisibleRunCount] = useState(20)
+  const projectName =
+    currentProjectName ?? t('center.scope.currentProject')
+  const dateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(i18n.resolvedLanguage || 'zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+    [i18n.resolvedLanguage]
+  )
+  const countFormatter = useMemo(
+    () => new Intl.NumberFormat(i18n.resolvedLanguage || 'zh-CN'),
+    [i18n.resolvedLanguage]
+  )
+  const percentFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat(i18n.resolvedLanguage || 'zh-CN', {
+        style: 'percent',
+        maximumFractionDigits: 0
+      }),
+    [i18n.resolvedLanguage]
+  )
+  const formatCount = (value: number): string =>
+    countFormatter.format(value)
+  const formatPercent = (value: number): string =>
+    percentFormatter.format(value / 100)
+  const weekdayLabels = [
+    t('center.weekdays.sunday'),
+    t('center.weekdays.monday'),
+    t('center.weekdays.tuesday'),
+    t('center.weekdays.wednesday'),
+    t('center.weekdays.thursday'),
+    t('center.weekdays.friday'),
+    t('center.weekdays.saturday')
+  ]
+  const runStatusLabels: Record<
+    AssistantHeartbeatRun['status'],
+    string
+  > = {
+    claimed: t('statuses.run.claimed'),
+    completed: t('statuses.run.completed'),
+    failed: t('statuses.run.failed'),
+    skipped: t('statuses.run.skipped')
+  }
+  const taskStatusLabels: Record<AssistantTask['status'], string> = {
+    queued: t('statuses.task.queued'),
+    running: t('statuses.task.running'),
+    waiting_approval: t('statuses.task.waitingApproval'),
+    paused: t('statuses.task.paused'),
+    completed: t('statuses.task.completed'),
+    failed: t('statuses.task.failed'),
+    cancelled: t('statuses.task.cancelled'),
+    interrupted: t('statuses.task.interrupted')
+  }
+  const memoryTypeLabels: Record<AssistantMemory['type'], string> = {
+    preference: t('statuses.memory.preference'),
+    fact: t('statuses.memory.fact'),
+    summary: t('statuses.memory.summary'),
+    procedure: t('statuses.memory.procedure')
+  }
+  const formatDateTime = (value?: string): string => {
+    if (!value) {
+      return t('common.unavailable')
+    }
+    const date = new Date(value)
+    return Number.isNaN(date.getTime())
+      ? t('common.unknownTime')
+      : dateTimeFormatter.format(date)
+  }
+  const recurrenceLabel = (
+    config: AssistantHeartbeatConfig
+  ): string =>
+    config.recurrence.type === 'weekly'
+      ? t('center.recurrence.weekly', {
+          weekday: weekdayLabels[config.recurrence.weekday],
+          time: config.recurrence.localTime
+        })
+      : t('center.recurrence.daily', {
+          time: config.recurrence.localTime
+        })
 
   const orderedEntries = useMemo(
     () => [...entries].sort(byNewest),
@@ -250,7 +275,9 @@ export function HeartbeatCenter({
       await action()
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '智能心跳操作失败'
+        reason instanceof Error
+          ? reason.message
+          : t('common.operationFailed')
       )
     } finally {
       setPendingAction(undefined)
@@ -262,14 +289,14 @@ export function HeartbeatCenter({
     label: string
     count?: number
   }> = [
-    { id: 'overview', label: '成长概览' },
+    { id: 'overview', label: t('center.tabs.overview') },
     {
       id: 'suggestions',
-      label: '待处理建议',
+      label: t('center.tabs.suggestions'),
       count: attentionCount
     },
-    { id: 'history', label: '心跳轨迹' },
-    { id: 'plans', label: '心跳计划' }
+    { id: 'history', label: t('center.tabs.history') },
+    { id: 'plans', label: t('center.tabs.plans') }
   ]
 
   return (
@@ -282,14 +309,14 @@ export function HeartbeatCenter({
           initialLoadBlocked ? undefined : (
             <>
             <button
-              aria-label="刷新智能心跳"
+              aria-label={t('center.actions.refreshAriaLabel')}
               className="secondary-button"
               disabled={loading || pendingAction !== undefined}
               onClick={() => void runAction('refresh', onRefresh)}
               type="button"
             >
               <RefreshCw aria-hidden="true" size={14} />
-              刷新
+              {t('center.actions.refresh')}
             </button>
             {primaryConfig ? (
               <button
@@ -304,8 +331,8 @@ export function HeartbeatCenter({
               >
                 <Play aria-hidden="true" size={14} />
                 {pendingAction === `run:${primaryConfig.id}`
-                  ? '心跳中…'
-                  : '运行一次心跳'}
+                  ? t('center.actions.running')
+                  : t('center.actions.runOnce')}
               </button>
             ) : (
               <button
@@ -314,18 +341,18 @@ export function HeartbeatCenter({
                 onClick={() => setTab('plans')}
                 type="button"
               >
-                配置智能心跳
+                {t('center.actions.configure')}
               </button>
             )}
             </>
           )
         }
-        description="定期回顾经历、沉淀记忆、发现问题，并把每次变化转化为可处理的成长建议。"
-        eyebrow="SMART HEARTBEAT"
+        description={t('center.description')}
+        eyebrow={t('center.eyebrow')}
         headingId="heartbeat-center-title"
         icon={<HeartPulse size={22} />}
-        scope={{ kind: 'mixed', projectName: currentProjectName }}
-        title="智能心跳"
+        scope={{ kind: 'mixed', projectName }}
+        title={t('center.title')}
       />
 
       {error && (
@@ -336,10 +363,10 @@ export function HeartbeatCenter({
 
       {loading && !hasHeartbeatData ? (
         <EmptyState
-          description="正在读取心跳计划、运行记录和成长报告。"
+          description={t('center.loading.description')}
           icon={<RefreshCw size={24} />}
           level="page"
-          title="正在加载智能心跳"
+          title={t('center.loading.title')}
         />
       ) : loadError && !hasHeartbeatData ? (
         <EmptyState
@@ -350,19 +377,19 @@ export function HeartbeatCenter({
               type="button"
             >
               <RefreshCw aria-hidden="true" size={14} />
-              重试
+              {t('center.actions.retry')}
             </button>
           }
           description={loadError}
           icon={<XCircle size={24} />}
           level="page"
-          title="智能心跳加载失败"
+          title={t('center.loading.failedTitle')}
         />
       ) : null}
 
       {loadError && hasHeartbeatData && (
         <div className="heartbeat-center__error" role="alert">
-          <strong>智能心跳刷新失败</strong>
+          <strong>{t('center.loading.refreshFailedTitle')}</strong>
           <p>{loadError}</p>
           <button
             className="secondary-button"
@@ -370,7 +397,7 @@ export function HeartbeatCenter({
             type="button"
           >
             <RefreshCw aria-hidden="true" size={14} />
-            重试
+            {t('center.actions.retry')}
           </button>
         </div>
       )}
@@ -378,7 +405,7 @@ export function HeartbeatCenter({
       {!initialLoadBlocked && (
         <>
       <PageTabs
-        ariaLabel="智能心跳视图"
+        ariaLabel={t('center.tabs.ariaLabel')}
         idPrefix="heartbeat"
         onChange={setTab}
         tabs={tabs}
@@ -398,8 +425,12 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">CURRENT PULSE</p>
-                <h3 id="heartbeat-status-title">当前状态</h3>
+                <p className="eyebrow">
+                  {t('center.currentStatus.eyebrow')}
+                </p>
+                <h3 id="heartbeat-status-title">
+                  {t('center.currentStatus.title')}
+                </h3>
               </div>
               <span
                 className={
@@ -410,8 +441,11 @@ export function HeartbeatCenter({
               >
                 <span aria-hidden="true" />
                 {activeConfigs.length > 0
-                  ? `${activeConfigs.length} 个计划运行中`
-                  : '尚未启用'}
+                  ? t('center.currentStatus.activePlans', {
+                      count: activeConfigs.length,
+                      formattedCount: formatCount(activeConfigs.length)
+                    })
+                  : t('center.currentStatus.disabled')}
               </span>
             </div>
             {configs.length === 0 ? (
@@ -422,13 +456,15 @@ export function HeartbeatCenter({
                     onClick={() => setTab('plans')}
                     type="button"
                   >
-                    创建心跳计划
+                    {t('center.currentStatus.createPlan')}
                   </button>
                 }
-                description="配置每日或每周心跳，让 GoodBuddy 持续回顾和学习。"
+                description={t(
+                  'center.currentStatus.emptyDescription'
+                )}
                 icon={<HeartPulse size={24} />}
                 level="section"
-                title="尚未建立成长节奏"
+                title={t('center.currentStatus.emptyTitle')}
               />
             ) : (
               <div className="heartbeat-center__config-grid">
@@ -450,22 +486,22 @@ export function HeartbeatCenter({
                         <small>
                           {recurrenceLabel(config)} ·{' '}
                           {config.projectId
-                            ? currentProjectName
-                            : '全局'}
+                            ? projectName
+                            : t('center.scope.global')}
                         </small>
                       </div>
                     </header>
                     <dl>
                       <div>
-                        <dt>下次心跳</dt>
+                        <dt>{t('center.config.nextHeartbeat')}</dt>
                         <dd>{formatDateTime(config.nextRunAt)}</dd>
                       </div>
                       <div>
-                        <dt>上次状态</dt>
+                        <dt>{t('center.config.lastStatus')}</dt>
                         <dd>
                           {config.lastStatus
                             ? runStatusLabels[config.lastStatus]
-                            : '尚未运行'}
+                            : t('center.config.neverRun')}
                         </dd>
                       </div>
                     </dl>
@@ -479,7 +515,7 @@ export function HeartbeatCenter({
                         }
                         type="button"
                       >
-                        立即心跳
+                        {t('center.config.runNow')}
                       </button>
                       <button
                         disabled={pendingAction !== undefined}
@@ -490,7 +526,9 @@ export function HeartbeatCenter({
                         }
                         type="button"
                       >
-                        {config.enabled ? '暂停' : '恢复'}
+                        {config.enabled
+                          ? t('center.config.pause')
+                          : t('center.config.resume')}
                       </button>
                     </div>
                   </article>
@@ -500,20 +538,29 @@ export function HeartbeatCenter({
           </section>
 
           <dl
-            aria-label="智能心跳成长维度"
+            aria-label={t('center.metrics.ariaLabel')}
             className="heartbeat-center__metrics"
           >
             <div>
               <dt>
                 <HeartPulse aria-hidden="true" size={15} />
-                心跳健康
+                {t('center.metrics.health')}
               </dt>
-              <dd>{terminalRuns.length ? `${healthPercent}%` : '暂无'}</dd>
+              <dd>
+                {terminalRuns.length
+                  ? formatPercent(healthPercent)
+                  : t('common.unavailable')}
+              </dd>
               <small>
-                {completedRuns.length}/{terminalRuns.length} 次成功完成
+                {t('center.metrics.successfulRuns', {
+                  completed: formatCount(completedRuns.length),
+                  total: formatCount(terminalRuns.length)
+                })}
               </small>
               <span
-                aria-label={`心跳成功率 ${healthPercent}%`}
+                aria-label={t('center.metrics.healthRateAriaLabel', {
+                  percent: formatPercent(healthPercent)
+                })}
                 className="heartbeat-center__meter"
                 role="progressbar"
                 aria-valuemax={100}
@@ -526,14 +573,17 @@ export function HeartbeatCenter({
             <div>
               <dt>
                 <Sparkles aria-hidden="true" size={15} />
-                记忆沉淀
+                {t('center.metrics.memory')}
               </dt>
               <dd>
-                {confirmedMemories.length}/{proposedMemoryIds.size}
+                {formatCount(confirmedMemories.length)}/
+                {formatCount(proposedMemoryIds.size)}
               </dd>
-              <small>已确认记忆 / 心跳建议</small>
+              <small>{t('center.metrics.memoryDescription')}</small>
               <span
-                aria-label={`记忆确认率 ${memoryPercent}%`}
+                aria-label={t('center.metrics.memoryRateAriaLabel', {
+                  percent: formatPercent(memoryPercent)
+                })}
                 className="heartbeat-center__meter"
                 role="progressbar"
                 aria-valuemax={100}
@@ -546,27 +596,40 @@ export function HeartbeatCenter({
             <div>
               <dt>
                 <Lightbulb aria-hidden="true" size={15} />
-                洞察发现
+                {t('center.metrics.insights')}
               </dt>
-              <dd>{highlightCount}</dd>
-              <small>来自 {orderedEntries.length} 份心跳报告</small>
+              <dd>{formatCount(highlightCount)}</dd>
+              <small>
+                {t('center.metrics.insightReports', {
+                  count: orderedEntries.length,
+                  formattedCount: formatCount(orderedEntries.length)
+                })}
+              </small>
               <span className="heartbeat-center__metric-note">
                 {latestEntry
-                  ? `最近一次发现 ${latestEntry.highlights.length} 条`
-                  : '等待首次心跳'}
+                  ? t('center.metrics.latestInsights', {
+                      count: latestEntry.highlights.length,
+                      formattedCount: formatCount(
+                        latestEntry.highlights.length
+                      )
+                    })
+                  : t('center.metrics.awaitingFirstRun')}
               </span>
             </div>
             <div>
               <dt>
                 <ListChecks aria-hidden="true" size={15} />
-                行动转化
+                {t('center.metrics.action')}
               </dt>
               <dd>
-                {completedTasks.length}/{followUpTaskIds.size}
+                {formatCount(completedTasks.length)}/
+                {formatCount(followUpTaskIds.size)}
               </dd>
-              <small>已完成任务 / 心跳建议</small>
+              <small>{t('center.metrics.actionDescription')}</small>
               <span
-                aria-label={`建议任务完成率 ${actionPercent}%`}
+                aria-label={t('center.metrics.actionRateAriaLabel', {
+                  percent: formatPercent(actionPercent)
+                })}
                 className="heartbeat-center__meter"
                 role="progressbar"
                 aria-valuemax={100}
@@ -585,25 +648,29 @@ export function HeartbeatCenter({
             >
               <div className="heartbeat-center__section-heading">
                 <div>
-                  <p className="eyebrow">GROWTH TREND</p>
-                  <h3 id="heartbeat-trend-title">成长趋势</h3>
+                  <p className="eyebrow">
+                    {t('center.trend.eyebrow')}
+                  </p>
+                  <h3 id="heartbeat-trend-title">
+                    {t('center.trend.title')}
+                  </h3>
                 </div>
               </div>
               {recentTrend.length === 0 ? (
                 <p className="heartbeat-center__section-empty">
-                  完成心跳后，这里会显示洞察、记忆与行动建议的变化。
+                  {t('center.trend.empty')}
                 </p>
               ) : (
                 <>
                   <div className="heartbeat-center__legend">
                     <span className="heartbeat-center__legend--insight">
-                      洞察
+                      {t('center.trend.insight')}
                     </span>
                     <span className="heartbeat-center__legend--memory">
-                      记忆
+                      {t('center.trend.memory')}
                     </span>
                     <span className="heartbeat-center__legend--task">
-                      行动
+                      {t('center.trend.action')}
                     </span>
                   </div>
                   <div className="heartbeat-center__trend">
@@ -614,7 +681,18 @@ export function HeartbeatCenter({
                         entry.followUpTaskIds.length
                       return (
                         <div
-                          aria-label={`${formatDateTime(entry.createdAt)}：${entry.highlights.length} 条洞察，${entry.proposedMemoryIds.length} 条记忆建议，${entry.followUpTaskIds.length} 个行动建议`}
+                          aria-label={t('center.trend.rowAriaLabel', {
+                            date: formatDateTime(entry.createdAt),
+                            insights: formatCount(
+                              entry.highlights.length
+                            ),
+                            memories: formatCount(
+                              entry.proposedMemoryIds.length
+                            ),
+                            actions: formatCount(
+                              entry.followUpTaskIds.length
+                            )
+                          })}
                           className="heartbeat-center__trend-row"
                           key={entry.id}
                           role="img"
@@ -649,7 +727,7 @@ export function HeartbeatCenter({
                               />
                             </span>
                           </span>
-                          <small>{total}</small>
+                          <small>{formatCount(total)}</small>
                         </div>
                       )
                     })}
@@ -664,8 +742,12 @@ export function HeartbeatCenter({
             >
               <div className="heartbeat-center__section-heading">
                 <div>
-                  <p className="eyebrow">LATEST REPORT</p>
-                  <h3 id="latest-heartbeat-title">本次心跳</h3>
+                  <p className="eyebrow">
+                    {t('center.latest.eyebrow')}
+                  </p>
+                  <h3 id="latest-heartbeat-title">
+                    {t('center.latest.title')}
+                  </h3>
                 </div>
                 {latestEntry && (
                   <time dateTime={latestEntry.createdAt}>
@@ -689,7 +771,7 @@ export function HeartbeatCenter({
                       onClick={() => setTab('history')}
                       type="button"
                     >
-                      查看心跳轨迹
+                      {t('center.latest.viewHistory')}
                       <ChevronRight aria-hidden="true" size={14} />
                     </button>
                     {attentionCount > 0 && (
@@ -698,14 +780,17 @@ export function HeartbeatCenter({
                         onClick={() => setTab('suggestions')}
                         type="button"
                       >
-                        处理 {attentionCount} 条建议
+                        {t('center.latest.handleSuggestions', {
+                          count: attentionCount,
+                          formattedCount: formatCount(attentionCount)
+                        })}
                       </button>
                     )}
                   </div>
                 </div>
               ) : (
                 <p className="heartbeat-center__section-empty">
-                  尚无心跳报告。运行一次心跳后，你会在这里看到本次学到了什么。
+                  {t('center.latest.empty')}
                 </p>
               )}
             </section>
@@ -726,14 +811,23 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">MEMORY GROWTH</p>
-                <h3 id="heartbeat-memory-title">待确认记忆</h3>
+                <p className="eyebrow">
+                  {t('center.suggestions.memoryEyebrow')}
+                </p>
+                <h3 id="heartbeat-memory-title">
+                  {t('center.suggestions.memoryTitle')}
+                </h3>
               </div>
-              <span>{pendingMemories.length} 条</span>
+              <span>
+                {t('center.suggestions.memoryCount', {
+                  count: pendingMemories.length,
+                  formattedCount: formatCount(pendingMemories.length)
+                })}
+              </span>
             </div>
             {pendingMemories.length === 0 ? (
               <p className="heartbeat-center__section-empty">
-                当前没有等待确认的记忆建议。
+                {t('center.suggestions.memoryEmpty')}
               </p>
             ) : (
               <div className="heartbeat-center__suggestion-list">
@@ -745,8 +839,17 @@ export function HeartbeatCenter({
                     <header>
                       <span>{memoryTypeLabels[memory.type]}</span>
                       <small>
-                        置信度 {Math.round(memory.confidence * 100)}% ·
-                        重要度 {Math.round(memory.salience * 100)}%
+                        {t(
+                          'center.suggestions.confidenceAndSalience',
+                          {
+                            confidence: percentFormatter.format(
+                              memory.confidence
+                            ),
+                            salience: percentFormatter.format(
+                              memory.salience
+                            )
+                          }
+                        )}
                       </small>
                     </header>
                     <p
@@ -774,8 +877,8 @@ export function HeartbeatCenter({
                         type="button"
                       >
                         {expandedSuggestionId === memory.id
-                          ? '收起内容'
-                          : '查看完整内容'}
+                          ? t('center.suggestions.collapseContent')
+                          : t('center.suggestions.expandContent')}
                       </button>
                     )}
                     <div>
@@ -792,7 +895,7 @@ export function HeartbeatCenter({
                         type="button"
                       >
                         <CheckCircle2 aria-hidden="true" size={14} />
-                        确认记忆
+                        {t('center.suggestions.confirmMemory')}
                       </button>
                       <button
                         className="secondary-button"
@@ -807,7 +910,7 @@ export function HeartbeatCenter({
                         type="button"
                       >
                         <XCircle aria-hidden="true" size={14} />
-                        忽略
+                        {t('center.suggestions.ignore')}
                       </button>
                     </div>
                   </article>
@@ -822,14 +925,23 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">NEXT ACTIONS</p>
-                <h3 id="heartbeat-task-title">行动建议</h3>
+                <p className="eyebrow">
+                  {t('center.suggestions.taskEyebrow')}
+                </p>
+                <h3 id="heartbeat-task-title">
+                  {t('center.suggestions.taskTitle')}
+                </h3>
               </div>
-              <span>{followUpTasks.length} 个</span>
+              <span>
+                {t('center.suggestions.taskCount', {
+                  count: followUpTasks.length,
+                  formattedCount: formatCount(followUpTasks.length)
+                })}
+              </span>
             </div>
             {followUpTasks.length === 0 ? (
               <p className="heartbeat-center__section-empty">
-                当前没有由智能心跳产生的行动建议。
+                {t('center.suggestions.taskEmpty')}
               </p>
             ) : (
               <div className="heartbeat-center__suggestion-list">
@@ -868,8 +980,8 @@ export function HeartbeatCenter({
                         type="button"
                       >
                         {expandedSuggestionId === task.id
-                          ? '收起内容'
-                          : '查看完整内容'}
+                          ? t('center.suggestions.collapseContent')
+                          : t('center.suggestions.expandContent')}
                       </button>
                     )}
                     {task.status !== 'completed' &&
@@ -880,7 +992,7 @@ export function HeartbeatCenter({
                           onClick={() => onUseFollowUpTask(task)}
                           type="button"
                         >
-                          带入对话处理
+                          {t('center.suggestions.useInConversation')}
                           <ChevronRight aria-hidden="true" size={14} />
                         </button>
                         <button
@@ -896,7 +1008,7 @@ export function HeartbeatCenter({
                           type="button"
                         >
                           <CheckCircle2 aria-hidden="true" size={14} />
-                          标记完成
+                          {t('center.suggestions.markCompleted')}
                         </button>
                         <button
                           className="secondary-button"
@@ -910,7 +1022,7 @@ export function HeartbeatCenter({
                           }
                           type="button"
                         >
-                          忽略建议
+                          {t('center.suggestions.ignoreSuggestion')}
                         </button>
                       </div>
                     ) : null}
@@ -935,17 +1047,24 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">HEARTBEAT TIMELINE</p>
+                <p className="eyebrow">
+                  {t('center.history.timelineEyebrow')}
+                </p>
                 <h3 id="heartbeat-reports-title">
                   <History aria-hidden="true" size={16} />
-                  成长轨迹
+                  {t('center.history.timelineTitle')}
                 </h3>
               </div>
-              <span>{orderedEntries.length} 份报告</span>
+              <span>
+                {t('center.history.reportCount', {
+                  count: orderedEntries.length,
+                  formattedCount: formatCount(orderedEntries.length)
+                })}
+              </span>
             </div>
             {orderedEntries.length === 0 ? (
               <p className="heartbeat-center__section-empty">
-                完成心跳后，每次学习和变化都会沉淀在这里。
+                {t('center.history.emptyTimeline')}
               </p>
             ) : (
               <div className="heartbeat-center__timeline">
@@ -964,9 +1083,17 @@ export function HeartbeatCenter({
                             {formatDateTime(entry.createdAt)}
                           </time>
                           <small>
-                            {entry.highlights.length} 条洞察 ·{' '}
-                            {entry.proposedMemoryIds.length} 条记忆 ·{' '}
-                            {entry.followUpTaskIds.length} 个行动
+                            {t('center.history.reportSummary', {
+                              insights: formatCount(
+                                entry.highlights.length
+                              ),
+                              memories: formatCount(
+                                entry.proposedMemoryIds.length
+                              ),
+                              actions: formatCount(
+                                entry.followUpTaskIds.length
+                              )
+                            })}
                           </small>
                         </header>
                         <p
@@ -995,7 +1122,9 @@ export function HeartbeatCenter({
                           }
                           type="button"
                         >
-                          {expanded ? '收起报告' : '展开完整报告'}
+                          {expanded
+                            ? t('center.history.collapseReport')
+                            : t('center.history.expandReport')}
                         </button>
                       </article>
                     )
@@ -1010,7 +1139,7 @@ export function HeartbeatCenter({
                 }
                 type="button"
               >
-                加载更多心跳报告
+                {t('center.history.loadMoreReports')}
               </button>
             )}
           </section>
@@ -1021,14 +1150,23 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">RUN AUDIT</p>
-                <h3 id="heartbeat-runs-title">运行记录</h3>
+                <p className="eyebrow">
+                  {t('center.history.auditEyebrow')}
+                </p>
+                <h3 id="heartbeat-runs-title">
+                  {t('center.history.auditTitle')}
+                </h3>
               </div>
-              <span>{orderedRuns.length} 次</span>
+              <span>
+                {t('center.history.runCount', {
+                  count: orderedRuns.length,
+                  formattedCount: formatCount(orderedRuns.length)
+                })}
+              </span>
             </div>
             {orderedRuns.length === 0 ? (
               <p className="heartbeat-center__section-empty">
-                尚无智能心跳运行记录。
+                {t('center.history.emptyRuns')}
               </p>
             ) : (
               <ul className="heartbeat-center__run-list">
@@ -1047,10 +1185,18 @@ export function HeartbeatCenter({
                     <span>
                       <strong>{runStatusLabels[run.status]}</strong>
                       <small>
-                        {run.trigger === 'manual' ? '手动运行' : '周期运行'} ·{' '}
+                        {run.trigger === 'manual'
+                          ? t('center.history.manualRun')
+                          : t('center.history.scheduledRun')}{' '}
+                        ·{' '}
                         {formatDateTime(run.scheduledFor)}
                         {run.attemptCount > 1
-                          ? ` · 第 ${run.attemptCount} 次尝试`
+                          ? ` · ${t('center.history.attempt', {
+                              count: run.attemptCount,
+                              formattedCount: formatCount(
+                                run.attemptCount
+                              )
+                            })}`
                           : ''}
                       </small>
                       {run.error && <em>{run.error}</em>}
@@ -1067,7 +1213,7 @@ export function HeartbeatCenter({
                 }
                 type="button"
               >
-                加载更多运行记录
+                {t('center.history.loadMoreRuns')}
               </button>
             )}
           </section>

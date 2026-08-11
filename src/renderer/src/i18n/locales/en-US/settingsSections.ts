@@ -1,0 +1,339 @@
+import type { TranslationShape } from '../../resource-types'
+import type {
+  settingsSections as chineseSettingsSections
+} from '../zh-CN/settingsSections'
+
+export const settingsSections = {
+  speech: {
+    title: 'Speech models',
+    description:
+      'Model weights are not bundled. Download them as needed or import them from a local directory.',
+    openModelsDirectory: 'Open models directory',
+    storagePrefix: 'Models are stored in',
+    storageSuffix:
+      '. Automatic downloads pin the source revision and verify file sizes and SHA-256 hashes. You can also download models from their repositories and import them.',
+    availableModels: 'Available speech models',
+    loading: 'Loading speech models…',
+    errors: {
+      serviceUnavailable:
+        'Speech model services are not available in this version',
+      readFailed: 'Could not load speech models',
+      operationFailed: 'The speech model operation failed'
+    },
+    quality: {
+      basic: 'Basic quality',
+      balanced: 'Balanced quality',
+      high: 'High quality'
+    },
+    speed: {
+      fast: 'Fast',
+      balanced: 'Balanced speed',
+      slow: 'Slower'
+    },
+    family: {
+      sensevoice: 'SenseVoice',
+      paraformer: 'Paraformer',
+      whisper: 'Whisper'
+    },
+    operations: {
+      installing: 'Verifying and installing',
+      preparingImport: 'Preparing import',
+      preparingDownload: 'Preparing download',
+      importing: 'Importing',
+      downloading: 'Downloading',
+      processingFile: 'Processing {{file}}'
+    },
+    status: {
+      inUse: 'In use',
+      pendingSave: 'Pending save',
+      installed: 'Installed',
+      manualImport: 'Manual import',
+      availableToDownload: 'Available to download',
+      unknownSize: 'Unknown size'
+    },
+    tags: {
+      recommended: 'Recommended'
+    },
+    actions: {
+      cancel: 'Cancel',
+      delete: 'Delete',
+      confirmDelete: 'Confirm delete',
+      download: 'Download',
+      import: 'Import',
+      modelDetails: 'Model details',
+      openRepository: 'Open model repository'
+    },
+    accessibility: {
+      selectModel: 'Select {{name}}',
+      notInstalled: '{{name}} is not installed',
+      cancelOperation: 'Cancel the {{name}} operation',
+      deleteModel: 'Delete {{name}}',
+      downloadModel: 'Download {{name}}',
+      importModel: 'Import {{name}} from a local directory',
+      downloadProgress: '{{name}} download progress',
+      openRepository: 'Open the {{name}} model repository'
+    },
+    notifications: {
+      installed: '{{name}} installed',
+      imported: '{{name}} imported from a local directory',
+      removed: 'Speech model deleted'
+    },
+    details: {
+      license: 'License: ',
+      licenseSeparator: '. '
+    },
+    languages: {
+      中文: 'Chinese',
+      粤语: 'Cantonese',
+      英语: 'English',
+      日语: 'Japanese',
+      韩语: 'Korean',
+      多语言: 'Multilingual'
+    },
+    catalog: {
+      'sensevoice-small-int8': {
+        displayName: 'SenseVoiceSmall INT8',
+        description:
+          'Fast Chinese speech recognition with Cantonese, English, Japanese, and Korean support, optimized for local CPUs.'
+      },
+      'whisper-tiny-multilingual': {
+        displayName: 'Whisper Tiny (Multilingual)',
+        description:
+          'A compact multilingual OpenAI Whisper Tiny alternative that supports Chinese and many other languages.'
+      },
+      'paraformer-bilingual-zh-en-int8': {
+        displayName: 'Paraformer Chinese-English INT8',
+        description:
+          'Fast offline Mandarin and English recognition for primarily Chinese dictation with occasional English.'
+      },
+      'paraformer-trilingual-zh-yue-en-int8': {
+        displayName: 'Paraformer Chinese-Cantonese-English INT8',
+        description:
+          'Offline Mandarin, Cantonese, and English recognition for multilingual and Cantonese input.'
+      },
+      'whisper-small-multilingual-int8': {
+        displayName: 'Whisper Small (Multilingual) INT8',
+        description:
+          'A balanced multilingual model with much better recognition quality than Tiny for general dictation.'
+      },
+      'whisper-medium-multilingual-int8': {
+        displayName: 'Whisper Medium (Multilingual) INT8',
+        description:
+          'A high-quality multilingual model for situations where accuracy matters more than slower CPU inference.'
+      }
+    }
+  },
+  embedding: {
+    label: 'Embedding model',
+    title: 'Embeddings and knowledge retrieval',
+    description:
+      'Verify the model and manage the embedding index used for knowledge retrieval',
+    model: {
+      heading: 'Current embedding model',
+      configured: 'Configured model',
+      provider: 'Provider: {{provider}}',
+      credentialConfigured: 'Credentials configured',
+      credentialMissing: 'Credentials not configured',
+      endpoint: 'Endpoint: '
+    },
+    diagnostic: {
+      success: 'Test succeeded',
+      failed: 'Test failed',
+      result:
+        'The service returned a {{dimensions}}-dimensional vector in {{latency}} ms.',
+      checkedAt: 'Tested: {{date}}',
+      remedy: 'Suggested action: {{remedy}}',
+      testing: 'Testing…',
+      test: 'Test embedding model',
+      notice:
+        'The test sends one real request to the current service and does not change the knowledge index.'
+    },
+    index: {
+      heading: 'Knowledge embedding index',
+      rebuildRunning: 'Rebuild in progress…',
+      rebuild: 'Rebuild embedding index',
+      emptyTitle: 'No rebuild history yet',
+      emptyDescription:
+        'Select “Rebuild embedding index” to generate retrievable embeddings for knowledge documents.',
+      statuses: {
+        queued: 'Rebuild waiting to start',
+        running: 'Rebuilding',
+        completed: 'Last rebuild succeeded',
+        failed: 'Last rebuild failed',
+        cancelled: 'Last rebuild was cancelled'
+      },
+      cancelAria: 'Cancel embedding index rebuild',
+      cancel: 'Cancel rebuild',
+      progressAria: 'Embedding index rebuild progress',
+      completed: '{{completed}} / {{total}} documents completed',
+      completedWithPeriod: '{{completed}} / {{total}} documents completed.',
+      completedAt:
+        '{{completed}} / {{total}} documents completed at {{date}}.',
+      preparing: 'Preparing documents…',
+      atomicNotice:
+        'Each document is updated atomically and becomes available for retrieval immediately. If cancelled, completed documents are kept while all others retain their previous or missing state.',
+      cancelledNotice:
+        'Completed documents keep their new embeddings. All other documents retain their previous embeddings, and documents without embeddings remain missing.',
+      failedNotice:
+        '{{completed}} / {{total}} documents completed. Documents with errors were marked as failed, while completed documents remain available for retrieval.',
+      remedyPrefix: 'Suggested action: ',
+      defaultRemedy:
+        'Check the embedding model configuration and network connection.',
+      retrySuffix:
+        ' After fixing the issue, select “Rebuild embedding index” to retry.'
+    }
+  },
+  roles: {
+    title: 'Roles and prompts',
+    description: 'Manage chat roles and their trusted system prompts',
+    newRole: 'New role',
+    notice:
+      'The selected role adds its system prompt to the current text conversation. Expert teams use up to three enabled roles in parallel. Synthesis mode and expert teams always inherit the default model; only an individual role uses its assigned connection. Image generation connections do not use role prompts.',
+    listLabel: 'Role list',
+    listTitle: 'Roles',
+    editRole: 'Edit role {{name}}',
+    noDescription: 'No description',
+    details: 'Role details',
+    fields: {
+      name: 'Role name',
+      description: 'Role description',
+      systemPrompt: 'System prompt',
+      systemPromptHelp:
+        'Sent to the text model as trusted instructions. Do not include API keys or private data. {{count}} / 20,000 characters entered.',
+      modelConnection: 'Model connection',
+      modelConnectionAria: 'Role model connection',
+      inheritDefault: 'Inherit default model',
+      inheritDefaultNamed: 'Inherit default model ({{name}})',
+      unavailableConnection: 'Previous model connection is unavailable',
+      modelHelp:
+        'An inherited model follows changes to the default connection. An assigned connection applies only to this role.',
+      modelFallbackNamed:
+        'The assigned model connection is unavailable. The runtime will fall back to the default model “{{name}}”. Select an available connection or inherit the default model.',
+      modelFallback:
+        'The assigned model connection is unavailable. The runtime will fall back to the current default model. Select an available connection or inherit the default model.',
+      routingKeywords: 'Routing keywords',
+      routingSeparator: ', ',
+      routingPlaceholder:
+        'For example: code review, TypeScript, performance analysis',
+      routingHelp:
+        'Separate keywords with commas or line breaks. They are normalized and deduplicated when saved. Up to 32 keywords, each 2–48 characters.'
+    },
+    validation: {
+      tooManyKeywords: 'Use no more than 32 routing keywords.',
+      invalidKeyword: 'Keyword “{{keyword}}” must be 2–48 characters.'
+    },
+    errors: {
+      readFailed: 'Could not load roles',
+      saveFailed: 'Could not save the role',
+      deleteFailed: 'Could not delete the role'
+    },
+    delete: {
+      confirmAria: 'Confirm deletion of role {{name}}',
+      label: 'Delete role',
+      triggerAria: 'Delete role {{name}}',
+      message:
+        'After deletion, this role will be removed from chat selection and expert teams.'
+    },
+    actions: {
+      cancel: 'Cancel',
+      saving: 'Saving…',
+      save: 'Save role',
+      create: 'Create role'
+    },
+    empty:
+      'No roles yet. Create a role to configure its system prompt.'
+  },
+  platformFeatures: {
+    errors: {
+      serviceUnavailable:
+        'Application settings are not available in this version',
+      readFailed: 'Could not load platform feature settings',
+      saveMagicNotesFailed: 'Could not save Magic Notes settings. Try again.',
+      saveCommentModeFailed:
+        'Could not save the AI comment mode. Try again.',
+      saveCommentFormatFailed:
+        'Could not save the AI comment format. Try again.'
+    },
+    label: 'Platform feature options',
+    magicNotes: {
+      title: 'Magic Notes',
+      description:
+        'Off by default. Enable it to capture notes and to-dos and analyze content with AI.',
+      showEntry: 'Show Magic Notes',
+      commentMode: 'AI comment mode',
+      commentModeAria: 'Magic Notes AI comment mode',
+      modes: {
+        immediate: 'Immediate',
+        afterSaveAuto: 'Automatic after save',
+        afterSaveManual: 'Manual after save'
+      },
+      commentModeHelp:
+        'Immediate mode comments on an unsaved draft 5 seconds after you press Enter and stop typing. Automatic mode comments after saving. Manual mode comments only after you select Analyze with AI.',
+      commentFormat: 'AI comment format',
+      commentFormatAria: 'Magic Notes AI comment format',
+      formats: {
+        combined: 'Long-form + points',
+        narrative: 'Long-form',
+        structured: 'Points'
+      },
+      commentFormatHelp:
+        'By default, AI generates both a streaming long-form comment and structured points. You can keep only one format instead.'
+    }
+  },
+  skills: {
+    runtimeLabels: {
+      model: 'Model',
+      opencode: 'OpenCode',
+      continue: 'Continue'
+    },
+    errors: {
+      readFailed: 'Could not load Skills',
+      operationFailed: 'The Skill operation failed'
+    },
+    actions: {
+      importDirectory: 'Import Skill directory',
+      importZip: 'Import Skill ZIP',
+      delete: 'Delete'
+    },
+    listLabel: 'Skills list',
+    notice:
+      'Skills inject local capability instructions into selected targets without changing the Runtime’s own configuration. Newly imported Skills are enabled by default and assigned to the direct model, OpenCode, and Continue.',
+    loading: 'Loading Skills…',
+    source: {
+      builtin: 'Built in',
+      imported: 'Imported'
+    },
+    versionMissing: 'Version not specified',
+    enableAria: 'Enable {{name}}',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    assignedTo: 'Assigned to',
+    deleteAria: 'Delete {{name}}'
+  },
+  updates: {
+    label: 'Update settings',
+    errors: {
+      serviceUnavailable:
+        'Version checks are not available in this version',
+      readSettingsFailed: 'Could not load application settings',
+      saveSettingsFailed: 'Could not save update settings',
+      checkFailed: 'Version check failed',
+      network:
+        '{{fallback}}: Could not connect to the official GoodBuddy GitHub Release. Check your network or proxy and try again.'
+    },
+    loadingAppInfo: 'Loading application information…',
+    checkOnStartup: 'Check for updates at startup',
+    actions: {
+      checking: 'Checking…',
+      checkNow: 'Check for updates now',
+      openDownloadPage: 'Open official download page'
+    },
+    result: {
+      available: 'New version {{version}} is available',
+      current: 'You have the latest version',
+      target: 'Current: {{version}} · {{platform}}/{{arch}}',
+      safety:
+        'Verify the file name and SHA-256 on the release page before downloading. GoodBuddy never downloads or runs installers automatically.'
+    }
+  }
+} satisfies TranslationShape<typeof chineseSettingsSections>

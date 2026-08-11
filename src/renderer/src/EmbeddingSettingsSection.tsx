@@ -5,6 +5,7 @@ import {
   RefreshCw,
   XCircle
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type {
   EmbeddingConfigurationSummary,
   EmbeddingDiagnosticResult,
@@ -12,14 +13,6 @@ import type {
   EmbeddingIndexStatus
 } from '../../shared/embedding-contracts'
 import { isEmbeddingIndexJobActive } from '../../shared/embedding-contracts'
-
-const jobStatusLabels: Record<EmbeddingIndexJob['status'], string> = {
-  queued: '重建等待开始',
-  running: '正在重建',
-  completed: '最近一次重建成功',
-  failed: '最近一次重建失败',
-  cancelled: '最近一次重建已取消'
-}
 
 export interface EmbeddingSettingsSectionProps {
   configuration: EmbeddingConfigurationSummary
@@ -32,8 +25,8 @@ export interface EmbeddingSettingsSectionProps {
   onCancel?: (jobId: string) => void
 }
 
-function formatCheckedAt(timestamp: number): string {
-  return new Intl.DateTimeFormat('zh-CN', {
+function formatCheckedAt(timestamp: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: 'medium',
     timeStyle: 'short'
   }).format(timestamp)
@@ -44,14 +37,23 @@ function DiagnosticResult({
 }: {
   result: EmbeddingDiagnosticResult
 }): React.JSX.Element {
+  const { i18n, t } = useTranslation('settingsSections')
+  const locale = i18n.resolvedLanguage ?? i18n.language
   if (result.status === 'available') {
     return (
       <div aria-live="polite" className="capability-diagnostic__result">
-        <strong>测试成功</strong>
+        <strong>{t('embedding.diagnostic.success')}</strong>
         <p>
-          服务返回 {result.dimensions} 维向量，耗时 {result.latencyMs} 毫秒。
+          {t('embedding.diagnostic.result', {
+            dimensions: result.dimensions,
+            latency: result.latencyMs
+          })}
         </p>
-        <small>测试时间：{formatCheckedAt(result.checkedAt)}</small>
+        <small>
+          {t('embedding.diagnostic.checkedAt', {
+            date: formatCheckedAt(result.checkedAt, locale)
+          })}
+        </small>
       </div>
     )
   }
@@ -61,9 +63,15 @@ function DiagnosticResult({
       className="capability-diagnostic__result"
       role="alert"
     >
-      <strong>测试失败</strong>
+      <strong>{t('embedding.diagnostic.failed')}</strong>
       <p>{result.error.message}</p>
-      {result.error.remedy && <p>处理建议：{result.error.remedy}</p>}
+      {result.error.remedy && (
+        <p>
+          {t('embedding.diagnostic.remedy', {
+            remedy: result.error.remedy
+          })}
+        </p>
+      )}
     </div>
   )
 }
@@ -77,6 +85,8 @@ function IndexJobStatus({
   disabled: boolean
   onCancel?: (jobId: string) => void
 }): React.JSX.Element {
+  const { i18n, t } = useTranslation('settingsSections')
+  const locale = i18n.resolvedLanguage ?? i18n.language
   const active = isEmbeddingIndexJobActive(job)
   return (
     <div
@@ -86,28 +96,28 @@ function IndexJobStatus({
     >
       <div className="embedding-settings__job-header">
         <div>
-          <strong>{jobStatusLabels[job.status]}</strong>
+          <strong>{t(`embedding.index.statuses.${job.status}`)}</strong>
           <small>
             {job.provider} · {job.model}
           </small>
         </div>
         {active && onCancel && (
           <button
-            aria-label="取消向量索引重建"
+            aria-label={t('embedding.index.cancelAria')}
             className="secondary-button"
             disabled={disabled}
             onClick={() => onCancel(job.id)}
             type="button"
           >
             <XCircle aria-hidden="true" size={13} />
-            取消重建
+            {t('embedding.index.cancel')}
           </button>
         )}
       </div>
       {active && (
         <>
           <progress
-            aria-label="向量索引重建进度"
+            aria-label={t('embedding.index.progressAria')}
             max={100}
             {...(job.progress.total > 0
               ? { value: job.progress.percent }
@@ -115,40 +125,55 @@ function IndexJobStatus({
           />
           <p>
             {job.progress.total > 0
-              ? `已完成 ${job.progress.completed} / ${job.progress.total} 篇文档`
-              : '正在准备待处理文档…'}
+              ? t('embedding.index.completed', {
+                  completed: job.progress.completed,
+                  total: job.progress.total
+                })
+              : t('embedding.index.preparing')}
           </p>
           <p className="settings-notice">
-            每篇文档会一次性更新，处理完成后立即可用于检索。取消后，已完成文档会保留，其余文档的原有或缺失状态不变。
+            {t('embedding.index.atomicNotice')}
           </p>
         </>
       )}
       {job.status === 'completed' && (
         <p>
-          已完成 {job.progress.completed} / {job.progress.total} 篇文档
           {job.completedAt
-            ? `，完成于 ${formatCheckedAt(job.completedAt)}。`
-            : '。'}
+            ? t('embedding.index.completedAt', {
+                completed: job.progress.completed,
+                total: job.progress.total,
+                date: formatCheckedAt(job.completedAt, locale)
+              })
+            : t('embedding.index.completedWithPeriod', {
+                completed: job.progress.completed,
+                total: job.progress.total
+              })}
         </p>
       )}
       {job.status === 'cancelled' && (
         <>
           <p>
-            已完成 {job.progress.completed} / {job.progress.total} 篇文档。
+            {t('embedding.index.completedWithPeriod', {
+              completed: job.progress.completed,
+              total: job.progress.total
+            })}
           </p>
-          <p>
-            已完成文档保留新向量；其余文档保留原有向量，原本没有向量的仍保持缺失。
-          </p>
+          <p>{t('embedding.index.cancelledNotice')}</p>
         </>
       )}
       {job.status === 'failed' && job.error && (
         <div role="alert">
           <p>{job.error.message}</p>
-          <p>{`已完成 ${job.progress.completed} / ${job.progress.total} 篇文档。发生错误的文档已标记为错误，已完成文档仍可用于检索。`}</p>
           <p>
-            处理建议：
-            {job.error.remedy ?? '请检查向量模型配置和网络连接。'}
-            修复后点击“重建向量索引”重试。
+            {t('embedding.index.failedNotice', {
+              completed: job.progress.completed,
+              total: job.progress.total
+            })}
+          </p>
+          <p>
+            {t('embedding.index.remedyPrefix')}
+            {job.error.remedy ?? t('embedding.index.defaultRemedy')}
+            {t('embedding.index.retrySuffix')}
           </p>
         </div>
       )}
@@ -166,18 +191,19 @@ export function EmbeddingSettingsSection({
   onRebuild,
   onCancel
 }: EmbeddingSettingsSectionProps): React.JSX.Element {
+  const { t } = useTranslation('settingsSections')
   const active = isEmbeddingIndexJobActive(indexStatus.job)
 
   return (
     <section
-      aria-label="向量模型"
+      aria-label={t('embedding.label')}
       className="embedding-settings settings-section"
     >
       <div className="settings-section__title">
         <Activity aria-hidden="true" size={17} />
         <div>
-          <h2 id="embedding-settings-heading">向量与知识检索</h2>
-          <small>确认模型可用，并管理知识检索使用的向量索引</small>
+          <h2 id="embedding-settings-heading">{t('embedding.title')}</h2>
+          <small>{t('embedding.description')}</small>
         </div>
       </div>
 
@@ -188,22 +214,31 @@ export function EmbeddingSettingsSection({
         <div className="embedding-settings__subheading">
           <div>
             <FlaskConical aria-hidden="true" size={15} />
-            <h3 id="embedding-model-heading">当前向量模型</h3>
+            <h3 id="embedding-model-heading">
+              {t('embedding.model.heading')}
+            </h3>
           </div>
         </div>
         <div className="embedding-settings__model">
           <div className="embedding-settings__model-name">
-            <span>已配置模型</span>
+            <span>{t('embedding.model.configured')}</span>
             <strong>{configuration.model}</strong>
-            <small>服务提供方：{configuration.provider}</small>
+            <small>
+              {t('embedding.model.provider', {
+                provider: configuration.provider
+              })}
+            </small>
           </div>
           <span className="embedding-settings__credential">
-            {configuration.credentialConfigured ? '已配置凭据' : '未配置凭据'}
+            {configuration.credentialConfigured
+              ? t('embedding.model.credentialConfigured')
+              : t('embedding.model.credentialMissing')}
           </span>
         </div>
         {configuration.endpoint && (
           <p className="embedding-settings__endpoint">
-            服务地址：<code>{configuration.endpoint}</code>
+            {t('embedding.model.endpoint')}
+            <code>{configuration.endpoint}</code>
           </p>
         )}
         <div className="capability-diagnostic">
@@ -214,12 +249,14 @@ export function EmbeddingSettingsSection({
             type="button"
           >
             <FlaskConical aria-hidden="true" size={13} />
-            {diagnosticRunning ? '正在测试…' : '测试向量模型'}
+            {diagnosticRunning
+              ? t('embedding.diagnostic.testing')
+              : t('embedding.diagnostic.test')}
           </button>
           {diagnostic && <DiagnosticResult result={diagnostic} />}
           {!diagnostic && !diagnosticRunning && (
             <p className="settings-notice">
-              测试会向当前服务发送一次实际请求，不会更改知识索引。
+              {t('embedding.diagnostic.notice')}
             </p>
           )}
         </div>
@@ -232,7 +269,9 @@ export function EmbeddingSettingsSection({
         <div className="embedding-settings__subheading">
           <div>
             <Database aria-hidden="true" size={15} />
-            <h3 id="embedding-index-heading">知识向量索引</h3>
+            <h3 id="embedding-index-heading">
+              {t('embedding.index.heading')}
+            </h3>
           </div>
           <button
             className="secondary-button"
@@ -241,7 +280,9 @@ export function EmbeddingSettingsSection({
             type="button"
           >
             <RefreshCw aria-hidden="true" size={13} />
-            {active ? '重建进行中…' : '重建向量索引'}
+            {active
+              ? t('embedding.index.rebuildRunning')
+              : t('embedding.index.rebuild')}
           </button>
         </div>
 
@@ -253,8 +294,8 @@ export function EmbeddingSettingsSection({
           />
         ) : (
           <div className="embedding-settings__empty">
-            <strong>还没有重建记录</strong>
-            <p>点击“重建向量索引”，为知识文档生成可用于检索的向量。</p>
+            <strong>{t('embedding.index.emptyTitle')}</strong>
+            <p>{t('embedding.index.emptyDescription')}</p>
           </div>
         )}
       </div>

@@ -10,6 +10,7 @@ import {
   X
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   AssistantExpert,
   AssistantHeartbeatConfig,
@@ -49,6 +50,7 @@ import type {
   EmbeddingDiagnosticResult,
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
+import { useUiLocale } from './i18n/UiLocaleProvider'
 
 type ModelType = 'llm' | 'embedding' | 'speech'
 type AgentRuntimeType = RuntimeConfigActionInput['runtime']
@@ -79,15 +81,6 @@ type SettingsPanelProps = {
   appearanceTheme?: AppearanceTheme
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
   onMagicNotesEnabledChange?: (enabled: boolean) => void
-}
-
-const credentialLabels: Record<
-  RuntimeSettings['credentialSource'],
-  string
-> = {
-  none: '尚未配置',
-  encrypted: '已由系统安全存储加密',
-  environment: '由环境变量提供'
 }
 
 function settingsErrorMessage(reason: unknown, fallback: string): string {
@@ -158,20 +151,27 @@ function RuntimeConfigCard({
   onSelect,
   onOpen
 }: RuntimeConfigCardProps): React.JSX.Element {
+  const { t } = useTranslation('settings')
   const saved = Boolean(path) && savedPath === path
   return (
     <div className="runtime-config-card">
       <div>
-        <strong>{runtimeLabel} 自有配置</strong>
+        <strong>
+          {t('runtime.configCard.title', { runtime: runtimeLabel })}
+        </strong>
         <small>{description}</small>
       </div>
       <label className="field">
-        <span>配置文件</span>
+        <span>{t('runtime.configCard.fileLabel')}</span>
         <div className="workspace-picker">
           <input
-            aria-label={`${runtimeLabel} 配置文件路径`}
+            aria-label={t('runtime.configCard.pathAriaLabel', {
+              runtime: runtimeLabel
+            })}
             onChange={(event) => onPathChange(event.target.value)}
-            placeholder={`选择可信的本地 ${runtimeLabel} 配置文件`}
+            placeholder={t('runtime.configCard.pathPlaceholder', {
+              runtime: runtimeLabel
+            })}
             value={path}
           />
           <button
@@ -179,7 +179,7 @@ function RuntimeConfigCard({
             onClick={() => void onSelect(fileKind, onPathChange)}
             type="button"
           >
-            选择文件
+            {t('actions.selectFile')}
           </button>
           <button
             className="secondary-button"
@@ -187,7 +187,7 @@ function RuntimeConfigCard({
             onClick={() => onPathChange('')}
             type="button"
           >
-            清除
+            {t('actions.clear')}
           </button>
         </div>
       </label>
@@ -199,14 +199,14 @@ function RuntimeConfigCard({
               onClick={() => void onOpen(runtime, 'open-file')}
               type="button"
             >
-              打开配置文件
+              {t('actions.openConfigFile')}
             </button>
             <button
               className="secondary-button"
               onClick={() => void onOpen(runtime, 'show-file')}
               type="button"
             >
-              在文件夹中显示
+              {t('actions.revealInFolder')}
             </button>
           </>
         ) : (
@@ -215,13 +215,15 @@ function RuntimeConfigCard({
             onClick={() => void onOpen(runtime, 'open-directory')}
             type="button"
           >
-            打开 {runtimeLabel} 配置目录
+            {t('actions.openConfigDirectory', {
+              runtime: runtimeLabel
+            })}
           </button>
         )}
       </div>
       {path && !saved && (
         <small className="runtime-config-card__hint">
-          保存设置后可直接打开或定位该文件。
+          {t('runtime.configCard.unsavedHint')}
         </small>
       )}
     </div>
@@ -245,6 +247,11 @@ export function SettingsPanel({
   onAppearanceThemeChange = () => {},
   onMagicNotesEnabledChange = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
+  const { i18n, t } = useTranslation('settings')
+  const {
+    preference: uiLocalePreference,
+    setPreference: setUiLocalePreference
+  } = useUiLocale()
   const [settings, setSettings] = useState<RuntimeSettings>()
   const [provider, setProvider] =
     useState<RuntimeSettingsInput['provider']>(
@@ -320,6 +327,15 @@ export function SettingsPanel({
   const [activeTab, setActiveTab] =
     useState<SettingsCategoryId>('runtime')
   const [modelType, setModelType] = useState<ModelType>('llm')
+  const [speechModelDraftId, setSpeechModelDraftId] = useState<
+    string | null | undefined
+  >()
+  const [
+    persistedSpeechModelId,
+    setPersistedSpeechModelId
+  ] = useState<string | null | undefined>()
+  const [speechModelSelectionDirty, setSpeechModelSelectionDirty] =
+    useState(false)
   const [agentRuntimeType, setAgentRuntimeType] =
     useState<AgentRuntimeType>('opencode')
   const settingsBodyRef = useRef<HTMLDivElement>(null)
@@ -377,6 +393,9 @@ export function SettingsPanel({
         setConfirmingClear(false)
         setClearingLocalData(false)
         setModelType('llm')
+        setSpeechModelDraftId(undefined)
+        setPersistedSpeechModelId(undefined)
+        setSpeechModelSelectionDirty(false)
         setAgentRuntimeType('opencode')
         setSettings(value)
         setProvider(value.provider)
@@ -412,15 +431,25 @@ export function SettingsPanel({
         )
       })
       .catch((reason: unknown) => {
-        setError(settingsErrorMessage(reason, '读取设置失败'))
+        setError(
+          settingsErrorMessage(
+            reason,
+            i18n.t('errors.readSettings', { ns: 'settings' })
+          )
+        )
       })
     void window.goodbuddy.settings
       .detectAgentRuntimes()
       .then(setDetection)
       .catch((reason: unknown) => {
-        setError(settingsErrorMessage(reason, 'Runtime 自动检测失败'))
+        setError(
+          settingsErrorMessage(
+            reason,
+            i18n.t('errors.detectRuntimes', { ns: 'settings' })
+          )
+        )
       })
-  }, [open])
+  }, [i18n, open])
 
   useEffect(() => {
     if (open && settingsBodyRef.current) {
@@ -444,7 +473,14 @@ export function SettingsPanel({
       })
       .catch((reason: unknown) => {
         if (active) {
-          setError(settingsErrorMessage(reason, '读取向量索引状态失败'))
+          setError(
+            settingsErrorMessage(
+              reason,
+              i18n.t('errors.readEmbeddingStatus', {
+                ns: 'settings'
+              })
+            )
+          )
         }
       })
     const unsubscribe = embeddings.onStatus((indexStatus) => {
@@ -458,7 +494,7 @@ export function SettingsPanel({
       active = false
       unsubscribe()
     }
-  }, [open])
+  }, [i18n, open])
 
   if (!open) {
     return null
@@ -474,6 +510,9 @@ export function SettingsPanel({
     )
     setKnowledgeEmbeddingApiKey('')
     setClearKnowledgeEmbeddingApiKey(false)
+    setSpeechModelDraftId(undefined)
+    setPersistedSpeechModelId(undefined)
+    setSpeechModelSelectionDirty(false)
     setError(undefined)
     onClose()
   }
@@ -489,7 +528,7 @@ export function SettingsPanel({
           (profile) => profile.id === defaultModelProfileId
         ) ?? modelProfiles[0]
       if (!defaultProfile) {
-        throw new Error('请至少配置一个模型连接')
+        throw new Error(t('errors.requireModelConnection'))
       }
       const profileInputs = modelProfiles.map((profile) => ({
         id: profile.id,
@@ -547,6 +586,17 @@ export function SettingsPanel({
         toolApproval,
         subagentSmartRoutingEnabled
       })
+      let selectedSpeechModelId = speechModelDraftId
+      if (speechModelSelectionDirty) {
+        const speechModels = window.goodbuddy.speechModels
+        if (!speechModels) {
+          throw new Error(t('errors.speechModelsUnavailable'))
+        }
+        const speechSnapshot = await speechModels.select(
+          speechModelDraftId ?? null
+        )
+        selectedSpeechModelId = speechSnapshot.selectedModelId
+      }
       setSettings(value)
       setModelProfiles(toModelProfileDrafts(value))
       setSelectedModelProfileId((selectedId) =>
@@ -575,6 +625,11 @@ export function SettingsPanel({
       setSubagentSmartRoutingEnabled(
         value.subagentSmartRoutingEnabled
       )
+      if (speechModelSelectionDirty) {
+        setSpeechModelDraftId(selectedSpeechModelId)
+        setPersistedSpeechModelId(selectedSpeechModelId)
+        setSpeechModelSelectionDirty(false)
+      }
       const embeddings = window.goodbuddy.embeddings
       if (embeddings) {
         try {
@@ -583,7 +638,7 @@ export function SettingsPanel({
           setError(
             settingsErrorMessage(
               reason,
-              '设置已保存，但刷新向量模型状态失败'
+              t('errors.refreshEmbeddingAfterSave')
             )
           )
         }
@@ -592,13 +647,13 @@ export function SettingsPanel({
       if (notifySuccess) {
         onNotify({
           tone: 'success',
-          message: '设置已保存',
+          message: t('notifications.settingsSaved'),
           dedupeKey: 'runtime-settings-saved'
         })
       }
       return value
     } catch (reason) {
-      setError(settingsErrorMessage(reason, '保存设置失败'))
+      setError(settingsErrorMessage(reason, t('errors.saveSettings')))
       return undefined
     } finally {
       setSaving(false)
@@ -637,7 +692,9 @@ export function SettingsPanel({
         message:
           status.capability === 'image-generation'
             ? status.detail
-            : `连接成功：${status.label}`,
+            : t('notifications.connectionSucceeded', {
+                label: status.label
+              }),
         dedupeKey: testingModel
           ? 'model-connection-tested'
           : `runtime-connection-tested-${agentRuntimeType}`
@@ -646,7 +703,9 @@ export function SettingsPanel({
       setError(
         settingsErrorMessage(
           reason,
-          testingModel ? '模型连接测试失败' : 'Runtime 连接测试失败'
+          testingModel
+            ? t('errors.testModel')
+            : t('errors.testRuntime')
         )
       )
     } finally {
@@ -657,7 +716,7 @@ export function SettingsPanel({
   const runEmbeddingDiagnostic = async (): Promise<void> => {
     const embeddings = window.goodbuddy.embeddings
     if (!embeddings) {
-      setError('向量诊断服务不可用')
+      setError(t('errors.embeddingDiagnosticUnavailable'))
       return
     }
     setEmbeddingDiagnosticRunning(true)
@@ -671,7 +730,7 @@ export function SettingsPanel({
       setEmbeddingDiagnostic(diagnostic)
       setEmbeddingSnapshot(await embeddings.getSnapshot())
     } catch (reason) {
-      setError(settingsErrorMessage(reason, '向量模型测试失败'))
+      setError(settingsErrorMessage(reason, t('errors.testEmbedding')))
     } finally {
       setEmbeddingDiagnosticRunning(false)
     }
@@ -680,7 +739,7 @@ export function SettingsPanel({
   const rebuildEmbeddingIndex = async (): Promise<void> => {
     const embeddings = window.goodbuddy.embeddings
     if (!embeddings) {
-      setError('向量索引服务不可用')
+      setError(t('errors.embeddingIndexUnavailable'))
       return
     }
     setError(undefined)
@@ -693,7 +752,9 @@ export function SettingsPanel({
         snapshot ? { ...snapshot, indexStatus } : snapshot
       )
     } catch (reason) {
-      setError(settingsErrorMessage(reason, '启动向量索引重建失败'))
+      setError(
+        settingsErrorMessage(reason, t('errors.rebuildEmbeddingIndex'))
+      )
     }
   }
 
@@ -704,10 +765,12 @@ export function SettingsPanel({
     }
     try {
       if (!(await embeddings.cancel(jobId))) {
-        throw new Error('当前向量索引任务已结束')
+        throw new Error(t('errors.embeddingJobFinished'))
       }
     } catch (reason) {
-      setError(settingsErrorMessage(reason, '取消向量索引重建失败'))
+      setError(
+        settingsErrorMessage(reason, t('errors.cancelEmbeddingIndex'))
+      )
     }
   }
 
@@ -722,7 +785,7 @@ export function SettingsPanel({
         setValue(selected)
       }
     } catch (reason) {
-      setError(settingsErrorMessage(reason, '选择文件失败'))
+      setError(settingsErrorMessage(reason, t('errors.selectFile')))
     }
   }
 
@@ -737,7 +800,7 @@ export function SettingsPanel({
       })
     } catch (reason) {
       setError(
-        settingsErrorMessage(reason, '打开 Runtime 配置失败')
+        settingsErrorMessage(reason, t('errors.openRuntimeConfig'))
       )
     }
   }
@@ -750,7 +813,7 @@ export function SettingsPanel({
         await window.goodbuddy.settings.detectAgentRuntimes()
       )
     } catch (reason) {
-      setError(settingsErrorMessage(reason, 'Runtime 自动检测失败'))
+      setError(settingsErrorMessage(reason, t('errors.detectRuntimes')))
     } finally {
       setDetecting(false)
     }
@@ -773,7 +836,9 @@ export function SettingsPanel({
       ...profiles,
       {
         id,
-        name: `模型连接 ${profiles.length + 1}`,
+        name: t('model.profile.generatedName', {
+          count: profiles.length + 1
+        }),
         baseUrl: '',
         modelName: '',
         protocol: 'openai-chat-completions',
@@ -795,7 +860,7 @@ export function SettingsPanel({
 
   const removeModelProfile = (id: string): void => {
     if (modelProfiles.length <= 1) {
-      setError('请至少保留一个模型连接')
+      setError(t('errors.retainModelConnection'))
       return
     }
     const removedIndex = modelProfiles.findIndex(
@@ -928,17 +993,19 @@ export function SettingsPanel({
         {value
           ? value.available
             ? [
-                '已就绪',
+                t('runtime.detection.ready'),
                 value.path,
                 value.version,
                 value.detail
               ]
                 .filter(Boolean)
                 .join(' · ')
-            : `尚未就绪 · ${value.detail}`
+            : t('runtime.detection.notReady', {
+                detail: value.detail
+              })
           : detecting
-            ? '正在检测…'
-            : '尚未检测'}
+            ? t('runtime.detection.detecting')
+            : t('runtime.detection.notDetected')}
       </span>
     </div>
   )
@@ -963,7 +1030,7 @@ export function SettingsPanel({
             <PageHeader
               actions={
                 <button
-                  aria-label="关闭设置"
+                  aria-label={t('center.close')}
                   className="icon-button"
                   onClick={close}
                   type="button"
@@ -971,17 +1038,17 @@ export function SettingsPanel({
                   <X aria-hidden="true" size={19} />
                 </button>
               }
-              description="管理模型连接、Agent Runtime、自动化、扩展能力和本地数据。"
-              eyebrow="SETTINGS"
+              description={t('center.description')}
+              eyebrow={t('center.eyebrow')}
               headingId="settings-title"
-              title="设置中心"
+              title={t('center.title')}
             />
           </div>
         </div>
 
         <div className="settings-panel__body">
           <nav
-            aria-label="设置分类"
+            aria-label={t('center.categoriesAriaLabel')}
             aria-orientation="vertical"
             className="settings-tabs"
             role="tablist"
@@ -989,7 +1056,9 @@ export function SettingsPanel({
             {settingsCategoryList.map((category) => (
               <button
                 aria-controls={`settings-panel-${category.id}`}
-                aria-label={category.label}
+                aria-label={t(
+                  `categories.${category.translationKey}.label`
+                )}
                 aria-selected={activeTab === category.id}
                 id={`settings-tab-${category.id}`}
                 key={category.id}
@@ -1004,8 +1073,14 @@ export function SettingsPanel({
                 tabIndex={activeTab === category.id ? 0 : -1}
                 type="button"
               >
-                <strong>{category.label}</strong>
-                <small>{category.navigationDescription}</small>
+                <strong>
+                  {t(`categories.${category.translationKey}.label`)}
+                </strong>
+                <small>
+                  {t(
+                    `categories.${category.translationKey}.navigationDescription`
+                  )}
+                </small>
               </button>
             ))}
           </nav>
@@ -1031,12 +1106,15 @@ export function SettingsPanel({
                         type="button"
                       >
                         {testing
-                          ? '测试中…'
+                          ? t('actions.testing')
                           : activeTab === 'model'
-                            ? '保存并测试模型'
-                            : agentRuntimeType === 'opencode'
-                              ? '保存并测试 OpenCode'
-                              : '保存并测试 Continue'}
+                            ? t('actions.saveAndTestModel')
+                            : t('actions.saveAndTestRuntime', {
+                                runtime:
+                                  agentRuntimeType === 'opencode'
+                                    ? 'OpenCode'
+                                    : 'Continue'
+                              })}
                       </button>
                     )}
                     <button
@@ -1046,7 +1124,9 @@ export function SettingsPanel({
                       type="button"
                     >
                       <Save aria-hidden="true" size={13} />
-                      {saving ? '保存中…' : '保存设置'}
+                      {saving
+                        ? t('actions.saving')
+                        : t('actions.saveSettings')}
                     </button>
                   </>
                 ) : undefined
@@ -1056,48 +1136,97 @@ export function SettingsPanel({
             />
           )}
           {activeTab === 'appearance' && (
-            <div className="settings-section appearance-settings">
-              <div className="settings-section__title">
-                <SunMoon size={17} />
-                <div>
-                  <strong>界面主题</strong>
-                  <small>选择后立即应用，并保存在此设备</small>
+            <>
+              <div className="settings-section appearance-settings">
+                <div className="settings-section__title">
+                  <SunMoon size={17} />
+                  <div>
+                    <strong>{t('appearance.theme.title')}</strong>
+                    <small>{t('appearance.theme.description')}</small>
+                  </div>
+                </div>
+                <div
+                  aria-label={t('appearance.theme.ariaLabel')}
+                  className="appearance-options"
+                  role="radiogroup"
+                >
+                  {(['system', 'light', 'dark'] as const).map(
+                    (value) => (
+                      <label key={value}>
+                        <input
+                          checked={appearanceTheme === value}
+                          name="appearance-theme"
+                          onChange={() =>
+                            onAppearanceThemeChange(value)
+                          }
+                          type="radio"
+                          value={value}
+                        />
+                        <span
+                          aria-hidden="true"
+                          className={`appearance-options__preview appearance-options__preview--${value}`}
+                        >
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                        <strong>
+                          {t(
+                            `appearance.theme.options.${value}.label`
+                          )}
+                        </strong>
+                        <small>
+                          {t(
+                            `appearance.theme.options.${value}.description`
+                          )}
+                        </small>
+                      </label>
+                    )
+                  )}
                 </div>
               </div>
-              <div
-                aria-label="界面主题"
-                className="appearance-options"
-                role="radiogroup"
-              >
-                {(
-                  [
-                    ['system', '跟随系统', '随操作系统自动切换'],
-                    ['light', '亮色', '明亮、清晰的工作界面'],
-                    ['dark', '暗色', '降低暗光环境下的亮度']
-                  ] as const
-                ).map(([value, label, description]) => (
-                  <label key={value}>
-                    <input
-                      checked={appearanceTheme === value}
-                      name="appearance-theme"
-                      onChange={() => onAppearanceThemeChange(value)}
-                      type="radio"
-                      value={value}
-                    />
-                    <span
-                      aria-hidden="true"
-                      className={`appearance-options__preview appearance-options__preview--${value}`}
-                    >
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    <strong>{label}</strong>
-                    <small>{description}</small>
-                  </label>
-                ))}
+              <div className="settings-section appearance-settings">
+                <div className="settings-section__title">
+                  <div>
+                    <strong>{t('appearance.language.title')}</strong>
+                    <small>{t('appearance.language.description')}</small>
+                  </div>
+                </div>
+                <div
+                  aria-label={t('appearance.language.ariaLabel')}
+                  className="appearance-options"
+                  role="radiogroup"
+                >
+                  {(
+                    [
+                      ['system', 'system'],
+                      ['zh-CN', 'chinese'],
+                      ['en-US', 'english']
+                    ] as const
+                  ).map(([value, translationKey]) => (
+                    <label key={value}>
+                      <input
+                        checked={uiLocalePreference === value}
+                        name="interface-language"
+                        onChange={() => setUiLocalePreference(value)}
+                        type="radio"
+                        value={value}
+                      />
+                      <strong>
+                        {t(
+                          `appearance.language.options.${translationKey}.label`
+                        )}
+                      </strong>
+                      <small>
+                        {t(
+                          `appearance.language.options.${translationKey}.description`
+                        )}
+                      </small>
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
+            </>
           )}
           {activeTab === 'platform-features' && (
             <PlatformFeaturesSettingsSection
@@ -1113,17 +1242,15 @@ export function SettingsPanel({
             <div className="settings-section__title">
               <FolderOpen size={17} />
               <div>
-                <strong>默认工作区</strong>
-                <small>
-                  当前项目未设置根目录时，Agent 才使用此默认位置
-                </small>
+                <strong>{t('runtime.workspace.title')}</strong>
+                <small>{t('runtime.workspace.description')}</small>
               </div>
             </div>
             <label className="field">
-              <span>默认工作区目录</span>
+              <span>{t('runtime.workspace.directoryLabel')}</span>
               <div className="workspace-picker">
                 <input
-                  aria-label="默认工作区目录"
+                  aria-label={t('runtime.workspace.directoryLabel')}
                   onChange={(event) => setWorkspacePath(event.target.value)}
                   value={workspacePath}
                 />
@@ -1141,14 +1268,14 @@ export function SettingsPanel({
                         setError(
                           settingsErrorMessage(
                             reason,
-                            '选择工作区目录失败'
+                            t('errors.selectWorkspace')
                           )
                         )
                       })
                   }}
                   type="button"
                 >
-                  选择
+                  {t('actions.select')}
                 </button>
               </div>
             </label>
@@ -1165,7 +1292,7 @@ export function SettingsPanel({
               value={agentRuntimeType}
             />
             <small>
-              OpenCode 和 Continue 已随 GoodBuddy 内置；配置可兼容的直连文本模型后即可使用。
+              {t('runtime.selectorDescription')}
             </small>
           </div>
 
@@ -1174,38 +1301,44 @@ export function SettingsPanel({
               <div className="settings-section__title">
                 <TerminalSquare size={17} />
                 <div>
-                  <strong>OpenCode Agent</strong>
-                  <small>GoodBuddy 内置 Runtime，默认跟随文本模型连接</small>
+                  <strong>{t('runtime.opencode.title')}</strong>
+                  <small>{t('runtime.bundledDescription')}</small>
                 </div>
               </div>
               <div className="runtime-note">
-                <strong>Runtime：</strong>GoodBuddy 内置 OpenCode
+                <strong>{t('runtime.runtimeLabel')}</strong>
+                {t('runtime.bundledRuntime', { runtime: 'OpenCode' })}
                 <br />
-                <strong>模型配置：</strong>
+                <strong>{t('runtime.modelConfigurationLabel')}</strong>
                 {activeRuntimeModelSource.kind === 'platform'
-                  ? '使用 OpenCode 自有配置'
+                  ? t('runtime.ownConfiguration', {
+                      runtime: 'OpenCode'
+                    })
                   : activeRuntimeModelProfile
-                    ? `跟随 GoodBuddy · ${activeRuntimeModelProfile.name}（${activeRuntimeModelProfile.modelName}）`
+                    ? t('runtime.followGoodBuddy', {
+                        name: activeRuntimeModelProfile.name,
+                        model: activeRuntimeModelProfile.modelName
+                      })
                     : defaultTextModelProfile
-                      ? `跟随 GoodBuddy · ${defaultTextModelProfile.name}（${defaultTextModelProfile.modelName}）`
-                      : '尚未配置兼容的文本模型'}
+                      ? t('runtime.followGoodBuddy', {
+                          name: defaultTextModelProfile.name,
+                          model: defaultTextModelProfile.modelName
+                        })
+                      : t('runtime.noCompatibleModel')}
                 <br />
-                推荐直接跟随 GoodBuddy 模型。只有需要复用 OpenCode
-                原生模型、插件或 MCP 配置时，才切换到 Runtime 自有配置。
+                {t('runtime.opencode.recommendation')}
               </div>
               <div className="runtime-note">
-                对话时可选择 Ask 或 Execute。Ask 仅可调用知识库与全局笔记读取工具；Execute
-                可调用已启用工具及笔记写入工具，调用过程会记录到活动。
+                {t('runtime.permissions')}
               </div>
               {detectionSummary(detection?.opencode)}
               <details className="settings-section">
-                <summary>高级设置</summary>
+                <summary>{t('runtime.advanced')}</summary>
                 <p className="settings-panel__description">
-                  普通使用无需修改。这里可以切换模型配置来源、管理
-                  Runtime 自有配置，或覆盖内置程序与服务。
+                  {t('runtime.opencode.advancedDescription')}
                 </p>
                 <fieldset className="runtime-source-options">
-                  <legend>模型配置来源</legend>
+                  <legend>{t('runtime.sourceLegend')}</legend>
                   <label>
                     <input
                       checked={opencodeModelSource.kind === 'profile'}
@@ -1223,9 +1356,9 @@ export function SettingsPanel({
                       type="radio"
                     />
                     <span>
-                      <strong>跟随 GoodBuddy 模型（推荐）</strong>
+                      <strong>{t('runtime.followRecommended')}</strong>
                       <small>
-                        自动生成安全的运行期配置，无需维护 Runtime 配置文件。
+                        {t('runtime.opencode.followDescription')}
                       </small>
                     </span>
                   </label>
@@ -1239,18 +1372,24 @@ export function SettingsPanel({
                       type="radio"
                     />
                     <span>
-                      <strong>使用 OpenCode 自有配置</strong>
+                      <strong>
+                        {t('runtime.ownConfiguration', {
+                          runtime: 'OpenCode'
+                        })}
+                      </strong>
                       <small>
-                        适合需要原生模型、插件或 MCP 配置的专业用户。
+                        {t('runtime.opencode.ownDescription')}
                       </small>
                     </span>
                   </label>
                 </fieldset>
                 {opencodeModelSource.kind === 'profile' && (
                   <label className="field">
-                    <span>GoodBuddy 模型连接</span>
+                    <span>{t('runtime.goodBuddyConnection')}</span>
                     <select
-                      aria-label="OpenCode GoodBuddy 模型连接"
+                      aria-label={`OpenCode ${t(
+                        'runtime.goodBuddyConnection'
+                      )}`}
                       value={opencodeModelSource.profileId}
                       onChange={(event) => {
                         setOpencodeModelSource(
@@ -1268,19 +1407,21 @@ export function SettingsPanel({
                           {profile.name}
                           {isOpenCodeCompatible(profile)
                             ? ''
-                            : '（不兼容）'}
+                            : t('runtime.incompatibleSuffix')}
                         </option>
                       ))}
                     </select>
                     <small>
-                      可固定到其他 GoodBuddy 文本模型连接。
+                      {t('runtime.pinConnectionDescription')}
                     </small>
                   </label>
                 )}
                 {opencodeModelSource.kind === 'platform' &&
                   !opencodeBaseUrl.trim() && (
                   <RuntimeConfigCard
-                    description="GoodBuddy 不会打开或暴露自动生成的运行期配置；这里只管理你明确选择的本地文件。"
+                    description={t(
+                      'runtime.opencode.configDescription'
+                    )}
                     fileKind="opencodeConfig"
                     onOpen={openRuntimeConfig}
                     onPathChange={setOpencodeConfigPath}
@@ -1294,14 +1435,13 @@ export function SettingsPanel({
                 {opencodeModelSource.kind === 'platform' &&
                   Boolean(opencodeBaseUrl.trim()) && (
                     <p className="settings-warning">
-                      外部 OpenCode Server
-                      的模型、插件与工具由服务端管理，本地配置文件不会传给该服务。按请求授权的本机知识库工具也不会注入外部服务。
+                      {t('runtime.opencode.externalServerWarning')}
                     </p>
                   )}
                 <label className="field">
-                  <span>Server 地址</span>
+                  <span>{t('runtime.serverAddress')}</span>
                   <input
-                    aria-label="OpenCode Server 地址"
+                    aria-label={t('runtime.opencode.serverAriaLabel')}
                     inputMode="url"
                     onChange={(event) => {
                       const value = event.target.value
@@ -1310,23 +1450,26 @@ export function SettingsPanel({
                         setOpencodeModelSource({ kind: 'platform' })
                       }
                     }}
-                    placeholder="留空使用内置本机服务"
+                    placeholder={t(
+                      'runtime.opencode.serverPlaceholder'
+                    )}
                     value={opencodeBaseUrl}
                   />
                   <small>
-                    留空时自动启动 GoodBuddy 内置的本机 OpenCode
-                    服务，无需安装或填写地址。
+                    {t('runtime.opencode.serverDescription')}
                   </small>
                 </label>
                 <label className="field">
-                  <span>OpenCode 可执行文件路径</span>
+                  <span>{t('runtime.opencode.binaryPath')}</span>
                   <div className="workspace-picker">
                     <input
-                      aria-label="OpenCode 可执行文件路径"
+                      aria-label={t('runtime.opencode.binaryPath')}
                       onChange={(event) =>
                         setOpencodeBinaryPath(event.target.value)
                       }
-                      placeholder="留空使用 GoodBuddy 内置程序"
+                      placeholder={t(
+                        'runtime.bundledProgramPlaceholder'
+                      )}
                       value={opencodeBinaryPath}
                     />
                     <button
@@ -1339,7 +1482,7 @@ export function SettingsPanel({
                       }
                       type="button"
                     >
-                      选择
+                      {t('actions.select')}
                     </button>
                     <button
                       className="secondary-button"
@@ -1347,13 +1490,15 @@ export function SettingsPanel({
                       onClick={() => setOpencodeBinaryPath('')}
                       type="button"
                     >
-                      清除
+                      {t('actions.clear')}
                     </button>
                   </div>
                 </label>
                 {opencodeBinaryPath && (
                   <p className="settings-warning">
-                    自定义 OpenCode 可执行文件将以当前用户权限运行，请仅选择可信文件。
+                    {t('runtime.customBinaryWarning', {
+                      runtime: 'OpenCode'
+                    })}
                   </p>
                 )}
                 <button
@@ -1362,7 +1507,11 @@ export function SettingsPanel({
                   onClick={() => void detectRuntimes()}
                   type="button"
                 >
-                  {detecting ? '检测中…' : '重新检测 OpenCode'}
+                  {detecting
+                    ? t('actions.detecting')
+                    : t('actions.redetectRuntime', {
+                        runtime: 'OpenCode'
+                      })}
                 </button>
               </details>
             </div>
@@ -1373,38 +1522,44 @@ export function SettingsPanel({
               <div className="settings-section__title">
                 <TerminalSquare size={17} />
                 <div>
-                  <strong>Continue CLI</strong>
-                  <small>GoodBuddy 内置 Runtime，默认跟随文本模型连接</small>
+                  <strong>{t('runtime.continue.title')}</strong>
+                  <small>{t('runtime.bundledDescription')}</small>
                 </div>
               </div>
               <div className="runtime-note">
-                <strong>Runtime：</strong>GoodBuddy 内置 Continue
+                <strong>{t('runtime.runtimeLabel')}</strong>
+                {t('runtime.bundledRuntime', { runtime: 'Continue' })}
                 <br />
-                <strong>模型配置：</strong>
+                <strong>{t('runtime.modelConfigurationLabel')}</strong>
                 {activeRuntimeModelSource.kind === 'platform'
-                  ? '使用 Continue 自有配置'
+                  ? t('runtime.ownConfiguration', {
+                      runtime: 'Continue'
+                    })
                   : activeRuntimeModelProfile
-                    ? `跟随 GoodBuddy · ${activeRuntimeModelProfile.name}（${activeRuntimeModelProfile.modelName}）`
+                    ? t('runtime.followGoodBuddy', {
+                        name: activeRuntimeModelProfile.name,
+                        model: activeRuntimeModelProfile.modelName
+                      })
                     : defaultTextModelProfile
-                      ? `跟随 GoodBuddy · ${defaultTextModelProfile.name}（${defaultTextModelProfile.modelName}）`
-                      : '尚未配置兼容的文本模型'}
+                      ? t('runtime.followGoodBuddy', {
+                          name: defaultTextModelProfile.name,
+                          model: defaultTextModelProfile.modelName
+                        })
+                      : t('runtime.noCompatibleModel')}
                 <br />
-                推荐直接跟随 GoodBuddy 模型。只有需要复用 Continue
-                原生模型、规则或 MCP 配置时，才切换到 Runtime 自有配置。
+                {t('runtime.continue.recommendation')}
               </div>
               <div className="runtime-note">
-                对话时可选择 Ask 或 Execute。Ask 仅可调用知识库与全局笔记读取工具；Execute
-                可调用已启用工具及笔记写入工具，调用过程会记录到活动。
+                {t('runtime.permissions')}
               </div>
               {detectionSummary(detection?.continue)}
               <details className="settings-section">
-                <summary>高级设置</summary>
+                <summary>{t('runtime.advanced')}</summary>
                 <p className="settings-panel__description">
-                  普通使用无需修改。这里可以切换模型配置来源、管理
-                  Runtime 自有配置，或覆盖内置程序。
+                  {t('runtime.continue.advancedDescription')}
                 </p>
                 <fieldset className="runtime-source-options">
-                  <legend>模型配置来源</legend>
+                  <legend>{t('runtime.sourceLegend')}</legend>
                   <label>
                     <input
                       checked={continueModelSource.kind === 'profile'}
@@ -1421,9 +1576,9 @@ export function SettingsPanel({
                       type="radio"
                     />
                     <span>
-                      <strong>跟随 GoodBuddy 模型（推荐）</strong>
+                      <strong>{t('runtime.followRecommended')}</strong>
                       <small>
-                        自动生成安全的临时运行期配置，任务结束后立即删除。
+                        {t('runtime.continue.followDescription')}
                       </small>
                     </span>
                   </label>
@@ -1437,18 +1592,24 @@ export function SettingsPanel({
                       type="radio"
                     />
                     <span>
-                      <strong>使用 Continue 自有配置</strong>
+                      <strong>
+                        {t('runtime.ownConfiguration', {
+                          runtime: 'Continue'
+                        })}
+                      </strong>
                       <small>
-                        适合需要原生模型、规则或 MCP 配置的专业用户。
+                        {t('runtime.continue.ownDescription')}
                       </small>
                     </span>
                   </label>
                 </fieldset>
                 {continueModelSource.kind === 'profile' && (
                   <label className="field">
-                    <span>GoodBuddy 模型连接</span>
+                    <span>{t('runtime.goodBuddyConnection')}</span>
                     <select
-                      aria-label="Continue GoodBuddy 模型连接"
+                      aria-label={`Continue ${t(
+                        'runtime.goodBuddyConnection'
+                      )}`}
                       value={continueModelSource.profileId}
                       onChange={(event) =>
                         setContinueModelSource(
@@ -1465,18 +1626,20 @@ export function SettingsPanel({
                           {profile.name}
                           {isContinueCompatible(profile)
                             ? ''
-                            : '（不兼容）'}
+                            : t('runtime.incompatibleSuffix')}
                         </option>
                       ))}
                     </select>
                     <small>
-                      可固定到其他 GoodBuddy 文本模型连接。
+                      {t('runtime.pinConnectionDescription')}
                     </small>
                   </label>
                 )}
                 {continueModelSource.kind === 'platform' && (
                   <RuntimeConfigCard
-                    description="GoodBuddy 不会打开或暴露含临时凭据的运行期配置；这里只管理你明确选择的本地文件。"
+                    description={t(
+                      'runtime.continue.configDescription'
+                    )}
                     fileKind="continueConfig"
                     onOpen={openRuntimeConfig}
                     onPathChange={setContinueConfigPath}
@@ -1488,14 +1651,16 @@ export function SettingsPanel({
                   />
                 )}
                 <label className="field">
-                  <span>Continue 可执行文件路径</span>
+                  <span>{t('runtime.continue.binaryPath')}</span>
                   <div className="workspace-picker">
                     <input
-                      aria-label="Continue 可执行文件路径"
+                      aria-label={t('runtime.continue.binaryPath')}
                       onChange={(event) =>
                         setContinueBinaryPath(event.target.value)
                       }
-                      placeholder="留空使用 GoodBuddy 内置程序"
+                      placeholder={t(
+                        'runtime.bundledProgramPlaceholder'
+                      )}
                       value={continueBinaryPath}
                     />
                     <button
@@ -1508,7 +1673,7 @@ export function SettingsPanel({
                       }
                       type="button"
                     >
-                      选择
+                      {t('actions.select')}
                     </button>
                     <button
                       className="secondary-button"
@@ -1516,19 +1681,21 @@ export function SettingsPanel({
                       onClick={() => setContinueBinaryPath('')}
                       type="button"
                     >
-                      清除
+                      {t('actions.clear')}
                     </button>
                   </div>
                 </label>
                 {continueModelSource.kind === 'platform' &&
                   !continueConfigPath && (
                   <p className="settings-warning">
-                    未指定配置文件时 Continue 将保持不可用，不会匿名加载远程默认模型。
+                    {t('runtime.continue.missingConfigWarning')}
                   </p>
                   )}
                 {continueBinaryPath && (
                   <p className="settings-warning">
-                    自定义 Continue 可执行文件将以当前用户权限运行，请仅选择可信文件。
+                    {t('runtime.customBinaryWarning', {
+                      runtime: 'Continue'
+                    })}
                   </p>
                 )}
                 <button
@@ -1537,7 +1704,11 @@ export function SettingsPanel({
                   onClick={() => void detectRuntimes()}
                   type="button"
                 >
-                  {detecting ? '检测中…' : '重新检测 Continue'}
+                  {detecting
+                    ? t('actions.detecting')
+                    : t('actions.redetectRuntime', {
+                        runtime: 'Continue'
+                      })}
                 </button>
               </details>
             </div>
@@ -1549,21 +1720,27 @@ export function SettingsPanel({
             <>
           <div className="model-type-navigation">
             <SegmentedControl
-              ariaLabel="模型类型"
+              ariaLabel={t('model.typeAriaLabel')}
               onChange={setModelType}
               options={[
-                { label: 'LLM 模型', value: 'llm' },
-                { label: '向量模型', value: 'embedding' },
-                { label: '语音模型', value: 'speech' }
+                { label: t('model.types.llm.label'), value: 'llm' },
+                {
+                  label: t('model.types.embedding.label'),
+                  value: 'embedding'
+                },
+                {
+                  label: t('model.types.speech.label'),
+                  value: 'speech'
+                }
               ]}
               value={modelType}
             />
             <small>
               {modelType === 'llm'
-                ? '配置对话、推理和图片生成使用的模型连接。'
+                ? t('model.types.llm.description')
                 : modelType === 'embedding'
-                  ? '配置知识库语义检索与 GraphRAG 使用的向量模型。'
-                  : '按需下载或从本地目录导入离线语音识别模型。'}
+                  ? t('model.types.embedding.description')
+                  : t('model.types.speech.description')}
             </small>
           </div>
           {modelType === 'llm' && (
@@ -1571,11 +1748,9 @@ export function SettingsPanel({
             <div className="settings-section__title settings-section__title--actions">
               <KeyRound size={17} />
               <div>
-                <strong>LLM 模型连接</strong>
+                <strong>{t('model.profile.title')}</strong>
                 <small>
-                  支持 OpenAI Responses、Anthropic Messages 和
-                  OpenAI 兼容 Chat Completions；图片模型使用独立的
-                  OpenAI Images Generations 接口类型
+                  {t('model.profile.description')}
                 </small>
               </div>
               <button
@@ -1584,16 +1759,16 @@ export function SettingsPanel({
                 type="button"
               >
                 <Plus size={14} />
-                添加自定义
+                {t('actions.addCustom')}
               </button>
             </div>
             <div className="model-connection-manager">
               <aside
-                aria-label="模型连接列表"
+                aria-label={t('model.profile.listAriaLabel')}
                 className="model-connection-list"
               >
                 <div className="model-connection-list__header">
-                  <strong>连接列表</strong>
+                  <strong>{t('model.profile.listTitle')}</strong>
                   <span>{modelProfiles.length}</span>
                 </div>
                 <div role="list">
@@ -1605,7 +1780,9 @@ export function SettingsPanel({
                             ? 'page'
                             : undefined
                         }
-                        aria-label={`编辑模型连接 ${profile.name}`}
+                        aria-label={t('model.profile.editAriaLabel', {
+                          name: profile.name
+                        })}
                         onClick={() =>
                           setSelectedModelProfileId(profile.id)
                         }
@@ -1617,11 +1794,11 @@ export function SettingsPanel({
                         </span>
                         <span className="model-connection-list__badges">
                           {defaultModelProfileId === profile.id && (
-                            <span>默认</span>
+                            <span>{t('model.profile.defaultBadge')}</span>
                           )}
                           {profile.protocol ===
                             'openai-images-generations' && (
-                            <span>图像</span>
+                            <span>{t('model.profile.imageBadge')}</span>
                           )}
                         </span>
                       </button>
@@ -1644,7 +1821,7 @@ export function SettingsPanel({
                       <strong id={`model-connection-${profile.id}`}>
                         {profile.name}
                       </strong>
-                      <small>连接详情</small>
+                      <small>{t('model.profile.detail')}</small>
                     </div>
                     <label className="check-field">
                       <input
@@ -1655,26 +1832,28 @@ export function SettingsPanel({
                         }
                         type="radio"
                       />
-                      <span>默认连接</span>
+                      <span>{t('model.profile.defaultConnection')}</span>
                     </label>
                     {profile.protocol === 'openai-images-generations' && (
                       <span className="model-capability-badge">
-                        图像生成
+                        {t('model.profile.imageGeneration')}
                       </span>
                     )}
                     <button
-                      aria-label={`删除模型连接 ${profile.name}`}
+                      aria-label={t('model.profile.deleteAriaLabel', {
+                        name: profile.name
+                      })}
                       className="danger-button danger-button--quiet"
                       disabled={modelProfiles.length <= 1}
                       onClick={() => removeModelProfile(profile.id)}
                       type="button"
                     >
                       <Trash2 aria-hidden="true" size={14} />
-                      删除连接
+                      {t('actions.deleteConnection')}
                     </button>
                   </div>
                   <label className="field">
-                    <span>名称</span>
+                    <span>{t('model.profile.name')}</span>
                     <input
                       onChange={(event) =>
                         updateModelProfile(profile.id, {
@@ -1685,7 +1864,7 @@ export function SettingsPanel({
                     />
                   </label>
                   <label className="field">
-                    <span>模型接口 URL</span>
+                    <span>{t('model.profile.endpoint')}</span>
                     <input
                       disabled={environmentManaged}
                       inputMode="url"
@@ -1699,7 +1878,7 @@ export function SettingsPanel({
                     />
                   </label>
                   <label className="field">
-                    <span>模型</span>
+                    <span>{t('model.profile.model')}</span>
                     <input
                       disabled={environmentManaged}
                       onChange={(event) =>
@@ -1712,9 +1891,12 @@ export function SettingsPanel({
                     />
                   </label>
                   <label className="field">
-                    <span>接口协议</span>
+                    <span>{t('model.profile.protocol')}</span>
                     <select
-                      aria-label={`接口协议 ${profile.name}`}
+                      aria-label={t(
+                        'model.profile.protocolAriaLabel',
+                        { name: profile.name }
+                      )}
                       onChange={(event) =>
                         {
                           const protocol = event.target
@@ -1762,7 +1944,7 @@ export function SettingsPanel({
                       value={profile.protocol}
                     >
                       <option value="openai-chat-completions">
-                        OpenAI 兼容 Chat Completions
+                        {t('model.profile.openAiCompatibleProtocol')}
                       </option>
                       <option value="openai-responses">
                         OpenAI Responses
@@ -1771,14 +1953,17 @@ export function SettingsPanel({
                         Anthropic Messages
                       </option>
                       <option value="openai-images-generations">
-                        OpenAI Images Generations（图像生成）
+                        {t('model.profile.imageProtocol')}
                       </option>
                     </select>
                   </label>
                   <label className="field">
-                    <span>认证方式</span>
+                    <span>{t('model.profile.authentication')}</span>
                     <select
-                      aria-label={`认证方式 ${profile.name}`}
+                      aria-label={t(
+                        'model.profile.authenticationAriaLabel',
+                        { name: profile.name }
+                      )}
                       onChange={(event) => {
                         const authentication = event.target
                           .value as ModelProfileDraft['authentication']
@@ -1793,7 +1978,9 @@ export function SettingsPanel({
                       value={profile.authentication}
                     >
                       <option value="api-key">API Key</option>
-                      <option value="none">无需认证</option>
+                      <option value="none">
+                        {t('credentials.noAuthentication')}
+                      </option>
                     </select>
                   </label>
                   {isAgentRuntimeModelProtocol(profile.protocol) && (
@@ -1808,19 +1995,22 @@ export function SettingsPanel({
                           }
                           type="checkbox"
                         />
-                        <span>支持图像输入</span>
+                        <span>{t('model.profile.supportsImageInput')}</span>
                       </label>
                       <small>
-                        启用后，GoodBuddy 可将图片上下文发送给此模型连接。
+                        {t('model.profile.supportsImageInputDescription')}
                       </small>
                     </div>
                   )}
                   {profile.protocol ===
                     'openai-images-generations' && (
                       <label className="field">
-                        <span>图片质量</span>
+                        <span>{t('model.profile.imageQuality')}</span>
                         <select
-                          aria-label={`图片质量 ${profile.name}`}
+                          aria-label={t(
+                            'model.profile.imageQualityAriaLabel',
+                            { name: profile.name }
+                          )}
                           onChange={(event) =>
                             updateModelProfile(profile.id, {
                               imageGenerationQuality: event.target
@@ -1829,13 +2019,21 @@ export function SettingsPanel({
                           }
                           value={profile.imageGenerationQuality}
                         >
-                          <option value="auto">自动</option>
-                          <option value="low">低</option>
-                          <option value="medium">中</option>
-                          <option value="high">高</option>
+                          <option value="auto">
+                            {t('model.profile.quality.auto')}
+                          </option>
+                          <option value="low">
+                            {t('model.profile.quality.low')}
+                          </option>
+                          <option value="medium">
+                            {t('model.profile.quality.medium')}
+                          </option>
+                          <option value="high">
+                            {t('model.profile.quality.high')}
+                          </option>
                         </select>
                         <small>
-                          仅用于 OpenAI 兼容图像生成请求。
+                          {t('model.profile.imageQualityDescription')}
                         </small>
                       </label>
                     )}
@@ -1857,8 +2055,8 @@ export function SettingsPanel({
                           }
                           placeholder={
                             profile.apiKeyConfigured
-                              ? '已配置，留空保持不变'
-                              : '输入 API Key'
+                              ? t('credentials.configuredPlaceholder')
+                              : t('credentials.enterApiKey')
                           }
                           type="password"
                           value={profile.apiKey}
@@ -1867,7 +2065,9 @@ export function SettingsPanel({
                       <div className="credential-state">
                         <LockKeyhole size={15} />
                         <span>
-                          {credentialLabels[profile.credentialSource]}
+                          {t(
+                            `credentials.${profile.credentialSource}`
+                          )}
                         </span>
                         {profile.credentialSource === 'encrypted' && (
                           <button
@@ -1880,8 +2080,8 @@ export function SettingsPanel({
                             type="button"
                           >
                             {profile.clearApiKey
-                              ? '保存后清除'
-                              : '清除凭据'}
+                              ? t('actions.clearAfterSave')
+                              : t('actions.clearCredential')}
                           </button>
                         )}
                       </div>
@@ -1889,20 +2089,25 @@ export function SettingsPanel({
                   ) : (
                     <div className="credential-state">
                       <LockKeyhole size={15} />
-                      <span>无需认证，不会发送 API Key</span>
+                      <span>
+                        {t('credentials.noAuthenticationDescription')}
+                      </span>
                     </div>
                   )}
                   <small className="model-connection-detail__compatibility">
-                    直连模型：
-                    {profile.protocol === 'openai-images-generations'
-                      ? '图像生成'
-                      : '文本对话'}{' '}
-                    · Continue：
-                    {isContinueCompatible(profile) ? '兼容' : '不兼容'} ·
-                    OpenCode：
-                    {isOpenCodeCompatible(profile)
-                      ? '兼容'
-                      : '不兼容（不支持图像生成协议）'}
+                    {t('model.profile.compatibilitySummary', {
+                      directCapability:
+                        profile.protocol ===
+                        'openai-images-generations'
+                          ? t('model.profile.imageGeneration')
+                          : t('model.profile.textChat'),
+                      continueCompatibility: isContinueCompatible(profile)
+                        ? t('model.profile.compatible')
+                        : t('model.profile.incompatible'),
+                      openCodeCompatibility: isOpenCodeCompatible(profile)
+                        ? t('model.profile.compatible')
+                        : t('model.profile.incompatibleImageProtocol')
+                    })}
                   </small>
                 </div>
               )
@@ -1910,8 +2115,7 @@ export function SettingsPanel({
             </div>
             {settings && !settings.secureStorageAvailable && (
               <p className="settings-warning">
-                当前系统密钥服务不可用。为了避免明文落盘，请使用环境变量提供
-                API Key。
+                {t('model.profile.secureStorageWarning')}
               </p>
             )}
           </div>
@@ -1921,10 +2125,8 @@ export function SettingsPanel({
               <div className="settings-section__title">
                 <KeyRound size={17} />
                 <div>
-                  <strong>向量模型连接</strong>
-                  <small>
-                    使用 OpenAI 兼容 Embeddings 接口，不限定服务提供商
-                  </small>
+                  <strong>{t('model.embedding.title')}</strong>
+                  <small>{t('model.embedding.description')}</small>
                 </div>
               </div>
               <div className="runtime-note">
@@ -1936,12 +2138,12 @@ export function SettingsPanel({
                     }
                     type="checkbox"
                   />
-                  <span>启用向量模型</span>
+                  <span>{t('model.embedding.enabled')}</span>
                 </label>
                 <label className="field">
-                  <span>向量接口 URL</span>
+                  <span>{t('model.embedding.endpoint')}</span>
                   <input
-                    aria-label="向量接口 URL"
+                    aria-label={t('model.embedding.endpoint')}
                     disabled={!knowledgeEmbeddingEnabled}
                     inputMode="url"
                     onChange={(event) =>
@@ -1951,13 +2153,13 @@ export function SettingsPanel({
                     value={knowledgeEmbeddingBaseUrl}
                   />
                   <small>
-                    填写完整的 OpenAI 兼容 Embeddings 端点。
+                    {t('model.embedding.endpointDescription')}
                   </small>
                 </label>
                 <label className="field">
-                  <span>模型名称</span>
+                  <span>{t('model.embedding.modelName')}</span>
                   <input
-                    aria-label="模型名称"
+                    aria-label={t('model.embedding.modelName')}
                     disabled={!knowledgeEmbeddingEnabled}
                     onChange={(event) =>
                       setKnowledgeEmbeddingModel(event.target.value)
@@ -1966,9 +2168,9 @@ export function SettingsPanel({
                   />
                 </label>
                 <label className="field">
-                  <span>API Key（可选）</span>
+                  <span>{t('model.embedding.optionalApiKey')}</span>
                   <input
-                    aria-label="API Key（可选）"
+                    aria-label={t('model.embedding.optionalApiKey')}
                     autoComplete="off"
                     disabled={
                       !knowledgeEmbeddingEnabled ||
@@ -1982,8 +2184,8 @@ export function SettingsPanel({
                     }}
                     placeholder={
                       settings?.knowledgeEmbeddingApiKeyConfigured
-                        ? '已配置，留空保持不变'
-                        : '本地无认证服务可留空'
+                        ? t('credentials.configuredPlaceholder')
+                        : t('model.embedding.optionalApiKeyPlaceholder')
                     }
                     type="password"
                     value={knowledgeEmbeddingApiKey}
@@ -1993,10 +2195,10 @@ export function SettingsPanel({
                   <LockKeyhole size={15} />
                   <span>
                     {settings
-                      ? credentialLabels[
-                          settings.knowledgeEmbeddingCredentialSource
-                        ]
-                      : '尚未配置'}
+                      ? t(
+                          `credentials.${settings.knowledgeEmbeddingCredentialSource}`
+                        )
+                      : t('credentials.none')}
                   </span>
                   {settings?.knowledgeEmbeddingCredentialSource ===
                     'encrypted' && (
@@ -2008,15 +2210,13 @@ export function SettingsPanel({
                       type="button"
                     >
                       {clearKnowledgeEmbeddingApiKey
-                        ? '保存后清除'
-                        : '清除凭据'}
+                        ? t('actions.clearAfterSave')
+                        : t('actions.clearCredential')}
                     </button>
                   )}
                 </div>
                 <small>
-                  仅向所填接口发送已启用知识库的分块文本。API Key
-                  由系统安全存储加密；向量服务失败时自动回退到 FTS5
-                  与证据图谱。
+                  {t('model.embedding.privacyDescription')}
                 </small>
               </div>
             </div>
@@ -2040,7 +2240,20 @@ export function SettingsPanel({
             />
           )}
           {modelType === 'speech' && (
-            <SpeechModelSettingsSection onNotify={onNotify} />
+            <SpeechModelSettingsSection
+              onNotify={onNotify}
+              onSelectedModelIdChange={(modelId, changed) => {
+                setSpeechModelDraftId(modelId)
+                setSpeechModelSelectionDirty(changed)
+              }}
+              onSelectionInvalidated={(modelId) => {
+                setSpeechModelDraftId(modelId)
+                setPersistedSpeechModelId(modelId)
+                setSpeechModelSelectionDirty(false)
+              }}
+              persistedSelectedModelId={persistedSpeechModelId}
+              selectedModelId={speechModelDraftId}
+            />
           )}
             </>
           )}
@@ -2049,9 +2262,9 @@ export function SettingsPanel({
             <>
           <div className="settings-section">
             <label className="field">
-            <span>Runtime OS 沙箱</span>
+            <span>{t('security.sandbox.label')}</span>
             <select
-              aria-label="Runtime OS 沙箱"
+              aria-label={t('security.sandbox.label')}
               value={runtimeSandboxMode}
               onChange={(event) =>
                 setRuntimeSandboxMode(
@@ -2060,19 +2273,24 @@ export function SettingsPanel({
                 )
               }
             >
-              <option value="auto">自动（Linux 优先启用）</option>
-              <option value="strict">严格（不可用时拒绝运行）</option>
-              <option value="off">关闭</option>
+              <option value="auto">
+                {t('security.sandbox.options.auto')}
+              </option>
+              <option value="strict">
+                {t('security.sandbox.options.strict')}
+              </option>
+              <option value="off">
+                {t('security.sandbox.options.off')}
+              </option>
             </select>
             <small>
-              首期严格隔离适用于安装 bubblewrap 的 Linux 嵌入式
-              OpenCode。外部 Runtime 与 Continue 不会被误标为已沙箱。
+              {t('security.sandbox.description')}
             </small>
             </label>
             <label className="field">
-            <span>直连模型工具安全策略</span>
+            <span>{t('security.toolPolicy.label')}</span>
             <select
-              aria-label="直连模型工具安全策略"
+              aria-label={t('security.toolPolicy.label')}
               value={toolApproval}
               onChange={(event) =>
                 setToolApproval(
@@ -2081,25 +2299,23 @@ export function SettingsPanel({
               }
             >
               <option value="always">
-                Execute 自动授权已启用的工具
+                {t('security.toolPolicy.always')}
               </option>
-              <option value="policy">禁止所有工具执行</option>
+              <option value="policy">
+                {t('security.toolPolicy.deny')}
+              </option>
             </select>
             <small>
-              直连模型的 Execute 模式可使用内置工作区工具及已分配的
-              MCP 工具；选择 Execute 即授权当前交互运行自动调用这些工具，
-              不再逐次询问。禁止策略会拒绝所有工具调用。OpenCode 与
-              Continue 继续使用各自的工具系统。
+              {t('security.toolPolicy.description')}
             </small>
             </label>
           </div>
 
           <div className="settings-section settings-section--danger">
             <div>
-              <strong>本地数据与隐私</strong>
+              <strong>{t('security.localData.title')}</strong>
               <p>
-                清除本机对话、活动记录和知识库索引。已保存的 Runtime
-                凭据和原目录文件不会被删除。
+                {t('security.localData.description')}
               </p>
             </div>
             {confirmingClear ? (
@@ -2110,7 +2326,7 @@ export function SettingsPanel({
                   onClick={() => setConfirmingClear(false)}
                   type="button"
                 >
-                  取消
+                  {t('actions.cancel')}
                 </button>
                 <button
                   className="danger-button"
@@ -2126,7 +2342,7 @@ export function SettingsPanel({
                         setError(
                           settingsErrorMessage(
                             reason,
-                            '本地数据清除失败'
+                            t('errors.clearLocalData')
                           )
                         )
                       })
@@ -2135,8 +2351,8 @@ export function SettingsPanel({
                   type="button"
                 >
                   {clearingLocalData
-                    ? '正在清除…'
-                    : '清除本地数据'}
+                    ? t('actions.clearing')
+                    : t('actions.clearLocalData')}
                 </button>
               </div>
             ) : (
@@ -2145,7 +2361,7 @@ export function SettingsPanel({
                 onClick={() => setConfirmingClear(true)}
                 type="button"
               >
-                清除本地数据
+                {t('actions.clearLocalData')}
               </button>
             )}
           </div>
@@ -2170,8 +2386,10 @@ export function SettingsPanel({
               <div className="settings-section subagent-routing-settings">
                 <div className="settings-section__title">
                   <div>
-                    <strong>Subagent 智能路由</strong>
-                    <small>按问题内容自动选择最匹配的专家角色</small>
+                    <strong>{t('roles.smartRouting.title')}</strong>
+                    <small>
+                      {t('roles.smartRouting.description')}
+                    </small>
                   </div>
                 </div>
                 <label className="check-field">
@@ -2183,12 +2401,10 @@ export function SettingsPanel({
                     }
                     type="checkbox"
                   />
-                  <span>启用 Subagent 智能路由</span>
+                  <span>{t('roles.smartRouting.enabled')}</span>
                 </label>
                 <small id="subagent-smart-routing-help">
-                  默认关闭。仅在 Ask 或 Plan
-                  模式且未显式选择专家或团队时，自动选择 1
-                  位专家；子专家使用默认文本模型，只读运行且不使用工具。
+                  {t('roles.smartRouting.help')}
                 </small>
               </div>
               <RolePromptSettingsSection

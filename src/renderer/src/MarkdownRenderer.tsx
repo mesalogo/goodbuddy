@@ -1,29 +1,38 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
+import { useTranslation } from 'react-i18next'
 
-const components: Components = {
-  a: ({ children, node, ...properties }) => {
-    void node
-    return (
-      <a {...properties} rel="noopener noreferrer" target="_blank">
-        {children}
-      </a>
-    )
-  },
-  table: ({ children, node, ...properties }) => {
-    void node
-    return (
-      <div
-        aria-label="表格，可横向滚动"
-        className="markdown-table-scroll"
-        role="region"
-        tabIndex={0}
-      >
-        <table {...properties}>{children}</table>
-      </div>
-    )
+const linkComponent: Components['a'] = ({
+  children,
+  node,
+  ...properties
+}) => {
+  void node
+  return (
+    <a {...properties} rel="noopener noreferrer" target="_blank">
+      {children}
+    </a>
+  )
+}
+
+function markdownComponents(tableAriaLabel: string): Components {
+  return {
+    a: linkComponent,
+    table: ({ children, node, ...properties }) => {
+      void node
+      return (
+        <div
+          aria-label={tableAriaLabel}
+          className="markdown-table-scroll"
+          role="region"
+          tabIndex={0}
+        >
+          <table {...properties}>{children}</table>
+        </div>
+      )
+    }
   }
 }
 
@@ -42,6 +51,12 @@ function unwrapMarkdownFence(content: string): string {
 export const MarkdownRenderer = memo(function MarkdownRenderer({
   children
 }: MarkdownRendererProps): React.JSX.Element {
+  const { t } = useTranslation('app')
+  const components = useMemo(
+    () => markdownComponents(t('markdown.scrollableTable')),
+    [t]
+  )
+
   return (
     <ReactMarkdown
       components={components}

@@ -1,0 +1,407 @@
+import type { TranslationShape } from '../../resource-types'
+import type { app as chineseApp } from '../zh-CN/app'
+
+export const app = {
+  notifications: {
+    success: 'Success',
+    error: 'Error',
+    info: 'Notice',
+    close: 'Close notification',
+    viewport: 'App notifications'
+  },
+  window: {
+    minimizeAria: 'Minimize window',
+    minimize: 'Minimize',
+    maximizeAria: 'Maximize window',
+    maximize: 'Maximize',
+    restoreAria: 'Restore window',
+    restore: 'Restore',
+    closeAria: 'Close window',
+    close: 'Close',
+    errors: {
+      readState: 'Failed to read the window state',
+      minimize: 'Failed to minimize the window',
+      resize: 'Failed to change the window size',
+      close: 'Failed to close the window'
+    }
+  },
+  navigation: {
+    label: 'Main navigation',
+    chat: 'Chat',
+    magicNotes: 'Magic Notes',
+    knowledge: 'Knowledge',
+    heartbeat: 'Smart Heartbeat',
+    activity: 'Tasks & Activity',
+    pendingSuggestions: '{{count}} pending suggestions'
+  },
+  sidebar: {
+    label: 'Main sidebar',
+    newConversation: 'New conversation',
+    searchLabel: 'Search conversations',
+    searchPlaceholder: 'Search titles or messages',
+    recent: 'Recent conversations',
+    localWorkspace: 'Local workspace',
+    loading: 'Loading',
+    close: 'Close sidebar',
+    toggle: 'Toggle sidebar'
+  },
+  topbar: {
+    toggleAssistantSidebar: 'Toggle assistant workspace',
+    switchLight: 'Switch to light theme',
+    switchDark: 'Switch to dark theme'
+  },
+  conversation: {
+    defaultTitle: 'New conversation',
+    remoteTitle: 'Remote conversation',
+    greeting:
+      'Hi, I’m GoodBuddy. Ask me a question, add local files, or use your knowledge base. With an Agent Runtime enabled, I can also use tools with your authorization.',
+    interrupted: 'The previous run stopped unexpectedly. You can resend your question.',
+    unread: 'Unread',
+    unreadRemote: 'Unread remote message',
+    noRemote: 'No remote conversations yet',
+    noMatches: 'No matching conversations',
+    renameAria: 'Rename conversation {{title}}',
+    saveName: 'Save conversation name',
+    cancelRename: 'Cancel rename',
+    exportFallbackName: 'GoodBuddy conversation',
+    actions: {
+      more: 'More conversation actions for {{title}}',
+      region: 'Conversation actions for {{title}}',
+      rename: 'Rename conversation',
+      copy: 'Copy full conversation',
+      export: 'Export Markdown'
+    },
+    delete: {
+      cancelAria: 'Cancel deleting conversation {{title}}',
+      confirmAria: 'Confirm permanently deleting conversation {{title}}',
+      confirm: 'Permanently delete conversation',
+      message:
+        'This permanently deletes all content in the conversation. Any running task in it will also stop. This action cannot be undone.',
+      triggerAria: 'Delete conversation {{title}}',
+      trigger: 'Delete conversation'
+    }
+  },
+  runtime: {
+    unavailable: 'Runtime unavailable',
+    detecting: 'Detecting runtime',
+    imageGeneration: 'Image',
+    directModel: 'Direct model',
+    automatic: 'Automatic',
+    automaticSelection: 'Automatic selection',
+    modelUnavailable: 'Model configuration unavailable',
+    selectModel: 'Select the model again in Settings',
+    ownConfiguration: 'Own configuration',
+    useOwnConfiguration: 'Use {{runtime}}’s own configuration',
+    switched: 'This conversation now uses {{label}}',
+    selectionUnavailable: '{{label}} is unavailable: {{detail}}',
+    loadingRetry: 'Agent Runtime is loading. Try again shortly.',
+    updatingRetry: 'Agent Runtime status is updating. Try again shortly.',
+    notSelected: 'No Runtime is selected for this conversation',
+    connecting: 'Connecting to Agent Runtime',
+    pickerTitle: 'Runtime and model: {{label}}',
+    switching: 'Switching…',
+    picker: 'Runtime and model',
+    directModels: 'Direct models',
+    manage: 'Manage Runtime and model connections',
+    errors: {
+      readStatus: 'Failed to read Agent Runtime status',
+      readSettings: 'Failed to read Runtime settings',
+      switch: 'Failed to switch Runtime'
+    }
+  },
+  chat: {
+    user: 'You',
+    assistantResult: 'Assistant result {{index}}',
+    welcome: {
+      title: 'What would you like to accomplish today?',
+      description:
+        'Ask a question, organize information, or connect OpenCode for file search and development tools.'
+    },
+    quickActions: {
+      summarize: {
+        title: 'Summarize content',
+        description: 'Extract key points and action items',
+        prompt: 'Summarize the following content with key points and action items:\n'
+      },
+      analyzeError: {
+        title: 'Analyze an error',
+        description: 'Identify causes and troubleshooting steps',
+        prompt: 'Analyze this error and suggest likely causes and troubleshooting steps:\n'
+      },
+      write: {
+        title: 'Draft work content',
+        description: 'Draft an email, update, or proposal',
+        prompt: 'Help me draft clear, professional work content:\n'
+      }
+    },
+    remote: {
+      title: 'Remote channel conversation',
+      openSettings: 'Open Settings',
+      emptyDescription:
+        'Connect {{project}} first. The conversation will appear here after a remote user sends the first message.',
+      continueInClient:
+        'Continue messaging in the {{client}} client. Use this window to view history, tasks, and results.',
+      waiting:
+        'The conversation will appear here after a remote user sends a message.'
+    },
+    attachments: {
+      label: 'Attachments',
+      region: 'Message attachments',
+      exportHeading: 'Attachments:',
+      exportItem: '- {{name}} ({{size}})'
+    },
+    exportSpeaker: '{{speaker}}:\n{{content}}',
+    images: {
+      view: 'View',
+      download: 'Download',
+      viewNamed: 'View image {{title}}',
+      downloadNamed: 'Download image {{title}}',
+      downloadImage: 'Download image',
+      closeViewer: 'Close image viewer',
+      fallbackTitle: 'GoodBuddy image'
+    },
+    reasoning: {
+      streaming: 'Reasoning',
+      complete: 'Reasoning process'
+    },
+    sources: 'Sources: {{sources}}',
+    citations: {
+      view: 'View {{count}} evidence references',
+      retrieval: 'Retrieved by: ',
+      fullText: 'Full text',
+      vector: 'Vector',
+      graph: 'Graph'
+    },
+    retry: 'Edit and send again',
+    status: {
+      responseTruncated: 'The response was too long and was truncated locally',
+      savingImage: 'Image generated; saving the result',
+      taskCompleted: 'Task completed',
+      taskFailed: 'Task failed',
+      runtimeCompleted: 'Agent Runtime completed its response',
+      answerSubmitted: 'Answer submitted; OpenCode is continuing',
+      questionSkipped: 'Question skipped'
+    },
+    tools: {
+      region: 'Tool execution, {{count}} items',
+      title: 'Tool execution',
+      count: '{{count}} items',
+      input: 'Call arguments',
+      output: 'Result',
+      error: 'Error details',
+      noDetails: 'No execution details are available yet.',
+      states: {
+        pending: 'Pending',
+        running: 'Running',
+        completed: 'Completed',
+        failed: 'Failed',
+        recoverable: 'Retry available',
+        cancelled: 'Cancelled',
+        interrupted: 'Interrupted'
+      }
+    },
+    subagents: {
+      region: 'Subagent status',
+      smart: 'Smart routing',
+      manual: 'Selected manually',
+      fallbackTask: '{{name}} subagent task',
+      states: {
+        queued: 'Queued',
+        running: 'Running',
+        completed: 'Completed',
+        failed: 'Failed',
+        cancelled: 'Cancelled'
+      }
+    },
+    approval: {
+      deny: 'Deny',
+      once: 'Allow once',
+      session: 'Allow for conversation',
+      permanent: 'Always allow',
+      decisionDeny: 'Denied',
+      decisionOnce: 'Allowed once',
+      decisionSession: 'Allowed for this conversation',
+      decisionPermanent: 'Always allowed',
+      executing: '{{decision}}; Agent is running',
+      denied: 'Tool execution denied',
+      responseFailed: 'Failed to respond to approval. Try again.'
+    }
+  },
+  composer: {
+    menuSelection: '{{label}}: {{selection}}',
+    inputLabel: 'Message GoodBuddy',
+    placeholder: 'Message GoodBuddy…',
+    imagePlaceholder: 'Describe the image you want to generate…',
+    keyboardHint:
+      'Enter to send · Shift+Enter for a new line · Ctrl+V to paste an image or text',
+    addContent: 'Add content',
+    addAttachment: 'Add attachment',
+    removeAttachment: 'Remove {{name}}',
+    settings: 'Conversation settings',
+    expertLabel: 'Expert role',
+    modeLabel: 'Work mode',
+    stop: 'Stop generating',
+    send: 'Send',
+    sendTitle: 'Send message',
+    shortcut: 'Quick access: ',
+    experts: {
+      general: 'General assistant',
+      generalDescription: 'Default single assistant',
+      team: 'Expert team (parallel)',
+      teamDescription: 'Multiple experts collaborate in parallel',
+      customDescription: 'Custom expert role'
+    },
+    modes: {
+      ask: {
+        label: 'Ask · Read only',
+        description: 'Read-only answers without modifying files'
+      },
+      execute: {
+        label: 'Execute · Controlled',
+        description: 'Use tools after approval'
+      }
+    },
+    voice: {
+      stopRecording: 'Stop recording',
+      cancel: 'Cancel speech recognition',
+      input: 'Voice input',
+      stopAndRecognize: 'Stop recording and recognize speech',
+      description: 'Convert speech to editable text before sending',
+      unsupported:
+        'Built-in speech recognition is unavailable. You can keep typing.',
+      downloadingPack:
+        'Downloading the offline speech pack. Dictation will start automatically.',
+      transcribed: 'Speech converted to text. Edit it before sending.',
+      localListening: 'Listening with local speech recognition',
+      systemListening: 'Listening with the system speech service',
+      startFailed: 'Could not start speech recognition. Check system speech settings.',
+      microphoneUnavailable:
+        'The microphone is unavailable. Check your recording device and permissions.',
+      recording: 'Recording. Click the voice button again to recognize speech.',
+      localRecognizing: 'Recognizing with the local speech model',
+      noSpeech: 'No speech detected. Move closer to the microphone and try again.',
+      cancelled: 'Speech recognition cancelled',
+      localFailed: 'Local speech recognition failed',
+      permissionDenied:
+        'Microphone access was denied. Allow GoodBuddy in system privacy settings.',
+      recordingStartFailed: 'Could not start recording',
+      preparing: 'Recording complete; preparing local recognition',
+      serviceNotLoaded:
+        'Local speech recognition did not load. Restart GoodBuddy and try again.',
+      availabilityTimeout:
+        'Checking the offline speech pack timed out. Check your connection and try again.',
+      downloadTimeout:
+        'Downloading the offline speech pack timed out. Check your connection and try again.',
+      packDownloading:
+        'The offline speech pack is still downloading. Try again shortly.',
+      recordingCancelled: 'Voice recording cancelled',
+      noRecording: 'No audio was recorded. Check your microphone and try again.',
+      errors: {
+        aborted: 'Speech recognition cancelled',
+        audioCapture:
+          'No microphone is available. Check your device and system input settings.',
+        languageNotSupported:
+          'The required offline speech pack is not available on this system.',
+        network:
+          'Electron online speech recognition is unavailable. Install the offline speech pack and try again.',
+        noSpeech:
+          'No speech was detected. Move closer to the microphone and try again.',
+        permission:
+          'Microphone access was denied. Allow GoodBuddy in system privacy settings.',
+        phrasesNotSupported:
+          'This speech recognition service does not support phrase enhancement.',
+        badGrammar:
+          'This speech recognition service cannot process the grammar configuration.',
+        generic:
+          'Speech recognition failed. Check your microphone and system speech settings.'
+      }
+    },
+    knowledge: {
+      select: 'Select knowledge bases, {{count}} enabled',
+      title: 'Select knowledge bases for this conversation',
+      scope: 'Retrieval scope for this conversation',
+      documents: '{{count}} documents'
+    },
+    hints: {
+      configureRuntime: 'Configure an available model or Agent Runtime first.',
+      imageGeneration:
+        'Image model: describe a scene to generate an image that will appear here and be saved to Results.',
+      agentAsk:
+        '{{runtime}} Ask mode: can only search enabled knowledge bases and cannot modify files.',
+      agentExecute:
+        '{{runtime}} Execute mode: tool calls do not show GoodBuddy approvals and are recorded in Activity.',
+      ask: 'Ask mode: read-only answers without tool calls or file changes.',
+      execute:
+        'Execute mode: tools are automatically authorized and calls are still recorded in Activity.'
+    },
+    errors: {
+      pasteImageType: 'Only JPEG, PNG, or WebP images can be pasted',
+      pasteImageSize: 'Pasted images cannot exceed 12 MB',
+      attachmentLimit: 'A message can include up to 8 attachments',
+      addContext: 'Failed to add context'
+    }
+  },
+  notices: {
+    updateAvailable:
+      'GoodBuddy {{version}} is available. View it in About & Updates.',
+    channelConversationAutomatic:
+      'Channel conversations are created automatically when the client receives a new message',
+    deleteConversationCancelFailed:
+      'Could not stop the running task, so the conversation was not deleted',
+    deletedConversationBrowserCloseFailed:
+      'Failed to close the browser for the deleted conversation',
+    conversationCopied: 'Conversation copied to the clipboard',
+    clipboardUnavailable:
+      'Cannot access the clipboard. Check your system permissions.',
+    conversationExported: 'Conversation exported',
+    imageUnavailable: 'Image content is unavailable',
+    imageDownloadStarted: 'Image download started',
+    remoteConversationReadOnly:
+      'Continue a remote conversation from its messaging app',
+    conversationAlreadyRunning:
+      'A task is already running in this conversation. Wait for it to finish or stop it first.',
+    sendFailed: 'Failed to send',
+    stopFailed: 'Failed to stop generating. Try again.',
+    projectNotLoaded: 'The current project has not loaded yet.',
+    browserControlUnavailable:
+      'Browser controls have not loaded. Restart GoodBuddy.',
+    browserStopFailed: 'Failed to stop the browser. Try again.',
+    scheduleStarted: 'Scheduled task started',
+    conversationPersistenceFailed:
+      'Failed to save conversations. Check local storage.',
+    remoteConversationRefreshFailed:
+      'Failed to refresh remote channel conversations',
+    projectReadFailed: 'Failed to read projects',
+    expertsReadFailed: 'Failed to read expert roles',
+    appInfoReadFailed: 'Failed to read app information',
+    workspaceChangesReadFailed: 'Failed to read workspace changes',
+    tokenUsageReadFailed: 'Failed to read token usage',
+    resultsRefreshFailed: 'Failed to refresh results',
+    generatedImageReadFailed: 'Failed to read the generated image',
+    remoteMessage: 'New message from {{channel}}',
+    memoryReadFailed: 'Failed to read long-term memory',
+    schedulesReadFailed: 'Failed to read scheduled tasks',
+    taskHistoryReadFailed: 'Failed to read task history',
+    resultHistoryReadFailed: 'Failed to read result history',
+    knowledgeReadFailed: 'Failed to read the local knowledge base',
+    selectProject: 'Select a project first',
+    heartbeatReadFailed: 'Failed to read Smart Heartbeat',
+    heartbeatRefreshFailed: 'Failed to refresh Smart Heartbeat',
+    heartbeatTaskPrompt:
+      'Create an actionable plan from this Smart Heartbeat suggestion:',
+    heartbeatTaskAdded:
+      'Added “{{title}}” to the conversation. Review it before sending.',
+    userStartedTask: 'User started a conversation task',
+    userDecision: 'User selected {{decision}}',
+    conversationDeleted: 'The related conversation has been deleted',
+    localDataCleared:
+      'Local conversations, tasks, memory, heartbeat data, automations, and knowledge indexes were cleared',
+    selectKnowledgeBase: 'Select a knowledge base first',
+    knowledgeGraphRebuilt: 'Knowledge graph extracted again',
+    knowledgeSettingsUpdated: 'Knowledge base settings updated',
+    evidenceExcerpt: '{{source}}: {{excerpt}}'
+  },
+  markdown: {
+    scrollableTable: 'Table, horizontally scrollable'
+  }
+} satisfies TranslationShape<typeof chineseApp>

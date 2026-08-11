@@ -1,5 +1,6 @@
 import { Activity, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { TokenUsageSummary } from '../../shared/assistant-contracts'
 import {
   MAX_ACTIVITY_RECORDS,
@@ -28,57 +29,6 @@ export type ActivityPanelProps = {
   onOpenConversation: (conversationId: string) => void
 }
 
-const statusLabels: Record<ActivityRecord['status'], string> = {
-  pending: '等待中',
-  running: '进行中',
-  completed: '已完成',
-  failed: '失败',
-  denied: '已拒绝',
-  cancelled: '已取消',
-  interrupted: '已中断'
-}
-
-const kindLabels: Record<ActivityRecord['kind'], string> = {
-  request: '任务',
-  tool: '工具',
-  approval: '审批',
-  subagent: '子专家',
-  result: '结果'
-}
-
-const filters: ReadonlyArray<{
-  value: ActivityFilter
-  label: string
-}> = [
-  { value: 'all', label: '全部' },
-  { value: 'active', label: '进行中' },
-  { value: 'failed', label: '失败' }
-]
-
-const tokenGroups: ReadonlyArray<{
-  value: TokenUsageGroup
-  label: string
-  columnLabel: string
-}> = [
-  { value: 'project', label: '按项目', columnLabel: '项目' },
-  {
-    value: 'conversation',
-    label: '按会话',
-    columnLabel: '会话'
-  },
-  { value: 'model', label: '按模型', columnLabel: '模型' }
-]
-
-const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit'
-})
-
-const tokenCountFormatter = new Intl.NumberFormat('zh-CN')
-
 function isActive(record: ActivityRecord): boolean {
   return record.status === 'pending' || record.status === 'running'
 }
@@ -105,33 +55,27 @@ function matchesFilter(
   return true
 }
 
-function formatTime(createdAt: number): {
+function formatTime(
+  createdAt: number,
+  formatter: Intl.DateTimeFormat,
+  unknownTime: string
+): {
   display: string
   machineReadable?: string
 } {
   if (!Number.isFinite(createdAt) || createdAt < 0) {
-    return { display: '时间未知' }
+    return { display: unknownTime }
   }
 
   const date = new Date(createdAt)
   if (Number.isNaN(date.getTime())) {
-    return { display: '时间未知' }
+    return { display: unknownTime }
   }
 
   return {
-    display: dateTimeFormatter.format(date),
+    display: formatter.format(date),
     machineReadable: date.toISOString()
   }
-}
-
-function emptyMessage(filter: ActivityFilter): string {
-  if (filter === 'active') {
-    return '当前没有等待中或正在运行的活动。'
-  }
-  if (filter === 'failed') {
-    return '当前没有失败、取消或中断的活动。'
-  }
-  return '任务请求、子专家、工具调用和审批决定会显示在这里。'
 }
 
 type ActivityGroup = {
@@ -144,7 +88,8 @@ type ActivityGroup = {
 }
 
 function activityWorkspaceScope(
-  scope: ActivityRecord['scope']
+  scope: ActivityRecord['scope'],
+  unavailableExplanation: string
 ): WorkspaceScope {
   if (scope.kind === 'project') {
     return { kind: 'project', projectName: scope.projectName }
@@ -154,7 +99,7 @@ function activityWorkspaceScope(
   }
   return {
     kind: 'unavailable',
-    explanation: '创建此活动记录时未能确定其归属范围。'
+    explanation: unavailableExplanation
   }
 }
 
@@ -202,10 +147,73 @@ export function ActivityPanel({
   onClear,
   onOpenConversation
 }: ActivityPanelProps): React.JSX.Element {
+  const { t, i18n } = useTranslation('activity')
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const [tokenGroup, setTokenGroup] =
     useState<TokenUsageGroup>('project')
   const [confirmingClear, setConfirmingClear] = useState(false)
+  const dateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(i18n.resolvedLanguage || 'zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }),
+    [i18n.resolvedLanguage]
+  )
+  const tokenCountFormatter = useMemo(
+    () => new Intl.NumberFormat(i18n.resolvedLanguage || 'zh-CN'),
+    [i18n.resolvedLanguage]
+  )
+  const formatCount = (value: number): string =>
+    tokenCountFormatter.format(value)
+  const statusLabels: Record<ActivityRecord['status'], string> = {
+    pending: t('statuses.pending'),
+    running: t('statuses.running'),
+    completed: t('statuses.completed'),
+    failed: t('statuses.failed'),
+    denied: t('statuses.denied'),
+    cancelled: t('statuses.cancelled'),
+    interrupted: t('statuses.interrupted')
+  }
+  const kindLabels: Record<ActivityRecord['kind'], string> = {
+    request: t('kinds.request'),
+    tool: t('kinds.tool'),
+    approval: t('kinds.approval'),
+    subagent: t('kinds.subagent'),
+    result: t('kinds.result')
+  }
+  const filters: ReadonlyArray<{
+    value: ActivityFilter
+    label: string
+  }> = [
+    { value: 'all', label: t('filters.all') },
+    { value: 'active', label: t('filters.active') },
+    { value: 'failed', label: t('filters.failed') }
+  ]
+  const tokenGroups: ReadonlyArray<{
+    value: TokenUsageGroup
+    label: string
+    columnLabel: string
+  }> = [
+    {
+      value: 'project',
+      label: t('tokenUsage.groups.project'),
+      columnLabel: t('tokenUsage.columns.project')
+    },
+    {
+      value: 'conversation',
+      label: t('tokenUsage.groups.conversation'),
+      columnLabel: t('tokenUsage.columns.conversation')
+    },
+    {
+      value: 'model',
+      label: t('tokenUsage.groups.model'),
+      columnLabel: t('tokenUsage.columns.model')
+    }
+  ]
 
   const visibleRecords = useMemo(
     () => records.slice(0, MAX_ACTIVITY_RECORDS),
@@ -231,7 +239,40 @@ export function ActivityPanel({
   )
   const tokenGroupLabel =
     tokenGroups.find((item) => item.value === tokenGroup)?.columnLabel ??
-    '项目'
+    t('tokenUsage.columns.project')
+  const emptyDescription =
+    filter === 'active'
+      ? t('empty.active')
+      : filter === 'failed'
+        ? t('empty.failed')
+        : t('empty.all')
+  const localizeTokenRow = (
+    row: (typeof tokenRows)[number]
+  ): { label: string; detail?: string } => {
+    const missingModel = row.key.endsWith(':')
+    const modelProvider =
+      row.key.match(/model:([^:]*):$/u)?.[1] ?? ''
+    const label =
+      tokenGroup === 'project' &&
+      row.key.startsWith('project:unassigned:')
+        ? t('tokenUsage.fallbacks.unassignedProject')
+        : tokenGroup === 'conversation' &&
+            row.key.startsWith('conversation:deleted:')
+          ? t('tokenUsage.fallbacks.deletedConversation')
+          : tokenGroup === 'model' && missingModel
+            ? t('tokenUsage.fallbacks.unknownModel')
+            : row.label
+    const detail =
+      missingModel && tokenGroup !== 'model'
+        ? [
+            t('tokenUsage.fallbacks.unknownModel'),
+            modelProvider
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : row.detail
+    return { label, detail }
+  }
 
   return (
     <section
@@ -241,27 +282,36 @@ export function ActivityPanel({
       <PageHeader
         actions={
           <DestructiveConfirmActions
-            confirmAriaLabel={`确认清空 ${visibleRecords.length} 条活动记录`}
-            confirmLabel={`清空 ${visibleRecords.length} 条记录`}
+            confirmAriaLabel={t('clear.confirmAriaLabel', {
+              count: visibleRecords.length,
+              formattedCount: formatCount(visibleRecords.length)
+            })}
+            confirmLabel={t('clear.confirmLabel', {
+              count: visibleRecords.length,
+              formattedCount: formatCount(visibleRecords.length)
+            })}
             confirming={confirmingClear}
             disabled={!confirmingClear && visibleRecords.length === 0}
             icon={<Trash2 aria-hidden="true" size={15} />}
-            message={`永久清空 ${visibleRecords.length} 条活动记录？此操作不可撤销。`}
+            message={t('clear.message', {
+              count: visibleRecords.length,
+              formattedCount: formatCount(visibleRecords.length)
+            })}
             onCancel={() => setConfirmingClear(false)}
             onConfirm={() => {
               onClear()
               setConfirmingClear(false)
             }}
             onRequestConfirm={() => setConfirmingClear(true)}
-            triggerLabel="清空记录"
+            triggerLabel={t('clear.triggerLabel')}
           />
         }
-        description="查看全部项目中的任务请求、子专家、工具调用、审批结果和 Token 用量。"
-        eyebrow="ACTIVITY AUDIT"
+        description={t('header.description')}
+        eyebrow={t('header.eyebrow')}
         headingId="activity-panel-title"
         icon={<Activity size={20} />}
         scope={{ kind: 'all-projects' }}
-        title="任务与活动"
+        title={t('header.title')}
       />
 
       <section
@@ -269,109 +319,132 @@ export function ActivityPanel({
         className="token-usage"
       >
         <header className="token-usage__header">
-          <h3 id="token-usage-title">Token 用量</h3>
+          <h3 id="token-usage-title">{t('tokenUsage.title')}</h3>
           <SegmentedControl
-            ariaLabel="Token 用量分组"
+            ariaLabel={t('tokenUsage.groupAriaLabel')}
             onChange={setTokenGroup}
             options={tokenGroups}
             value={tokenGroup}
           />
         </header>
 
-        <dl aria-label="Token 用量统计" className="token-usage__stats">
+        <dl
+          aria-label={t('tokenUsage.statsAriaLabel')}
+          className="token-usage__stats"
+        >
           <div>
-            <dt>输入</dt>
+            <dt>{t('tokenUsage.columns.input')}</dt>
             <dd>{tokenCountFormatter.format(tokenTotals.inputTokens)}</dd>
           </div>
           <div>
-            <dt>输出</dt>
+            <dt>{t('tokenUsage.columns.output')}</dt>
             <dd>{tokenCountFormatter.format(tokenTotals.outputTokens)}</dd>
           </div>
           <div>
-            <dt>缓存写入</dt>
+            <dt>{t('tokenUsage.columns.cacheWrite')}</dt>
             <dd>
               {tokenCountFormatter.format(tokenTotals.cacheWriteTokens)}
             </dd>
           </div>
           <div>
-            <dt>缓存读取</dt>
+            <dt>{t('tokenUsage.columns.cacheRead')}</dt>
             <dd>
               {tokenCountFormatter.format(tokenTotals.cacheReadTokens)}
             </dd>
           </div>
           <div>
-            <dt>总计</dt>
+            <dt>{t('tokenUsage.columns.total')}</dt>
             <dd>{tokenCountFormatter.format(tokenTotals.totalTokens)}</dd>
           </div>
         </dl>
 
         <div className="token-usage__table-scroll">
-          <table aria-label={`Token 用量${tokenGroupLabel}明细`}>
+          <table
+            aria-label={t('tokenUsage.detailAriaLabel', {
+              group: tokenGroupLabel
+            })}
+          >
             <thead>
               <tr>
                 <th scope="col">{tokenGroupLabel}</th>
-                <th scope="col">输入</th>
-                <th scope="col">输出</th>
-                <th scope="col">缓存写入</th>
-                <th scope="col">缓存读取</th>
-                <th scope="col">总计</th>
+                <th scope="col">{t('tokenUsage.columns.input')}</th>
+                <th scope="col">{t('tokenUsage.columns.output')}</th>
+                <th scope="col">
+                  {t('tokenUsage.columns.cacheWrite')}
+                </th>
+                <th scope="col">
+                  {t('tokenUsage.columns.cacheRead')}
+                </th>
+                <th scope="col">{t('tokenUsage.columns.total')}</th>
               </tr>
             </thead>
             <tbody>
               {tokenRows.length === 0 ? (
                 <tr>
                   <td className="token-usage__empty" colSpan={6}>
-                    暂无 Token 用量
+                    {t('tokenUsage.empty')}
                   </td>
                 </tr>
               ) : (
-                tokenRows.map((row) => (
-                  <tr key={row.key}>
-                    <th scope="row">
-                      <span>{row.label}</span>
-                      {row.detail && <small>{row.detail}</small>}
-                    </th>
-                    <td>
-                      {tokenCountFormatter.format(row.inputTokens)}
-                    </td>
-                    <td>
-                      {tokenCountFormatter.format(row.outputTokens)}
-                    </td>
-                    <td>
-                      {tokenCountFormatter.format(row.cacheWriteTokens)}
-                    </td>
-                    <td>
-                      {tokenCountFormatter.format(row.cacheReadTokens)}
-                    </td>
-                    <td>
-                      {tokenCountFormatter.format(row.totalTokens)}
-                    </td>
-                  </tr>
-                ))
+                tokenRows.map((row) => {
+                  const localizedRow = localizeTokenRow(row)
+                  return (
+                    <tr key={row.key}>
+                      <th scope="row">
+                        <span>{localizedRow.label}</span>
+                        {localizedRow.detail && (
+                          <small>{localizedRow.detail}</small>
+                        )}
+                      </th>
+                      <td>
+                        {tokenCountFormatter.format(row.inputTokens)}
+                      </td>
+                      <td>
+                        {tokenCountFormatter.format(row.outputTokens)}
+                      </td>
+                      <td>
+                        {tokenCountFormatter.format(
+                          row.cacheWriteTokens
+                        )}
+                      </td>
+                      <td>
+                        {tokenCountFormatter.format(
+                          row.cacheReadTokens
+                        )}
+                      </td>
+                      <td>
+                        {tokenCountFormatter.format(row.totalTokens)}
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
         </div>
       </section>
 
-      <dl aria-label="活动统计" className="activity-panel__stats">
+      <dl
+        aria-label={t('stats.ariaLabel')}
+        className="activity-panel__stats"
+      >
         <div>
-          <dt>全部</dt>
-          <dd>{visibleRecords.length}</dd>
+          <dt>{t('stats.all')}</dt>
+          <dd>{formatCount(visibleRecords.length)}</dd>
         </div>
         <div>
-          <dt>进行中</dt>
-          <dd>{activeCount}</dd>
+          <dt>{t('stats.active')}</dt>
+          <dd>{formatCount(activeCount)}</dd>
         </div>
         <div>
-          <dt>失败</dt>
-          <dd>{failedCount}</dd>
+          <dt>{t('stats.failed')}</dt>
+          <dd>{formatCount(failedCount)}</dd>
         </div>
       </dl>
 
       <div className="activity-panel__filters">
         <SegmentedControl
-          ariaLabel="筛选活动"
+          ariaLabel={t('filters.ariaLabel')}
           onChange={setFilter}
           options={filters}
           value={filter}
@@ -387,19 +460,27 @@ export function ActivityPanel({
                 onClick={() => setFilter('all')}
                 type="button"
               >
-                清除筛选
+                {t('filters.clear')}
               </button>
             )
           }
-          description={emptyMessage(filter)}
+          description={emptyDescription}
           icon={<Activity size={24} />}
           level="section"
-          title={filter === 'all' ? '尚无活动记录' : '没有匹配的活动'}
+          title={
+            filter === 'all'
+              ? t('empty.noRecordsTitle')
+              : t('empty.noMatchesTitle')
+          }
         />
       ) : (
         <div className="activity-groups">
           {activityGroups.map((group) => {
-            const groupTime = formatTime(group.latestAt)
+            const groupTime = formatTime(
+              group.latestAt,
+              dateTimeFormatter,
+              t('records.unknownTime')
+            )
             return (
               <details
                 className="activity-group"
@@ -407,10 +488,24 @@ export function ActivityPanel({
               >
                 <summary>
                   <span>
-                    <strong>对话：{group.title}</strong>
-                    <small>{group.records.length} 条活动</small>
+                    <strong>
+                      {t('records.conversation', {
+                        title: group.title
+                      })}
+                    </strong>
+                    <small>
+                      {t('records.activityCount', {
+                        count: group.records.length,
+                        formattedCount: formatCount(
+                          group.records.length
+                        )
+                      })}
+                    </small>
                     <ScopeBadge
-                      scope={activityWorkspaceScope(group.scope)}
+                      scope={activityWorkspaceScope(
+                        group.scope,
+                        t('records.unavailableScope')
+                      )}
                     />
                   </span>
                   <span
@@ -424,7 +519,11 @@ export function ActivityPanel({
                 </summary>
                 <ol className="activity-list">
                   {group.records.map((record, index) => {
-                    const time = formatTime(record.createdAt)
+                    const time = formatTime(
+                      record.createdAt,
+                      dateTimeFormatter,
+                      t('records.unknownTime')
+                    )
                     return (
                       <li
                         className={`activity-item activity-item--${record.status}`}
@@ -447,7 +546,10 @@ export function ActivityPanel({
                             </time>
                           </header>
                           <ScopeBadge
-                            scope={activityWorkspaceScope(record.scope)}
+                            scope={activityWorkspaceScope(
+                              record.scope,
+                              t('records.unavailableScope')
+                            )}
                           />
                           <h3>{record.title}</h3>
                           {record.detail.length > 0 && <p>{record.detail}</p>}
@@ -458,7 +560,7 @@ export function ActivityPanel({
                             }
                             type="button"
                           >
-                            打开所属对话
+                            {t('records.openConversation')}
                           </button>
                         </article>
                       </li>

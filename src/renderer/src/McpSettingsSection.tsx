@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import type {
@@ -31,21 +32,7 @@ import type {
 import { trapTabFocus } from './dialog-focus'
 import { SettingsCategoryHeader } from './SettingsPrimitives'
 
-const runtimeLabels: Record<RuntimeTarget, string> = {
-  model: '模型',
-  opencode: 'OpenCode',
-  continue: 'Continue'
-}
 const configurableMcpTargets: RuntimeTarget[] = ['model']
-const diagnosticStatusLabels: Record<
-  CapabilityDiagnosticReport['status'],
-  string
-> = {
-  available: '可用',
-  degraded: '部分可用',
-  unavailable: '不可用',
-  disabled: '未启用'
-}
 
 type McpEditor = {
   id?: string
@@ -93,6 +80,25 @@ function editorFromServer(server: McpServerSummary): McpEditor {
 }
 
 export function McpSettingsSection(): React.JSX.Element {
+  const { t } = useTranslation('integrations')
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
+  const runtimeLabels: Record<RuntimeTarget, string> = {
+    model: t('mcp.runtimeLabels.model'),
+    opencode: t('mcp.runtimeLabels.opencode'),
+    continue: t('mcp.runtimeLabels.continue')
+  }
+  const diagnosticStatusLabels: Record<
+    CapabilityDiagnosticReport['status'],
+    string
+  > = {
+    available: t('mcp.diagnosticStatuses.available'),
+    degraded: t('mcp.diagnosticStatuses.degraded'),
+    unavailable: t('mcp.diagnosticStatuses.unavailable'),
+    disabled: t('mcp.diagnosticStatuses.disabled')
+  }
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>()
   const [editor, setEditor] = useState<McpEditor>()
   const [busy, setBusy] = useState<string>()
@@ -133,7 +139,11 @@ export function McpSettingsSection(): React.JSX.Element {
       .getSnapshot()
       .then(setSnapshot)
       .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : '读取 MCP 设置失败')
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : tRef.current('mcp.errors.load')
+        )
       })
   }, [])
 
@@ -157,7 +167,11 @@ export function McpSettingsSection(): React.JSX.Element {
       setSnapshot(await operation())
       return true
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '能力设置操作失败')
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : t('mcp.errors.operation')
+      )
       return false
     } finally {
       setBusy(undefined)
@@ -173,7 +187,7 @@ export function McpSettingsSection(): React.JSX.Element {
       const diagnoseCapability =
         window.goodbuddy.capabilities.diagnoseComputerCapability
       if (!diagnoseCapability) {
-        throw new Error('当前版本不支持电脑控制能力诊断')
+        throw new Error(t('mcp.errors.unsupportedDiagnostics'))
       }
       const report = await diagnoseCapability(capabilityId)
       setDiagnostics((current) => ({
@@ -181,7 +195,11 @@ export function McpSettingsSection(): React.JSX.Element {
         [capabilityId]: report
       }))
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '能力诊断失败')
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : t('mcp.errors.diagnostics')
+      )
     } finally {
       setBusy(undefined)
     }
@@ -195,7 +213,7 @@ export function McpSettingsSection(): React.JSX.Element {
     if (
       await run('profile:create', () =>
         window.goodbuddy.capabilities.createBrowserProfile?.({ name }) ??
-        Promise.reject(new Error('当前版本不支持托管浏览器配置'))
+        Promise.reject(new Error(t('mcp.errors.unsupportedProfiles')))
       )
     ) {
       setNewProfileName('')
@@ -259,7 +277,7 @@ export function McpSettingsSection(): React.JSX.Element {
       })
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : 'MCP 连接测试失败'
+        reason instanceof Error ? reason.message : t('mcp.errors.test')
       )
     } finally {
       setBusy(undefined)
@@ -331,25 +349,23 @@ export function McpSettingsSection(): React.JSX.Element {
             type="button"
           >
             <Plus aria-hidden="true" size={14} />
-            添加 Server
+            {t('mcp.addServer')}
           </button>
         }
         category="mcp"
         error={!editor ? error : undefined}
         headingId="mcp-settings-heading"
       />
-      <section aria-label="MCP 配置" className="settings-section">
+      <section
+        aria-label={t('mcp.sectionAriaLabel')}
+        className="settings-section"
+      >
 
       <p className="settings-notice">
-        自定义 MCP 当前仅用于直连模型，新建时默认分配给直连模型，并仅在 Execute
-        模式加载。内置共享 MCP 提供知识库读取与全局笔记管理，可供直连模型、
-        OpenCode 和 Continue 使用；Ask 只读，笔记写入仅在 Execute
-        模式开放。Runtime 自有 MCP 配置不在此处管理。
+        {t('mcp.customNotice')}
       </p>
       <p className="settings-notice">
-        内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server
-        及其工具具有当前用户权限，请仅添加可信服务；远程访问令牌将由系统安全存储加密，
-        工具调用前仍需 GoodBuddy 审批。
+        {t('mcp.securityNotice')}
       </p>
       <section
         aria-labelledby="computer-capabilities-heading"
@@ -358,9 +374,11 @@ export function McpSettingsSection(): React.JSX.Element {
         <div className="mcp-subsection-heading">
           <div>
             <MonitorCog size={15} />
-            <strong id="computer-capabilities-heading">电脑控制能力</strong>
+            <strong id="computer-capabilities-heading">
+              {t('mcp.computer.title')}
+            </strong>
           </div>
-          <small>默认停用，启用后仍遵循审批</small>
+          <small>{t('mcp.computer.subtitle')}</small>
         </div>
         <div className="capability-list">
           {computerCapabilities.map((capability) => {
@@ -371,13 +389,20 @@ export function McpSettingsSection(): React.JSX.Element {
                   <div>
                     <strong>{capability.name}</strong>
                     <small>
-                      {capability.supported ? '当前设备支持' : '当前设备不支持'} ·{' '}
-                      {capability.enabled ? '已启用' : '已停用'}
+                      {capability.supported
+                        ? t('mcp.computer.supported')
+                        : t('mcp.computer.unsupported')}{' '}
+                      ·{' '}
+                      {capability.enabled
+                        ? t('mcp.computer.enabled')
+                        : t('mcp.computer.disabled')}
                     </small>
                   </div>
                   <label className="capability-switch">
                     <input
-                      aria-label={`启用 ${capability.name}`}
+                      aria-label={t('mcp.computer.enableAriaLabel', {
+                        name: capability.name
+                      })}
                       checked={capability.enabled}
                       disabled={Boolean(busy) || !capability.supported}
                       onChange={(event) =>
@@ -387,13 +412,19 @@ export function McpSettingsSection(): React.JSX.Element {
                             event.target.checked
                           ) ??
                           Promise.reject(
-                            new Error('当前版本不支持电脑控制能力')
+                            new Error(
+                              t('mcp.errors.unsupportedComputerControl')
+                            )
                           )
                         )
                       }
                       type="checkbox"
                     />
-                    <span>{capability.enabled ? '已启用' : '已停用'}</span>
+                    <span>
+                      {capability.enabled
+                        ? t('mcp.computer.enabled')
+                        : t('mcp.computer.disabled')}
+                    </span>
                   </label>
                 </div>
                 <p>{capability.description}</p>
@@ -403,9 +434,9 @@ export function McpSettingsSection(): React.JSX.Element {
                 </p>
                 {capability.id === 'host-browser-control' && (
                   <label className="field computer-capability-profile">
-                    <span>托管浏览器配置</span>
+                    <span>{t('mcp.computer.browserProfile')}</span>
                     <select
-                      aria-label="浏览器控制使用的托管配置"
+                      aria-label={t('mcp.computer.profileAriaLabel')}
                       disabled={Boolean(busy)}
                       onChange={(event) =>
                         void run('computer:profile', () =>
@@ -414,13 +445,17 @@ export function McpSettingsSection(): React.JSX.Element {
                             event.target.value || null
                           ) ??
                           Promise.reject(
-                            new Error('当前版本不支持托管浏览器配置')
+                            new Error(
+                              t('mcp.errors.unsupportedProfiles')
+                            )
                           )
                         )
                       }
                       value={capability.browserProfileId ?? ''}
                     >
-                      <option value="">使用默认托管配置</option>
+                      <option value="">
+                        {t('mcp.computer.defaultProfile')}
+                      </option>
                       {browserProfiles.profiles.map((profile) => (
                         <option key={profile.id} value={profile.id}>
                           {profile.name}
@@ -431,7 +466,9 @@ export function McpSettingsSection(): React.JSX.Element {
                 )}
                 <div className="capability-diagnostic">
                   <button
-                    aria-label={`诊断 ${capability.name}`}
+                    aria-label={t('mcp.computer.diagnoseAriaLabel', {
+                      name: capability.name
+                    })}
                     className="secondary-button"
                     disabled={Boolean(busy)}
                     onClick={() => void diagnose(capability.id)}
@@ -439,18 +476,24 @@ export function McpSettingsSection(): React.JSX.Element {
                   >
                     <RefreshCw size={13} />
                     {busy === `diagnose:${capability.id}`
-                      ? '诊断中…'
-                      : '运行诊断'}
+                      ? t('mcp.computer.diagnosing')
+                      : t('mcp.computer.diagnose')}
                   </button>
                   {report && (
                     <div aria-live="polite" className="capability-diagnostic__result">
                       <strong>
-                        诊断结果：{diagnosticStatusLabels[report.status]}
+                        {t('mcp.computer.result', {
+                          status: diagnosticStatusLabels[report.status]
+                        })}
                       </strong>
                       {report.checks.map((check) => (
                         <p key={check.id}>
                           {check.summary}
-                          {check.remedy ? ` 处理建议：${check.remedy}` : ''}
+                          {check.remedy
+                            ? t('mcp.computer.remedy', {
+                                remedy: check.remedy
+                              })
+                            : ''}
                         </p>
                       ))}
                     </div>
@@ -469,19 +512,25 @@ export function McpSettingsSection(): React.JSX.Element {
         <div className="mcp-subsection-heading">
           <div>
             <Globe2 size={15} />
-            <strong id="browser-profiles-heading">托管浏览器配置</strong>
+            <strong id="browser-profiles-heading">
+              {t('mcp.profiles.title')}
+            </strong>
           </div>
-          <small>{browserProfiles.profiles.length} 个</small>
+          <small>
+            {t('mcp.profiles.count', {
+              count: browserProfiles.profiles.length
+            })}
+          </small>
         </div>
         <p className="settings-notice">
-          每个配置使用 GoodBuddy 管理的隔离存储；界面不会接收或显示可执行路径、命令参数与环境变量。
+          {t('mcp.profiles.notice')}
         </p>
         <div className="browser-profile-create">
           <label className="field">
-            <span>新配置名称</span>
+            <span>{t('mcp.profiles.newName')}</span>
             <input
               onChange={(event) => setNewProfileName(event.target.value)}
-              placeholder="例如：工作网站"
+              placeholder={t('mcp.profiles.placeholder')}
               value={newProfileName}
             />
           </label>
@@ -492,12 +541,12 @@ export function McpSettingsSection(): React.JSX.Element {
             type="button"
           >
             <Plus size={13} />
-            创建托管配置
+            {t('mcp.profiles.create')}
           </button>
         </div>
         <div className="browser-profile-list">
           {browserProfiles.profiles.length === 0 && (
-            <p className="settings-empty">尚未创建托管浏览器配置</p>
+            <p className="settings-empty">{t('mcp.profiles.empty')}</p>
           )}
           {browserProfiles.profiles.map((profile) => {
             const referenced = computerCapabilities.some(
@@ -507,9 +556,11 @@ export function McpSettingsSection(): React.JSX.Element {
             return (
               <article className="browser-profile-row" key={profile.id}>
                 <label className="field">
-                  <span>配置名称</span>
+                  <span>{t('mcp.profiles.name')}</span>
                   <input
-                    aria-label={`配置名称 ${profile.name}`}
+                    aria-label={t('mcp.profiles.nameAriaLabel', {
+                      name: profile.name
+                    })}
                     onChange={(event) =>
                       setProfileNames((current) => ({
                         ...current,
@@ -521,7 +572,10 @@ export function McpSettingsSection(): React.JSX.Element {
                 </label>
                 <label className="browser-profile-default">
                   <input
-                    aria-label={`设为默认配置 ${profile.name}`}
+                    aria-label={t(
+                      'mcp.profiles.setDefaultAriaLabel',
+                      { name: profile.name }
+                    )}
                     checked={
                       browserProfiles.defaultProfileId === profile.id
                     }
@@ -533,16 +587,18 @@ export function McpSettingsSection(): React.JSX.Element {
                           profile.id
                         ) ??
                         Promise.reject(
-                          new Error('当前版本不支持托管浏览器配置')
+                          new Error(t('mcp.errors.unsupportedProfiles'))
                         )
                       )
                     }
                     type="radio"
                   />
-                  默认
+                  {t('mcp.profiles.default')}
                 </label>
                 <button
-                  aria-label={`重命名配置 ${profile.name}`}
+                  aria-label={t('mcp.profiles.renameAriaLabel', {
+                    name: profile.name
+                  })}
                   className="secondary-button"
                   disabled={
                     Boolean(busy) ||
@@ -556,17 +612,19 @@ export function McpSettingsSection(): React.JSX.Element {
                         name: profileNames[profile.id] ?? profile.name
                       }) ??
                       Promise.reject(
-                        new Error('当前版本不支持托管浏览器配置')
+                        new Error(t('mcp.errors.unsupportedProfiles'))
                       )
                     )
                   }
                   type="button"
                 >
                   <Pencil size={13} />
-                  重命名
+                  {t('mcp.profiles.rename')}
                 </button>
                 <button
-                  aria-label={`删除配置 ${profile.name}`}
+                  aria-label={t('mcp.profiles.deleteAriaLabel', {
+                    name: profile.name
+                  })}
                   className="danger-ghost"
                   disabled={Boolean(busy) || referenced}
                   onClick={() =>
@@ -575,15 +633,17 @@ export function McpSettingsSection(): React.JSX.Element {
                         profile.id
                       ) ??
                       Promise.reject(
-                        new Error('当前版本不支持托管浏览器配置')
+                        new Error(t('mcp.errors.unsupportedProfiles'))
                       )
                     )
                   }
-                  title={referenced ? '此配置正被电脑控制能力使用' : undefined}
+                  title={
+                    referenced ? t('mcp.profiles.inUse') : undefined
+                  }
                   type="button"
                 >
                   <Trash2 size={13} />
-                  删除
+                  {t('mcp.profiles.delete')}
                 </button>
               </article>
             )
@@ -599,14 +659,20 @@ export function McpSettingsSection(): React.JSX.Element {
           <div>
             <Database size={15} />
             <span className="mcp-subsection-heading__title">
-              <strong id="builtin-mcp-heading">GoodBuddy 内置 MCP</strong>
-              <small>可用于：模型、OpenCode、Continue</small>
+              <strong id="builtin-mcp-heading">
+                {t('mcp.builtin.title')}
+              </strong>
+              <small>{t('mcp.builtin.availableTo')}</small>
             </span>
           </div>
-          <small>{builtinMcpServers.length} 个</small>
+          <small>
+            {t('mcp.profiles.count', {
+              count: builtinMcpServers.length
+            })}
+          </small>
         </div>
         <p className="settings-notice">
-          内置 MCP 由 GoodBuddy 在主进程按当前对话签发短期权限，不公开服务地址或凭据。
+          {t('mcp.builtin.notice')}
         </p>
         <div className="mcp-server-list">
           {builtinMcpServers.map((server) => {
@@ -618,7 +684,12 @@ export function McpSettingsSection(): React.JSX.Element {
                 <button
                   aria-controls={panelId}
                   aria-expanded={expanded}
-                  aria-label={`${expanded ? '收起' : '展开'}服务器 ${server.name}`}
+                  aria-label={t(
+                    expanded
+                      ? 'mcp.builtin.collapseServer'
+                      : 'mcp.builtin.expandServer',
+                    { name: server.name }
+                  )}
                   className="mcp-server-card__toggle"
                   onClick={() => toggleItem(expansionId)}
                   type="button"
@@ -626,13 +697,15 @@ export function McpSettingsSection(): React.JSX.Element {
                   <div>
                     <strong>{server.name}</strong>
                     <small>
-                      内置 MCP Server ·{' '}
-                      {server.access === 'mixed' ? '按模式读写' : '只读'} ·
-                      按对话授权
+                      {server.access === 'mixed'
+                        ? t('mcp.builtin.serverSummaryMixed')
+                        : t('mcp.builtin.serverSummaryReadOnly')}
                     </small>
                   </div>
                   <span className="mcp-server-card__summary">
-                    {server.tools.length} 个工具
+                    {t('mcp.builtin.toolCount', {
+                      count: server.tools.length
+                    })}
                     <ChevronDown
                       aria-hidden="true"
                       className={
@@ -648,12 +721,18 @@ export function McpSettingsSection(): React.JSX.Element {
                   <div className="mcp-server-card__body" id={panelId}>
                     <p>{server.description}</p>
                     <section
-                      aria-label={`${server.name} 工具`}
+                      aria-label={t('mcp.builtin.toolsAriaLabel', {
+                        name: server.name
+                      })}
                       className="mcp-server-tools"
                     >
                       <div className="mcp-server-tools__heading">
-                        <strong>工具</strong>
-                        <small>{server.tools.length} 个</small>
+                        <strong>{t('mcp.builtin.tools')}</strong>
+                        <small>
+                          {t('mcp.profiles.count', {
+                            count: server.tools.length
+                          })}
+                        </small>
                       </div>
                       <ul>
                         {server.tools.map((tool) => (
@@ -661,7 +740,9 @@ export function McpSettingsSection(): React.JSX.Element {
                             <div>
                               <code>{tool.name}</code>
                               <span className="builtin-tool-badge">
-                                {tool.access === 'write' ? '写入' : '只读'}
+                                {tool.access === 'write'
+                                  ? t('mcp.builtin.write')
+                                  : t('mcp.builtin.readOnly')}
                               </span>
                             </div>
                             <p>{tool.description}</p>
@@ -681,9 +762,13 @@ export function McpSettingsSection(): React.JSX.Element {
         <div className="mcp-subsection-heading">
           <div>
             <Wrench size={15} />
-            <strong>直连模型内置工具</strong>
+            <strong>{t('mcp.modelTools.title')}</strong>
           </div>
-          <small>{builtinModelToolGroups.length} 组</small>
+          <small>
+            {t('mcp.modelTools.groupCount', {
+              count: builtinModelToolGroups.length
+            })}
+          </small>
         </div>
         <div className="mcp-server-list">
           {builtinModelToolGroups.map((group) => {
@@ -695,17 +780,24 @@ export function McpSettingsSection(): React.JSX.Element {
                 <button
                   aria-controls={panelId}
                   aria-expanded={expanded}
-                  aria-label={`${expanded ? '收起' : '展开'}工具组 ${group.name}`}
+                  aria-label={t(
+                    expanded
+                      ? 'mcp.modelTools.collapseGroup'
+                      : 'mcp.modelTools.expandGroup',
+                    { name: group.name }
+                  )}
                   className="mcp-server-card__toggle"
                   onClick={() => toggleItem(expansionId)}
                   type="button"
                 >
                   <div>
                     <strong>{group.name}</strong>
-                    <small>GoodBuddy 直连模型内置能力</small>
+                    <small>{t('mcp.modelTools.summary')}</small>
                   </div>
                   <span className="mcp-server-card__summary">
-                    {group.tools.length} 个工具
+                    {t('mcp.builtin.toolCount', {
+                      count: group.tools.length
+                    })}
                     <ChevronDown
                       aria-hidden="true"
                       className={
@@ -721,12 +813,18 @@ export function McpSettingsSection(): React.JSX.Element {
                   <div className="mcp-server-card__body" id={panelId}>
                     <p>{group.description}</p>
                     <section
-                      aria-label={`${group.name} 工具`}
+                      aria-label={t('mcp.builtin.toolsAriaLabel', {
+                        name: group.name
+                      })}
                       className="mcp-server-tools"
                     >
                       <div className="mcp-server-tools__heading">
-                        <strong>工具</strong>
-                        <small>{group.tools.length} 个</small>
+                        <strong>{t('mcp.builtin.tools')}</strong>
+                        <small>
+                          {t('mcp.profiles.count', {
+                            count: group.tools.length
+                          })}
+                        </small>
                       </div>
                       <ul>
                         {group.tools.map((tool) => (
@@ -737,7 +835,9 @@ export function McpSettingsSection(): React.JSX.Element {
                                 <code>{tool.name}</code>
                               </span>
                               <span className="builtin-tool-badge">
-                                {tool.access === 'write' ? '写入' : '只读'}
+                                {tool.access === 'write'
+                                  ? t('mcp.builtin.write')
+                                  : t('mcp.builtin.readOnly')}
                               </span>
                             </div>
                             <p>{tool.description}</p>
@@ -773,10 +873,12 @@ export function McpSettingsSection(): React.JSX.Element {
             >
             <div className="mcp-editor__header">
             <strong id="mcp-editor-title">
-              {editor.id ? '编辑 MCP Server' : '添加 MCP Server'}
+              {editor.id
+                ? t('mcp.editor.editTitle')
+                : t('mcp.editor.addTitle')}
             </strong>
             <button
-              aria-label="关闭 MCP 编辑器"
+              aria-label={t('mcp.editor.closeAriaLabel')}
               className="icon-button"
               disabled={busy === 'save'}
               onClick={closeEditor}
@@ -791,7 +893,7 @@ export function McpSettingsSection(): React.JSX.Element {
             </p>
           )}
           <label className="field">
-            <span>名称</span>
+            <span>{t('mcp.editor.name')}</span>
             <input
               onChange={(event) =>
                 setEditor({ ...editor, name: event.target.value })
@@ -801,7 +903,7 @@ export function McpSettingsSection(): React.JSX.Element {
             />
           </label>
           <label className="field">
-            <span>说明</span>
+            <span>{t('mcp.editor.description')}</span>
             <input
               onChange={(event) =>
                 setEditor({
@@ -813,7 +915,7 @@ export function McpSettingsSection(): React.JSX.Element {
             />
           </label>
           <label className="field">
-            <span>传输方式</span>
+            <span>{t('mcp.editor.transport')}</span>
             <select
               onChange={(event) =>
                 setEditor({
@@ -823,31 +925,31 @@ export function McpSettingsSection(): React.JSX.Element {
               }
               value={editor.transport}
             >
-              <option value="stdio">stdio（本地进程）</option>
+              <option value="stdio">{t('mcp.editor.stdio')}</option>
               <option value="http">Streamable HTTP</option>
-              <option value="sse">SSE（兼容旧服务）</option>
+              <option value="sse">{t('mcp.editor.sse')}</option>
             </select>
           </label>
           {editor.transport === 'stdio' ? (
             <>
               <label className="field">
-                <span>可执行命令或绝对路径</span>
+                <span>{t('mcp.editor.command')}</span>
                 <input
-                  aria-label="MCP 可执行命令"
+                  aria-label={t('mcp.editor.commandAriaLabel')}
                   onChange={(event) =>
                     setEditor({
                       ...editor,
                       command: event.target.value
                     })
                   }
-                  placeholder="例如 npx 或 C:\Tools\server.exe"
+                  placeholder={t('mcp.editor.commandPlaceholder')}
                   value={editor.command}
                 />
               </label>
               <label className="field">
-                <span>参数（每行一个）</span>
+                <span>{t('mcp.editor.args')}</span>
                 <textarea
-                  aria-label="MCP 命令参数"
+                  aria-label={t('mcp.editor.argsAriaLabel')}
                   onChange={(event) =>
                     setEditor({ ...editor, args: event.target.value })
                   }
@@ -882,7 +984,9 @@ export function McpSettingsSection(): React.JSX.Element {
                     })
                   }
                   placeholder={
-                    editor.id ? '留空保持已保存令牌' : '可选'
+                    editor.id
+                      ? t('mcp.editor.savedTokenPlaceholder')
+                      : t('mcp.editor.optional')
                   }
                   type="password"
                   value={editor.token}
@@ -901,7 +1005,7 @@ export function McpSettingsSection(): React.JSX.Element {
                     }
                     type="checkbox"
                   />
-                  <span>保存时清除已保存的 Bearer Token</span>
+                  <span>{t('mcp.editor.clearToken')}</span>
                 </label>
               )}
             </>
@@ -917,10 +1021,10 @@ export function McpSettingsSection(): React.JSX.Element {
               }
               type="checkbox"
             />
-            <span>启用此 MCP Server</span>
+            <span>{t('mcp.editor.enable')}</span>
           </label>
           <div className="runtime-assignments">
-            <small>分配给</small>
+            <small>{t('mcp.editor.assignTo')}</small>
             {configurableMcpTargets.map(
               (target) => (
                 <label key={target}>
@@ -943,7 +1047,7 @@ export function McpSettingsSection(): React.JSX.Element {
               onClick={closeEditor}
               type="button"
             >
-              取消
+              {t('mcp.editor.cancel')}
             </button>
             <button
               className="primary-button"
@@ -951,7 +1055,9 @@ export function McpSettingsSection(): React.JSX.Element {
               onClick={() => void save()}
               type="button"
             >
-              {busy === 'save' ? '保存中…' : '保存 MCP Server'}
+              {busy === 'save'
+                ? t('mcp.editor.saving')
+                : t('mcp.editor.save')}
             </button>
           </div>
             </div>
@@ -962,16 +1068,20 @@ export function McpSettingsSection(): React.JSX.Element {
       <div className="mcp-subsection-heading">
         <div>
           <Network size={15} />
-          <strong>自定义 MCP Servers（高级）</strong>
+          <strong>{t('mcp.custom.title')}</strong>
         </div>
-        <small>{snapshot?.mcpServers.length ?? 0} 个</small>
+        <small>
+          {t('mcp.custom.count', {
+            count: snapshot?.mcpServers.length ?? 0
+          })}
+        </small>
       </div>
       <p className="settings-notice">
-        自定义 stdio MCP 会以受限环境启动，不会获得桌面会话变量。需要电脑控制时请使用上方经过诊断的内置能力。
+        {t('mcp.custom.notice')}
       </p>
       <div className="capability-list">
         {snapshot?.mcpServers.length === 0 && !editor && (
-          <p className="settings-empty">尚未配置 MCP Server</p>
+          <p className="settings-empty">{t('mcp.custom.empty')}</p>
         )}
         {snapshot?.mcpServers.map((server) => {
           const result = testResults[server.id]
@@ -984,7 +1094,12 @@ export function McpSettingsSection(): React.JSX.Element {
                 <button
                   aria-controls={panelId}
                   aria-expanded={expanded}
-                  aria-label={`${expanded ? '收起' : '展开'}服务器 ${server.name}`}
+                  aria-label={t(
+                    expanded
+                      ? 'mcp.custom.collapseServer'
+                      : 'mcp.custom.expandServer',
+                    { name: server.name }
+                  )}
                   className="mcp-server-card__toggle"
                   onClick={() => toggleItem(expansionId)}
                   type="button"
@@ -993,12 +1108,20 @@ export function McpSettingsSection(): React.JSX.Element {
                     <strong>{server.name}</strong>
                     <small>
                       {server.transport.toUpperCase()} MCP Server ·{' '}
-                      {server.enabled ? '已启用' : '已停用'}
-                      {server.secretConfigured ? ' · 已加密令牌' : ''}
+                      {server.enabled
+                        ? t('mcp.custom.enabled')
+                        : t('mcp.custom.disabled')}
+                      {server.secretConfigured
+                        ? t('mcp.custom.encryptedToken')
+                        : ''}
                     </small>
                   </div>
                   <span className="mcp-server-card__summary">
-                    {result ? `${result.toolCount} 个工具` : '工具未检测'}
+                    {result
+                      ? t('mcp.builtin.toolCount', {
+                          count: result.toolCount
+                        })
+                      : t('mcp.custom.toolsUndetected')}
                     <ChevronDown
                       aria-hidden="true"
                       className={
@@ -1012,16 +1135,20 @@ export function McpSettingsSection(): React.JSX.Element {
                 </button>
                 <div className="capability-card__actions">
                   <button
-                    aria-label={`测试 ${server.name}`}
+                    aria-label={t('mcp.custom.testAriaLabel', {
+                      name: server.name
+                    })}
                     disabled={Boolean(busy)}
                     onClick={() => void test(server)}
                     type="button"
                   >
                     <FlaskConical size={13} />
-                    测试
+                    {t('mcp.custom.test')}
                   </button>
                   <button
-                    aria-label={`编辑 ${server.name}`}
+                    aria-label={t('mcp.custom.editAriaLabel', {
+                      name: server.name
+                    })}
                     disabled={Boolean(busy) || Boolean(editor)}
                     onClick={(event) =>
                       openEditor(
@@ -1032,10 +1159,12 @@ export function McpSettingsSection(): React.JSX.Element {
                     type="button"
                   >
                     <Pencil size={13} />
-                    编辑
+                    {t('mcp.custom.edit')}
                   </button>
                   <button
-                    aria-label={`删除 ${server.name}`}
+                    aria-label={t('mcp.custom.deleteAriaLabel', {
+                      name: server.name
+                    })}
                     disabled={Boolean(busy)}
                     onClick={() =>
                       void run(`remove:${server.id}`, () =>
@@ -1047,7 +1176,7 @@ export function McpSettingsSection(): React.JSX.Element {
                     type="button"
                   >
                     <Trash2 size={13} />
-                    删除
+                    {t('mcp.custom.delete')}
                   </button>
                 </div>
               </div>
@@ -1060,16 +1189,19 @@ export function McpSettingsSection(): React.JSX.Element {
                       : server.url}
                   </code>
                   <div className="runtime-assignments">
-                    <small>已分配：</small>
+                    <small>{t('mcp.custom.assigned')}</small>
                     <span>
                       {server.assignments
                         .map((target) => runtimeLabels[target])
-                        .join('、') || '无'}
+                        .join(t('mcp.custom.assignmentSeparator')) ||
+                        t('mcp.custom.none')}
                     </span>
                   </div>
                   {result ? (
                     <section
-                      aria-label={`${server.name} 工具`}
+                      aria-label={t('mcp.builtin.toolsAriaLabel', {
+                        name: server.name
+                      })}
                       className="mcp-server-tools"
                     >
                       <div className="mcp-server-tools__heading">
@@ -1079,7 +1211,11 @@ export function McpSettingsSection(): React.JSX.Element {
                             ? ` ${result.serverVersion}`
                             : ''}
                         </strong>
-                        <small>{result.toolCount} 个工具</small>
+                        <small>
+                          {t('mcp.builtin.toolCount', {
+                            count: result.toolCount
+                          })}
+                        </small>
                       </div>
                       {result.tools.length > 0 ? (
                         <ul>
@@ -1096,13 +1232,13 @@ export function McpSettingsSection(): React.JSX.Element {
                         </ul>
                       ) : (
                         <p className="settings-empty">
-                          服务器未公开可用工具。
+                          {t('mcp.custom.noTools')}
                         </p>
                       )}
                     </section>
                   ) : (
                     <p className="settings-empty">
-                      点击“测试”连接服务器并读取其工具列表。
+                      {t('mcp.custom.testHelp')}
                     </p>
                   )}
                 </div>

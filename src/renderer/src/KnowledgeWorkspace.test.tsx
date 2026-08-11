@@ -12,6 +12,7 @@ import {
   KnowledgeWorkspace,
   type KnowledgeWorkspaceProps
 } from './KnowledgeWorkspace'
+import i18n from './i18n'
 
 const g6Mock = vi.hoisted(() => {
   const handlers = new Map<string, (event: unknown) => void>()
@@ -199,6 +200,23 @@ describe('KnowledgeWorkspace', () => {
         graphStrategy: 'rules'
       })
     )
+  })
+
+  it('renders English interface copy without translating knowledge content', async () => {
+    await i18n.changeLanguage('en-US')
+    render(<KnowledgeWorkspace {...createProps()} />)
+
+    expect(
+      screen.getByRole('heading', { name: 'Knowledge Base' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'Documents and sources' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '产品知识' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('架构说明.md')).toBeInTheDocument()
+    expect(screen.getByText('Local file · 架构说明.md')).toBeInTheDocument()
   })
 
   it('imports an HTTP URL into the selected library', async () => {

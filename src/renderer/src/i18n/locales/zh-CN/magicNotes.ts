@@ -1,0 +1,181 @@
+export const magicNotes = {
+  page: {
+    eyebrow: 'MAGIC NOTES',
+    title: '魔法笔记',
+    description: '全局记录富文本、本地媒体、附件和待办清单，由 AI 提供只读评论。',
+    contentLabel: '魔法笔记内容'
+  },
+  tabs: {
+    notes: '笔记',
+    todos: '待办'
+  },
+  actions: {
+    cancel: '取消',
+    retry: '重试',
+    clearFilters: '清除筛选',
+    createNote: '创建笔记',
+    newNote: '新建笔记',
+    deleteNote: '删除笔记',
+    saveEntry: '保存记录',
+    saveChanges: '保存修改',
+    edit: '编辑',
+    deleteEntry: '删除记录',
+    analyze: 'AI 分析',
+    analyzeAgain: '重新分析',
+    analyzing: '分析中…',
+    openSourceNote: '打开原笔记修改',
+    hideAiComments: '隐藏 AI 评论',
+    showAiComments: '显示 AI 评论',
+    pinNote: '置顶笔记',
+    unpinNote: '取消置顶'
+  },
+  status: {
+    loading: '正在加载',
+    loadingNotes: '正在加载笔记…',
+    loadingTodos: '正在加载待办…',
+    pinned: '已置顶',
+    preparingComment: '正在准备评论…',
+    commentingDraft: '正在评论当前草稿…',
+    generatingPoints: '正在生成{{direction}}要点…',
+    generatingDirection: '正在生成 · {{direction}}',
+    unsavedDraft: '未保存草稿'
+  },
+  notifications: {
+    waitForOperation: '请等待当前操作完成',
+    noteCreated: '笔记已创建',
+    noteDeleted: '笔记已删除',
+    entrySaved: '记录已保存',
+    entryDeleted: '记录已删除',
+    entryUpdated: '记录已更新，原 AI 评论已清除',
+    aiCommentAdded: 'AI 评论已添加',
+    todoCompleted: '待办已完成',
+    todoReopened: '待办已恢复为未完成'
+  },
+  errors: {
+    operationFailed: '操作失败，请重试',
+    initialLoadTitle: '魔法笔记加载失败',
+    initialLoadDescription: '无法加载魔法笔记：{{error}}',
+    refreshFailed: '刷新失败，已保留当前内容：{{error}}',
+    detailLoadFailed: '笔记加载失败，已保留当前内容：{{error}}'
+  },
+  validation: {
+    createNoteTitle: '请输入笔记标题',
+    noteTitleRequired: '笔记标题不能为空',
+    newEntryRequired: '请先输入记录内容',
+    entryRequired: '记录内容不能为空'
+  },
+  notes: {
+    listLabel: '笔记列表',
+    streamLabel: '笔记记录',
+    heading: '笔记',
+    searchLabel: '搜索当前范围的笔记',
+    searchPlaceholder: '搜索笔记',
+    titleLabel: '笔记标题',
+    noMatches: '没有符合条件的笔记',
+    empty: '还没有笔记',
+    noPreview: '还没有记录',
+    entryCountOne: '{{count}} 条记录',
+    entryCountOther: '{{count}} 条记录',
+    emptySelectionTitle: '还没有选择笔记',
+    emptySelectionDescription: '从左侧选择笔记，或新建一篇笔记开始记录。',
+    newEntryLabel: '新记录内容',
+    composerImmediateHint: '按回车并停止输入 5 秒后，AI 评论当前草稿',
+    composerRichTextHint: '支持富文本，可粘贴或拖入本地图片、视频和附件',
+    emptyEntries: '还没有记录，在上方写下第一条内容。',
+    editEntryLabel: '编辑记录内容',
+    entryAt: '{{date}} 的记录'
+  },
+  todos: {
+    listLabel: '待办列表',
+    detailLabel: '待办详情',
+    heading: '全部待办',
+    searchLabel: '搜索当前范围的待办',
+    searchPlaceholder: '搜索待办',
+    filterLabel: '筛选待办',
+    filters: {
+      active: '未完成',
+      completed: '已完成',
+      all: '全部'
+    },
+    empty: '还没有待办',
+    noMatches: '没有符合条件的待办',
+    emptySelectionTitle: '还没有选择待办',
+    emptySelectionDescription: '从左侧选择待办；待办统一来自笔记中的清单。',
+    sourceNote: '来自笔记：{{title}}',
+    defaultInstructions: '此待办来自笔记正文中的待办清单。',
+    markComplete: '标记为已完成：{{title}}',
+    markIncomplete: '标记为未完成：{{title}}'
+  },
+  confirmations: {
+    deleteNote: '删除“{{title}}”及其中全部记录？',
+    deleteEntry: '删除这条记录？此操作不可撤销。'
+  },
+  comments: {
+    paneLabel: 'AI 评论',
+    closePane: '关闭 AI 评论面板',
+    directionLabel: '评论方向',
+    directionAriaLabel: 'AI 评论方向',
+    directionHelp: '评论方向更改仅用于下一次评论，不会改动已生成的内容；评论形式可在设置中心修改。',
+    directions: {
+      general: '综合点评',
+      expand: '扩展写作',
+      polish: '润色改写',
+      challenge: '质疑审校',
+      brainstorm: '灵感发散'
+    },
+    kinds: {
+      narrative: '长评',
+      warning: '提醒',
+      suggestion: '建议',
+      summary: '摘要'
+    },
+    selectTodo: '选择待办后显示 AI 评论。',
+    analyzeTodoHint: '点击待办详情中的“AI 分析”，评论会显示在这里。',
+    selectNote: '选择笔记后显示 AI 评论。',
+    immediateHint: '写完一句后按回车，停止输入 5 秒，评论会显示在这里。',
+    autoHint: '保存记录后，AI 会自动评论。',
+    manualHint: '在记录上点击“AI 分析”，评论会显示在这里。'
+  },
+  accessibility: {
+    resizeAiPane: '调整编辑区与 AI 评论宽度',
+    aiPaneWidth: 'AI 评论栏 {{width}} 像素'
+  },
+  editor: {
+    imageReadFailed: '图片读取失败',
+    fileReadFailed: '文件读取失败',
+    maxImages: '每条记录最多包含 {{count}} 张图片',
+    maxVideos: '每条记录最多包含 {{count}} 个视频',
+    maxAttachments: '每条记录最多包含 {{count}} 个附件',
+    unsupportedImage: '只支持小于 2 MB 的 JPEG、PNG、GIF 或 WebP 图片',
+    unsupportedFile:
+      '图片不能超过 2 MB，MP4、WebM、Ogg 或 MOV 视频不能超过 16 MB，其他附件不能超过 8 MB',
+    totalImageSize: '本次添加的图片总大小不能超过 8 MB',
+    totalEmbedSize: '每条记录中的图片、视频和附件总大小不能超过 32 MB',
+    placeholder: '记录想法、会议内容或待办线索…',
+    paragraphStyle: '段落样式',
+    heading1: '标题 1',
+    heading2: '标题 2',
+    heading3: '标题 3',
+    body: '正文',
+    fontSize: '字体大小',
+    fontSizeSmall: '小号',
+    fontSizeNormal: '常规',
+    fontSizeLarge: '大号',
+    fontSizeHuge: '特大',
+    textColor: '字体颜色',
+    bold: '粗体',
+    italic: '斜体',
+    underline: '下划线',
+    strike: '删除线',
+    todoList: '待办清单',
+    bulletList: '项目符号列表',
+    numberedList: '编号列表',
+    blockquote: '引用',
+    codeBlock: '代码块',
+    insertImage: '插入本地图片',
+    uploadAttachment: '上传视频或附件',
+    undo: '撤销',
+    redo: '重做',
+    contentLabel: '笔记记录内容'
+  }
+} as const

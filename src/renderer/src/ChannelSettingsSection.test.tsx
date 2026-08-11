@@ -19,6 +19,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import { ChannelSettingsSection } from './ChannelSettingsSection'
+import i18n from './i18n'
 
 const directProfileId = '00000000-0000-4000-8000-000000000011'
 const runtimeSettings: RuntimeSettings = {
@@ -139,9 +140,10 @@ function settingsApi() {
   }
 }
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
   vi.restoreAllMocks()
+  await i18n.changeLanguage('zh-CN')
 })
 
 describe('ChannelSettingsSection', () => {
@@ -606,6 +608,46 @@ describe('ChannelSettingsSection', () => {
     )
     expect(
       screen.getByRole('checkbox', { name: '启用企业微信通道' })
+    ).toBeInTheDocument()
+  })
+
+  it('renders English channel copy while preserving project data', async () => {
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...bindingApi(),
+          getSnapshot: vi.fn(async () => snapshot),
+          apply: vi.fn(),
+          testConnection: vi.fn()
+        },
+        projects: {
+          list: vi.fn(async () => projects),
+          update: vi.fn()
+        },
+        settings: settingsApi()
+      } as unknown as DesktopApi
+    })
+
+    await i18n.changeLanguage('en-US')
+    render(<ChannelSettingsSection />)
+
+    expect(
+      await screen.findByRole('tablist', {
+        name: 'Message channel configuration'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Save channel settings' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('微信 ClawBot default working directory')
+    ).toHaveValue('C:\\Users\\tester')
+    expect(screen.getByText('微信 ClawBot')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Remote Execute operations can run only within this project directory.'
+      )
     ).toBeInTheDocument()
   })
 })

@@ -45,9 +45,11 @@ function groupIdentity(
   const model = record.model.trim()
   const provider = record.provider.trim()
   const modelKey = `${provider}:${model}`
-  const modelLabel = model || '未知模型'
+  const modelLabel = model
   const modelDetail = provider
-    ? `${modelLabel} · ${provider}`
+    ? modelLabel
+      ? `${modelLabel} · ${provider}`
+      : provider
     : modelLabel
 
   if (group === 'project') {
@@ -56,7 +58,7 @@ function groupIdentity(
       : 'project:unassigned'
     return {
       key: `${projectKey}:model:${modelKey}`,
-      label: record.projectName?.trim() || '未归属项目',
+      label: record.projectName?.trim() || '',
       detail: modelDetail
     }
   }
@@ -67,7 +69,7 @@ function groupIdentity(
       : 'conversation:deleted'
     return {
       key: `${conversationKey}:model:${modelKey}`,
-      label: record.conversationTitle?.trim() || '已删除会话',
+      label: record.conversationTitle?.trim() || '',
       detail: modelDetail
     }
   }
@@ -103,11 +105,7 @@ export function groupTokenUsage(
       existing.cacheWriteTokens += usage.cacheWriteTokens
       existing.totalTokens = existing.inputTokens + existing.outputTokens
 
-      if (
-        (existing.label === '未归属项目' ||
-          existing.label === '已删除会话') &&
-        identity.label !== existing.label
-      ) {
+      if (!existing.label && identity.label) {
         existing.label = identity.label
       }
       continue

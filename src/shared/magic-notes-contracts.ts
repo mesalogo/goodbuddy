@@ -3,9 +3,60 @@ import { z } from 'zod'
 export const MAGIC_NOTE_MAX_IMAGES = 12
 export const MAGIC_NOTE_MAX_IMAGE_BYTES = 2 * 1024 * 1024
 export const MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES = 8 * 1024 * 1024
+export const MAGIC_NOTE_MAX_VIDEOS = 4
+export const MAGIC_NOTE_MAX_VIDEO_BYTES = 16 * 1024 * 1024
+export const MAGIC_NOTE_MAX_ATTACHMENTS = 8
+export const MAGIC_NOTE_MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+export const MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES = 32 * 1024 * 1024
+export const MAGIC_NOTE_MAX_NOTE_EMBED_BYTES = 64 * 1024 * 1024
 export const MAGIC_NOTE_MAX_TEXT_BYTES = 500 * 1024
 
-export function magicNoteImageDataBytes(dataUrl: string): number {
+export const MAGIC_NOTE_VIDEO_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/ogg',
+  'video/quicktime'
+] as const
+
+export const MAGIC_NOTE_TEXT_COLORS = [
+  '#000000',
+  '#e60000',
+  '#ff9900',
+  '#ffff00',
+  '#008a00',
+  '#0066cc',
+  '#9933ff',
+  '#ffffff',
+  '#facccc',
+  '#ffebcc',
+  '#ffffcc',
+  '#cce8cc',
+  '#cce0f5',
+  '#ebd6ff',
+  '#bbbbbb',
+  '#f06666',
+  '#ffc266',
+  '#ffff66',
+  '#66b966',
+  '#66a3e0',
+  '#c285ff',
+  '#888888',
+  '#a10000',
+  '#b26b00',
+  '#b2b200',
+  '#006100',
+  '#0047b2',
+  '#6b24b2',
+  '#444444',
+  '#5c0000',
+  '#663d00',
+  '#666600',
+  '#003700',
+  '#002966',
+  '#3d1466'
+] as const
+
+export function magicNoteDataBytes(dataUrl: string): number {
   const payload = dataUrl.slice(dataUrl.indexOf(',') + 1)
   const padding = payload.endsWith('==')
     ? 2
@@ -15,6 +66,8 @@ export function magicNoteImageDataBytes(dataUrl: string): number {
   return Math.floor((payload.length * 3) / 4) - padding
 }
 
+export const magicNoteImageDataBytes = magicNoteDataBytes
+
 const magicNoteIdSchema = z.string().uuid()
 const imageDataUrlSchema = z
   .string()
@@ -23,6 +76,67 @@ const imageDataUrlSchema = z
     /^data:image\/(?:jpeg|png|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
     '只支持本地 JPEG、PNG、GIF 或 WebP 图片'
   )
+
+const embeddedFileNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .regex(/^[^<>:"/\\|?*]+$/u, '附件名称包含不支持的字符')
+  .refine(
+    (name) =>
+      [...name].every((character) => {
+        const code = character.charCodeAt(0)
+        return code >= 32 && code !== 127
+      }),
+    { message: '附件名称包含不支持的字符' }
+  )
+  .refine((name) => name !== '.' && name !== '..', {
+    message: '附件名称无效'
+  })
+
+const embeddedMimeTypeSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(127)
+  .regex(
+    /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/u,
+    '附件类型无效'
+  )
+
+function embeddedDataUrlSchema(maxBytes: number): z.ZodString {
+  return z
+    .string()
+    .max(Math.ceil((maxBytes * 4) / 3) + 256)
+    .regex(
+      /^data:[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*;base64,[A-Za-z0-9+/]+={0,2}$/u,
+      '只支持本地附件数据'
+    )
+}
+
+const embeddedFileFields = {
+  name: embeddedFileNameSchema,
+  mimeType: embeddedMimeTypeSchema,
+  size: z.number().int().positive()
+}
+
+const localVideoSchema = z
+  .object({
+    ...embeddedFileFields,
+    mimeType: z.enum(MAGIC_NOTE_VIDEO_TYPES),
+    size: z.number().int().positive().max(MAGIC_NOTE_MAX_VIDEO_BYTES),
+    dataUrl: embeddedDataUrlSchema(MAGIC_NOTE_MAX_VIDEO_BYTES)
+  })
+  .strict()
+
+const attachmentSchema = z
+  .object({
+    ...embeddedFileFields,
+    size: z.number().int().positive().max(MAGIC_NOTE_MAX_ATTACHMENT_BYTES),
+    dataUrl: embeddedDataUrlSchema(MAGIC_NOTE_MAX_ATTACHMENT_BYTES)
+  })
+  .strict()
 
 const magicNoteAttributesSchema = z
   .object({
@@ -38,7 +152,9 @@ const magicNoteAttributesSchema = z
       .enum(['ordered', 'bullet', 'checked', 'unchecked'])
       .optional(),
     align: z.enum(['center', 'right', 'justify']).optional(),
-    indent: z.number().int().min(1).max(8).optional()
+    indent: z.number().int().min(1).max(8).optional(),
+    size: z.enum(['small', 'large', 'huge']).optional(),
+    color: z.enum(MAGIC_NOTE_TEXT_COLORS).optional()
   })
   .strict()
 
@@ -51,7 +167,9 @@ export const magicNoteRichContentSchema = z
           .object({
             insert: z.union([
               z.string().max(200_000),
-              z.object({ image: imageDataUrlSchema }).strict()
+              z.object({ image: imageDataUrlSchema }).strict(),
+              z.object({ localVideo: localVideoSchema }).strict(),
+              z.object({ attachment: attachmentSchema }).strict()
             ]),
             attributes: magicNoteAttributesSchema.optional()
           })
@@ -65,11 +183,17 @@ export const magicNoteRichContentSchema = z
     const encoder = new TextEncoder()
     let textBytes = 0
     const imageData: string[] = []
+    const videoData: string[] = []
+    const attachmentData: string[] = []
     for (const operation of content.ops) {
       if (typeof operation.insert === 'string') {
         textBytes += encoder.encode(operation.insert).byteLength
-      } else {
+      } else if ('image' in operation.insert) {
         imageData.push(operation.insert.image)
+      } else if ('localVideo' in operation.insert) {
+        videoData.push(operation.insert.localVideo.dataUrl)
+      } else {
+        attachmentData.push(operation.insert.attachment.dataUrl)
       }
     }
     if (textBytes > MAGIC_NOTE_MAX_TEXT_BYTES) {
@@ -92,6 +216,28 @@ export const magicNoteRichContentSchema = z
       context.addIssue({
         code: 'custom',
         message: '一篇笔记中的图片总大小不能超过 8 MB'
+      })
+    }
+    if (videoData.length > MAGIC_NOTE_MAX_VIDEOS) {
+      context.addIssue({
+        code: 'custom',
+        message: `每条记录最多包含 ${MAGIC_NOTE_MAX_VIDEOS} 个视频`
+      })
+    }
+    if (attachmentData.length > MAGIC_NOTE_MAX_ATTACHMENTS) {
+      context.addIssue({
+        code: 'custom',
+        message: `每条记录最多包含 ${MAGIC_NOTE_MAX_ATTACHMENTS} 个附件`
+      })
+    }
+    const embeddedBytes = [...imageData, ...videoData, ...attachmentData].reduce(
+      (total, dataUrl) => total + magicNoteDataBytes(dataUrl),
+      0
+    )
+    if (embeddedBytes > MAGIC_NOTE_MAX_TOTAL_EMBED_BYTES) {
+      context.addIssue({
+        code: 'custom',
+        message: '每条记录中的图片、视频和附件总大小不能超过 32 MB'
       })
     }
   })

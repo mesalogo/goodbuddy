@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   magicNoteChecklistItems,
+  magicNoteEmbeddedBytes,
   magicNoteImageBytes,
   magicNotePlainText,
   setMagicNoteChecklistCompletion,
@@ -10,6 +11,13 @@ import {
 const pngDataUrl = `data:image/png;base64,${Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
 ]).toString('base64')}`
+const mp4Bytes = Buffer.from([
+  0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d
+])
+const mp4DataUrl = `data:video/mp4;base64,${mp4Bytes.toString('base64')}`
+const attachmentBytes = Buffer.from('release notes')
+const attachmentDataUrl =
+  `data:text/plain;base64,${attachmentBytes.toString('base64')}`
 
 describe('magic note rich content', () => {
   it('accepts bounded text formats and signature-checked local images', () => {
@@ -57,6 +65,86 @@ describe('magic note rich content', () => {
         ops: [{ insert: { image: spoofed } }]
       })
     ).toThrow('图片内容与声明的格式不一致')
+  })
+
+  it('accepts bounded font formats, local videos, and attachments', () => {
+    const content = validateMagicNoteRichContent({
+      version: 1,
+      ops: [
+        {
+          insert: '重点',
+          attributes: { size: 'large', color: '#e60000' }
+        },
+        { insert: '\n' },
+        {
+          insert: {
+            localVideo: {
+              name: 'demo.mp4',
+              mimeType: 'video/mp4',
+              size: mp4Bytes.length,
+              dataUrl: mp4DataUrl
+            }
+          }
+        },
+        {
+          insert: {
+            attachment: {
+              name: 'notes.txt',
+              mimeType: 'text/plain',
+              size: attachmentBytes.length,
+              dataUrl: attachmentDataUrl
+            }
+          }
+        },
+        { insert: '\n' }
+      ]
+    })
+
+    expect(magicNotePlainText(content)).toBe(
+      '重点\n[视频：demo.mp4][附件：notes.txt]'
+    )
+    expect(magicNoteImageBytes(content)).toBe(0)
+    expect(magicNoteEmbeddedBytes(content)).toBe(
+      mp4Bytes.length + attachmentBytes.length
+    )
+  })
+
+  it('rejects spoofed videos and mismatched attachment metadata', () => {
+    expect(() =>
+      validateMagicNoteRichContent({
+        version: 1,
+        ops: [
+          {
+            insert: {
+              localVideo: {
+                name: 'demo.mp4',
+                mimeType: 'video/mp4',
+                size: attachmentBytes.length,
+                dataUrl: `data:video/mp4;base64,${attachmentBytes.toString('base64')}`
+              }
+            }
+          }
+        ]
+      })
+    ).toThrow('视频内容与声明的格式不一致')
+
+    expect(() =>
+      validateMagicNoteRichContent({
+        version: 1,
+        ops: [
+          {
+            insert: {
+              attachment: {
+                name: 'notes.txt',
+                mimeType: 'text/plain',
+                size: attachmentBytes.length + 1,
+                dataUrl: attachmentDataUrl
+              }
+            }
+          }
+        ]
+      })
+    ).toThrow('附件内容与声明的大小不一致')
   })
 
   it('rejects more than twelve images in one record', () => {

@@ -44,7 +44,7 @@ import {
   type RuntimeSelectionRepairSettings
 } from '../../shared/runtime-selection-contracts'
 import {
-  MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES,
+  MAGIC_NOTE_MAX_NOTE_EMBED_BYTES,
   type MagicNoteComment,
   type MagicNoteDetail,
   type MagicNoteEntry,
@@ -57,6 +57,7 @@ import {
 import type { ComputerControlAuditEvent } from '../computer-control/audit'
 import {
   magicNoteChecklistItems,
+  magicNoteEmbeddedBytes,
   magicNoteImageBytes,
   magicNotePlainText,
   magicNotePreview,
@@ -1917,7 +1918,7 @@ export class AssistantDatabase {
     const now = new Date().toISOString()
     database.exec('BEGIN IMMEDIATE')
     try {
-      this.assertMagicNoteImageBudget(input.noteId, input.content)
+      this.assertMagicNoteEmbedBudget(input.noteId, input.content)
       const noteResult = database
         .prepare(
           `UPDATE magic_notes
@@ -1943,7 +1944,7 @@ export class AssistantDatabase {
           input.plainText,
           now,
           now,
-          magicNoteImageBytes(input.content)
+          magicNoteEmbeddedBytes(input.content)
         )
       this.syncMagicNoteTodos(
         database,
@@ -1976,7 +1977,7 @@ export class AssistantDatabase {
     const now = new Date().toISOString()
     database.exec('BEGIN IMMEDIATE')
     try {
-      this.assertMagicNoteImageBudget(
+      this.assertMagicNoteEmbedBudget(
         existing.note_id,
         input.content,
         input.entryId
@@ -1993,7 +1994,7 @@ export class AssistantDatabase {
           JSON.stringify(input.content),
           input.plainText,
           now,
-          magicNoteImageBytes(input.content),
+          magicNoteEmbeddedBytes(input.content),
           input.entryId,
           input.expectedRevision
         )
@@ -4256,7 +4257,7 @@ export class AssistantDatabase {
     }
   }
 
-  private assertMagicNoteImageBudget(
+  private assertMagicNoteEmbedBudget(
     noteId: string,
     content: MagicNoteRichContent,
     excludedEntryId?: string
@@ -4269,10 +4270,10 @@ export class AssistantDatabase {
       )
       .get(noteId, excludedEntryId ?? '') as { image_bytes: number }
     if (
-      existing.image_bytes + magicNoteImageBytes(content) >
-      MAGIC_NOTE_MAX_TOTAL_IMAGE_BYTES
+      existing.image_bytes + magicNoteEmbeddedBytes(content) >
+      MAGIC_NOTE_MAX_NOTE_EMBED_BYTES
     ) {
-      throw new Error('一篇笔记中的图片总大小不能超过 8 MB')
+      throw new Error('一篇笔记中的图片、视频和附件总大小不能超过 64 MB')
     }
   }
 

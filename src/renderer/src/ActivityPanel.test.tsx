@@ -12,6 +12,7 @@ import {
   MAX_ACTIVITY_RECORDS,
   type ActivityRecord
 } from './activity-store'
+import i18n from './i18n'
 
 function makeRecord(
   index: number,
@@ -75,8 +76,42 @@ function makeTokenUsage(): TokenUsageSummary {
 }
 
 describe('ActivityPanel', () => {
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
+    await i18n.changeLanguage('zh-CN')
+  })
+
+  it('renders English interface copy while preserving activity content', async () => {
+    await i18n.changeLanguage('en-US')
+    const record = makeRecord(1, 'running')
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[record]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    const englishDate = new Intl.DateTimeFormat('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).format(new Date(record.createdAt))
+    expect(screen.getAllByText(englishDate).length).toBeGreaterThan(0)
+    expect(
+      screen.getByRole('heading', {
+        level: 1,
+        name: 'Tasks and activity'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'In progress' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(record.title)).toBeInTheDocument()
+    expect(screen.getByText('Token usage')).toBeInTheDocument()
   })
 
   it('filters active and unsuccessful activity and opens its conversation', () => {

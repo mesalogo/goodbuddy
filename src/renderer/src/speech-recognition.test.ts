@@ -8,6 +8,7 @@ import {
   type SpeechRecognitionConstructor,
   type SpeechRecognitionInstance
 } from './speech-recognition'
+import { changeUiLocale } from './i18n'
 
 function createRecognitionConstructor(): {
   Recognition: SpeechRecognitionConstructor
@@ -194,5 +195,13 @@ describe('speech recognition', () => {
     ['service-not-allowed', '麦克风权限被拒绝']
   ])('maps %s errors to actionable copy', (error, copy) => {
     expect(describeSpeechRecognitionError({ error })).toContain(copy)
+  })
+
+  it('reports renderer-owned speech errors in English', async () => {
+    await changeUiLocale('en-US')
+    expect(
+      describeSpeechRecognitionError({ error: 'audio-capture' })
+    ).toContain('No microphone is available')
+    await changeUiLocale('zh-CN')
   })
 })

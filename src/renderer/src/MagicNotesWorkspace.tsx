@@ -23,6 +23,7 @@ import {
   useRef,
   useState
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   MagicNoteAnalysisOptions,
   MagicNoteCommentDirection,
@@ -61,35 +62,6 @@ type ValidationTarget =
   | 'new-entry'
   | 'edit-entry'
 
-const libraryTabs: ReadonlyArray<PageTab<LibraryView>> = [
-  { id: 'notes', label: '笔记', icon: <BookOpen size={14} /> },
-  { id: 'todos', label: '待办', icon: <ListTodo size={14} /> }
-]
-
-const todoFilters = [
-  { value: 'active', label: '未完成' },
-  { value: 'completed', label: '已完成' },
-  { value: 'all', label: '全部' }
-] as const
-
-const commentDirections: ReadonlyArray<{
-  value: MagicNoteCommentDirection
-  label: string
-}> = [
-  { value: 'general', label: '综合点评' },
-  { value: 'expand', label: '扩展写作' },
-  { value: 'polish', label: '润色改写' },
-  { value: 'challenge', label: '质疑审校' },
-  { value: 'brainstorm', label: '灵感发散' }
-]
-
-const commentDirectionLabels = Object.fromEntries(
-  commentDirections.map((direction) => [
-    direction.value,
-    direction.label
-  ])
-) as Record<MagicNoteCommentDirection, string>
-
 const defaultAiPaneWidth = 300
 const minimumAiPaneWidth = 240
 const maximumAiPaneWidth = 520
@@ -122,13 +94,6 @@ function clampAiPaneWidth(width: number, layoutWidth: number): number {
   return Math.min(limits.maximum, Math.max(limits.minimum, width))
 }
 
-const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit'
-})
-
 function noteSummary(note: MagicNoteDetail): MagicNoteSummary {
   return {
     id: note.id,
@@ -152,11 +117,11 @@ function hasContent(content?: MagicNoteRichContent): boolean {
   )
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, fallback: string): string {
   if (typeof error === 'string') {
     return error
   }
-  return error instanceof Error ? error.message : '操作失败，请重试'
+  return error instanceof Error ? error.message : fallback
 }
 
 function AiComment({
@@ -164,6 +129,15 @@ function AiComment({
 }: {
   comment: MagicNoteComment
 }): React.JSX.Element {
+  const { t } = useTranslation('magicNotes')
+  const kindLabel =
+    comment.kind === 'narrative'
+      ? t('comments.kinds.narrative')
+      : comment.kind === 'warning'
+        ? t('comments.kinds.warning')
+        : comment.kind === 'suggestion'
+          ? t('comments.kinds.suggestion')
+          : t('comments.kinds.summary')
   return (
     <div
       className={`magic-note-comment magic-note-comment--${comment.kind}`}
@@ -179,17 +153,11 @@ function AiComment({
       </span>
       <div>
         <strong>
-          {comment.kind === 'narrative'
-            ? '长评'
-            : comment.kind === 'warning'
-            ? '提醒'
-            : comment.kind === 'suggestion'
-              ? '建议'
-              : '摘要'}
+          {kindLabel}
         </strong>
         {comment.direction && (
           <span className="magic-note-comment__direction">
-            {commentDirectionLabels[comment.direction]}
+            {t(`comments.directions.${comment.direction}`)}
           </span>
         )}
         {comment.kind === 'narrative' ? (
@@ -217,6 +185,7 @@ function TodoListItem({
   selected: boolean
   todo: MagicTodoItem
 }): React.JSX.Element {
+  const { t } = useTranslation('magicNotes')
   return (
     <div
       className={`magic-todo-list-item ${
@@ -224,9 +193,12 @@ function TodoListItem({
       }`}
     >
       <button
-        aria-label={`${
-          todo.completed ? '标记为未完成' : '标记为已完成'
-        }：${todo.title}`}
+        aria-label={t(
+          todo.completed
+            ? 'todos.markIncomplete'
+            : 'todos.markComplete',
+          { title: todo.title }
+        )}
         aria-pressed={todo.completed}
         className="magic-todo-list-item__check"
         disabled={disabled}
@@ -246,7 +218,7 @@ function TodoListItem({
         type="button"
       >
         <strong>{todo.title}</strong>
-        <small>来自笔记：{todo.noteTitle}</small>
+        <small>{t('todos.sourceNote', { title: todo.noteTitle })}</small>
       </button>
     </div>
   )
@@ -255,6 +227,81 @@ function TodoListItem({
 export function MagicNotesWorkspace({
   onNotify
 }: MagicNotesWorkspaceProps): React.JSX.Element {
+  const { i18n, t } = useTranslation('magicNotes')
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
+  const currentLocale = i18n.resolvedLanguage || i18n.language
+  const libraryTabs = useMemo<ReadonlyArray<PageTab<LibraryView>>>(
+    () => [
+      {
+        id: 'notes',
+        label: t('tabs.notes'),
+        icon: <BookOpen size={14} />
+      },
+      {
+        id: 'todos',
+        label: t('tabs.todos'),
+        icon: <ListTodo size={14} />
+      }
+    ],
+    [t]
+  )
+  const todoFilters = useMemo<
+    ReadonlyArray<{ value: TodoFilter; label: string }>
+  >(
+    () => [
+      { value: 'active', label: t('todos.filters.active') },
+      { value: 'completed', label: t('todos.filters.completed') },
+      { value: 'all', label: t('todos.filters.all') }
+    ],
+    [t]
+  )
+  const commentDirections = useMemo<
+    ReadonlyArray<{
+      value: MagicNoteCommentDirection
+      label: string
+    }>
+  >(
+    () => [
+      { value: 'general', label: t('comments.directions.general') },
+      { value: 'expand', label: t('comments.directions.expand') },
+      { value: 'polish', label: t('comments.directions.polish') },
+      {
+        value: 'challenge',
+        label: t('comments.directions.challenge')
+      },
+      {
+        value: 'brainstorm',
+        label: t('comments.directions.brainstorm')
+      }
+    ],
+    [t]
+  )
+  const commentDirectionLabels = useMemo(
+    () =>
+      Object.fromEntries(
+        commentDirections.map((direction) => [
+          direction.value,
+          direction.label
+        ])
+      ) as Record<MagicNoteCommentDirection, string>,
+    [commentDirections]
+  )
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(
+        currentLocale,
+        {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        }
+      ),
+    [currentLocale]
+  )
   const [notes, setNotes] = useState<MagicNoteSummary[]>([])
   const [todos, setTodos] = useState<MagicTodoItem[]>([])
   const [libraryView, setLibraryView] = useState<LibraryView>('notes')
@@ -471,7 +518,10 @@ export function MagicNotesWorkspace({
     (error: unknown): void =>
       onNotify({
         tone: 'error',
-        message: errorMessage(error),
+        message: errorMessage(
+          error,
+          tRef.current('errors.operationFailed')
+        ),
         dedupeKey: 'magic-notes-error'
       }),
     [onNotify]
@@ -492,7 +542,7 @@ export function MagicNotesWorkspace({
 
   const beginBusy = useCallback((operation: string): boolean => {
     if (busyRef.current) {
-      notifyInfo('请等待当前操作完成')
+      notifyInfo(tRef.current('notifications.waitForOperation'))
       return false
     }
     busyRef.current = operation
@@ -672,7 +722,10 @@ export function MagicNotesWorkspace({
       } catch (loadError) {
         if (detailRequestRef.current === requestId) {
           setDetailLoadError({
-            message: errorMessage(loadError),
+            message: errorMessage(
+              loadError,
+              tRef.current('errors.operationFailed')
+            ),
             noteId
           })
         }
@@ -730,7 +783,10 @@ export function MagicNotesWorkspace({
         setDetailLoadError(undefined)
       } catch (loadError) {
         if (refreshRequestRef.current === requestId) {
-          const message = errorMessage(loadError)
+          const message = errorMessage(
+            loadError,
+            tRef.current('errors.operationFailed')
+          )
           if (hasLoadedRef.current) {
             setRefreshError(message)
           } else {
@@ -796,9 +852,12 @@ export function MagicNotesWorkspace({
       directories.set(todo.noteId, directory)
     }
     return [...directories.values()].sort((left, right) =>
-      left.noteTitle.localeCompare(right.noteTitle, 'zh-CN')
+      left.noteTitle.localeCompare(
+        right.noteTitle,
+        currentLocale
+      )
     )
-  }, [visibleTodos])
+  }, [currentLocale, visibleTodos])
 
   const selectedTodo = useMemo(
     () => todos.find((todo) => todo.id === selectedTodoId),
@@ -828,7 +887,10 @@ export function MagicNotesWorkspace({
   const createNote = async (): Promise<void> => {
     const title = newTitle.trim()
     if (!title) {
-      setValidation({ target: 'create-note', message: '请输入笔记标题' })
+      setValidation({
+        target: 'create-note',
+        message: t('validation.createNoteTitle')
+      })
       return
     }
     clearValidation('create-note')
@@ -845,7 +907,7 @@ export function MagicNotesWorkspace({
       setSelectedNoteId(created.id)
       setNewTitle('')
       setCreating(false)
-      notifySuccess('笔记已创建')
+      notifySuccess(t('notifications.noteCreated'))
     } catch (createError) {
       notifyError(createError)
     } finally {
@@ -869,7 +931,7 @@ export function MagicNotesWorkspace({
       applyTodo(
         await window.goodbuddy.magicNotes.analyzeTodo(todoId, options)
       )
-      notifySuccess('AI 评论已添加')
+      notifySuccess(t('notifications.aiCommentAdded'))
     } catch (analysisError) {
       notifyError(analysisError)
     } finally {
@@ -896,7 +958,13 @@ export function MagicNotesWorkspace({
           expectedRevision: todo.revision
         })
       )
-      notifySuccess(completed ? '待办已完成' : '待办已恢复为未完成')
+      notifySuccess(
+        t(
+          completed
+            ? 'notifications.todoCompleted'
+            : 'notifications.todoReopened'
+        )
+      )
     } catch (updateError) {
       notifyError(updateError)
     } finally {
@@ -910,7 +978,10 @@ export function MagicNotesWorkspace({
     }
     if (!titleDraft.trim()) {
       setTitleDraft(detail.title)
-      setValidation({ target: 'note-title', message: '笔记标题不能为空' })
+      setValidation({
+        target: 'note-title',
+        message: t('validation.noteTitleRequired')
+      })
       return
     }
     clearValidation('note-title')
@@ -937,7 +1008,10 @@ export function MagicNotesWorkspace({
   const saveEntry = async (): Promise<void> => {
     const composerContent = composerContentRef.current
     if (!detail || !hasContent(composerContent) || !composerContent) {
-      setValidation({ target: 'new-entry', message: '请先输入记录内容' })
+      setValidation({
+        target: 'new-entry',
+        message: t('validation.newEntryRequired')
+      })
       return
     }
     clearValidation('new-entry')
@@ -965,7 +1039,7 @@ export function MagicNotesWorkspace({
         draftAnalysisTimerRef.current = undefined
       }
       setComposerKey((current) => current + 1)
-      notifySuccess('记录已保存')
+      notifySuccess(t('notifications.entrySaved'))
       const createdEntry = updated.entries.find(
         (entry) => !existingEntryIds.has(entry.id)
       )
@@ -984,7 +1058,7 @@ export function MagicNotesWorkspace({
               options
             )
           )
-          notifySuccess('AI 评论已添加')
+          notifySuccess(t('notifications.aiCommentAdded'))
         } catch (analysisError) {
           notifyError(analysisError)
         } finally {
@@ -1005,7 +1079,10 @@ export function MagicNotesWorkspace({
   const saveEditedEntry = async (): Promise<void> => {
     const editingContent = editingContentRef.current
     if (!editingEntry || !editingContent || !hasContent(editingContent)) {
-      setValidation({ target: 'edit-entry', message: '记录内容不能为空' })
+      setValidation({
+        target: 'edit-entry',
+        message: t('validation.entryRequired')
+      })
       return
     }
     clearValidation('edit-entry')
@@ -1023,7 +1100,7 @@ export function MagicNotesWorkspace({
       await reloadTodos()
       setEditingEntry(undefined)
       editingContentRef.current = undefined
-      notifySuccess('记录已更新，原 AI 评论已清除')
+      notifySuccess(t('notifications.entryUpdated'))
       if (commentMode === 'after-save-auto') {
         const options = await createAnalysisOptions()
         setLiveAnalysis({
@@ -1039,7 +1116,7 @@ export function MagicNotesWorkspace({
               options
             )
           )
-          notifySuccess('AI 评论已添加')
+          notifySuccess(t('notifications.aiCommentAdded'))
         } catch (analysisError) {
           notifyError(analysisError)
         } finally {
@@ -1073,7 +1150,7 @@ export function MagicNotesWorkspace({
       applyDetail(
         await window.goodbuddy.magicNotes.analyze(entryId, options)
       )
-      notifySuccess('AI 评论已添加')
+      notifySuccess(t('notifications.aiCommentAdded'))
     } catch (analysisError) {
       notifyError(analysisError)
     } finally {
@@ -1101,7 +1178,11 @@ export function MagicNotesWorkspace({
               ) : (
                 <PanelRightOpen aria-hidden="true" size={15} />
               )}
-              {aiPaneOpen ? '隐藏 AI 评论' : '显示 AI 评论'}
+              {t(
+                aiPaneOpen
+                  ? 'actions.hideAiComments'
+                  : 'actions.showAiComments'
+              )}
             </button>
             {libraryView === 'notes' && (
               <button
@@ -1113,17 +1194,17 @@ export function MagicNotesWorkspace({
                 }}
               >
                 <Plus aria-hidden="true" size={15} />
-                新建笔记
+                {t('actions.newNote')}
               </button>
             )}
           </>
         }
-        description="全局记录富文本、本地图片和待办清单，由 AI 提供只读评论。"
-        eyebrow="MAGIC NOTES"
+        description={t('page.description')}
+        eyebrow={t('page.eyebrow')}
         headingId="magic-notes-title"
         icon={<Sparkles size={20} />}
         scope={{ kind: 'global' }}
-        title="魔法笔记"
+        title={t('page.title')}
       />
 
       {loadStatus === 'error' ? (
@@ -1134,25 +1215,29 @@ export function MagicNotesWorkspace({
               onClick={() => void refreshNotes()}
               type="button"
             >
-              重试
+              {t('actions.retry')}
             </button>
           }
-          description={`无法加载魔法笔记：${loadError}`}
+          description={t('errors.initialLoadDescription', {
+            error: loadError
+          })}
           icon={<CircleAlert size={24} />}
           level="page"
-          title="魔法笔记加载失败"
+          title={t('errors.initialLoadTitle')}
         />
       ) : (
         <>
           {refreshError && (
             <div className="magic-note-delete-confirmation" role="alert">
-              <span>刷新失败，已保留当前内容：{refreshError}</span>
+              <span>
+                {t('errors.refreshFailed', { error: refreshError })}
+              </span>
               <button
                 className="secondary-button"
                 onClick={() => void refreshNotes(selectedNoteId)}
                 type="button"
               >
-                重试
+                {t('actions.retry')}
               </button>
             </div>
           )}
@@ -1173,11 +1258,15 @@ export function MagicNotesWorkspace({
         }
       >
         <aside
-          aria-label={libraryView === 'notes' ? '笔记列表' : '待办列表'}
+          aria-label={t(
+            libraryView === 'notes'
+              ? 'notes.listLabel'
+              : 'todos.listLabel'
+          )}
           className="magic-notes-list-pane"
         >
           <PageTabs
-            ariaLabel="魔法笔记内容"
+            ariaLabel={t('page.contentLabel')}
             idPrefix="magic-library"
             onChange={(value) => {
               setLibraryView(value)
@@ -1197,13 +1286,13 @@ export function MagicNotesWorkspace({
               role="tabpanel"
             >
           <div className="magic-notes-pane-heading">
-            <strong>笔记</strong>
+            <strong>{t('notes.heading')}</strong>
             <span>{notes.length}</span>
           </div>
           <label className="magic-notes-search">
-            <span className="sr-only">搜索当前范围的笔记</span>
+            <span className="sr-only">{t('notes.searchLabel')}</span>
             <input
-              placeholder="搜索笔记"
+              placeholder={t('notes.searchPlaceholder')}
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -1218,7 +1307,7 @@ export function MagicNotesWorkspace({
               }}
             >
               <label>
-                <span>笔记标题</span>
+                <span>{t('notes.titleLabel')}</span>
                 <input
                   aria-describedby={
                     validation?.target === 'create-note'
@@ -1253,27 +1342,29 @@ export function MagicNotesWorkspace({
                     clearValidation('create-note')
                   }}
                 >
-                  取消
+                  {t('actions.cancel')}
                 </button>
                 <button
                   className="primary-button"
                   disabled={busy === 'create-note'}
                   type="submit"
                 >
-                  创建笔记
+                  {t('actions.createNote')}
                 </button>
               </div>
             </form>
           )}
           <div className="magic-notes-list">
             {loadStatus === 'loading' ? (
-              <p className="magic-notes-muted">正在加载笔记…</p>
+              <p className="magic-notes-muted">
+                {t('status.loadingNotes')}
+              </p>
             ) : visibleNotes.length === 0 ? (
               <>
                 <p className="magic-notes-muted">
                   {search.trim()
-                    ? '没有符合条件的笔记'
-                    : '还没有笔记'}
+                    ? t('notes.noMatches')
+                    : t('notes.empty')}
                 </p>
                 {search.trim() && (
                   <button
@@ -1281,7 +1372,7 @@ export function MagicNotesWorkspace({
                     onClick={() => setSearch('')}
                     type="button"
                   >
-                    清除筛选
+                    {t('actions.clearFilters')}
                   </button>
                 )}
               </>
@@ -1305,14 +1396,21 @@ export function MagicNotesWorkspace({
                   }}
                 >
                   <span className="magic-note-list-item__title">
-                    {note.pinned && <Pin aria-label="已置顶" size={12} />}
+                    {note.pinned && (
+                      <Pin aria-label={t('status.pinned')} size={12} />
+                    )}
                     {note.title}
                   </span>
                   <span className="magic-note-list-item__preview">
-                    {note.preview || '还没有记录'}
+                    {note.preview || t('notes.noPreview')}
                   </span>
                   <span className="magic-note-list-item__meta">
-                    {note.entryCount} 条记录
+                    {t(
+                      note.entryCount === 1
+                        ? 'notes.entryCountOne'
+                        : 'notes.entryCountOther',
+                      { count: note.entryCount }
+                    )}
                   </span>
                 </button>
               ))
@@ -1327,35 +1425,37 @@ export function MagicNotesWorkspace({
               role="tabpanel"
             >
               <div className="magic-notes-pane-heading">
-                <strong>全部待办</strong>
+                <strong>{t('todos.heading')}</strong>
                 <span>{todos.length}</span>
               </div>
               <label className="magic-notes-search">
-                <span className="sr-only">搜索当前范围的待办</span>
+                <span className="sr-only">{t('todos.searchLabel')}</span>
                 <input
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="搜索待办"
+                  placeholder={t('todos.searchPlaceholder')}
                   type="search"
                   value={search}
                 />
               </label>
               <SegmentedControl
-                ariaLabel="筛选待办"
+                ariaLabel={t('todos.filterLabel')}
                 onChange={setTodoFilter}
                 options={todoFilters}
                 value={todoFilter}
               />
               <div className="magic-notes-list">
                 {loadStatus === 'loading' ? (
-                  <p className="magic-notes-muted">正在加载待办…</p>
+                  <p className="magic-notes-muted">
+                    {t('status.loadingTodos')}
+                  </p>
                 ) : visibleTodos.length === 0 ? (
                   <>
                     <p className="magic-notes-muted">
                       {todos.length === 0
-                        ? '还没有待办'
+                        ? t('todos.empty')
                         : search.trim() || todoFilter !== 'all'
-                          ? '没有符合条件的待办'
-                          : '还没有待办'}
+                          ? t('todos.noMatches')
+                          : t('todos.empty')}
                     </p>
                     {todos.length > 0 &&
                       (Boolean(search.trim()) ||
@@ -1368,7 +1468,7 @@ export function MagicNotesWorkspace({
                           }}
                           type="button"
                         >
-                          清除筛选
+                          {t('actions.clearFilters')}
                         </button>
                       )}
                   </>
@@ -1409,16 +1509,22 @@ export function MagicNotesWorkspace({
         </aside>
 
         <section
-          aria-label={libraryView === 'notes' ? '笔记记录' : '待办详情'}
+          aria-label={t(
+            libraryView === 'notes'
+              ? 'notes.streamLabel'
+              : 'todos.detailLabel'
+          )}
           className="magic-notes-stream-pane"
         >
           {libraryView === 'notes' ? (
             !detail ? (
             <EmptyState
-              description="从左侧选择笔记，或新建一篇笔记开始记录。"
+              description={t('notes.emptySelectionDescription')}
               icon={<FileText size={24} />}
               title={
-                loadStatus === 'loading' ? '正在加载' : '还没有选择笔记'
+                loadStatus === 'loading'
+                  ? t('status.loading')
+                  : t('notes.emptySelectionTitle')
               }
             />
           ) : (
@@ -1426,15 +1532,16 @@ export function MagicNotesWorkspace({
               {detailLoadError && (
                 <div className="magic-note-delete-confirmation" role="alert">
                   <span>
-                    笔记加载失败，已保留当前内容：
-                    {detailLoadError.message}
+                    {t('errors.detailLoadFailed', {
+                      error: detailLoadError.message
+                    })}
                   </span>
                   <button
                     className="secondary-button"
                     onClick={() => void loadDetail(detailLoadError.noteId)}
                     type="button"
                   >
-                    重试
+                    {t('actions.retry')}
                   </button>
                 </div>
               )}
@@ -1446,7 +1553,7 @@ export function MagicNotesWorkspace({
                       : undefined
                   }
                   aria-invalid={validation?.target === 'note-title'}
-                  aria-label="笔记标题"
+                  aria-label={t('notes.titleLabel')}
                   maxLength={100}
                   value={titleDraft}
                   onBlur={() => void updateTitle()}
@@ -1466,9 +1573,17 @@ export function MagicNotesWorkspace({
                 />
                 <div>
                   <button
-                    aria-label={detail.pinned ? '取消置顶' : '置顶笔记'}
+                    aria-label={t(
+                      detail.pinned
+                        ? 'actions.unpinNote'
+                        : 'actions.pinNote'
+                    )}
                     className="icon-button"
-                    title={detail.pinned ? '取消置顶' : '置顶笔记'}
+                    title={t(
+                      detail.pinned
+                        ? 'actions.unpinNote'
+                        : 'actions.pinNote'
+                    )}
                     type="button"
                     onClick={() => {
                       const operation = 'pin-note'
@@ -1495,13 +1610,13 @@ export function MagicNotesWorkspace({
                     )}
                   </button>
                   <button
-                    aria-label="删除笔记"
+                    aria-label={t('actions.deleteNote')}
                     className="danger-button danger-button--quiet"
                     type="button"
                     onClick={() => setDeletingNote(true)}
                   >
                     <Trash2 aria-hidden="true" size={14} />
-                    删除笔记
+                    {t('actions.deleteNote')}
                   </button>
                 </div>
               </header>
@@ -1517,13 +1632,17 @@ export function MagicNotesWorkspace({
 
               {deletingNote && (
                 <div className="magic-note-delete-confirmation">
-                  <span>删除“{detail.title}”及其中全部记录？</span>
+                  <span>
+                    {t('confirmations.deleteNote', {
+                      title: detail.title
+                    })}
+                  </span>
                   <button
                     className="secondary-button"
                     type="button"
                     onClick={() => setDeletingNote(false)}
                   >
-                    取消
+                    {t('actions.cancel')}
                   </button>
                   <button
                     className="danger-solid"
@@ -1536,7 +1655,7 @@ export function MagicNotesWorkspace({
                       void window.goodbuddy.magicNotes
                         .remove(detail.id)
                         .then(async () => {
-                          notifySuccess('笔记已删除')
+                          notifySuccess(t('notifications.noteDeleted'))
                           setDeletingNote(false)
                           await refreshNotes()
                         })
@@ -1546,7 +1665,7 @@ export function MagicNotesWorkspace({
                         .finally(() => endBusy(operation))
                     }}
                   >
-                    删除笔记
+                    {t('actions.deleteNote')}
                   </button>
                 </div>
               )}
@@ -1560,7 +1679,7 @@ export function MagicNotesWorkspace({
                       : undefined
                   }
                   ariaInvalid={validation?.target === 'new-entry'}
-                  ariaLabel="新记录内容"
+                  ariaLabel={t('notes.newEntryLabel')}
                   onChange={(content) => {
                     composerContentRef.current = content
                     clearValidation('new-entry')
@@ -1596,8 +1715,8 @@ export function MagicNotesWorkspace({
                 <footer>
                   <span>
                     {commentMode === 'immediate'
-                      ? '按回车并停止输入 5 秒后，AI 评论当前草稿'
-                      : '支持富文本、粘贴或拖入本地图片'}
+                      ? t('notes.composerImmediateHint')
+                      : t('notes.composerRichTextHint')}
                   </span>
                   <button
                     className="primary-button"
@@ -1605,7 +1724,7 @@ export function MagicNotesWorkspace({
                     type="button"
                     onClick={() => void saveEntry()}
                   >
-                    保存记录
+                    {t('actions.saveEntry')}
                   </button>
                 </footer>
               </div>
@@ -1613,7 +1732,7 @@ export function MagicNotesWorkspace({
               <div className="magic-note-entry-stream">
                 {detail.entries.length === 0 ? (
                   <p className="magic-notes-muted">
-                    还没有记录，在上方写下第一条内容。
+                    {t('notes.emptyEntries')}
                   </p>
                 ) : (
                   [...detail.entries].reverse().map((entry) => (
@@ -1636,10 +1755,10 @@ export function MagicNotesWorkspace({
                             >
                               <Bot size={14} />
                               {busy === `analyze-${entry.id}`
-                                ? '分析中…'
+                                ? t('actions.analyzing')
                                 : entry.analyzedAt
-                                  ? '重新分析'
-                                  : 'AI 分析'}
+                                  ? t('actions.analyzeAgain')
+                                  : t('actions.analyze')}
                             </button>
                           )}
                           <button
@@ -1652,10 +1771,10 @@ export function MagicNotesWorkspace({
                               editingContentRef.current = entry.content
                             }}
                           >
-                            编辑
+                            {t('actions.edit')}
                           </button>
                           <button
-                            aria-label="删除记录"
+                            aria-label={t('actions.deleteEntry')}
                             className="danger-button danger-button--quiet"
                             type="button"
                             onClick={() => {
@@ -1666,19 +1785,19 @@ export function MagicNotesWorkspace({
                             }}
                           >
                             <Trash2 aria-hidden="true" size={14} />
-                            删除记录
+                            {t('actions.deleteEntry')}
                           </button>
                         </div>
                       </header>
                       {deletingEntryId === entry.id && (
                         <div className="magic-note-entry__delete">
-                          <span>删除这条记录？此操作不可撤销。</span>
+                          <span>{t('confirmations.deleteEntry')}</span>
                           <button
                             className="secondary-button"
                             type="button"
                             onClick={() => setDeletingEntryId('')}
                           >
-                            取消
+                            {t('actions.cancel')}
                           </button>
                           <button
                             className="danger-solid"
@@ -1694,7 +1813,9 @@ export function MagicNotesWorkspace({
                                   applyDetail(next)
                                   await reloadTodos()
                                   setDeletingEntryId('')
-                                  notifySuccess('记录已删除')
+                                  notifySuccess(
+                                    t('notifications.entryDeleted')
+                                  )
                                 })
                                 .catch((deleteError) =>
                                   notifyError(deleteError)
@@ -1702,7 +1823,7 @@ export function MagicNotesWorkspace({
                                 .finally(() => endBusy(operation))
                             }}
                           >
-                            删除记录
+                            {t('actions.deleteEntry')}
                           </button>
                         </div>
                       )}
@@ -1718,7 +1839,7 @@ export function MagicNotesWorkspace({
                             ariaInvalid={
                               validation?.target === 'edit-entry'
                             }
-                            ariaLabel="编辑记录内容"
+                            ariaLabel={t('notes.editEntryLabel')}
                             initialContent={entry.content}
                             onChange={(content) => {
                               editingContentRef.current = content
@@ -1765,7 +1886,7 @@ export function MagicNotesWorkspace({
                                 clearValidation('edit-entry')
                               }}
                             >
-                              取消
+                              {t('actions.cancel')}
                             </button>
                             <button
                               className="primary-button"
@@ -1773,7 +1894,7 @@ export function MagicNotesWorkspace({
                               type="button"
                               onClick={() => void saveEditedEntry()}
                             >
-                              保存修改
+                              {t('actions.saveChanges')}
                             </button>
                           </div>
                         </div>
@@ -1788,21 +1909,24 @@ export function MagicNotesWorkspace({
             )
           ) : !selectedTodo ? (
             <EmptyState
-              description="从左侧选择待办；待办统一来自笔记中的清单。"
+              description={t('todos.emptySelectionDescription')}
               icon={<ListTodo size={24} />}
               title={
-                loadStatus === 'loading' ? '正在加载' : '还没有选择待办'
+                loadStatus === 'loading'
+                  ? t('status.loading')
+                  : t('todos.emptySelectionTitle')
               }
             />
           ) : (
             <section className="magic-todo-detail">
               <header>
                 <button
-                  aria-label={`${
+                  aria-label={t(
                     selectedTodo.completed
-                      ? '标记为未完成'
-                      : '标记为已完成'
-                  }：${selectedTodo.title}`}
+                      ? 'todos.markIncomplete'
+                      : 'todos.markComplete',
+                    { title: selectedTodo.title }
+                  )}
                   aria-pressed={selectedTodo.completed}
                   className="magic-todo-detail__check"
                   disabled={
@@ -1821,7 +1945,11 @@ export function MagicNotesWorkspace({
                 </button>
                 <div>
                   <h2>{selectedTodo.title}</h2>
-                  <span>来自笔记：{selectedTodo.noteTitle}</span>
+                  <span>
+                    {t('todos.sourceNote', {
+                      title: selectedTodo.noteTitle
+                    })}
+                  </span>
                 </div>
                 <div className="magic-todo-detail__actions">
                   <button
@@ -1832,10 +1960,10 @@ export function MagicNotesWorkspace({
                   >
                     <Bot aria-hidden="true" size={14} />
                     {busy === `analyze-todo-${selectedTodo.id}`
-                      ? '分析中…'
+                      ? t('actions.analyzing')
                       : selectedTodo.analyzedAt
-                        ? '重新分析'
-                        : 'AI 分析'}
+                        ? t('actions.analyzeAgain')
+                        : t('actions.analyze')}
                   </button>
                 </div>
               </header>
@@ -1843,7 +1971,7 @@ export function MagicNotesWorkspace({
               <div className="magic-todo-detail__content">
                 <p>
                   {selectedTodo.instructions ||
-                    '此待办来自笔记正文中的待办清单。'}
+                    t('todos.defaultInstructions')}
                 </p>
                 <button
                   className="secondary-button"
@@ -1862,7 +1990,7 @@ export function MagicNotesWorkspace({
                   type="button"
                 >
                   <BookOpen size={14} />
-                  打开原笔记修改
+                  {t('actions.openSourceNote')}
                 </button>
               </div>
             </section>
@@ -1873,12 +2001,14 @@ export function MagicNotesWorkspace({
           <div
             aria-controls="magic-notes-ai-pane"
             aria-disabled={!canResizeAiPane}
-            aria-label="调整编辑区与 AI 评论宽度"
+            aria-label={t('accessibility.resizeAiPane')}
             aria-orientation="vertical"
             aria-valuemax={aiPaneWidthLimits.maximum}
             aria-valuemin={aiPaneWidthLimits.minimum}
             aria-valuenow={aiPaneWidth}
-            aria-valuetext={`AI 评论栏 ${aiPaneWidth} 像素`}
+            aria-valuetext={t('accessibility.aiPaneWidth', {
+              width: aiPaneWidth
+            })}
             className="magic-notes-ai-resize-handle"
             onKeyDown={resizeAiPaneWithKeyboard}
             onLostPointerCapture={(event) => {
@@ -1917,18 +2047,18 @@ export function MagicNotesWorkspace({
         )}
 
         <aside
-          aria-label="AI 评论"
+          aria-label={t('comments.paneLabel')}
           className="magic-notes-ai-pane"
           hidden={!aiPaneOpen}
           id="magic-notes-ai-pane"
         >
           <div className="magic-notes-pane-heading">
-            <strong>AI 评论</strong>
+            <strong>{t('comments.paneLabel')}</strong>
             <button
-              aria-label="关闭 AI 评论面板"
+              aria-label={t('comments.closePane')}
               className="icon-button"
               onClick={() => setAiPaneOpen(false)}
-              title="关闭 AI 评论面板"
+              title={t('comments.closePane')}
               type="button"
             >
               <PanelRightClose aria-hidden="true" size={15} />
@@ -1936,9 +2066,9 @@ export function MagicNotesWorkspace({
           </div>
           <div className="magic-notes-ai-controls">
             <label>
-              <span>评论方向</span>
+              <span>{t('comments.directionLabel')}</span>
               <select
-                aria-label="AI 评论方向"
+                aria-label={t('comments.directionAriaLabel')}
                 onChange={(event) =>
                   setCommentDirection(
                     event.target.value as MagicNoteCommentDirection
@@ -1954,14 +2084,15 @@ export function MagicNotesWorkspace({
               </select>
             </label>
             <small>
-              评论方向更改仅用于下一次评论，不会改动已生成的内容；评论形式可在设置中心修改。
+              {t('comments.directionHelp')}
             </small>
           </div>
           {liveAnalysis?.format === 'structured' ? (
             <p className="magic-notes-muted" role="status">
-              正在生成
-              {commentDirectionLabels[liveAnalysis.direction]}
-              要点…
+              {t('status.generatingPoints', {
+                direction:
+                  commentDirectionLabels[liveAnalysis.direction]
+              })}
             </p>
           ) : liveAnalysis ? (
             <section
@@ -1969,15 +2100,17 @@ export function MagicNotesWorkspace({
               className="magic-notes-ai-group magic-notes-ai-live"
             >
               <span className="magic-notes-ai-source">
-                正在生成 ·{' '}
-                {commentDirectionLabels[liveAnalysis.direction]}
+                {t('status.generatingDirection', {
+                  direction:
+                    commentDirectionLabels[liveAnalysis.direction]
+                })}
               </span>
               <div className="magic-note-comment magic-note-comment--narrative">
                 <span aria-hidden="true">
                   <Bot size={15} />
                 </span>
                 <div>
-                  <strong>长评</strong>
+                  <strong>{t('comments.kinds.narrative')}</strong>
                   {liveAnalysis.content ? (
                     <div className="magic-note-comment__narrative markdown-content">
                       <MarkdownRenderer>
@@ -1985,7 +2118,9 @@ export function MagicNotesWorkspace({
                       </MarkdownRenderer>
                     </div>
                   ) : (
-                    <p role="status">正在准备评论…</p>
+                    <p role="status">
+                      {t('status.preparingComment')}
+                    </p>
                   )}
                 </div>
               </div>
@@ -1993,11 +2128,13 @@ export function MagicNotesWorkspace({
           ) : null}
           {libraryView === 'todos' ? (
             !selectedTodo ? (
-              <p className="magic-notes-muted">选择待办后显示 AI 评论。</p>
+              <p className="magic-notes-muted">
+                {t('comments.selectTodo')}
+              </p>
             ) : selectedTodo.comments.length === 0 ? (
               !liveAnalysis && (
                 <p className="magic-notes-muted">
-                  点击待办详情中的“AI 分析”，评论会显示在这里。
+                  {t('comments.analyzeTodoHint')}
                 </p>
               )
             ) : (
@@ -2013,23 +2150,25 @@ export function MagicNotesWorkspace({
               </div>
             )
           ) : !detail ? (
-            <p className="magic-notes-muted">选择笔记后显示 AI 评论。</p>
+            <p className="magic-notes-muted">
+              {t('comments.selectNote')}
+            </p>
           ) : aiEntries.length === 0 &&
             draftAnalyses.length === 0 &&
             !draftAnalysisRunning &&
             !liveAnalysis ? (
             <p className="magic-notes-muted">
               {commentMode === 'immediate'
-                ? '写完一句后按回车，停止输入 5 秒，评论会显示在这里。'
+                ? t('comments.immediateHint')
                 : commentMode === 'after-save-auto'
-                  ? '保存记录后，AI 会自动评论。'
-                  : '在记录上点击“AI 分析”，评论会显示在这里。'}
+                  ? t('comments.autoHint')
+                  : t('comments.manualHint')}
             </p>
           ) : (
             <div className="magic-notes-ai-feed">
               {draftAnalysisRunning && !liveAnalysis && (
                 <p className="magic-notes-muted" role="status">
-                  正在评论当前草稿…
+                  {t('status.commentingDraft')}
                 </p>
               )}
               {draftAnalyses.map((analysis) => (
@@ -2039,7 +2178,7 @@ export function MagicNotesWorkspace({
                 >
                   <span className="magic-notes-ai-source">
                     {dateFormatter.format(new Date(analysis.analyzedAt))} ·
-                    未保存草稿
+                    {t('status.unsavedDraft')}
                   </span>
                   {analysis.comments.map((comment) => (
                     <AiComment comment={comment} key={comment.id} />
@@ -2049,7 +2188,11 @@ export function MagicNotesWorkspace({
               {aiEntries.map((entry) => (
                 <section className="magic-notes-ai-group" key={entry.id}>
                   <a href={`#magic-note-entry-${entry.id}`}>
-                    {dateFormatter.format(new Date(entry.createdAt))} 的记录
+                    {t('notes.entryAt', {
+                      date: dateFormatter.format(
+                        new Date(entry.createdAt)
+                      )
+                    })}
                   </a>
                   {entry.comments.map((comment) => (
                     <AiComment comment={comment} key={comment.id} />

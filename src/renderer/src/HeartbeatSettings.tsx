@@ -1,5 +1,6 @@
 import { HeartPulse } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   AssistantHeartbeatConfig,
   HeartbeatCreateInput
@@ -15,16 +16,6 @@ type HeartbeatSettingsProps = {
   onRunNow: (heartbeatId: string) => Promise<void>
 }
 
-const heartbeatStatusLabels: Record<
-  NonNullable<AssistantHeartbeatConfig['lastStatus']>,
-  string
-> = {
-  claimed: '运行中',
-  completed: '已完成',
-  failed: '失败',
-  skipped: '已跳过'
-}
-
 export function HeartbeatSettings({
   heartbeats,
   variant = 'settings',
@@ -33,6 +24,7 @@ export function HeartbeatSettings({
   onRemove,
   onRunNow
 }: HeartbeatSettingsProps): React.JSX.Element {
+  const { t, i18n } = useTranslation('heartbeat')
   const [time, setTime] = useState('09:00')
   const [recurrence, setRecurrence] = useState<'daily' | 'weekly'>(
     'daily'
@@ -42,6 +34,16 @@ export function HeartbeatSettings({
   const [error, setError] = useState<string>()
   const [confirmingRemoveId, setConfirmingRemoveId] =
     useState<string>()
+  const locale = i18n.resolvedLanguage || 'zh-CN'
+  const heartbeatStatusLabels: Record<
+    NonNullable<AssistantHeartbeatConfig['lastStatus']>,
+    string
+  > = {
+    claimed: t('statuses.run.claimed'),
+    completed: t('statuses.run.completed'),
+    failed: t('statuses.run.failed'),
+    skipped: t('statuses.run.skipped')
+  }
 
   const runAction = async (
     actionId: string,
@@ -56,7 +58,9 @@ export function HeartbeatSettings({
       await action()
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : '智能心跳操作失败'
+        reason instanceof Error
+          ? reason.message
+          : t('common.operationFailed')
       )
     } finally {
       setPendingAction(undefined)
@@ -68,11 +72,9 @@ export function HeartbeatSettings({
       <div className="heartbeat-settings__intro">
         <h3>
           <HeartPulse size={15} />
-          智能心跳
+          {t('settings.title')}
         </h3>
-        <p>
-          定期回顾经历、沉淀记忆、发现问题，并把变化转化为可处理的成长建议。智能心跳只读且不调用工具。
-        </p>
+        <p>{t('settings.description')}</p>
       </div>
       <div
         className={`heartbeat-settings__form${
@@ -82,44 +84,44 @@ export function HeartbeatSettings({
         }`}
       >
         <select
-          aria-label="心跳重复规则"
+          aria-label={t('settings.recurrenceAriaLabel')}
           onChange={(event) =>
             setRecurrence(event.target.value as 'daily' | 'weekly')
           }
           value={recurrence}
         >
-          <option value="daily">每天</option>
-          <option value="weekly">每周</option>
+          <option value="daily">{t('settings.daily')}</option>
+          <option value="weekly">{t('settings.weekly')}</option>
         </select>
         {recurrence === 'weekly' && (
           <select
-            aria-label="心跳星期"
+            aria-label={t('settings.weekdayAriaLabel')}
             onChange={(event) => setWeekday(Number(event.target.value))}
             value={weekday}
           >
-            <option value={1}>周一</option>
-            <option value={2}>周二</option>
-            <option value={3}>周三</option>
-            <option value={4}>周四</option>
-            <option value={5}>周五</option>
-            <option value={6}>周六</option>
-            <option value={0}>周日</option>
+            <option value={1}>{t('center.weekdays.monday')}</option>
+            <option value={2}>{t('center.weekdays.tuesday')}</option>
+            <option value={3}>{t('center.weekdays.wednesday')}</option>
+            <option value={4}>{t('center.weekdays.thursday')}</option>
+            <option value={5}>{t('center.weekdays.friday')}</option>
+            <option value={6}>{t('center.weekdays.saturday')}</option>
+            <option value={0}>{t('center.weekdays.sunday')}</option>
           </select>
         )}
         <input
-          aria-label="心跳时间"
+          aria-label={t('settings.timeAriaLabel')}
           onChange={(event) => setTime(event.target.value)}
           type="time"
           value={time}
         />
         <button
-          aria-label="启用智能心跳"
+          aria-label={t('settings.enableAriaLabel')}
           className="primary-button"
           disabled={!time || pendingAction !== undefined}
           onClick={() =>
             void runAction('create', () =>
               onCreate({
-                name: '智能成长回顾',
+                name: t('settings.defaultName'),
                 timezone:
                   Intl.DateTimeFormat().resolvedOptions().timeZone ||
                   'UTC',
@@ -143,7 +145,9 @@ export function HeartbeatSettings({
           }
           type="button"
         >
-          {pendingAction === 'create' ? '启用中…' : '启用智能心跳'}
+          {pendingAction === 'create'
+            ? t('settings.enabling')
+            : t('settings.enable')}
         </button>
       </div>
       {error && (
@@ -153,7 +157,7 @@ export function HeartbeatSettings({
       )}
       {heartbeats.length === 0 ? (
         <p className="heartbeat-settings__empty">
-          当前范围尚未配置智能心跳。
+          {t('settings.empty')}
         </p>
       ) : (
         <div className="heartbeat-settings__list">
@@ -165,18 +169,31 @@ export function HeartbeatSettings({
               <span>
                 <strong>{heartbeat.name}</strong>
                 <small>
-                  {heartbeat.enabled ? '运行中' : '已暂停'} · 下次{' '}
-                  {new Date(heartbeat.nextRunAt).toLocaleString('zh-CN')}
+                  {heartbeat.enabled
+                    ? t('settings.running')
+                    : t('settings.paused')}{' '}
+                  ·{' '}
+                  {t('settings.next', {
+                    date: new Date(
+                      heartbeat.nextRunAt
+                    ).toLocaleString(locale)
+                  })}
                   {heartbeat.lastStatus
-                    ? ` · 上次 ${heartbeatStatusLabels[heartbeat.lastStatus]}`
+                    ? ` · ${t('settings.last', {
+                        status:
+                          heartbeatStatusLabels[heartbeat.lastStatus]
+                      })}`
                     : ''}
                 </small>
               </span>
               <div className="heartbeat-settings__actions">
                 <button
-                  aria-label={`${
-                    heartbeat.enabled ? '暂停' : '恢复'
-                  } ${heartbeat.name}`}
+                  aria-label={t(
+                    heartbeat.enabled
+                      ? 'settings.pauseAriaLabel'
+                      : 'settings.resumeAriaLabel',
+                    { name: heartbeat.name }
+                  )}
                   disabled={pendingAction !== undefined}
                   onClick={() =>
                     void runAction(
@@ -190,10 +207,14 @@ export function HeartbeatSettings({
                   }
                   type="button"
                 >
-                  {heartbeat.enabled ? '暂停' : '恢复'}
+                  {heartbeat.enabled
+                    ? t('settings.pause')
+                    : t('settings.resume')}
                 </button>
                 <button
-                  aria-label={`立即心跳 ${heartbeat.name}`}
+                  aria-label={t('settings.runNowAriaLabel', {
+                    name: heartbeat.name
+                  })}
                   disabled={pendingAction !== undefined}
                   onClick={() =>
                     void runAction(`run:${heartbeat.id}`, () =>
@@ -202,15 +223,21 @@ export function HeartbeatSettings({
                   }
                   type="button"
                 >
-                  立即心跳
+                  {t('settings.runNow')}
                 </button>
                 <DestructiveConfirmActions
-                  cancelAriaLabel={`取消删除 ${heartbeat.name}`}
-                  confirmAriaLabel={`确认删除 ${heartbeat.name}`}
-                  confirmLabel="确认删除计划"
+                  cancelAriaLabel={t(
+                    'settings.cancelDeleteAriaLabel',
+                    { name: heartbeat.name }
+                  )}
+                  confirmAriaLabel={t(
+                    'settings.confirmDeleteAriaLabel',
+                    { name: heartbeat.name }
+                  )}
+                  confirmLabel={t('settings.confirmDelete')}
                   confirming={confirmingRemoveId === heartbeat.id}
                   disabled={pendingAction !== undefined}
-                  message="将永久删除此计划、运行历史和关联结果，且无法恢复。"
+                  message={t('settings.deleteMessage')}
                   onCancel={() => setConfirmingRemoveId(undefined)}
                   onConfirm={() =>
                     void runAction(
@@ -224,8 +251,10 @@ export function HeartbeatSettings({
                   onRequestConfirm={() =>
                     setConfirmingRemoveId(heartbeat.id)
                   }
-                  triggerAriaLabel={`删除 ${heartbeat.name}`}
-                  triggerLabel="删除"
+                  triggerAriaLabel={t('settings.deleteAriaLabel', {
+                    name: heartbeat.name
+                  })}
+                  triggerLabel={t('settings.delete')}
                 />
               </div>
             </article>

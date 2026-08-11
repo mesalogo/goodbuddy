@@ -28,6 +28,8 @@ vi.mock('./speech-recognition', async (importOriginal) => ({
 
 import App from './App'
 import { loadActivityRecords } from './activity-store'
+import { changeUiLocale } from './i18n'
+import { UiLocaleProvider } from './i18n/UiLocaleProvider'
 
 let agentListener: ((event: AgentEvent) => void) | undefined
 let browserListener: ((state: BrowserLiveState) => void) | undefined
@@ -621,6 +623,116 @@ describe('App', () => {
 
     unmount()
     expect(removeMaximizedChangedListener).toHaveBeenCalledOnce()
+  })
+
+  it('renders the core app shell in English', async () => {
+    await changeUiLocale('en-US')
+    try {
+      render(<App />)
+
+      expect(
+        await screen.findByText('New conversation', {
+          selector: '.new-chat span'
+        })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('navigation', {
+          name: 'Main navigation'
+        })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Chat' })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('heading', {
+          name: 'What would you like to accomplish today?'
+        })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByText(/Hi, I’m GoodBuddy/u)
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText('Message GoodBuddy')
+      ).toHaveAttribute(
+        'placeholder',
+        'Message GoodBuddy…\nEnter to send · Shift+Enter for a new line · Ctrl+V to paste an image or text'
+      )
+    } finally {
+      cleanup()
+      await changeUiLocale('zh-CN')
+    }
+  })
+
+  it('keeps Settings open when the interface language changes', async () => {
+    api.updates = {
+      getSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: false,
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
+      })),
+      updateSettings: vi.fn(),
+      check: vi.fn(),
+      openReleasePage: vi.fn(),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      render(
+        <UiLocaleProvider initialPreference="zh-CN">
+          <App />
+        </UiLocaleProvider>
+      )
+
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: /本地工作区/u
+        })
+      )
+      fireEvent.click(
+        await screen.findByRole('tab', { name: '外观' })
+      )
+      const projectsList = vi.mocked(api.projects.list)
+      const expertsList = vi.mocked(api.experts.list)
+      const tasksList = vi.mocked(api.tasks.list)
+      await waitFor(() => {
+        expect(projectsList).toHaveBeenCalled()
+        expect(expertsList).toHaveBeenCalled()
+        expect(tasksList).toHaveBeenCalled()
+      })
+      const loadCounts = {
+        projects: projectsList.mock.calls.length,
+        experts: expertsList.mock.calls.length,
+        tasks: tasksList.mock.calls.length
+      }
+      fireEvent.click(
+        screen.getByRole('radio', {
+          name: /^English/u
+        })
+      )
+
+      expect(
+        await screen.findByRole('region', {
+          name: 'Settings'
+        })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('heading', {
+          level: 1,
+          name: 'Settings'
+        })
+      ).toBeInTheDocument()
+      expect(api.updates.getSettings).toHaveBeenCalledOnce()
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(projectsList).toHaveBeenCalledTimes(loadCounts.projects)
+      expect(expertsList).toHaveBeenCalledTimes(loadCounts.experts)
+      expect(tasksList).toHaveBeenCalledTimes(loadCounts.tasks)
+    } finally {
+      delete api.updates
+      cleanup()
+      await changeUiLocale('zh-CN')
+    }
   })
 
   it('checks for updates silently on startup and only reports a new version', async () => {

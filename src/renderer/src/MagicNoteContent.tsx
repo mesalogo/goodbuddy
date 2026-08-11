@@ -1,12 +1,15 @@
 import { useEffect, useRef } from 'react'
 import Quill from 'quill'
+import { useTranslation } from 'react-i18next'
 import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
+import './magic-note-embeds'
 
 export function MagicNoteContent({
   content
 }: {
   content: MagicNoteRichContent
 }): React.JSX.Element {
+  const { t } = useTranslation('magicNotes')
   const containerRef = useRef<HTMLDivElement>(null)
   const quillRef = useRef<Quill | null>(null)
 
@@ -35,7 +38,7 @@ export function MagicNoteContent({
   return (
     <div
       ref={containerRef}
-      aria-label="笔记记录内容"
+      aria-label={t('editor.contentLabel')}
       className="magic-note-content"
     />
   )

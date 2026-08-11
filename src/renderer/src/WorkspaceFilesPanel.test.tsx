@@ -1,8 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { changeUiLocale } from './i18n'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 
-afterEach(cleanup)
+afterEach(async () => {
+  cleanup()
+  await changeUiLocale('zh-CN')
+})
 
 describe('WorkspaceFilesPanel', () => {
   it('lists the project tree, expands directories, and opens files', async () => {
@@ -118,5 +122,34 @@ describe('WorkspaceFilesPanel', () => {
 
     await waitFor(() => expect(onListDirectory).toHaveBeenCalledTimes(2))
     expect(await screen.findByText('工作区为空。')).toBeInTheDocument()
+  })
+
+  it('switches navigation to English without reloading the directory', async () => {
+    const onListDirectory = vi.fn(async (path: string) => ({
+      path,
+      entries: [],
+      truncated: false
+    }))
+
+    render(
+      <WorkspaceFilesPanel
+        changedFiles={[{ path: 'notes.txt', status: ' M' }]}
+        onListDirectory={onListDirectory}
+        onOpenEntry={vi.fn(async () => undefined)}
+        onOpenFile={vi.fn()}
+        projectId="00000000-0000-4000-8000-000000000101"
+      />
+    )
+
+    await screen.findByText('当前工作区')
+    expect(onListDirectory).toHaveBeenCalledOnce()
+    await changeUiLocale('en-US')
+
+    expect(
+      await screen.findByText('Current workspace')
+    ).toBeInTheDocument()
+    expect(screen.getByText('Uncommitted changes')).toBeInTheDocument()
+    expect(screen.getByText('Modified')).toBeInTheDocument()
+    expect(onListDirectory).toHaveBeenCalledOnce()
   })
 })

@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantExpert } from '../../shared/assistant-contracts'
 import type { DesktopApi } from '../../shared/contracts'
+import { changeUiLocale } from './i18n'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 
 const defaultModelProfileId =
@@ -28,12 +29,14 @@ const baseExpert: AssistantExpert = {
   updatedAt: '2026-08-01T00:00:00.000Z'
 }
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
   vi.restoreAllMocks()
+  await changeUiLocale('zh-CN')
 })
 
 function installExpertsApi(expert: AssistantExpert) {
+  const list = vi.fn(async () => [expert])
   const update = vi.fn<DesktopApi['experts']['update']>(
     async (expertId, input) => ({
       ...expert,
@@ -48,14 +51,14 @@ function installExpertsApi(expert: AssistantExpert) {
     configurable: true,
     value: {
       experts: {
-        list: vi.fn(async () => [expert]),
+        list,
         create: vi.fn(),
         update,
         remove: vi.fn()
       }
     } as unknown as DesktopApi
   })
-  return { update }
+  return { list, update }
 }
 
 describe('RolePromptSettingsSection model connections', () => {
@@ -149,5 +152,26 @@ describe('RolePromptSettingsSection model connections', () => {
     expect(screen.getByLabelText('角色模型连接')).toHaveValue(
       removedModelProfileId
     )
+  })
+
+  it('switches languages without reloading or resetting the expert', async () => {
+    const { list } = installExpertsApi(baseExpert)
+
+    render(
+      <RolePromptSettingsSection
+        defaultModelProfileId={defaultModelProfileId}
+        modelProfiles={[]}
+        onChanged={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByText('角色与提示词')).toBeInTheDocument()
+    expect(list).toHaveBeenCalledOnce()
+
+    await changeUiLocale('en-US')
+
+    expect(await screen.findByText('Roles and prompts')).toBeInTheDocument()
+    expect(screen.getByDisplayValue(baseExpert.name)).toBeInTheDocument()
+    expect(list).toHaveBeenCalledOnce()
   })
 })

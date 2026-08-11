@@ -13,6 +13,7 @@ import {
   useRef,
   useState
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   WorkspaceChangedFile,
   WorkspaceDirectoryEntry,
@@ -30,21 +31,23 @@ type WorkspaceFilesPanelProps = {
   ) => Promise<void>
 }
 
-function statusLabel(status: string): string {
+function statusKey(
+  status: string
+): 'added' | 'deleted' | 'renamed' | 'modified' {
   const value = status.trim()
   if (value === '??') {
-    return '新增'
+    return 'added'
   }
   if (value.includes('D')) {
-    return '删除'
+    return 'deleted'
   }
   if (value.includes('R')) {
-    return '重命名'
+    return 'renamed'
   }
   if (value.includes('A')) {
-    return '新增'
+    return 'added'
   }
-  return '修改'
+  return 'modified'
 }
 
 export function WorkspaceFilesPanel({
@@ -54,6 +57,11 @@ export function WorkspaceFilesPanel({
   onOpenFile,
   onOpenEntry
 }: WorkspaceFilesPanelProps): React.JSX.Element {
+  const { t } = useTranslation('workspace')
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
   const [listingState, setListingState] = useState<{
     projectId?: string
     value: Record<string, WorkspaceDirectoryListing>
@@ -106,7 +114,7 @@ export function WorkspaceFilesPanel({
             value:
               reason instanceof Error
                 ? reason.message
-                : '工作区文件读取失败'
+                : tRef.current('files.errors.read')
           })
         }
       } finally {
@@ -189,8 +197,8 @@ export function WorkspaceFilesPanel({
           reason instanceof Error
             ? reason.message
             : entry.type === 'directory'
-              ? '打开文件夹失败'
-              : '打开文件失败'
+              ? t('files.errors.openFolder')
+              : t('files.errors.openFile')
       })
     })
   }
@@ -220,10 +228,12 @@ export function WorkspaceFilesPanel({
               <span title={entry.path}>{entry.name}</span>
             </button>
             <button
-              aria-label={`在系统资源管理器中打开文件夹 ${entry.name}`}
+              aria-label={t('files.openFolderAriaLabel', {
+                name: entry.name
+              })}
               className="workspace-files__open-entry"
               onClick={() => openEntry(entry)}
-              title="打开文件夹"
+              title={t('files.openFolder')}
               type="button"
             >
               <FolderOpen size={14} />
@@ -235,11 +245,13 @@ export function WorkspaceFilesPanel({
                 renderEntry(child)
               )}
               {loadingPaths.has(entry.path) && (
-                <p className="workspace-files__status">正在读取…</p>
+                <p className="workspace-files__status">
+                  {t('files.reading')}
+                </p>
               )}
               {listing?.truncated && (
                 <p className="workspace-files__status">
-                  目录项目超过 500 项，仅显示前 500 项。
+                  {t('files.directoryTruncated')}
                 </p>
               )}
             </div>
@@ -260,15 +272,17 @@ export function WorkspaceFilesPanel({
           <span>{entry.name}</span>
           {changed && (
             <small className="workspace-files__change">
-              {statusLabel(changed.status)}
+              {t(`files.statuses.${statusKey(changed.status)}`)}
             </small>
           )}
         </button>
         <button
-          aria-label={`使用默认应用打开文件 ${entry.name}`}
+          aria-label={t('files.openFileAriaLabel', {
+            name: entry.name
+          })}
           className="workspace-files__open-entry"
           onClick={() => openEntry(entry)}
-          title="打开文件"
+          title={t('files.openFile')}
           type="button"
         >
           <FileSearch size={14} />
@@ -280,7 +294,7 @@ export function WorkspaceFilesPanel({
   if (!projectId) {
     return (
       <p className="assistant-sidebar__empty">
-        选择项目后可浏览项目工作区。
+        {t('files.selectProject')}
       </p>
     )
   }
@@ -290,7 +304,7 @@ export function WorkspaceFilesPanel({
     <div className="workspace-files">
       {changedFiles.length > 0 && (
         <div className="workspace-files__changed">
-          <strong>未提交更改</strong>
+          <strong>{t('files.changedTitle')}</strong>
           {changedFiles.slice(0, 50).map((file) => {
             const deleted = file.status.includes('D')
             return (
@@ -304,20 +318,26 @@ export function WorkspaceFilesPanel({
               >
                 <FileText size={14} />
                 <span>{file.path}</span>
-                <small>{statusLabel(file.status)}</small>
+                <small>
+                  {t(`files.statuses.${statusKey(file.status)}`)}
+                </small>
               </button>
             )
           })}
           {changedFiles.length > 50 && (
             <p className="workspace-files__status">
-              仅显示前 50 个未提交更改。
+              {t('files.changesTruncated')}
             </p>
           )}
         </div>
       )}
-      <strong className="workspace-files__heading">当前工作区</strong>
+      <strong className="workspace-files__heading">
+        {t('files.currentWorkspace')}
+      </strong>
       {loadingPaths.has('') && !root ? (
-        <p className="assistant-sidebar__empty">正在读取工作区…</p>
+        <p className="assistant-sidebar__empty">
+          {t('files.readingWorkspace')}
+        </p>
       ) : error && !root ? (
         <p className="assistant-sidebar__empty">{error}</p>
       ) : root?.entries.length ? (
@@ -327,12 +347,14 @@ export function WorkspaceFilesPanel({
           </div>
           {root.truncated && (
             <p className="workspace-files__status">
-              根目录项目超过 500 项，仅显示前 500 项。
+              {t('files.rootTruncated')}
             </p>
           )}
         </>
       ) : (
-        <p className="assistant-sidebar__empty">工作区为空。</p>
+        <p className="assistant-sidebar__empty">
+          {t('files.empty')}
+        </p>
       )}
       {error && root && (
         <p className="workspace-files__error" role="alert">

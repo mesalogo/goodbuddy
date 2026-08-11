@@ -8,6 +8,7 @@ import {
   type NodeData
 } from '@antv/g6'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   KnowledgeGraphNode,
   KnowledgeGraphRelation
@@ -44,15 +45,18 @@ function readToken(name: string): string {
     .trim()
 }
 
-function graphErrorMessage(error: unknown): string {
+function graphErrorMessage(error: unknown, fallback: string): string {
   return (
-    (error instanceof Error ? error.message : '图谱渲染失败')
+    (error instanceof Error ? error.message : fallback)
       .trim()
-      .slice(0, 500) || '图谱渲染失败'
+      .slice(0, 500) || fallback
   )
 }
 
-function graphTypeStyles(nodes: readonly ChartKnowledgeGraphNode[]): Map<
+function graphTypeStyles(
+  nodes: readonly ChartKnowledgeGraphNode[],
+  locale: string
+): Map<
   string,
   { color: string; borderColor: string }
 > {
@@ -62,7 +66,7 @@ function graphTypeStyles(nodes: readonly ChartKnowledgeGraphNode[]): Map<
   }))
   return new Map(
     [...new Set(nodes.map((node) => node.type))]
-      .sort((left, right) => left.localeCompare(right, 'zh-CN'))
+      .sort((left, right) => left.localeCompare(right, locale))
       .map((type, index) => [type, palette[index % palette.length]!])
   )
 }
@@ -106,7 +110,9 @@ function nodeMetadata(node: NodeData): G6NodeMetadata {
 
 function createPresentation(
   nodes: readonly ChartKnowledgeGraphNode[],
-  relations: readonly ChartKnowledgeGraphRelation[]
+  relations: readonly ChartKnowledgeGraphRelation[],
+  locale: string,
+  relationFallback: string
 ): Pick<
   GraphOptions,
   'data' | 'layout' | 'node' | 'edge' | 'behaviors' | 'plugins'
@@ -117,7 +123,7 @@ function createPresentation(
   const accentSubtle = readToken('--accent-subtle')
   const surfaceRaised = readToken('--surface-raised')
   const borderDefault = readToken('--border-default')
-  const typeStyles = graphTypeStyles(nodes)
+  const typeStyles = graphTypeStyles(nodes, locale)
   const dense = nodes.length > 24
   const degreeByNodeId = new Map(nodes.map((node) => [node.id, 0]))
   for (const relation of relations) {
@@ -294,7 +300,7 @@ function createPresentation(
               | G6EdgeMetadata
               | undefined
             content.textContent =
-              metadata?.description || metadata?.label || '关系'
+              metadata?.description || metadata?.label || relationFallback
           }
           return content
         }
@@ -312,6 +318,10 @@ export function KnowledgeGraphChart({
   onSelectNode,
   onZoomChange
 }: KnowledgeGraphChartProps): React.JSX.Element {
+  const { i18n, t } = useTranslation('knowledge')
+  const locale = i18n.resolvedLanguage ?? i18n.language ?? 'zh-CN'
+  const renderErrorFallback = t('graphChart.renderError')
+  const relationFallback = t('graphChart.relation')
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
   const onMoveNodeRef = useRef(onMoveNode)
@@ -456,7 +466,9 @@ export function KnowledgeGraphChart({
     }
     const presentation = createPresentation(
       nodesRef.current,
-      relationsRef.current
+      relationsRef.current,
+      locale,
+      relationFallback
     )
     graph.setOptions({
       ...presentation,
@@ -506,7 +518,7 @@ export function KnowledgeGraphChart({
           renderVersionRef.current === renderVersion
         ) {
           setRenderError(
-            graphErrorMessage(error)
+            graphErrorMessage(error, renderErrorFallback)
           )
         }
       })
@@ -522,7 +534,13 @@ export function KnowledgeGraphChart({
         pendingRenderRef.current = undefined
       }
     })
-  }, [dataRevision, themeRevision])
+  }, [
+    dataRevision,
+    locale,
+    relationFallback,
+    renderErrorFallback,
+    themeRevision
+  ])
 
   useEffect(() => {
     const graph = graphRef.current
@@ -541,11 +559,11 @@ export function KnowledgeGraphChart({
     }
     void graph.zoomTo(zoom, false).catch((error: unknown) => {
       if (graphRef.current === graph) {
-        setRenderError(graphErrorMessage(error))
+        setRenderError(graphErrorMessage(error, renderErrorFallback))
       }
     })
     appliedZoomRef.current = zoom
-  }, [dataRevision, zoom])
+  }, [dataRevision, renderErrorFallback, zoom])
 
   useEffect(() => {
     const graph = graphRef.current
@@ -563,22 +581,22 @@ export function KnowledgeGraphChart({
     )
     void graph.setElementState(states, false).catch((error: unknown) => {
       if (graphRef.current === graph) {
-        setRenderError(graphErrorMessage(error))
+        setRenderError(graphErrorMessage(error, renderErrorFallback))
       }
     })
-  }, [dataRevision, selectedNodeId])
+  }, [dataRevision, renderErrorFallback, selectedNodeId])
 
   return (
     <div className="knowledge-graph__chart-shell">
       <div
-        aria-label="实体关系图"
+        aria-label={t('graphChart.ariaLabel')}
         className="knowledge-graph__chart"
         ref={containerRef}
         role="img"
       />
       {renderError && (
         <div className="knowledge-graph__chart-error" role="alert">
-          图谱渲染失败：{renderError}
+          {t('graphChart.errorWithContext', { error: renderError })}
         </div>
       )}
     </div>

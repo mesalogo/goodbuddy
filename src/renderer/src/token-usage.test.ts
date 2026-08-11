@@ -99,13 +99,9 @@ describe('token usage aggregation', () => {
       }
     ]
 
-    expect(groupTokenUsage(usage, 'project')[0]?.label).toBe(
-      '未归属项目'
-    )
-    expect(groupTokenUsage(usage, 'conversation')[0]?.label).toBe(
-      '已删除会话'
-    )
-    expect(groupTokenUsage(usage, 'model')[0]?.label).toBe('未知模型')
+    expect(groupTokenUsage(usage, 'project')[0]?.label).toBe('')
+    expect(groupTokenUsage(usage, 'conversation')[0]?.label).toBe('')
+    expect(groupTokenUsage(usage, 'model')[0]?.label).toBe('')
   })
 
   it('keeps project and conversation totals separated by model', () => {
