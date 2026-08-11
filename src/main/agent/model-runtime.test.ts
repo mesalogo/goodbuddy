@@ -251,6 +251,9 @@ describe('ModelAgentRuntime', () => {
       model: 'sonnet-5',
       stream: true
     })
+    expect(body.system).toMatch(
+      /Current system time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\./u
+    )
     expect(body.system).toContain('# 文档写作')
     expect(body.system).toContain('Trusted specialist system instruction.')
     expect(events).toContainEqual(
