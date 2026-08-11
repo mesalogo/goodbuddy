@@ -6034,8 +6034,11 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .toggle-row input {
   position: relative;
+  min-width: 38px;
   width: 38px;
+  min-height: 22px;
   height: 22px;
+  margin: 0;
   padding: 0;
   border: 1px solid var(--border-control);
   border-radius: 999px;

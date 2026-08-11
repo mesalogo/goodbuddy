@@ -122,6 +122,12 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('keeps shared switches from inheriting text-field dimensions', () => {
+    expect(stylesheet).toMatch(
+      /\.toggle-row input\s*\{[^}]*min-width:\s*38px;[^}]*width:\s*38px;[^}]*min-height:\s*22px;[^}]*height:\s*22px;[^}]*margin:\s*0;/u
+    )
+  })
+
   it('uses the design-system page gutters at each window width', () => {
     expect(stylesheet).toMatch(/--page-gutter:\s*32px;/u)
     expect(stylesheet).toMatch(
