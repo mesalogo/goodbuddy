@@ -18,7 +18,7 @@
           ],
           "fixes": [
             "修复 Execute 模式下内置 OpenCode 和 Continue 仍可能阻止已授权工具的问题。",
-            "修复工具失败信息重复显示，并仅为最近一次失败保留重新编辑入口。",
+            "修复工具失败信息重复显示、已恢复的 OpenCode 响应仍被判定失败，并仅为最近一次失败保留重新编辑入口。",
             "修复共享开关在部分设置布局中尺寸被文本输入样式覆盖的问题。"
           ]
         },
@@ -35,7 +35,7 @@
           ],
           "fixes": [
             "Fixed authorized tools still being blocked for bundled OpenCode and Continue in Execute mode.",
-            "Fixed duplicate tool-failure messages and limited the edit-and-retry action to the latest failed response.",
+            "Fixed duplicate tool-failure messages, preserved recovered OpenCode responses, and limited the edit-and-retry action to the latest failed response.",
             "Fixed shared switches inheriting text-input dimensions in some settings layouts."
           ]
         }
