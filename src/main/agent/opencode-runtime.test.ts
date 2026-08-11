@@ -1928,6 +1928,72 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
+  it('keeps a completed response when an earlier tool attempt failed', async () => {
+    const { client, session } = runClient([
+      {
+        id: 'event-tool-error',
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'session-1',
+          part: {
+            id: 'part-1',
+            callID: 'call-1',
+            type: 'tool',
+            tool: 'read',
+            state: {
+              status: 'error',
+              error: 'Cannot read binary file'
+            }
+          }
+        }
+      },
+      completedToolEvent('call-2', 'write'),
+      {
+        id: 'event-text',
+        type: 'message.part.delta',
+        properties: {
+          sessionID: 'session-1',
+          messageID: 'message-1',
+          partID: 'part-text',
+          field: 'text',
+          delta: 'PPT 已生成并保存。'
+        }
+      },
+      {
+        id: 'event-idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(client)
+    const events = await collectRun(runtime, 'execute')
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'tool' && event.callId === 'call-1'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        state: 'failed',
+        error: 'Cannot read binary file'
+      }),
+      expect.objectContaining({
+        state: 'recoverable',
+        error: 'Cannot read binary file'
+      })
+    ])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: 'PPT 已生成并保存。'
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+    expect(session.abort).not.toHaveBeenCalled()
+    await runtime.dispose()
+  })
+
   it('surfaces a rejected async prompt instead of reporting success', async () => {
     const { client, session } = runClient([
       {

@@ -1190,6 +1190,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     >()
     const reasoningPartIds = new Set<string>()
     const reportedQuestionIds = new Set<string>()
+    let hasResponseTextAfterFailure = false
     try {
       const promptText =
         session.created && request.history?.length
@@ -1262,6 +1263,15 @@ export class OpenCodeRuntime implements AgentRuntime {
               'thinking'
             ].includes(event.properties.field)
           if (reasoning || event.properties.field === 'text') {
+            if (
+              !reasoning &&
+              /\S/u.test(event.properties.delta) &&
+              [...toolStates.values()].some(
+                (tool) => tool.state === 'failed'
+              )
+            ) {
+              hasResponseTextAfterFailure = true
+            }
             yield {
               requestId: request.requestId,
               type: reasoning ? 'reasoning' : 'text',
@@ -1291,6 +1301,9 @@ export class OpenCodeRuntime implements AgentRuntime {
             }
             const state =
               part.state.status === 'error' ? 'failed' : part.state.status
+            if (state === 'failed') {
+              hasResponseTextAfterFailure = false
+            }
             const error =
               part.state.status === 'error'
                 ? safeToolErrorDetail(part.state.error)
@@ -1498,16 +1511,40 @@ export class OpenCodeRuntime implements AgentRuntime {
               )
             )
           }
-          const unsuccessfulTool = [...toolStates.entries()].find(
-            ([, tool]) => tool.state !== 'completed'
+          const incompleteTool = [...toolStates.entries()].find(
+            ([, tool]) =>
+              tool.state === 'pending' || tool.state === 'running'
           )
-          if (unsuccessfulTool) {
-            const [callId, tool] = unsuccessfulTool
+          if (incompleteTool) {
+            const [callId] = incompleteTool
             throw new Error(
-              tool.state === 'failed'
-                ? `OpenCode 工具执行失败（${callId.slice(0, 128)}）${tool.error ? `：${tool.error}` : ''}`
-                : `OpenCode 工具未完成（${callId.slice(0, 128)}）`
+              `OpenCode 工具未完成（${callId.slice(0, 128)}）`
             )
+          }
+          const failedTools = [...toolStates.entries()].filter(
+            ([, tool]) => tool.state === 'failed'
+          )
+          if (
+            failedTools.length > 0 &&
+            !hasResponseTextAfterFailure
+          ) {
+            const [callId, tool] = failedTools[0]!
+            throw new Error(
+              `OpenCode 工具执行失败（${callId.slice(0, 128)}）${tool.error ? `：${tool.error}` : ''}`
+            )
+          }
+          for (const [callId, tool] of failedTools) {
+            yield {
+              requestId: request.requestId,
+              type: 'tool',
+              callId,
+              name: tool.name,
+              state: 'recoverable',
+              summary: `OpenCode 已在后续响应中处理工具失败：${tool.name}`,
+              ...(tool.input ? { input: tool.input } : {}),
+              ...(tool.output ? { output: tool.output } : {}),
+              ...(tool.error ? { error: tool.error } : {})
+            }
           }
           yield {
             requestId: request.requestId,
