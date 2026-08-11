@@ -23,8 +23,14 @@ export const workspace = {
         name: 'Name',
         description: 'Description',
         rootPath: 'Root folder',
-        defaultMode: 'Default mode'
+        defaultMode: 'Default mode',
+        defaultRuntime: 'Default Runtime for new conversations'
       },
+      runtimeOptions: {
+        direct: 'Direct model'
+      },
+      defaultRuntimeHelp:
+        'Applies only to new conversations in this project. Existing conversations are unchanged.',
       channelManaged: 'GoodBuddy manages channel project names.',
       selectRoot: 'Select project root folder',
       danger: {

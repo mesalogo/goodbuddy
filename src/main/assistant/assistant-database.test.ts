@@ -393,11 +393,17 @@ describe('AssistantDatabase', () => {
       name: '产品发布 2',
       description: '更新后的项目',
       rootPath: 'C:\\Release',
-      defaultWorkMode: 'execute'
+      defaultWorkMode: 'execute',
+      runtimeSelection: {
+        provider: 'continue'
+      }
     })
     expect(updated).toMatchObject({
       name: '产品发布 2',
-      defaultWorkMode: 'execute'
+      defaultWorkMode: 'execute',
+      runtimeSelection: {
+        provider: 'continue'
+      }
     })
     database.setProjectArchived(project.id, true)
     expect(database.listProjects()).toHaveLength(1)

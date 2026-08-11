@@ -818,6 +818,16 @@ function getDefaultRuntimeSelection(
   }
 }
 
+function getProjectDefaultRuntimeSelection(
+  project: AssistantProject | undefined,
+  settings: RuntimeSettings
+): AgentRuntimeSelection {
+  const selection = project?.runtimeSelection
+  return !selection || selection.provider === 'auto'
+    ? getDefaultRuntimeSelection(settings)
+    : repairAgentRuntimeSelection(selection, settings)
+}
+
 function getRuntimeSelectionLabel(
   selection: AgentRuntimeSelection | undefined,
   settings: RuntimeSettings | undefined,
@@ -1798,11 +1808,17 @@ function App(): React.JSX.Element {
     if (!runtimeSettings || !conversationStoreReady) {
       return
     }
-    const defaultSelection = getDefaultRuntimeSelection(runtimeSettings)
     const timeout = setTimeout(() => {
       setConversations((current) => {
         let changed = false
         const next = current.map((conversation) => {
+          const project = projects.find(
+            (candidate) => candidate.id === conversation.projectId
+          )
+          const defaultSelection = getProjectDefaultRuntimeSelection(
+            project,
+            runtimeSettings
+          )
           const selection =
             !conversation.runtimeSelection ||
             conversation.runtimeSelection.provider === 'auto'
@@ -1828,7 +1844,7 @@ function App(): React.JSX.Element {
       })
     }, 0)
     return () => clearTimeout(timeout)
-  }, [conversationStoreReady, runtimeSettings])
+  }, [conversationStoreReady, projects, runtimeSettings])
 
   useEffect(() => {
     const selection = activeRuntimeSelectionRef.current
@@ -1914,7 +1930,7 @@ function App(): React.JSX.Element {
       const conversation = createConversation(
         projectId,
         runtimeSettings
-          ? getDefaultRuntimeSelection(runtimeSettings)
+          ? getProjectDefaultRuntimeSelection(project, runtimeSettings)
           : undefined,
         tRef.current('conversation.greeting')
       )
@@ -3520,7 +3536,7 @@ function App(): React.JSX.Element {
       const created = createConversation(
         projectId,
         runtimeSettings
-          ? getDefaultRuntimeSelection(runtimeSettings)
+          ? getProjectDefaultRuntimeSelection(project, runtimeSettings)
           : undefined,
         t('conversation.greeting')
       )
@@ -3540,7 +3556,7 @@ function App(): React.JSX.Element {
     const conversation = createConversation(
       project.id,
       runtimeSettings
-        ? getDefaultRuntimeSelection(runtimeSettings)
+        ? getProjectDefaultRuntimeSelection(project, runtimeSettings)
         : undefined,
       t('conversation.greeting')
     )
@@ -3635,7 +3651,7 @@ function App(): React.JSX.Element {
         const created = createConversation(
           next.id,
           runtimeSettings
-            ? getDefaultRuntimeSelection(runtimeSettings)
+            ? getProjectDefaultRuntimeSelection(next, runtimeSettings)
             : undefined,
           t('conversation.greeting')
         )
@@ -3767,7 +3783,10 @@ function App(): React.JSX.Element {
     const replacement = createConversation(
       activeProjectId || undefined,
       runtimeSettings
-        ? getDefaultRuntimeSelection(runtimeSettings)
+        ? getProjectDefaultRuntimeSelection(
+            activeProject,
+            runtimeSettings
+          )
         : undefined,
       t('conversation.greeting')
     )
@@ -4531,7 +4550,10 @@ function App(): React.JSX.Element {
     const conversation = createConversation(
       activeProjectId || undefined,
       runtimeSettings
-        ? getDefaultRuntimeSelection(runtimeSettings)
+        ? getProjectDefaultRuntimeSelection(
+            activeProject,
+            runtimeSettings
+          )
         : undefined,
       t('conversation.greeting')
     )
@@ -4602,6 +4624,7 @@ function App(): React.JSX.Element {
 
         <ProjectSwitcher
           activeProjectId={activeProjectId}
+          runtimeSettings={runtimeSettings}
           onArchive={archiveProject}
           onCreate={createProject}
           onDelete={deleteProject}

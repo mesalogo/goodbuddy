@@ -20,8 +20,14 @@ export const workspace = {
         name: '名称',
         description: '说明',
         rootPath: '根目录',
-        defaultMode: '默认模式'
+        defaultMode: '默认模式',
+        defaultRuntime: '新对话默认 Runtime'
       },
+      runtimeOptions: {
+        direct: '直连模型'
+      },
+      defaultRuntimeHelp:
+        '仅应用于此项目中新建的对话，不会更改已有对话。',
       channelManaged: '通道项目名称由 GoodBuddy 管理。',
       selectRoot: '选择项目根目录',
       danger: {

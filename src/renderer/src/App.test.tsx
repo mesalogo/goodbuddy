@@ -3357,9 +3357,16 @@ describe('App', () => {
     expect(within(dialog).getByLabelText('根目录')).toHaveValue(
       project.rootPath
     )
+    expect(
+      within(dialog).getByLabelText('新对话默认 Runtime')
+    ).toHaveValue('model')
     fireEvent.change(within(dialog).getByLabelText('说明'), {
       target: { value: '更新后的说明' }
     })
+    fireEvent.change(
+      within(dialog).getByLabelText('新对话默认 Runtime'),
+      { target: { value: 'continue' } }
+    )
     fireEvent.click(
       within(dialog).getByRole('button', { name: '保存项目' })
     )
@@ -3368,7 +3375,11 @@ describe('App', () => {
         project.id,
         expect.objectContaining({
           description: '更新后的说明',
-          rootPath: project.rootPath
+          rootPath: project.rootPath,
+          runtimeSelection: {
+            provider: 'continue',
+            profileId: modelProfileId
+          }
         })
       )
     )
@@ -3401,6 +3412,49 @@ describe('App', () => {
     expect(screen.getByLabelText('当前项目')).toHaveValue(
       secondProject.id
     )
+  })
+
+  it('uses the project default Runtime for new conversations', async () => {
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      {
+        ...project,
+        runtimeSelection: {
+          provider: 'opencode',
+          profileId: modelProfileId
+        }
+      }
+    ])
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000220',
+        projectId,
+        runtimeSelection: {
+          provider: 'model',
+          profileId: modelProfileId
+        },
+        title: '已有对话',
+        updatedAt: 1,
+        messages: []
+      }
+    ])
+    render(<App />)
+
+    await screen.findAllByText('已有对话')
+    fireEvent.click(
+      screen.getByRole('button', { name: /新建对话/u })
+    )
+
+    await waitFor(() =>
+      expect(api.agent.getStatus).toHaveBeenLastCalledWith({
+        provider: 'opencode',
+        profileId: modelProfileId
+      })
+    )
+    expect(
+      screen.getByRole('button', {
+        name: /OpenCode · 默认模型/u
+      })
+    ).toBeInTheDocument()
   })
 
   it('uses a message icon for conversation navigation', async () => {

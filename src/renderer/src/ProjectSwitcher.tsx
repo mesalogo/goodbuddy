@@ -17,11 +17,14 @@ import {
   interactiveWorkModes,
   normalizeInteractiveWorkMode
 } from '../../shared/assistant-contracts'
+import type { RuntimeSettings } from '../../shared/contracts'
+import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import { trapTabFocus } from './dialog-focus'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
   activeProjectId: string
+  runtimeSettings?: RuntimeSettings
   onArchive: (projectId: string) => Promise<void>
   onCreate: (input: ProjectCreateInput) => Promise<AssistantProject>
   onDelete: (projectId: string, confirmation: string) => Promise<void>
@@ -33,9 +36,47 @@ type ProjectSwitcherProps = {
   ) => Promise<AssistantProject>
 }
 
+function runtimeSelectionForProvider(
+  provider: 'model' | 'opencode' | 'continue',
+  settings: RuntimeSettings
+): AgentRuntimeSelection {
+  if (provider === 'model') {
+    return {
+      provider,
+      profileId: settings.defaultModelProfileId
+    }
+  }
+  const source =
+    provider === 'opencode'
+      ? settings.opencodeModelSource
+      : settings.continueModelSource
+  return {
+    provider,
+    ...(source.kind === 'profile' ? { profileId: source.profileId } : {})
+  }
+}
+
+function defaultRuntimeSelection(
+  settings: RuntimeSettings
+): AgentRuntimeSelection {
+  if (settings.provider === 'model') {
+    return runtimeSelectionForProvider('model', settings)
+  }
+  if (settings.provider === 'opencode') {
+    return runtimeSelectionForProvider('opencode', settings)
+  }
+  if (settings.provider === 'continue') {
+    return runtimeSelectionForProvider('continue', settings)
+  }
+  return settings.opencodeBaseUrl || settings.opencodeEmbedded
+    ? runtimeSelectionForProvider('opencode', settings)
+    : runtimeSelectionForProvider('model', settings)
+}
+
 export function ProjectSwitcher({
   projects,
   activeProjectId,
+  runtimeSettings,
   onArchive,
   onCreate,
   onDelete,
@@ -111,10 +152,17 @@ export function ProjectSwitcher({
     setSaving(true)
     setError(undefined)
     try {
+      const input =
+        draft.runtimeSelection || !runtimeSettings
+          ? draft
+          : {
+              ...draft,
+              runtimeSelection: defaultRuntimeSelection(runtimeSettings)
+            }
       if (dialogMode === 'settings' && activeProject) {
-        await onUpdate(activeProject.id, draft)
+        await onUpdate(activeProject.id, input)
       } else {
-        await onCreate(draft)
+        await onCreate(input)
       }
       closeDialog()
     } catch (reason) {
@@ -226,7 +274,10 @@ export function ProjectSwitcher({
               name: '',
               description: '',
               rootPath: '',
-              defaultWorkMode: 'ask'
+              defaultWorkMode: 'ask',
+              runtimeSelection: runtimeSettings
+                ? defaultRuntimeSelection(runtimeSettings)
+                : undefined
             })
             restoreFocusTarget.current = 'create'
             setDialogMode('create')
@@ -253,7 +304,12 @@ export function ProjectSwitcher({
               rootPath: activeProject.rootPath,
               defaultWorkMode: normalizeInteractiveWorkMode(
                 activeProject.defaultWorkMode
-              )
+              ),
+              runtimeSelection:
+                activeProject.runtimeSelection ??
+                (runtimeSettings
+                  ? defaultRuntimeSelection(runtimeSettings)
+                  : undefined)
             })
             restoreFocusTarget.current = 'settings'
             setDialogMode('settings')
@@ -373,6 +429,48 @@ export function ProjectSwitcher({
                 ))}
               </select>
             </label>
+            {runtimeSettings && (
+              <label>
+                <span>
+                  {t('projectSwitcher.dialog.fields.defaultRuntime')}
+                </span>
+                <select
+                  aria-label={t(
+                    'projectSwitcher.dialog.fields.defaultRuntime'
+                  )}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      runtimeSelection: runtimeSelectionForProvider(
+                        event.target.value as
+                          | 'model'
+                          | 'opencode'
+                          | 'continue',
+                        runtimeSettings
+                      )
+                    }))
+                  }
+                  value={
+                    draft.runtimeSelection?.provider === 'auto'
+                      ? 'model'
+                      : (draft.runtimeSelection?.provider ??
+                        defaultRuntimeSelection(runtimeSettings)
+                          .provider)
+                  }
+                >
+                  <option value="model">
+                    {t(
+                      'projectSwitcher.dialog.runtimeOptions.direct'
+                    )}
+                  </option>
+                  <option value="opencode">OpenCode</option>
+                  <option value="continue">Continue</option>
+                </select>
+                <small>
+                  {t('projectSwitcher.dialog.defaultRuntimeHelp')}
+                </small>
+              </label>
+            )}
             {error && (
               <p className="project-create-card__error" role="alert">
                 {error}
