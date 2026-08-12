@@ -1,6 +1,8 @@
 import { memo, useMemo } from 'react'
+import rehypeKatex from 'rehype-katex'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import type { Components } from 'react-markdown'
 import { useTranslation } from 'react-i18next'
 
@@ -43,6 +45,100 @@ type MarkdownRendererProps = {
 const wholeMarkdownFence =
   /^```(?:markdown|md)\s*\r?\n([\s\S]*?)\r?\n```$/iu
 
+function replaceLatexDelimiters(line: string): string {
+  let output = ''
+  let index = 0
+  let codeDelimiterLength = 0
+
+  while (index < line.length) {
+    if (line[index] === '`') {
+      let runLength = 1
+      while (line[index + runLength] === '`') {
+        runLength += 1
+      }
+      if (
+        codeDelimiterLength === 0 ||
+        codeDelimiterLength === runLength
+      ) {
+        codeDelimiterLength =
+          codeDelimiterLength === 0 ? runLength : 0
+      }
+      output += line.slice(index, index + runLength)
+      index += runLength
+      continue
+    }
+    if (
+      codeDelimiterLength === 0 &&
+      line[index] === '\\' &&
+      line[index - 1] !== '\\' &&
+      (line[index + 1] === '(' || line[index + 1] === ')')
+    ) {
+      output += '$'
+      index += 2
+      continue
+    }
+    output += line[index]
+    index += 1
+  }
+  return output
+}
+
+function normalizeLatexDelimiters(content: string): string {
+  let fence:
+    | {
+        character: '`' | '~'
+        length: number
+      }
+    | undefined
+
+  return content
+    .split(/\r?\n/u)
+    .map((line) => {
+      if (fence) {
+        const closingFence = new RegExp(
+          `^ {0,3}${fence.character}{${fence.length},}\\s*$`,
+          'u'
+        )
+        if (closingFence.test(line)) {
+          fence = undefined
+        }
+        return line
+      }
+      const openingFence = /^ {0,3}(`{3,}|~{3,})/u.exec(line)
+      if (openingFence) {
+        const marker = openingFence[1]!
+        fence = {
+          character: marker[0] as '`' | '~',
+          length: marker.length
+        }
+        return line
+      }
+      const standaloneDollar =
+        /^ {0,3}\$(?!\$)(.+?)(?<!\\)\$\s*$/u.exec(line)
+      if (standaloneDollar) {
+        return `$$\n${standaloneDollar[1]}\n$$`
+      }
+      const standaloneParentheses =
+        /^ {0,3}\\\(\s*(.*?)\s*\\\)\s*$/u.exec(line)
+      if (standaloneParentheses) {
+        return `$$\n${standaloneParentheses[1]}\n$$`
+      }
+      const singleLineDisplay =
+        /^ {0,3}\\\[\s*(.*?)\s*\\\]\s*$/u.exec(line)
+      if (singleLineDisplay) {
+        return `$$\n${singleLineDisplay[1]}\n$$`
+      }
+      if (/^ {0,3}\\\[\s*$/u.test(line)) {
+        return '$$'
+      }
+      if (/^ {0,3}\\\]\s*$/u.test(line)) {
+        return '$$'
+      }
+      return replaceLatexDelimiters(line)
+    })
+    .join('\n')
+}
+
 function unwrapMarkdownFence(content: string): string {
   const fencedMarkdown = wholeMarkdownFence.exec(content.trim())
   return fencedMarkdown?.[1] ?? content
@@ -60,10 +156,23 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   return (
     <ReactMarkdown
       components={components}
-      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[
+        [
+          rehypeKatex,
+          {
+            output: 'htmlAndMathml',
+            strict: 'warn',
+            trust: false
+          }
+        ]
+      ]}
+      remarkPlugins={[
+        remarkGfm,
+        [remarkMath, { singleDollarTextMath: true }]
+      ]}
       skipHtml
     >
-      {unwrapMarkdownFence(children)}
+      {normalizeLatexDelimiters(unwrapMarkdownFence(children))}
     </ReactMarkdown>
   )
 })

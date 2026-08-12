@@ -1,6 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/noto-sans-sc/wght.css'
+import 'katex/dist/katex.min.css'
+import './markdown-math.css'
 import App from './App'
 import { installBundledUiFonts } from './fonts'
 import { changeUiLocale } from './i18n'

@@ -116,6 +116,10 @@
       {
         "from": "node_modules/onnxruntime-web/LICENSE",
         "to": "licenses/onnxruntime-web-MIT.txt"
+      },
+      {
+        "from": "node_modules/katex/LICENSE",
+        "to": "licenses/katex-MIT.txt"
       }
     ],
     "win": {
@@ -165,6 +169,7 @@
     "html-to-text": "^10.0.0",
     "i18next": "^25.10.10",
     "json5": "^2.2.3",
+    "katex": "^0.16.47",
     "lucide-react": "^1.27.0",
     "onnxruntime-web": "^1.23.2",
     "pdfjs-dist": "^6.2.108",
@@ -175,7 +180,9 @@
     "react-dom": "^19.2.8",
     "react-i18next": "^16.6.6",
     "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "sherpa-onnx": "1.13.4",
     "undici": "^7.29.0",
     "yaml": "^2.9.0",

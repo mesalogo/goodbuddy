@@ -73,6 +73,98 @@ const ready = true
     expect(container.querySelector('pre')).not.toBeInTheDocument()
   })
 
+  it('renders inline and display LaTeX formulas with KaTeX', () => {
+    const { container } = render(
+      <MarkdownRenderer>{`质能方程为 $E = mc^2$。
+
+$$
+\\int_0^1 x^2\\,dx = \\frac{1}{3}
+$$`}</MarkdownRenderer>
+    )
+
+    expect(container.querySelectorAll('.katex')).toHaveLength(2)
+    expect(container.querySelector('.katex-display')).toBeInTheDocument()
+    expect(
+      container.querySelector(
+        'annotation[encoding="application/x-tex"]'
+      )
+    ).toHaveTextContent('E = mc^2')
+    expect(
+      [...container.querySelectorAll(
+        'annotation[encoding="application/x-tex"]'
+      )].at(-1)
+    ).toHaveTextContent('\\int_0^1 x^2\\,dx = \\frac{1}{3}')
+  })
+
+  it('supports common model-style LaTeX delimiters outside code', () => {
+    const { container } = render(
+      <MarkdownRenderer>{`行内公式 \\(a^2 + b^2 = c^2\\)。
+
+\\[
+\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}
+\\]
+
+\\[ \\sqrt{x^2} = |x| \\]
+
+\`\\(not rendered\\)\`
+
+\`\`\`tex
+\\[
+also not rendered
+\\]
+\`\`\``}</MarkdownRenderer>
+    )
+
+    expect(container.querySelectorAll('.katex')).toHaveLength(3)
+    expect(container.querySelectorAll('.katex-display')).toHaveLength(2)
+    expect(screen.getByText('\\(not rendered\\)')).toBeInTheDocument()
+    expect(screen.getByText(/also not rendered/u)).toBeInTheDocument()
+    expect(container.querySelectorAll('code .katex')).toHaveLength(0)
+  })
+
+  it('promotes formulas that occupy a whole line to centered display math', () => {
+    const { container } = render(
+      <MarkdownRenderer>{`段落内仍是 $E = mc^2$ 行内公式。
+
+$S(A) = \\frac{\\operatorname{Area}(\\gamma_A)}{4G_N}$
+
+\\(S \\leq \\frac{A}{4G_N}\\)`}</MarkdownRenderer>
+    )
+
+    expect(container.querySelectorAll('.katex')).toHaveLength(3)
+    expect(container.querySelectorAll('.katex-display')).toHaveLength(2)
+    expect(
+      container.querySelector(
+        'p:first-child .katex-display'
+      )
+    ).not.toBeInTheDocument()
+    for (const display of container.querySelectorAll('.katex-display')) {
+      expect(display.querySelector(':scope > .katex')).toBeInTheDocument()
+    }
+  })
+
+  it('shows invalid formulas without crashing or rendering raw HTML', () => {
+    const { container } = render(
+      <MarkdownRenderer>{`$\\notARealCommand{value}$
+
+$\\href{javascript:alert(1)}{unsafe}$`}</MarkdownRenderer>
+    )
+
+    expect(
+      container.querySelector(
+        'annotation[encoding="application/x-tex"]'
+      )
+    ).toHaveTextContent('\\notARealCommand{value}')
+    expect(container.querySelectorAll('.katex')).toHaveLength(2)
+    expect(container).toHaveTextContent(
+      '\\notARealCommand'
+    )
+    expect(container.querySelector('script')).not.toBeInTheDocument()
+    expect(
+      container.querySelector('a[href^="javascript:"]')
+    ).not.toBeInTheDocument()
+  })
+
   it('updates table accessibility copy when the locale changes', async () => {
     render(
       <MarkdownRenderer>{`| Name |

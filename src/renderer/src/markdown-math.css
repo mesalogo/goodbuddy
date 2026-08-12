@@ -1,0 +1,27 @@
+.markdown-content .katex {
+  color: inherit;
+  font-size: 1.05em;
+}
+
+.markdown-content .katex-display {
+  max-width: 100%;
+  margin: 0.85em 0;
+  padding: var(--space-1) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
+.markdown-content .katex-display > .katex {
+  width: max-content;
+  min-width: max-content;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.markdown-content .katex-error {
+  color: var(--danger);
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
