@@ -86,7 +86,7 @@ describe('KnowledgeDatabase', () => {
     const inspection = new DatabaseSync(path)
     expect(
       inspection.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 10 })
+    ).toEqual({ user_version: 11 })
     expect(
       inspection
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
@@ -101,7 +101,8 @@ describe('KnowledgeDatabase', () => {
       { version: 7 },
       { version: 8 },
       { version: 9 },
-      { version: 10 }
+      { version: 10 },
+      { version: 11 }
     ])
     inspection.close()
 
@@ -193,7 +194,7 @@ describe('KnowledgeDatabase', () => {
     })
   })
 
-  it('upgrades an existing v1 database through knowledge schema v10', async () => {
+  it('upgrades an existing v1 database through knowledge schema v11', async () => {
     const { database, path } = await createDatabase()
     const knowledgeBase = database.createKnowledgeBase({
       name: 'Version one data',
@@ -210,7 +211,7 @@ describe('KnowledgeDatabase', () => {
       DROP TABLE chunk_embeddings;
       DROP TABLE knowledge_tasks;
       DELETE FROM schema_migrations
-      WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10);
+      WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
       PRAGMA user_version = 1;
     `)
     downgrade.close()
@@ -220,7 +221,7 @@ describe('KnowledgeDatabase', () => {
     upgraded.initialize()
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 10
+      user_version: 11
     })
     expect(
       inspection
@@ -327,7 +328,7 @@ describe('KnowledgeDatabase', () => {
           WHERE new.enabled = 1 AND new.role <> 'parent';
       END;
       INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild');
-      DELETE FROM schema_migrations WHERE version IN (9, 10);
+      DELETE FROM schema_migrations WHERE version IN (9, 10, 11);
       PRAGMA user_version = 8;
     `)
     downgrade
@@ -698,6 +699,22 @@ describe('KnowledgeDatabase', () => {
         query: 'lighthouse'
       })
     ).toEqual([])
+  })
+
+  it('lists complete source and document snapshots beyond display limits', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Complete snapshot',
+      storageMode: 'reference'
+    })
+    for (let index = 0; index < 501; index += 1) {
+      seedDocument(database, library.id, `snapshot-${index}`)
+    }
+
+    expect(database.listSources(library.id)).toHaveLength(500)
+    expect(database.listDocuments(library.id)).toHaveLength(500)
+    expect(database.listSourcesForSnapshot(library.id)).toHaveLength(501)
+    expect(database.listDocumentsForSnapshot(library.id)).toHaveLength(501)
   })
 
   it('edits graph records and merges entities while retaining evidence and locks', async () => {
@@ -1401,6 +1418,182 @@ describe('KnowledgeDatabase', () => {
       )
     ).toThrow('content changed')
     database.discardDocumentEmbeddingReplacement(replacementId)
+  })
+
+  it('publishes candidate chunks, vectors, and graph evidence atomically', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Atomic publication',
+      storageMode: 'reference',
+      graphEnabled: true,
+      graphStrategy: 'rules'
+    })
+    const seeded = seedDocument(database, library.id, 'atomic-publication')
+    const originalContent =
+      'atomic-publication contains the searchable lighthouse phrase'
+    database.replaceDocumentEmbeddings(
+      seeded.documentId,
+      'provider',
+      'model',
+      [{
+        chunkId: seeded.chunkId,
+        contentChecksum: createHash('sha256')
+          .update(originalContent)
+          .digest('hex'),
+        vector: [1, 0]
+      }]
+    )
+    const originalEntity = database.createEntity({
+      knowledgeBaseId: library.id,
+      name: 'Original Entity',
+      type: 'CONCEPT'
+    })
+    database.createEvidence({
+      knowledgeBaseId: library.id,
+      entityId: originalEntity.id,
+      documentId: seeded.documentId,
+      chunkId: seeded.chunkId,
+      quote: originalContent
+    })
+    const candidateChunkId = 'atomic-publication-candidate'
+    const candidateContent = 'candidate searchable content'
+    const replacementId =
+      database.beginPreparedDocumentEmbeddingReplacement(
+        seeded.documentId,
+        'provider',
+        'model'
+      )
+    database.appendPreparedDocumentEmbeddingBatch(
+      replacementId,
+      seeded.documentId,
+      'provider',
+      'model',
+      [{
+        chunkId: candidateChunkId,
+        contentChecksum: createHash('sha256')
+          .update(candidateContent)
+          .digest('hex'),
+        vector: [0, 1]
+      }]
+    )
+    expect(() =>
+      database.publishDocument(
+        {
+          id: seeded.documentId,
+          knowledgeBaseId: library.id,
+          sourceId: seeded.sourceId,
+          externalId: 'atomic-publication',
+          title: 'candidate'
+        },
+        [{
+          id: candidateChunkId,
+          ordinal: 0,
+          content: candidateContent
+        }],
+        {
+          embeddingReplacement: {
+            replacementId,
+            provider: 'provider',
+            model: 'model'
+          },
+          afterChunksInserted: () => {
+            throw new Error('synthetic graph failure')
+          }
+        }
+      )
+    ).toThrow('synthetic graph failure')
+    database.discardDocumentEmbeddingReplacement(replacementId)
+    expect(database.search({
+      knowledgeBaseId: library.id,
+      query: 'lighthouse'
+    })[0]?.chunk.id).toBe(seeded.chunkId)
+    expect(database.vectorSearch({
+      knowledgeBaseId: library.id,
+      provider: 'provider',
+      model: 'model',
+      vector: [1, 0],
+      limit: 1
+    })[0]?.chunk.id).toBe(seeded.chunkId)
+    expect(database.listEvidence(library.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          documentId: seeded.documentId,
+          chunkId: seeded.chunkId
+        })
+      ])
+    )
+
+    const successfulReplacementId =
+      database.beginPreparedDocumentEmbeddingReplacement(
+        seeded.documentId,
+        'provider',
+        'model'
+      )
+    database.appendPreparedDocumentEmbeddingBatch(
+      successfulReplacementId,
+      seeded.documentId,
+      'provider',
+      'model',
+      [{
+        chunkId: candidateChunkId,
+        contentChecksum: createHash('sha256')
+          .update(candidateContent)
+          .digest('hex'),
+        vector: [0, 1]
+      }]
+    )
+    const candidateEntity = database.createEntity({
+      knowledgeBaseId: library.id,
+      name: 'Candidate Entity',
+      type: 'CONCEPT'
+    })
+    database.publishDocument(
+      {
+        id: seeded.documentId,
+        knowledgeBaseId: library.id,
+        sourceId: seeded.sourceId,
+        externalId: 'atomic-publication',
+        title: 'candidate'
+      },
+      [{
+        id: candidateChunkId,
+        ordinal: 0,
+        content: candidateContent
+      }],
+      {
+        embeddingReplacement: {
+          replacementId: successfulReplacementId,
+          provider: 'provider',
+          model: 'model'
+        },
+        afterChunksInserted: (document) => {
+          database.createEvidence({
+            knowledgeBaseId: library.id,
+            entityId: candidateEntity.id,
+            documentId: document.id,
+            chunkId: candidateChunkId,
+            quote: candidateContent
+          })
+        }
+      }
+    )
+    expect(database.search({
+      knowledgeBaseId: library.id,
+      query: 'candidate'
+    })[0]?.chunk.id).toBe(candidateChunkId)
+    expect(database.vectorSearch({
+      knowledgeBaseId: library.id,
+      provider: 'provider',
+      model: 'model',
+      vector: [0, 1],
+      limit: 1
+    })[0]?.chunk.id).toBe(candidateChunkId)
+    expect(database.listEvidence(library.id)).toEqual([
+      expect.objectContaining({
+        documentId: seeded.documentId,
+        chunkId: candidateChunkId
+      })
+    ])
   })
 
   it('persists embedding index jobs independently by knowledge base', async () => {

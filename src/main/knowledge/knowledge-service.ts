@@ -66,9 +66,13 @@ import {
   extractKnowledgeGraph,
   normalizeEntityAlias,
   type ExtractStructured,
+  type GraphChunk,
   type GraphExtractionResult
 } from './graph-extractor'
-import { KnowledgeDatabase } from './knowledge-database'
+import {
+  KnowledgeDatabase,
+  type PreparedEmbeddingReplacement
+} from './knowledge-database'
 import {
   containsHanText,
   contextualIndexText,
@@ -154,6 +158,20 @@ const maximumSourceBytes = 500 * 1024 * 1024
 const maximumFilesPerSource = 2_000
 const maximumEmbeddingChunksPerBatch = 32
 
+type PreparedDocumentPublication = {
+  input: Parameters<KnowledgeDatabase['publishDocument']>[0]
+  chunks: ReplaceChunkInput[]
+  graph?: GraphExtractionResult
+  embeddingReplacement?: PreparedEmbeddingReplacement
+  embeddingFailure?: {
+    provider: string
+    model: string
+    message: string
+  }
+  embeddingTaskId: string
+  graphTaskId: string
+}
+
 interface PreparedQueryEmbedding {
   provider?: EmbeddingProvider
   providerStorageKey?: string
@@ -184,11 +202,17 @@ export class KnowledgeService {
     string,
     Promise<Document>
   >()
+  private readonly documentMutationTails = new Map<string, Promise<void>>()
   private readonly backgroundEmbeddingReindexes = new Map<
     string,
     Promise<void>
   >()
   private readonly pendingEmbeddingReindexes = new Set<string>()
+  private readonly backgroundGraphReindexes = new Map<
+    string,
+    Promise<void>
+  >()
+  private readonly pendingGraphReindexes = new Set<string>()
   private readonly taskControllers = new Map<string, AbortController>()
   private readonly taskOperations = new Map<string, Promise<unknown>>()
   private readonly sourceSyncTaskIds = new Map<string, string>()
@@ -229,7 +253,7 @@ export class KnowledgeService {
     await mkdir(this.managedRoot, { recursive: true })
     this.database.initialize()
     for (const library of this.database.listKnowledgeBases()) {
-      for (const source of this.database.listSources(library.id)) {
+      for (const source of this.database.listSourcesForSnapshot(library.id)) {
         if (
           library.storageMode === 'reference' &&
           source.type !== 'url' &&
@@ -274,7 +298,9 @@ export class KnowledgeService {
     await Promise.allSettled([
       ...this.activeSyncs.values(),
       ...this.activeDocumentRebuilds.values(),
+      ...this.documentMutationTails.values(),
       ...this.backgroundEmbeddingReindexes.values(),
+      ...this.backgroundGraphReindexes.values(),
       ...this.taskOperations.values(),
       ...embeddingCompletions
     ])
@@ -282,6 +308,7 @@ export class KnowledgeService {
     this.taskOperations.clear()
     this.sourceSyncTaskIds.clear()
     this.libraryRebuildControllers.clear()
+    this.documentMutationTails.clear()
     this.database.close()
   }
 
@@ -543,6 +570,343 @@ export class KnowledgeService {
     await Promise.allSettled(operations)
   }
 
+  private async withDocumentMutation<T>(
+    documentId: string,
+    operation: () => Promise<T> | T,
+    signal?: AbortSignal
+  ): Promise<T> {
+    const previous = this.documentMutationTails.get(documentId)
+    let release: (() => void) | undefined
+    const tail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    this.documentMutationTails.set(documentId, tail)
+    try {
+      await previous
+      signal?.throwIfAborted()
+      this.lifecycleController.signal.throwIfAborted()
+      return await operation()
+    } finally {
+      release?.()
+      if (this.documentMutationTails.get(documentId) === tail) {
+        this.documentMutationTails.delete(documentId)
+      }
+    }
+  }
+
+  private async prepareDocumentEmbeddings(
+    documentId: string,
+    chunks: readonly ReplaceChunkInput[],
+    signal?: AbortSignal
+  ): Promise<PreparedEmbeddingReplacement | undefined> {
+    const provider = this.embeddingProvider
+    if (!provider) {
+      return undefined
+    }
+    const effectiveSignal = signal
+      ? AbortSignal.any([signal, this.lifecycleController.signal])
+      : this.lifecycleController.signal
+    const providerStorageKey = embeddingStorageProvider(provider)
+    const indexableChunks = chunks.filter(
+      (chunk) =>
+        (chunk.enabled ?? true) &&
+        (chunk.role ?? 'standalone') !== 'parent'
+    )
+    const replacementId =
+      this.database.beginPreparedDocumentEmbeddingReplacement(
+        documentId,
+        providerStorageKey,
+        provider.model
+      )
+    try {
+      let expectedDimensions: number | undefined
+      for (
+        let offset = 0;
+        offset < indexableChunks.length;
+        offset += this.embeddingBatchSize
+      ) {
+        effectiveSignal.throwIfAborted()
+        const batch = indexableChunks.slice(
+          offset,
+          offset + this.embeddingBatchSize
+        )
+        const contents = batch.map((chunk) =>
+          contextualIndexText(
+            chunk.content,
+            chunk.metadata?.contextPrefix
+          )
+        )
+        const vectors = await provider.embed(contents, effectiveSignal)
+        effectiveSignal.throwIfAborted()
+        if (vectors.length !== batch.length) {
+          throw new Error('Embedding provider returned an invalid result count')
+        }
+        const embeddings = batch.map((chunk, index) => {
+          const vector = vectors[index]
+          if (!vector) {
+            throw new Error('Embedding provider returned an incomplete batch')
+          }
+          if (expectedDimensions === undefined) {
+            expectedDimensions = vector.length
+          } else if (vector.length !== expectedDimensions) {
+            throw new Error(
+              'Embedding provider returned inconsistent dimensions'
+            )
+          }
+          return {
+            chunkId: chunk.id!,
+            contentChecksum: createHash('sha256')
+              .update(contents[index]!)
+              .digest('hex'),
+            vector
+          }
+        })
+        this.database.appendPreparedDocumentEmbeddingBatch(
+          replacementId,
+          documentId,
+          providerStorageKey,
+          provider.model,
+          embeddings
+        )
+      }
+      effectiveSignal.throwIfAborted()
+      if (this.embeddingProvider !== provider) {
+        throw new Error('向量模型配置已变化')
+      }
+      return {
+        replacementId,
+        provider: providerStorageKey,
+        model: provider.model
+      }
+    } catch (error) {
+      this.database.discardDocumentEmbeddingReplacement(replacementId)
+      throw error
+    }
+  }
+
+  private async prepareDocumentPublication(
+    input: PreparedDocumentPublication['input'],
+    parsed: ParsedDocument,
+    library: KnowledgeBase,
+    signal?: AbortSignal,
+    parentTaskId?: string
+  ): Promise<PreparedDocumentPublication> {
+    signal?.throwIfAborted()
+    const documentId = input.id ?? randomUUID()
+    const chunks = this.createDocumentChunks(parsed, library)
+    let embeddingReplacement: PreparedEmbeddingReplacement | undefined
+    let embeddingFailure: PreparedDocumentPublication['embeddingFailure']
+    const embeddingProvider = this.embeddingProvider
+    const embeddingTask = this.createKnowledgeTask({
+      libraryId: library.id,
+      parentTaskId,
+      sourceId: input.sourceId,
+      documentName: input.title,
+      scope: 'document',
+      kind: 'embedding'
+    })
+    if (!embeddingProvider) {
+      this.updateKnowledgeTask(embeddingTask.id, {
+        status: 'skipped',
+        message: '未启用向量化'
+      })
+    } else {
+      this.updateKnowledgeTask(embeddingTask.id, {
+        status: 'running',
+        stage: 'embedding',
+        progress: 5,
+        message: '正在生成候选向量索引'
+      })
+    }
+    try {
+      embeddingReplacement = await this.prepareDocumentEmbeddings(
+        documentId,
+        chunks,
+        signal
+      )
+      if (embeddingReplacement) {
+        this.updateKnowledgeTask(embeddingTask.id, {
+          progress: 90,
+          message: `已生成 ${chunks.length} 个候选分块向量`
+        })
+      }
+    } catch (error) {
+      if (signal?.aborted) {
+        this.database.cancelKnowledgeTask(embeddingTask.id, '文档处理已取消')
+        throw signal.reason
+      }
+      const safeError = classifyEmbeddingError(error)
+      if (embeddingProvider) {
+        this.failKnowledgeTask(embeddingTask.id, safeError)
+        embeddingFailure = {
+          provider: embeddingStorageProvider(embeddingProvider),
+          model: embeddingProvider.model,
+          message: safeError.message
+        }
+      } else {
+        this.updateKnowledgeTask(embeddingTask.id, {
+          status: 'skipped',
+          message: '未启用向量化'
+        })
+      }
+    }
+    let graph: GraphExtractionResult | undefined
+    const graphTask = this.createKnowledgeTask({
+      libraryId: library.id,
+      parentTaskId,
+      sourceId: input.sourceId,
+      documentName: input.title,
+      scope: 'document',
+      kind: 'graph'
+    })
+    try {
+      signal?.throwIfAborted()
+      if (library.graphEnabled && library.graphStrategy !== 'ask') {
+        this.updateKnowledgeTask(graphTask.id, {
+          status: 'running',
+          stage: 'graph',
+          progress: 10,
+          message: '正在抽取候选知识图谱'
+        })
+        graph = await this.extractGraphChunks(library, chunks, signal)
+        this.updateKnowledgeTask(graphTask.id, {
+          progress: 90,
+          message: `已生成 ${graph.entities.length} 个候选实体、${graph.relations.length} 条候选关系`
+        })
+      } else {
+        this.updateKnowledgeTask(graphTask.id, {
+          status: 'skipped',
+          message: library.graphEnabled
+            ? '按需询问策略不自动抽取'
+            : '知识图谱未启用'
+        })
+      }
+      signal?.throwIfAborted()
+    } catch (error) {
+      if (embeddingReplacement) {
+        this.database.discardDocumentEmbeddingReplacement(
+          embeddingReplacement.replacementId
+        )
+        if (signal?.aborted) {
+          this.database.cancelKnowledgeTask(
+            embeddingTask.id,
+            '文档处理已取消'
+          )
+        } else {
+          this.updateKnowledgeTask(embeddingTask.id, {
+            status: 'skipped',
+            message: '因文档发布前处理失败而未保存向量'
+          })
+        }
+      } else if (
+        !embeddingFailure &&
+        !['skipped', 'failed'].includes(
+          this.database.getKnowledgeTask(embeddingTask.id)?.status ?? ''
+        )
+      ) {
+        if (signal?.aborted) {
+          this.database.cancelKnowledgeTask(
+            embeddingTask.id,
+            '文档处理已取消'
+          )
+        } else {
+          this.updateKnowledgeTask(embeddingTask.id, {
+            status: 'skipped',
+            message: '因文档发布前处理失败而未保存向量'
+          })
+        }
+      }
+      if (signal?.aborted) {
+        this.database.cancelKnowledgeTask(graphTask.id, '文档处理已取消')
+      } else {
+        this.failKnowledgeTask(graphTask.id, error)
+      }
+      throw error
+    }
+    return {
+      input: { ...input, id: documentId },
+      chunks,
+      graph,
+      embeddingReplacement,
+      embeddingFailure,
+      embeddingTaskId: embeddingTask.id,
+      graphTaskId: graphTask.id
+    }
+  }
+
+  private publishPreparedDocument(
+    library: KnowledgeBase,
+    prepared: PreparedDocumentPublication
+  ): Document {
+    try {
+      const document = this.database.publishDocument(
+        prepared.input,
+        prepared.chunks,
+        {
+          embeddingReplacement: prepared.embeddingReplacement,
+          embeddingError: prepared.embeddingFailure,
+          afterChunksInserted: prepared.graph
+            ? (document) => {
+                this.storeExtractedGraph(library, document, prepared.graph!)
+              }
+            : undefined
+        }
+      )
+      if (prepared.embeddingReplacement) {
+        this.updateKnowledgeTask(prepared.embeddingTaskId, {
+          documentId: document.id,
+          documentName: document.title,
+          status: 'succeeded',
+          message: `已发布 ${prepared.chunks.length} 个分块向量`
+        })
+      } else {
+        this.updateKnowledgeTask(prepared.embeddingTaskId, {
+          documentId: document.id,
+          documentName: document.title
+        })
+      }
+      if (prepared.graph) {
+        this.updateKnowledgeTask(prepared.graphTaskId, {
+          documentId: document.id,
+          documentName: document.title,
+          status: 'succeeded',
+          message: `已发布 ${prepared.graph.entities.length} 个实体、${prepared.graph.relations.length} 条关系`
+        })
+      } else {
+        this.updateKnowledgeTask(prepared.graphTaskId, {
+          documentId: document.id,
+          documentName: document.title
+        })
+      }
+      return document
+    } catch (error) {
+      const currentEmbeddingTask =
+        this.database.getKnowledgeTask(prepared.embeddingTaskId)
+      if (prepared.embeddingReplacement) {
+        try {
+          this.database.discardDocumentEmbeddingReplacement(
+            prepared.embeddingReplacement.replacementId
+          )
+        } catch {
+          // The enclosing database transaction may already have rolled back.
+        }
+        this.failKnowledgeTask(prepared.embeddingTaskId, error)
+      } else if (
+        currentEmbeddingTask?.status === 'queued' ||
+        currentEmbeddingTask?.status === 'running'
+      ) {
+        this.updateKnowledgeTask(prepared.embeddingTaskId, {
+          status: 'skipped',
+          message: '因文档发布失败而未保存向量'
+        })
+      }
+      if (prepared.graph) {
+        this.failKnowledgeTask(prepared.graphTaskId, error)
+      }
+      throw error
+    }
+  }
+
   private reconcileEmbeddingTask(
     libraryId: string,
     job: EmbeddingIndexJob | null
@@ -627,7 +991,7 @@ export class KnowledgeService {
     if (!library) {
       return false
     }
-    for (const source of this.database.listSources(id)) {
+    for (const source of this.database.listSourcesForSnapshot(id)) {
       this.stopWatcher(source.id)
     }
     await this.cancelTasks(
@@ -681,7 +1045,8 @@ export class KnowledgeService {
         embeddingCoordinator.status().job
       )
     }
-    const libraryDocuments = this.database.listDocuments(libraryId)
+    const libraryDocuments =
+      this.database.listDocumentsForSnapshot(libraryId)
     const documentCountsBySource = new Map<string, number>()
     for (const document of libraryDocuments) {
       documentCountsBySource.set(
@@ -689,7 +1054,9 @@ export class KnowledgeService {
         (documentCountsBySource.get(document.sourceId) ?? 0) + 1
       )
     }
-    const sources = this.database.listSources(libraryId).map((source) => ({
+    const sources = this.database
+      .listSourcesForSnapshot(libraryId)
+      .map((source) => ({
       ...source,
       documentCount: documentCountsBySource.get(source.id) ?? 0,
       progress:
@@ -702,7 +1069,7 @@ export class KnowledgeService {
         typeof source.metadata.lastSyncedAt === 'string'
           ? source.metadata.lastSyncedAt
           : undefined
-    }))
+      }))
     const chunkCounts = this.database.getDocumentChunkCounts(libraryId)
     const documents = libraryDocuments.map((document) => {
       const status =
@@ -1219,47 +1586,51 @@ export class KnowledgeService {
 
   async updateChunk(
     rawInput: KnowledgeChunkUpdateInput
-  ) {
+  ): Promise<ReturnType<KnowledgeDatabase['updateChunk']>> {
     const input = knowledgeChunkUpdateInputSchema.parse(rawInput)
-    const current = this.database.getChunkForReference(
-      input.knowledgeBaseId,
-      input.documentId,
-      input.chunkId
-    )?.chunk
-    const chunk = this.database.updateChunk(input)
-    if (
-      current &&
-      (
-        (input.content !== undefined &&
-          input.content !== current.content) ||
-        (input.enabled !== undefined &&
-          input.enabled !== current.enabled)
-      )
-    ) {
-      this.scheduleEmbeddingReindex(input.documentId)
-    }
-    if (
-      current &&
-      input.content !== undefined &&
-      input.content !== current.content
-    ) {
-      this.database.pruneUnreferencedGeneratedGraph(
-        input.knowledgeBaseId
-      )
-    }
-    return chunk
+    return this.withDocumentMutation(input.documentId, async () => {
+      const current = this.database.getChunkForReference(
+        input.knowledgeBaseId,
+        input.documentId,
+        input.chunkId
+      )?.chunk
+      const chunk = this.database.updateChunk(input)
+      if (
+        current &&
+        (
+          (input.content !== undefined &&
+            input.content !== current.content) ||
+          (input.enabled !== undefined &&
+            input.enabled !== current.enabled)
+        )
+      ) {
+        this.scheduleEmbeddingReindex(input.documentId)
+        const library = this.requireLibrary(input.knowledgeBaseId)
+        if (library.graphEnabled && library.graphStrategy !== 'ask') {
+          this.scheduleGraphReindex(input.documentId)
+        }
+      }
+      this.database.pruneUnreferencedGeneratedGraph(input.knowledgeBaseId)
+      return chunk
+    })
   }
 
-  deleteChunk(rawInput: KnowledgeChunkDeleteInput): boolean {
+  async deleteChunk(rawInput: KnowledgeChunkDeleteInput): Promise<boolean> {
     const input = knowledgeChunkDeleteInputSchema.parse(rawInput)
-    const deleted = this.database.deleteChunk(input)
-    if (deleted) {
-      this.scheduleEmbeddingReindex(input.documentId)
-      this.database.pruneUnreferencedGeneratedGraph(
-        input.knowledgeBaseId
-      )
-    }
-    return deleted
+    return this.withDocumentMutation(input.documentId, async () => {
+      const deleted = this.database.deleteChunk(input)
+      if (deleted) {
+        this.scheduleEmbeddingReindex(input.documentId)
+        const library = this.requireLibrary(input.knowledgeBaseId)
+        if (library.graphEnabled && library.graphStrategy !== 'ask') {
+          this.scheduleGraphReindex(input.documentId)
+        }
+        this.database.pruneUnreferencedGeneratedGraph(
+          input.knowledgeBaseId
+        )
+      }
+      return deleted
+    })
   }
 
   getReferenceContext(rawInput: KnowledgeReferenceContextInput) {
@@ -1552,7 +1923,9 @@ export class KnowledgeService {
     signal: AbortSignal,
     sourceId?: string,
     graphStrategy?: Exclude<GraphStrategy, 'ask'>,
-    parentTaskId?: string
+    parentTaskId?: string,
+    mutationDocumentId?: string,
+    documentMutationHeld = false
   ): Promise<void> {
     const library = this.requireLibrary(knowledgeBaseId)
     const parsingTask = this.createKnowledgeTask({
@@ -1618,59 +1991,52 @@ export class KnowledgeService {
           knowledgeBaseId,
           graphStrategy
         )
-        const previousDocument = this.database
-          .listDocumentsForSource(source.id)
-          .find((document) => document.externalId === result.url)
-        if (previousDocument) {
-          this.database.removeEvidenceForDocument(previousDocument.id)
+        const previousDocument = mutationDocumentId
+          ? this.database.getDocument(mutationDocumentId)
+          : this.database
+              .listDocumentsForSource(source.id)
+              .find((document) => document.externalId === result.url)
+        const documentId =
+          mutationDocumentId ?? previousDocument?.id ?? randomUUID()
+        const publish = async (): Promise<Document> => {
+            const prepared = await this.prepareDocumentPublication(
+              {
+                id: documentId,
+                knowledgeBaseId,
+                sourceId: source.id,
+                externalId: result.url,
+                title: result.title,
+                mimeType: result.contentType,
+                sourceLocation: result.url,
+                checksum: createHash('sha256')
+                  .update(result.document.content)
+                  .digest('hex'),
+                metadata: {
+                  status: 'ready',
+                  size: Buffer.byteLength(result.document.content)
+                }
+              },
+              result.document,
+              effectiveLibrary,
+              effectiveSignal,
+              parsingTask.id
+            )
+            return this.publishPreparedDocument(effectiveLibrary, prepared)
         }
-        const document = this.database.upsertDocument(
-          {
-            knowledgeBaseId,
-            sourceId: source.id,
-            externalId: result.url,
-            title: result.title,
-            mimeType: result.contentType,
-            sourceLocation: result.url,
-            checksum: createHash('sha256')
-              .update(result.document.content)
-              .digest('hex'),
-            metadata: {
-              status: 'ready',
-              size: Buffer.byteLength(result.document.content)
-            }
-          },
-          this.createDocumentChunks(
-            result.document,
-            effectiveLibrary
-          )
-        )
-        this.database.pruneUnreferencedGeneratedGraph(library.id)
+        const document = documentMutationHeld
+          ? await publish()
+          : await this.withDocumentMutation(
+              documentId,
+              publish,
+              effectiveSignal
+            )
         this.updateKnowledgeTask(parsingTask.id, {
           documentId: document.id,
           documentName: document.title,
-          stage: 'embedding',
-          progress: 80,
-          message: '网页解析完成，正在生成索引'
-        })
-        await this.indexDocumentEmbeddings(
-          document,
-          undefined,
-          parsingTask.id,
-          effectiveSignal
-        )
-        effectiveSignal.throwIfAborted()
-        this.updateKnowledgeTask(parsingTask.id, {
-          stage: 'graph',
+          stage: 'finalizing',
           progress: 92,
-          message: '正在处理知识图谱'
+          message: '网页解析与索引完成'
         })
-        await this.extractGraph(
-          effectiveLibrary,
-          document,
-          parsingTask.id,
-          effectiveSignal
-        )
         effectiveSignal.throwIfAborted()
         source = this.database.upsertSource({
           ...source,
@@ -1764,33 +2130,44 @@ export class KnowledgeService {
     retryOfTaskId?: string
   ): Promise<Document> {
     const input = knowledgeDocumentRebuildInputSchema.parse(rawInput)
-    if (!parentTaskId) {
-      const existing = this.activeDocumentRebuilds.get(input.documentId)
-      if (existing) {
-        return existing
-      }
-      const operation = this.performRebuildDocument(
-        input,
-        signal,
-        undefined,
-        retryOfTaskId
-      ).finally(() => {
-        if (this.activeDocumentRebuilds.get(input.documentId) === operation) {
-          this.activeDocumentRebuilds.delete(input.documentId)
-        }
-      })
-      this.activeDocumentRebuilds.set(input.documentId, operation)
-      return operation
+    const existing = this.activeDocumentRebuilds.get(input.documentId)
+    if (existing) {
+      return existing
     }
-    return this.performRebuildDocument(
+    const operation = this.performRebuildDocument(
       input,
       signal,
       parentTaskId,
       retryOfTaskId
-    )
+    ).finally(() => {
+      if (this.activeDocumentRebuilds.get(input.documentId) === operation) {
+        this.activeDocumentRebuilds.delete(input.documentId)
+      }
+    })
+    this.activeDocumentRebuilds.set(input.documentId, operation)
+    return operation
   }
 
   private async performRebuildDocument(
+    input: KnowledgeDocumentRebuildInput,
+    signal?: AbortSignal,
+    parentTaskId?: string,
+    retryOfTaskId?: string
+  ): Promise<Document> {
+    return this.withDocumentMutation(
+      input.documentId,
+      () =>
+        this.performRebuildDocumentMutation(
+          input,
+          signal,
+          parentTaskId,
+          retryOfTaskId
+        ),
+      signal
+    )
+  }
+
+  private async performRebuildDocumentMutation(
     input: KnowledgeDocumentRebuildInput,
     signal?: AbortSignal,
     parentTaskId?: string,
@@ -1849,7 +2226,9 @@ export class KnowledgeService {
           effectiveSignal,
           source.id,
           undefined,
-          task.id
+          task.id,
+          document.id,
+          true
         )
         effectiveSignal.throwIfAborted()
         const rebuilt = this.database.getDocument(document.id) ?? document
@@ -1898,8 +2277,7 @@ export class KnowledgeService {
         progress: 45,
         message: '正在切分文档'
       })
-      this.database.removeEvidenceForDocument(document.id)
-      const rebuilt = this.database.upsertDocument(
+      const prepared = await this.prepareDocumentPublication(
         {
           ...document,
           checksum: createHash('sha256').update(buffer).digest('hex'),
@@ -1909,28 +2287,18 @@ export class KnowledgeService {
             size: fileStat.size
           }
         },
-        this.createDocumentChunks(parsed, library)
+        parsed,
+        library,
+        effectiveSignal,
+        task.id
       )
-      this.database.pruneUnreferencedGeneratedGraph(library.id)
       this.updateKnowledgeTask(task.id, {
-        stage: 'embedding',
-        progress: 65,
-        message: '正在生成向量索引'
+        stage: 'finalizing',
+        progress: 92,
+        message: '正在发布重建结果'
       })
-      await this.indexDocumentEmbeddings(
-        rebuilt,
-        undefined,
-        task.id,
-        effectiveSignal
-      )
       effectiveSignal.throwIfAborted()
-      this.updateKnowledgeTask(task.id, {
-        stage: 'graph',
-        progress: 88,
-        message: '正在处理知识图谱'
-      })
-      await this.extractGraph(library, rebuilt, task.id, effectiveSignal)
-      effectiveSignal.throwIfAborted()
+      const rebuilt = this.publishPreparedDocument(library, prepared)
       this.updateKnowledgeTask(task.id, {
         status: 'succeeded',
         stage: 'finalizing',
@@ -2238,29 +2606,35 @@ export class KnowledgeService {
         })
         tasks.push(task)
         try {
-          this.updateKnowledgeTask(task.id, {
-            status: 'running',
-            progress: 10,
-            message: '正在重新抽取知识图谱'
-          })
-          const result = await this.extractGraphResult(
-            library,
-            document,
+          await this.withDocumentMutation(
+            document.id,
+            async () => {
+              this.updateKnowledgeTask(task.id, {
+                status: 'running',
+                progress: 10,
+                message: '正在重新抽取知识图谱'
+              })
+              const result = await this.extractGraphResult(
+                library,
+                document,
+                effectiveSignal
+              )
+              effectiveSignal.throwIfAborted()
+              this.updateKnowledgeTask(task.id, {
+                progress: 85,
+                message: '正在保存实体和关系'
+              })
+              this.database.replaceEvidenceForDocument(document.id, () => {
+                this.storeExtractedGraph(library, document, result)
+              })
+              effectiveSignal.throwIfAborted()
+              this.updateKnowledgeTask(task.id, {
+                status: 'succeeded',
+                message: `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系`
+              })
+            },
             effectiveSignal
           )
-          effectiveSignal.throwIfAborted()
-          this.updateKnowledgeTask(task.id, {
-            progress: 85,
-            message: '正在保存实体和关系'
-          })
-          this.database.replaceEvidenceForDocument(document.id, () => {
-            this.storeExtractedGraph(library, document, result)
-          })
-          effectiveSignal.throwIfAborted()
-          this.updateKnowledgeTask(task.id, {
-            status: 'succeeded',
-            message: `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系`
-          })
           this.updateKnowledgeTask(parentTask.id, {
             progress: ((index + 1) / Math.max(documents.length, 1)) * 100,
             completedItems: index + 1,
@@ -2481,7 +2855,14 @@ export class KnowledgeService {
     for (const document of existing) {
       signal.throwIfAborted()
       if (!currentExternalIds.has(document.externalId)) {
-        this.database.removeDocument(document.id)
+        await this.withDocumentMutation(
+          document.id,
+          () => {
+            this.cancelScheduledEmbeddingReindex(document.id)
+            return this.database.removeDocument(document.id)
+          },
+          signal
+        )
       }
     }
     if (existing.some(
@@ -2551,52 +2932,44 @@ export class KnowledgeService {
           library.id,
           graphStrategy
         )
-        const document = this.database.upsertDocument(
-          {
-            knowledgeBaseId: library.id,
-            sourceId: source.id,
-            externalId: file.relativePath,
-            title: parsed.title,
-            mimeType: mimeTypeFromFileName(
-              file.absolutePath,
-              'text/plain'
-            ),
-            sourceLocation: file.absolutePath,
-            checksum,
-            metadata: {
-              status: 'ready',
-              size: file.size
-            }
+        const documentId = previous?.id ?? randomUUID()
+        const document = await this.withDocumentMutation(
+          documentId,
+          async () => {
+            const prepared = await this.prepareDocumentPublication(
+              {
+                id: documentId,
+                knowledgeBaseId: library.id,
+                sourceId: source.id,
+                externalId: file.relativePath,
+                title: parsed.title,
+                mimeType: mimeTypeFromFileName(
+                  file.absolutePath,
+                  'text/plain'
+                ),
+                sourceLocation: file.absolutePath,
+                checksum,
+                metadata: {
+                  status: 'ready',
+                  size: file.size
+                }
+              },
+              parsed,
+              effectiveLibrary,
+              signal,
+              parsingTask.id
+            )
+            return this.publishPreparedDocument(effectiveLibrary, prepared)
           },
-          this.createDocumentChunks(parsed, effectiveLibrary)
+          signal
         )
-        this.database.pruneUnreferencedGeneratedGraph(library.id)
         this.updateKnowledgeTask(parsingTask.id, {
           documentId: document.id,
           documentName: document.title,
-          stage: 'embedding',
-          progress: 80,
-          message: '文档解析完成，正在生成索引'
-        })
-        this.database.removeEvidenceForDocument(document.id)
-        await this.indexDocumentEmbeddings(
-          document,
-          undefined,
-          parsingTask.id,
-          signal
-        )
-        signal.throwIfAborted()
-        this.updateKnowledgeTask(parsingTask.id, {
-          stage: 'graph',
+          stage: 'finalizing',
           progress: 92,
-          message: '正在处理知识图谱'
+          message: '文档解析与索引完成'
         })
-        await this.extractGraph(
-          effectiveLibrary,
-          document,
-          parsingTask.id,
-          signal
-        )
         signal.throwIfAborted()
         this.updateKnowledgeTask(parsingTask.id, {
           status: 'succeeded',
@@ -2691,6 +3064,45 @@ export class KnowledgeService {
       clearTimeout(timer)
       this.embeddingEditTimers.delete(documentId)
     }
+  }
+
+  private scheduleGraphReindex(documentId: string): void {
+    if (this.backgroundGraphReindexes.has(documentId)) {
+      this.pendingGraphReindexes.add(documentId)
+      return
+    }
+    const operation = (async () => {
+      do {
+        this.pendingGraphReindexes.delete(documentId)
+        const document = this.database.getDocument(documentId)
+        if (!document || this.lifecycleController.signal.aborted) {
+          return
+        }
+        const library = this.database.getKnowledgeBase(
+          document.knowledgeBaseId
+        )
+        if (
+          !library?.graphEnabled ||
+          library.graphStrategy === 'ask'
+        ) {
+          return
+        }
+        await this.extractGraphMutation(
+          library,
+          document,
+          undefined,
+          this.lifecycleController.signal
+        )
+      } while (this.pendingGraphReindexes.delete(documentId))
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        this.pendingGraphReindexes.delete(documentId)
+        if (this.backgroundGraphReindexes.get(documentId) === operation) {
+          this.backgroundGraphReindexes.delete(documentId)
+        }
+      })
+    this.backgroundGraphReindexes.set(documentId, operation)
   }
 
   private async indexDocumentEmbeddings(
@@ -2849,7 +3261,7 @@ export class KnowledgeService {
     }
   }
 
-  private async extractGraph(
+  private async extractGraphMutation(
     library: KnowledgeBase,
     document: Document,
     operationTaskId?: string,
@@ -2927,14 +3339,29 @@ export class KnowledgeService {
     document: Document,
     signal?: AbortSignal
   ): Promise<GraphExtractionResult> {
-    const chunks = this.database
-      .listChunks(document.id, 10_000)
-      .filter((chunk) => chunk.enabled && chunk.role !== 'parent')
+    return this.extractGraphChunks(
+      library,
+      this.database.listChunks(document.id, 10_000),
+      signal
+    )
+  }
+
+  private extractGraphChunks(
+    library: KnowledgeBase,
+    chunks: readonly Pick<ReplaceChunkInput, 'id' | 'content' | 'enabled' | 'role'>[],
+    signal?: AbortSignal
+  ): Promise<GraphExtractionResult> {
     return extractKnowledgeGraph(
-      chunks.map((chunk) => ({
-        id: chunk.id,
-        content: chunk.content
-      })),
+      chunks
+        .filter(
+          (chunk) =>
+            (chunk.enabled ?? true) &&
+            (chunk.role ?? 'standalone') !== 'parent'
+        )
+        .map((chunk): GraphChunk => ({
+          id: chunk.id!,
+          content: chunk.content
+        })),
       {
         strategy: library.graphStrategy,
         ontology: library.ontologySettings,

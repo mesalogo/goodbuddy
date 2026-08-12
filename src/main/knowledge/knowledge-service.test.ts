@@ -464,6 +464,104 @@ describe('KnowledgeService', () => {
     expect(service.snapshot(library.id).evidence).toEqual([])
   })
 
+  it('keeps a committed chunk edit successful when graph refresh fails', async () => {
+    const extractStructured = vi.fn(async () => {
+      throw new Error('synthetic edit graph failure')
+    })
+    const { directory, service } = await createService(
+      undefined,
+      undefined,
+      extractStructured
+    )
+    const sourcePath = join(directory, 'edit-graph-failure.md')
+    await writeFile(sourcePath, 'initial edit content', 'utf8')
+    const library = service.createLibrary({
+      name: 'Edit graph failure',
+      storageMode: 'reference',
+      graphEnabled: false,
+      graphStrategy: 'model'
+    })
+    await service.importPaths(library.id, [sourcePath])
+    service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
+    const document = service.snapshot(library.id).documents[0]!
+    const chunk = service.database
+      .listChunks(document.id)
+      .find((candidate) => candidate.role !== 'parent')!
+
+    await expect(service.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: chunk.id,
+      content: 'committed edit survives graph failure'
+    })).resolves.toMatchObject({
+      content: 'committed edit survives graph failure'
+    })
+    await vi.waitFor(() => expect(extractStructured).toHaveBeenCalled())
+    expect(service.search(library.id, 'committed')).toHaveLength(1)
+  })
+
+  it('coalesces edit graph refreshes so stale extraction cannot publish last', async () => {
+    const resolvers: Array<(value: {
+      entities: unknown[]
+      relations: unknown[]
+    }) => void> = []
+    const extractStructured: ExtractStructured = () =>
+      new Promise((resolve) => {
+        resolvers.push(resolve)
+      })
+    const { directory, service } = await createService(
+      undefined,
+      undefined,
+      extractStructured
+    )
+    const sourcePath = join(directory, 'coalesced-edit-graph.md')
+    await writeFile(sourcePath, 'initial graph content', 'utf8')
+    const library = service.createLibrary({
+      name: 'Coalesced edit graph',
+      storageMode: 'reference',
+      graphEnabled: false,
+      graphStrategy: 'model'
+    })
+    await service.importPaths(library.id, [sourcePath])
+    service.database.updateKnowledgeBase(library.id, { graphEnabled: true })
+    const document = service.snapshot(library.id).documents[0]!
+    const chunk = service.database
+      .listChunks(document.id)
+      .find((candidate) => candidate.role !== 'parent')!
+
+    await service.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: chunk.id,
+      content: 'first graph edit'
+    })
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+    await service.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: chunk.id,
+      content: 'second graph edit'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(resolvers).toHaveLength(1)
+
+    resolvers.shift()?.({ entities: [], relations: [] })
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+    resolvers.shift()?.({ entities: [], relations: [] })
+    await vi.waitFor(() => {
+      expect(
+        service.snapshot(library.id).tasks.filter(
+          (task) => task.kind === 'graph' && task.status === 'succeeded'
+        )
+      ).toHaveLength(1)
+    })
+    expect(service.database.listChunks(document.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content: 'second graph edit' })
+      ])
+    )
+  })
+
   it('fails hybrid reextraction when model extraction fails', async () => {
     const extractStructured = vi.fn(async () => {
       throw new Error('模型未返回图谱内容')
@@ -1062,6 +1160,133 @@ describe('KnowledgeService', () => {
     )
   })
 
+  it('preserves old chunks, vectors, and graph evidence when rebuild extraction fails', async () => {
+    let failExtraction = false
+    const extractStructured: ExtractStructured = async () => {
+      if (failExtraction) {
+        throw new Error('synthetic graph failure')
+      }
+      return {
+        entities: [],
+        relations: []
+      }
+    }
+    const provider: EmbeddingProvider = {
+      provider: 'atomic-provider',
+      model: 'atomic-model',
+      embed: async (input) => input.map(() => [1, 0])
+    }
+    const { directory, service } = await createService(
+      undefined,
+      provider,
+      extractStructured
+    )
+    const sourcePath = join(directory, 'atomic-rebuild.md')
+    await writeFile(sourcePath, '# Original Entity\nold searchable text', 'utf8')
+    const library = service.createLibrary({
+      name: 'Atomic rebuild',
+      storageMode: 'reference',
+      graphEnabled: true,
+      graphStrategy: 'hybrid'
+    })
+    await service.importPaths(library.id, [sourcePath])
+    const before = service.snapshot(library.id)
+    const document = before.documents[0]!
+    const oldChunk = service.database.listChunks(document.id)[0]!
+    const oldEvidence = before.evidence
+    failExtraction = true
+    await writeFile(sourcePath, '# Replacement Entity\nnew searchable text', 'utf8')
+
+    await expect(service.rebuildDocument({
+      knowledgeBaseId: library.id,
+      documentId: document.id
+    })).rejects.toThrow('synthetic graph failure')
+
+    expect(service.search(library.id, 'old')[0]?.chunk.id).toBe(oldChunk.id)
+    expect(service.search(library.id, 'new')).toEqual([])
+    expect(service.database.vectorSearch({
+      knowledgeBaseId: library.id,
+      provider: embeddingStorageProvider(provider),
+      model: provider.model,
+      vector: [1, 0],
+      limit: 1
+    })[0]?.chunk.id).toBe(oldChunk.id)
+    expect(service.snapshot(library.id).evidence).toEqual(oldEvidence)
+  })
+
+  it('serializes a rebuild and chunk edit so the latest mutation wins', async () => {
+    let releaseParser: (() => void) | undefined
+    let parserStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      parserStarted = resolve
+    })
+    let blockParser = false
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-knowledge-service-')
+    )
+    temporaryDirectories.push(directory)
+    const service = new KnowledgeService({
+      databasePath: join(directory, 'knowledge.sqlite'),
+      managedRoot: join(directory, 'managed'),
+      parseDocument: async (name, buffer) => {
+        if (blockParser) {
+          parserStarted?.()
+          await new Promise<void>((resolve) => {
+            releaseParser = resolve
+          })
+        }
+        const content = blockParser
+          ? 'rebuilt content'
+          : buffer.toString('utf8')
+        return {
+          title: name,
+          content,
+          sourceFormat: 'text',
+          sections: [{
+            locator: '全文',
+            content
+          }],
+          warnings: []
+        }
+      }
+    })
+    await service.initialize()
+    services.push(service)
+    const sourcePath = join(directory, 'mutation-gate.txt')
+    await writeFile(sourcePath, 'initial content', 'utf8')
+    const library = service.createLibrary({
+      name: 'Mutation gate',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    await service.importPaths(library.id, [sourcePath])
+    const document = service.snapshot(library.id).documents[0]!
+    const originalChunk = service.database
+      .listChunks(document.id)
+      .find((chunk) => chunk.role !== 'parent')!
+    blockParser = true
+    await writeFile(sourcePath, 'rebuilt source bytes', 'utf8')
+
+    const rebuilding = service.rebuildDocument({
+      knowledgeBaseId: library.id,
+      documentId: document.id
+    })
+    await started
+    const editing = service.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: originalChunk.id,
+      content: 'manual latest content'
+    })
+    releaseParser?.()
+    await rebuilding
+    await expect(editing).rejects.toThrow(
+      'Chunk must belong to the requested document'
+    )
+    expect(service.search(library.id, 'rebuilt')).toHaveLength(1)
+    expect(service.search(library.id, 'manual')).toEqual([])
+  })
+
   it('aborts standalone document rebuild work and keeps child capabilities honest', async () => {
     let parserSignal: AbortSignal | undefined
     const directory = await mkdtemp(
@@ -1334,7 +1559,7 @@ describe('KnowledgeService', () => {
       displayName: 'Original title',
       status: 'ready'
     })
-    vi.spyOn(service.database, 'upsertDocument').mockImplementationOnce(
+    vi.spyOn(service.database, 'publishDocument').mockImplementationOnce(
       () => {
         throw new Error('synthetic indexing failure')
       }

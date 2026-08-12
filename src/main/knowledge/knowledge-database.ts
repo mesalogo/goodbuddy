@@ -80,7 +80,7 @@ import type {
   VectorSearchOptions
 } from './types'
 
-const DATABASE_VERSION = 10
+const DATABASE_VERSION = 11
 const MAX_ID_LENGTH = 128
 const MAX_NAME_LENGTH = 512
 const MAX_LOCATION_LENGTH = 8192
@@ -116,6 +116,22 @@ type ScoredSearchResult = {
 export type HybridSearchResultPage = {
   results: HybridSearchResult[]
   vectorScannedCount: number
+}
+
+export type PreparedEmbeddingReplacement = {
+  replacementId: string
+  provider: string
+  model: string
+}
+
+export type DocumentPublicationOptions = {
+  embeddingReplacement?: PreparedEmbeddingReplacement
+  embeddingError?: {
+    provider: string
+    model: string
+    message: string
+  }
+  afterChunksInserted?: (document: Document) => void
 }
 
 type Row = Record<string, null | number | bigint | string | Uint8Array>
@@ -1635,6 +1651,22 @@ export class KnowledgeDatabase {
       .map(mapSource)
   }
 
+  listSourcesForSnapshot(knowledgeBaseId: string): KnowledgeSource[] {
+    const normalizedId = requiredString(
+      knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    return this.requireDatabase()
+      .prepare(
+        `SELECT * FROM knowledge_sources
+         WHERE knowledge_base_id = ?
+         ORDER BY created_at ASC, id ASC`
+      )
+      .all(normalizedId)
+      .map(mapSource)
+  }
+
   getSource(id: string): KnowledgeSource | undefined {
     const row = this.requireDatabase()
       .prepare('SELECT * FROM knowledge_sources WHERE id = ?')
@@ -1654,6 +1686,14 @@ export class KnowledgeDatabase {
   upsertDocument(
     input: UpsertDocumentInput,
     chunks: ReplaceChunkInput[]
+  ): Document {
+    return this.publishDocument(input, chunks)
+  }
+
+  publishDocument(
+    input: UpsertDocumentInput,
+    chunks: ReplaceChunkInput[],
+    options: DocumentPublicationOptions = {}
   ): Document {
     if (!Array.isArray(chunks) || chunks.length > MAX_CHUNKS) {
       throw new RangeError(`chunks must contain at most ${MAX_CHUNKS} items`)
@@ -1716,6 +1756,58 @@ export class KnowledgeDatabase {
     )
     const checksum = optionalString(input.checksum, 'checksum', 512)
     const metadata = jsonObject(input.metadata, 'metadata')
+    const embeddingReplacement = options.embeddingReplacement
+      ? {
+          replacementId: requiredString(
+            options.embeddingReplacement.replacementId,
+            'embeddingReplacement.replacementId',
+            MAX_ID_LENGTH
+          ),
+          provider: requiredString(
+            options.embeddingReplacement.provider,
+            'embeddingReplacement.provider',
+            MAX_EMBEDDING_PROVIDER_LENGTH
+          ),
+          model: requiredString(
+            options.embeddingReplacement.model,
+            'embeddingReplacement.model',
+            MAX_EMBEDDING_MODEL_LENGTH
+          )
+        }
+      : undefined
+    const embeddingError = options.embeddingError
+      ? {
+          provider: requiredString(
+            options.embeddingError.provider,
+            'embeddingError.provider',
+            MAX_EMBEDDING_PROVIDER_LENGTH
+          ),
+          model: requiredString(
+            options.embeddingError.model,
+            'embeddingError.model',
+            MAX_EMBEDDING_MODEL_LENGTH
+          ),
+          message: requiredString(
+            options.embeddingError.message,
+            'embeddingError.message',
+            MAX_EMBEDDING_ERROR_LENGTH,
+            false
+          )
+        }
+      : undefined
+    if (embeddingReplacement && embeddingError) {
+      throw new Error(
+        'Document publication cannot include embeddings and an embedding error'
+      )
+    }
+    if (embeddingReplacement) {
+      this.validatePreparedDocumentEmbeddings(
+        database,
+        embeddingReplacement,
+        id,
+        normalizedChunks
+      )
+    }
     const now = new Date().toISOString()
 
     this.transaction(database, () => {
@@ -1749,7 +1841,7 @@ export class KnowledgeDatabase {
           now
         )
       database
-        .prepare('DELETE FROM embedding_index_state WHERE document_id = ?')
+        .prepare('DELETE FROM graph_evidence WHERE document_id = ?')
         .run(id)
       database.prepare('DELETE FROM chunks WHERE document_id = ?').run(id)
       const insertChunk = database.prepare(
@@ -1794,6 +1886,29 @@ export class KnowledgeDatabase {
           indexContent
         )
       }
+      options.afterChunksInserted?.(this.requiredDocument(id))
+      database
+        .prepare(
+          'DELETE FROM embedding_index_state WHERE document_id = ?'
+        )
+        .run(id)
+      if (embeddingReplacement) {
+        this.publishPreparedDocumentEmbeddings(
+          database,
+          embeddingReplacement,
+          id,
+          knowledgeBaseId,
+          now
+        )
+      } else if (embeddingError) {
+        this.recordEmbeddingIndexError(
+          id,
+          embeddingError.provider,
+          embeddingError.model,
+          embeddingError.message
+        )
+      }
+      this.pruneUnreferencedGeneratedGraph(knowledgeBaseId)
     })
     return this.requiredDocument(id)
   }
@@ -1849,6 +1964,10 @@ export class KnowledgeDatabase {
       )
       .all(normalizedId)
       .map(mapDocument)
+  }
+
+  listDocumentsForSnapshot(knowledgeBaseId: string): Document[] {
+    return this.listDocumentsForLibraryRebuild(knowledgeBaseId)
   }
 
   getDocumentChunkCounts(knowledgeBaseId: string): Map<string, number> {
@@ -2365,6 +2484,17 @@ export class KnowledgeDatabase {
     return randomUUID()
   }
 
+  beginPreparedDocumentEmbeddingReplacement(
+    documentId: string,
+    provider: string,
+    model: string
+  ): string {
+    requiredString(documentId, 'documentId', MAX_ID_LENGTH)
+    requiredString(provider, 'provider', MAX_EMBEDDING_PROVIDER_LENGTH)
+    requiredString(model, 'model', MAX_EMBEDDING_MODEL_LENGTH)
+    return randomUUID()
+  }
+
   appendDocumentEmbeddingBatch(
     replacementId: string,
     documentId: string,
@@ -2465,26 +2595,95 @@ export class KnowledgeDatabase {
       }
       return { chunkId, checksum, ...vector }
     })
-    const insert = database.prepare(
-      `INSERT INTO embedding_rebuild_staging
-        (replacement_id, document_id, provider, model, chunk_id,
-         dimensions, content_checksum, vector, magnitude)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    this.insertEmbeddingReplacementBatch(database, {
+      replacementId: normalizedReplacementId,
+      documentId: normalizedDocumentId,
+      provider: normalizedProvider,
+      model: normalizedModel,
+      embeddings: normalized
+    })
+  }
+
+  appendPreparedDocumentEmbeddingBatch(
+    replacementId: string,
+    documentId: string,
+    provider: string,
+    model: string,
+    embeddings: readonly ChunkEmbeddingInput[]
+  ): void {
+    const normalizedReplacementId = requiredString(
+      replacementId,
+      'replacementId',
+      MAX_ID_LENGTH
     )
-    this.transaction(database, () => {
-      for (const item of normalized) {
-        insert.run(
-          normalizedReplacementId,
-          normalizedDocumentId,
-          normalizedProvider,
-          normalizedModel,
-          item.chunkId,
-          item.dimensions,
-          item.checksum,
-          item.bytes,
-          item.magnitude
+    const normalizedDocumentId = requiredString(
+      documentId,
+      'documentId',
+      MAX_ID_LENGTH
+    )
+    const normalizedProvider = requiredString(
+      provider,
+      'provider',
+      MAX_EMBEDDING_PROVIDER_LENGTH
+    )
+    const normalizedModel = requiredString(
+      model,
+      'model',
+      MAX_EMBEDDING_MODEL_LENGTH
+    )
+    if (
+      !Array.isArray(embeddings) ||
+      embeddings.length < 1 ||
+      embeddings.length > MAX_EMBEDDING_BATCH
+    ) {
+      throw new RangeError(
+        `embeddings must contain between 1 and ${MAX_EMBEDDING_BATCH} items`
+      )
+    }
+    const database = this.requireDatabase()
+    const existingDimensions = database
+      .prepare(
+        `SELECT dimensions FROM embedding_rebuild_staging
+         WHERE replacement_id = ? LIMIT 1`
+      )
+      .get(normalizedReplacementId)
+    let dimensions = existingDimensions
+      ? asNumber(existingDimensions, 'dimensions')
+      : undefined
+    const seen = new Set<string>()
+    const normalized = embeddings.map((embedding, index) => {
+      const chunkId = requiredString(
+        embedding.chunkId,
+        `embeddings[${index}].chunkId`,
+        MAX_ID_LENGTH
+      )
+      if (seen.has(chunkId)) {
+        throw new Error('Embedding chunk IDs must be unique within a batch')
+      }
+      seen.add(chunkId)
+      const checksum = normalizedChecksum(
+        embedding.contentChecksum,
+        `embeddings[${index}].contentChecksum`
+      )
+      const vector = normalizeVector(
+        embedding.vector,
+        `embeddings[${index}].vector`
+      )
+      if (dimensions === undefined) {
+        dimensions = vector.dimensions
+      } else if (dimensions !== vector.dimensions) {
+        throw new Error(
+          'Document embeddings must have consistent dimensions'
         )
       }
+      return { chunkId, checksum, ...vector }
+    })
+    this.insertEmbeddingReplacementBatch(database, {
+      replacementId: normalizedReplacementId,
+      documentId: normalizedDocumentId,
+      provider: normalizedProvider,
+      model: normalizedModel,
+      embeddings: normalized
     })
   }
 
@@ -4324,6 +4523,14 @@ export class KnowledgeDatabase {
           )
           .run(10, new Date().toISOString())
       }
+      if (currentVersion < 11) {
+        this.migrateToVersion11(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(11, new Date().toISOString())
+      }
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}`)
       database.exec('COMMIT')
     } catch (error) {
@@ -4947,6 +5154,228 @@ export class KnowledgeDatabase {
     `)
   }
 
+  private migrateToVersion11(database: DatabaseSync): void {
+    database.exec('DROP TABLE embedding_rebuild_staging;')
+    database.exec(`
+      CREATE TABLE embedding_rebuild_staging (
+        replacement_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        chunk_id TEXT NOT NULL,
+        dimensions INTEGER NOT NULL
+          CHECK (dimensions >= 1 AND dimensions <= 8192),
+        content_checksum TEXT NOT NULL
+          CHECK (length(content_checksum) = 64),
+        vector BLOB NOT NULL,
+        magnitude REAL NOT NULL CHECK (magnitude > 0),
+        PRIMARY KEY (replacement_id, chunk_id)
+      );
+      CREATE INDEX embedding_rebuild_staging_document_idx
+        ON embedding_rebuild_staging(
+          document_id, provider, model, replacement_id
+        );
+    `)
+  }
+
+  private validatePreparedDocumentEmbeddings(
+    database: DatabaseSync,
+    replacement: PreparedEmbeddingReplacement,
+    documentId: string,
+    chunks: ReturnType<KnowledgeDatabase['normalizeChunks']>
+  ): void {
+    const indexableChunks = chunks.filter(
+      (chunk) => chunk.enabled && chunk.role !== 'parent'
+    )
+    if (indexableChunks.length === 0) {
+      throw new Error(
+        'Prepared embedding replacement requires indexable chunks'
+      )
+    }
+    const stagedRows = database
+      .prepare(
+        `SELECT chunk_id, content_checksum, dimensions
+         FROM embedding_rebuild_staging
+         WHERE replacement_id = ? AND document_id = ?
+           AND provider = ? AND model = ?
+         ORDER BY chunk_id`
+      )
+      .all(
+        replacement.replacementId,
+        documentId,
+        replacement.provider,
+        replacement.model
+      )
+    if (stagedRows.length !== indexableChunks.length) {
+      throw new Error('Embeddings must cover every candidate document chunk')
+    }
+    const chunksById = new Map(
+      indexableChunks.map((chunk) => [
+        chunk.id,
+        contentChecksum(
+          chunkIndexContent(chunk.content, parseObject(chunk.metadata))
+        )
+      ])
+    )
+    let dimensions: number | undefined
+    for (const row of stagedRows) {
+      const chunkId = asString(row, 'chunk_id')
+      const checksum = chunksById.get(chunkId)
+      if (
+        checksum === undefined ||
+        checksum !== asString(row, 'content_checksum')
+      ) {
+        throw new Error('Prepared embedding content does not match the chunk')
+      }
+      chunksById.delete(chunkId)
+      const rowDimensions = asNumber(row, 'dimensions')
+      if (dimensions === undefined) {
+        dimensions = rowDimensions
+      } else if (dimensions !== rowDimensions) {
+        throw new Error(
+          'Document embeddings must have consistent dimensions'
+        )
+      }
+    }
+    if (chunksById.size > 0) {
+      throw new Error('Embeddings must cover every candidate document chunk')
+    }
+  }
+
+  private publishPreparedDocumentEmbeddings(
+    database: DatabaseSync,
+    replacement: PreparedEmbeddingReplacement,
+    documentId: string,
+    knowledgeBaseId: string,
+    now: string
+  ): void {
+    let dimensions: number | undefined
+    const indexHash = createHash('sha256')
+    let firstChecksum = true
+    for (const row of database
+      .prepare(
+        `SELECT chunk_id, content_checksum, dimensions
+         FROM embedding_rebuild_staging
+         WHERE replacement_id = ? AND document_id = ?
+           AND provider = ? AND model = ?
+         ORDER BY chunk_id`
+      )
+      .iterate(
+        replacement.replacementId,
+        documentId,
+        replacement.provider,
+        replacement.model
+      )) {
+      const chunkId = asString(row, 'chunk_id')
+      const checksum = asString(row, 'content_checksum')
+      if (!firstChecksum) {
+        indexHash.update('\n')
+      }
+      indexHash.update(`${chunkId}\0${checksum}`)
+      firstChecksum = false
+      dimensions ??= asNumber(row, 'dimensions')
+    }
+    database
+      .prepare(
+        `INSERT INTO chunk_embeddings
+          (chunk_id, knowledge_base_id, provider, model, dimensions,
+           content_checksum, vector, magnitude, created_at, updated_at)
+         SELECT chunk_id, ?, provider, model, dimensions,
+           content_checksum, vector, magnitude, ?, ?
+         FROM embedding_rebuild_staging
+         WHERE replacement_id = ? AND document_id = ?
+           AND provider = ? AND model = ?`
+      )
+      .run(
+        knowledgeBaseId,
+        now,
+        now,
+        replacement.replacementId,
+        documentId,
+        replacement.provider,
+        replacement.model
+      )
+    database
+      .prepare(
+        `INSERT INTO embedding_index_state
+          (document_id, knowledge_base_id, provider, model, dimensions,
+           content_checksum, status, last_error, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'ready', NULL, ?)`
+      )
+      .run(
+        documentId,
+        knowledgeBaseId,
+        replacement.provider,
+        replacement.model,
+        dimensions ?? null,
+        indexHash.digest('hex'),
+        now
+      )
+    database
+      .prepare(
+        'DELETE FROM embedding_rebuild_staging WHERE replacement_id = ?'
+      )
+      .run(replacement.replacementId)
+  }
+
+  private insertEmbeddingReplacementBatch(
+    database: DatabaseSync,
+    input: {
+      replacementId: string
+      documentId: string
+      provider: string
+      model: string
+      embeddings: ReadonlyArray<{
+        chunkId: string
+        checksum: string
+        bytes: Buffer
+        dimensions: number
+        magnitude: number
+      }>
+    }
+  ): void {
+    const insert = database.prepare(
+      `INSERT INTO embedding_rebuild_staging
+        (replacement_id, document_id, provider, model, chunk_id,
+         dimensions, content_checksum, vector, magnitude)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    this.transaction(database, () => {
+      const existingTarget = database
+        .prepare(
+          `SELECT document_id, provider, model
+           FROM embedding_rebuild_staging
+           WHERE replacement_id = ? LIMIT 1`
+        )
+        .get(input.replacementId)
+      if (
+        existingTarget &&
+        (
+          asString(existingTarget, 'document_id') !== input.documentId ||
+          asString(existingTarget, 'provider') !== input.provider ||
+          asString(existingTarget, 'model') !== input.model
+        )
+      ) {
+        throw new Error(
+          'Embedding replacement target cannot change between batches'
+        )
+      }
+      for (const item of input.embeddings) {
+        insert.run(
+          input.replacementId,
+          input.documentId,
+          input.provider,
+          input.model,
+          item.chunkId,
+          item.dimensions,
+          item.checksum,
+          item.bytes,
+          item.magnitude
+        )
+      }
+    })
+  }
+
   private normalizeChunks(chunks: ReplaceChunkInput[]): Array<{
     id: string
     ordinal: number
@@ -5175,6 +5604,10 @@ export class KnowledgeDatabase {
   }
 
   private transaction(database: DatabaseSync, operation: () => void): void {
+    if (database.isTransaction) {
+      operation()
+      return
+    }
     database.exec('BEGIN IMMEDIATE')
     try {
       operation()

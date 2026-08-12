@@ -558,6 +558,65 @@ describe('extraction strategies', () => {
     ).rejects.toThrow('Model extraction is unavailable')
   })
 
+  it('extracts bounded batches beyond the first chunk window', async () => {
+    const chunks = Array.from(
+      { length: GRAPH_LIMITS.maximumChunks + 1 },
+      (_, index) => ({
+        id: `batch-${index}`,
+        content:
+          index === GRAPH_LIMITS.maximumChunks
+            ? '# Late Batch Entity'
+            : 'ordinary text'
+      })
+    )
+    const modelCalls = vi.fn(async (prompt: string) => {
+      const parsed = JSON.parse(
+        prompt
+          .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+          .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+      ) as Array<{ chunkId: string; content: string }>
+      const chunk = parsed[0]!
+      return {
+        entities: chunk.content.includes('Late Batch')
+          ? [{
+              id: 'late',
+              name: 'Late Batch Entity',
+              evidence: [{
+                chunkId: chunk.chunkId,
+                start: 2,
+                end: chunk.content.length
+              }]
+            }]
+          : [],
+        relations: []
+      }
+    })
+
+    const rules = await extractKnowledgeGraph(chunks, { strategy: 'rules' })
+    const model = await extractKnowledgeGraph(chunks, {
+      strategy: 'model',
+      extractStructured: modelCalls
+    })
+
+    expect(rules.entities.some((entity) =>
+      entity.name === 'Late Batch Entity'
+    )).toBe(true)
+    expect(model.entities.some((entity) =>
+      entity.name === 'Late Batch Entity'
+    )).toBe(true)
+    expect(modelCalls).toHaveBeenCalledTimes(2)
+    expect(
+      modelCalls.mock.calls.every(([prompt]) => {
+        const parsed = JSON.parse(
+          prompt
+            .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+            .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+        ) as unknown[]
+        return parsed.length <= GRAPH_LIMITS.maximumChunks
+      })
+    ).toBe(true)
+  })
+
   it('honors cancellation before and after the injected model callback', async () => {
     const preCancelled = new AbortController()
     preCancelled.abort()

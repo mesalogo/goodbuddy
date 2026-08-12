@@ -4454,9 +4454,9 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     ipcChannels.knowledgeDeleteChunk,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const deleted = knowledgeService.deleteChunk(
+      const deleted = await knowledgeService.deleteChunk(
         knowledgeChunkDeleteInputSchema.parse(input)
       )
       if (!deleted) {

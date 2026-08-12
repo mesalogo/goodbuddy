@@ -21,6 +21,7 @@ export const GRAPH_LIMITS = {
   maximumWarnings: 20,
   maximumWarningLength: 240
 } as const
+const maximumEvidencePerRecord = 20
 
 export type ExtractionStrategy = 'rules' | 'model' | 'hybrid' | 'ask'
 
@@ -192,7 +193,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 function prepareChunks(chunks: readonly GraphChunk[]): GraphChunk[] {
   const ids = new Set<string>()
   const prepared: GraphChunk[] = []
-  for (const chunk of chunks.slice(0, GRAPH_LIMITS.maximumChunks)) {
+  for (const chunk of chunks) {
     const id = truncate(chunk.id.trim(), GRAPH_LIMITS.maximumFieldLength)
     if (!id || ids.has(id)) {
       continue
@@ -219,6 +220,9 @@ function mergeEvidence(
     const key = evidenceKey(evidence)
     if (!merged.has(key)) {
       merged.set(key, evidence)
+      if (merged.size >= maximumEvidencePerRecord) {
+        break
+      }
     }
   }
   return [...merged.values()]
@@ -805,41 +809,64 @@ export async function extractKnowledgeGraph(
   const context = createOntologyContext(options.ontology)
   throwIfAborted(options.signal)
   const prepared = prepareChunks(chunks)
-  const rules =
-    strategy === 'rules' || strategy === 'hybrid' || strategy === 'ask'
-      ? extractGraphWithRulesInternal(prepared, options.signal, context)
-      : emptyGraph()
-  if (strategy === 'rules' || strategy === 'ask') {
+  if (prepared.length === 0) {
     return {
-      ...rules,
+      ...emptyGraph(),
       strategy,
       requiresModelApproval: strategy === 'ask',
       warnings: [...context.warnings]
     }
   }
-  if (!options.extractStructured) {
-    throw new Error('Model extraction is unavailable')
+  let graph = emptyGraph()
+  for (
+    let offset = 0;
+    offset < prepared.length;
+    offset += GRAPH_LIMITS.maximumChunks
+  ) {
+    throwIfAborted(options.signal)
+    const batch = prepared.slice(offset, offset + GRAPH_LIMITS.maximumChunks)
+    const batchContext = createOntologyContext(
+      context.settings,
+      context.warnings
+    )
+    const rules =
+      strategy === 'rules' || strategy === 'hybrid' || strategy === 'ask'
+        ? extractGraphWithRulesInternal(batch, options.signal, batchContext)
+        : emptyGraph()
+    if (strategy === 'rules' || strategy === 'ask') {
+      graph = mergeKnowledgeGraphsInternal(graph, rules, context)
+      continue
+    }
+    if (!options.extractStructured) {
+      throw new Error('Model extraction is unavailable')
+    }
+    const output = await options.extractStructured(
+      createModelPrompt(batch, context.settings),
+      options.signal
+    )
+    throwIfAborted(options.signal)
+    const parsedOutput = parseModelOutput(output)
+    if (!modelEnvelopeSchema.safeParse(parsedOutput).success) {
+      throw new Error('模型返回的图谱结构无效')
+    }
+    const model = validateModelGraphInternal(
+      parsedOutput,
+      batch,
+      batchContext
+    )
+    graph = mergeKnowledgeGraphsInternal(
+      graph,
+      strategy === 'hybrid'
+        ? mergeKnowledgeGraphsInternal(rules, model, batchContext)
+        : model,
+      context
+    )
   }
-
-  const output = await options.extractStructured(
-    createModelPrompt(prepared, context.settings),
-    options.signal
-  )
-  throwIfAborted(options.signal)
-  const parsedOutput = parseModelOutput(output)
-  if (!modelEnvelopeSchema.safeParse(parsedOutput).success) {
-    throw new Error('模型返回的图谱结构无效')
-  }
-  const model = validateModelGraphInternal(parsedOutput, prepared, context)
-  const graph =
-    strategy === 'hybrid'
-      ? mergeKnowledgeGraphsInternal(rules, model, context)
-      : model
   return {
     ...graph,
     strategy,
-    requiresModelApproval: false,
-    warnings: [...context.warnings]
+    requiresModelApproval: strategy === 'ask',
+    warnings: [...context.warnings].slice(0, GRAPH_LIMITS.maximumWarnings)
   }
 }
 
