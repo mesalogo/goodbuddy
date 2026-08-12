@@ -189,7 +189,7 @@ export type ContinueHostAdapterOptions = {
 }
 
 export type ContinueHostRunOptions = {
-  workMode?: 'ask' | 'plan' | 'execute'
+  workMode?: 'ask' | 'execute'
   images?: AgentImage[]
   knowledgeCapability?: {
     endpoint: string

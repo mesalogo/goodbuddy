@@ -34,6 +34,7 @@ import { KnowledgeService } from './knowledge/knowledge-service'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { createModelGraphExtractor } from './knowledge/model-extractor'
 import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
+import { CohereRerankClient } from './knowledge/cohere-rerank-client'
 import { RuntimeSettingsStore } from './runtime-settings-store'
 import type { ResolvedRuntimeSettings } from './runtime-settings-store'
 import { ToolApprovalBroker } from './tool-approval-broker'
@@ -62,8 +63,6 @@ import { ApplicationSettingsStore } from './application-settings-store'
 import { VersionChecker } from './version-checker'
 import { SpeechModelManager } from './speech/speech-model-manager'
 import { SpeechTranscriptionService } from './speech/speech-transcription-service'
-import { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinator'
-import { KnowledgeEmbeddingIndexRepository } from './knowledge/knowledge-embedding-index-repository'
 import { GlobalTlsPolicy } from './global-tls-policy'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import { waitForCleanup } from './shutdown'
@@ -114,6 +113,18 @@ function createEmbeddingProvider(
         endpoint: settings.knowledgeEmbeddingBaseUrl,
         model: settings.knowledgeEmbeddingModel,
         apiKey: settings.knowledgeEmbeddingApiKey
+      })
+    : undefined
+}
+
+function createRerankProvider(
+  settings: ResolvedRuntimeSettings
+): CohereRerankClient | undefined {
+  return settings.knowledgeRerankEnabled
+    ? new CohereRerankClient({
+        endpoint: settings.knowledgeRerankEndpoint,
+        model: settings.knowledgeRerankModel,
+        apiKey: settings.knowledgeRerankApiKey
       })
     : undefined
 }
@@ -394,13 +405,16 @@ if (hasSingleInstanceLock) {
       parseDocument: documentParsingService.parse
     })
     await knowledgeService.initialize()
-    const embeddingIndexCoordinator = new EmbeddingIndexCoordinator(
-      new KnowledgeEmbeddingIndexRepository(knowledgeService.database)
-    )
-    await embeddingIndexCoordinator.initialize()
+    const knowledgeRuntimeSettings =
+      await settingsStore.getResolvedSettings()
     void knowledgeService
       .setEmbeddingProvider(
-        createEmbeddingProvider(await settingsStore.getResolvedSettings())
+        createEmbeddingProvider(knowledgeRuntimeSettings)
+      )
+      .catch(() => undefined)
+    void knowledgeService
+      .setRerankProvider(
+        createRerankProvider(knowledgeRuntimeSettings)
       )
       .catch(() => undefined)
     assistantDatabase = new AssistantDatabase(
@@ -525,6 +539,9 @@ if (hasSingleInstanceLock) {
           void knowledgeService
             .setEmbeddingProvider(createEmbeddingProvider(settings))
             .catch(() => undefined)
+          void knowledgeService
+            .setRerankProvider(createRerankProvider(settings))
+            .catch(() => undefined)
         }
         if (runtime) {
           await runtime.replace(
@@ -546,7 +563,7 @@ if (hasSingleInstanceLock) {
       applicationSettingsStore,
       versionChecker,
       speechModelManager,
-      embeddingIndexCoordinator,
+      undefined,
       selectedRuntimeManager,
       speechTranscriptionService,
       knowledgeGateway,

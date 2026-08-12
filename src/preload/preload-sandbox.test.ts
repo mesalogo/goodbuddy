@@ -71,4 +71,15 @@ describe('sandboxed preload', () => {
     expect(source).toContain('ipcChannels.releaseNotesGetPending')
     expect(source).toContain('ipcChannels.releaseNotesAcknowledge')
   })
+
+  it('exposes bounded knowledge task actions', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('cancelTask: (taskId: string)')
+    expect(source).toContain('retryTask: async (taskId: string)')
+    expect(source).toContain('ipcChannels.knowledgeTaskCancel')
+    expect(source).toContain('ipcChannels.knowledgeTaskRetry')
+  })
 })

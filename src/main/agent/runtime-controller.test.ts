@@ -160,9 +160,7 @@ describe('AgentRuntimeController', () => {
     await stream.return()
   })
 
-  it.each(['ask', 'plan'] as const)(
-    'denies tool authorization in %s mode without prompting the user',
-    async (workMode) => {
+  it('denies tool authorization in Ask mode without prompting the user', async () => {
       const runtime = new TestRuntime(false, false, true)
       const controller = new AgentRuntimeController(runtime)
       const authorize = vi.fn(async () => 'once' as const)
@@ -171,7 +169,7 @@ describe('AgentRuntimeController', () => {
           requestId: '1c608898-ecb7-4081-8174-2b6a52f53b09',
           conversationId: 'conversation-3',
           prompt: 'test',
-          workMode
+          workMode: 'ask'
         },
         new AbortController().signal,
         authorize
@@ -179,8 +177,7 @@ describe('AgentRuntimeController', () => {
 
       await expect(stream.next()).rejects.toThrow('tool denied')
       expect(authorize).not.toHaveBeenCalled()
-    }
-  )
+  })
 
   it('forwards per-tool authorization without adding a whole-run gate', async () => {
     const runtime = new TestRuntime(false, false, true)

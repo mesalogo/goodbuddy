@@ -3,7 +3,7 @@ import { z } from 'zod'
 const boundedLabelSchema = z.string().trim().min(1).max(256)
 const timestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const countSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
-const safeEndpointSchema = z
+export const safeProviderEndpointSchema = z
   .url()
   .trim()
   .max(2_048)
@@ -40,7 +40,7 @@ export const embeddingConfigurationSummarySchema = z
   .object({
     provider: boundedLabelSchema,
     model: boundedLabelSchema,
-    endpoint: safeEndpointSchema.optional(),
+    endpoint: safeProviderEndpointSchema.optional(),
     credentialConfigured: z.boolean()
   })
   .strict()
@@ -180,19 +180,59 @@ export type EmbeddingIndexStatus = z.infer<
 
 export const embeddingSettingsSnapshotSchema = z
   .object({
-    configuration: embeddingConfigurationSummarySchema,
-    indexStatus: embeddingIndexStatusSchema
+    configuration: embeddingConfigurationSummarySchema
   })
   .strict()
 export type EmbeddingSettingsSnapshot = z.infer<
   typeof embeddingSettingsSnapshotSchema
 >
 
-export const embeddingIndexJobRequestSchema = z
+export const knowledgeEmbeddingIndexRequestSchema = z
   .object({
+    knowledgeBaseId: z.string().uuid()
+  })
+  .strict()
+
+export const knowledgeEmbeddingIndexCancelRequestSchema = z
+  .object({
+    knowledgeBaseId: z.string().uuid(),
     jobId: z.string().uuid()
   })
   .strict()
+
+export const knowledgeEmbeddingIndexCoverageSchema = z
+  .object({
+    total: countSchema,
+    indexed: countSchema,
+    missing: countSchema,
+    error: countSchema
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.indexed + value.missing + value.error !== value.total) {
+      context.addIssue({
+        code: 'custom',
+        message: 'coverage counts must equal total',
+        path: ['total']
+      })
+    }
+  })
+export type KnowledgeEmbeddingIndexCoverage = z.infer<
+  typeof knowledgeEmbeddingIndexCoverageSchema
+>
+
+export const knowledgeEmbeddingIndexSnapshotSchema = z
+  .object({
+    knowledgeBaseId: z.string().uuid(),
+    enabled: z.boolean(),
+    configuration: embeddingConfigurationSummarySchema.optional(),
+    coverage: knowledgeEmbeddingIndexCoverageSchema,
+    indexStatus: embeddingIndexStatusSchema
+  })
+  .strict()
+export type KnowledgeEmbeddingIndexSnapshot = z.infer<
+  typeof knowledgeEmbeddingIndexSnapshotSchema
+>
 
 export const isEmbeddingIndexJobActive = (
   job: EmbeddingIndexJob | null | undefined

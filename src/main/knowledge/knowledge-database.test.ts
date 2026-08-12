@@ -86,7 +86,7 @@ describe('KnowledgeDatabase', () => {
     const inspection = new DatabaseSync(path)
     expect(
       inspection.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 4 })
+    ).toEqual({ user_version: 9 })
     expect(
       inspection
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
@@ -95,7 +95,12 @@ describe('KnowledgeDatabase', () => {
       { version: 1 },
       { version: 2 },
       { version: 3 },
-      { version: 4 }
+      { version: 4 },
+      { version: 5 },
+      { version: 6 },
+      { version: 7 },
+      { version: 8 },
+      { version: 9 }
     ])
     inspection.close()
 
@@ -113,7 +118,81 @@ describe('KnowledgeDatabase', () => {
       .toHaveLength(1)
   })
 
-  it('upgrades an existing v1 database to embedding rebuild schema v4', async () => {
+  it('keeps graph generation off unless explicitly enabled', async () => {
+    const { database } = await createDatabase()
+    const defaultLibrary = database.createKnowledgeBase({
+      name: 'Default graph setting',
+      storageMode: 'reference'
+    })
+    const graphLibrary = database.createKnowledgeBase({
+      name: 'Explicit graph setting',
+      storageMode: 'reference',
+      graphEnabled: true
+    })
+
+    expect(defaultLibrary.graphEnabled).toBe(false)
+    expect(graphLibrary.graphEnabled).toBe(true)
+    expect(defaultLibrary.ontologyRebuildRequired).toBe(false)
+    expect(graphLibrary.ontologyRebuildRequired).toBe(false)
+
+    expect(
+      database.updateKnowledgeBase(graphLibrary.id, {
+        graphStrategy: 'rules'
+      }).ontologyRebuildRequired
+    ).toBe(true)
+  })
+
+  it('normalizes legacy negative vector thresholds without losing settings', async () => {
+    const { database, path } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Legacy retrieval settings',
+      storageMode: 'reference'
+    })
+    database.close()
+    const inspection = new DatabaseSync(path)
+    inspection
+      .prepare(
+        `UPDATE knowledge_bases
+         SET retrieval_settings = ?
+         WHERE id = ?`
+      )
+      .run(
+        JSON.stringify({
+          version: 1,
+          topK: 9,
+          minimumVectorSimilarity: -1,
+          ftsWeight: 1.2,
+          vectorWeight: 0.8,
+          graphWeight: 0,
+          candidateMultiplier: 5,
+          contextMaxCharacters: 20_000,
+          adjacentChunkCount: 1,
+          localRerankEnabled: true
+        }),
+        library.id
+      )
+    inspection.close()
+
+    const reopened = new KnowledgeDatabase(path)
+    openDatabases.push(reopened)
+    reopened.initialize()
+
+    expect(reopened.getKnowledgeBase(library.id)?.retrievalSettings).toEqual({
+      version: 1,
+      topK: 9,
+      minimumVectorSimilarity: 0,
+      ftsWeight: 1.2,
+      vectorWeight: 0.8,
+      graphWeight: 0,
+      candidateMultiplier: 5,
+      contextMaxCharacters: 20_000,
+      adjacentChunkCount: 1,
+      localRerankEnabled: true,
+      rerankMode: 'local'
+    })
+  })
+
+  it('upgrades an existing v1 database through knowledge schema v9', async () => {
     const { database, path } = await createDatabase()
     const knowledgeBase = database.createKnowledgeBase({
       name: 'Version one data',
@@ -128,7 +207,8 @@ describe('KnowledgeDatabase', () => {
       DROP TABLE embedding_index_job;
       DROP TABLE embedding_index_state;
       DROP TABLE chunk_embeddings;
-      DELETE FROM schema_migrations WHERE version IN (2, 3, 4);
+      DROP TABLE knowledge_tasks;
+      DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9);
       PRAGMA user_version = 1;
     `)
     downgrade.close()
@@ -138,7 +218,7 @@ describe('KnowledgeDatabase', () => {
     upgraded.initialize()
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 4
+      user_version: 9
     })
     expect(
       inspection
@@ -162,6 +242,337 @@ describe('KnowledgeDatabase', () => {
         query: 'lighthouse'
       })
     ).toHaveLength(1)
+  })
+
+  it('migrates version 8 contextual indexes and remains idempotent', async () => {
+    const { database, path } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Version eight context',
+      storageMode: 'reference'
+    })
+    database.updateKnowledgeSettings({
+      knowledgeBaseId: library.id,
+      chunking: {
+        ...library.chunkingSettings,
+        contextualIndexingEnabled: true
+      }
+    })
+    const emptyLibrary = database.createKnowledgeBase({
+      name: 'Empty version eight context',
+      storageMode: 'reference'
+    })
+    database.updateKnowledgeSettings({
+      knowledgeBaseId: emptyLibrary.id,
+      chunking: {
+        ...emptyLibrary.chunkingSettings,
+        contextualIndexingEnabled: true
+      }
+    })
+    const source = database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'file',
+      location: 'C:\\migration-context.md',
+      displayName: 'migration-context.md',
+      status: 'ready'
+    })
+    const rawContent = 'Only the source body is shown to users.'
+    const contextPrefix =
+      '[context title="Migration handbook" heading="Recovery"]\n'
+    const document = database.upsertDocument(
+      {
+        knowledgeBaseId: library.id,
+        sourceId: source.id,
+        externalId: 'version-eight-context',
+        title: 'Migration handbook'
+      },
+      [{
+        id: 'version-eight-context-chunk',
+        ordinal: 0,
+        content: rawContent,
+        metadata: { contextPrefix }
+      }]
+    )
+    database.close()
+
+    const downgrade = new DatabaseSync(path)
+    downgrade.exec(`
+      DROP TRIGGER IF EXISTS chunks_after_insert;
+      DROP TRIGGER IF EXISTS chunks_after_delete;
+      DROP TRIGGER IF EXISTS chunks_after_update;
+      DROP TABLE chunks_fts;
+      CREATE VIRTUAL TABLE chunks_fts USING fts5(
+        content,
+        content='chunks',
+        content_rowid='rowid',
+        tokenize='unicode61'
+      );
+      CREATE TRIGGER chunks_after_insert AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_fts(rowid, content)
+          SELECT new.rowid, new.content
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+      CREATE TRIGGER chunks_after_delete AFTER DELETE ON chunks
+        WHEN old.enabled = 1 AND old.role <> 'parent' BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, content)
+          VALUES ('delete', old.rowid, old.content);
+      END;
+      CREATE TRIGGER chunks_after_update AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, content)
+          SELECT 'delete', old.rowid, old.content
+          WHERE old.enabled = 1 AND old.role <> 'parent';
+        INSERT INTO chunks_fts(rowid, content)
+          SELECT new.rowid, new.content
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+      INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild');
+      DELETE FROM schema_migrations WHERE version = 9;
+      PRAGMA user_version = 8;
+    `)
+    downgrade
+      .prepare(
+        `UPDATE knowledge_bases
+         SET chunking_rebuild_required = 1
+         WHERE id = ?`
+      )
+      .run(emptyLibrary.id)
+    downgrade.close()
+
+    const upgraded = new KnowledgeDatabase(path)
+    openDatabases.push(upgraded)
+    upgraded.initialize()
+    upgraded.initialize()
+
+    expect(upgraded.getKnowledgeBase(library.id)).toMatchObject({
+      chunkingRebuildRequired: true
+    })
+    expect(upgraded.getKnowledgeBase(emptyLibrary.id)).toMatchObject({
+      chunkingRebuildRequired: false
+    })
+    expect(
+      upgraded.search({
+        knowledgeBaseId: library.id,
+        query: 'Recovery'
+      })[0]
+    ).toMatchObject({
+      chunk: { content: rawContent },
+      snippet: expect.not.stringContaining('[context')
+    })
+    expect(upgraded.getEmbeddingIndexDocument(document.id)?.items[0])
+      .toMatchObject({
+        content: `${contextPrefix}${rawContent}`,
+        contentChecksum: createHash('sha256')
+          .update(`${contextPrefix}${rawContent}`)
+          .digest('hex')
+      })
+
+    upgraded.close()
+    const reopened = new KnowledgeDatabase(path)
+    openDatabases.push(reopened)
+    reopened.initialize()
+    expect(reopened.search({
+      knowledgeBaseId: library.id,
+      query: 'Recovery'
+    })).toHaveLength(1)
+  })
+
+  it('indexes deterministic context while preserving raw chunks and citations', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Contextual index',
+      storageMode: 'reference'
+    })
+    const source = database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'file',
+      location: 'C:\\context.md',
+      displayName: 'context.md',
+      status: 'ready'
+    })
+    const rawContent = '正文只保留原始内容。'
+    const contextPrefix =
+      '[context title="季度计划" heading="部署 > 离线安装"]\n'
+    const document = database.upsertDocument(
+      {
+        knowledgeBaseId: library.id,
+        sourceId: source.id,
+        externalId: 'context',
+        title: '季度计划'
+      },
+      [
+        {
+          id: 'context-chunk',
+          ordinal: 0,
+          content: rawContent,
+          location: '第 3 页',
+          metadata: {
+            contextPrefix,
+            pageNumber: 3,
+            headingPath: ['部署', '离线安装'],
+            blockKind: 'text'
+          }
+        }
+      ]
+    )
+
+    const result = database.search({
+      knowledgeBaseId: library.id,
+      query: '离线安装'
+    })[0]
+    expect(result?.chunk.content).toBe(rawContent)
+    expect(result?.snippet).not.toContain('[context')
+    expect(result?.chunk.location).toBe('第 3 页')
+    expect(database.getEmbeddingIndexDocument(document.id)?.items[0])
+      .toMatchObject({
+        id: 'context-chunk',
+        content: `${contextPrefix}${rawContent}`,
+        contentChecksum: createHash('sha256')
+          .update(`${contextPrefix}${rawContent}`)
+          .digest('hex')
+      })
+  })
+
+  it('persists tasks, interrupts active work, dedupes, and guards terminal updates', async () => {
+    const created = await createDatabase()
+    let database = created.database
+    const library = database.createKnowledgeBase({
+      name: 'Durable tasks',
+      storageMode: 'reference'
+    })
+    const first = database.createKnowledgeTask({
+      libraryId: library.id,
+      documentName: library.name,
+      scope: 'library',
+      kind: 'library-rebuild',
+      dedupeKey: `library-rebuild:${library.id}`
+    })
+    expect(
+      database.createKnowledgeTask({
+        libraryId: library.id,
+        documentName: library.name,
+        scope: 'library',
+        kind: 'library-rebuild',
+        dedupeKey: `library-rebuild:${library.id}`
+      }).id
+    ).toBe(first.id)
+    database.updateKnowledgeTask(first.id, {
+      status: 'running',
+      stage: 'parsing',
+      progress: 30
+    })
+    database.close()
+
+    database = new KnowledgeDatabase(created.path)
+    openDatabases.push(database)
+    database.initialize()
+    expect(database.getKnowledgeTask(first.id)).toMatchObject({
+      status: 'interrupted',
+      progress: 30,
+      canRetry: true,
+      error: { message: expect.stringContaining('重启') }
+    })
+    expect(
+      database.updateKnowledgeTask(first.id, {
+        status: 'succeeded',
+        progress: 100
+      })
+    ).toMatchObject({ status: 'interrupted', progress: 30 })
+  })
+
+  it('lists every active task in addition to the terminal history limit', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Task listing',
+      storageMode: 'reference'
+    })
+    const active = database.createKnowledgeTask({
+      id: '00000000-0000-4000-8000-000000000001',
+      libraryId: library.id,
+      documentName: library.name,
+      scope: 'library',
+      kind: 'library-rebuild'
+    })
+    for (let index = 0; index < 501; index += 1) {
+      database.createKnowledgeTask({
+        libraryId: library.id,
+        documentName: `terminal-${index}`,
+        scope: 'document',
+        kind: 'parsing',
+        status: 'skipped'
+      })
+    }
+    database.pruneKnowledgeTasks(library.id)
+
+    const listed = database.listKnowledgeTasks(library.id)
+    expect(listed).toHaveLength(501)
+    expect(listed.map((task) => task.id)).toContain(active.id)
+    expect(listed.filter((task) => !task.canCancel)).toHaveLength(500)
+  })
+
+  it('retains task ancestors and disables retry after targets are deleted', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Task lineage retention',
+      storageMode: 'reference'
+    })
+    const seeded = seedDocument(database, library.id, 'lineage-target')
+    const parent = database.createKnowledgeTask({
+      libraryId: library.id,
+      documentName: 'retained parent',
+      scope: 'library',
+      kind: 'library-rebuild',
+      status: 'succeeded'
+    })
+    for (let index = 0; index < 500; index += 1) {
+      database.createKnowledgeTask({
+        libraryId: library.id,
+        documentName: `retention-${index}`,
+        scope: 'document',
+        kind: 'parsing',
+        status: 'skipped'
+      })
+    }
+    database.createKnowledgeTask({
+      libraryId: library.id,
+      parentTaskId: parent.id,
+      documentName: 'retained child',
+      scope: 'document',
+      kind: 'parsing',
+      status: 'skipped'
+    })
+    const sourceTask = database.createKnowledgeTask({
+      libraryId: library.id,
+      sourceId: seeded.sourceId,
+      documentName: 'source retry',
+      scope: 'source',
+      kind: 'source-sync',
+      status: 'failed',
+      error: { message: 'failed source' }
+    })
+    const documentTask = database.createKnowledgeTask({
+      libraryId: library.id,
+      documentId: seeded.documentId,
+      sourceId: seeded.sourceId,
+      documentName: 'document retry',
+      scope: 'document',
+      kind: 'document-rebuild',
+      status: 'failed',
+      error: { message: 'failed document' }
+    })
+    database.pruneKnowledgeTasks(library.id)
+
+    database.removeSource(seeded.sourceId)
+    expect(database.getKnowledgeTask(sourceTask.id)).toMatchObject({
+      sourceId: undefined,
+      canRetry: false
+    })
+    expect(database.getKnowledgeTask(documentTask.id)).toMatchObject({
+      documentId: undefined,
+      canRetry: false
+    })
+    expect(database.getKnowledgeTask(parent.id)).toBeDefined()
+    const listed = database.listKnowledgeTasks(library.id)
+    expect(listed.map((task) => task.id)).toContain(parent.id)
+    expect(listed.some((task) => task.parentTaskId === parent.id)).toBe(true)
   })
 
   it('isolates FTS results by knowledge base and replaces indexed chunks', async () => {
@@ -190,7 +601,7 @@ describe('KnowledgeDatabase', () => {
       },
       chunk: { location: 'line 1' }
     })
-    expect(firstResults[0]?.snippet).toContain('<mark>lighthouse</mark>')
+    expect(firstResults[0]?.snippet).toContain('lighthouse')
     expect(
       database.search({
         knowledgeBaseId: second.id,
@@ -266,14 +677,14 @@ describe('KnowledgeDatabase', () => {
     const target = database.createEntity({
       knowledgeBaseId: knowledgeBase.id,
       name: 'GoodBuddy',
-      type: 'product',
+      type: 'organization',
       aliases: ['Buddy'],
       properties: { owner: 'team' }
     })
     const source = database.createEntity({
       knowledgeBaseId: knowledgeBase.id,
       name: 'Good Buddy',
-      type: 'product',
+      type: 'organization',
       aliases: ['GB'],
       properties: { language: 'TypeScript' },
       locked: true
@@ -281,7 +692,7 @@ describe('KnowledgeDatabase', () => {
     const other = database.createEntity({
       knowledgeBaseId: knowledgeBase.id,
       name: 'SQLite',
-      type: 'technology'
+      type: 'concept'
     })
     const relation = database.createRelation({
       knowledgeBaseId: knowledgeBase.id,
@@ -295,7 +706,12 @@ describe('KnowledgeDatabase', () => {
       entityId: source.id,
       documentId: seeded.documentId,
       chunkId: seeded.chunkId,
-      quote: 'graph evidence'
+      quote: 'graph evidence',
+      start: 2,
+      end: 8,
+      confidence: 0.92,
+      source: 'model',
+      provenance: { strategy: 'hybrid', ontologyVersion: 1 }
     })
     const relationEvidence = database.createEvidence({
       knowledgeBaseId: knowledgeBase.id,
@@ -319,7 +735,15 @@ describe('KnowledgeDatabase', () => {
     })
     expect(database.listEvidence(knowledgeBase.id)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: entityEvidence.id, entityId: target.id }),
+        expect.objectContaining({
+          id: entityEvidence.id,
+          entityId: target.id,
+          start: 2,
+          end: 8,
+          confidence: 0.92,
+          source: 'model',
+          provenance: { strategy: 'hybrid', ontologyVersion: 1 }
+        }),
         expect.objectContaining({
           id: relationEvidence.id,
           relationId: relation.id
@@ -353,6 +777,39 @@ describe('KnowledgeDatabase', () => {
     expect(database.deleteEvidence(entityEvidence.id)).toBe(true)
     expect(database.deleteRelation(relation.id)).toBe(true)
     expect(database.deleteEntity(other.id)).toBe(true)
+  })
+
+  it('persists controlled ontology updates and marks graph rebuild state', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Controlled ontology',
+      storageMode: 'reference',
+      graphEnabled: true
+    })
+    const ontology = {
+      ...library.ontologySettings,
+      entityTypes: [
+        ...library.ontologySettings.entityTypes,
+        {
+          id: 'PRODUCT',
+          name: { zh: '产品', en: 'Product' },
+          aliases: ['product', '产品']
+        }
+      ]
+    }
+    const updated = database.updateKnowledgeSettings({
+      knowledgeBaseId: library.id,
+      ontology
+    })
+    expect(updated.ontologySettings.entityTypes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'PRODUCT' })
+      ])
+    )
+    expect(updated.ontologyRebuildRequired).toBe(true)
+    database.markKnowledgeOntologyRebuilt(library.id)
+    expect(database.getKnowledgeBase(library.id)?.ontologyRebuildRequired)
+      .toBe(false)
   })
 
   it('persists isolated Float32 embeddings and clears stale index state transactionally', async () => {
@@ -624,7 +1081,9 @@ describe('KnowledgeDatabase', () => {
     })
     const alpha = seedDocument(database, knowledgeBase.id, 'incremental-alpha')
     const beta = seedDocument(database, knowledgeBase.id, 'incremental-beta')
-    const documentIds = database.listEmbeddingIndexDocumentIds()
+    const documentIds = database.listEmbeddingIndexDocumentIds(
+      knowledgeBase.id
+    )
     const documents = documentIds.map(
       (documentId) =>
         database.getEmbeddingIndexDocument(documentId)!
@@ -698,7 +1157,7 @@ describe('KnowledgeDatabase', () => {
         'embed-v1'
       )
     ).toMatchObject({
-      status: 'error',
+      status: 'ready',
       lastError: '向量服务暂时不可用。'
     })
     expect(
@@ -710,7 +1169,19 @@ describe('KnowledgeDatabase', () => {
           vector: [0, 1]
         })
         .map((result) => result.chunk.id)
-    ).not.toContain(beta.chunkId)
+    ).toContain(beta.chunkId)
+    expect(
+      database.getEmbeddingIndexCoverage(
+        knowledgeBase.id,
+        'openai-compatible',
+        'embed-v1'
+      )
+    ).toEqual({
+      total: 2,
+      indexed: 2,
+      missing: 0,
+      error: 0
+    })
   })
 
   it('stages embedding batches before atomically replacing a document index', async () => {
@@ -783,12 +1254,22 @@ describe('KnowledgeDatabase', () => {
     ).toBe(item.id)
   })
 
-  it('persists the last embedding index job across restarts', async () => {
+  it('persists embedding index jobs independently by knowledge base', async () => {
     const created = await createDatabase()
     let database = created.database
-    expect(database.getLastEmbeddingIndexJob()).toBeNull()
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Persisted vector job',
+      storageMode: 'reference'
+    })
+    const otherKnowledgeBase = database.createKnowledgeBase({
+      name: 'Other persisted vector job',
+      storageMode: 'reference'
+    })
+    expect(
+      database.getLastEmbeddingIndexJob(knowledgeBase.id)
+    ).toBeNull()
 
-    database.saveEmbeddingIndexJob({
+    database.saveEmbeddingIndexJob(knowledgeBase.id, {
       id: 'job-1',
       status: 'running',
       provider: 'openai-compatible',
@@ -797,18 +1278,38 @@ describe('KnowledgeDatabase', () => {
       createdAt: 10,
       startedAt: 11
     })
+    database.saveEmbeddingIndexJob(otherKnowledgeBase.id, {
+      id: 'job-2',
+      status: 'completed',
+      provider: 'openai-compatible',
+      model: 'embed-v1',
+      progress: { completed: 3, total: 3, percent: 100 },
+      createdAt: 20,
+      startedAt: 21,
+      completedAt: 22
+    })
     database.close()
     database = new KnowledgeDatabase(created.path)
     openDatabases.push(database)
     database.initialize()
 
-    expect(database.getLastEmbeddingIndexJob()).toMatchObject({
+    expect(
+      database.getLastEmbeddingIndexJob(knowledgeBase.id)
+    ).toMatchObject({
       id: 'job-1',
       status: 'running',
       progress: { completed: 1, total: 2, percent: 50 }
     })
-    database.saveEmbeddingIndexJob(null)
-    expect(database.getLastEmbeddingIndexJob()).toBeNull()
+    expect(
+      database.getLastEmbeddingIndexJob(otherKnowledgeBase.id)
+    ).toMatchObject({
+      id: 'job-2',
+      status: 'completed'
+    })
+    database.saveEmbeddingIndexJob(knowledgeBase.id, null)
+    expect(
+      database.getLastEmbeddingIndexJob(knowledgeBase.id)
+    ).toBeNull()
   })
 
   it('bounds inputs and rejects API keys in extensible metadata', async () => {
@@ -833,5 +1334,210 @@ describe('KnowledgeDatabase', () => {
         metadata: { api_key: 'must-not-be-stored' }
       })
     ).toThrow('must not contain API keys')
+  })
+
+  it('persists per-library settings and recalls Chinese text with indexed bigrams', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: '中文制度',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    const source = database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'file',
+      location: 'C:\\制度.md',
+      displayName: '制度.md',
+      status: 'ready'
+    })
+    database.upsertDocument(
+      {
+        knowledgeBaseId: library.id,
+        sourceId: source.id,
+        externalId: '制度',
+        title: '远程办公制度'
+      },
+      [
+        {
+          ordinal: 0,
+          content: '员工申请远程办公需要提前提交审批材料。'
+        }
+      ]
+    )
+    expect(
+      database.search({
+        knowledgeBaseId: library.id,
+        query: '远程工作怎么申请'
+      })
+    ).toHaveLength(1)
+
+    const updated = database.updateKnowledgeSettings({
+      knowledgeBaseId: library.id,
+      retrieval: {
+        ...library.retrievalSettings,
+        topK: 9,
+        vectorWeight: 0.5
+      },
+      chunking: {
+        ...library.chunkingSettings,
+        mode: 'parent-child'
+      }
+    })
+    expect(updated.retrievalSettings).toMatchObject({
+      topK: 9,
+      vectorWeight: 0.5
+    })
+    expect(updated.chunkingRebuildRequired).toBe(true)
+  })
+
+  it('keeps parent chunks out of recall and synchronizes chunk mutations', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Chunk states',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    const source = database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'file',
+      location: 'C:\\parent.md',
+      displayName: 'parent.md',
+      status: 'ready'
+    })
+    const document = database.upsertDocument(
+      {
+        knowledgeBaseId: library.id,
+        sourceId: source.id,
+        externalId: 'parent',
+        title: 'Parent'
+      },
+      [
+        {
+          id: 'child-chunk',
+          ordinal: 1,
+          role: 'child',
+          parentChunkId: 'parent-chunk',
+          content: 'recallable child text'
+        },
+        {
+          id: 'parent-chunk',
+          ordinal: 0,
+          role: 'parent',
+          content: 'parent-only-secret complete context'
+        }
+      ]
+    )
+    expect(
+      database.search({
+        knowledgeBaseId: library.id,
+        query: 'parent-only-secret'
+      })
+    ).toEqual([])
+    expect(
+      database.search({ knowledgeBaseId: library.id, query: 'recallable' })
+    ).toHaveLength(1)
+    expect(
+      database.listContextChunks(
+        database.listChunks(document.id, 10)[1]!,
+        0
+      ).map((chunk) => chunk.id)
+    ).toEqual(['parent-chunk'])
+
+    database.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: 'child-chunk',
+      enabled: false
+    })
+    expect(
+      database.search({ knowledgeBaseId: library.id, query: 'recallable' })
+    ).toEqual([])
+    database.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: 'child-chunk',
+      enabled: true,
+      content: '人工修正后的可检索文本'
+    })
+    expect(
+      database.search({ knowledgeBaseId: library.id, query: '人工修正' })
+    ).toHaveLength(1)
+    expect(
+      database.listChunksPage({
+        knowledgeBaseId: library.id,
+        documentId: document.id,
+        page: 1,
+        pageSize: 10,
+        search: '修正'
+      })
+    ).toMatchObject({
+      total: 1,
+      items: [
+        expect.objectContaining({
+          id: 'child-chunk',
+          enabled: true,
+          manuallyEdited: true
+        })
+      ]
+    })
+    expect(
+      database.deleteChunk({
+        knowledgeBaseId: library.id,
+        documentId: document.id,
+        chunkId: 'child-chunk'
+      })
+    ).toBe(true)
+  })
+
+  it('streams exact vector search beyond five thousand chunks', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Large vectors',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    const source = database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'file',
+      location: 'C:\\large.txt',
+      displayName: 'large.txt',
+      status: 'ready'
+    })
+    const chunks = Array.from({ length: 5_001 }, (_, index) => ({
+      id: `large-${index}`,
+      ordinal: index,
+      content: `bounded vector content ${index}`
+    }))
+    const document = database.upsertDocument(
+      {
+        knowledgeBaseId: library.id,
+        sourceId: source.id,
+        externalId: 'large',
+        title: 'Large'
+      },
+      chunks
+    )
+    database.replaceDocumentEmbeddings(
+      document.id,
+      'provider',
+      'model',
+      chunks.map((chunk, index) => ({
+        chunkId: chunk.id,
+        contentChecksum: createHash('sha256')
+          .update(chunk.content)
+          .digest('hex'),
+        vector: index === chunks.length - 1 ? [1, 0] : [0, 1]
+      }))
+    )
+    expect(
+      database.vectorSearch({
+        knowledgeBaseId: library.id,
+        provider: 'provider',
+        model: 'model',
+        vector: [1, 0],
+        limit: 1,
+        minimumSimilarity: 0.5
+      })[0]?.chunk.id
+    ).toBe('large-5000')
   })
 })

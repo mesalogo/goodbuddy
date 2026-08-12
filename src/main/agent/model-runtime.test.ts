@@ -453,9 +453,7 @@ describe('ModelAgentRuntime', () => {
     expect(toolProvider.listTools).not.toHaveBeenCalled()
   })
 
-  it.each(['ask', 'plan'] as const)(
-    'keeps browser and workspace tools out of %s mode',
-    async (workMode) => {
+  it('keeps browser and workspace tools out of Ask mode', async () => {
       const fetcher = vi.fn<typeof fetch>(async () =>
         new Response('data: {"choices":[{"delta":{"content":"只读回答"}}]}\n\ndata: [DONE]\n\n', {
           status: 200,
@@ -475,9 +473,9 @@ describe('ModelAgentRuntime', () => {
       for await (const _event of runtime.run(
         {
           requestId: crypto.randomUUID(),
-          conversationId: `conversation-${workMode}`,
+          conversationId: 'conversation-ask',
           prompt: '只读',
-          workMode
+          workMode: 'ask'
         },
         new AbortController().signal
       )) {
@@ -486,8 +484,7 @@ describe('ModelAgentRuntime', () => {
 
       expect(toolProvider.listTools).not.toHaveBeenCalled()
       expect(toolProvider.callTool).not.toHaveBeenCalled()
-    }
-  )
+  })
 
   it('uses the OpenAI Responses endpoint and streams output text', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>

@@ -1,3 +1,10 @@
+import type {
+  KnowledgeChunkingSettings,
+  KnowledgeChunkRole,
+  KnowledgeRetrievalSettings
+} from '../../shared/knowledge-contracts'
+import type { KnowledgeOntologySettings } from '../../shared/knowledge-ontology'
+
 export type StorageMode = 'reference' | 'managed'
 export type GraphStrategy = 'rules' | 'model' | 'hybrid' | 'ask'
 export type KnowledgeSourceType = 'file' | 'directory' | 'url'
@@ -24,6 +31,11 @@ export interface KnowledgeBase {
   storageMode: StorageMode
   graphEnabled: boolean
   graphStrategy: GraphStrategy
+  retrievalSettings: KnowledgeRetrievalSettings
+  chunkingSettings: KnowledgeChunkingSettings
+  chunkingRebuildRequired: boolean
+  ontologySettings: KnowledgeOntologySettings
+  ontologyRebuildRequired: boolean
   createdAt: string
   updatedAt: string
 }
@@ -106,6 +118,11 @@ export interface Chunk {
   location?: string
   metadata: JsonObject
   createdAt: string
+  enabled: boolean
+  role: KnowledgeChunkRole
+  parentChunkId?: string
+  manuallyEdited: boolean
+  updatedAt?: string
 }
 
 export interface ReplaceChunkInput {
@@ -116,6 +133,10 @@ export interface ReplaceChunkInput {
   heading?: string
   location?: string
   metadata?: JsonObject
+  enabled?: boolean
+  role?: KnowledgeChunkRole
+  parentChunkId?: string
+  manuallyEdited?: boolean
 }
 
 export interface SearchOptions {
@@ -139,6 +160,23 @@ export interface EmbeddingProvider {
   embed(input: readonly string[], signal?: AbortSignal): Promise<number[][]>
 }
 
+export interface RerankProviderResult {
+  index: number
+  relevanceScore: number
+}
+
+export interface RerankProvider {
+  readonly provider: string
+  readonly model: string
+  readonly fingerprint?: string
+  rerank(
+    query: string,
+    documents: readonly string[],
+    topN: number,
+    signal?: AbortSignal
+  ): Promise<RerankProviderResult[]>
+}
+
 export interface ChunkEmbeddingInput {
   chunkId: string
   contentChecksum: string
@@ -157,6 +195,13 @@ export interface EmbeddingIndexState {
   updatedAt: string
 }
 
+export interface EmbeddingIndexCoverage {
+  total: number
+  indexed: number
+  missing: number
+  error: number
+}
+
 export interface VectorSearchOptions {
   knowledgeBaseId: string
   provider: string
@@ -164,6 +209,7 @@ export interface VectorSearchOptions {
   vector: readonly number[]
   limit?: number
   minimumSimilarity?: number
+  signal?: AbortSignal
 }
 
 export interface HybridSearchOptions extends SearchOptions {
@@ -173,6 +219,12 @@ export interface HybridSearchOptions extends SearchOptions {
   graphEnabled?: boolean
   vectorLimit?: number
   graphDepth?: number
+  minimumVectorSimilarity?: number
+  candidateMultiplier?: number
+  ftsWeight?: number
+  vectorWeight?: number
+  graphWeight?: number
+  signal?: AbortSignal
 }
 
 export interface RetrievalMetadata {
@@ -264,6 +316,11 @@ export interface Evidence {
   chunkId?: string
   quote?: string
   location?: string
+  start?: number
+  end?: number
+  confidence?: number
+  source: 'rules' | 'model' | 'manual' | 'legacy'
+  provenance: JsonObject
   createdAt: string
 }
 
@@ -276,6 +333,11 @@ export interface CreateEvidenceInput {
   chunkId?: string
   quote?: string
   location?: string
+  start?: number
+  end?: number
+  confidence?: number
+  source?: 'rules' | 'model' | 'manual' | 'legacy'
+  provenance?: JsonObject
 }
 
 export interface UpdateEvidenceInput {

@@ -1,0 +1,443 @@
+{
+  "version": 1,
+  "id": "synthetic-bilingual-v1",
+  "provenance": {
+    "kind": "synthetic",
+    "license": "CC0-1.0"
+  },
+  "documents": [
+    {
+      "id": "doc-secrets",
+      "title": "Credential storage",
+      "chunks": [
+        {
+          "id": "chunk-secrets-main",
+          "content": "API tokens and service keys stay in the main process encrypted settings store. The renderer never receives the credential value."
+        }
+      ]
+    },
+    {
+      "id": "doc-secrets-secondary",
+      "title": "凭据轮换",
+      "chunks": [
+        {
+          "id": "chunk-secrets-secondary",
+          "content": "轮换访问凭据后，应立即撤销旧令牌，并确认新密钥只保存在加密存储中。"
+        }
+      ]
+    },
+    {
+      "id": "doc-offline",
+      "title": "Offline operation",
+      "chunks": [
+        {
+          "id": "chunk-offline-main",
+          "content": "Offline search uses the local SQLite index and does not require a network connection. Local files remain on the device."
+        }
+      ]
+    },
+    {
+      "id": "doc-cancel",
+      "title": "任务取消",
+      "chunks": [
+        {
+          "id": "chunk-cancel-main",
+          "content": "用户取消索引任务时，系统会中止当前批次，保留旧索引，并将任务标记为已取消。"
+        }
+      ]
+    },
+    {
+      "id": "doc-backup",
+      "title": "Backup and restore",
+      "chunks": [
+        {
+          "id": "chunk-backup-main",
+          "content": "Create a backup before migration. To restore, close the application and replace the database with the verified backup copy."
+        }
+      ]
+    },
+    {
+      "id": "doc-accessibility",
+      "title": "键盘导航",
+      "chunks": [
+        {
+          "id": "chunk-accessibility-main",
+          "content": "分段控件支持键盘导航：左右方向键移动焦点，Tab 键离开控件，当前选项使用清晰的焦点样式。"
+        }
+      ]
+    },
+    {
+      "id": "doc-image",
+      "title": "Image handling",
+      "chunks": [
+        {
+          "id": "chunk-image-main",
+          "content": "Generated images are accepted only as bounded inline image data. Provider-returned image URLs are not fetched."
+        }
+      ]
+    },
+    {
+      "id": "doc-sqlite",
+      "title": "数据库更新",
+      "chunks": [
+        {
+          "id": "chunk-sqlite-main",
+          "content": "SQLite 数据迁移在事务中执行；任一步骤失败都会回滚，以保护现有用户数据。"
+        }
+      ]
+    },
+    {
+      "id": "doc-runtime",
+      "title": "Runtime modes",
+      "chunks": [
+        {
+          "id": "chunk-runtime-main",
+          "content": "Ask mode is read-only at the runtime boundary. Execute mode can use tools only after the configured approval check."
+        }
+      ]
+    },
+    {
+      "id": "doc-fonts",
+      "title": "界面字体",
+      "chunks": [
+        {
+          "id": "chunk-fonts-main",
+          "content": "界面使用随应用打包的 Inter Variable 和 Noto Sans SC Variable 字体，不发起远程字体请求。"
+        }
+      ]
+    },
+    {
+      "id": "doc-release",
+      "title": "Release verification",
+      "chunks": [
+        {
+          "id": "chunk-release-main",
+          "content": "Each release package includes a release manifest containing SHA-256 hashes for the packaged artifacts."
+        }
+      ]
+    },
+    {
+      "id": "doc-chunking",
+      "title": "上下文分块",
+      "chunks": [
+        {
+          "id": "chunk-chunking-main",
+          "content": "检索结果可加入相邻分块来补充上下文，但合并后的内容必须遵守字符预算。"
+        }
+      ]
+    },
+    {
+      "id": "doc-language",
+      "title": "Interface language",
+      "chunks": [
+        {
+          "id": "chunk-language-main",
+          "content": "The interface supports Simplified Chinese and English. Release notes are shown in the current interface language."
+        }
+      ]
+    },
+    {
+      "id": "doc-approval-secondary",
+      "title": "审批记录",
+      "chunks": [
+        {
+          "id": "chunk-approval-secondary",
+          "content": "执行敏感工具前应显示审批提示，并记录本次允许的操作范围。"
+        }
+      ]
+    },
+    {
+      "id": "doc-manifest-secondary",
+      "title": "包清单检查",
+      "chunks": [
+        {
+          "id": "chunk-manifest-secondary",
+          "content": "发布检查会核对包清单，但测试构建可以跳过签名步骤。"
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "query-secrets-en",
+      "language": "en",
+      "query": "Where should API tokens be stored?",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-secrets-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "API tokens and service keys stay in the main process encrypted settings store."
+            }
+          ]
+        },
+        {
+          "chunkId": "chunk-secrets-secondary",
+          "relevance": 1,
+          "spans": [
+            {
+              "text": "新密钥只保存在加密存储中"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-secrets-zh",
+      "language": "zh-CN",
+      "query": "怎样安全保存访问凭据",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-secrets-main",
+          "relevance": 2,
+          "spans": [
+            {
+              "text": "main process encrypted settings store"
+            }
+          ]
+        },
+        {
+          "chunkId": "chunk-secrets-secondary",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "新密钥只保存在加密存储中"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-offline-zh",
+      "language": "zh-CN",
+      "query": "没有网络时能否检索本地资料",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-offline-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "Offline search uses the local SQLite index and does not require a network connection."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-cancel-en",
+      "language": "en",
+      "query": "What happens when indexing is aborted?",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-cancel-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "系统会中止当前批次，保留旧索引"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-backup-en",
+      "language": "en",
+      "query": "How do I restore the database backup?",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-backup-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "To restore, close the application and replace the database with the verified backup copy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-keyboard-en",
+      "language": "en",
+      "query": "How does focus move inside a segmented control?",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-accessibility-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "左右方向键移动焦点"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-image-zh",
+      "language": "zh-CN",
+      "query": "模型生成的图片数据如何接收",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-image-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "accepted only as bounded inline image data"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-sqlite-en",
+      "language": "en",
+      "query": "How are failed database migrations protected?",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-sqlite-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "任一步骤失败都会回滚"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-runtime-zh",
+      "language": "zh-CN",
+      "query": "询问模式是否允许写入，工具何时需要审批",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-runtime-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "Ask mode is read-only at the runtime boundary."
+            },
+            {
+              "text": "Execute mode can use tools only after the configured approval check."
+            }
+          ]
+        },
+        {
+          "chunkId": "chunk-approval-secondary",
+          "relevance": 1,
+          "spans": [
+            {
+              "text": "执行敏感工具前应显示审批提示"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-font-en",
+      "language": "en",
+      "query": "Are interface typefaces downloaded remotely?",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-fonts-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "不发起远程字体请求"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-release-zh",
+      "language": "zh-CN",
+      "query": "发布产物怎样校验完整性",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-release-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "release manifest containing SHA-256 hashes"
+            }
+          ]
+        },
+        {
+          "chunkId": "chunk-manifest-secondary",
+          "relevance": 1,
+          "spans": [
+            {
+              "text": "发布检查会核对包清单"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-chunk-en",
+      "language": "en",
+      "query": "Can neighboring sections be added to retrieved context?",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-chunking-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "检索结果可加入相邻分块来补充上下文"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-language-zh",
+      "language": "zh-CN",
+      "query": "界面提供哪些语言",
+      "noAnswer": false,
+      "judgments": [
+        {
+          "chunkId": "chunk-language-main",
+          "relevance": 3,
+          "spans": [
+            {
+              "text": "supports Simplified Chinese and English"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "query-noanswer-weather",
+      "language": "zh-CN",
+      "query": "明天火星天气预报",
+      "noAnswer": true,
+      "judgments": []
+    },
+    {
+      "id": "query-noanswer-payroll",
+      "language": "en",
+      "query": "employee payroll tax withholding schedule",
+      "noAnswer": true,
+      "judgments": []
+    },
+    {
+      "id": "query-noanswer-recipe",
+      "language": "en",
+      "query": "sourdough cinnamon recipe temperature",
+      "noAnswer": true,
+      "judgments": []
+    }
+  ]
+}

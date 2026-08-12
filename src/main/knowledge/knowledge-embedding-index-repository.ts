@@ -7,20 +7,28 @@ import type { KnowledgeDatabase } from './knowledge-database'
 
 export class KnowledgeEmbeddingIndexRepository
 implements EmbeddingIndexRepository {
-  constructor(private readonly database: KnowledgeDatabase) {}
+  constructor(
+    private readonly database: KnowledgeDatabase,
+    private readonly knowledgeBaseId: string
+  ) {}
 
   async getLastJob(): Promise<EmbeddingIndexStatus['job']> {
-    return this.database.getLastEmbeddingIndexJob()
+    return this.database.getLastEmbeddingIndexJob(this.knowledgeBaseId)
   }
 
   async saveStatus(status: EmbeddingIndexStatus): Promise<void> {
-    this.database.saveEmbeddingIndexJob(status.job)
+    this.database.saveEmbeddingIndexJob(
+      this.knowledgeBaseId,
+      status.job
+    )
   }
 
   async listIndexDocumentIds(signal: AbortSignal) {
     signal.throwIfAborted()
     const documentIds =
-      this.database.listEmbeddingIndexDocumentIds()
+      this.database.listEmbeddingIndexDocumentIds(
+        this.knowledgeBaseId
+      )
     signal.throwIfAborted()
     return documentIds
   }

@@ -385,7 +385,7 @@ describe('AssistantDatabase', () => {
       name: '产品发布',
       description: '发布资料和任务',
       rootPath: 'C:\\Release',
-      defaultWorkMode: 'plan'
+      defaultWorkMode: 'ask'
     })
     expect(database.listProjects()).toHaveLength(2)
 

@@ -47,6 +47,9 @@ function settings(
     knowledgeEmbeddingBaseUrl:
       'http://127.0.0.1:11434/v1/embeddings',
     knowledgeEmbeddingModel: 'nomic-embed-text',
+    knowledgeRerankEnabled: false,
+    knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
+    knowledgeRerankModel: 'rerank-v3.5',
     workspacePath: 'test-workspace',
     apiKey: { action: 'keep' },
     toolApproval: 'always',
@@ -328,7 +331,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(13)
+    expect(persisted.version).toBe(14)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -348,7 +351,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(13)
+    expect(persisted.version).toBe(14)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -489,6 +492,136 @@ describe('RuntimeSettingsStore', () => {
         })
       )
     ).rejects.toThrow('重新输入或清除 API Key')
+  })
+
+  it('migrates version 13 with reranking disabled by default', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    persisted.version = 13
+    delete persisted.knowledgeRerankEnabled
+    delete persisted.knowledgeRerankEndpoint
+    delete persisted.knowledgeRerankModel
+    delete persisted.knowledgeRerankCredential
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      knowledgeRerankEnabled: false,
+      knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
+      knowledgeRerankModel: 'rerank-v3.5',
+      knowledgeRerankApiKeyConfigured: false,
+      knowledgeRerankCredentialSource: 'none'
+    })
+  })
+
+  it('encrypts and endpoint-binds the rerank API key', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        knowledgeRerankEnabled: true,
+        knowledgeRerankEndpoint: 'https://rerank.example/v1/rerank',
+        knowledgeRerankModel: 'vendor/rerank-large',
+        knowledgeRerankApiKey: {
+          action: 'replace',
+          value: 'rerank-secret-value'
+        }
+      })
+    )
+
+    expect(await readFile(filePath, 'utf8')).not.toContain(
+      'rerank-secret-value'
+    )
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      knowledgeRerankEnabled: true,
+      knowledgeRerankEndpoint: 'https://rerank.example/v1/rerank',
+      knowledgeRerankModel: 'vendor/rerank-large',
+      knowledgeRerankApiKey: 'rerank-secret-value'
+    })
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      knowledgeRerankApiKeyConfigured: true,
+      knowledgeRerankCredentialSource: 'encrypted'
+    })
+    await expect(
+      store.update(
+        settings({
+          knowledgeRerankEndpoint: 'https://other.example/v1/rerank',
+          knowledgeRerankApiKey: { action: 'keep' }
+        })
+      )
+    ).rejects.toThrow('重排接口 URL 已更改')
+  })
+
+  it('prefers the rerank environment API key without exposing it', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        knowledgeRerankApiKey: {
+          action: 'replace',
+          value: 'stored-rerank-secret'
+        }
+      })
+    )
+    const environmentStore = new RuntimeSettingsStore(filePath, cipher, {
+      GOODBUDDY_RERANK_API_KEY: 'environment-rerank-secret'
+    })
+
+    await expect(environmentStore.getResolvedSettings()).resolves.toMatchObject({
+      knowledgeRerankApiKey: 'environment-rerank-secret'
+    })
+    const publicSettings = await environmentStore.getPublicSettings()
+    expect(publicSettings).toMatchObject({
+      knowledgeRerankApiKeyConfigured: true,
+      knowledgeRerankCredentialSource: 'environment'
+    })
+    expect(JSON.stringify(publicSettings)).not.toContain(
+      'environment-rerank-secret'
+    )
+  })
+
+  it('clears rerank credentials and rejects replacement without secure storage', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        knowledgeRerankApiKey: {
+          action: 'replace',
+          value: 'rerank-secret-to-clear'
+        }
+      })
+    )
+    await store.update(
+      settings({
+        knowledgeRerankApiKey: { action: 'clear' }
+      })
+    )
+    expect(await readFile(filePath, 'utf8')).not.toContain(
+      'rerank-secret-to-clear'
+    )
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      knowledgeRerankApiKeyConfigured: false,
+      knowledgeRerankCredentialSource: 'none'
+    })
+
+    const unavailable = new RuntimeSettingsStore(filePath, {
+      ...cipher,
+      isAvailable: () => false
+    })
+    await expect(
+      unavailable.update(
+        settings({
+          knowledgeRerankApiKey: {
+            action: 'replace',
+            value: 'must-not-be-persisted'
+          }
+        })
+      )
+    ).rejects.toThrow('安全存储不可用')
+    expect(await readFile(filePath, 'utf8')).not.toContain(
+      'must-not-be-persisted'
+    )
   })
 
   it('migrates version 6 Ollama origins to OpenAI-compatible embedding endpoints', async () => {
@@ -658,7 +791,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(13)
+    expect(persisted.version).toBe(14)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -832,7 +965,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 13,
+      version: 14,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -1111,7 +1244,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(13)
+    expect(persisted.version).toBe(14)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

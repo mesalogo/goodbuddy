@@ -8,6 +8,7 @@ import {
   classifyEmbeddingError,
   EmbeddingOperationError
 } from './embedding-errors'
+import { embeddingStorageProvider } from './embedding-provider-key'
 
 const DEFAULT_BATCH_SIZE = 32
 const MAX_BATCH_SIZE = 256
@@ -86,6 +87,7 @@ export interface EmbeddingIndexCoordinatorOptions {
 export interface EmbeddingDiagnosticOptions {
   signal?: AbortSignal
   probeText?: string
+  now?: () => number
 }
 
 export interface EmbeddingRebuildOptions {
@@ -148,6 +150,55 @@ function validateVector(
 
 function percent(completed: number, total: number): number {
   return total === 0 ? 0 : (completed / total) * 100
+}
+
+export async function diagnoseEmbeddingProvider(
+  provider: EmbeddingIndexProvider,
+  options: EmbeddingDiagnosticOptions = {}
+): Promise<EmbeddingDiagnosticResult> {
+  const providerName = validatedLabel(provider.provider, 'provider')
+  const model = validatedLabel(provider.model, 'model')
+  const now = options.now ?? Date.now
+  const startedAt = now()
+  try {
+    const vectors = await provider.embed(
+      [options.probeText ?? 'GoodBuddy 向量模型连接测试'],
+      options.signal
+    )
+    if (vectors.length !== 1 || !vectors[0]) {
+      throw new EmbeddingOperationError({
+        code: 'invalid_response',
+        message: '向量服务返回了无效结果。',
+        retryable: false,
+        remedy: '请确认服务为每个输入返回一个有效向量。'
+      })
+    }
+    const dimensions = validateVector(vectors[0])
+    const checkedAt = now()
+    return {
+      status: 'available',
+      provider: providerName,
+      model,
+      checkedAt,
+      latencyMs: Math.max(0, checkedAt - startedAt),
+      dimensions
+    }
+  } catch (error) {
+    const checkedAt = now()
+    return {
+      status: 'unavailable',
+      provider: providerName,
+      model,
+      checkedAt,
+      latencyMs: Math.max(0, checkedAt - startedAt),
+      error:
+        error instanceof EmbeddingOperationError
+          ? error.toSafeError()
+          : classifyEmbeddingError(error, {
+              cancelled: options.signal?.aborted
+            })
+    }
+  }
 }
 
 export class EmbeddingIndexCoordinator {
@@ -215,48 +266,10 @@ export class EmbeddingIndexCoordinator {
     provider: EmbeddingIndexProvider,
     options: EmbeddingDiagnosticOptions = {}
   ): Promise<EmbeddingDiagnosticResult> {
-    const providerName = validatedLabel(provider.provider, 'provider')
-    const model = validatedLabel(provider.model, 'model')
-    const startedAt = this.now()
-    try {
-      const vectors = await provider.embed(
-        [options.probeText ?? 'GoodBuddy 向量模型连接测试'],
-        options.signal
-      )
-      if (vectors.length !== 1 || !vectors[0]) {
-        throw new EmbeddingOperationError({
-          code: 'invalid_response',
-          message: '向量服务返回了无效结果。',
-          retryable: false,
-          remedy: '请确认服务为每个输入返回一个有效向量。'
-        })
-      }
-      const dimensions = validateVector(vectors[0])
-      const checkedAt = this.now()
-      return {
-        status: 'available',
-        provider: providerName,
-        model,
-        checkedAt,
-        latencyMs: Math.max(0, checkedAt - startedAt),
-        dimensions
-      }
-    } catch (error) {
-      const checkedAt = this.now()
-      return {
-        status: 'unavailable',
-        provider: providerName,
-        model,
-        checkedAt,
-        latencyMs: Math.max(0, checkedAt - startedAt),
-        error:
-          error instanceof EmbeddingOperationError
-            ? error.toSafeError()
-            : classifyEmbeddingError(error, {
-                cancelled: options.signal?.aborted
-              })
-      }
-    }
+    return diagnoseEmbeddingProvider(provider, {
+      ...options,
+      now: this.now
+    })
   }
 
   startRebuild(
@@ -328,6 +341,7 @@ export class EmbeddingIndexCoordinator {
     provider: EmbeddingIndexProvider,
     signal: AbortSignal
   ): Promise<EmbeddingIndexJob> {
+    const storageProvider = embeddingStorageProvider(provider)
     try {
       signal.throwIfAborted()
       const documentIds =
@@ -365,7 +379,7 @@ export class EmbeddingIndexCoordinator {
         const replacementId =
           await this.repository.beginDocumentReplacement(
             document.id,
-            provider.provider,
+            storageProvider,
             provider.model,
             signal
           )
@@ -413,7 +427,7 @@ export class EmbeddingIndexCoordinator {
             await this.repository.appendDocumentReplacement(
               replacementId,
               document.id,
-              provider.provider,
+              storageProvider,
               provider.model,
               records,
               signal
@@ -423,7 +437,7 @@ export class EmbeddingIndexCoordinator {
           await this.repository.finishDocumentReplacement(
             replacementId,
             document.id,
-            provider.provider,
+            storageProvider,
             provider.model,
             signal
           )
@@ -442,7 +456,7 @@ export class EmbeddingIndexCoordinator {
           }
           await this.repository.recordDocumentError(
             document.id,
-            provider.provider,
+            storageProvider,
             provider.model,
             safeError.message
           )

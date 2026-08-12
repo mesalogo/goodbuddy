@@ -26,11 +26,16 @@ function createService() {
             displayName: `来源 ${index}`,
             location: `/private/${index}`
           },
-          chunk: { location: `第 ${index + 1} 段` },
+          chunk: {
+            id: `44444444-4444-4444-8444-44444444444${index}`,
+            location: `第 ${index + 1} 段`
+          },
           snippet: `<mark>匹配</mark> ${index}`,
           rank: index + 1,
           retrieval: {
+            score: 0.5,
             channels: ['fts'] as const,
+            lexicalRank: 1,
             evidenceIds: []
           }
         }
@@ -115,9 +120,12 @@ describe('KnowledgeMcpGateway', () => {
       expect.objectContaining({
         libraryId: secondLibraryId,
         libraryName: '二号知识库',
+        chunkId: '44444444-4444-4444-8444-444444444440',
+        score: 0.5,
         snippet: '匹配 0'
       })
     ])
+    expect(references[0]?.sourceLocation).toBeUndefined()
     expect(gateway.drainReferences(token)).toEqual(references)
     expect(gateway.drainReferences(token)).toEqual([])
     await expect(

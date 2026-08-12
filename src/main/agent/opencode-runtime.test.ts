@@ -274,7 +274,7 @@ function embeddedRuntime(
 
 async function collectRun(
   runtime: OpenCodeRuntime,
-  workMode: 'ask' | 'plan' | 'execute' = 'execute'
+  workMode: 'ask' | 'execute' = 'execute'
 ) {
   const events = []
   for await (const event of runtime.run(
@@ -2083,9 +2083,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it.each(['ask', 'plan'] as const)(
-    'uses deny-all session rules and hard tool disable in %s mode',
-    async (workMode) => {
+  it('uses deny-all session rules and hard tool disable in Ask mode', async () => {
       const { client, session, tool } = runClient([
         {
           id: 'event-idle',
@@ -2095,7 +2093,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       ])
       const runtime = embeddedRuntime(client)
 
-      await collectRun(runtime, workMode)
+      await collectRun(runtime, 'ask')
 
       expect(session.create).toHaveBeenCalledWith({
         title: 'GoodBuddy 对话',
@@ -2119,8 +2117,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         expect.anything()
       )
       await runtime.dispose()
-    }
-  )
+  })
 
   it('updates reused sessions when the work mode changes', async () => {
     const { client, session } = runClient([

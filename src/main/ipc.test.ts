@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
 import type { AssistantProject } from '../shared/assistant-contracts'
 import type { BrowserLiveState } from '../shared/contracts'
+import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { registerIpcHandlers } from './ipc'
 
@@ -337,6 +338,277 @@ vi.mock('./channels/channel-env', () => ({
     }
   )
 }))
+
+describe('registerIpcHandlers knowledge snapshot ontology', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('exposes per-library ontology settings and rebuild state', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const knowledgeService = {
+      snapshot: vi.fn(() => ({
+        libraries: [
+          {
+            id: libraryId,
+            name: 'Ontology',
+            description: '',
+            storageMode: 'reference',
+            graphEnabled: true,
+            graphStrategy: 'rules',
+            sourceCount: 0,
+            documentCount: 0,
+            indexedDocumentCount: 0,
+            retrievalSettings: {},
+            chunkingSettings: {},
+            chunkingRebuildRequired: false,
+            ontologySettings: defaultKnowledgeOntologySettings,
+            ontologyRebuildRequired: true,
+            updatedAt: '2026-08-12T00:00:00.000Z'
+          }
+        ],
+        sources: [],
+        documents: [],
+        entities: [],
+        relations: [],
+        evidence: [],
+        tasks: []
+      }))
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      knowledgeService as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined)
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    expect(
+      electronMocks.handlers.get(ipcChannels.knowledgeSnapshot)?.(
+        event,
+        libraryId
+      )
+    ).toMatchObject({
+      libraries: [
+        {
+          id: libraryId,
+          ontologySettings: defaultKnowledgeOntologySettings,
+          ontologyRebuildRequired: true
+        }
+      ]
+    })
+    await dispose()
+  })
+})
+
+describe('registerIpcHandlers knowledge embedding index', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates and forwards library-scoped index actions', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const jobId = '22222222-2222-4222-8222-222222222222'
+    const snapshot = {
+      knowledgeBaseId: libraryId,
+      enabled: true,
+      configuration: {
+        provider: 'openai-compatible',
+        model: 'embed-v1',
+        endpoint: 'http://127.0.0.1:11434/v1/embeddings',
+        credentialConfigured: false
+      },
+      coverage: { total: 2, indexed: 1, missing: 1, error: 0 },
+      indexStatus: { job: null }
+    }
+    const knowledgeService = {
+      getEmbeddingIndexSnapshot: vi.fn(async () => snapshot),
+      rebuildEmbeddingIndex: vi.fn(async () => snapshot),
+      cancelEmbeddingIndex: vi.fn(async () => true)
+    }
+    const settingsStore = {
+      getResolvedSettings: vi.fn(async () => ({
+        knowledgeEmbeddingEnabled: true
+      })),
+      getPublicSettings: vi.fn(async () => ({
+        knowledgeEmbeddingModel: 'embed-v1',
+        knowledgeEmbeddingBaseUrl:
+          'http://127.0.0.1:11434/v1/embeddings',
+        knowledgeEmbeddingApiKeyConfigured: false
+      }))
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      settingsStore as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      knowledgeService as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined)
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeEmbeddingIndexGet
+      )?.(event, { knowledgeBaseId: libraryId })
+    ).resolves.toEqual(snapshot)
+    expect(
+      knowledgeService.getEmbeddingIndexSnapshot
+    ).toHaveBeenCalledWith(
+      libraryId,
+      snapshot.configuration
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeEmbeddingIndexRebuild
+      )?.(event, { knowledgeBaseId: libraryId })
+    ).resolves.toEqual(snapshot)
+    expect(knowledgeService.rebuildEmbeddingIndex).toHaveBeenCalledWith(
+      libraryId,
+      snapshot.configuration
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeEmbeddingIndexCancel
+      )?.(event, { knowledgeBaseId: libraryId, jobId })
+    ).resolves.toBe(true)
+    expect(knowledgeService.cancelEmbeddingIndex).toHaveBeenCalledWith(
+      libraryId,
+      jobId
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeEmbeddingIndexGet
+      )?.(event, { knowledgeBaseId: 'not-a-uuid' })
+    ).rejects.toThrow()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeEmbeddingIndexGet
+      )?.(
+        { sender: {}, senderFrame: webContents.mainFrame },
+        { knowledgeBaseId: libraryId }
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await dispose()
+  })
+})
+
+describe('registerIpcHandlers knowledge task actions', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates and forwards bounded cancel and retry actions', async () => {
+    const taskId = '33333333-3333-4333-8333-333333333333'
+    const knowledgeService = {
+      cancelTask: vi.fn(async () => true),
+      retryTask: vi.fn(async () => undefined)
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      knowledgeService as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined)
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeTaskCancel
+      )?.(event, { taskId })
+    ).resolves.toBe(true)
+    expect(knowledgeService.cancelTask).toHaveBeenCalledWith(taskId)
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeTaskRetry
+      )?.(event, { taskId })
+    ).resolves.toBeUndefined()
+    expect(knowledgeService.retryTask).toHaveBeenCalledWith(taskId)
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeTaskCancel
+      )?.(event, { taskId: 'not-a-uuid' })
+    ).rejects.toThrow()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.knowledgeTaskRetry
+      )?.(
+        { sender: {}, senderFrame: webContents.mainFrame },
+        { taskId }
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await dispose()
+  })
+})
 
 describe('registerIpcHandlers model ZIP dialogs', () => {
   afterEach(() => {
@@ -1247,6 +1519,12 @@ describe('registerIpcHandlers agent terminal state', () => {
       knowledgeSearchHandler: electronMocks.handlers.get(
         ipcChannels.knowledgeSearch
       ),
+      knowledgeRebuildHandler: electronMocks.handlers.get(
+        ipcChannels.knowledgeRebuildLibrary
+      ),
+      knowledgeCancelRebuildHandler: electronMocks.handlers.get(
+        ipcChannels.knowledgeCancelRebuild
+      ),
       webContents
     }
   }
@@ -1525,6 +1803,220 @@ describe('registerIpcHandlers agent terminal state', () => {
       { requestId, type: 'done' }
     ])
     expect(knowledgeGateway.revoke).toHaveBeenCalledWith('capability')
+    await harness.dispose()
+  })
+
+  it('preflights always-retrieve mode and injects bounded untrusted evidence', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const documentId = '33333333-3333-4333-8333-333333333333'
+    const chunkId = '44444444-4444-4444-8444-444444444444'
+    const run = vi.fn(async function* (request: {
+      requestId: string
+      prompt: string
+      trustedInstructions?: string
+    }) {
+      expect(request.prompt).toContain(
+        'BEGIN_UNTRUSTED_KNOWLEDGE_EVIDENCE'
+      )
+      expect(request.prompt).toContain('离线部署需要先校验安装包')
+      expect(request.prompt).toContain('ORIGINAL_USER_REQUEST')
+      expect(request.prompt).not.toContain('C:\\private')
+      expect(request.trustedInstructions).toContain(
+        'untrusted quoted data'
+      )
+      yield { requestId: request.requestId, type: 'done' }
+    })
+    const retrievalResponse = {
+      query: '如何离线部署？',
+      durationMs: 12,
+      settings: {
+        version: 1 as const,
+        topK: 6,
+        minimumVectorSimilarity: 0,
+        ftsWeight: 1,
+        vectorWeight: 1,
+        graphWeight: 0.8,
+        candidateMultiplier: 4,
+        contextMaxCharacters: 16_000,
+        adjacentChunkCount: 0,
+        localRerankEnabled: false
+      },
+      diagnostics: {
+        requestedChannels: ['fts' as const],
+        usedChannels: ['fts' as const],
+        degradedChannels: [],
+        candidateCounts: { fts: 1 },
+        channelDurationMs: { fts: 4 },
+        vectorScannedCount: 0,
+        filteredByThresholdCount: 0,
+        filteredByBudgetCount: 0,
+        rerank: {
+          requested: 'none' as const,
+          used: 'none' as const,
+          status: 'skipped' as const,
+          candidateCount: 1,
+          durationMs: 0
+        }
+      },
+      results: [
+        {
+          knowledgeBaseId: libraryId,
+          documentId,
+          sourceId: '55555555-5555-4555-8555-555555555555',
+          chunkId,
+          documentTitle: '离线部署.md',
+          sourceDisplayName: '产品手册',
+          sourceType: 'file' as const,
+          location: '第 2 节',
+          snippet: '离线部署需要先校验安装包',
+          relevance: 0.9,
+          rank: 1,
+          channels: ['fts' as const],
+          scores: {
+            ftsRank: 1,
+            fusedScore: 0.8
+          }
+        }
+      ],
+      context: {
+        characterCount: 13,
+        truncated: false,
+        groups: [
+          {
+            resultChunkId: chunkId,
+            chunkIds: [chunkId],
+            documentId,
+            content: '离线部署需要先校验安装包',
+            characterCount: 13,
+            truncated: false
+          }
+        ]
+      }
+    }
+    const retrieveMany = vi.fn(async () => [
+      { knowledgeBaseId: libraryId, response: retrievalResponse }
+    ])
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'capability'),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      {
+        runtimeId: 'model',
+        capability: 'chat',
+        supportsToolExecution: true,
+        run
+      },
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      {
+        database: {
+          listKnowledgeBases: vi.fn(() => [
+            { id: libraryId, name: '产品知识' }
+          ])
+        },
+        retrieveMany
+      },
+      knowledgeGateway
+    )
+    const requestId = '00000000-0000-4000-8000-000000000024'
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'always-retrieve',
+      prompt: '如何离线部署？',
+      workMode: 'ask',
+      knowledgeLibraryIds: [libraryId],
+      knowledgeRetrievalMode: 'always'
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+
+    expect(retrieveMany).toHaveBeenCalledWith(
+      [libraryId],
+      '如何离线部署？',
+      expect.any(AbortSignal)
+    )
+    const publicEvents = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, payload]) => payload)
+    expect(publicEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'knowledge-retrieval',
+          state: 'searching'
+        }),
+        expect.objectContaining({
+          type: 'knowledge-retrieval',
+          state: 'succeeded',
+          resultCount: 1
+        }),
+        expect.objectContaining({
+          type: 'source-references',
+          references: [
+            expect.objectContaining({
+              chunkId,
+              documentId
+            })
+          ]
+        })
+      ])
+    )
+    expect(run).toHaveBeenCalledOnce()
+    await harness.dispose()
+  })
+
+  it('cancels an active full-library rebuild through its scoped controller', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    let resolveRebuild:
+      | ((value: { rebuilt: number; failed: number }) => void)
+      | undefined
+    const rebuildLibrary = vi.fn(
+      () =>
+        new Promise<{ rebuilt: number; failed: number }>(
+          (resolve) => {
+            resolveRebuild = resolve
+          }
+        )
+    )
+    const cancelLibraryRebuild = vi.fn(() => true)
+    const harness = createHarness(
+      {
+        capability: 'chat',
+        supportsToolExecution: true
+      },
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      {
+        database: { listKnowledgeBases: vi.fn(() => []) },
+        cancelLibraryRebuild,
+        rebuildLibrary
+      }
+    )
+    const event = trustedEvent(harness.webContents)
+    const rebuild = harness.knowledgeRebuildHandler?.(event, {
+      knowledgeBaseId: libraryId
+    }) as Promise<unknown>
+    await vi.waitFor(() => expect(rebuildLibrary).toHaveBeenCalledOnce())
+
+    expect(
+      await Promise.resolve(
+        harness.knowledgeCancelRebuildHandler?.(event, libraryId)
+      )
+    ).toBe(true)
+    expect(cancelLibraryRebuild).toHaveBeenCalledWith(libraryId)
+    resolveRebuild?.({ rebuilt: 0, failed: 0 })
+    await expect(rebuild).resolves.toEqual({ rebuilt: 0, failed: 0 })
     await harness.dispose()
   })
 

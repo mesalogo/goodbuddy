@@ -75,8 +75,8 @@ import type {
 } from '../shared/speech-model-contracts'
 import type {
   EmbeddingDiagnosticResult,
-  EmbeddingIndexStatus,
-  EmbeddingSettingsSnapshot
+  EmbeddingSettingsSnapshot,
+  KnowledgeEmbeddingIndexSnapshot
 } from '../shared/embedding-contracts'
 import type {
   DocumentOcrAssets,
@@ -98,6 +98,20 @@ import type {
   MagicTodoItem,
   MagicTodosSnapshot
 } from '../shared/magic-notes-contracts'
+import type {
+  KnowledgeChunkDeleteInput,
+  KnowledgeChunkPage,
+  KnowledgeChunkUpdateInput,
+  KnowledgeChunksListInput,
+  KnowledgeDocumentRebuildInput,
+  KnowledgeLibraryRebuildInput,
+  KnowledgeReferenceContext,
+  KnowledgeReferenceContextInput,
+  KnowledgeReferenceOpenInput,
+  KnowledgeRetrievalResponse,
+  KnowledgeRetrieveInput,
+  KnowledgeSettingsUpdateInput
+} from '../shared/knowledge-contracts'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -409,28 +423,7 @@ const desktopApi: DesktopApi = {
     diagnose: () =>
       ipcRenderer.invoke(
         ipcChannels.embeddingDiagnose
-      ) as Promise<EmbeddingDiagnosticResult>,
-    rebuild: () =>
-      ipcRenderer.invoke(
-        ipcChannels.embeddingIndexRebuild
-      ) as Promise<EmbeddingIndexStatus>,
-    cancel: (jobId: string) =>
-      ipcRenderer.invoke(
-        ipcChannels.embeddingIndexCancel,
-        { jobId }
-      ) as Promise<boolean>,
-    onStatus: (listener) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        status: EmbeddingIndexStatus
-      ): void => listener(status)
-      ipcRenderer.on(ipcChannels.embeddingIndexStatusChanged, handler)
-      return () =>
-        ipcRenderer.removeListener(
-          ipcChannels.embeddingIndexStatusChanged,
-          handler
-        )
-    }
+      ) as Promise<EmbeddingDiagnosticResult>
   },
   documentParsing: {
     getSnapshot: () =>
@@ -1020,6 +1013,81 @@ const desktopApi: DesktopApi = {
         libraryIds,
         query
       }) as Promise<KnowledgeSearchReference[]>,
+    retrieve: (input: KnowledgeRetrieveInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeRetrieve,
+        input
+      ) as Promise<KnowledgeRetrievalResponse>,
+    updateSettings: (input: KnowledgeSettingsUpdateInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeUpdateSettings,
+        input
+      ) as Promise<KnowledgeLibrary>,
+    listChunks: (input: KnowledgeChunksListInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeListChunks,
+        input
+      ) as Promise<KnowledgeChunkPage>,
+    updateChunk: async (input: KnowledgeChunkUpdateInput) => {
+      await ipcRenderer.invoke(ipcChannels.knowledgeUpdateChunk, input)
+    },
+    deleteChunk: async (input: KnowledgeChunkDeleteInput) => {
+      await ipcRenderer.invoke(ipcChannels.knowledgeDeleteChunk, input)
+    },
+    rebuildDocument: (input: KnowledgeDocumentRebuildInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeRebuildDocument,
+        input
+      ) as Promise<KnowledgeSnapshot>,
+    rebuildLibrary: (input: KnowledgeLibraryRebuildInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeRebuildLibrary,
+        input
+      ) as Promise<{ rebuilt: number; failed: number }>,
+    cancelRebuild: (knowledgeBaseId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeCancelRebuild,
+        knowledgeBaseId
+      ) as Promise<boolean>,
+    getEmbeddingIndex: (knowledgeBaseId: string) =>
+      ipcRenderer.invoke(ipcChannels.knowledgeEmbeddingIndexGet, {
+        knowledgeBaseId
+      }) as Promise<KnowledgeEmbeddingIndexSnapshot>,
+    rebuildEmbeddingIndex: (knowledgeBaseId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeEmbeddingIndexRebuild,
+        { knowledgeBaseId }
+      ) as Promise<KnowledgeEmbeddingIndexSnapshot>,
+    cancelEmbeddingIndex: (
+      knowledgeBaseId: string,
+      jobId: string
+    ) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeEmbeddingIndexCancel,
+        { knowledgeBaseId, jobId }
+      ) as Promise<boolean>,
+    cancelTask: (taskId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeTaskCancel,
+        { taskId }
+      ) as Promise<boolean>,
+    retryTask: async (taskId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.knowledgeTaskRetry,
+        { taskId }
+      )
+    },
+    getReferenceContext: (input: KnowledgeReferenceContextInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.knowledgeReferenceContext,
+        input
+      ) as Promise<KnowledgeReferenceContext>,
+    openReferenceSource: async (input: KnowledgeReferenceOpenInput) => {
+      await ipcRenderer.invoke(
+        ipcChannels.knowledgeOpenReferenceSource,
+        input
+      )
+    },
     createEntity: async (libraryId, input) => {
       await ipcRenderer.invoke(ipcChannels.knowledgeCreateEntity, {
         libraryId,

@@ -9,6 +9,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import type { KnowledgeSearchReference } from '../../shared/contracts'
+import { stripKnowledgeHighlightTags } from '../../shared/knowledge-text'
 import type { KnowledgeService } from '../knowledge/knowledge-service'
 import type {
   MagicNoteDetail,
@@ -236,13 +237,10 @@ function referenceKey(reference: KnowledgeSearchReference): string {
   return [
     reference.libraryId,
     reference.documentId,
+    reference.chunkId ?? '',
     reference.locator ?? '',
     reference.snippet
   ].join('\0')
-}
-
-function stripMarkTags(value: string): string {
-  return value.replace(/<\/?mark\b[^>]*>/giu, '')
 }
 
 function sendJson(
@@ -465,12 +463,17 @@ export class KnowledgeMcpGateway {
         libraryId: knowledgeBaseId,
         libraryName: libraryNames.get(knowledgeBaseId) ?? '知识库',
         documentId: result.document.id,
+        chunkId: result.chunk.id,
         documentName: result.document.title.slice(0, 500),
         sourceName: result.source.displayName.slice(0, 500),
-        sourceLocation: result.source.location?.slice(0, 4_096),
         locator: result.chunk.location?.slice(0, 1_000),
-        snippet: stripMarkTags(result.snippet).slice(0, 12_000),
+        snippet: stripKnowledgeHighlightTags(result.snippet).slice(0, 12_000),
         rank: result.rank,
+        score: result.retrieval.score,
+        lexicalRank: result.retrieval.lexicalRank,
+        vectorRank: result.retrieval.vectorRank,
+        graphRank: result.retrieval.graphRank,
+        similarity: result.retrieval.similarity,
         retrievalChannels: result.retrieval.channels,
         evidenceIds: result.retrieval.evidenceIds?.slice(0, 100)
       }

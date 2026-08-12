@@ -461,27 +461,25 @@ describe('ModelToolProvider', () => {
     } satisfies ModelToolCallContext
     const signal = new AbortController().signal
 
-    for (const workMode of ['ask', 'plan'] as const) {
-      const readOnlyContext = {
-        conversationId: `browser-${workMode}`,
-        workMode
-      } satisfies ModelToolCallContext
-      await expect(
-        provider.listTools(readOnlyContext, signal)
-      ).resolves.not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: 'browser_screenshot' })
-        ])
+    const readOnlyContext = {
+      conversationId: 'browser-ask',
+      workMode: 'ask'
+    } satisfies ModelToolCallContext
+    await expect(
+      provider.listTools(readOnlyContext, signal)
+    ).resolves.not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'browser_screenshot' })
+      ])
+    )
+    await expect(
+      provider.callTool(
+        'browser_screenshot',
+        {},
+        signal,
+        readOnlyContext
       )
-      await expect(
-        provider.callTool(
-          'browser_screenshot',
-          {},
-          signal,
-          readOnlyContext
-        )
-      ).rejects.toThrow('未知工具')
-    }
+    ).rejects.toThrow('未知工具')
     expect(browserService.screenshot).not.toHaveBeenCalled()
 
     const tools = await provider.listTools(firstContext, signal)
@@ -603,13 +601,6 @@ describe('ModelToolProvider', () => {
         source: 'builtin'
       })
     ])
-    await expect(
-      provider.listTools(
-        { ...askContext, workMode: 'plan' },
-        signal
-      )
-    ).resolves.toEqual([])
-
     await provider.callTool(
       'web_search',
       { query: 'GoodBuddy current release', numResults: 3 },

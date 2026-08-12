@@ -1,9 +1,9 @@
 import type {
   AgentQuestionAnswer,
-  AgentRequest,
   AgentRuntimeStatus
 } from '../../shared/contracts'
 import type {
+  AgentExecutionRequest,
   AgentRuntime,
   RuntimeAuthorizer,
   RuntimeEvent
@@ -113,7 +113,7 @@ export class AgentRuntimeController implements AgentRuntime {
   }
 
   async *run(
-    request: AgentRequest,
+    request: AgentExecutionRequest,
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void> {

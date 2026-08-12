@@ -208,7 +208,7 @@ export type ModelToolResult = {
 
 export type ModelToolCallContext = {
   conversationId: string
-  workMode: 'ask' | 'plan' | 'execute'
+  workMode: 'ask' | 'execute'
   knowledgeCapabilityToken?: string
 }
 
@@ -1218,10 +1218,9 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): Promise<ModelToolDefinition[]> {
     signal.throwIfAborted()
     const scopedTools = this.getScopedTools(context)
-    const webTools =
-      this.webSearchEnabled && context.workMode !== 'plan'
-        ? this.getWebSearchDefinitions()
-        : []
+    const webTools = this.webSearchEnabled
+      ? this.getWebSearchDefinitions()
+      : []
     if (context.workMode !== 'execute') {
       return [...webTools, ...scopedTools]
     }

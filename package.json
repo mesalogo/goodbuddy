@@ -18,6 +18,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:retrieval": "vitest run --config tests/support/knowledge-retrieval-evaluation.ts tests/knowledge-retrieval-metrics.test.ts tests/knowledge-retrieval-evaluation.test.ts",
     "build": "npm run typecheck && npm run build:bundle",
     "build:bundle": "electron-vite build",
     "release:notes:verify": "node build/release-notes.cjs",

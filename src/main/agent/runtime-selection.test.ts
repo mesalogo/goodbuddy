@@ -78,6 +78,9 @@ function settings(
     knowledgeEmbeddingBaseUrl:
       'http://127.0.0.1:11434/v1/embeddings',
     knowledgeEmbeddingModel: 'embedding',
+    knowledgeRerankEnabled: false,
+    knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
+    knowledgeRerankModel: 'rerank-v3.5',
     workspacePath: process.cwd(),
     toolApproval: 'always',
     ...overrides

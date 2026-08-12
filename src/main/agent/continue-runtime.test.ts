@@ -35,7 +35,7 @@ function createRuntime(): ContinueAgentRuntime {
 
 async function collectEvents(
   runtime: ContinueAgentRuntime,
-  workMode?: 'ask' | 'plan' | 'execute'
+  workMode?: 'ask' | 'execute'
 ): Promise<RuntimeEvent[]> {
   const events: RuntimeEvent[] = []
   for await (const event of runtime.run(

@@ -287,7 +287,7 @@ describe('ContextManager', () => {
     expect(attachment).toMatchObject({
       name: '需求说明.docx',
       kind: 'text',
-      preview: '[正文] Word 需求正文'
+      preview: '[正文 · 段落 1] Word 需求正文'
     })
     expect(showOpenDialog).toHaveBeenCalledWith(
       expect.anything(),
@@ -326,7 +326,9 @@ describe('ContextManager', () => {
       contextIds: [attachment!.id]
     }).prompt
     expect(prompt).toContain('Word 需求正文')
-    expect(prompt).toContain('"content":"[正文]\\nWord 需求正文"')
+    expect(prompt).toContain(
+      '"content":"[正文 · 段落 1]\\nWord 需求正文"'
+    )
   })
 
   it('keeps all five explicitly selected images', async () => {

@@ -3,6 +3,7 @@ import {
   embeddingDiagnosticResultSchema,
   embeddingIndexJobSchema,
   embeddingIndexStatusSchema,
+  knowledgeEmbeddingIndexSnapshotSchema,
   embeddingSafeErrorSchema,
   isEmbeddingIndexJobActive
 } from './embedding-contracts'
@@ -127,6 +128,24 @@ describe('embedding contracts', () => {
       embeddingIndexStatusSchema.safeParse({
         job: null,
         servingSnapshot: null
+      }).success
+    ).toBe(false)
+  })
+
+  it('validates library-scoped embedding coverage totals', () => {
+    const base = {
+      knowledgeBaseId: '11111111-1111-4111-8111-111111111111',
+      enabled: true,
+      coverage: { total: 4, indexed: 2, missing: 1, error: 1 },
+      indexStatus: { job: null }
+    }
+    expect(
+      knowledgeEmbeddingIndexSnapshotSchema.safeParse(base).success
+    ).toBe(true)
+    expect(
+      knowledgeEmbeddingIndexSnapshotSchema.safeParse({
+        ...base,
+        coverage: { total: 4, indexed: 2, missing: 2, error: 1 }
       }).success
     ).toBe(false)
   })

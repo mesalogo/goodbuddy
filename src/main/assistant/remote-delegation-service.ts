@@ -9,7 +9,7 @@ const remoteTaskSchema = z
     projectId: z.string().uuid().optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100_000),
-    workMode: z.enum(['ask', 'plan'])
+    workMode: z.literal('ask')
   })
   .strict()
 

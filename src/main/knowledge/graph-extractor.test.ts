@@ -10,6 +10,7 @@ import {
   type GraphChunk,
   type KnowledgeGraph
 } from './graph-extractor'
+import { knowledgeOntologySettingsSchema } from '../../shared/knowledge-ontology'
 
 function indexedEvidence(
   chunk: GraphChunk,
@@ -43,13 +44,13 @@ describe('rule graph extraction', () => {
 
     expect(graph.entities).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: '支付服务', type: '服务' }),
-        expect.objectContaining({ name: 'MySQL', type: '数据库' }),
+        expect.objectContaining({ name: '支付服务', type: 'CONCEPT' }),
+        expect.objectContaining({ name: 'MySQL', type: 'CONCEPT' }),
         expect.objectContaining({ name: '风控服务' })
       ])
     )
     const dependency = graph.relations.find(
-      (relation) => relation.type === 'depends_on'
+      (relation) => relation.type === 'DEPENDS_ON'
     )
     expect(dependency).toBeDefined()
     expect(dependency?.evidence[0]).toMatchObject({
@@ -78,19 +79,19 @@ describe('rule graph extraction', () => {
 
     expect(graph.entities).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: 'Application', type: 'section' }),
+        expect.objectContaining({ name: 'Application', type: 'CONCEPT' }),
         expect.objectContaining({ name: 'API Gateway' }),
         expect.objectContaining({ name: 'UserService' }),
         expect.objectContaining({
           name: 'SessionController',
-          type: 'class'
+          type: 'CONCEPT'
         }),
-        expect.objectContaining({ name: 'SessionStore', type: 'interface' }),
-        expect.objectContaining({ name: 'createSession', type: 'function' })
+        expect.objectContaining({ name: 'SessionStore', type: 'CONCEPT' }),
+        expect.objectContaining({ name: 'createSession', type: 'CONCEPT' })
       ])
     )
     expect(graph.relations.map((relation) => relation.type)).toEqual(
-      expect.arrayContaining(['uses', 'depends_on'])
+      expect.arrayContaining(['USES', 'DEPENDS_ON'])
     )
   })
 
@@ -110,7 +111,7 @@ describe('rule graph extraction', () => {
         (entity) => normalizeEntityAlias(entity.name) === 'api gateway'
       )
     ).toHaveLength(1)
-    expect(graph.relations.filter((relation) => relation.type === 'uses')).toHaveLength(
+    expect(graph.relations.filter((relation) => relation.type === 'USES')).toHaveLength(
       1
     )
   })
@@ -337,14 +338,182 @@ describe('extraction strategies', () => {
     expect(graph.entities.filter((entity) => normalizeEntityAlias(entity.name) === 'api')).toHaveLength(
       1
     )
-    expect(api?.type).toBe('service')
+    expect(api?.type).toBe('CONCEPT')
     expect(api?.evidence[0]?.source).toBe('rules')
     expect(api?.evidence.at(-1)?.source).toBe('model')
-    expect(graph.relations.filter((relation) => relation.type === 'uses')).toHaveLength(
+    expect(graph.relations.filter((relation) => relation.type === 'USES')).toHaveLength(
       1
     )
-    expect(graph.relations.find((relation) => relation.type === 'uses')?.evidence[0]?.source).toBe(
+    expect(graph.relations.find((relation) => relation.type === 'USES')?.evidence[0]?.source).toBe(
       'rules'
+    )
+  })
+
+  it('canonicalizes aliases, preserves incompatible same-name types, and warns on fallback', async () => {
+    const chunk = {
+      id: 'ontology-entities',
+      content: 'Alex is represented with several explicit types.'
+    }
+    const result = await extractKnowledgeGraph([chunk], {
+      strategy: 'model',
+      extractStructured: async () => ({
+        entities: [
+          {
+            id: 'person',
+            name: 'Alex',
+            type: 'people',
+            evidence: [indexedEvidence(chunk, 'Alex')]
+          },
+          {
+            id: 'organization',
+            name: 'Alex',
+            type: '公司',
+            evidence: [indexedEvidence(chunk, 'Alex')]
+          },
+          {
+            id: 'unknown',
+            name: 'Unknown',
+            type: 'legacy_service',
+            evidence: [indexedEvidence(chunk, 'represented')]
+          }
+        ],
+        relations: []
+      })
+    })
+
+    expect(
+      result.entities
+        .filter((entity) => entity.name === 'Alex')
+        .map((entity) => entity.type)
+        .sort()
+    ).toEqual(['ORGANIZATION', 'PERSON'])
+    expect(result.entities.find(({ name }) => name === 'Unknown')?.type).toBe(
+      'CONCEPT'
+    )
+    expect(result.warnings).toEqual([
+      'Unknown entity type "legacy_service"; using CONCEPT.'
+    ])
+  })
+
+  it('drops unknown and endpoint-disallowed automatic relations with deduplicated warnings', async () => {
+    const ontology = knowledgeOntologySettingsSchema.parse({
+      entityTypes: [
+        {
+          id: 'CONCEPT',
+          name: { zh: '概念', en: 'Concept' },
+          aliases: ['concept']
+        },
+        {
+          id: 'PERSON',
+          name: { zh: '人物', en: 'Person' },
+          aliases: ['person']
+        },
+        {
+          id: 'ORGANIZATION',
+          name: { zh: '组织', en: 'Organization' },
+          aliases: ['organization']
+        }
+      ],
+      relationTypes: [
+        {
+          id: 'WORKS_FOR',
+          name: { zh: '任职于', en: 'Works for' },
+          aliases: ['works for'],
+          sourceTypes: ['PERSON'],
+          targetTypes: ['ORGANIZATION']
+        }
+      ]
+    })
+    const chunk = { id: 'relations', content: 'Alex Acme' }
+    const relationEvidence = indexedEvidence(chunk, chunk.content)
+    const result = await extractKnowledgeGraph([chunk], {
+      strategy: 'model',
+      ontology,
+      extractStructured: async () => ({
+        entities: [
+          {
+            id: 'alex',
+            name: 'Alex',
+            type: 'PERSON',
+            evidence: [indexedEvidence(chunk, 'Alex')]
+          },
+          {
+            id: 'acme',
+            name: 'Acme',
+            type: 'ORGANIZATION',
+            evidence: [indexedEvidence(chunk, 'Acme')]
+          }
+        ],
+        relations: [
+          {
+            sourceId: 'alex',
+            targetId: 'acme',
+            type: 'works for',
+            evidence: [relationEvidence]
+          },
+          {
+            sourceId: 'acme',
+            targetId: 'alex',
+            type: 'WORKS_FOR',
+            evidence: [relationEvidence]
+          },
+          {
+            sourceId: 'alex',
+            targetId: 'acme',
+            type: 'UNKNOWN',
+            evidence: [relationEvidence, relationEvidence]
+          }
+        ]
+      })
+    })
+
+    expect(result.relations.map(({ type }) => type)).toEqual(['WORKS_FOR'])
+    expect(result.warnings).toEqual([
+      'Relation WORKS_FOR disallows ORGANIZATION -> PERSON; relation dropped.',
+      'Unknown relation type "UNKNOWN"; relation dropped.'
+    ])
+  })
+
+  it('enumerates the selected ontology and constraints in the model prompt', async () => {
+    const ontology = knowledgeOntologySettingsSchema.parse({
+      entityTypes: [
+        {
+          id: 'CONCEPT',
+          name: { zh: '概念', en: 'Concept' },
+          aliases: []
+        },
+        {
+          id: 'PERSON',
+          name: { zh: '人物', en: 'Person' },
+          aliases: []
+        }
+      ],
+      relationTypes: [
+        {
+          id: 'KNOWS',
+          name: { zh: '认识', en: 'Knows' },
+          aliases: [],
+          sourceTypes: ['PERSON'],
+          targetTypes: ['PERSON']
+        }
+      ]
+    })
+    const extractStructured = vi.fn().mockResolvedValue({
+      entities: [],
+      relations: []
+    })
+
+    await extractKnowledgeGraph([{ id: 'prompt', content: 'data' }], {
+      strategy: 'model',
+      ontology,
+      extractStructured
+    })
+    const prompt = extractStructured.mock.calls[0]?.[0] as string
+    expect(prompt).toContain(
+      'Allowed entity type ids (use one exactly): ["CONCEPT","PERSON"]'
+    )
+    expect(prompt).toContain(
+      '{"id":"KNOWS","sourceTypes":["PERSON"],"targetTypes":["PERSON"]}'
     )
   })
 

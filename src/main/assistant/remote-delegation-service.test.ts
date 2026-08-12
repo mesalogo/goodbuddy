@@ -48,7 +48,7 @@ describe('RemoteDelegationService', () => {
       id: '00000000-0000-4000-8000-000000000302',
       title: '远程摘要',
       prompt: '整理状态',
-      workMode: 'plan'
+      workMode: 'ask'
     }
     const transport = vi
       .fn()

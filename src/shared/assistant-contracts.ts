@@ -2,8 +2,13 @@ import { z } from 'zod'
 import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
 
 export const assistantIdSchema = z.string().uuid()
-export const workModeSchema = z.enum(['ask', 'plan', 'execute'])
 export const interactiveWorkModes = ['ask', 'execute'] as const
+export const workModeSchema = z.enum(interactiveWorkModes)
+export const legacyWorkModeSchema = z.enum([
+  'ask',
+  'plan',
+  'execute'
+])
 export const projectKindSchema = z.enum(['user', 'channel'])
 export const projectChannels = [
   'weixin',
@@ -18,12 +23,13 @@ export const projectChannelLabels: Record<ProjectChannel, string> = {
 }
 
 export type WorkMode = z.infer<typeof workModeSchema>
+export type LegacyWorkMode = z.infer<typeof legacyWorkModeSchema>
 export type InteractiveWorkMode = (typeof interactiveWorkModes)[number]
 export type ProjectKind = z.infer<typeof projectKindSchema>
 export type ProjectChannel = z.infer<typeof projectChannelSchema>
 
 export function normalizeInteractiveWorkMode(
-  workMode: WorkMode | undefined
+  workMode: LegacyWorkMode | undefined
 ): InteractiveWorkMode {
   return workMode === 'execute' ? 'execute' : 'ask'
 }
@@ -136,6 +142,7 @@ export const conversationSnapshotSchema = z
     id: assistantIdSchema,
     projectId: assistantIdSchema.optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
+    knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
     remote: z
       .object({
         channel: projectChannelSchema,
@@ -167,15 +174,21 @@ export const conversationSnapshotSchema = z
                     libraryId: assistantIdSchema,
                     libraryName: z.string().max(200),
                     documentId: assistantIdSchema,
+                    chunkId: assistantIdSchema.optional(),
                     documentName: z.string().max(500),
                     sourceName: z.string().max(500),
                     sourceLocation: z.string().max(4_096).optional(),
                     locator: z.string().max(1_000).optional(),
                     snippet: z.string().max(16_000),
                     rank: z.number().finite(),
+                    score: z.number().finite().optional(),
+                    lexicalRank: z.number().int().positive().optional(),
+                    vectorRank: z.number().int().positive().optional(),
+                    graphRank: z.number().int().positive().optional(),
+                    similarity: z.number().min(-1).max(1).optional(),
                     retrievalChannels: z
-                      .array(z.enum(['fts', 'vector', 'graph']))
-                      .max(3)
+                      .array(z.enum(['fts', 'cjk', 'vector', 'graph']))
+                      .max(4)
                       .optional(),
                     evidenceIds: z
                       .array(assistantIdSchema)
@@ -185,6 +198,27 @@ export const conversationSnapshotSchema = z
                   .strict()
               )
               .max(20)
+              .optional(),
+            knowledgeRetrieval: z
+              .object({
+                mode: z.literal('always'),
+                state: z.enum([
+                  'searching',
+                  'succeeded',
+                  'zero',
+                  'degraded',
+                  'failed',
+                  'cancelled'
+                ]),
+                libraryCount: z.number().int().min(1).max(20),
+                resultCount: z.number().int().nonnegative().max(20),
+                durationMs: z.number().int().nonnegative().optional(),
+                usedChannels: z
+                  .array(z.enum(['fts', 'cjk', 'vector', 'graph']))
+                  .max(4),
+                warnings: z.array(z.string().max(500)).max(20)
+              })
+              .strict()
               .optional(),
             artifactIds: z.array(assistantIdSchema).max(8).optional(),
             attachments: z
@@ -357,7 +391,7 @@ export const scheduleCreateSchema = z
     projectId: z.string().uuid().optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100_000),
-    workMode: z.enum(['ask', 'plan']),
+    workMode: z.literal('ask'),
     recurrence: z.enum(['once', 'daily', 'weekly']),
     nextRunAt: z.string().datetime({ offset: true })
   })

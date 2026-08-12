@@ -4,9 +4,47 @@ import {
   embeddingIndexJobSchema,
   type EmbeddingIndexJob
 } from '../../shared/embedding-contracts'
+import {
+  defaultKnowledgeChunkingSettings,
+  defaultKnowledgeRetrievalSettings,
+  knowledgeChunkingSettingsSchema,
+  knowledgeChunkRoleSchema,
+  knowledgeRetrievalSettingsSchema,
+  type KnowledgeChunkRole,
+  type KnowledgeChunksListInput,
+  type KnowledgeSettingsUpdateInput
+} from '../../shared/knowledge-contracts'
+import {
+  defaultKnowledgeOntologySettings,
+  isRelationEndpointAllowed,
+  knowledgeOntologySettingsSchema,
+  normalizeEntityTypeAlias,
+  normalizeOntologyAlias,
+  normalizeRelationTypeAlias
+} from '../../shared/knowledge-ontology'
+import type {
+  KnowledgeTaskError,
+  KnowledgeTaskItem,
+  KnowledgeTaskKind,
+  KnowledgeTaskScope,
+  KnowledgeTaskStage,
+  KnowledgeTaskStatus
+} from '../../shared/knowledge-task-contracts'
+import {
+  knowledgeTaskKindSchema,
+  knowledgeTaskScopeSchema,
+  knowledgeTaskStageSchema,
+  knowledgeTaskStatusSchema
+} from '../../shared/knowledge-task-contracts'
 import type {
   EmbeddingIndexDocument
 } from './embedding-index-coordinator'
+import {
+  containsHanText,
+  contextualIndexText,
+  createCjkSearchText,
+  knowledgeRetrievalTerms
+} from './retrieval-text'
 import type {
   Chunk,
   ChunkEmbeddingInput,
@@ -15,6 +53,7 @@ import type {
   CreateGraphRelationInput,
   CreateKnowledgeBaseInput,
   Document,
+  EmbeddingIndexCoverage,
   Evidence,
   EmbeddingIndexState,
   GraphEntity,
@@ -40,7 +79,7 @@ import type {
   VectorSearchOptions
 } from './types'
 
-const DATABASE_VERSION = 4
+const DATABASE_VERSION = 9
 const MAX_ID_LENGTH = 128
 const MAX_NAME_LENGTH = 512
 const MAX_LOCATION_LENGTH = 8192
@@ -50,6 +89,7 @@ const MAX_CHUNKS = 10_000
 const MAX_CHUNK_BATCH_CONTENT = 32_000_000
 const MAX_ALIASES = 100
 const MAX_LIST_LIMIT = 500
+const maximumFilesPerSourceDatabaseLimit = 2_000
 const MAX_JSON_ARRAY_ITEMS = 1_000
 const MAX_JSON_DEPTH = 20
 const MAX_JSON_NODES = 10_000
@@ -59,8 +99,11 @@ const MAX_EMBEDDING_BATCH = 256
 const MAX_EMBEDDING_PROVIDER_LENGTH = 128
 const MAX_EMBEDDING_MODEL_LENGTH = 512
 const MAX_EMBEDDING_ERROR_LENGTH = 2_000
+const MAX_TASK_TEXT_LENGTH = 1_000
+const MAX_TASK_DEDUPE_KEY_LENGTH = 512
+const MAX_TASK_JOB_ID_LENGTH = 256
+const MAX_TERMINAL_TASKS_PER_LIBRARY = 500
 const MAX_GRAPH_DEPTH = 3
-const MAX_VECTOR_CANDIDATES = 5_000
 const RRF_CONSTANT = 60
 
 type ScoredSearchResult = {
@@ -69,7 +112,64 @@ type ScoredSearchResult = {
   evidenceIds?: string[]
 }
 
+export type HybridSearchResultPage = {
+  results: HybridSearchResult[]
+  vectorScannedCount: number
+}
+
 type Row = Record<string, null | number | bigint | string | Uint8Array>
+
+const taskScopes = knowledgeTaskScopeSchema.options
+const taskKinds = knowledgeTaskKindSchema.options
+const taskStages = knowledgeTaskStageSchema.options
+const taskStatuses = knowledgeTaskStatusSchema.options
+const activeTaskStatuses: readonly KnowledgeTaskStatus[] = [
+  'queued',
+  'running'
+]
+const terminalTaskStatuses: readonly KnowledgeTaskStatus[] = [
+  'succeeded',
+  'failed',
+  'cancelled',
+  'skipped',
+  'interrupted'
+]
+
+export type CreateKnowledgeTaskInput = {
+  id?: string
+  libraryId: string
+  parentTaskId?: string
+  retryOfTaskId?: string
+  sourceId?: string
+  documentId?: string
+  documentName: string
+  scope: KnowledgeTaskScope
+  kind: KnowledgeTaskKind
+  stage?: KnowledgeTaskStage
+  status?: KnowledgeTaskStatus
+  progress?: number
+  completedItems?: number
+  totalItems?: number
+  message?: string
+  error?: KnowledgeTaskError
+  attempt?: number
+  dedupeKey?: string
+  embeddingJobId?: string
+}
+
+export type UpdateKnowledgeTaskInput = {
+  sourceId?: string | null
+  documentId?: string | null
+  documentName?: string
+  stage?: KnowledgeTaskStage
+  status?: KnowledgeTaskStatus
+  progress?: number
+  completedItems?: number | null
+  totalItems?: number | null
+  message?: string | null
+  error?: KnowledgeTaskError | null
+  embeddingJobId?: string | null
+}
 
 function requiredString(
   value: string,
@@ -230,6 +330,21 @@ function parseObject(value: string): JsonObject {
   return JSON.parse(value) as JsonObject
 }
 
+function parseSettings<T>(
+  value: string | null | number | bigint | Uint8Array | undefined,
+  schema: { parse(input: unknown): T },
+  fallback: T
+): T {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+  try {
+    return schema.parse(JSON.parse(value))
+  } catch {
+    return fallback
+  }
+}
+
 function parseStringArray(value: string): string[] {
   return JSON.parse(value) as string[]
 }
@@ -351,6 +466,29 @@ function mapKnowledgeBase(row: Row): KnowledgeBase {
     storageMode: asString(row, 'storage_mode') as StorageMode,
     graphEnabled: asNumber(row, 'graph_enabled') === 1,
     graphStrategy: asString(row, 'graph_strategy') as GraphStrategy,
+    retrievalSettings: parseSettings(
+      row.retrieval_settings,
+      knowledgeRetrievalSettingsSchema,
+      defaultKnowledgeRetrievalSettings
+    ),
+    chunkingSettings: parseSettings(
+      row.chunking_settings,
+      knowledgeChunkingSettingsSchema,
+      defaultKnowledgeChunkingSettings
+    ),
+    chunkingRebuildRequired:
+      row.chunking_rebuild_required === undefined
+        ? false
+        : asNumber(row, 'chunking_rebuild_required') === 1,
+    ontologySettings: parseSettings(
+      row.ontology_settings,
+      knowledgeOntologySettingsSchema,
+      defaultKnowledgeOntologySettings
+    ),
+    ontologyRebuildRequired:
+      row.ontology_rebuild_required === undefined
+        ? false
+        : asNumber(row, 'ontology_rebuild_required') === 1,
     createdAt: asString(row, 'created_at'),
     updatedAt: asString(row, 'updated_at')
   }
@@ -399,8 +537,32 @@ function mapChunk(row: Row): Chunk {
     heading: asOptionalString(row, 'heading'),
     location: asOptionalString(row, 'location'),
     metadata: parseObject(asString(row, 'metadata')),
-    createdAt: asString(row, 'created_at')
+    createdAt: asString(row, 'created_at'),
+    enabled: row.enabled === undefined ? true : asNumber(row, 'enabled') === 1,
+    role:
+      row.role === undefined
+        ? 'standalone'
+        : knowledgeChunkRoleSchema.parse(asString(row, 'role')),
+    parentChunkId:
+      row.parent_chunk_id === undefined
+        ? undefined
+        : asOptionalString(row, 'parent_chunk_id'),
+    manuallyEdited:
+      row.manually_edited === undefined
+        ? false
+        : asNumber(row, 'manually_edited') === 1,
+    updatedAt:
+      row.updated_at === undefined
+        ? undefined
+        : asOptionalString(row, 'updated_at')
   }
+}
+
+function chunkIndexContent(
+  content: string,
+  metadata: JsonObject
+): string {
+  return contextualIndexText(content, metadata.contextPrefix)
 }
 
 function mapEntity(row: Row): GraphEntity {
@@ -443,6 +605,26 @@ function mapEvidence(row: Row): Evidence {
     chunkId: asOptionalString(row, 'chunk_id'),
     quote: asOptionalString(row, 'quote'),
     location: asOptionalString(row, 'location'),
+    start:
+      row.start_offset === undefined || row.start_offset === null
+        ? undefined
+        : asNumber(row, 'start_offset'),
+    end:
+      row.end_offset === undefined || row.end_offset === null
+        ? undefined
+        : asNumber(row, 'end_offset'),
+    confidence:
+      row.confidence === undefined || row.confidence === null
+        ? undefined
+        : asNumber(row, 'confidence'),
+    source:
+      row.source === undefined
+        ? 'legacy'
+        : (asString(row, 'source') as Evidence['source']),
+    provenance:
+      row.provenance === undefined
+        ? {}
+        : parseObject(asString(row, 'provenance')),
     createdAt: asString(row, 'created_at')
   }
 }
@@ -462,8 +644,76 @@ function mapEmbeddingIndexState(row: Row): EmbeddingIndexState {
   }
 }
 
+function mapKnowledgeTask(row: Row): KnowledgeTaskItem {
+  const status = asString(row, 'status') as KnowledgeTaskStatus
+  const kind = asString(row, 'kind') as KnowledgeTaskKind
+  const topLevel = row.parent_task_id === null
+  const sourceId = asOptionalString(row, 'source_id')
+  const documentId = asOptionalString(row, 'document_id')
+  const message = asOptionalString(row, 'message')
+  const errorMessage = asOptionalString(row, 'error_message')
+  return {
+    id: asString(row, 'id'),
+    libraryId: asString(row, 'library_id'),
+    parentTaskId: asOptionalString(row, 'parent_task_id'),
+    retryOfTaskId: asOptionalString(row, 'retry_of_task_id'),
+    sourceId,
+    documentId,
+    documentName: asString(row, 'document_name'),
+    scope: asString(row, 'scope') as KnowledgeTaskScope,
+    kind,
+    stage: asString(row, 'stage') as KnowledgeTaskStage,
+    status,
+    progress: asNumber(row, 'progress'),
+    completedItems:
+      row.completed_items === null
+        ? undefined
+        : asNumber(row, 'completed_items'),
+    totalItems:
+      row.total_items === null ? undefined : asNumber(row, 'total_items'),
+    message,
+    error: errorMessage
+      ? {
+          message: errorMessage,
+          remedy: asOptionalString(row, 'error_remedy')
+        }
+      : undefined,
+    attempt: asNumber(row, 'attempt'),
+    canCancel:
+      topLevel &&
+      activeTaskStatuses.includes(status) &&
+      [
+        'source-sync',
+        'document-process',
+        'document-rebuild',
+        'library-rebuild',
+        'embedding-rebuild',
+        'graph-rebuild'
+      ].includes(kind),
+    canRetry:
+      topLevel &&
+      ['failed', 'cancelled', 'interrupted'].includes(status) &&
+      [
+        'source-sync',
+        'document-rebuild',
+        'library-rebuild',
+        'embedding-rebuild',
+        'graph-rebuild'
+      ].includes(kind) &&
+      (kind !== 'source-sync' || sourceId !== undefined) &&
+      (kind !== 'document-rebuild' || documentId !== undefined),
+    embeddingJobId: asOptionalString(row, 'embedding_job_id'),
+    createdAt: asString(row, 'created_at'),
+    startedAt: asOptionalString(row, 'started_at'),
+    completedAt: asOptionalString(row, 'completed_at'),
+    updatedAt: asString(row, 'updated_at')
+  }
+}
+
 export class KnowledgeDatabase {
   private database?: DatabaseSync
+  private readonly taskPrunedLibraries = new Set<string>()
+  private readonly taskPrunePending = new Set<string>()
 
   constructor(private readonly databasePath: string) {
     requiredString(databasePath, 'databasePath', MAX_LOCATION_LENGTH, false)
@@ -486,11 +736,13 @@ export class KnowledgeDatabase {
       `)
       this.assertFts5(database)
       this.migrate(database)
+      this.database = database
+      this.interruptActiveKnowledgeTasks()
       database
         .prepare('DELETE FROM embedding_rebuild_staging')
         .run()
-      this.database = database
     } catch (error) {
+      this.database = undefined
       database.close()
       throw error
     }
@@ -502,6 +754,8 @@ export class KnowledgeDatabase {
     }
     this.database.close()
     this.database = undefined
+    this.taskPrunedLibraries.clear()
+    this.taskPrunePending.clear()
   }
 
   createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeBase {
@@ -527,16 +781,20 @@ export class KnowledgeDatabase {
       .prepare(
         `INSERT INTO knowledge_bases
           (id, name, description, storage_mode, graph_enabled, graph_strategy,
-           created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+           retrieval_settings, chunking_settings, chunking_rebuild_required,
+           ontology_settings, ontology_rebuild_required, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?)`
       )
       .run(
         id,
         name,
         description ?? null,
         storageMode,
-        input.graphEnabled === false ? 0 : 1,
+        input.graphEnabled === true ? 1 : 0,
         graphStrategy,
+        JSON.stringify(defaultKnowledgeRetrievalSettings),
+        JSON.stringify(defaultKnowledgeChunkingSettings),
+        JSON.stringify(defaultKnowledgeOntologySettings),
         now,
         now
       )
@@ -552,6 +810,44 @@ export class KnowledgeDatabase {
       )
       .all(limit)
       .map(mapKnowledgeBase)
+  }
+
+  getKnowledgeBaseCounts(): Map<
+    string,
+    {
+      sourceCount: number
+      documentCount: number
+      indexedDocumentCount: number
+    }
+  > {
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT kb.id,
+           COUNT(DISTINCT s.id) AS source_count,
+           COUNT(DISTINCT d.id) AS document_count,
+           COUNT(DISTINCT CASE
+             WHEN COALESCE(json_extract(d.metadata, '$.status'), 'ready')
+               <> 'failed'
+             THEN d.id END) AS indexed_document_count
+         FROM knowledge_bases kb
+         LEFT JOIN knowledge_sources s ON s.knowledge_base_id = kb.id
+         LEFT JOIN documents d ON d.knowledge_base_id = kb.id
+         GROUP BY kb.id`
+      )
+      .all()
+    return new Map(
+      rows.map((row) => [
+        asString(row, 'id'),
+        {
+          sourceCount: asNumber(row, 'source_count'),
+          documentCount: asNumber(row, 'document_count'),
+          indexedDocumentCount: asNumber(
+            row,
+            'indexed_document_count'
+          )
+        }
+      ])
+    )
   }
 
   getKnowledgeBase(id: string): KnowledgeBase | undefined {
@@ -589,11 +885,21 @@ export class KnowledgeDatabase {
             'ask'
           ])
     const graphEnabled = input.graphEnabled ?? current.graphEnabled
+    const enablingGraph = !current.graphEnabled && graphEnabled
+    const graphConfigurationChanged =
+      graphEnabled &&
+      (
+        enablingGraph ||
+        graphStrategy !== current.graphStrategy
+      )
     this.requireDatabase()
       .prepare(
         `UPDATE knowledge_bases
          SET name = ?, description = ?, storage_mode = ?, graph_enabled = ?,
-             graph_strategy = ?, updated_at = ?
+             graph_strategy = ?,
+             ontology_rebuild_required = CASE
+               WHEN ? = 1 THEN 1 ELSE ontology_rebuild_required END,
+             updated_at = ?
          WHERE id = ?`
       )
       .run(
@@ -602,19 +908,619 @@ export class KnowledgeDatabase {
         storageMode,
         graphEnabled ? 1 : 0,
         graphStrategy,
+        graphConfigurationChanged ? 1 : 0,
         new Date().toISOString(),
         current.id
       )
     return this.requiredKnowledgeBase(current.id)
   }
 
+  updateKnowledgeSettings(
+    input: KnowledgeSettingsUpdateInput
+  ): KnowledgeBase {
+    const current = this.requiredKnowledgeBase(input.knowledgeBaseId)
+    const retrieval = input.retrieval
+      ? knowledgeRetrievalSettingsSchema.parse(input.retrieval)
+      : current.retrievalSettings
+    const chunking = input.chunking
+      ? knowledgeChunkingSettingsSchema.parse(input.chunking)
+      : current.chunkingSettings
+    const ontology = input.ontology
+      ? knowledgeOntologySettingsSchema.parse(input.ontology)
+      : current.ontologySettings
+    const chunkingChanged =
+      input.chunking !== undefined &&
+      JSON.stringify(chunking) !== JSON.stringify(current.chunkingSettings)
+    const ontologyChanged =
+      input.ontology !== undefined &&
+      JSON.stringify(ontology) !== JSON.stringify(current.ontologySettings)
+    this.requireDatabase()
+      .prepare(
+        `UPDATE knowledge_bases
+         SET retrieval_settings = ?, chunking_settings = ?,
+             chunking_rebuild_required = CASE
+               WHEN NOT EXISTS (
+                 SELECT 1 FROM documents
+                 WHERE documents.knowledge_base_id = knowledge_bases.id
+               ) THEN 0
+               WHEN ? = 1 THEN 1 ELSE chunking_rebuild_required END,
+             ontology_settings = ?,
+             ontology_rebuild_required = CASE
+               WHEN ? = 1 THEN 1 ELSE ontology_rebuild_required END,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        JSON.stringify(retrieval),
+        JSON.stringify(chunking),
+        chunkingChanged ? 1 : 0,
+        JSON.stringify(ontology),
+        ontologyChanged ? 1 : 0,
+        new Date().toISOString(),
+        current.id
+      )
+    return this.requiredKnowledgeBase(current.id)
+  }
+
+  markKnowledgeChunkingRebuilt(knowledgeBaseId: string): void {
+    this.requireDatabase()
+      .prepare(
+        `UPDATE knowledge_bases SET chunking_rebuild_required = 0,
+           updated_at = ? WHERE id = ?`
+      )
+      .run(
+        new Date().toISOString(),
+        requiredString(knowledgeBaseId, 'knowledgeBaseId', MAX_ID_LENGTH)
+      )
+  }
+
+  markKnowledgeOntologyRebuilt(knowledgeBaseId: string): void {
+    this.requireDatabase()
+      .prepare(
+        `UPDATE knowledge_bases SET ontology_rebuild_required = 0,
+           updated_at = ? WHERE id = ?`
+      )
+      .run(
+        new Date().toISOString(),
+        requiredString(knowledgeBaseId, 'knowledgeBaseId', MAX_ID_LENGTH)
+      )
+  }
+
   deleteKnowledgeBase(id: string): boolean {
     const normalizedId = requiredString(id, 'id', MAX_ID_LENGTH)
-    return (
+    const deleted =
       this.requireDatabase()
         .prepare('DELETE FROM knowledge_bases WHERE id = ?')
         .run(normalizedId).changes > 0
+    if (deleted) {
+      this.taskPrunedLibraries.delete(normalizedId)
+      this.taskPrunePending.delete(normalizedId)
+    }
+    return deleted
+  }
+
+  createKnowledgeTask(input: CreateKnowledgeTaskInput): KnowledgeTaskItem {
+    const database = this.requireDatabase()
+    const id = optionalString(input.id, 'id', MAX_ID_LENGTH) ?? randomUUID()
+    const libraryId = requiredString(
+      input.libraryId,
+      'libraryId',
+      MAX_ID_LENGTH
     )
+    const parentTaskId = optionalString(
+      input.parentTaskId,
+      'parentTaskId',
+      MAX_ID_LENGTH
+    )
+    const retryOfTaskId = optionalString(
+      input.retryOfTaskId,
+      'retryOfTaskId',
+      MAX_ID_LENGTH
+    )
+    const sourceId = optionalString(input.sourceId, 'sourceId', MAX_ID_LENGTH)
+    const documentId = optionalString(
+      input.documentId,
+      'documentId',
+      MAX_ID_LENGTH
+    )
+    const documentName = requiredString(
+      input.documentName,
+      'documentName',
+      MAX_NAME_LENGTH
+    )
+    const scope = enumValue(input.scope, 'scope', taskScopes)
+    const kind = enumValue(input.kind, 'kind', taskKinds)
+    const status = enumValue(input.status ?? 'queued', 'status', taskStatuses)
+    const stage = enumValue(input.stage ?? 'queued', 'stage', taskStages)
+    const progress = boundedInteger(
+      input.progress ??
+        (status === 'succeeded' || status === 'skipped' ? 100 : 0),
+      'progress',
+      0,
+      100
+    )
+    const completedItems =
+      input.completedItems === undefined
+        ? undefined
+        : boundedInteger(
+            input.completedItems,
+            'completedItems',
+            0,
+            Number.MAX_SAFE_INTEGER
+          )
+    const totalItems =
+      input.totalItems === undefined
+        ? undefined
+        : boundedInteger(
+            input.totalItems,
+            'totalItems',
+            0,
+            Number.MAX_SAFE_INTEGER
+          )
+    if (
+      completedItems !== undefined &&
+      totalItems !== undefined &&
+      completedItems > totalItems
+    ) {
+      throw new RangeError('completedItems must not exceed totalItems')
+    }
+    const message = optionalString(
+      input.message,
+      'message',
+      MAX_TASK_TEXT_LENGTH
+    )
+    const errorMessage = optionalString(
+      input.error?.message,
+      'error.message',
+      MAX_TASK_TEXT_LENGTH
+    )
+    const errorRemedy = optionalString(
+      input.error?.remedy,
+      'error.remedy',
+      MAX_TASK_TEXT_LENGTH
+    )
+    if (status === 'failed' && !errorMessage) {
+      throw new Error('Failed tasks must include an error')
+    }
+    if (status === 'succeeded' && progress !== 100) {
+      throw new Error('Succeeded tasks must report 100 percent')
+    }
+    const attempt = boundedInteger(
+      input.attempt ?? 1,
+      'attempt',
+      1,
+      Number.MAX_SAFE_INTEGER
+    )
+    const dedupeKey = optionalString(
+      input.dedupeKey,
+      'dedupeKey',
+      MAX_TASK_DEDUPE_KEY_LENGTH
+    )
+    const embeddingJobId = optionalString(
+      input.embeddingJobId,
+      'embeddingJobId',
+      MAX_TASK_JOB_ID_LENGTH
+    )
+    const now = new Date().toISOString()
+    const terminal = terminalTaskStatuses.includes(status)
+    try {
+      database
+        .prepare(
+          `INSERT INTO knowledge_tasks
+            (id, library_id, parent_task_id, retry_of_task_id, source_id,
+             document_id, document_name, scope, kind, stage, status, progress,
+             completed_items, total_items, message, error_message,
+             error_remedy, attempt, dedupe_key, embedding_job_id, created_at,
+             started_at, completed_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          libraryId,
+          parentTaskId ?? null,
+          retryOfTaskId ?? null,
+          sourceId ?? null,
+          documentId ?? null,
+          documentName,
+          scope,
+          kind,
+          stage,
+          status,
+          progress,
+          completedItems ?? null,
+          totalItems ?? null,
+          message ?? null,
+          errorMessage ?? null,
+          errorRemedy ?? null,
+          attempt,
+          dedupeKey ?? null,
+          embeddingJobId ?? null,
+          now,
+          status === 'running' ? now : null,
+          terminal ? now : null,
+          now
+        )
+    } catch (error) {
+      if (
+        dedupeKey &&
+        error instanceof Error &&
+        error.message.includes('UNIQUE constraint failed')
+      ) {
+        const existing = this.getActiveKnowledgeTaskByDedupeKey(
+          libraryId,
+          dedupeKey
+        )
+        if (existing) {
+          return existing
+        }
+      }
+      throw error
+    }
+    if (terminal) {
+      this.taskPrunePending.add(libraryId)
+    }
+    return this.requiredKnowledgeTask(id)
+  }
+
+  getKnowledgeTask(id: string): KnowledgeTaskItem | undefined {
+    const row = this.requireDatabase()
+      .prepare('SELECT * FROM knowledge_tasks WHERE id = ?')
+      .get(requiredString(id, 'id', MAX_ID_LENGTH))
+    return row ? mapKnowledgeTask(row) : undefined
+  }
+
+  getActiveKnowledgeTaskByDedupeKey(
+    libraryId: string,
+    dedupeKey: string
+  ): KnowledgeTaskItem | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT * FROM knowledge_tasks
+         WHERE library_id = ? AND dedupe_key = ?
+           AND status IN ('queued', 'running') LIMIT 1`
+      )
+      .get(
+        requiredString(libraryId, 'libraryId', MAX_ID_LENGTH),
+        requiredString(
+          dedupeKey,
+          'dedupeKey',
+          MAX_TASK_DEDUPE_KEY_LENGTH
+        )
+      )
+    return row ? mapKnowledgeTask(row) : undefined
+  }
+
+  getKnowledgeTaskByEmbeddingJobId(
+    libraryId: string,
+    embeddingJobId: string
+  ): KnowledgeTaskItem | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT * FROM knowledge_tasks
+         WHERE library_id = ? AND embedding_job_id = ?
+         ORDER BY created_at DESC, id DESC LIMIT 1`
+      )
+      .get(
+        requiredString(libraryId, 'libraryId', MAX_ID_LENGTH),
+        requiredString(
+          embeddingJobId,
+          'embeddingJobId',
+          MAX_TASK_JOB_ID_LENGTH
+        )
+      )
+    return row ? mapKnowledgeTask(row) : undefined
+  }
+
+  listKnowledgeTasks(
+    libraryId: string,
+    limit = MAX_LIST_LIMIT
+  ): KnowledgeTaskItem[] {
+    boundedInteger(limit, 'limit', 1, MAX_LIST_LIMIT)
+    const normalizedLibraryId = requiredString(
+      libraryId,
+      'libraryId',
+      MAX_ID_LENGTH
+    )
+    if (
+      !this.taskPrunedLibraries.has(normalizedLibraryId) ||
+      this.taskPrunePending.has(normalizedLibraryId)
+    ) {
+      this.pruneKnowledgeTasks(normalizedLibraryId)
+    }
+    return this.requireDatabase()
+      .prepare(
+        `WITH RECURSIVE retained(id) AS (
+           SELECT id FROM (
+             SELECT id FROM knowledge_tasks
+             WHERE library_id = ?
+               AND status NOT IN ('queued', 'running')
+             ORDER BY created_at DESC, id DESC LIMIT ?
+           )
+           UNION
+           SELECT task.parent_task_id
+           FROM knowledge_tasks task
+           JOIN retained ON task.id = retained.id
+           WHERE task.parent_task_id IS NOT NULL
+           UNION
+           SELECT task.retry_of_task_id
+           FROM knowledge_tasks task
+           JOIN retained ON task.id = retained.id
+           WHERE task.retry_of_task_id IS NOT NULL
+         )
+         SELECT * FROM knowledge_tasks
+         WHERE library_id = ? AND status IN ('queued', 'running')
+         UNION ALL
+         SELECT task.* FROM knowledge_tasks task
+         JOIN retained ON task.id = retained.id
+         WHERE task.status NOT IN ('queued', 'running')
+         ORDER BY created_at DESC, id DESC`
+      )
+      .all(normalizedLibraryId, limit, normalizedLibraryId)
+      .map(mapKnowledgeTask)
+  }
+
+  listActiveKnowledgeTasks(libraryId?: string): KnowledgeTaskItem[] {
+    const database = this.requireDatabase()
+    const rows = libraryId
+      ? database
+          .prepare(
+            `SELECT * FROM knowledge_tasks
+             WHERE library_id = ? AND status IN ('queued', 'running')
+             ORDER BY created_at ASC, id ASC`
+          )
+          .all(requiredString(libraryId, 'libraryId', MAX_ID_LENGTH))
+      : database
+          .prepare(
+            `SELECT * FROM knowledge_tasks
+             WHERE status IN ('queued', 'running')
+             ORDER BY created_at ASC, id ASC`
+          )
+          .all()
+    return rows.map(mapKnowledgeTask)
+  }
+
+  updateKnowledgeTask(
+    id: string,
+    update: UpdateKnowledgeTaskInput
+  ): KnowledgeTaskItem | undefined {
+    const current = this.getKnowledgeTask(id)
+    if (!current || terminalTaskStatuses.includes(current.status)) {
+      return current
+    }
+    const status = enumValue(
+      update.status ?? current.status,
+      'status',
+      taskStatuses
+    )
+    const stage = enumValue(
+      update.stage ?? current.stage,
+      'stage',
+      taskStages
+    )
+    const progress = boundedInteger(
+      status === 'succeeded' || status === 'skipped'
+        ? 100
+        : update.progress ?? current.progress,
+      'progress',
+      0,
+      100
+    )
+    const completedItems =
+      update.completedItems === null
+        ? undefined
+        : update.completedItems === undefined
+          ? current.completedItems
+          : boundedInteger(
+              update.completedItems,
+              'completedItems',
+              0,
+              Number.MAX_SAFE_INTEGER
+            )
+    const totalItems =
+      update.totalItems === null
+        ? undefined
+        : update.totalItems === undefined
+          ? current.totalItems
+          : boundedInteger(
+              update.totalItems,
+              'totalItems',
+              0,
+              Number.MAX_SAFE_INTEGER
+            )
+    if (
+      completedItems !== undefined &&
+      totalItems !== undefined &&
+      completedItems > totalItems
+    ) {
+      throw new RangeError('completedItems must not exceed totalItems')
+    }
+    const message =
+      update.message === null
+        ? undefined
+        : update.message === undefined
+          ? current.message
+          : optionalString(
+              update.message,
+              'message',
+              MAX_TASK_TEXT_LENGTH
+            )
+    const error =
+      update.error === null
+        ? undefined
+        : update.error === undefined
+          ? current.error
+          : {
+              message: requiredString(
+                update.error.message,
+                'error.message',
+                MAX_TASK_TEXT_LENGTH
+              ),
+              remedy: optionalString(
+                update.error.remedy,
+                'error.remedy',
+                MAX_TASK_TEXT_LENGTH
+              )
+            }
+    if (status === 'failed' && !error) {
+      throw new Error('Failed tasks must include an error')
+    }
+    const sourceId =
+      update.sourceId === null
+        ? undefined
+        : update.sourceId === undefined
+          ? current.sourceId
+          : requiredString(update.sourceId, 'sourceId', MAX_ID_LENGTH)
+    const documentId =
+      update.documentId === null
+        ? undefined
+        : update.documentId === undefined
+          ? current.documentId
+          : requiredString(update.documentId, 'documentId', MAX_ID_LENGTH)
+    const documentName =
+      update.documentName === undefined
+        ? current.documentName
+        : requiredString(
+            update.documentName,
+            'documentName',
+            MAX_NAME_LENGTH
+          )
+    const embeddingJobId =
+      update.embeddingJobId === null
+        ? undefined
+        : update.embeddingJobId === undefined
+          ? current.embeddingJobId
+          : requiredString(
+              update.embeddingJobId,
+              'embeddingJobId',
+              MAX_TASK_JOB_ID_LENGTH
+            )
+    const now = new Date().toISOString()
+    const terminal = terminalTaskStatuses.includes(status)
+    const changes = this.requireDatabase()
+      .prepare(
+        `UPDATE knowledge_tasks SET
+           source_id = ?, document_id = ?, document_name = ?, stage = ?,
+           status = ?, progress = ?, completed_items = ?, total_items = ?,
+           message = ?, error_message = ?, error_remedy = ?,
+           embedding_job_id = ?,
+           started_at = CASE
+             WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at
+           END,
+           completed_at = CASE
+             WHEN ? = 1 THEN COALESCE(completed_at, ?) ELSE completed_at
+           END,
+           updated_at = ?
+         WHERE id = ? AND status IN ('queued', 'running')`
+      )
+      .run(
+        sourceId ?? null,
+        documentId ?? null,
+        documentName,
+        stage,
+        status,
+        progress,
+        completedItems ?? null,
+        totalItems ?? null,
+        message ?? null,
+        error?.message ?? null,
+        error?.remedy ?? null,
+        embeddingJobId ?? null,
+        status,
+        now,
+        terminal ? 1 : 0,
+        now,
+        now,
+        current.id
+      ).changes
+    if (changes > 0 && terminal) {
+      this.taskPrunePending.add(current.libraryId)
+    }
+    return this.getKnowledgeTask(current.id)
+  }
+
+  cancelKnowledgeTask(
+    id: string,
+    message = '任务已取消'
+  ): boolean {
+    const current = this.getKnowledgeTask(id)
+    if (!current || !activeTaskStatuses.includes(current.status)) {
+      return false
+    }
+    return (
+      this.updateKnowledgeTask(current.id, {
+        status: 'cancelled',
+        message,
+        error: null
+      })?.status === 'cancelled'
+    )
+  }
+
+  interruptActiveKnowledgeTasks(
+    message = '应用重启，任务已中断'
+  ): number {
+    if (!this.database) {
+      return 0
+    }
+    const normalizedMessage = requiredString(
+      message,
+      'message',
+      MAX_TASK_TEXT_LENGTH
+    )
+    const now = new Date().toISOString()
+    return Number(
+      this.database
+        .prepare(
+          `UPDATE knowledge_tasks
+           SET status = 'interrupted', message = ?, error_message = ?,
+               error_remedy = '请重试该任务。', completed_at = ?,
+               updated_at = ?
+           WHERE status IN ('queued', 'running')`
+        )
+        .run(normalizedMessage, normalizedMessage, now, now).changes
+    )
+  }
+
+  pruneKnowledgeTasks(libraryId: string): number {
+    const normalizedLibraryId = requiredString(
+      libraryId,
+      'libraryId',
+      MAX_ID_LENGTH
+    )
+    const changes = Number(
+      this.requireDatabase()
+        .prepare(
+          `WITH RECURSIVE retained(id) AS (
+             SELECT id FROM (
+               SELECT id FROM knowledge_tasks
+               WHERE library_id = ?
+                 AND status NOT IN ('queued', 'running')
+               ORDER BY created_at DESC, id DESC LIMIT ?
+             )
+             UNION
+             SELECT task.parent_task_id
+             FROM knowledge_tasks task
+             JOIN retained ON task.id = retained.id
+             WHERE task.parent_task_id IS NOT NULL
+             UNION
+             SELECT task.retry_of_task_id
+             FROM knowledge_tasks task
+             JOIN retained ON task.id = retained.id
+             WHERE task.retry_of_task_id IS NOT NULL
+           )
+           DELETE FROM knowledge_tasks
+           WHERE library_id = ? AND status NOT IN ('queued', 'running')
+             AND id NOT IN (SELECT id FROM retained)`
+        )
+        .run(
+          normalizedLibraryId,
+          MAX_TERMINAL_TASKS_PER_LIBRARY,
+          normalizedLibraryId
+        ).changes
+    )
+    this.taskPrunedLibraries.add(normalizedLibraryId)
+    this.taskPrunePending.delete(normalizedLibraryId)
+    return changes
   }
 
   upsertSource(input: UpsertKnowledgeSourceInput): KnowledgeSource {
@@ -720,6 +1626,13 @@ export class KnowledgeDatabase {
       )
       .all(normalizedId, limit)
       .map(mapSource)
+  }
+
+  getSource(id: string): KnowledgeSource | undefined {
+    const row = this.requireDatabase()
+      .prepare('SELECT * FROM knowledge_sources WHERE id = ?')
+      .get(requiredString(id, 'id', MAX_ID_LENGTH))
+    return row ? mapSource(row) : undefined
   }
 
   removeSource(id: string): boolean {
@@ -835,10 +1748,23 @@ export class KnowledgeDatabase {
       const insertChunk = database.prepare(
         `INSERT INTO chunks
           (id, knowledge_base_id, document_id, ordinal, content, token_count,
-           heading, location, metadata, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           heading, location, metadata, created_at, enabled, role,
+           parent_chunk_id, manually_edited, updated_at, cjk_search,
+           index_content)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      for (const chunk of normalizedChunks) {
+      const chunksInForeignKeyOrder = [...normalizedChunks].sort(
+        (left, right) =>
+          Number(left.role === 'child') -
+            Number(right.role === 'child') ||
+          left.ordinal - right.ordinal
+      )
+      for (const chunk of chunksInForeignKeyOrder) {
+        const chunkMetadata = parseObject(chunk.metadata)
+        const indexContent = chunkIndexContent(
+          chunk.content,
+          chunkMetadata
+        )
         insertChunk.run(
           chunk.id,
           knowledgeBaseId,
@@ -849,7 +1775,16 @@ export class KnowledgeDatabase {
           chunk.heading ?? null,
           chunk.location ?? null,
           chunk.metadata,
-          now
+          now,
+          chunk.enabled ? 1 : 0,
+          chunk.role,
+          chunk.parentChunkId ?? null,
+          chunk.manuallyEdited ? 1 : 0,
+          now,
+          createCjkSearchText(
+            `${chunk.heading ?? ''}\n${indexContent}`
+          ),
+          indexContent
         )
       }
     })
@@ -883,6 +1818,53 @@ export class KnowledgeDatabase {
       .map(mapDocument)
   }
 
+  listDocumentsForSource(sourceId: string): Document[] {
+    const normalizedId = requiredString(sourceId, 'sourceId', MAX_ID_LENGTH)
+    return this.requireDatabase()
+      .prepare(
+        `SELECT * FROM documents WHERE source_id = ?
+         ORDER BY created_at ASC, id ASC LIMIT ?`
+      )
+      .all(normalizedId, maximumFilesPerSourceDatabaseLimit)
+      .map(mapDocument)
+  }
+
+  listDocumentsForLibraryRebuild(knowledgeBaseId: string): Document[] {
+    const normalizedId = requiredString(
+      knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    return this.requireDatabase()
+      .prepare(
+        `SELECT * FROM documents WHERE knowledge_base_id = ?
+         ORDER BY source_id ASC, created_at ASC, id ASC`
+      )
+      .all(normalizedId)
+      .map(mapDocument)
+  }
+
+  getDocumentChunkCounts(knowledgeBaseId: string): Map<string, number> {
+    const normalizedId = requiredString(
+      knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    return new Map(
+      this.requireDatabase()
+        .prepare(
+          `SELECT document_id, COUNT(*) AS chunk_count
+           FROM chunks WHERE knowledge_base_id = ?
+           GROUP BY document_id`
+        )
+        .all(normalizedId)
+        .map((row) => [
+          asString(row, 'document_id'),
+          asNumber(row, 'chunk_count')
+        ])
+    )
+  }
+
   removeDocument(id: string): boolean {
     const normalizedId = requiredString(id, 'id', MAX_ID_LENGTH)
     return (
@@ -903,6 +1885,24 @@ export class KnowledgeDatabase {
       .prepare('DELETE FROM graph_evidence WHERE document_id = ?')
       .run(normalizedId).changes
     )
+  }
+
+  replaceEvidenceForDocument(
+    documentId: string,
+    operation: () => void
+  ): void {
+    const normalizedId = requiredString(
+      documentId,
+      'documentId',
+      MAX_ID_LENGTH
+    )
+    const database = this.requireDatabase()
+    this.transaction(database, () => {
+      database
+        .prepare('DELETE FROM graph_evidence WHERE document_id = ?')
+        .run(normalizedId)
+      operation()
+    })
   }
 
   pruneUnreferencedGeneratedGraph(knowledgeBaseId: string): {
@@ -969,6 +1969,216 @@ export class KnowledgeDatabase {
       .map(mapChunk)
   }
 
+  listChunksPage(input: KnowledgeChunksListInput): {
+    items: Chunk[]
+    total: number
+    page: number
+    pageSize: number
+  } {
+    const document = this.getDocument(input.documentId)
+    if (!document || document.knowledgeBaseId !== input.knowledgeBaseId) {
+      throw new Error('Document must belong to the requested knowledge base')
+    }
+    const page = boundedInteger(input.page, 'page', 1, 1_000_000)
+    const pageSize = boundedInteger(input.pageSize, 'pageSize', 1, 200)
+    const search = optionalString(input.search, 'search', 1_000)
+    const pattern = search
+      ? `%${search.replaceAll('\\', '\\\\').replaceAll('%', '\\%')
+        .replaceAll('_', '\\_')}%`
+      : undefined
+    const database = this.requireDatabase()
+    const where = pattern
+      ? `document_id = ? AND
+         (content LIKE ? ESCAPE '\\' OR heading LIKE ? ESCAPE '\\'
+          OR location LIKE ? ESCAPE '\\')`
+      : 'document_id = ?'
+    const parameters = pattern
+      ? [document.id, pattern, pattern, pattern]
+      : [document.id]
+    const count = database
+      .prepare(`SELECT COUNT(*) AS count FROM chunks WHERE ${where}`)
+      .get(...parameters)
+    const items = database
+      .prepare(
+        `SELECT * FROM chunks WHERE ${where}
+         ORDER BY ordinal ASC, id ASC LIMIT ? OFFSET ?`
+      )
+      .all(
+        ...parameters,
+        pageSize,
+        (page - 1) * pageSize
+      )
+      .map(mapChunk)
+    return {
+      items,
+      total: count ? asNumber(count, 'count') : 0,
+      page,
+      pageSize
+    }
+  }
+
+  getChunkForReference(
+    knowledgeBaseId: string,
+    documentId: string,
+    chunkId: string
+  ): { chunk: Chunk; document: Document; source: KnowledgeSource } | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT c.*,
+           d.id AS d_id, d.knowledge_base_id AS d_knowledge_base_id,
+           d.source_id AS d_source_id, d.external_id AS d_external_id,
+           d.title AS d_title, d.mime_type AS d_mime_type,
+           d.source_location AS d_source_location, d.checksum AS d_checksum,
+           d.metadata AS d_metadata, d.created_at AS d_created_at,
+           d.updated_at AS d_updated_at,
+           s.id AS s_id, s.knowledge_base_id AS s_knowledge_base_id,
+           s.type AS s_type, s.location AS s_location,
+           s.display_name AS s_display_name, s.status AS s_status,
+           s.last_error AS s_last_error, s.metadata AS s_metadata,
+           s.created_at AS s_created_at, s.updated_at AS s_updated_at
+         FROM chunks c JOIN documents d ON d.id = c.document_id
+         JOIN knowledge_sources s ON s.id = d.source_id
+         WHERE c.id = ? AND c.document_id = ? AND c.knowledge_base_id = ?
+           AND d.knowledge_base_id = ? AND s.knowledge_base_id = ?`
+      )
+      .get(
+        requiredString(chunkId, 'chunkId', MAX_ID_LENGTH),
+        requiredString(documentId, 'documentId', MAX_ID_LENGTH),
+        requiredString(knowledgeBaseId, 'knowledgeBaseId', MAX_ID_LENGTH),
+        knowledgeBaseId,
+        knowledgeBaseId
+      )
+    return row
+      ? {
+          chunk: mapChunk(row),
+          document: mapDocument(this.prefixedRow(row, 'd_')),
+          source: mapSource(this.prefixedRow(row, 's_'))
+        }
+      : undefined
+  }
+
+  updateChunk(input: {
+    knowledgeBaseId: string
+    documentId: string
+    chunkId: string
+    content?: string
+    enabled?: boolean
+  }): Chunk {
+    const current = this.getChunkForReference(
+      input.knowledgeBaseId,
+      input.documentId,
+      input.chunkId
+    )
+    if (!current) {
+      throw new Error('Chunk must belong to the requested document and library')
+    }
+    const content =
+      input.content === undefined
+        ? current.chunk.content
+        : requiredString(input.content, 'content', MAX_CONTENT_LENGTH, false)
+    const enabled = input.enabled ?? current.chunk.enabled
+    const indexContent = chunkIndexContent(
+      content,
+      current.chunk.metadata
+    )
+    const changed =
+      content !== current.chunk.content || enabled !== current.chunk.enabled
+    if (!changed) {
+      return current.chunk
+    }
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    this.transaction(database, () => {
+      database
+        .prepare(
+          `UPDATE chunks SET content = ?, enabled = ?, manually_edited = 1,
+             updated_at = ?, cjk_search = ?, index_content = ? WHERE id = ?`
+        )
+        .run(
+          content,
+          enabled ? 1 : 0,
+          now,
+          createCjkSearchText(
+            `${current.chunk.heading ?? ''}\n${indexContent}`
+          ),
+          indexContent,
+          current.chunk.id
+        )
+      database
+        .prepare('DELETE FROM chunk_embeddings WHERE chunk_id = ?')
+        .run(current.chunk.id)
+      database
+        .prepare('DELETE FROM embedding_index_state WHERE document_id = ?')
+        .run(current.document.id)
+      database
+        .prepare('DELETE FROM graph_evidence WHERE chunk_id = ?')
+        .run(current.chunk.id)
+    })
+    return this.getChunkForReference(
+      input.knowledgeBaseId,
+      input.documentId,
+      input.chunkId
+    )!.chunk
+  }
+
+  deleteChunk(input: {
+    knowledgeBaseId: string
+    documentId: string
+    chunkId: string
+  }): boolean {
+    const current = this.getChunkForReference(
+      input.knowledgeBaseId,
+      input.documentId,
+      input.chunkId
+    )
+    if (!current) {
+      return false
+    }
+    const database = this.requireDatabase()
+    let deleted = false
+    this.transaction(database, () => {
+      database
+        .prepare('DELETE FROM graph_evidence WHERE chunk_id = ?')
+        .run(current.chunk.id)
+      database
+        .prepare('DELETE FROM embedding_index_state WHERE document_id = ?')
+        .run(current.document.id)
+      deleted =
+        database
+          .prepare('DELETE FROM chunks WHERE id = ?')
+          .run(current.chunk.id).changes > 0
+    })
+    return deleted
+  }
+
+  listContextChunks(chunk: Chunk, adjacentCount: number): Chunk[] {
+    boundedInteger(adjacentCount, 'adjacentCount', 0, 2)
+    const database = this.requireDatabase()
+    if (chunk.parentChunkId) {
+      const parent = database
+        .prepare(
+          `SELECT * FROM chunks WHERE id = ? AND document_id = ?
+             AND enabled = 1 AND role = 'parent'`
+        )
+        .get(chunk.parentChunkId, chunk.documentId)
+      if (parent) {
+        return [mapChunk(parent)]
+      }
+    }
+    return database
+      .prepare(
+        `SELECT * FROM chunks WHERE document_id = ? AND enabled = 1
+           AND role <> 'parent' AND ordinal BETWEEN ? AND ?
+         ORDER BY ordinal ASC, id ASC`
+      )
+      .all(
+        chunk.documentId,
+        Math.max(0, chunk.ordinal - adjacentCount),
+        chunk.ordinal + adjacentCount
+      )
+      .map(mapChunk)
+  }
+
   replaceDocumentEmbeddings(
     documentId: string,
     provider: string,
@@ -1002,15 +2212,19 @@ export class KnowledgeDatabase {
     }
     const chunks = database
       .prepare(
-        `SELECT id, content FROM chunks
-         WHERE document_id = ? ORDER BY ordinal ASC, id ASC`
+        `SELECT id, index_content FROM chunks
+         WHERE document_id = ? AND enabled = 1 AND role <> 'parent'
+         ORDER BY ordinal ASC, id ASC`
       )
       .all(normalizedDocumentId)
     if (embeddings.length !== chunks.length) {
       throw new Error('Embeddings must cover every current document chunk')
     }
     const chunksById = new Map(
-      chunks.map((row) => [asString(row, 'id'), asString(row, 'content')])
+      chunks.map((row) => [
+        asString(row, 'id'),
+        asString(row, 'index_content')
+      ])
     )
     const seen = new Set<string>()
     let dimensions: number | undefined
@@ -1189,9 +2403,35 @@ export class KnowledgeDatabase {
       )
     }
     const database = this.requireDatabase()
-    const findChunk = database.prepare(
-      'SELECT content FROM chunks WHERE id = ? AND document_id = ?'
+    const chunkIds = embeddings.map((embedding, index) =>
+      requiredString(
+        embedding.chunkId,
+        `embeddings[${index}].chunkId`,
+        MAX_ID_LENGTH
+      )
     )
+    if (new Set(chunkIds).size !== chunkIds.length) {
+      throw new Error('Embedding chunk IDs must be unique within a batch')
+    }
+    const placeholders = chunkIds.map(() => '?').join(', ')
+    const chunksById = new Map(
+      database
+        .prepare(
+          `SELECT id, index_content FROM chunks
+           WHERE document_id = ? AND enabled = 1 AND role <> 'parent'
+             AND id IN (${placeholders})`
+        )
+        .all(normalizedDocumentId, ...chunkIds)
+        .map((row) => [
+          asString(row, 'id'),
+          asString(row, 'index_content')
+        ])
+    )
+    if (chunksById.size !== chunkIds.length) {
+      throw new Error(
+        'Embeddings must reference chunks in the document'
+      )
+    }
     const existingDimensions = database
       .prepare(
         `SELECT dimensions FROM embedding_rebuild_staging
@@ -1202,22 +2442,13 @@ export class KnowledgeDatabase {
       ? asNumber(existingDimensions, 'dimensions')
       : undefined
     const normalized = embeddings.map((embedding, index) => {
-      const chunkId = requiredString(
-        embedding.chunkId,
-        `embeddings[${index}].chunkId`,
-        MAX_ID_LENGTH
-      )
-      const chunk = findChunk.get(chunkId, normalizedDocumentId)
-      if (!chunk) {
-        throw new Error(
-          'Embeddings must reference chunks in the document'
-        )
-      }
+      const chunkId = chunkIds[index]!
+      const chunkContent = chunksById.get(chunkId)!
       const checksum = normalizedChecksum(
         embedding.contentChecksum,
         `embeddings[${index}].contentChecksum`
       )
-      if (checksum !== contentChecksum(asString(chunk, 'content'))) {
+      if (checksum !== contentChecksum(chunkContent)) {
         throw new Error(
           'Embedding content checksum does not match the chunk'
         )
@@ -1294,7 +2525,8 @@ export class KnowledgeDatabase {
     const counts = database
       .prepare(
         `SELECT
-           (SELECT COUNT(*) FROM chunks WHERE document_id = ?) AS chunks,
+           (SELECT COUNT(*) FROM chunks WHERE document_id = ?
+              AND enabled = 1 AND role <> 'parent') AS chunks,
            (SELECT COUNT(*) FROM embedding_rebuild_staging
              WHERE replacement_id = ? AND document_id = ?
                AND provider = ? AND model = ?) AS embeddings`
@@ -1456,7 +2688,9 @@ export class KnowledgeDatabase {
            content_checksum, status, last_error, updated_at)
          VALUES (?, ?, ?, ?, NULL, '', 'error', ?, ?)
          ON CONFLICT(document_id, provider, model) DO UPDATE SET
-           status = 'error',
+           status = CASE
+             WHEN embedding_index_state.status = 'ready' THEN 'ready'
+             ELSE 'error' END,
            last_error = excluded.last_error,
            updated_at = excluded.updated_at`
       )
@@ -1497,12 +2731,21 @@ export class KnowledgeDatabase {
     return row ? mapEmbeddingIndexState(row) : undefined
   }
 
-  getLastEmbeddingIndexJob(): EmbeddingIndexJob | null {
+  getLastEmbeddingIndexJob(
+    knowledgeBaseId: string
+  ): EmbeddingIndexJob | null {
     const row = this.requireDatabase()
       .prepare(
-        'SELECT status_json FROM embedding_index_job WHERE singleton = 1'
+        `SELECT status_json FROM embedding_index_job
+         WHERE knowledge_base_id = ?`
       )
-      .get()
+      .get(
+        requiredString(
+          knowledgeBaseId,
+          'knowledgeBaseId',
+          MAX_ID_LENGTH
+        )
+      )
     if (!row) {
       return null
     }
@@ -1515,38 +2758,128 @@ export class KnowledgeDatabase {
     }
   }
 
-  saveEmbeddingIndexJob(job: EmbeddingIndexJob | null): void {
+  saveEmbeddingIndexJob(
+    knowledgeBaseId: string,
+    job: EmbeddingIndexJob | null
+  ): void {
     const database = this.requireDatabase()
+    const normalizedKnowledgeBaseId = requiredString(
+      knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
     if (!job) {
       database
-        .prepare('DELETE FROM embedding_index_job WHERE singleton = 1')
-        .run()
+        .prepare(
+          'DELETE FROM embedding_index_job WHERE knowledge_base_id = ?'
+        )
+        .run(normalizedKnowledgeBaseId)
       return
     }
     const normalized = embeddingIndexJobSchema.parse(job)
     database
       .prepare(
         `INSERT INTO embedding_index_job
-          (singleton, status_json, updated_at)
-         VALUES (1, ?, ?)
-         ON CONFLICT(singleton) DO UPDATE SET
+          (knowledge_base_id, status_json, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(knowledge_base_id) DO UPDATE SET
            status_json = excluded.status_json,
            updated_at = excluded.updated_at`
       )
-      .run(JSON.stringify(normalized), new Date().toISOString())
+      .run(
+        normalizedKnowledgeBaseId,
+        JSON.stringify(normalized),
+        new Date().toISOString()
+      )
   }
 
-  listEmbeddingIndexDocumentIds(): string[] {
+  listEmbeddingIndexDocumentIds(
+    knowledgeBaseId: string
+  ): string[] {
     return this.requireDatabase()
       .prepare(
         `SELECT d.id
          FROM documents d
-         WHERE json_extract(d.metadata, '$.status') IS NULL
-            OR json_extract(d.metadata, '$.status') = 'ready'
-         ORDER BY d.knowledge_base_id, d.id`
+         WHERE d.knowledge_base_id = ?
+           AND (json_extract(d.metadata, '$.status') IS NULL
+             OR json_extract(d.metadata, '$.status') = 'ready')
+         ORDER BY d.id`
       )
-      .all()
+      .all(
+        requiredString(
+          knowledgeBaseId,
+          'knowledgeBaseId',
+          MAX_ID_LENGTH
+        )
+      )
       .map((document) => asString(document, 'id'))
+  }
+
+  countEmbeddingIndexDocuments(knowledgeBaseId: string): number {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM documents d
+         WHERE d.knowledge_base_id = ?
+           AND (json_extract(d.metadata, '$.status') IS NULL
+             OR json_extract(d.metadata, '$.status') = 'ready')`
+      )
+      .get(
+        requiredString(
+          knowledgeBaseId,
+          'knowledgeBaseId',
+          MAX_ID_LENGTH
+        )
+      )
+    return row ? asNumber(row, 'count') : 0
+  }
+
+  getEmbeddingIndexCoverage(
+    knowledgeBaseId: string,
+    provider: string,
+    model: string
+  ): EmbeddingIndexCoverage {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COALESCE(SUM(
+             CASE WHEN eis.status = 'ready' THEN 1 ELSE 0 END
+           ), 0) AS indexed,
+           COALESCE(SUM(
+             CASE WHEN eis.status = 'error' THEN 1 ELSE 0 END
+           ), 0) AS error
+         FROM documents d
+         LEFT JOIN embedding_index_state eis
+           ON eis.document_id = d.id
+          AND eis.provider = ?
+          AND eis.model = ?
+         WHERE d.knowledge_base_id = ?
+           AND (json_extract(d.metadata, '$.status') IS NULL
+             OR json_extract(d.metadata, '$.status') = 'ready')`
+      )
+      .get(
+        requiredString(
+          provider,
+          'provider',
+          MAX_EMBEDDING_PROVIDER_LENGTH
+        ),
+        requiredString(model, 'model', MAX_EMBEDDING_MODEL_LENGTH),
+        requiredString(
+          knowledgeBaseId,
+          'knowledgeBaseId',
+          MAX_ID_LENGTH
+        )
+      )
+    const total = row ? asNumber(row, 'total') : 0
+    const indexed = row ? asNumber(row, 'indexed') : 0
+    const error = row ? asNumber(row, 'error') : 0
+    return {
+      total,
+      indexed,
+      error,
+      missing: total - indexed - error
+    }
   }
 
   getEmbeddingIndexDocument(
@@ -1571,13 +2904,20 @@ export class KnowledgeDatabase {
       return undefined
     }
     const chunks = database.prepare(
-      `SELECT id, content FROM chunks
-       WHERE document_id = ? ORDER BY ordinal ASC, id ASC`
+      `SELECT id, content, metadata, index_content FROM chunks
+       WHERE document_id = ? AND enabled = 1 AND role <> 'parent'
+       ORDER BY ordinal ASC, id ASC`
     )
     return {
       id: normalizedDocumentId,
       items: chunks.all(normalizedDocumentId).map((row) => {
-        const content = asString(row, 'content')
+        const content =
+          row.index_content === undefined
+            ? chunkIndexContent(
+                asString(row, 'content'),
+                parseObject(asString(row, 'metadata'))
+              )
+            : asString(row, 'index_content')
         return {
           id: asString(row, 'id'),
           content,
@@ -1616,35 +2956,59 @@ export class KnowledgeDatabase {
   }
 
   hybridSearch(options: HybridSearchOptions): HybridSearchResult[] {
+    return this.hybridSearchWithDiagnostics(options).results
+  }
+
+  hybridSearchWithDiagnostics(
+    options: HybridSearchOptions
+  ): HybridSearchResultPage {
     const knowledgeBaseId = requiredString(
       options.knowledgeBaseId,
       'knowledgeBaseId',
       MAX_ID_LENGTH
     )
-    const query = requiredString(options.query, 'query', 512)
+    const query = requiredString(options.query, 'query', 4_000)
     const limit = options.limit ?? 20
     boundedInteger(limit, 'limit', 1, 100)
-    const lexical = this.search({
-      knowledgeBaseId,
-      query,
-      limit: Math.min(100, Math.max(limit * 4, limit))
-    })
-    const vector =
-      options.vector && options.provider && options.model
-        ? this.vectorSearchScored({
+    const candidateMultiplier = boundedInteger(
+      options.candidateMultiplier ?? 4,
+      'candidateMultiplier',
+      1,
+      10
+    )
+    const candidateLimit = Math.min(100, limit * candidateMultiplier)
+    const ftsWeight = this.validateWeight(options.ftsWeight ?? 1, 'ftsWeight')
+    const vectorWeight = this.validateWeight(
+      options.vectorWeight ?? 1,
+      'vectorWeight'
+    )
+    const graphWeight = this.validateWeight(
+      options.graphWeight ?? 0.8,
+      'graphWeight'
+    )
+    const lexical =
+      ftsWeight === 0
+        ? []
+        : this.search({ knowledgeBaseId, query, limit: candidateLimit })
+    const vectorPage =
+      vectorWeight > 0 && options.vector && options.provider && options.model
+        ? this.vectorSearchScoredWithCount({
             knowledgeBaseId,
             provider: options.provider,
             model: options.model,
             vector: options.vector,
-            limit: options.vectorLimit ?? Math.min(100, limit * 4)
+            limit: options.vectorLimit ?? candidateLimit,
+            minimumSimilarity: options.minimumVectorSimilarity,
+            signal: options.signal
           })
-        : []
-    const graph = options.graphEnabled === false
+        : { results: [], scannedCount: 0 }
+    const vector = vectorPage.results
+    const graph = options.graphEnabled === false || graphWeight === 0
       ? []
       : this.graphSearchScored(
           knowledgeBaseId,
           query,
-          Math.min(100, Math.max(limit * 4, limit)),
+          candidateLimit,
           boundedInteger(
             options.graphDepth ?? 1,
             'graphDepth',
@@ -1696,30 +3060,33 @@ export class KnowledgeDatabase {
     add(
       'fts',
       lexical.map((result) => ({ result })),
-      1
+      ftsWeight
     )
-    add('vector', vector, 1)
-    add('graph', graph, 0.8)
-    return [...fused.values()]
-      .sort(
-        (left, right) =>
-          right.score - left.score ||
-          left.result.chunk.id.localeCompare(right.result.chunk.id)
-      )
-      .slice(0, limit)
-      .map((item) => ({
-        ...item.result,
-        rank: -item.score,
-        retrieval: {
-          score: item.score,
-          channels: [...item.channels],
-          lexicalRank: item.lexicalRank,
-          vectorRank: item.vectorRank,
-          graphRank: item.graphRank,
-          similarity: item.similarity,
-          evidenceIds: [...item.evidenceIds]
-        }
-      }))
+    add('vector', vector, vectorWeight)
+    add('graph', graph, graphWeight)
+    return {
+      results: [...fused.values()]
+        .sort(
+          (left, right) =>
+            right.score - left.score ||
+            left.result.chunk.id.localeCompare(right.result.chunk.id)
+        )
+        .slice(0, limit)
+        .map((item) => ({
+          ...item.result,
+          rank: -item.score,
+          retrieval: {
+            score: item.score,
+            channels: [...item.channels],
+            lexicalRank: item.lexicalRank,
+            vectorRank: item.vectorRank,
+            graphRank: item.graphRank,
+            similarity: item.similarity,
+            evidenceIds: [...item.evidenceIds]
+          }
+        })),
+      vectorScannedCount: vectorPage.scannedCount
+    }
   }
 
   search(options: SearchOptions): SearchResult[] {
@@ -1728,18 +3095,19 @@ export class KnowledgeDatabase {
       'knowledgeBaseId',
       MAX_ID_LENGTH
     )
-    const query = requiredString(options.query, 'query', 512)
+    const query = requiredString(options.query, 'query', 4_000)
     const limit = options.limit ?? 20
     boundedInteger(limit, 'limit', 1, 100)
     const literalQuery = query
       .split(/\s+/u)
+      .filter(Boolean)
       .map((term) => `"${term.replaceAll('"', '""')}"`)
-      .join(' ')
+      .join(' OR ')
     let rows = this.requireDatabase()
       .prepare(
         `SELECT
            c.*,
-           snippet(chunks_fts, 0, '<mark>', '</mark>', ' … ', 24) AS snippet,
+           substr(c.content, 1, 600) AS snippet,
            bm25(chunks_fts) AS rank,
            d.id AS d_id, d.knowledge_base_id AS d_knowledge_base_id,
            d.source_id AS d_source_id, d.external_id AS d_external_id,
@@ -1757,21 +3125,22 @@ export class KnowledgeDatabase {
          JOIN documents d ON d.id = c.document_id
          JOIN knowledge_sources s ON s.id = d.source_id
          WHERE chunks_fts MATCH ? AND c.knowledge_base_id = ?
+           AND c.enabled = 1 AND c.role <> 'parent'
          ORDER BY rank ASC LIMIT ?`
       )
-      .all(literalQuery, knowledgeBaseId, limit)
+      .all(literalQuery, knowledgeBaseId, limit) as Row[]
 
-    if (rows.length === 0 && /\p{Script=Han}/u.test(query)) {
-      const terms = [
-        ...new Set(
-          [...query].filter((character) => /\p{Script=Han}/u.test(character))
-        )
-      ].slice(0, 24)
-      const conditions = terms.map(() => 'c.content LIKE ?').join(' AND ')
-      rows = this.requireDatabase()
+    if (containsHanText(query)) {
+      const terms = knowledgeRetrievalTerms(query, 64)
+      const cjkQuery = terms
+        .map((term) => `"${term.replaceAll('"', '""')}"`)
+        .join(' OR ')
+      const cjkRows = cjkQuery
+        ? this.requireDatabase()
         .prepare(
           `SELECT
-             c.*, substr(c.content, 1, 600) AS snippet, 100 AS rank,
+             c.*, substr(c.content, 1, 600) AS snippet,
+             bm25(chunks_cjk) AS rank,
              d.id AS d_id, d.knowledge_base_id AS d_knowledge_base_id,
              d.source_id AS d_source_id, d.external_id AS d_external_id,
              d.title AS d_title, d.mime_type AS d_mime_type,
@@ -1783,17 +3152,31 @@ export class KnowledgeDatabase {
              s.display_name AS s_display_name, s.status AS s_status,
              s.last_error AS s_last_error, s.metadata AS s_metadata,
              s.created_at AS s_created_at, s.updated_at AS s_updated_at
-           FROM chunks c
+           FROM chunks_cjk
+           JOIN chunks c ON c.rowid = chunks_cjk.rowid
            JOIN documents d ON d.id = c.document_id
            JOIN knowledge_sources s ON s.id = d.source_id
-           WHERE c.knowledge_base_id = ? AND ${conditions}
-           ORDER BY d.updated_at DESC, c.ordinal ASC LIMIT ?`
+           WHERE chunks_cjk MATCH ? AND c.knowledge_base_id = ?
+             AND c.enabled = 1 AND c.role <> 'parent'
+           ORDER BY rank ASC, c.id ASC LIMIT ?`
         )
-        .all(
-          knowledgeBaseId,
-          ...terms.map((term) => `%${term}%`),
-          limit
+        .all(cjkQuery, knowledgeBaseId, limit)
+        : []
+      const byChunkId = new Map<string, Row>()
+      for (const row of [...rows, ...cjkRows]) {
+        const id = asString(row, 'id')
+        const current = byChunkId.get(id)
+        if (!current || asNumber(row, 'rank') < asNumber(current, 'rank')) {
+          byChunkId.set(id, row)
+        }
+      }
+      rows = [...byChunkId.values()]
+        .sort(
+          (left, right) =>
+            asNumber(left, 'rank') - asNumber(right, 'rank') ||
+            asString(left, 'id').localeCompare(asString(right, 'id'))
         )
+        .slice(0, limit)
     }
 
     return rows.map((row) => ({
@@ -1814,7 +3197,22 @@ export class KnowledgeDatabase {
       MAX_ID_LENGTH
     )
     const name = requiredString(input.name, 'name', MAX_NAME_LENGTH)
-    const type = requiredString(input.type, 'type', MAX_NAME_LENGTH)
+    const ontology = this.requiredKnowledgeBase(knowledgeBaseId).ontologySettings
+    const requestedType = requiredString(input.type, 'type', MAX_NAME_LENGTH)
+    const type = normalizeEntityTypeAlias(requestedType, ontology)
+    if (
+      input.locked &&
+      type === 'CONCEPT' &&
+      !ontology.entityTypes.some(
+        (definition) =>
+          [definition.id, ...definition.aliases].some(
+            (value) => normalizeOntologyAlias(value) ===
+              normalizeOntologyAlias(requestedType)
+          )
+      )
+    ) {
+      throw new Error('Entity type is not defined by the library ontology')
+    }
     const aliases = JSON.stringify(stringArray(input.aliases, 'aliases'))
     const description = optionalString(
       input.description,
@@ -1874,6 +3272,30 @@ export class KnowledgeDatabase {
 
   updateEntity(id: string, input: UpdateGraphEntityInput): GraphEntity {
     const current = this.requiredEntity(id)
+    const ontology =
+      this.requiredKnowledgeBase(current.knowledgeBaseId).ontologySettings
+    const requestedType =
+      input.type === undefined
+        ? undefined
+        : requiredString(input.type, 'type', MAX_NAME_LENGTH)
+    const nextType =
+      requestedType === undefined
+        ? current.type
+        : normalizeEntityTypeAlias(requestedType, ontology)
+    if (
+      input.locked === true &&
+      requestedType !== undefined &&
+      nextType === 'CONCEPT' &&
+      !ontology.entityTypes.some((definition) =>
+        [definition.id, ...definition.aliases].some(
+          (value) =>
+            normalizeOntologyAlias(value) ===
+            normalizeOntologyAlias(requestedType)
+        )
+      )
+    ) {
+      throw new Error('Entity type is not defined by the library ontology')
+    }
     this.requireDatabase()
       .prepare(
         `UPDATE graph_entities
@@ -1885,9 +3307,7 @@ export class KnowledgeDatabase {
         input.name === undefined
           ? current.name
           : requiredString(input.name, 'name', MAX_NAME_LENGTH),
-        input.type === undefined
-          ? current.type
-          : requiredString(input.type, 'type', MAX_NAME_LENGTH),
+        nextType,
         JSON.stringify(
           input.aliases === undefined
             ? current.aliases
@@ -1937,7 +3357,14 @@ export class KnowledgeDatabase {
       'targetEntityId',
       MAX_ID_LENGTH
     )
-    const type = requiredString(input.type, 'type', MAX_NAME_LENGTH)
+    const ontology = this.requiredKnowledgeBase(knowledgeBaseId).ontologySettings
+    const type = normalizeRelationTypeAlias(
+      requiredString(input.type, 'type', MAX_NAME_LENGTH),
+      ontology
+    )
+    if (!type) {
+      throw new Error('Relation type is not defined by the library ontology')
+    }
     const label = optionalString(input.label, 'label', MAX_NAME_LENGTH)
     const properties = jsonObject(input.properties, 'properties')
     const now = new Date().toISOString()
@@ -1946,6 +3373,13 @@ export class KnowledgeDatabase {
       knowledgeBaseId,
       sourceEntityId,
       targetEntityId
+    )
+    this.assertOntologyRelation(
+      database,
+      knowledgeBaseId,
+      sourceEntityId,
+      targetEntityId,
+      type
     )
     database
       .prepare(
@@ -2024,6 +3458,25 @@ export class KnowledgeDatabase {
       sourceEntityId,
       targetEntityId
     )
+    const ontology =
+      this.requiredKnowledgeBase(current.knowledgeBaseId).ontologySettings
+    const type =
+      input.type === undefined
+        ? current.type
+        : normalizeRelationTypeAlias(
+            requiredString(input.type, 'type', MAX_NAME_LENGTH),
+            ontology
+          )
+    if (!type) {
+      throw new Error('Relation type is not defined by the library ontology')
+    }
+    this.assertOntologyRelation(
+      database,
+      current.knowledgeBaseId,
+      sourceEntityId,
+      targetEntityId,
+      type
+    )
     database
       .prepare(
         `UPDATE graph_relations
@@ -2034,9 +3487,7 @@ export class KnowledgeDatabase {
       .run(
         sourceEntityId,
         targetEntityId,
-        input.type === undefined
-          ? current.type
-          : requiredString(input.type, 'type', MAX_NAME_LENGTH),
+        type,
         input.label === undefined
           ? (current.label ?? null)
           : (optionalString(input.label, 'label', MAX_NAME_LENGTH) ?? null),
@@ -2095,6 +3546,33 @@ export class KnowledgeDatabase {
       MAX_LOCATION_LENGTH,
       false
     )
+    const start =
+      input.start === undefined
+        ? undefined
+        : boundedInteger(input.start, 'start', 0, MAX_CONTENT_LENGTH)
+    const end =
+      input.end === undefined
+        ? undefined
+        : boundedInteger(input.end, 'end', 0, MAX_CONTENT_LENGTH)
+    if (
+      (start === undefined) !== (end === undefined) ||
+      (start !== undefined && end !== undefined && start >= end)
+    ) {
+      throw new RangeError('Evidence offsets must form a non-empty range')
+    }
+    const confidence = input.confidence
+    if (
+      confidence !== undefined &&
+      (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)
+    ) {
+      throw new RangeError('Evidence confidence must be between 0 and 1')
+    }
+    const source = enumValue(
+      input.source ?? 'manual',
+      'source',
+      ['rules', 'model', 'manual', 'legacy'] as const
+    )
+    const provenance = jsonObject(input.provenance, 'provenance')
     this.assertEvidenceTargets(database, {
       knowledgeBaseId,
       entityId,
@@ -2106,8 +3584,9 @@ export class KnowledgeDatabase {
       .prepare(
         `INSERT INTO graph_evidence
           (id, knowledge_base_id, entity_id, relation_id, document_id, chunk_id,
-           quote, location, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           quote, location, created_at, start_offset, end_offset, confidence,
+           source, provenance)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -2118,7 +3597,12 @@ export class KnowledgeDatabase {
         chunkId ?? null,
         quote ?? null,
         location ?? null,
-        new Date().toISOString()
+        new Date().toISOString(),
+        start ?? null,
+        end ?? null,
+        confidence ?? null,
+        source,
+        provenance
       )
     return this.requiredEvidence(id)
   }
@@ -2211,6 +3695,12 @@ export class KnowledgeDatabase {
     if (target.knowledgeBaseId !== source.knowledgeBaseId) {
       throw new Error('Entities must belong to the same knowledge base')
     }
+    if (
+      target.type !== source.type &&
+      (target.locked || source.locked)
+    ) {
+      throw new Error('Entities with different ontology types cannot be merged')
+    }
 
     const aliases = stringArray(
       [
@@ -2265,6 +3755,15 @@ export class KnowledgeDatabase {
   private vectorSearchScored(
     options: VectorSearchOptions
   ): ScoredSearchResult[] {
+    return this.vectorSearchScoredWithCount(options).results
+  }
+
+  private vectorSearchScoredWithCount(
+    options: VectorSearchOptions
+  ): {
+    results: ScoredSearchResult[]
+    scannedCount: number
+  } {
     const knowledgeBaseId = requiredString(
       options.knowledgeBaseId,
       'knowledgeBaseId',
@@ -2313,44 +3812,56 @@ export class KnowledgeDatabase {
            AND ce.provider = ? AND ce.model = ? AND ce.dimensions = ?
            AND length(ce.vector) = ce.dimensions * 4
            AND ce.content_checksum <> ''
-         ORDER BY ce.chunk_id ASC LIMIT ?`
+           AND c.enabled = 1 AND c.role <> 'parent'
+         ORDER BY ce.chunk_id ASC`
       )
-      .all(
+      .iterate(
         knowledgeBaseId,
         provider,
         model,
-        queryVector.dimensions,
-        MAX_VECTOR_CANDIDATES + 1
+        queryVector.dimensions
       )
-    if (rows.length > MAX_VECTOR_CANDIDATES) {
-      return []
-    }
-    const winners = rows
-      .map((row): { chunkId: string; similarity: number } | undefined => {
-        const similarity = cosineSimilarity(
-          queryVector.values,
-          queryVector.magnitude,
-          asBytes(row, 'embedding_vector'),
-          asNumber(row, 'embedding_dimensions'),
-          asNumber(row, 'embedding_magnitude')
-        )
-        if (similarity === undefined || similarity < minimumSimilarity) {
-          return undefined
+    const winners: Array<{ chunkId: string; similarity: number }> = []
+    let scanned = 0
+    for (const row of rows) {
+      scanned += 1
+      if (scanned % 256 === 0) {
+        options.signal?.throwIfAborted()
+      }
+      const similarity = cosineSimilarity(
+        queryVector.values,
+        queryVector.magnitude,
+        asBytes(row, 'embedding_vector'),
+        asNumber(row, 'embedding_dimensions'),
+        asNumber(row, 'embedding_magnitude')
+      )
+      if (similarity === undefined || similarity < minimumSimilarity) {
+        continue
+      }
+      const candidate = {
+        chunkId: asString(row, 'chunk_id'),
+        similarity
+      }
+      let insertionIndex = 0
+      while (
+        insertionIndex < winners.length &&
+        (winners[insertionIndex]!.similarity > candidate.similarity ||
+          (winners[insertionIndex]!.similarity === candidate.similarity &&
+            winners[insertionIndex]!.chunkId.localeCompare(
+              candidate.chunkId
+            ) < 0))
+      ) {
+        insertionIndex += 1
+      }
+      if (insertionIndex < limit) {
+        winners.splice(insertionIndex, 0, candidate)
+        if (winners.length > limit) {
+          winners.pop()
         }
-        return { chunkId: asString(row, 'chunk_id'), similarity }
-      })
-      .filter(
-        (item): item is { chunkId: string; similarity: number } =>
-          item !== undefined
-      )
-      .sort(
-        (left, right) =>
-          right.similarity - left.similarity ||
-          left.chunkId.localeCompare(right.chunkId)
-      )
-      .slice(0, limit)
+      }
+    }
     if (winners.length === 0) {
-      return []
+      return { results: [], scannedCount: scanned }
     }
     const placeholders = winners.map(() => '?').join(', ')
     const hydratedRows = this.requireDatabase()
@@ -2385,23 +3896,26 @@ export class KnowledgeDatabase {
     const rowsByChunkId = new Map(
       hydratedRows.map((row) => [asString(row, 'id'), row])
     )
-    return winners.flatMap((winner) => {
-      const row = rowsByChunkId.get(winner.chunkId)
-      return row
-        ? [
-            {
-              similarity: winner.similarity,
-              result: {
-                chunk: mapChunk(row),
-                document: mapDocument(this.prefixedRow(row, 'd_')),
-                source: mapSource(this.prefixedRow(row, 's_')),
-                snippet: asString(row, 'snippet'),
-                rank: -winner.similarity
+    return {
+      results: winners.flatMap((winner) => {
+        const row = rowsByChunkId.get(winner.chunkId)
+        return row
+          ? [
+              {
+                similarity: winner.similarity,
+                result: {
+                  chunk: mapChunk(row),
+                  document: mapDocument(this.prefixedRow(row, 'd_')),
+                  source: mapSource(this.prefixedRow(row, 's_')),
+                  snippet: asString(row, 'snippet'),
+                  rank: -winner.similarity
+                }
               }
-            }
-          ]
-        : []
-    })
+            ]
+          : []
+      }),
+      scannedCount: scanned
+    }
   }
 
   private graphSearchScored(
@@ -2621,6 +4135,46 @@ export class KnowledgeDatabase {
           )
           .run(4, new Date().toISOString())
       }
+      if (currentVersion < 5) {
+        this.migrateToVersion5(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(5, new Date().toISOString())
+      }
+      if (currentVersion < 6) {
+        this.migrateToVersion6(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(6, new Date().toISOString())
+      }
+      if (currentVersion < 7) {
+        this.migrateToVersion7(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(7, new Date().toISOString())
+      }
+      if (currentVersion < 8) {
+        this.migrateToVersion8(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(8, new Date().toISOString())
+      }
+      if (currentVersion < 9) {
+        this.migrateToVersion9(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(9, new Date().toISOString())
+      }
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}`)
       database.exec('COMMIT')
     } catch (error) {
@@ -2836,6 +4390,399 @@ export class KnowledgeDatabase {
     `)
   }
 
+  private migrateToVersion5(database: DatabaseSync): void {
+    const addColumn = (
+      table: 'knowledge_bases' | 'chunks',
+      name: string,
+      definition: string
+    ): void => {
+      const exists = database
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .some((row) => asString(row, 'name') === name)
+      if (!exists) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`)
+      }
+    }
+    addColumn(
+      'knowledge_bases',
+      'retrieval_settings',
+      `retrieval_settings TEXT NOT NULL
+       DEFAULT '{"version":1,"topK":6,"minimumVectorSimilarity":0,"ftsWeight":1,"vectorWeight":1,"graphWeight":0.8,"candidateMultiplier":4,"contextMaxCharacters":16000,"adjacentChunkCount":0,"localRerankEnabled":false}'`
+    )
+    addColumn(
+      'knowledge_bases',
+      'chunking_settings',
+      `chunking_settings TEXT NOT NULL
+       DEFAULT '{"version":1,"mode":"structure","targetCharacters":1600,"overlapCharacters":160,"parentCharacters":4800,"childCharacters":900}'`
+    )
+    addColumn(
+      'knowledge_bases',
+      'chunking_rebuild_required',
+      `chunking_rebuild_required INTEGER NOT NULL DEFAULT 0
+       CHECK (chunking_rebuild_required IN (0, 1))`
+    )
+    addColumn(
+      'chunks',
+      'enabled',
+      'enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))'
+    )
+    addColumn(
+      'chunks',
+      'role',
+      `role TEXT NOT NULL DEFAULT 'standalone'
+       CHECK (role IN ('standalone', 'parent', 'child'))`
+    )
+    addColumn(
+      'chunks',
+      'parent_chunk_id',
+      'parent_chunk_id TEXT REFERENCES chunks(id) ON DELETE SET NULL'
+    )
+    addColumn(
+      'chunks',
+      'manually_edited',
+      `manually_edited INTEGER NOT NULL DEFAULT 0
+       CHECK (manually_edited IN (0, 1))`
+    )
+    addColumn('chunks', 'updated_at', 'updated_at TEXT')
+    addColumn(
+      'chunks',
+      'cjk_search',
+      `cjk_search TEXT NOT NULL DEFAULT ''`
+    )
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS chunks_document_state_idx
+        ON chunks(document_id, enabled, role, ordinal, id);
+      CREATE INDEX IF NOT EXISTS chunks_parent_idx ON chunks(parent_chunk_id);
+
+      DROP TRIGGER IF EXISTS chunks_after_insert;
+      DROP TRIGGER IF EXISTS chunks_after_delete;
+      DROP TRIGGER IF EXISTS chunks_after_update;
+      DROP TRIGGER IF EXISTS chunks_cjk_after_insert;
+      DROP TRIGGER IF EXISTS chunks_cjk_after_delete;
+      DROP TRIGGER IF EXISTS chunks_cjk_after_update;
+    `)
+    const update = database.prepare(
+      'UPDATE chunks SET cjk_search = ?, updated_at = created_at WHERE id = ?'
+    )
+    for (const row of database
+      .prepare('SELECT id, content, heading FROM chunks ORDER BY rowid')
+      .iterate()) {
+      update.run(
+        createCjkSearchText(
+          `${asOptionalString(row, 'heading') ?? ''}\n${asString(row, 'content')}`
+        ),
+        asString(row, 'id')
+      )
+    }
+    database.exec(`
+      CREATE TRIGGER chunks_after_insert AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_fts(rowid, content)
+          SELECT new.rowid, new.content
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+      CREATE TRIGGER chunks_after_delete AFTER DELETE ON chunks
+        WHEN old.enabled = 1 AND old.role <> 'parent' BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, content)
+          VALUES ('delete', old.rowid, old.content);
+      END;
+      CREATE TRIGGER chunks_after_update AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, content)
+          SELECT 'delete', old.rowid, old.content
+          WHERE old.enabled = 1 AND old.role <> 'parent';
+        INSERT INTO chunks_fts(rowid, content)
+          SELECT new.rowid, new.content
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_cjk USING fts5(
+        cjk_search,
+        content='chunks',
+        content_rowid='rowid',
+        tokenize='unicode61'
+      );
+      CREATE TRIGGER chunks_cjk_after_insert AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_cjk(rowid, cjk_search)
+          SELECT new.rowid, new.cjk_search
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+      CREATE TRIGGER chunks_cjk_after_delete AFTER DELETE ON chunks
+        WHEN old.enabled = 1 AND old.role <> 'parent' BEGIN
+        INSERT INTO chunks_cjk(chunks_cjk, rowid, cjk_search)
+          VALUES ('delete', old.rowid, old.cjk_search);
+      END;
+      CREATE TRIGGER chunks_cjk_after_update AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_cjk(chunks_cjk, rowid, cjk_search)
+          SELECT 'delete', old.rowid, old.cjk_search
+          WHERE old.enabled = 1 AND old.role <> 'parent';
+        INSERT INTO chunks_cjk(rowid, cjk_search)
+          SELECT new.rowid, new.cjk_search
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+      INSERT INTO chunks_cjk(chunks_cjk) VALUES ('rebuild');
+    `)
+  }
+
+  private migrateToVersion6(database: DatabaseSync): void {
+    database.exec(`
+      ALTER TABLE embedding_index_job RENAME TO embedding_index_job_global;
+      CREATE TABLE embedding_index_job (
+        knowledge_base_id TEXT PRIMARY KEY
+          REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+        status_json TEXT NOT NULL CHECK (length(status_json) <= 32768),
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO embedding_index_job
+        (knowledge_base_id, status_json, updated_at)
+      SELECT kb.id, legacy.status_json, legacy.updated_at
+      FROM embedding_index_job_global legacy
+      CROSS JOIN (SELECT id FROM knowledge_bases LIMIT 1) kb
+      WHERE (SELECT COUNT(*) FROM knowledge_bases) = 1;
+      DROP TABLE embedding_index_job_global;
+    `)
+  }
+
+  private migrateToVersion7(database: DatabaseSync): void {
+    database.exec(`
+      CREATE TABLE knowledge_tasks (
+        id TEXT PRIMARY KEY,
+        library_id TEXT NOT NULL
+          REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+        parent_task_id TEXT
+          REFERENCES knowledge_tasks(id) ON DELETE SET NULL,
+        retry_of_task_id TEXT
+          REFERENCES knowledge_tasks(id) ON DELETE SET NULL,
+        source_id TEXT
+          REFERENCES knowledge_sources(id) ON DELETE SET NULL,
+        document_id TEXT
+          REFERENCES documents(id) ON DELETE SET NULL,
+        document_name TEXT NOT NULL
+          CHECK (length(document_name) BETWEEN 1 AND 512),
+        scope TEXT NOT NULL
+          CHECK (scope IN ('library', 'source', 'document')),
+        kind TEXT NOT NULL CHECK (kind IN (
+          'source-sync', 'document-process', 'document-rebuild',
+          'library-rebuild', 'embedding-rebuild', 'graph-rebuild',
+          'parsing', 'embedding', 'graph'
+        )),
+        stage TEXT NOT NULL CHECK (stage IN (
+          'queued', 'syncing', 'reading', 'parsing', 'chunking', 'indexing',
+          'embedding', 'graph', 'finalizing'
+        )),
+        status TEXT NOT NULL CHECK (status IN (
+          'queued', 'running', 'succeeded', 'failed', 'cancelled', 'skipped',
+          'interrupted'
+        )),
+        progress INTEGER NOT NULL CHECK (progress BETWEEN 0 AND 100),
+        completed_items INTEGER CHECK (completed_items IS NULL OR completed_items >= 0),
+        total_items INTEGER CHECK (total_items IS NULL OR total_items >= 0),
+        message TEXT CHECK (message IS NULL OR length(message) <= 1000),
+        error_message TEXT
+          CHECK (error_message IS NULL OR length(error_message) BETWEEN 1 AND 1000),
+        error_remedy TEXT
+          CHECK (error_remedy IS NULL OR length(error_remedy) BETWEEN 1 AND 1000),
+        attempt INTEGER NOT NULL CHECK (attempt >= 1),
+        dedupe_key TEXT
+          CHECK (dedupe_key IS NULL OR length(dedupe_key) BETWEEN 1 AND 512),
+        embedding_job_id TEXT
+          CHECK (embedding_job_id IS NULL OR length(embedding_job_id) BETWEEN 1 AND 256),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          completed_items IS NULL OR total_items IS NULL
+          OR completed_items <= total_items
+        ),
+        CHECK (status <> 'failed' OR error_message IS NOT NULL),
+        CHECK (status <> 'succeeded' OR progress = 100),
+        CHECK (
+          status IN ('queued', 'running') OR completed_at IS NOT NULL
+        )
+      );
+      CREATE UNIQUE INDEX knowledge_tasks_active_dedupe_idx
+        ON knowledge_tasks(library_id, dedupe_key)
+        WHERE dedupe_key IS NOT NULL
+          AND status IN ('queued', 'running');
+      CREATE INDEX knowledge_tasks_library_list_idx
+        ON knowledge_tasks(library_id, created_at DESC, id DESC);
+      CREATE INDEX knowledge_tasks_parent_idx
+        ON knowledge_tasks(parent_task_id, created_at ASC, id ASC);
+      CREATE INDEX knowledge_tasks_retry_idx
+        ON knowledge_tasks(retry_of_task_id);
+      CREATE INDEX knowledge_tasks_embedding_job_idx
+        ON knowledge_tasks(embedding_job_id)
+        WHERE embedding_job_id IS NOT NULL;
+    `)
+  }
+
+  private migrateToVersion8(database: DatabaseSync): void {
+    const ontology = JSON.stringify(defaultKnowledgeOntologySettings)
+      .replaceAll("'", "''")
+    const addColumn = (
+      table: 'knowledge_bases' | 'graph_evidence',
+      name: string,
+      definition: string
+    ): void => {
+      const exists = database
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .some((row) => asString(row, 'name') === name)
+      if (!exists) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`)
+      }
+    }
+    addColumn(
+      'knowledge_bases',
+      'ontology_settings',
+      `ontology_settings TEXT NOT NULL DEFAULT '${ontology}'`
+    )
+    addColumn(
+      'knowledge_bases',
+      'ontology_rebuild_required',
+      `ontology_rebuild_required INTEGER NOT NULL DEFAULT 0
+       CHECK (ontology_rebuild_required IN (0, 1))`
+    )
+    addColumn(
+      'graph_evidence',
+      'start_offset',
+      'start_offset INTEGER CHECK (start_offset IS NULL OR start_offset >= 0)'
+    )
+    addColumn(
+      'graph_evidence',
+      'end_offset',
+      'end_offset INTEGER CHECK (end_offset IS NULL OR end_offset >= 0)'
+    )
+    addColumn(
+      'graph_evidence',
+      'confidence',
+      `confidence REAL CHECK (
+        confidence IS NULL OR (confidence >= 0 AND confidence <= 1)
+      )`
+    )
+    addColumn(
+      'graph_evidence',
+      'source',
+      `source TEXT NOT NULL DEFAULT 'legacy'
+       CHECK (source IN ('rules', 'model', 'manual', 'legacy'))`
+    )
+    addColumn(
+      'graph_evidence',
+      'provenance',
+      `provenance TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(provenance))`
+    )
+  }
+
+  private migrateToVersion9(database: DatabaseSync): void {
+    const hasIndexContent = database
+      .prepare('PRAGMA table_info(chunks)')
+      .all()
+      .some((row) => asString(row, 'name') === 'index_content')
+    if (!hasIndexContent) {
+      database.exec(
+        `ALTER TABLE chunks ADD COLUMN index_content TEXT NOT NULL DEFAULT ''`
+      )
+    }
+    database.exec(`
+      DROP TRIGGER IF EXISTS chunks_after_insert;
+      DROP TRIGGER IF EXISTS chunks_after_delete;
+      DROP TRIGGER IF EXISTS chunks_after_update;
+      DROP TRIGGER IF EXISTS chunks_cjk_after_insert;
+      DROP TRIGGER IF EXISTS chunks_cjk_after_delete;
+      DROP TRIGGER IF EXISTS chunks_cjk_after_update;
+      DROP TABLE IF EXISTS chunks_fts;
+    `)
+    const update = database.prepare(
+      `UPDATE chunks SET index_content = ?, cjk_search = ? WHERE id = ?`
+    )
+    const selectPage = database.prepare(
+      `SELECT rowid, id, content, heading, metadata
+       FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT 500`
+    )
+    let lastRowId = 0
+    while (true) {
+      const rows = selectPage.all(lastRowId)
+      if (rows.length === 0) {
+        break
+      }
+      for (const row of rows) {
+        const content = chunkIndexContent(
+          asString(row, 'content'),
+          parseObject(asString(row, 'metadata'))
+        )
+        update.run(
+          content,
+          createCjkSearchText(
+            `${asOptionalString(row, 'heading') ?? ''}\n${content}`
+          ),
+          asString(row, 'id')
+        )
+      }
+      lastRowId = asNumber(rows.at(-1)!, 'rowid')
+    }
+    database.exec(`
+      CREATE VIRTUAL TABLE chunks_fts USING fts5(
+        index_content,
+        content='chunks',
+        content_rowid='rowid',
+        tokenize='unicode61'
+      );
+      CREATE TRIGGER chunks_after_insert AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_fts(rowid, index_content)
+          SELECT new.rowid, new.index_content
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+      CREATE TRIGGER chunks_after_delete AFTER DELETE ON chunks
+        WHEN old.enabled = 1 AND old.role <> 'parent' BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, index_content)
+          VALUES ('delete', old.rowid, old.index_content);
+      END;
+      CREATE TRIGGER chunks_after_update AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, index_content)
+          SELECT 'delete', old.rowid, old.index_content
+          WHERE old.enabled = 1 AND old.role <> 'parent';
+        INSERT INTO chunks_fts(rowid, index_content)
+          SELECT new.rowid, new.index_content
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+
+      CREATE TRIGGER chunks_cjk_after_insert AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_cjk(rowid, cjk_search)
+          SELECT new.rowid, new.cjk_search
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+      CREATE TRIGGER chunks_cjk_after_delete AFTER DELETE ON chunks
+        WHEN old.enabled = 1 AND old.role <> 'parent' BEGIN
+        INSERT INTO chunks_cjk(chunks_cjk, rowid, cjk_search)
+          VALUES ('delete', old.rowid, old.cjk_search);
+      END;
+      CREATE TRIGGER chunks_cjk_after_update AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_cjk(chunks_cjk, rowid, cjk_search)
+          SELECT 'delete', old.rowid, old.cjk_search
+          WHERE old.enabled = 1 AND old.role <> 'parent';
+        INSERT INTO chunks_cjk(rowid, cjk_search)
+          SELECT new.rowid, new.cjk_search
+          WHERE new.enabled = 1 AND new.role <> 'parent';
+      END;
+
+      INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild');
+      INSERT INTO chunks_cjk(chunks_cjk) VALUES ('rebuild');
+
+      UPDATE knowledge_bases
+      SET chunking_rebuild_required = CASE
+        WHEN EXISTS (
+          SELECT 1 FROM documents
+          WHERE documents.knowledge_base_id = knowledge_bases.id
+        ) THEN 1
+        ELSE 0
+      END
+      WHERE json_extract(
+        chunking_settings,
+        '$.contextualIndexingEnabled'
+      ) = 1;
+    `)
+  }
+
   private normalizeChunks(chunks: ReplaceChunkInput[]): Array<{
     id: string
     ordinal: number
@@ -2844,11 +4791,15 @@ export class KnowledgeDatabase {
     heading?: string
     location?: string
     metadata: string
+    enabled: boolean
+    role: KnowledgeChunkRole
+    parentChunkId?: string
+    manuallyEdited: boolean
   }> {
     let totalContent = 0
     const ordinals = new Set<number>()
     const ids = new Set<string>()
-    return chunks.map((chunk, index) => {
+    const normalized = chunks.map((chunk, index) => {
       const id =
         optionalString(chunk.id, `chunks[${index}].id`, MAX_ID_LENGTH) ??
         randomUUID()
@@ -2902,9 +4853,31 @@ export class KnowledgeDatabase {
           MAX_LOCATION_LENGTH,
           false
         ),
-        metadata: jsonObject(chunk.metadata, `chunks[${index}].metadata`)
+        metadata: jsonObject(chunk.metadata, `chunks[${index}].metadata`),
+        enabled: chunk.enabled ?? true,
+        role: knowledgeChunkRoleSchema.parse(chunk.role ?? 'standalone'),
+        parentChunkId: optionalString(
+          chunk.parentChunkId,
+          `chunks[${index}].parentChunkId`,
+          MAX_ID_LENGTH
+        ),
+        manuallyEdited: chunk.manuallyEdited ?? false
       }
     })
+    const byId = new Map(normalized.map((chunk) => [chunk.id, chunk]))
+    for (const chunk of normalized) {
+      if (chunk.role === 'child') {
+        const parent = chunk.parentChunkId
+          ? byId.get(chunk.parentChunkId)
+          : undefined
+        if (!parent || parent.role !== 'parent') {
+          throw new Error('Child chunks must reference a parent chunk in the batch')
+        }
+      } else if (chunk.parentChunkId !== undefined) {
+        throw new Error('Only child chunks may reference a parent chunk')
+      }
+    }
+    return normalized
   }
 
   private assertRelationEntities(
@@ -2922,6 +4895,43 @@ export class KnowledgeDatabase {
     const expected = sourceEntityId === targetEntityId ? 1 : 2
     if (!count || asNumber(count, 'count') !== expected) {
       throw new Error('Relation entities must belong to the relation knowledge base')
+    }
+  }
+
+  private assertOntologyRelation(
+    database: DatabaseSync,
+    knowledgeBaseId: string,
+    sourceEntityId: string,
+    targetEntityId: string,
+    relationType: string
+  ): void {
+    if (sourceEntityId === targetEntityId) {
+      throw new Error('Knowledge graph relations cannot target the same entity')
+    }
+    const rows = database
+      .prepare(
+        `SELECT id, type FROM graph_entities
+         WHERE knowledge_base_id = ? AND id IN (?, ?)`
+      )
+      .all(knowledgeBaseId, sourceEntityId, targetEntityId)
+    const types = new Map(
+      rows.map((row) => [asString(row, 'id'), asString(row, 'type')])
+    )
+    const sourceType = types.get(sourceEntityId)
+    const targetType = types.get(targetEntityId)
+    if (
+      !sourceType ||
+      !targetType ||
+      !isRelationEndpointAllowed(
+        relationType,
+        sourceType,
+        targetType,
+        this.requiredKnowledgeBase(knowledgeBaseId).ontologySettings
+      )
+    ) {
+      throw new Error(
+        'Relation endpoints are not allowed by the library ontology'
+      )
     }
   }
 
@@ -2991,6 +5001,13 @@ export class KnowledgeDatabase {
       }
     }
     return result
+  }
+
+  private validateWeight(value: number, field: string): number {
+    if (!Number.isFinite(value) || value < 0 || value > 2) {
+      throw new RangeError(`${field} must be between 0 and 2`)
+    }
+    return value
   }
 
   private transaction(database: DatabaseSync, operation: () => void): void {
@@ -3073,6 +5090,14 @@ export class KnowledgeDatabase {
     const value = this.getEmbeddingIndexState(documentId, provider, model)
     if (!value) {
       throw new Error(`Embedding index state not found: ${documentId}`)
+    }
+    return value
+  }
+
+  private requiredKnowledgeTask(id: string): KnowledgeTaskItem {
+    const value = this.getKnowledgeTask(id)
+    if (!value) {
+      throw new Error(`Knowledge task not found: ${id}`)
     }
     return value
   }

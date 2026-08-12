@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { expertCreateSchema } from '../../shared/assistant-contracts'
+import {
+  expertCreateSchema,
+  normalizeInteractiveWorkMode
+} from '../../shared/assistant-contracts'
 import type {
   AssistantArtifact,
   AssistantExpert,
@@ -17,6 +20,7 @@ import type {
   HeartbeatCreateInput,
   HeartbeatSummaryOutput,
   HeartbeatUpdateInput,
+  LegacyWorkMode,
   MemoryCreateInput,
   ModelUsageCallInput,
   ProjectChannel,
@@ -70,7 +74,7 @@ type ProjectRow = {
   name: string
   description: string
   root_path: string
-  default_work_mode: ProjectCreateInput['defaultWorkMode']
+  default_work_mode: LegacyWorkMode
   runtime_selection_json: string | null
   kind: AssistantProject['kind']
   channel: ProjectChannel | null
@@ -363,7 +367,9 @@ function toProject(row: ProjectRow): AssistantProject {
     name: row.name,
     description: row.description,
     rootPath: row.root_path,
-    defaultWorkMode: row.default_work_mode,
+    defaultWorkMode: normalizeInteractiveWorkMode(
+      row.default_work_mode
+    ),
     runtimeSelection:
       row.kind === 'channel'
         ? parseRuntimeSelection(row.runtime_selection_json) ?? {
@@ -487,7 +493,7 @@ function toSchedule(row: ScheduleRow): AssistantSchedule {
   const template = JSON.parse(row.task_template_json) as {
     title: string
     prompt: string
-    workMode: AssistantSchedule['workMode']
+    workMode: LegacyWorkMode
   }
   const recurrence = JSON.parse(row.recurrence_json) as {
     type: AssistantSchedule['recurrence']
@@ -497,7 +503,7 @@ function toSchedule(row: ScheduleRow): AssistantSchedule {
     projectId: row.project_id ?? undefined,
     title: template.title,
     prompt: template.prompt,
-    workMode: template.workMode,
+    workMode: 'ask',
     recurrence: recurrence.type,
     nextRunAt: row.next_run_at,
     enabled: row.enabled === 1,
@@ -2392,7 +2398,7 @@ export class AssistantDatabase {
     routingMode?: AssistantTask['routingMode']
     title: string
     instructions: string
-    workMode: 'ask' | 'plan' | 'execute'
+    workMode: 'ask' | 'execute'
     origin?: AssistantTask['origin']
     status?: 'queued' | 'running'
     visible?: boolean
@@ -3808,7 +3814,7 @@ export class AssistantDatabase {
            instructions, origin, status, priority, work_mode,
            progress, created_at, started_at, completed_at, error)
          VALUES (?, ?, NULL, NULL, ?, ?, 'assistant', 'paused', 0,
-           'plan', NULL, ?, NULL, NULL, NULL)`
+           'ask', NULL, ?, NULL, NULL, NULL)`
       )
       for (const task of output.followUpTasks) {
         const taskId = randomUUID()
@@ -4298,7 +4304,7 @@ export class AssistantDatabase {
         description TEXT NOT NULL DEFAULT '',
         root_path TEXT NOT NULL DEFAULT '',
         default_work_mode TEXT NOT NULL
-          CHECK(default_work_mode IN ('ask', 'plan', 'execute')),
+          CHECK(default_work_mode IN ('ask', 'execute')),
         runtime_selection_json TEXT,
         status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
         created_at TEXT NOT NULL,
@@ -4309,7 +4315,7 @@ export class AssistantDatabase {
         project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
         runtime_selection_json TEXT,
         work_mode TEXT NOT NULL DEFAULT 'ask'
-          CHECK(work_mode IN ('ask', 'plan', 'execute')),
+          CHECK(work_mode IN ('ask', 'execute')),
         title TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'active'
           CHECK(status IN ('active', 'archived')),
@@ -4343,7 +4349,7 @@ export class AssistantDatabase {
             'completed', 'failed', 'cancelled', 'interrupted')),
         priority INTEGER NOT NULL DEFAULT 0,
         work_mode TEXT NOT NULL DEFAULT 'execute'
-          CHECK(work_mode IN ('ask', 'plan', 'execute')),
+          CHECK(work_mode IN ('ask', 'execute')),
         progress REAL,
         created_at TEXT NOT NULL,
         started_at TEXT,

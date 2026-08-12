@@ -13,7 +13,7 @@ import type {
 } from './capability-contracts'
 import {
   assistantIdSchema,
-  workModeSchema,
+  legacyWorkModeSchema,
   type AssistantProject,
   type AssistantArtifact,
   type AssistantMemory,
@@ -73,8 +73,8 @@ import type {
 } from './speech-model-contracts'
 import type {
   EmbeddingDiagnosticResult,
-  EmbeddingIndexStatus,
-  EmbeddingSettingsSnapshot
+  EmbeddingSettingsSnapshot,
+  KnowledgeEmbeddingIndexSnapshot
 } from './embedding-contracts'
 import type {
   DocumentOcrAssets,
@@ -85,6 +85,34 @@ import type {
   DocumentParsingSettings,
   DocumentParsingSnapshot
 } from './document-parsing-contracts'
+import type {
+  KnowledgeChunkDeleteInput,
+  KnowledgeChunkPage,
+  KnowledgeChunkUpdateInput,
+  KnowledgeChunksListInput,
+  KnowledgeDocumentRebuildInput,
+  KnowledgeLibraryRebuildInput,
+  KnowledgeReferenceContext,
+  KnowledgeReferenceContextInput,
+  KnowledgeReferenceOpenInput,
+  KnowledgeRetrievalResponse,
+  KnowledgeRetrievalSettings,
+  KnowledgeRetrieveInput,
+  KnowledgeSettingsUpdateInput,
+  KnowledgeChunkingSettings
+} from './knowledge-contracts'
+import type { KnowledgeOntologySettings } from './knowledge-ontology'
+import type {
+  KnowledgeTaskItem
+} from './knowledge-task-contracts'
+export type {
+  KnowledgeTaskError,
+  KnowledgeTaskItem,
+  KnowledgeTaskKind,
+  KnowledgeTaskScope,
+  KnowledgeTaskStage,
+  KnowledgeTaskStatus
+} from './knowledge-task-contracts'
 import type { WeixinBindingSnapshot } from './weixin-channel-contracts'
 import type { RemoteChannelActivity } from './remote-channel-contracts'
 import {
@@ -148,6 +176,11 @@ export type AgentQuestionAnswer = z.infer<
 
 export const conversationIdSchema = z.string().min(1).max(128)
 
+export const knowledgeRetrievalModeSchema = z.enum(['auto', 'always'])
+export type KnowledgeRetrievalMode = z.infer<
+  typeof knowledgeRetrievalModeSchema
+>
+
 export const agentRequestSchema = z
   .object({
     requestId: z.string().uuid(),
@@ -157,12 +190,13 @@ export const agentRequestSchema = z
     teamMode: z.boolean().optional(),
     smartRouting: z.boolean().optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
-    workMode: workModeSchema.optional(),
+    workMode: legacyWorkModeSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
     knowledgeLibraryIds: z
       .array(z.string().uuid())
       .max(20)
       .default([]),
+    knowledgeRetrievalMode: knowledgeRetrievalModeSchema.default('auto'),
     contextIds: z.array(z.string().uuid()).max(8).optional(),
     history: z
       .array(
@@ -260,6 +294,9 @@ export const defaultRuntimeSettings = {
   knowledgeEmbeddingBaseUrl:
     'http://127.0.0.1:11434/v1/embeddings',
   knowledgeEmbeddingModel: 'nomic-embed-text',
+  knowledgeRerankEnabled: false,
+  knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
+  knowledgeRerankModel: 'rerank-v3.5',
   workspacePath: '',
   toolApproval: 'always'
 } as const
@@ -386,6 +423,15 @@ export const runtimeSettingsInputSchema = z
       .max(256)
       .regex(/^[\w./:-]+$/, '向量模型名称包含不支持的字符'),
     knowledgeEmbeddingApiKey: modelApiKeyUpdateSchema.optional(),
+    knowledgeRerankEnabled: z.boolean(),
+    knowledgeRerankEndpoint: z.string().url().max(2_048),
+    knowledgeRerankModel: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .regex(/^[\w./:-]+$/, '重排模型名称包含不支持的字符'),
+    knowledgeRerankApiKey: modelApiKeyUpdateSchema.optional(),
     workspacePath: z.string().trim().min(1).max(4_096),
     apiKey: modelApiKeyUpdateSchema,
     modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
@@ -527,6 +573,17 @@ export const runtimeSettingsInputSchema = z
         message: '向量接口 URL 必须使用 HTTP 或 HTTPS'
       })
     }
+    if (
+      !['http:', 'https:'].includes(
+        new URL(settings.knowledgeRerankEndpoint).protocol
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['knowledgeRerankEndpoint'],
+        message: '重排接口 URL 必须使用 HTTP 或 HTTPS'
+      })
+    }
   })
 
 export type RuntimeSettingsInput = z.infer<typeof runtimeSettingsInputSchema>
@@ -568,6 +625,11 @@ export type RuntimeSettings = {
   knowledgeEmbeddingModel: string
   knowledgeEmbeddingApiKeyConfigured: boolean
   knowledgeEmbeddingCredentialSource: 'none' | 'encrypted' | 'environment'
+  knowledgeRerankEnabled?: boolean
+  knowledgeRerankEndpoint?: string
+  knowledgeRerankModel?: string
+  knowledgeRerankApiKeyConfigured?: boolean
+  knowledgeRerankCredentialSource?: 'none' | 'encrypted' | 'environment'
   workspacePath: string
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment'
@@ -760,6 +822,23 @@ export type AgentEvent =
     }
   | {
       requestId: string
+      type: 'knowledge-retrieval'
+      mode: 'always'
+      state:
+        | 'searching'
+        | 'succeeded'
+        | 'zero'
+        | 'degraded'
+        | 'failed'
+        | 'cancelled'
+      libraryCount: number
+      resultCount: number
+      durationMs?: number
+      usedChannels: Array<'fts' | 'cjk' | 'vector' | 'graph'>
+      warnings: string[]
+    }
+  | {
+      requestId: string
       type: 'done'
       sessionId?: string
     }
@@ -870,6 +949,11 @@ export type KnowledgeLibrary = z.infer<typeof knowledgeCreateSchema> & {
   sourceCount: number
   documentCount: number
   indexedDocumentCount: number
+  retrievalSettings?: KnowledgeRetrievalSettings
+  chunkingSettings?: KnowledgeChunkingSettings
+  chunkingRebuildRequired?: boolean
+  ontologySettings?: KnowledgeOntologySettings
+  ontologyRebuildRequired?: boolean
   updatedAt?: string
 }
 
@@ -898,21 +982,6 @@ export type KnowledgeDocumentItem = {
   size?: number
   updatedAt?: string
   error?: string
-}
-
-export type KnowledgeTaskItem = {
-  id: string
-  libraryId: string
-  sourceId?: string
-  documentId?: string
-  documentName: string
-  kind: 'parsing' | 'embedding' | 'graph'
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
-  progress: number
-  message?: string
-  createdAt: string
-  startedAt?: string
-  completedAt?: string
 }
 
 export type KnowledgeGraphNode = {
@@ -958,13 +1027,19 @@ export type KnowledgeSearchReference = {
   libraryId: string
   libraryName: string
   documentId: string
+  chunkId?: string
   documentName: string
   sourceName: string
   sourceLocation?: string
   locator?: string
   snippet: string
   rank: number
-  retrievalChannels?: Array<'fts' | 'vector' | 'graph'>
+  score?: number
+  lexicalRank?: number
+  vectorRank?: number
+  graphRank?: number
+  similarity?: number
+  retrievalChannels?: Array<'fts' | 'cjk' | 'vector' | 'graph'>
   evidenceIds?: string[]
 }
 
@@ -1078,11 +1153,6 @@ export type DesktopApi = {
   embeddings?: {
     getSnapshot: () => Promise<EmbeddingSettingsSnapshot>
     diagnose: () => Promise<EmbeddingDiagnosticResult>
-    rebuild: () => Promise<EmbeddingIndexStatus>
-    cancel: (jobId: string) => Promise<boolean>
-    onStatus: (
-      listener: (status: EmbeddingIndexStatus) => void
-    ) => () => void
   }
   documentParsing?: {
     getSnapshot: () => Promise<DocumentParsingSnapshot>
@@ -1341,6 +1411,46 @@ export type DesktopApi = {
       libraryIds: string[],
       query: string
     ) => Promise<KnowledgeSearchReference[]>
+    retrieve: (
+      input: KnowledgeRetrieveInput
+    ) => Promise<KnowledgeRetrievalResponse>
+    updateSettings: (
+      input: KnowledgeSettingsUpdateInput
+    ) => Promise<KnowledgeLibrary>
+    listChunks: (
+      input: KnowledgeChunksListInput
+    ) => Promise<KnowledgeChunkPage>
+    updateChunk: (
+      input: KnowledgeChunkUpdateInput
+    ) => Promise<void>
+    deleteChunk: (
+      input: KnowledgeChunkDeleteInput
+    ) => Promise<void>
+    rebuildDocument: (
+      input: KnowledgeDocumentRebuildInput
+    ) => Promise<KnowledgeSnapshot>
+    rebuildLibrary: (
+      input: KnowledgeLibraryRebuildInput
+    ) => Promise<{ rebuilt: number; failed: number }>
+    cancelRebuild: (knowledgeBaseId: string) => Promise<boolean>
+    getEmbeddingIndex: (
+      knowledgeBaseId: string
+    ) => Promise<KnowledgeEmbeddingIndexSnapshot>
+    rebuildEmbeddingIndex: (
+      knowledgeBaseId: string
+    ) => Promise<KnowledgeEmbeddingIndexSnapshot>
+    cancelEmbeddingIndex: (
+      knowledgeBaseId: string,
+      jobId: string
+    ) => Promise<boolean>
+    cancelTask: (taskId: string) => Promise<boolean>
+    retryTask: (taskId: string) => Promise<void>
+    getReferenceContext: (
+      input: KnowledgeReferenceContextInput
+    ) => Promise<KnowledgeReferenceContext>
+    openReferenceSource: (
+      input: KnowledgeReferenceOpenInput
+    ) => Promise<void>
     createEntity: (
       libraryId: string,
       input: z.infer<typeof knowledgeEntityUpdateSchema>

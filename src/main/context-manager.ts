@@ -520,12 +520,16 @@ export class ContextManager {
   }
 
   enrichRequest(request: AgentRequest): AgentExecutionRequest {
+    const normalizedRequest: AgentExecutionRequest = {
+      ...request,
+      workMode: request.workMode === 'execute' ? 'execute' : 'ask'
+    }
     const selected = (request.contextIds ?? [])
       .map((id) => this.contexts.get(id))
       .filter((context): context is StoredContext => Boolean(context))
 
     if (selected.length === 0) {
-      return request
+      return normalizedRequest
     }
 
     const textContexts = selected.filter(
@@ -567,7 +571,7 @@ export class ContextManager {
       )
 
     return {
-      ...request,
+      ...normalizedRequest,
       prompt,
       images: images.length > 0 ? images : undefined
     }

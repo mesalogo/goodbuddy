@@ -5,6 +5,7 @@ import type {
   AgentRequest,
   AgentRuntimeStatus
 } from '../../shared/contracts'
+import type { WorkMode } from '../../shared/assistant-contracts'
 
 export type RuntimeApprovalRequest = {
   scopeKey: string
@@ -72,7 +73,8 @@ export type AgentImage = {
   data: string
 }
 
-export type AgentExecutionRequest = AgentRequest & {
+export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
+  workMode?: WorkMode
   images?: AgentImage[]
   /** Main-process-only instructions placed in the model system layer. */
   trustedInstructions?: string
