@@ -45,6 +45,7 @@ import {
   createCjkSearchText,
   knowledgeRetrievalTerms
 } from './retrieval-text'
+import { normalizeEntityAlias } from './graph-extractor'
 import type {
   Chunk,
   ChunkEmbeddingInput,
@@ -79,7 +80,7 @@ import type {
   VectorSearchOptions
 } from './types'
 
-const DATABASE_VERSION = 9
+const DATABASE_VERSION = 10
 const MAX_ID_LENGTH = 128
 const MAX_NAME_LENGTH = 512
 const MAX_LOCATION_LENGTH = 8192
@@ -200,6 +201,17 @@ function optionalString(
     return undefined
   }
   return requiredString(value, field, maximum, trim)
+}
+
+function truncatedOptionalString(
+  value: string | null | undefined,
+  maximum: number
+): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined
+  }
+  const normalized = String(value).trim()
+  return normalized ? normalized.slice(0, maximum) : undefined
 }
 
 function boundedInteger(
@@ -1340,25 +1352,20 @@ export class KnowledgeDatabase {
         ? undefined
         : update.message === undefined
           ? current.message
-          : optionalString(
-              update.message,
-              'message',
-              MAX_TASK_TEXT_LENGTH
-            )
+          : truncatedOptionalString(update.message, MAX_TASK_TEXT_LENGTH)
     const error =
       update.error === null
         ? undefined
         : update.error === undefined
           ? current.error
           : {
-              message: requiredString(
-                update.error.message,
-                'error.message',
-                MAX_TASK_TEXT_LENGTH
-              ),
-              remedy: optionalString(
+              message:
+                truncatedOptionalString(
+                  update.error.message,
+                  MAX_TASK_TEXT_LENGTH
+                ) ?? '任务失败',
+              remedy: truncatedOptionalString(
                 update.error.remedy,
-                'error.remedy',
                 MAX_TASK_TEXT_LENGTH
               )
             }
@@ -2089,6 +2096,11 @@ export class KnowledgeDatabase {
     const database = this.requireDatabase()
     const now = new Date().toISOString()
     this.transaction(database, () => {
+      if (content !== current.chunk.content) {
+        database
+          .prepare('DELETE FROM graph_evidence WHERE chunk_id = ?')
+          .run(current.chunk.id)
+      }
       database
         .prepare(
           `UPDATE chunks SET content = ?, enabled = ?, manually_edited = 1,
@@ -2110,9 +2122,6 @@ export class KnowledgeDatabase {
       database
         .prepare('DELETE FROM embedding_index_state WHERE document_id = ?')
         .run(current.document.id)
-      database
-        .prepare('DELETE FROM graph_evidence WHERE chunk_id = ?')
-        .run(current.chunk.id)
     })
     return this.getChunkForReference(
       input.knowledgeBaseId,
@@ -2335,12 +2344,12 @@ export class KnowledgeDatabase {
       'documentId',
       MAX_ID_LENGTH
     )
-    const normalizedProvider = requiredString(
+    requiredString(
       provider,
       'provider',
       MAX_EMBEDDING_PROVIDER_LENGTH
     )
-    const normalizedModel = requiredString(
+    requiredString(
       model,
       'model',
       MAX_EMBEDDING_MODEL_LENGTH
@@ -2353,16 +2362,6 @@ export class KnowledgeDatabase {
     ) {
       throw new Error(`Document not found: ${normalizedDocumentId}`)
     }
-    database
-      .prepare(
-        `DELETE FROM embedding_rebuild_staging
-         WHERE document_id = ? AND provider = ? AND model = ?`
-      )
-      .run(
-        normalizedDocumentId,
-        normalizedProvider,
-        normalizedModel
-      )
     return randomUUID()
   }
 
@@ -2543,6 +2542,40 @@ export class KnowledgeDatabase {
       asNumber(counts, 'chunks') !== asNumber(counts, 'embeddings')
     ) {
       throw new Error('Embeddings must cover every current document chunk')
+    }
+    const stagedRows = database
+      .prepare(
+        `SELECT
+           staged.content_checksum AS staged_checksum,
+           current.index_content AS current_content
+         FROM embedding_rebuild_staging staged
+         LEFT JOIN chunks current
+           ON current.id = staged.chunk_id
+          AND current.document_id = staged.document_id
+          AND current.enabled = 1
+          AND current.role <> 'parent'
+         WHERE staged.replacement_id = ?
+           AND staged.document_id = ?
+           AND staged.provider = ?
+           AND staged.model = ?`
+      )
+      .all(
+        normalizedReplacementId,
+        normalizedDocumentId,
+        normalizedProvider,
+        normalizedModel
+      )
+    if (
+      stagedRows.some((row) => {
+        const currentContent = asOptionalString(row, 'current_content')
+        return (
+          currentContent === undefined ||
+          asString(row, 'staged_checksum') !==
+            contentChecksum(currentContent)
+        )
+      })
+    ) {
+      throw new Error('Embedding content changed during replacement')
     }
     const indexHash = createHash('sha256')
     let dimensions: number | undefined
@@ -3270,6 +3303,45 @@ export class KnowledgeDatabase {
       .map(mapEntity)
   }
 
+  findEntityByCanonicalName(
+    knowledgeBaseId: string,
+    type: string,
+    name: string
+  ): GraphEntity | undefined {
+    requiredString(knowledgeBaseId, 'knowledgeBaseId', MAX_ID_LENGTH)
+    const normalizedType = requiredString(type, 'type', MAX_NAME_LENGTH)
+    const normalizedName = normalizeEntityAlias(name)
+    if (!normalizedName) {
+      return undefined
+    }
+    return this.listEntitiesForIdentity(knowledgeBaseId)
+      .find(
+        (candidate) =>
+          candidate.type === normalizedType &&
+          (
+            normalizeEntityAlias(candidate.name) === normalizedName ||
+            candidate.aliases.some(
+              (alias) => normalizeEntityAlias(alias) === normalizedName
+            )
+          )
+      )
+  }
+
+  listEntitiesForIdentity(knowledgeBaseId: string): GraphEntity[] {
+    const normalizedId = requiredString(
+      knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    return this.requireDatabase()
+      .prepare(
+        `SELECT * FROM graph_entities WHERE knowledge_base_id = ?
+         ORDER BY name COLLATE NOCASE ASC, id ASC`
+      )
+      .all(normalizedId)
+      .map(mapEntity)
+  }
+
   updateEntity(id: string, input: UpdateGraphEntityInput): GraphEntity {
     const current = this.requiredEntity(id)
     const ontology =
@@ -3428,6 +3500,32 @@ export class KnowledgeDatabase {
       )
       .all(normalizedId, limit)
       .map(mapRelation)
+  }
+
+  findRelationByIdentity(
+    knowledgeBaseId: string,
+    sourceEntityId: string,
+    targetEntityId: string,
+    type: string
+  ): GraphRelation | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT * FROM graph_relations
+         WHERE knowledge_base_id = ? AND source_entity_id = ?
+           AND target_entity_id = ? AND type = ?
+         ORDER BY created_at ASC, id ASC LIMIT 1`
+      )
+      .get(
+        requiredString(
+          knowledgeBaseId,
+          'knowledgeBaseId',
+          MAX_ID_LENGTH
+        ),
+        requiredString(sourceEntityId, 'sourceEntityId', MAX_ID_LENGTH),
+        requiredString(targetEntityId, 'targetEntityId', MAX_ID_LENGTH),
+        requiredString(type, 'type', MAX_NAME_LENGTH)
+      )
+    return row ? mapRelation(row) : undefined
   }
 
   updateRelation(
@@ -3624,6 +3722,42 @@ export class KnowledgeDatabase {
       )
       .all(normalizedId, limit)
       .map(mapEvidence)
+  }
+
+  listGraphSnapshot(knowledgeBaseId: string): {
+    entities: GraphEntity[]
+    relations: GraphRelation[]
+    evidence: Evidence[]
+  } {
+    const normalizedId = requiredString(
+      knowledgeBaseId,
+      'knowledgeBaseId',
+      MAX_ID_LENGTH
+    )
+    const database = this.requireDatabase()
+    return {
+      entities: database
+        .prepare(
+          `SELECT * FROM graph_entities WHERE knowledge_base_id = ?
+           ORDER BY name COLLATE NOCASE ASC, id ASC`
+        )
+        .all(normalizedId)
+        .map(mapEntity),
+      relations: database
+        .prepare(
+          `SELECT * FROM graph_relations WHERE knowledge_base_id = ?
+           ORDER BY created_at ASC, id ASC`
+        )
+        .all(normalizedId)
+        .map(mapRelation),
+      evidence: database
+        .prepare(
+          `SELECT * FROM graph_evidence WHERE knowledge_base_id = ?
+           ORDER BY created_at ASC, id ASC`
+        )
+        .all(normalizedId)
+        .map(mapEvidence)
+    }
   }
 
   updateEvidence(id: string, input: UpdateEvidenceInput): Evidence {
@@ -3961,6 +4095,8 @@ export class KnowledgeDatabase {
                  AND ev.knowledge_base_id = ge.knowledge_base_id
                  AND ec.knowledge_base_id = ge.knowledge_base_id
                  AND ec.document_id = ev.document_id
+                 AND ec.enabled = 1
+                 AND ec.role <> 'parent'
              )
            ORDER BY ge.name COLLATE NOCASE ASC, ge.id ASC
            LIMIT 24
@@ -3988,6 +4124,8 @@ export class KnowledgeDatabase {
                  AND rev.knowledge_base_id = gr.knowledge_base_id
                  AND rc.knowledge_base_id = gr.knowledge_base_id
                  AND rc.document_id = rev.document_id
+                 AND rc.enabled = 1
+                 AND rc.role <> 'parent'
              )
              AND EXISTS (
                SELECT 1 FROM graph_evidence nev
@@ -4000,6 +4138,8 @@ export class KnowledgeDatabase {
                  AND nev.knowledge_base_id = gr.knowledge_base_id
                  AND nc.knowledge_base_id = gr.knowledge_base_id
                  AND nc.document_id = nev.document_id
+                 AND nc.enabled = 1
+                 AND nc.role <> 'parent'
              )
          ),
          reached(id, depth) AS (
@@ -4042,6 +4182,7 @@ export class KnowledgeDatabase {
          JOIN knowledge_sources s ON s.id = d.source_id
          WHERE c.knowledge_base_id = ? AND d.knowledge_base_id = ?
            AND s.knowledge_base_id = ?
+           AND c.enabled = 1 AND c.role <> 'parent'
          GROUP BY c.id
          ORDER BY MIN(backed_evidence.graph_depth) ASC, c.id ASC
          LIMIT ?`
@@ -4174,6 +4315,14 @@ export class KnowledgeDatabase {
             'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
           )
           .run(9, new Date().toISOString())
+      }
+      if (currentVersion < 10) {
+        this.migrateToVersion10(database)
+        database
+          .prepare(
+            'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
+          )
+          .run(10, new Date().toISOString())
       }
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}`)
       database.exec('COMMIT')
@@ -4780,6 +4929,21 @@ export class KnowledgeDatabase {
         chunking_settings,
         '$.contextualIndexingEnabled'
       ) = 1;
+    `)
+  }
+
+  private migrateToVersion10(database: DatabaseSync): void {
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS graph_evidence_chunk_idx
+        ON graph_evidence(knowledge_base_id, chunk_id);
+      CREATE INDEX IF NOT EXISTS graph_evidence_entity_idx
+        ON graph_evidence(knowledge_base_id, entity_id);
+      CREATE INDEX IF NOT EXISTS graph_evidence_relation_idx
+        ON graph_evidence(knowledge_base_id, relation_id);
+      CREATE INDEX IF NOT EXISTS graph_relations_source_idx
+        ON graph_relations(knowledge_base_id, source_entity_id);
+      CREATE INDEX IF NOT EXISTS graph_relations_target_idx
+        ON graph_relations(knowledge_base_id, target_entity_id);
     `)
   }
 

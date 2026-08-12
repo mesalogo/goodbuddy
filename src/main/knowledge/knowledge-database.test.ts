@@ -86,7 +86,7 @@ describe('KnowledgeDatabase', () => {
     const inspection = new DatabaseSync(path)
     expect(
       inspection.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 9 })
+    ).toEqual({ user_version: 10 })
     expect(
       inspection
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
@@ -100,7 +100,8 @@ describe('KnowledgeDatabase', () => {
       { version: 6 },
       { version: 7 },
       { version: 8 },
-      { version: 9 }
+      { version: 9 },
+      { version: 10 }
     ])
     inspection.close()
 
@@ -192,7 +193,7 @@ describe('KnowledgeDatabase', () => {
     })
   })
 
-  it('upgrades an existing v1 database through knowledge schema v9', async () => {
+  it('upgrades an existing v1 database through knowledge schema v10', async () => {
     const { database, path } = await createDatabase()
     const knowledgeBase = database.createKnowledgeBase({
       name: 'Version one data',
@@ -208,7 +209,8 @@ describe('KnowledgeDatabase', () => {
       DROP TABLE embedding_index_state;
       DROP TABLE chunk_embeddings;
       DROP TABLE knowledge_tasks;
-      DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9);
+      DELETE FROM schema_migrations
+      WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10);
       PRAGMA user_version = 1;
     `)
     downgrade.close()
@@ -218,7 +220,7 @@ describe('KnowledgeDatabase', () => {
     upgraded.initialize()
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 9
+      user_version: 10
     })
     expect(
       inspection
@@ -325,7 +327,7 @@ describe('KnowledgeDatabase', () => {
           WHERE new.enabled = 1 AND new.role <> 'parent';
       END;
       INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild');
-      DELETE FROM schema_migrations WHERE version = 9;
+      DELETE FROM schema_migrations WHERE version IN (9, 10);
       PRAGMA user_version = 8;
     `)
     downgrade
@@ -476,6 +478,38 @@ describe('KnowledgeDatabase', () => {
         progress: 100
       })
     ).toMatchObject({ status: 'interrupted', progress: 30 })
+  })
+
+  it('bounds task status text from runtime failures', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Bounded task status',
+      storageMode: 'reference'
+    })
+    const task = database.createKnowledgeTask({
+      libraryId: library.id,
+      documentName: library.name,
+      scope: 'library',
+      kind: 'library-rebuild'
+    })
+
+    expect(
+      database.updateKnowledgeTask(task.id, {
+        status: 'failed',
+        message: 'm'.repeat(2_000),
+        error: {
+          message: 'e'.repeat(2_000),
+          remedy: 'r'.repeat(2_000)
+        }
+      })
+    ).toMatchObject({
+      status: 'failed',
+      message: 'm'.repeat(1_000),
+      error: {
+        message: 'e'.repeat(1_000),
+        remedy: 'r'.repeat(1_000)
+      }
+    })
   })
 
   it('lists every active task in addition to the terminal history limit', async () => {
@@ -777,6 +811,63 @@ describe('KnowledgeDatabase', () => {
     expect(database.deleteEvidence(entityEvidence.id)).toBe(true)
     expect(database.deleteRelation(relation.id)).toBe(true)
     expect(database.deleteEntity(other.id)).toBe(true)
+  })
+
+  it('finds graph identities beyond the ordinary list limit', async () => {
+    const { database } = await createDatabase()
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Large graph identity',
+      storageMode: 'reference'
+    })
+    let expectedEntityId = ''
+    const targetEntityIds: string[] = []
+    for (let index = 0; index < 501; index += 1) {
+      const entity = database.createEntity({
+        knowledgeBaseId: knowledgeBase.id,
+        name: `Entity ${String(index).padStart(3, '0')}`,
+        type: 'CONCEPT',
+        locked: false
+      })
+      targetEntityIds.push(entity.id)
+      if (index === 500) {
+        expectedEntityId = entity.id
+      }
+    }
+    const source = database.createEntity({
+      knowledgeBaseId: knowledgeBase.id,
+      name: 'Relation Source',
+      type: 'CONCEPT',
+      locked: false
+    })
+    let expectedRelationId = ''
+    for (let index = 0; index < 501; index += 1) {
+      const relation = database.createRelation({
+        knowledgeBaseId: knowledgeBase.id,
+        sourceEntityId: source.id,
+        targetEntityId: targetEntityIds[index]!,
+        type: 'RELATED_TO',
+        locked: false
+      })
+      if (index === 500) {
+        expectedRelationId = relation.id
+      }
+    }
+
+    expect(
+      database.findEntityByCanonicalName(
+        knowledgeBase.id,
+        'CONCEPT',
+        'Entity 500'
+      )?.id
+    ).toBe(expectedEntityId)
+    expect(
+      database.findRelationByIdentity(
+        knowledgeBase.id,
+        source.id,
+        targetEntityIds[500]!,
+        'RELATED_TO'
+      )?.id
+    ).toBe(expectedRelationId)
   })
 
   it('persists controlled ontology updates and marks graph rebuild state', async () => {
@@ -1229,6 +1320,12 @@ describe('KnowledgeDatabase', () => {
         }
       ]
     )
+    const concurrentReplacementId =
+      database.beginDocumentEmbeddingReplacement(
+        document.id,
+        'openai-compatible',
+        'embed-v1'
+      )
 
     expect(
       database.vectorSearch({
@@ -1244,6 +1341,9 @@ describe('KnowledgeDatabase', () => {
       'openai-compatible',
       'embed-v1'
     )
+    database.discardDocumentEmbeddingReplacement(
+      concurrentReplacementId
+    )
     expect(
       database.vectorSearch({
         knowledgeBaseId: knowledgeBase.id,
@@ -1252,6 +1352,55 @@ describe('KnowledgeDatabase', () => {
         vector: [0, 1]
       })[0]?.chunk.id
     ).toBe(item.id)
+  })
+
+  it('rejects a staged embedding replacement after chunk content changes', async () => {
+    const { database } = await createDatabase()
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Stale replacement',
+      storageMode: 'reference'
+    })
+    const seeded = seedDocument(
+      database,
+      knowledgeBase.id,
+      'stale-replacement'
+    )
+    const document =
+      database.getEmbeddingIndexDocument(seeded.documentId)!
+    const item = document.items[0]!
+    const replacementId =
+      database.beginDocumentEmbeddingReplacement(
+        document.id,
+        'openai-compatible',
+        'embed-v1'
+      )
+    database.appendDocumentEmbeddingBatch(
+      replacementId,
+      document.id,
+      'openai-compatible',
+      'embed-v1',
+      [{
+        chunkId: item.id,
+        contentChecksum: item.contentChecksum!,
+        vector: [1, 0]
+      }]
+    )
+    database.updateChunk({
+      knowledgeBaseId: knowledgeBase.id,
+      documentId: document.id,
+      chunkId: item.id,
+      content: 'newer content'
+    })
+
+    expect(() =>
+      database.finishDocumentEmbeddingReplacement(
+        replacementId,
+        document.id,
+        'openai-compatible',
+        'embed-v1'
+      )
+    ).toThrow('content changed')
+    database.discardDocumentEmbeddingReplacement(replacementId)
   })
 
   it('persists embedding index jobs independently by knowledge base', async () => {
@@ -1442,6 +1591,20 @@ describe('KnowledgeDatabase', () => {
         0
       ).map((chunk) => chunk.id)
     ).toEqual(['parent-chunk'])
+    const graphEntity = database.createEntity({
+      knowledgeBaseId: library.id,
+      name: 'Chunk evidence',
+      type: 'CONCEPT',
+      locked: false
+    })
+    const evidence = database.createEvidence({
+      knowledgeBaseId: library.id,
+      entityId: graphEntity.id,
+      documentId: document.id,
+      chunkId: 'child-chunk',
+      quote: 'recallable child text',
+      source: 'rules'
+    })
 
     database.updateChunk({
       knowledgeBaseId: library.id,
@@ -1451,6 +1614,12 @@ describe('KnowledgeDatabase', () => {
     })
     expect(
       database.search({ knowledgeBaseId: library.id, query: 'recallable' })
+    ).toEqual([])
+    expect(database.listEvidence(library.id)).toEqual([
+      expect.objectContaining({ id: evidence.id })
+    ])
+    expect(
+      database.graphSearch(library.id, 'Chunk evidence')
     ).toEqual([])
     database.updateChunk({
       knowledgeBaseId: library.id,
@@ -1462,6 +1631,7 @@ describe('KnowledgeDatabase', () => {
     expect(
       database.search({ knowledgeBaseId: library.id, query: '人工修正' })
     ).toHaveLength(1)
+    expect(database.listEvidence(library.id)).toEqual([])
     expect(
       database.listChunksPage({
         knowledgeBaseId: library.id,

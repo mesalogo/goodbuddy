@@ -2,7 +2,6 @@ import {
   cp,
   lstat,
   mkdir,
-  open,
   readdir,
   realpath,
   rm,
@@ -91,7 +90,10 @@ import type {
 } from './types'
 import { UrlImporter } from './url-importer'
 import { mimeTypeFromFileName } from '../file-media-type'
-import { isPathInside } from '../workspace-file-access'
+import {
+  isPathInside,
+  readBoundedFile
+} from '../workspace-file-access'
 
 type ScannedFile = {
   absolutePath: string
@@ -182,6 +184,11 @@ export class KnowledgeService {
     string,
     Promise<Document>
   >()
+  private readonly backgroundEmbeddingReindexes = new Map<
+    string,
+    Promise<void>
+  >()
+  private readonly pendingEmbeddingReindexes = new Set<string>()
   private readonly taskControllers = new Map<string, AbortController>()
   private readonly taskOperations = new Map<string, Promise<unknown>>()
   private readonly sourceSyncTaskIds = new Map<string, string>()
@@ -253,6 +260,7 @@ export class KnowledgeService {
       clearTimeout(timer)
     }
     this.embeddingEditTimers.clear()
+    this.pendingEmbeddingReindexes.clear()
     for (const watcher of this.watchers.values()) {
       watcher.close()
     }
@@ -266,6 +274,7 @@ export class KnowledgeService {
     await Promise.allSettled([
       ...this.activeSyncs.values(),
       ...this.activeDocumentRebuilds.values(),
+      ...this.backgroundEmbeddingReindexes.values(),
       ...this.taskOperations.values(),
       ...embeddingCompletions
     ])
@@ -451,6 +460,11 @@ export class KnowledgeService {
     })
   }
 
+  private static taskErrorMessage(error: unknown): string {
+    const message = error instanceof Error ? error.message : '任务失败'
+    return message.slice(0, 1_000) || '任务失败'
+  }
+
   private failKnowledgeTask(taskId: string, error: unknown): void {
     const current = this.database.getKnowledgeTask(taskId)
     if (
@@ -459,7 +473,7 @@ export class KnowledgeService {
     ) {
       return
     }
-    const message = error instanceof Error ? error.message : '任务失败'
+    const message = KnowledgeService.taskErrorMessage(error)
     this.database.updateKnowledgeTask(taskId, {
       status: 'failed',
       message,
@@ -712,13 +726,14 @@ export class KnowledgeService {
             : undefined
       }
     })
+    const graph = this.database.listGraphSnapshot(libraryId)
     return {
       libraries,
       sources,
       documents,
-      entities: this.database.listEntities(libraryId),
-      relations: this.database.listRelations(libraryId),
-      evidence: this.database.listEvidence(libraryId),
+      entities: graph.entities,
+      relations: graph.relations,
+      evidence: graph.evidence,
       tasks: this.database.listKnowledgeTasks(libraryId)
     }
   }
@@ -1223,6 +1238,15 @@ export class KnowledgeService {
     ) {
       this.scheduleEmbeddingReindex(input.documentId)
     }
+    if (
+      current &&
+      input.content !== undefined &&
+      input.content !== current.content
+    ) {
+      this.database.pruneUnreferencedGeneratedGraph(
+        input.knowledgeBaseId
+      )
+    }
     return chunk
   }
 
@@ -1231,6 +1255,9 @@ export class KnowledgeService {
     const deleted = this.database.deleteChunk(input)
     if (deleted) {
       this.scheduleEmbeddingReindex(input.documentId)
+      this.database.pruneUnreferencedGeneratedGraph(
+        input.knowledgeBaseId
+      )
     }
     return deleted
   }
@@ -1618,6 +1645,7 @@ export class KnowledgeService {
             effectiveLibrary
           )
         )
+        this.database.pruneUnreferencedGeneratedGraph(library.id)
         this.updateKnowledgeTask(parsingTask.id, {
           documentId: document.id,
           documentName: document.title,
@@ -1702,11 +1730,21 @@ export class KnowledgeService {
   }
 
   async syncSource(sourceId: string): Promise<void> {
+    return this.syncSourceOperation(sourceId)
+  }
+
+  private async syncSourceOperation(
+    sourceId: string,
+    retryOfTaskId?: string
+  ): Promise<void> {
     const existing = this.activeSyncs.get(sourceId)
     if (existing) {
       return existing
     }
-    const operation = this.performSyncSource(sourceId).finally(() => {
+    const operation = this.performSyncSource(
+      sourceId,
+      retryOfTaskId
+    ).finally(() => {
       if (this.activeSyncs.get(sourceId) === operation) {
         this.activeSyncs.delete(sourceId)
       }
@@ -1836,7 +1874,12 @@ export class KnowledgeService {
         progress: 5,
         message: '正在读取文档'
       })
-      const buffer = await this.readBoundedFile(location)
+      const buffer = await readBoundedFile(
+        location,
+        maximumFileBytes,
+        '文件超过 20MB',
+        '文件不是普通文件'
+      )
       effectiveSignal.throwIfAborted()
       this.updateKnowledgeTask(task.id, {
         stage: 'parsing',
@@ -1868,6 +1911,7 @@ export class KnowledgeService {
         },
         this.createDocumentChunks(parsed, library)
       )
+      this.database.pruneUnreferencedGeneratedGraph(library.id)
       this.updateKnowledgeTask(task.id, {
         stage: 'embedding',
         progress: 65,
@@ -2073,7 +2117,7 @@ export class KnowledgeService {
         if (!task.sourceId) {
           throw new Error('任务缺少知识来源')
         }
-        await this.performSyncSource(task.sourceId, task.id)
+        await this.syncSourceOperation(task.sourceId, task.id)
         return
       }
       case 'document-rebuild': {
@@ -2151,7 +2195,8 @@ export class KnowledgeService {
     if (library.graphStrategy === 'ask') {
       throw new Error('按需询问策略不会自动抽取，请在设置中选择其他策略')
     }
-    const documents = this.database.listDocuments(library.id)
+    const documents =
+      this.database.listDocumentsForLibraryRebuild(library.id)
     const parentTask = this.createKnowledgeTask({
       libraryId: library.id,
       retryOfTaskId,
@@ -2293,6 +2338,9 @@ export class KnowledgeService {
       'Knowledge source deleted'
     )
     const removed = this.database.removeSource(sourceId)
+    if (removed) {
+      this.database.pruneUnreferencedGeneratedGraph(library.id)
+    }
     if (
       removed &&
       library.storageMode === 'managed' &&
@@ -2395,13 +2443,18 @@ export class KnowledgeService {
       } else {
         this.failKnowledgeTask(task.id, error)
       }
-      if (!effectiveSignal.aborted && source.type !== 'url') {
-        this.database.upsertSource({
-          ...source,
-          status: 'error',
-          lastError:
-            error instanceof Error ? error.message.slice(0, 1_000) : '同步失败'
-        })
+      if (!effectiveSignal.aborted) {
+        const currentSource = this.database.getSource(source.id)
+        if (currentSource) {
+          this.database.upsertSource({
+            ...currentSource,
+            status: 'error',
+            lastError:
+              error instanceof Error
+                ? error.message.slice(0, 1_000)
+                : '同步失败'
+          })
+        }
       }
       throw error
     } finally {
@@ -2431,6 +2484,11 @@ export class KnowledgeService {
         this.database.removeDocument(document.id)
       }
     }
+    if (existing.some(
+      (document) => !currentExternalIds.has(document.externalId)
+    )) {
+      this.database.pruneUnreferencedGeneratedGraph(library.id)
+    }
 
     const failures: string[] = []
     for (let index = 0; index < files.length; index += 1) {
@@ -2454,7 +2512,12 @@ export class KnowledgeService {
           progress: 10,
           message: '正在读取文档'
         })
-        const buffer = await this.readBoundedFile(file.absolutePath)
+        const buffer = await readBoundedFile(
+          file.absolutePath,
+          maximumFileBytes,
+          '文件超过 20MB',
+          '文件不是普通文件'
+        )
         signal.throwIfAborted()
         this.updateKnowledgeTask(parsingTask.id, {
           stage: 'parsing',
@@ -2507,6 +2570,7 @@ export class KnowledgeService {
           },
           this.createDocumentChunks(parsed, effectiveLibrary)
         )
+        this.database.pruneUnreferencedGeneratedGraph(library.id)
         this.updateKnowledgeTask(parsingTask.id, {
           documentId: document.id,
           documentName: document.title,
@@ -2550,7 +2614,7 @@ export class KnowledgeService {
         this.failKnowledgeTask(parsingTask.id, error)
         failures.push(
           `${file.relativePath}: ${
-            error instanceof Error ? error.message : '解析失败'
+            KnowledgeService.taskErrorMessage(error)
           }`
         )
       }
@@ -2564,8 +2628,9 @@ export class KnowledgeService {
       })
     }
     if (failures.length > 0) {
+      const detail = failures.slice(0, 5).join('；')
       throw new Error(
-        `${failures.length} 个文件处理失败：${failures.slice(0, 5).join('；')}`
+        `${failures.length} 个文件处理失败：${detail}`.slice(0, 1_000)
       )
     }
   }
@@ -2577,13 +2642,47 @@ export class KnowledgeService {
     }
     const timer = setTimeout(() => {
       this.embeddingEditTimers.delete(documentId)
-      const document = this.database.getDocument(documentId)
-      if (document && this.embeddingProvider) {
-        void this.indexDocumentEmbeddings(document)
+      if (this.backgroundEmbeddingReindexes.has(documentId)) {
+        this.pendingEmbeddingReindexes.add(documentId)
+        return
       }
+      this.startBackgroundEmbeddingReindex(documentId)
     }, 250)
     timer.unref?.()
     this.embeddingEditTimers.set(documentId, timer)
+  }
+
+  private startBackgroundEmbeddingReindex(documentId: string): void {
+    if (
+      this.backgroundEmbeddingReindexes.has(documentId) ||
+      this.lifecycleController.signal.aborted
+    ) {
+      return
+    }
+    const operation = (async () => {
+      do {
+        this.pendingEmbeddingReindexes.delete(documentId)
+        const document = this.database.getDocument(documentId)
+        if (
+          !document ||
+          !this.embeddingProvider ||
+          this.lifecycleController.signal.aborted
+        ) {
+          return
+        }
+        await this.indexDocumentEmbeddings(document)
+      } while (this.pendingEmbeddingReindexes.delete(documentId))
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        this.pendingEmbeddingReindexes.delete(documentId)
+        if (
+          this.backgroundEmbeddingReindexes.get(documentId) === operation
+        ) {
+          this.backgroundEmbeddingReindexes.delete(documentId)
+        }
+      })
+    this.backgroundEmbeddingReindexes.set(documentId, operation)
   }
 
   private cancelScheduledEmbeddingReindex(documentId: string): void {
@@ -2850,23 +2949,24 @@ export class KnowledgeService {
     document: Document,
     result: GraphExtractionResult
   ): void {
-    const existingEntities = this.database.listEntities(library.id)
     const chunksById = new Map(
       this.database
         .listChunks(document.id)
         .map((chunk) => [chunk.id, chunk])
     )
     const entityIds = new Map<string, string>()
+    const existingEntitiesByIdentity = new Map<string, GraphEntity>()
+    for (const entity of this.database.listEntitiesForIdentity(library.id)) {
+      for (const name of [entity.name, ...entity.aliases]) {
+        existingEntitiesByIdentity.set(
+          `${entity.type}\0${normalizeEntityAlias(name)}`,
+          entity
+        )
+      }
+    }
     for (const entity of result.entities) {
-      const normalized = normalizeEntityAlias(entity.name)
-      const existing = existingEntities.find(
-        (candidate) =>
-          candidate.type === entity.type &&
-          (normalizeEntityAlias(candidate.name) === normalized ||
-            candidate.aliases.some(
-              (alias) => normalizeEntityAlias(alias) === normalized
-            ))
-      )
+      const identity = `${entity.type}\0${normalizeEntityAlias(entity.name)}`
+      const existing = existingEntitiesByIdentity.get(identity)
       const stored = existing
         ? existing.locked
           ? existing
@@ -2880,6 +2980,12 @@ export class KnowledgeService {
             aliases: entity.aliases,
             locked: false
           })
+      for (const name of [stored.name, ...stored.aliases]) {
+        existingEntitiesByIdentity.set(
+          `${stored.type}\0${normalizeEntityAlias(name)}`,
+          stored
+        )
+      }
       entityIds.set(entity.id, stored.id)
       for (const evidence of entity.evidence) {
         this.database.createEvidence({
@@ -2900,18 +3006,17 @@ export class KnowledgeService {
         })
       }
     }
-    const existingRelations = this.database.listRelations(library.id)
     for (const relation of result.relations) {
       const sourceEntityId = entityIds.get(relation.sourceId)
       const targetEntityId = entityIds.get(relation.targetId)
       if (!sourceEntityId || !targetEntityId) {
         continue
       }
-      const existing = existingRelations.find(
-        (candidate) =>
-          candidate.sourceEntityId === sourceEntityId &&
-          candidate.targetEntityId === targetEntityId &&
-          candidate.type === relation.type
+      const existing = this.database.findRelationByIdentity(
+        library.id,
+        sourceEntityId,
+        targetEntityId,
+        relation.type
       )
       const stored =
         existing ??
@@ -3024,24 +3129,6 @@ export class KnowledgeService {
         force: false,
         errorOnExist: true
       })
-    }
-  }
-
-  private async readBoundedFile(path: string): Promise<Buffer> {
-    const handle = await open(path, 'r')
-    try {
-      const fileStat = await handle.stat()
-      if (!fileStat.isFile() || fileStat.size > maximumFileBytes) {
-        throw new Error('文件超过 20MB 或不是普通文件')
-      }
-      const buffer = Buffer.alloc(fileStat.size + 1)
-      const result = await handle.read(buffer, 0, buffer.length, 0)
-      if (result.bytesRead > maximumFileBytes) {
-        throw new Error('文件超过 20MB')
-      }
-      return buffer.subarray(0, result.bytesRead)
-    } finally {
-      await handle.close()
     }
   }
 

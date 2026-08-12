@@ -433,6 +433,37 @@ describe('KnowledgeService', () => {
     expect(service.database.getEntity(manual.id)).toBeDefined()
   })
 
+  it('prunes generated graph records after chunk evidence is removed', async () => {
+    const { directory, service } = await createService()
+    const sourcePath = join(directory, 'chunk-graph.md')
+    await writeFile(sourcePath, '# Disposable Entity', 'utf8')
+    const library = service.createLibrary({
+      name: 'Chunk graph cleanup',
+      storageMode: 'reference',
+      graphEnabled: true,
+      graphStrategy: 'rules'
+    })
+    await service.importPaths(library.id, [sourcePath])
+    const snapshot = service.snapshot(library.id)
+    const document = snapshot.documents[0]!
+    const generatedEntity = snapshot.entities.find(
+      (entity) => entity.name === 'Disposable Entity'
+    )!
+    const evidence = snapshot.evidence.find(
+      (item) => item.entityId === generatedEntity.id
+    )!
+
+    await service.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: evidence.chunkId!,
+      content: 'Replacement text without graph evidence'
+    })
+
+    expect(service.database.getEntity(generatedEntity.id)).toBeUndefined()
+    expect(service.snapshot(library.id).evidence).toEqual([])
+  })
+
   it('fails hybrid reextraction when model extraction fails', async () => {
     const extractStructured = vi.fn(async () => {
       throw new Error('模型未返回图谱内容')
@@ -631,6 +662,44 @@ describe('KnowledgeService', () => {
     ).not.toContain('sk-private')
     const results = await service.searchHybrid(library.id, 'fallback')
     expect(results[0]?.retrieval.channels).toContain('fts')
+  })
+
+  it('bounds long indexing failures so task persistence does not mask them', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-knowledge-service-')
+    )
+    temporaryDirectories.push(directory)
+    const service = new KnowledgeService({
+      databasePath: join(directory, 'knowledge.sqlite'),
+      managedRoot: join(directory, 'managed'),
+      parseDocument: async () => {
+        throw new Error('x'.repeat(2_000))
+      }
+    })
+    await service.initialize()
+    services.push(service)
+    const sourcePath = join(directory, 'failure.txt')
+    await writeFile(sourcePath, 'failure source', 'utf8')
+    const library = service.createLibrary({
+      name: 'Bounded task errors',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+
+    await expect(
+      service.importPaths(library.id, [sourcePath])
+    ).rejects.toThrow()
+    const failedTasks = service
+      .snapshot(library.id)
+      .tasks.filter((task) => task.status === 'failed')
+    expect(failedTasks.length).toBeGreaterThan(0)
+    expect(
+      failedTasks.every(
+        (task) =>
+          (task.message?.length ?? 0) <= 1_000 &&
+          (task.error?.message.length ?? 0) <= 1_000
+      )
+    ).toBe(true)
   })
 
   it('defers existing-document rebuilds when an embedding provider is enabled', async () => {
@@ -1202,6 +1271,149 @@ describe('KnowledgeService', () => {
     })
   })
 
+  it('marks an existing URL source failed when refresh fails before parsing', async () => {
+    const importer = {
+      import: vi.fn(async () => {
+        throw new Error('URL refresh unavailable')
+      })
+    } as unknown as UrlImporter
+    const { service } = await createService(importer)
+    const library = service.createLibrary({
+      name: 'Failed URL refresh',
+      storageMode: 'managed',
+      graphEnabled: false
+    })
+    const source = service.database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'url',
+      location: 'https://example.com/failure',
+      displayName: 'Existing URL',
+      status: 'ready'
+    })
+
+    await expect(service.syncSource(source.id)).rejects.toThrow(
+      'URL refresh unavailable'
+    )
+    expect(service.database.getSource(source.id)).toMatchObject({
+      status: 'error',
+      lastError: 'URL refresh unavailable'
+    })
+  })
+
+  it('preserves refreshed URL metadata when later indexing fails', async () => {
+    const importer = {
+      import: vi.fn(async () => ({
+        url: 'https://example.com/redirected',
+        title: 'Redirected title',
+        contentType: 'text/html',
+        etag: 'fresh-etag',
+        lastModified: undefined,
+        discoveredUrls: [],
+        document: {
+          title: 'Redirected title',
+          sourceFormat: '.html',
+          content: 'refreshed content',
+          sections: [{
+            locator: '网页正文',
+            content: 'refreshed content'
+          }],
+          warnings: []
+        }
+      }))
+    } as unknown as UrlImporter
+    const { service } = await createService(importer)
+    const library = service.createLibrary({
+      name: 'Failed refreshed URL',
+      storageMode: 'managed',
+      graphEnabled: false
+    })
+    const source = service.database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'url',
+      location: 'https://example.com/original',
+      displayName: 'Original title',
+      status: 'ready'
+    })
+    vi.spyOn(service.database, 'upsertDocument').mockImplementationOnce(
+      () => {
+        throw new Error('synthetic indexing failure')
+      }
+    )
+
+    await expect(service.syncSource(source.id)).rejects.toThrow(
+      'synthetic indexing failure'
+    )
+    expect(service.database.getSource(source.id)).toMatchObject({
+      location: 'https://example.com/redirected',
+      displayName: 'Redirected title',
+      status: 'error',
+      metadata: expect.objectContaining({ etag: 'fresh-etag' })
+    })
+  })
+
+  it('serializes background embedding reindexes and awaits the rerun on disposal', async () => {
+    const resolvers: Array<() => void> = []
+    let activeEmbeddings = 0
+    let maximumActiveEmbeddings = 0
+    const provider: EmbeddingProvider = {
+      provider: 'serial-background-provider',
+      model: 'serial-background-model',
+      embed: vi.fn(async () => {
+        activeEmbeddings += 1
+        maximumActiveEmbeddings = Math.max(
+          maximumActiveEmbeddings,
+          activeEmbeddings
+        )
+        await new Promise<void>((resolve) => {
+          resolvers.push(resolve)
+        })
+        activeEmbeddings -= 1
+        return [[1, 0]]
+      })
+    }
+    const { directory, service } = await createService()
+    const sourcePath = join(directory, 'serial-background.txt')
+    await writeFile(sourcePath, 'initial content', 'utf8')
+    const library = service.createLibrary({
+      name: 'Serialized background embeddings',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+    await service.importPaths(library.id, [sourcePath])
+    await service.setEmbeddingProvider(provider)
+    const document = service.snapshot(library.id).documents[0]!
+    const chunk = service.database.listChunks(document.id, 1)[0]!
+
+    await service.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: chunk.id,
+      content: 'first edit'
+    })
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+    await service.updateChunk({
+      knowledgeBaseId: library.id,
+      documentId: document.id,
+      chunkId: chunk.id,
+      content: 'second edit'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(maximumActiveEmbeddings).toBe(1)
+
+    resolvers.shift()?.()
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+    const disposing = service.dispose()
+    let disposed = false
+    void disposing.then(() => {
+      disposed = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(disposed).toBe(false)
+    resolvers.shift()?.()
+    await disposing
+    expect(maximumActiveEmbeddings).toBe(1)
+  })
+
   it('cancels and awaits active graph work before deleting a library', async () => {
     let extractionSignal: AbortSignal | undefined
     const extractStructured: ExtractStructured = (_prompt, signal) => {
@@ -1278,6 +1490,54 @@ describe('KnowledgeService', () => {
         .filter((task) => task.parentTaskId)
         .every((task) => !task.canCancel && !task.canRetry)
     ).toBe(true)
+  })
+
+  it('deduplicates a source retry against an active manual sync', async () => {
+    let releaseImport: (() => void) | undefined
+    const importer = {
+      import: vi.fn(
+        async () => {
+          await new Promise<void>((resolve) => {
+            releaseImport = resolve
+          })
+          throw new Error('synthetic sync failure')
+        }
+      )
+    } as unknown as UrlImporter
+    const { service } = await createService(importer)
+    const library = service.createLibrary({
+      name: 'Dedupe source retry',
+      storageMode: 'managed',
+      graphEnabled: false
+    })
+    const source = service.database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'url',
+      location: 'https://example.com/dedupe',
+      displayName: 'Dedupe URL',
+      status: 'ready'
+    })
+    const failed = service.database.createKnowledgeTask({
+      libraryId: library.id,
+      sourceId: source.id,
+      documentName: source.displayName,
+      scope: 'source',
+      kind: 'source-sync',
+      status: 'failed',
+      error: { message: 'retry me' }
+    })
+
+    const syncing = service.syncSource(source.id)
+    void syncing.catch(() => undefined)
+    await vi.waitFor(() => expect(importer.import).toHaveBeenCalledOnce())
+    const retrying = service.retryTask(failed.id)
+    void retrying.catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(importer.import).toHaveBeenCalledOnce()
+
+    releaseImport?.()
+    await expect(syncing).rejects.toThrow('synthetic sync failure')
+    await expect(retrying).rejects.toThrow('synthetic sync failure')
   })
 
   it('reconciles embedding task status during ordinary snapshots', async () => {
