@@ -5,6 +5,10 @@ import type {
   KnowledgeChunkingSettings,
   KnowledgeChunkRole
 } from '../../shared/knowledge-contracts'
+import {
+  maximumDocumentExtractedCharacters,
+  maximumPdfPageCount
+} from '../../shared/document-parsing-contracts'
 
 export type ParsedSection = {
   locator: string
@@ -40,9 +44,10 @@ export type DocumentChunk = {
 export type DocumentBlockKind = 'text' | 'table' | 'slide'
 
 const maximumDocumentBytes = 20 * 1024 * 1024
-const maximumExtractedCharacters = 5_000_000
 const maximumHeadingCharacters = 512
 const maximumHeadingDepth = 6
+export const maximumDocumentChunks = 10_000
+const maximumDocumentSections = 10_000
 export const maximumChunkContextPrefixCharacters = 512
 const textExtensions = new Set([
   '.c',
@@ -112,7 +117,12 @@ function extractXmlText(xml: string): string {
 }
 
 function decodeText(buffer: Buffer): string {
-  const content = buffer.toString('utf8')
+  let content: string
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+  } catch (error) {
+    throw new Error('文件不是受支持的 UTF-8 文本', { cause: error })
+  }
   const nullCount = [...content.slice(0, 8_192)].filter(
     (character) => character.charCodeAt(0) === 0
   ).length
@@ -328,12 +338,18 @@ function parseOfficeArchive(
 }
 
 async function parsePdf(
-  buffer: Buffer
-): Promise<{ sections: ParsedSection[]; pageCount: number }> {
-  const pages = await extractPdfTextPages(buffer)
+  buffer: Buffer,
+  signal?: AbortSignal
+): Promise<{
+  sections: ParsedSection[]
+  pageCount: number
+  truncated: boolean
+}> {
+  const extracted = await extractPdfTextPages(buffer, { signal })
   return {
-    pageCount: pages.length,
-    sections: pages
+    pageCount: extracted.pageCount,
+    truncated: extracted.truncated,
+    sections: extracted.pages
       .filter((page) => page.content.length > 0)
       .map((page) => ({
         locator: `第 ${page.pageNumber} 页`,
@@ -349,6 +365,18 @@ export type PdfTextPage = {
   content: string
 }
 
+export type PdfTextExtraction = {
+  pages: PdfTextPage[]
+  pageCount: number
+  truncated: boolean
+}
+
+export type PdfTextExtractionOptions = {
+  maximumPages?: number
+  maximumCharacters?: number
+  signal?: AbortSignal
+}
+
 export class DocumentTextUnavailableError extends Error {
   constructor(message = '文档中没有可索引的文本内容') {
     super(message)
@@ -356,31 +384,43 @@ export class DocumentTextUnavailableError extends Error {
   }
 }
 
-function reconstructPdfText(
-  items: readonly unknown[]
-): string {
-  const lines: string[] = []
-  let line: string[] = []
-  let previousY: number | undefined
-  let previousHeight = 0
-  const flush = (): void => {
-    const value = line.join(' ').replace(/[ \t]+/gu, ' ').trim()
-    if (value) {
-      lines.push(value)
-    }
-    line = []
-  }
+type PdfTextItem = {
+  str?: string
+  hasEOL?: boolean
+  transform?: ArrayLike<number>
+  height?: number
+}
 
+type PdfTextReconstructionState = {
+  lines: string[]
+  line: string[]
+  lineCharacterCount: number
+  characterCount: number
+  previousY?: number
+  previousHeight: number
+}
+
+function flushPdfTextLine(state: PdfTextReconstructionState): void {
+  if (state.lineCharacterCount > 0) {
+    const value = state.line.join(' ')
+    state.lines.push(value)
+    state.characterCount +=
+      (state.lines.length > 1 ? 1 : 0) + value.length
+  }
+  state.line = []
+  state.lineCharacterCount = 0
+}
+
+function consumePdfTextItems(
+  state: PdfTextReconstructionState,
+  items: readonly unknown[],
+  maximumCharacters: number
+): 'complete' | 'limit' | 'truncated' {
   for (const candidate of items) {
     if (typeof candidate !== 'object' || candidate === null) {
       continue
     }
-    const item = candidate as {
-      str?: string
-      hasEOL?: boolean
-      transform?: ArrayLike<number>
-      height?: number
-    }
+    const item = candidate as PdfTextItem
     const value = typeof item.str === 'string' ? item.str.trim() : ''
     const y =
       item.transform && Number.isFinite(item.transform[5])
@@ -391,33 +431,130 @@ function reconstructPdfText(
         ? Math.abs(item.height)
         : 0
     const coordinateLineBreak =
-      line.length > 0 &&
+      state.line.length > 0 &&
       y !== undefined &&
-      previousY !== undefined &&
-      Math.abs(y - previousY) >
-        Math.max(3, previousHeight * 0.8, height * 0.8)
+      state.previousY !== undefined &&
+      Math.abs(y - state.previousY) >
+        Math.max(3, state.previousHeight * 0.8, height * 0.8)
     if (coordinateLineBreak) {
-      flush()
+      flushPdfTextLine(state)
     }
     if (value) {
-      line.push(value)
+      const lineSeparator = state.line.length > 0 ? 1 : 0
+      const documentSeparator =
+        state.line.length === 0 && state.lines.length > 0 ? 1 : 0
+      const available =
+        maximumCharacters -
+        state.characterCount -
+        state.lineCharacterCount -
+        lineSeparator -
+        documentSeparator
+      if (available <= 0) {
+        return 'truncated'
+      }
+      const limited = value.slice(0, available)
+      state.line.push(limited)
+      state.lineCharacterCount += lineSeparator + limited.length
+      if (limited.length < value.length) {
+        return 'truncated'
+      }
     }
     if (item.hasEOL) {
-      flush()
-      previousY = undefined
-      previousHeight = 0
+      flushPdfTextLine(state)
+      state.previousY = undefined
+      state.previousHeight = 0
     } else if (y !== undefined) {
-      previousY = y
-      previousHeight = height
+      state.previousY = y
+      state.previousHeight = height
+    }
+    if (
+      state.characterCount +
+        state.lineCharacterCount +
+        (state.line.length > 0 && state.lines.length > 0 ? 1 : 0) >=
+      maximumCharacters
+    ) {
+      return 'limit'
     }
   }
-  flush()
-  return lines.join('\n').replace(/\n{3,}/gu, '\n\n').trim()
+  return 'complete'
+}
+
+async function reconstructPdfTextStream(
+  stream: ReadableStream,
+  maximumCharacters: number,
+  signal?: AbortSignal
+): Promise<{ content: string; truncated: boolean }> {
+  const reader = stream.getReader()
+  const state: PdfTextReconstructionState = {
+    lines: [],
+    line: [],
+    lineCharacterCount: 0,
+    characterCount: 0,
+    previousHeight: 0
+  }
+  let truncated = false
+  try {
+    while (true) {
+      signal?.throwIfAborted()
+      const result = await reader.read()
+      if (result.done) {
+        break
+      }
+      const chunk = result.value as {
+        items?: readonly unknown[]
+      }
+      const consumption = consumePdfTextItems(
+        state,
+        chunk.items ?? [],
+        maximumCharacters
+      )
+      if (consumption === 'truncated') {
+        truncated = true
+        break
+      }
+      if (consumption === 'limit') {
+        const lookahead = await reader.read()
+        truncated = !lookahead.done
+        break
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+  flushPdfTextLine(state)
+  return {
+    content: state.lines.join('\n'),
+    truncated
+  }
 }
 
 export async function extractPdfTextPages(
-  buffer: Buffer
-): Promise<PdfTextPage[]> {
+  buffer: Buffer,
+  options: PdfTextExtractionOptions = {}
+): Promise<PdfTextExtraction> {
+  const maximumPages = options.maximumPages ?? maximumPdfPageCount
+  const maximumCharacters =
+    options.maximumCharacters ?? maximumDocumentExtractedCharacters
+  if (
+    !Number.isSafeInteger(maximumPages) ||
+    maximumPages < 1 ||
+    maximumPages > maximumPdfPageCount
+  ) {
+    throw new RangeError(
+      `PDF page limit must be between 1 and ${maximumPdfPageCount}`
+    )
+  }
+  if (
+    !Number.isSafeInteger(maximumCharacters) ||
+    maximumCharacters < 1 ||
+    maximumCharacters > maximumDocumentExtractedCharacters
+  ) {
+    throw new RangeError(
+      `PDF character limit must be between 1 and ${maximumDocumentExtractedCharacters}`
+    )
+  }
+  options.signal?.throwIfAborted()
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(buffer),
@@ -429,40 +566,121 @@ export async function extractPdfTextPages(
     useSystemFonts: false,
     useWorkerFetch: false
   })
-  const document = await loadingTask.promise
+  const abortLoading = (): void => {
+    void loadingTask.destroy()
+  }
+  options.signal?.addEventListener('abort', abortLoading, { once: true })
   const pages: PdfTextPage[] = []
+  let remainingCharacters = maximumCharacters
+  let truncated = false
   try {
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber)
-      const text = await page.getTextContent()
-      const content = reconstructPdfText(text.items)
-      pages.push({ pageNumber, content })
-      page.cleanup()
+    const document = await loadingTask.promise
+    options.signal?.throwIfAborted()
+    if (document.numPages > maximumPages) {
+      throw new Error(
+        `PDF 有 ${document.numPages} 页，超过 ${maximumPages} 页限制`
+      )
     }
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      options.signal?.throwIfAborted()
+      const page = await document.getPage(pageNumber)
+      try {
+        const reconstructed = await reconstructPdfTextStream(
+          page.streamTextContent(),
+          remainingCharacters,
+          options.signal
+        )
+        pages.push({ pageNumber, content: reconstructed.content })
+        remainingCharacters -= reconstructed.content.length
+        if (reconstructed.truncated || remainingCharacters === 0) {
+          truncated =
+            reconstructed.truncated || pageNumber < document.numPages
+          break
+        }
+      } finally {
+        page.cleanup()
+      }
+    }
+    return { pages, pageCount: document.numPages, truncated }
   } finally {
+    options.signal?.removeEventListener('abort', abortLoading)
     await loadingTask.destroy()
   }
-  return pages
 }
 
-export async function parseDocument(
-  name: string,
-  buffer: Buffer
-): Promise<ParsedDocument> {
+export function assertDocumentBuffer(buffer: Buffer): void {
   if (buffer.byteLength === 0) {
     throw new Error('文档内容为空')
   }
   if (buffer.byteLength > maximumDocumentBytes) {
     throw new Error('单个文档不能超过 20MB')
   }
+}
+
+function limitParsedSections(
+  sections: readonly ParsedSection[]
+): {
+  content: string
+  sections: ParsedSection[]
+  truncated: boolean
+} {
+  if (sections.length > maximumDocumentSections) {
+    throw new Error(
+      `文档包含超过 ${maximumDocumentSections.toLocaleString('en-US')} 个分区`
+    )
+  }
+  const limited: ParsedSection[] = []
+  let remaining = maximumDocumentExtractedCharacters
+  let truncated = false
+  for (const section of sections) {
+    if (!section.content) {
+      continue
+    }
+    const separatorLength = limited.length > 0 ? 2 : 0
+    if (remaining <= separatorLength) {
+      truncated = true
+      break
+    }
+    const maximumSectionLength = remaining - separatorLength
+    const content = section.content.slice(0, maximumSectionLength)
+    if (content) {
+      limited.push(
+        content === section.content ? section : { ...section, content }
+      )
+      remaining -= separatorLength + content.length
+    }
+    if (content.length < section.content.length) {
+      truncated = true
+      break
+    }
+  }
+  if (limited.length < sections.filter((section) => section.content).length) {
+    truncated = true
+  }
+  return {
+    content: limited.map((section) => section.content).join('\n\n'),
+    sections: limited,
+    truncated
+  }
+}
+
+export async function parseDocument(
+  name: string,
+  buffer: Buffer,
+  signal?: AbortSignal
+): Promise<ParsedDocument> {
+  assertDocumentBuffer(buffer)
+  signal?.throwIfAborted()
 
   const extension = extname(name).toLowerCase()
   let sections: ParsedSection[]
   let pageCount: number | undefined
+  let extractionTruncated = false
   if (extension === '.pdf') {
-    const parsedPdf = await parsePdf(buffer)
+    const parsedPdf = await parsePdf(buffer, signal)
     sections = parsedPdf.sections
     pageCount = parsedPdf.pageCount
+    extractionTruncated = parsedPdf.truncated
   } else if (['.docx', '.xlsx', '.pptx'].includes(extension)) {
     sections = parseOfficeArchive(buffer, extension)
   } else if (['.html', '.htm'].includes(extension)) {
@@ -481,19 +699,19 @@ export async function parseDocument(
     throw new Error(`不支持的文档类型：${extension || '未知'}`)
   }
 
-  const content = sections
-    .map((section) => section.content)
-    .join('\n\n')
-    .slice(0, maximumExtractedCharacters)
-  if (!content) {
+  signal?.throwIfAborted()
+  const limited = limitParsedSections(sections)
+  if (!limited.content) {
     throw new DocumentTextUnavailableError()
   }
   return {
     title: name.replace(/\.[^.]+$/, ''),
     sourceFormat: extension || 'unknown',
-    content,
-    sections,
-    warnings: [],
+    content: limited.content,
+    sections: limited.sections,
+    warnings: limited.truncated || extractionTruncated
+      ? ['文档提取文本超过 5,000,000 字符，已截断']
+      : [],
     ...(pageCount === undefined ? {} : { pageCount })
   }
 }
@@ -501,8 +719,14 @@ export async function parseDocument(
 function splitNatural(
   content: string,
   maximumLength: number,
-  overlap: number
+  overlap: number,
+  maximumParts = maximumDocumentChunks
 ): string[] {
+  if (maximumParts < 1 && content.trim()) {
+    throw new Error(
+      `文档分块超过 ${maximumDocumentChunks.toLocaleString('en-US')} 个，请增大分块长度或缩小文档`
+    )
+  }
   const chunks: string[] = []
   let offset = 0
   while (offset < content.length) {
@@ -524,6 +748,11 @@ function splitNatural(
     }
     const value = content.slice(offset, end).trim()
     if (value) {
+      if (chunks.length >= maximumParts) {
+        throw new Error(
+          `文档分块超过 ${maximumDocumentChunks.toLocaleString('en-US')} 个，请增大分块长度或缩小文档`
+        )
+      }
       chunks.push(value)
     }
     if (end >= content.length) {
@@ -578,9 +807,20 @@ function chunkMetadata(
 }
 
 function structuredSections(document: ParsedDocument): StructuredSection[] {
-  return document.sections.flatMap((section) => {
-    const lines = section.content.split(/\r?\n/u)
-    const result: StructuredSection[] = []
+  const result: StructuredSection[] = []
+  const append = (section: StructuredSection): void => {
+    if (!section.content) {
+      return
+    }
+    if (result.length >= maximumDocumentSections) {
+      throw new Error(
+        `文档包含超过 ${maximumDocumentSections.toLocaleString('en-US')} 个结构分区`
+      )
+    }
+    result.push(section)
+  }
+  for (const section of document.sections) {
+    const sectionStart = result.length
     let heading: string | undefined
     let headingPath = section.headingPath
       ? [...section.headingPath].slice(0, maximumHeadingDepth)
@@ -590,7 +830,7 @@ function structuredSections(document: ParsedDocument): StructuredSection[] {
     const flush = (): void => {
       const content = body.join('\n').trim()
       if (content) {
-        result.push({
+        append({
           locator: heading
             ? `${section.locator} · ${heading}`.slice(0, 8_192)
             : section.locator,
@@ -602,7 +842,16 @@ function structuredSections(document: ParsedDocument): StructuredSection[] {
       }
       body = []
     }
-    for (const line of lines) {
+    let offset = 0
+    while (offset <= section.content.length) {
+      const lineEnd = section.content.indexOf('\n', offset)
+      const rawLine = section.content.slice(
+        offset,
+        lineEnd < 0 ? section.content.length : lineEnd
+      )
+      const line = rawLine.endsWith('\r')
+        ? rawLine.slice(0, -1)
+        : rawLine
       const match = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line)
       if (match) {
         flush()
@@ -617,18 +866,21 @@ function structuredSections(document: ParsedDocument): StructuredSection[] {
       } else {
         body.push(line)
       }
+      if (lineEnd < 0) {
+        break
+      }
+      offset = lineEnd + 1
     }
     flush()
-    return result.length > 0
-      ? result
-      : [
-          {
-            locator: section.locator,
-            content: section.content.trim(),
-            ...sectionMetadata(section)
-          }
-        ]
-  }).filter((section) => section.content.length > 0)
+    if (result.length === sectionStart) {
+      append({
+        locator: section.locator,
+        content: section.content.trim(),
+        ...sectionMetadata(section)
+      })
+    }
+  }
+  return result
 }
 
 function normalizeContextValue(value: string, maximumLength: number): string {
@@ -696,38 +948,55 @@ export function chunkDocumentAdvanced(
   document: ParsedDocument,
   settings: KnowledgeChunkingSettings
 ): DocumentChunk[] {
+  if (document.sections.length > maximumDocumentSections) {
+    throw new Error(
+      `文档包含超过 ${maximumDocumentSections.toLocaleString('en-US')} 个分区`
+    )
+  }
   if (settings.mode === 'fixed') {
-    return document.sections.flatMap((section) =>
-      splitNatural(
+    const result: DocumentChunk[] = []
+    for (const section of document.sections) {
+      const parts = splitNatural(
         section.content,
         settings.targetCharacters,
-        settings.overlapCharacters
-      ).map((content) => ({
-        position: 0,
-        locator: section.locator,
-        content,
-        ...chunkMetadata(section),
-        role: 'standalone' as const
-      }))
-    ).map((chunk, position) => ({ ...chunk, position }))
+        settings.overlapCharacters,
+        maximumDocumentChunks - result.length
+      )
+      for (const content of parts) {
+        result.push({
+          position: result.length,
+          locator: section.locator,
+          content,
+          ...chunkMetadata(section),
+          role: 'standalone'
+        })
+      }
+    }
+    return result
   }
 
   const sections = structuredSections(document)
   if (settings.mode === 'structure') {
-    return sections.flatMap((section) =>
-      splitNatural(
+    const result: DocumentChunk[] = []
+    for (const section of sections) {
+      const parts = splitNatural(
         section.content,
         settings.targetCharacters,
-        settings.overlapCharacters
-      ).map((content) => ({
-        position: 0,
-        locator: section.locator,
-        heading: section.heading,
-        content,
-        ...chunkMetadata(section),
-        role: 'standalone' as const
-      }))
-    ).map((chunk, position) => ({ ...chunk, position }))
+        settings.overlapCharacters,
+        maximumDocumentChunks - result.length
+      )
+      for (const content of parts) {
+        result.push({
+          position: result.length,
+          locator: section.locator,
+          heading: section.heading,
+          content,
+          ...chunkMetadata(section),
+          role: 'standalone'
+        })
+      }
+    }
+    return result
   }
 
   const result: DocumentChunk[] = []
@@ -735,8 +1004,14 @@ export function chunkDocumentAdvanced(
     for (const parentContent of splitNatural(
       section.content,
       settings.parentCharacters,
-      0
+      0,
+      maximumDocumentChunks - result.length
     )) {
+      if (result.length >= maximumDocumentChunks) {
+        throw new Error(
+          `文档分块超过 ${maximumDocumentChunks.toLocaleString('en-US')} 个，请增大分块长度或缩小文档`
+        )
+      }
       const parentPosition = result.length
       result.push({
         position: parentPosition,
@@ -753,7 +1028,8 @@ export function chunkDocumentAdvanced(
       for (const childContent of splitNatural(
         parentContent,
         settings.childCharacters,
-        childOverlap
+        childOverlap,
+        maximumDocumentChunks - result.length
       )) {
         result.push({
           position: result.length,

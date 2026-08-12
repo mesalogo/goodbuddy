@@ -1,5 +1,10 @@
 import { z } from 'zod'
 
+export const maximumDocumentExtractedCharacters = 5_000_000
+export const maximumDocumentOcrSectionCharacters = 1_000_000
+export const maximumDocumentParsingWarnings = 20
+export const maximumPdfPageCount = 10_000
+
 export const documentParsingPurposeSchema = z.enum([
   'chat-attachment',
   'knowledge-index',
@@ -201,13 +206,15 @@ export const documentParsingDiagnosticSchema = z
   .object({
     fileName: z.string().trim().min(1).max(500),
     sourceFormat: z.string().trim().min(1).max(32),
-    pageCount: z.number().int().nonnegative().max(10_000),
-    ocrPageCount: z.number().int().nonnegative().max(10_000),
+    pageCount: z.number().int().nonnegative().max(maximumPdfPageCount),
+    ocrPageCount: z.number().int().nonnegative().max(maximumPdfPageCount),
     characterCount: z.number().int().nonnegative().safe(),
     method: z.enum(['native', 'ocr', 'mixed']),
     durationMs: z.number().int().nonnegative().safe(),
     preview: z.string().max(2_000),
-    warnings: z.array(z.string().trim().min(1).max(500)).max(20)
+    warnings: z
+      .array(z.string().trim().min(1).max(500))
+      .max(maximumDocumentParsingWarnings)
   })
   .strict()
 
@@ -239,7 +246,7 @@ export const documentOcrRequestSchema = z
       ),
     maximumPages: z.number().int().min(1).max(500),
     pageNumbers: z
-      .array(z.number().int().min(1).max(10_000))
+      .array(z.number().int().min(1).max(maximumPdfPageCount))
       .min(1)
       .max(500)
       .optional(),
@@ -271,7 +278,17 @@ export const documentOcrRequestSchema = z
 export const documentOcrSectionSchema = z
   .object({
     locator: z.string().trim().min(1).max(500),
-    content: z.string().trim().min(1).max(1_000_000),
+    pageNumber: z
+      .number()
+      .int()
+      .min(1)
+      .max(maximumPdfPageCount)
+      .optional(),
+    content: z
+      .string()
+      .trim()
+      .min(1)
+      .max(maximumDocumentOcrSectionCharacters),
     confidence: z.number().min(0).max(1)
   })
   .strict()
@@ -280,10 +297,30 @@ export const documentOcrResultSchema = z
   .object({
     requestId: z.string().uuid(),
     sections: z.array(documentOcrSectionSchema).max(500),
-    pageCount: z.number().int().nonnegative().max(10_000),
-    warnings: z.array(z.string().trim().min(1).max(500)).max(20)
+    pageCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(maximumPdfPageCount),
+    warnings: z
+      .array(z.string().trim().min(1).max(500))
+      .max(maximumDocumentParsingWarnings)
   })
   .strict()
+  .superRefine((result, context) => {
+    let characters = 0
+    for (const section of result.sections) {
+      characters += section.content.length
+      if (characters > maximumDocumentExtractedCharacters) {
+        context.addIssue({
+          code: 'custom',
+          path: ['sections'],
+          message: 'OCR 输出超过文档字符限制'
+        })
+        return
+      }
+    }
+  })
 
 export const documentOcrFailureSchema = z
   .object({

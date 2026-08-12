@@ -139,4 +139,33 @@ describe('DocumentOcrBroker', () => {
     broker.dispose()
     await expect(active).rejects.toThrow('OCR 解析已取消')
   })
+
+  it('rejects OCR sections outside the requested page set', async () => {
+    const send = vi.fn()
+    const broker = new DocumentOcrBroker({
+      isDestroyed: vi.fn(() => false),
+      webContents: { send }
+    } as never)
+    const pending = broker.recognize(request())
+    const dispatched = send.mock.calls.find(
+      ([channel]) => channel === ipcChannels.documentParsingOcrRequest
+    )?.[1] as { requestId: string }
+
+    broker.respond({
+      requestId: dispatched.requestId,
+      sections: [
+        {
+          locator: '第 2 页',
+          pageNumber: 2,
+          content: 'wrong page',
+          confidence: 0.9
+        }
+      ],
+      pageCount: 2,
+      warnings: []
+    })
+
+    await expect(pending).rejects.toThrow('OCR 响应页码无效')
+    broker.dispose()
+  })
 })

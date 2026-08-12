@@ -5,12 +5,19 @@ import {
   ipcMain,
   shell
 } from 'electron'
-import { lstat, mkdir, readFile, realpath, stat } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  stat
+} from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import { formatShortcutForDisplay } from '../shared/shortcut'
+import { readBoundedFile } from './workspace-file-access'
 import {
   approvalDecisionSchema,
   agentQuestionResponseSchema,
@@ -471,6 +478,19 @@ function assertTrustedSender(
   ) {
     throw new Error('拒绝来自未知窗口的 IPC 请求')
   }
+}
+
+async function readArtifactImportFile(
+  path: string,
+  maximumBytes: number,
+  label: string
+): Promise<Buffer> {
+  return readBoundedFile(
+    path,
+    maximumBytes,
+    `${label}超过大小限制`,
+    `${label}不是普通文件`
+  )
 }
 
 function getKnowledgeSnapshot(
@@ -3420,14 +3440,15 @@ export function registerIpcHandlers(
       const artifacts: AssistantArtifact[] = []
       for (const filePath of result.filePaths.slice(0, 10)) {
         const canonicalPath = await realpath(filePath)
-        const file = await readFile(canonicalPath)
         const extension = extname(canonicalPath).toLowerCase()
         const name = basename(canonicalPath)
         const imageMimeType = imageMimeTypes[extension]
         if (imageMimeType) {
-          if (file.byteLength > 3 * 1024 * 1024) {
-            throw new Error(`图片“${name}”超过 3MB 预览限制`)
-          }
+          const file = await readArtifactImportFile(
+            canonicalPath,
+            3 * 1024 * 1024,
+            `图片“${name}”`
+          )
           artifacts.push(
             assistantDatabase.createImageArtifact({
               projectId,
@@ -3439,6 +3460,11 @@ export function registerIpcHandlers(
           continue
         }
         if (extension === '.html' || extension === '.htm') {
+          const file = await readArtifactImportFile(
+            canonicalPath,
+            5 * 1024 * 1024,
+            `文件“${name}”`
+          )
           artifacts.push(
             assistantDatabase.createInlineArtifact({
               projectId,
@@ -3450,6 +3476,13 @@ export function registerIpcHandlers(
           )
           continue
         }
+        const file = await readArtifactImportFile(
+          canonicalPath,
+          extension === '.pdf'
+            ? 20 * 1024 * 1024
+            : 5 * 1024 * 1024,
+          `文件“${name}”`
+        )
         const parsed = documentParsingService
           ? await documentParsingService.parse(
               name,

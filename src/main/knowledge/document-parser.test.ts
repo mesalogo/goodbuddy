@@ -136,6 +136,53 @@ describe('document parser', () => {
     await expect(
       parseDocument('expanded.docx', Buffer.from(expandedArchive))
     ).rejects.toThrow('损坏')
+    await expect(
+      parseDocument('invalid.txt', Buffer.from([0xc3, 0x28]))
+    ).rejects.toThrow('UTF-8')
+  })
+
+  it('keeps extracted sections consistent with the document character limit', async () => {
+    const parsed = await parseDocument(
+      'large.txt',
+      Buffer.from('x'.repeat(5_000_100))
+    )
+
+    expect(parsed.content).toHaveLength(5_000_000)
+    expect(parsed.sections).toEqual([
+      {
+        locator: '全文',
+        content: parsed.content
+      }
+    ])
+    expect(parsed.warnings).toEqual([
+      '文档提取文本超过 5,000,000 字符，已截断'
+    ])
+  })
+
+  it('rejects chunk output that exceeds the database limit', () => {
+    expect(() =>
+      chunkDocumentAdvanced(
+        {
+          title: 'Too many chunks',
+          sourceFormat: '.txt',
+          content: '',
+          sections: Array.from({ length: 10_001 }, (_, index) => ({
+            locator: `section-${index}`,
+            content: 'content'
+          })),
+          warnings: []
+        },
+        {
+          version: 1,
+          mode: 'fixed',
+          targetCharacters: 400,
+          overlapCharacters: 0,
+          parentCharacters: 1_600,
+          childCharacters: 300,
+          contextualIndexingEnabled: false
+        }
+      )
+    ).toThrow('超过 10,000 个分区')
   })
 
   it('preserves headings and creates recall-only children with parent context', () => {

@@ -3,6 +3,8 @@ import {
   documentParsingDiagnosticSchema,
   documentParsingSettingsUpdateSchema,
   documentParsingSnapshotSchema,
+  maximumDocumentExtractedCharacters,
+  maximumDocumentParsingWarnings,
   type DocumentParsingDiagnostic,
   type DocumentParsingPurpose,
   type DocumentParsingSettings,
@@ -12,6 +14,7 @@ import type { DocumentOcrBroker } from './document-ocr-broker'
 import type { DocumentOcrModelManager } from './document-ocr-model-manager'
 import type { DocumentParsingSettingsStore } from './document-parsing-settings-store'
 import {
+  assertDocumentBuffer,
   DocumentTextUnavailableError,
   extractPdfTextPages,
   parseDocument,
@@ -81,20 +84,57 @@ function buildPdfDocument(
   pageCount: number,
   warnings: string[] = []
 ): ParsedDocument {
-  const content = sections
+  const truncationWarning =
+    '文档提取文本超过 5,000,000 字符，已截断'
+  const boundedWarnings = [
+    ...new Set(
+      warnings.filter((warning) => warning !== truncationWarning)
+    )
+  ]
+  const limitedSections: ParsedSection[] = []
+  let remaining = maximumDocumentExtractedCharacters
+  let truncated = false
+  for (const section of sections) {
+    const separatorLength = limitedSections.length > 0 ? 2 : 0
+    if (remaining <= separatorLength) {
+      truncated = true
+      break
+    }
+    const content = section.content.slice(0, remaining - separatorLength)
+    if (content) {
+      limitedSections.push(
+        content === section.content ? section : { ...section, content }
+      )
+      remaining -= separatorLength + content.length
+    }
+    if (content.length < section.content.length) {
+      truncated = true
+      break
+    }
+  }
+  if (limitedSections.length < sections.length) {
+    truncated = true
+  }
+  const content = limitedSections
     .map((section) => section.content)
     .join('\n\n')
-    .slice(0, 5_000_000)
   if (!content) {
     throw new DocumentTextUnavailableError()
   }
+  const documentWarnings =
+    truncated || warnings.includes(truncationWarning)
+    ? [
+        ...boundedWarnings.slice(0, maximumDocumentParsingWarnings - 1),
+        truncationWarning
+      ]
+    : boundedWarnings.slice(0, maximumDocumentParsingWarnings)
   return {
     title: name.replace(/\.[^.]+$/u, ''),
     sourceFormat: '.pdf',
     content,
-    sections,
+    sections: limitedSections,
     pageCount,
-    warnings
+    warnings: documentWarnings
   }
 }
 
@@ -104,7 +144,9 @@ function nativePdfSections(pages: PdfTextPage[]): ParsedSection[] {
     .map((page) => ({
       locator: `第 ${page.pageNumber} 页`,
       content: page.content,
-      method: 'native' as const
+      method: 'native' as const,
+      pageNumber: page.pageNumber,
+      blockKind: 'text' as const
     }))
 }
 
@@ -158,12 +200,14 @@ export class DocumentParsingService {
     signal
   ) => {
     ensureNotAborted(signal)
+    assertDocumentBuffer(buffer)
     if (extname(name).toLowerCase() !== '.pdf') {
-      return parseDocument(name, buffer)
+      return parseDocument(name, buffer, signal)
     }
 
     const settings = await this.settingsStore.get()
-    const pages = await extractPdfTextPages(buffer)
+    const extracted = await extractPdfTextPages(buffer, { signal })
+    const { pages } = extracted
     ensureNotAborted(signal)
     const mode = effectiveOcrMode(settings, purpose)
     const pagesWithoutUsefulText = pages
@@ -179,13 +223,19 @@ export class DocumentParsingService {
     if (mode === 'disabled') {
       const native = nativePdfSections(pages)
       if (native.length > 0) {
+        const warnings = [
+          ...(pagesWithoutUsefulText.length > 0
+            ? ['部分页面没有有效文本，当前工作流未启用 OCR']
+            : []),
+          ...(extracted.truncated
+            ? ['文档提取文本超过 5,000,000 字符，已截断']
+            : [])
+        ]
         return buildPdfDocument(
           name,
           native,
-          pages.length,
-          pagesWithoutUsefulText.length > 0
-            ? ['部分页面没有有效文本，当前工作流未启用 OCR']
-            : []
+          extracted.pageCount,
+          warnings
         )
       }
       throw new DocumentTextUnavailableError(
@@ -196,7 +246,10 @@ export class DocumentParsingService {
       return buildPdfDocument(
         name,
         nativePdfSections(pages),
-        pages.length
+        extracted.pageCount,
+        extracted.truncated
+          ? ['文档提取文本超过 5,000,000 字符，已截断']
+          : []
       )
     }
     if (ocrPageNumbers.length > settings.maximumPages) {
@@ -211,11 +264,20 @@ export class DocumentParsingService {
     if (!modelStatus.available || !modelStatus.verified) {
       if (
         mode === 'auto' &&
+        purpose !== 'knowledge-index' &&
         native.some((section) => hasUsefulText(section.content))
       ) {
-        return buildPdfDocument(name, native, pages.length, [
-          `本地 OCR 不可用，已保留 PDF 文本层内容：${modelStatus.detail}`
-        ])
+        return buildPdfDocument(
+          name,
+          native,
+          extracted.pageCount,
+          [
+            `本地 OCR 不可用，已保留 PDF 文本层内容：${modelStatus.detail}`,
+            ...(extracted.truncated
+              ? ['文档提取文本超过 5,000,000 字符，已截断']
+              : [])
+          ]
+        )
       }
       throw new Error(modelStatus.detail)
     }
@@ -238,23 +300,45 @@ export class DocumentParsingService {
       ensureNotAborted(signal)
       if (
         mode === 'auto' &&
+        purpose !== 'knowledge-index' &&
         native.some((section) => hasUsefulText(section.content))
       ) {
         const detail =
           error instanceof Error ? error.message : '本地 OCR 识别失败'
-        return buildPdfDocument(name, native, pages.length, [
-          `本地 OCR 失败，已保留 PDF 文本层内容：${detail}`
-        ])
+        return buildPdfDocument(
+          name,
+          native,
+          extracted.pageCount,
+          [
+            `本地 OCR 失败，已保留 PDF 文本层内容：${detail}`,
+            ...(extracted.truncated
+              ? ['文档提取文本超过 5,000,000 字符，已截断']
+              : [])
+          ]
+        )
       }
       throw error
     }
     ensureNotAborted(signal)
-    const ocrByLocator = new Map(
-      ocr.sections.map((section) => [section.locator, section])
+    const ocrByPageNumber = new Map(
+      ocr.sections.flatMap((section) =>
+        section.pageNumber === undefined
+          ? []
+          : [[section.pageNumber, section] as const]
+      )
     )
+    const missingOcrPage = ocrPageNumbers.find(
+      (pageNumber) => !ocrByPageNumber.has(pageNumber)
+    )
+    if (
+      missingOcrPage !== undefined &&
+      purpose === 'knowledge-index'
+    ) {
+      throw new Error(`第 ${missingOcrPage} 页未识别到可索引文本`)
+    }
     const merged = pages.flatMap((page): ParsedSection[] => {
       const locator = `第 ${page.pageNumber} 页`
-      const recognized = ocrByLocator.get(locator)
+      const recognized = ocrByPageNumber.get(page.pageNumber)
       if (
         recognized &&
         (mode === 'always' || !hasUsefulText(page.content))
@@ -264,15 +348,33 @@ export class DocumentParsingService {
             locator,
             content: recognized.content,
             method: 'ocr',
-            confidence: recognized.confidence
+            confidence: recognized.confidence,
+            pageNumber: page.pageNumber,
+            blockKind: 'text'
           }
         ]
       }
       return page.content
-        ? [{ locator, content: page.content, method: 'native' }]
+        ? [{
+            locator,
+            content: page.content,
+            method: 'native',
+            pageNumber: page.pageNumber,
+            blockKind: 'text'
+          }]
         : []
     })
-    return buildPdfDocument(name, merged, pages.length, ocr.warnings)
+    return buildPdfDocument(
+      name,
+      merged,
+      extracted.pageCount,
+      [
+        ...ocr.warnings,
+        ...(extracted.truncated
+          ? ['文档提取文本超过 5,000,000 字符，已截断']
+          : [])
+      ]
+    )
   }
 
   async diagnose(

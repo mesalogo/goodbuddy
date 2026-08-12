@@ -804,8 +804,13 @@ describe('registerIpcHandlers document parsing', () => {
     temporaryDirectories.push(directory)
     const diagnosticPath = join(directory, 'diagnostic.pdf')
     const artifactPath = join(directory, 'artifact.pdf')
+    const oversizedArtifactPath = join(directory, 'oversized.pdf')
     await writeFile(diagnosticPath, 'diagnostic')
     await writeFile(artifactPath, 'artifact')
+    await writeFile(
+      oversizedArtifactPath,
+      Buffer.alloc(20 * 1024 * 1024 + 1)
+    )
     const diagnostic = {
       fileName: 'diagnostic.pdf',
       sourceFormat: 'PDF',
@@ -922,6 +927,17 @@ describe('registerIpcHandlers document parsing', () => {
       expect.any(Buffer),
       'artifact-import'
     )
+
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [oversizedArtifactPath]
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.artifactsImportFiles
+      )?.(event)
+    ).rejects.toThrow('超过大小限制')
+    expect(documentParsingService.parse).toHaveBeenCalledOnce()
 
     await dispose()
   })

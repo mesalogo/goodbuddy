@@ -57,6 +57,7 @@ function createService(overrides?: {
     requestId: string
     sections: Array<{
       locator: string
+      pageNumber?: number
       content: string
       confidence: number
     }>
@@ -75,6 +76,7 @@ function createService(overrides?: {
         sections: [
           {
             locator: '第 1 页',
+            pageNumber: 1,
             content: '扫描件识别正文',
             confidence: 0.93
           }
@@ -136,7 +138,9 @@ describe('DocumentParsingService', () => {
         locator: '第 1 页',
         content: '扫描件识别正文',
         method: 'ocr',
-        confidence: 0.93
+        confidence: 0.93,
+        pageNumber: 1,
+        blockKind: 'text'
       }
     ])
     expect(recognize).toHaveBeenCalledWith(
@@ -203,6 +207,41 @@ describe('DocumentParsingService', () => {
     ])
   })
 
+  it('does not silently index a partial mixed PDF when OCR fails', async () => {
+    const { service } = createService({
+      recognize: async () => {
+        throw new Error('OCR runtime failed')
+      }
+    })
+
+    await expect(
+      service.parse(
+        'mixed.pdf',
+        createPdfFixture('Native PDF body text', ''),
+        'knowledge-index'
+      )
+    ).rejects.toThrow('OCR runtime failed')
+  })
+
+  it('does not silently index a mixed PDF when OCR returns no text', async () => {
+    const { service } = createService({
+      recognize: async () => ({
+        requestId: crypto.randomUUID(),
+        sections: [],
+        pageCount: 2,
+        warnings: ['第 2 页未识别到文字']
+      })
+    })
+
+    await expect(
+      service.parse(
+        'mixed.pdf',
+        createPdfFixture('Native PDF body text', ''),
+        'knowledge-index'
+      )
+    ).rejects.toThrow('第 2 页未识别到可索引文本')
+  })
+
   it('limits the number of pages sent to OCR rather than total PDF pages', async () => {
     const { recognize, service } = createService({
       settings: { maximumPages: 1 }
@@ -258,5 +297,77 @@ describe('DocumentParsingService', () => {
       })
     ).rejects.toThrow('请先安装并校验')
     expect(settingsStore.update).not.toHaveBeenCalled()
+  })
+
+  it('rejects oversized non-PDF input through the unified service', async () => {
+    const { service } = createService()
+
+    await expect(
+      service.parse(
+        'large.txt',
+        Buffer.alloc(20 * 1024 * 1024 + 1),
+        'knowledge-index'
+      )
+    ).rejects.toThrow('20MB')
+  })
+
+  it('bounds OCR output before returning parsed sections', async () => {
+    const { service } = createService({
+      recognize: async () => ({
+        requestId: crypto.randomUUID(),
+        sections: [
+          {
+            locator: '第 1 页',
+            pageNumber: 1,
+            content: 'x'.repeat(1_000_000),
+            confidence: 0.9
+          },
+          {
+            locator: '第 2 页',
+            pageNumber: 2,
+            content: 'y'.repeat(1_000_000),
+            confidence: 0.9
+          },
+          {
+            locator: '第 3 页',
+            pageNumber: 3,
+            content: 'z'.repeat(1_000_000),
+            confidence: 0.9
+          },
+          {
+            locator: '第 4 页',
+            pageNumber: 4,
+            content: 'a'.repeat(1_000_000),
+            confidence: 0.9
+          },
+          {
+            locator: '第 5 页',
+            pageNumber: 5,
+            content: 'b'.repeat(1_000_000),
+            confidence: 0.9
+          }
+        ],
+        pageCount: 5,
+        warnings: []
+      }),
+      settings: {
+        chatWorkflow: 'high-fidelity',
+        maximumPages: 5
+      }
+    })
+
+    const parsed = await service.parse(
+      'large-ocr.pdf',
+      createPdfFixture('', '', '', '', ''),
+      'chat-attachment'
+    )
+
+    expect(parsed.content.length).toBeLessThanOrEqual(5_000_000)
+    expect(
+      parsed.sections.map((section) => section.content).join('\n\n')
+    ).toBe(parsed.content)
+    expect(parsed.warnings).toContain(
+      '文档提取文本超过 5,000,000 字符，已截断'
+    )
   })
 })

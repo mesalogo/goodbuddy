@@ -10,6 +10,12 @@ import type {
   DocumentOcrRequest,
   DocumentOcrResult
 } from '../../shared/document-parsing-contracts'
+import {
+  maximumDocumentExtractedCharacters,
+  maximumDocumentOcrSectionCharacters,
+  maximumDocumentParsingWarnings,
+  maximumPdfPageCount
+} from '../../shared/document-parsing-contracts'
 import { createWorkerPdfLoadingParameters } from './document-ocr-pdf'
 
 type InitializeMessage = {
@@ -85,16 +91,21 @@ async function initialize(assets: DocumentOcrAssets): Promise<void> {
 
 async function recognizeImage(
   data: ArrayBuffer,
-  locator: string
+  locator: string,
+  pageNumber?: number
 ): Promise<DocumentOcrResult['sections'][number] | undefined> {
   if (!service?.isInitialized()) {
     throw new Error('本地 OCR 模型尚未初始化')
   }
   const result = await service.recognize(data)
   const content = result.text.replace(/\n{3,}/gu, '\n\n').trim()
+  if (content.length > maximumDocumentOcrSectionCharacters) {
+    throw new Error('单页 OCR 输出超过字符限制')
+  }
   return content
     ? {
         locator,
+        ...(pageNumber === undefined ? {} : { pageNumber }),
         content,
         confidence: result.confidence
       }
@@ -152,6 +163,18 @@ async function recognizePdf(
     createWorkerPdfLoadingParameters(request.data)
   )
   const document = await loadingTask.promise
+  if (document.numPages > maximumPdfPageCount) {
+    await loadingTask.destroy()
+    throw new Error(
+      `PDF 有 ${document.numPages} 页，超过 ${maximumPdfPageCount} 页限制`
+    )
+  }
+  if (!request.pageNumbers && document.numPages > request.maximumPages) {
+    await loadingTask.destroy()
+    throw new Error(
+      `PDF 有 ${document.numPages} 页需要 OCR，超过 ${request.maximumPages} 页限制`
+    )
+  }
   const selectedPages = new Set(
     request.pageNumbers ??
       Array.from(
@@ -174,15 +197,11 @@ async function recognizePdf(
   }
   const sections: DocumentOcrResult['sections'] = []
   const warnings: string[] = []
+  let extractedCharacters = 0
   try {
-    for (
-      let pageNumber = 1;
-      pageNumber <= document.numPages;
-      pageNumber += 1
-    ) {
-      if (!selectedPages.has(pageNumber)) {
-        continue
-      }
+    for (const pageNumber of [...selectedPages].sort(
+      (left, right) => left - right
+    )) {
       worker.postMessage({
         type: 'progress',
         requestId: request.requestId,
@@ -192,11 +211,19 @@ async function recognizePdf(
       try {
         const section = await recognizeImage(
           await renderPdfPage(page),
-          `第 ${pageNumber} 页`
+          `第 ${pageNumber} 页`,
+          pageNumber
         )
         if (section) {
+          extractedCharacters += section.content.length
+          if (
+            extractedCharacters >
+            maximumDocumentExtractedCharacters
+          ) {
+            throw new Error('OCR 输出超过文档字符限制')
+          }
           sections.push(section)
-        } else {
+        } else if (warnings.length < maximumDocumentParsingWarnings) {
           warnings.push(`第 ${pageNumber} 页未识别到文字`)
         }
       } finally {

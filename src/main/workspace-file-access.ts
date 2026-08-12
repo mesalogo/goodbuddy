@@ -52,27 +52,54 @@ export async function readBoundedUtf8File(
   tooLargeMessage: string,
   invalidUtf8Message: string
 ): Promise<{ content: string; size: number }> {
+  const data = await readBoundedFile(
+    filePath,
+    maximumBytes,
+    tooLargeMessage
+  )
+  try {
+    return {
+      content: new TextDecoder('utf-8', { fatal: true }).decode(data),
+      size: data.byteLength
+    }
+  } catch (error) {
+    throw new Error(invalidUtf8Message, { cause: error })
+  }
+}
+
+export async function readBoundedFile(
+  filePath: string,
+  maximumBytes: number,
+  tooLargeMessage: string,
+  invalidFileMessage = tooLargeMessage
+): Promise<Buffer> {
   const handle = await open(filePath, 'r')
   try {
     const metadata = await handle.stat()
+    if (!metadata.isFile()) {
+      throw new Error(invalidFileMessage)
+    }
     if (metadata.size > maximumBytes) {
       throw new Error(tooLargeMessage)
     }
     const data = Buffer.alloc(metadata.size + 1)
-    const result = await handle.read(data, 0, data.length, 0)
-    if (result.bytesRead > maximumBytes) {
-      throw new Error(tooLargeMessage)
-    }
-    try {
-      return {
-        content: new TextDecoder('utf-8', { fatal: true }).decode(
-          data.subarray(0, result.bytesRead)
-        ),
-        size: result.bytesRead
+    let bytesRead = 0
+    while (bytesRead < data.length) {
+      const result = await handle.read(
+        data,
+        bytesRead,
+        data.length - bytesRead,
+        bytesRead
+      )
+      if (result.bytesRead === 0) {
+        break
       }
-    } catch (error) {
-      throw new Error(invalidUtf8Message, { cause: error })
+      bytesRead += result.bytesRead
+      if (bytesRead > maximumBytes) {
+        throw new Error(tooLargeMessage)
+      }
     }
+    return data.subarray(0, bytesRead)
   } finally {
     await handle.close()
   }

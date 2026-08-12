@@ -99,6 +99,23 @@ export class DocumentOcrBroker {
       return
     }
     if (result.success) {
+      if (
+        pending.request.mimeType === 'application/pdf' &&
+        result.data.sections.some(
+          (section) =>
+            section.pageNumber === undefined ||
+            section.pageNumber > result.data.pageCount ||
+            (
+              pending.request.pageNumbers !== undefined &&
+              !pending.request.pageNumbers.includes(section.pageNumber)
+            )
+        )
+      ) {
+        this.finishRequest(requestId, () =>
+          pending.reject(new Error('OCR 响应页码无效'))
+        )
+        return
+      }
       this.finishRequest(requestId, () =>
         pending.resolve(result.data)
       )
