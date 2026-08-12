@@ -83,7 +83,6 @@ export const settings = {
     saveAndTestRuntime: 'Save and test {{runtime}}',
     saving: 'Saving…',
     saveSettings: 'Save settings',
-    testParsing: 'Test parsing',
     testingParsing: 'Parsing…',
     select: 'Select',
     selectFile: 'Select file',
@@ -238,52 +237,55 @@ export const settings = {
       conversionUnavailable:
         'Not implemented yet; DOC, XLS, and PPT are currently unavailable',
       localOcr: 'Local OCR',
+      localOcrModel: 'Current OCR: {{name}}',
       ocrReady:
         'The model is installed, SHA-256 verified, and available offline',
       ocrUnavailable:
         'The model is not installed or failed verification. Download it from ModelScope.',
       partialNotice:
-        'Basic document parsing is available. Legacy Office conversion is not implemented yet; scanned PDFs use local OCR.'
+        'Basic document parsing is available. Legacy Office conversion is not implemented yet; scenario modes can use local OCR for scanned PDFs.'
     },
     workflows: {
-      title: 'Usage scenarios',
+      title: 'PDF parsing modes',
       description:
-        'Choose different parsing depth for chat attachments and knowledge imports',
-      chat: 'Chat attachments',
-      chatDescription:
-        'Controls parsing before an attachment is added to the current request',
+        'Choose how each scenario handles PDF text layers and scanned pages',
+      chat: 'Chat and artifact files',
       knowledge: 'Knowledge imports',
-      knowledgeDescription:
-        'Controls parsing before chunking, indexing, and source location',
+      testChat: 'Test chat and artifact mode',
+      testKnowledge: 'Test knowledge mode',
+      unsavedNotice:
+        'There are unsaved changes. Save them before testing the active mode.',
       chatOptions: {
-        auto: 'Automatic parsing (recommended)',
-        fastText: 'Fast text',
-        highFidelity: 'High-fidelity parsing'
+        auto: 'Automatic recognition (recommended)',
+        fastText: 'Text layer only',
+        highFidelity: 'OCR every page'
+      },
+      chatDescriptions: {
+        auto:
+          'Chat attachments and artifact PDFs prefer the text layer and use OCR only on pages without useful text.',
+        fastText:
+          'Chat attachments and artifact PDFs use only the text layer. Scanned documents may be unreadable.',
+        highFidelity:
+          'Run OCR on every PDF page. This is slower.'
       },
       knowledgeOptions: {
-        completeIndex: 'Complete indexing (recommended)',
-        fastIndex: 'Fast indexing',
-        highFidelity: 'High-fidelity indexing'
+        completeIndex: 'Automatic recognition (recommended)',
+        fastIndex: 'Text layer only',
+        highFidelity: 'OCR every page'
+      },
+      knowledgeDescriptions: {
+        'complete-index':
+          'Prefer the PDF text layer and use OCR only on pages without useful text.',
+        'fast-index':
+          'Use only the PDF text layer. Scanned pages are not indexed.',
+        'high-fidelity':
+          'Run OCR on every PDF page before chunking and indexing. This is slower.'
       }
     },
     ocr: {
       title: 'OCR recognition',
       description:
         'Install a local model on demand to recognize scanned PDFs on this device',
-      enabled: 'Enable local OCR',
-      enabledDescription:
-        'After installation, the model runs only on this device through ONNX Runtime WebAssembly. Documents are not uploaded for recognition.',
-      model: 'Local model',
-      runtime: 'Runtime',
-      provider: {
-        title: 'OCR source',
-        description:
-          'Choose either a local model or a remote service, then save settings to switch.',
-        local: 'Local model',
-        remote: 'Remote service (coming soon)',
-        remoteDescription:
-          'Remote integrations will support services such as MinerU and PaddleOCR-VL. They are disabled in this version.'
-      },
       modelSelector: 'Current OCR model',
       modelSelectorDescription:
         'This saved model is used for chat attachments and knowledge imports.',
@@ -291,6 +293,7 @@ export const settings = {
         'This model selection is not active yet. Save settings to switch.',
       installedOption: 'Installed',
       downloadableOption: 'Available to download',
+      unavailableOption: 'Unavailable in this version',
       openModelsDirectory: 'Open model folder',
       storagePrefix: 'Models are installed on demand in',
       storageSuffix:
@@ -314,6 +317,7 @@ export const settings = {
       },
       installed: 'Installed and verified',
       download: 'Download',
+      downloadAndSelect: 'Download and enable',
       importZip: 'Import ZIP',
       exportZip: 'Export ZIP',
       delete: 'Delete',
@@ -322,14 +326,12 @@ export const settings = {
       openRepository: 'Open ModelScope',
       catalogUnavailable:
         'No OCR model catalog is available in this version.',
-      mode: 'PDF OCR strategy',
-      modes: {
-        auto: 'Automatic; recognize only pages without useful text',
-        always: 'Always recognize every page',
-        disabled: 'Use only the PDF text layer'
-      },
-      modelLicense:
-        'The model uses Apache License 2.0 and is SHA-256 verified before loading.',
+      selectedModelUnavailable:
+        'The saved OCR model is unavailable in this version. Select and install another model above.',
+      installBeforeSelecting:
+        'Download this model first. It will become the current model after installation.',
+      privacyNotice:
+        'OCR is enabled only when required by the scenario modes above. It always runs locally through ONNX Runtime WebAssembly and never uploads documents.',
       operations: {
         preparing: 'Preparing model files',
         downloading: 'Downloading from ModelScope',
@@ -347,7 +349,11 @@ export const settings = {
       },
       notifications: {
         installed: '{{name}} installed',
+        installedAndSelected:
+          '{{name}} installed and selected as the current model',
         importedZip: '{{name}} imported from ZIP',
+        importedAndSelected:
+          '{{name}} imported and selected as the current model',
         exportedZip: '{{name}} exported as ZIP',
         removed: 'OCR model deleted'
       }
@@ -355,10 +361,9 @@ export const settings = {
     advanced: {
       title: 'Advanced parsing settings',
       maximumPages: 'Maximum OCR pages per document',
-      concurrency: 'OCR concurrency',
       timeout: 'OCR time budget per page (seconds)',
-      concurrencyHint:
-        'The WASM baseline currently processes pages serially; this value is reserved for batching and hardware acceleration.'
+      description:
+        'The page limit counts only pages actually sent to OCR. Parsing stops if one page exceeds its time budget.'
     },
     diagnostic: {
       title: 'Parsing test result',

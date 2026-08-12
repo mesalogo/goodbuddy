@@ -9,17 +9,23 @@ import {
 } from '../shared/document-parsing-contracts'
 
 type PendingRequest = {
+  request: DocumentOcrRequest
   resolve: (result: DocumentOcrResult) => void
   reject: (error: Error) => void
-  timer: ReturnType<typeof setTimeout>
+  timer?: ReturnType<typeof setTimeout>
+  timeoutMs: number
   detachAbort: () => void
+  dispatched: boolean
 }
 
 const maximumPendingRequests = 4
 const maximumTotalTimeoutMs = 10 * 60 * 1_000
+const workerStartupTimeoutMs = 60 * 1_000
 
 export class DocumentOcrBroker {
   private readonly pending = new Map<string, PendingRequest>()
+  private readonly queue: string[] = []
+  private activeRequestId?: string
   private disposed = false
 
   constructor(private readonly window: BrowserWindow) {}
@@ -41,50 +47,37 @@ export class DocumentOcrBroker {
     if (signal?.aborted) {
       throw new Error('OCR 解析已取消')
     }
+    const pageCount =
+      request.pageNumbers?.length ?? request.maximumPages
     const timeoutMs = Math.min(
       maximumTotalTimeoutMs,
       Math.max(
         request.pageTimeoutSeconds * 1_000,
-        request.pageTimeoutSeconds *
-          request.maximumPages *
-          1_000
+        workerStartupTimeoutMs +
+          request.pageTimeoutSeconds *
+            pageCount *
+            1_000
       )
     )
     return new Promise<DocumentOcrResult>((resolve, reject) => {
-      const cancel = (message: string): void => {
-        const pending = this.pending.get(request.requestId)
-        if (!pending) {
-          return
-        }
-        clearTimeout(pending.timer)
-        pending.detachAbort()
-        this.pending.delete(request.requestId)
-        this.window.webContents.send(
-          ipcChannels.documentParsingOcrCancel,
-          request.requestId
-        )
-        reject(new Error(message))
-      }
-      const timer = setTimeout(() => {
-        cancel('OCR 解析超时')
-      }, timeoutMs)
-      const onAbort = (): void => cancel('OCR 解析已取消')
+      const onAbort = (): void =>
+        this.cancelRequest(request.requestId, 'OCR 解析已取消')
       signal?.addEventListener('abort', onAbort, { once: true })
       this.pending.set(request.requestId, {
+        request,
         resolve,
         reject,
-        timer,
+        timeoutMs,
         detachAbort: () =>
-          signal?.removeEventListener('abort', onAbort)
+          signal?.removeEventListener('abort', onAbort),
+        dispatched: false
       })
+      this.queue.push(request.requestId)
       if (signal?.aborted) {
-        cancel('OCR 解析已取消')
+        this.cancelRequest(request.requestId, 'OCR 解析已取消')
         return
       }
-      this.window.webContents.send(
-        ipcChannels.documentParsingOcrRequest,
-        request
-      )
+      this.dispatchNext()
     })
   }
 
@@ -102,30 +95,111 @@ export class DocumentOcrBroker {
       throw new Error('OCR 响应无效')
     }
     const pending = this.pending.get(requestId)
-    if (!pending) {
+    if (!pending || !pending.dispatched) {
       return
     }
-    clearTimeout(pending.timer)
-    pending.detachAbort()
-    this.pending.delete(requestId)
     if (result.success) {
-      pending.resolve(result.data)
+      this.finishRequest(requestId, () =>
+        pending.resolve(result.data)
+      )
     } else {
       if (!failure?.success) {
-        pending.reject(new Error('OCR 响应无效'))
+        this.finishRequest(requestId, () =>
+          pending.reject(new Error('OCR 响应无效'))
+        )
         return
       }
-      pending.reject(new Error(failure.data.error))
+      this.finishRequest(requestId, () =>
+        pending.reject(new Error(failure.data.error))
+      )
     }
   }
 
   dispose(): void {
     this.disposed = true
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
+      if (pending.timer) {
+        clearTimeout(pending.timer)
+      }
       pending.detachAbort()
       pending.reject(new Error('OCR 解析已取消'))
     }
     this.pending.clear()
+    this.queue.length = 0
+    this.activeRequestId = undefined
+  }
+
+  private dispatchNext(): void {
+    if (
+      this.disposed ||
+      this.activeRequestId ||
+      this.window.isDestroyed()
+    ) {
+      return
+    }
+    let requestId = this.queue.shift()
+    while (requestId && !this.pending.has(requestId)) {
+      requestId = this.queue.shift()
+    }
+    if (!requestId) {
+      return
+    }
+    const pending = this.pending.get(requestId)
+    if (!pending) {
+      return
+    }
+    this.activeRequestId = requestId
+    pending.dispatched = true
+    pending.timer = setTimeout(() => {
+      this.cancelRequest(requestId, 'OCR 解析超时')
+    }, pending.timeoutMs)
+    try {
+      this.window.webContents.send(
+        ipcChannels.documentParsingOcrRequest,
+        pending.request
+      )
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : 'OCR 渲染服务不可用'
+      this.finishRequest(requestId, () =>
+        pending.reject(new Error(detail))
+      )
+    }
+  }
+
+  private cancelRequest(requestId: string, message: string): void {
+    const pending = this.pending.get(requestId)
+    if (!pending) {
+      return
+    }
+    if (pending.dispatched && !this.window.isDestroyed()) {
+      this.window.webContents.send(
+        ipcChannels.documentParsingOcrCancel,
+        requestId
+      )
+    }
+    this.finishRequest(requestId, () =>
+      pending.reject(new Error(message))
+    )
+  }
+
+  private finishRequest(
+    requestId: string,
+    settle: () => void
+  ): void {
+    const pending = this.pending.get(requestId)
+    if (!pending) {
+      return
+    }
+    if (pending.timer) {
+      clearTimeout(pending.timer)
+    }
+    pending.detachAbort()
+    this.pending.delete(requestId)
+    if (this.activeRequestId === requestId) {
+      this.activeRequestId = undefined
+    }
+    settle()
+    this.dispatchNext()
   }
 }

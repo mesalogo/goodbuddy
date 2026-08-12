@@ -85,7 +85,8 @@ import type {
   DocumentOcrResult,
   DocumentParsingDiagnostic,
   DocumentParsingSettings,
-  DocumentParsingSnapshot
+  DocumentParsingSnapshot,
+  DocumentParsingTestPurpose
 } from '../shared/document-parsing-contracts'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
@@ -435,9 +436,10 @@ const desktopApi: DesktopApi = {
         ipcChannels.documentParsingUpdate,
         input
       ) as Promise<DocumentParsingSnapshot>,
-    test: () =>
+    test: (purpose: DocumentParsingTestPurpose) =>
       ipcRenderer.invoke(
-        ipcChannels.documentParsingTest
+        ipcChannels.documentParsingTest,
+        { purpose }
       ) as Promise<DocumentParsingDiagnostic | undefined>,
     installOcrModel: (modelId: string) =>
       ipcRenderer.invoke(

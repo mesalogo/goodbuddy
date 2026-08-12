@@ -60,7 +60,7 @@ describe('DocumentParsingSettingsStore', () => {
 
     await expect(store.update(settings)).resolves.toEqual(settings)
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 2,
+      version: 3,
       ...settings
     })
     await expect(
@@ -68,27 +68,59 @@ describe('DocumentParsingSettingsStore', () => {
     ).resolves.toEqual(settings)
   })
 
-  it('migrates legacy cloud permissions to the local OCR provider', async () => {
+  it('migrates version 2 OCR switches into scenario modes', async () => {
     const { filePath, store } = await createStore()
-    const {
-      ocrProvider: _ocrProvider,
-      ...legacySettings
-    } = defaultDocumentParsingSettings
-    void _ocrProvider
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 2,
+        chatWorkflow: 'auto',
+        knowledgeWorkflow: 'complete-index',
+        pdfOcrMode: 'always',
+        ocrProvider: 'local',
+        localOcrEnabled: true,
+        localOcrModelId: 'pp-ocrv6-small',
+        maximumPages: 42,
+        ocrConcurrency: 4,
+        pageTimeoutSeconds: 90
+      }),
+      'utf8'
+    )
+
+    await expect(store.get()).resolves.toEqual({
+      chatWorkflow: 'high-fidelity',
+      knowledgeWorkflow: 'high-fidelity',
+      localOcrModelId: 'pp-ocrv6-small',
+      maximumPages: 42,
+      pageTimeoutSeconds: 90
+    })
+  })
+
+  it('migrates version 1 cloud settings into local scenario modes', async () => {
+    const { filePath, store } = await createStore()
     await writeFile(
       filePath,
       JSON.stringify({
         version: 1,
-        ...legacySettings,
+        chatWorkflow: 'auto',
+        knowledgeWorkflow: 'complete-index',
+        pdfOcrMode: 'auto',
+        localOcrEnabled: false,
+        localOcrModelId: 'pp-ocrv6-tiny',
+        maximumPages: 100,
+        ocrConcurrency: 1,
+        pageTimeoutSeconds: 60,
         chatCloudPermission: 'always',
         knowledgeCloudPermission: 'never'
       }),
       'utf8'
     )
 
-    await expect(store.get()).resolves.toEqual(
-      defaultDocumentParsingSettings
-    )
+    await expect(store.get()).resolves.toEqual({
+      ...defaultDocumentParsingSettings,
+      chatWorkflow: 'fast-text',
+      knowledgeWorkflow: 'fast-index'
+    })
   })
 
   it('rejects incomplete or out-of-range settings', async () => {

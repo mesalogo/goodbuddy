@@ -5530,6 +5530,11 @@ details.settings-section > :not(summary) + :not(summary) {
   line-height: 1.5;
 }
 
+.document-parsing-workflows .field > label {
+  font-size: var(--font-caption);
+  font-weight: 650;
+}
+
 .document-parsing-workflows .field {
   padding: var(--space-3);
   border: 1px solid var(--border-default);
@@ -5557,37 +5562,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .document-ocr-settings__storage code {
   overflow-wrap: anywhere;
-}
-
-.document-ocr-provider {
-  display: grid;
-  align-items: center;
-  padding: var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2) var(--space-4);
-}
-
-.document-ocr-provider > div:first-child {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.document-ocr-provider strong {
-  color: var(--text-primary);
-  font-size: var(--font-body);
-}
-
-.document-ocr-provider small {
-  color: var(--text-muted);
-  font-size: var(--font-caption);
-  line-height: 1.5;
-}
-
-.document-ocr-provider > small {
-  grid-column: 1 / -1;
 }
 
 .document-ocr-model-selector {
@@ -5724,49 +5698,9 @@ details.settings-section > :not(summary) + :not(summary) {
   font-size: var(--font-caption);
 }
 
-.document-ocr-settings__options {
-  display: grid;
-  align-items: start;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-}
-
-.document-ocr-settings__options > * {
-  min-height: 100%;
-  padding: var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-}
-
-.document-ocr-settings__options .settings-checkbox {
-  display: grid;
-  align-items: start;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-3);
-}
-
-.document-ocr-settings__options .settings-checkbox > input {
-  width: 16px;
-  height: 16px;
-  margin: 2px 0 0;
-  accent-color: var(--accent-solid);
-}
-
-.document-ocr-settings__options .settings-checkbox > span {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.document-ocr-settings__options .settings-checkbox strong {
-  color: var(--text-primary);
-  font-size: var(--font-body);
-}
-
-.document-ocr-settings__options .settings-checkbox small {
-  color: var(--text-muted);
-  font-size: var(--font-caption);
-  line-height: 1.5;
+.document-parsing-workflow-test {
+  width: fit-content;
+  margin-top: auto;
 }
 
 .document-parsing-diagnostic-backdrop {
@@ -5866,8 +5800,7 @@ details.settings-section > :not(summary) + :not(summary) {
 @media (max-width: 720px) {
   .document-parsing-status__list,
   .document-parsing-grid,
-  .document-parsing-diagnostic dl,
-  .document-ocr-settings__options {
+  .document-parsing-diagnostic dl {
     grid-template-columns: minmax(0, 1fr);
   }
 

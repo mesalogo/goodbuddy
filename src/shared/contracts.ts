@@ -83,7 +83,8 @@ import type {
   DocumentOcrResult,
   DocumentParsingDiagnostic,
   DocumentParsingSettings,
-  DocumentParsingSnapshot
+  DocumentParsingSnapshot,
+  DocumentParsingTestPurpose
 } from './document-parsing-contracts'
 import type {
   KnowledgeChunkDeleteInput,
@@ -1159,7 +1160,9 @@ export type DesktopApi = {
     update: (
       input: DocumentParsingSettings
     ) => Promise<DocumentParsingSnapshot>
-    test: () => Promise<DocumentParsingDiagnostic | undefined>
+    test: (
+      purpose: DocumentParsingTestPurpose
+    ) => Promise<DocumentParsingDiagnostic | undefined>
     installOcrModel: (
       modelId: string
     ) => Promise<DocumentParsingSnapshot>

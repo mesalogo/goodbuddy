@@ -14,7 +14,7 @@ import {
   type DocumentParsingSettings
 } from '../shared/document-parsing-contracts'
 
-const CURRENT_SETTINGS_VERSION = 2
+const CURRENT_SETTINGS_VERSION = 3
 
 const storedDocumentParsingSettingsSchema =
   documentParsingSettingsSchema
@@ -27,9 +27,32 @@ type StoredDocumentParsingSettings = z.infer<
   typeof storedDocumentParsingSettingsSchema
 >
 
-const legacyDocumentParsingSettingsSchema =
-  documentParsingSettingsSchema
-    .omit({ ocrProvider: true })
+const legacyVersionTwoSettingsSchema = z
+  .object({
+    version: z.literal(2),
+    chatWorkflow: z.enum(['auto', 'fast-text', 'high-fidelity']),
+    knowledgeWorkflow: z.enum([
+      'complete-index',
+      'fast-index',
+      'high-fidelity'
+    ]),
+    pdfOcrMode: z.enum(['auto', 'always', 'disabled']),
+    ocrProvider: z.literal('local'),
+    localOcrEnabled: z.boolean(),
+    localOcrModelId: z
+      .string()
+      .min(1)
+      .max(96)
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+    maximumPages: z.number().int().min(1).max(500),
+    ocrConcurrency: z.number().int().min(1).max(4),
+    pageTimeoutSeconds: z.number().int().min(10).max(300)
+  })
+  .strict()
+
+const legacyVersionOneSettingsSchema =
+  legacyVersionTwoSettingsSchema
+    .omit({ version: true, ocrProvider: true })
     .extend({
       version: z.literal(1),
       chatCloudPermission: z.enum(['ask', 'always', 'never']),
@@ -40,13 +63,37 @@ const legacyDocumentParsingSettingsSchema =
 export const defaultDocumentParsingSettings: DocumentParsingSettings = {
   chatWorkflow: 'auto',
   knowledgeWorkflow: 'complete-index',
-  pdfOcrMode: 'auto',
-  ocrProvider: 'local',
-  localOcrEnabled: true,
   localOcrModelId: 'pp-ocrv6-tiny',
   maximumPages: 100,
-  ocrConcurrency: 1,
   pageTimeoutSeconds: 60
+}
+
+type LegacySettings = z.infer<
+  typeof legacyVersionTwoSettingsSchema
+>
+
+function migrateLegacySettings(
+  legacy: LegacySettings
+): StoredDocumentParsingSettings {
+  const ocrDisabled =
+    !legacy.localOcrEnabled || legacy.pdfOcrMode === 'disabled'
+  const ocrAlways = legacy.pdfOcrMode === 'always'
+  return {
+    version: CURRENT_SETTINGS_VERSION,
+    chatWorkflow: ocrDisabled
+      ? 'fast-text'
+      : legacy.chatWorkflow === 'auto' && ocrAlways
+        ? 'high-fidelity'
+        : legacy.chatWorkflow,
+    knowledgeWorkflow: ocrDisabled
+      ? 'fast-index'
+      : legacy.knowledgeWorkflow === 'complete-index' && ocrAlways
+        ? 'high-fidelity'
+        : legacy.knowledgeWorkflow,
+    localOcrModelId: legacy.localOcrModelId,
+    maximumPages: legacy.maximumPages,
+    pageTimeoutSeconds: legacy.pageTimeoutSeconds
+  }
 }
 
 function isMissingFile(error: unknown): boolean {
@@ -99,23 +146,27 @@ export class DocumentParsingSettingsStore {
       const result =
         storedDocumentParsingSettingsSchema.safeParse(parsed)
       if (!result.success) {
-        const legacy =
-          legacyDocumentParsingSettingsSchema.safeParse(parsed)
-        if (legacy.success) {
+        const versionTwo =
+          legacyVersionTwoSettingsSchema.safeParse(parsed)
+        if (versionTwo.success) {
+          this.settings = migrateLegacySettings(versionTwo.data)
+          return this.settings
+        }
+        const versionOne =
+          legacyVersionOneSettingsSchema.safeParse(parsed)
+        if (versionOne.success) {
           const {
-            version: _version,
             chatCloudPermission: _chatCloudPermission,
             knowledgeCloudPermission: _knowledgeCloudPermission,
-            ...settings
-          } = legacy.data
-          void _version
+            ...legacy
+          } = versionOne.data
           void _chatCloudPermission
           void _knowledgeCloudPermission
-          this.settings = {
-            version: CURRENT_SETTINGS_VERSION,
+          this.settings = migrateLegacySettings({
+            ...legacy,
+            version: 2,
             ocrProvider: 'local',
-            ...settings
-          }
+          })
           return this.settings
         }
         await this.isolateCorruptFile()

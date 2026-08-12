@@ -1,6 +1,7 @@
 import { extname } from 'node:path'
 import {
   documentParsingDiagnosticSchema,
+  documentParsingSettingsUpdateSchema,
   documentParsingSnapshotSchema,
   type DocumentParsingDiagnostic,
   type DocumentParsingPurpose,
@@ -52,9 +53,10 @@ function hasUsefulText(content: string): boolean {
 function effectiveOcrMode(
   settings: DocumentParsingSettings,
   purpose: DocumentParsingPurpose
-): DocumentParsingSettings['pdfOcrMode'] {
+): 'auto' | 'always' | 'disabled' {
   if (
-    (purpose === 'chat-attachment' &&
+    ((purpose === 'chat-attachment' ||
+      purpose === 'artifact-import') &&
       settings.chatWorkflow === 'fast-text') ||
     (purpose === 'knowledge-index' &&
       settings.knowledgeWorkflow === 'fast-index')
@@ -62,14 +64,15 @@ function effectiveOcrMode(
     return 'disabled'
   }
   if (
-    (purpose === 'chat-attachment' &&
+    ((purpose === 'chat-attachment' ||
+      purpose === 'artifact-import') &&
       settings.chatWorkflow === 'high-fidelity') ||
     (purpose === 'knowledge-index' &&
       settings.knowledgeWorkflow === 'high-fidelity')
   ) {
     return 'always'
   }
-  return settings.pdfOcrMode
+  return 'auto'
 }
 
 function buildPdfDocument(
@@ -130,7 +133,21 @@ export class DocumentParsingService {
   }
 
   async update(input: unknown): Promise<DocumentParsingSnapshot> {
-    await this.settingsStore.update(input)
+    const nextSettings =
+      documentParsingSettingsUpdateSchema.parse(input)
+    const currentSettings = await this.settingsStore.get()
+    if (
+      nextSettings.localOcrModelId !==
+      currentSettings.localOcrModelId
+    ) {
+      const status = await this.modelManager.getStatus(
+        nextSettings.localOcrModelId
+      )
+      if (!status.available || !status.verified) {
+        throw new Error('请先安装并校验所选 OCR 模型')
+      }
+    }
+    await this.settingsStore.update(nextSettings)
     return this.snapshot()
   }
 
@@ -159,7 +176,7 @@ export class DocumentParsingService {
           ? pagesWithoutUsefulText
           : []
 
-    if (mode === 'disabled' || !settings.localOcrEnabled) {
+    if (mode === 'disabled') {
       const native = nativePdfSections(pages)
       if (native.length > 0) {
         return buildPdfDocument(
@@ -182,15 +199,24 @@ export class DocumentParsingService {
         pages.length
       )
     }
-    if (pages.length > settings.maximumPages) {
+    if (ocrPageNumbers.length > settings.maximumPages) {
       throw new Error(
-        `PDF 共 ${pages.length} 页，超过本地 OCR 的 ${settings.maximumPages} 页限制`
+        `PDF 有 ${ocrPageNumbers.length} 页需要 OCR，超过 ${settings.maximumPages} 页限制`
       )
     }
+    const native = nativePdfSections(pages)
     const modelStatus = await this.modelManager.getStatus(
       settings.localOcrModelId
     )
     if (!modelStatus.available || !modelStatus.verified) {
+      if (
+        mode === 'auto' &&
+        native.some((section) => hasUsefulText(section.content))
+      ) {
+        return buildPdfDocument(name, native, pages.length, [
+          `本地 OCR 不可用，已保留 PDF 文本层内容：${modelStatus.detail}`
+        ])
+      }
       throw new Error(modelStatus.detail)
     }
 
@@ -203,9 +229,25 @@ export class DocumentParsingService {
       pageNumbers: ocrPageNumbers,
       pageTimeoutSeconds: settings.pageTimeoutSeconds
     }
-    const ocr = await (signal
-      ? this.ocrBroker.recognize(ocrRequest, signal)
-      : this.ocrBroker.recognize(ocrRequest))
+    let ocr
+    try {
+      ocr = await (signal
+        ? this.ocrBroker.recognize(ocrRequest, signal)
+        : this.ocrBroker.recognize(ocrRequest))
+    } catch (error) {
+      ensureNotAborted(signal)
+      if (
+        mode === 'auto' &&
+        native.some((section) => hasUsefulText(section.content))
+      ) {
+        const detail =
+          error instanceof Error ? error.message : '本地 OCR 识别失败'
+        return buildPdfDocument(name, native, pages.length, [
+          `本地 OCR 失败，已保留 PDF 文本层内容：${detail}`
+        ])
+      }
+      throw error
+    }
     ensureNotAborted(signal)
     const ocrByLocator = new Map(
       ocr.sections.map((section) => [section.locator, section])

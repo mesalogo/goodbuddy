@@ -163,6 +163,17 @@ afterEach(async () => {
 })
 
 describe('DocumentOcrModelManager', () => {
+  it('reports a removed catalog model as unavailable', async () => {
+    const { manager } = await createManager()
+
+    await expect(manager.getStatus('retired-model')).resolves.toMatchObject({
+      id: 'retired-model',
+      available: false,
+      verified: false,
+      detail: expect.stringContaining('不再提供')
+    })
+  })
+
   it('uses immutable SHA-256 verified ModelScope catalog files', () => {
     expect(DOCUMENT_OCR_MODEL_CATALOG).toHaveLength(3)
     expect(

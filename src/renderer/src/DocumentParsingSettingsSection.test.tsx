@@ -7,6 +7,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  InstalledDocumentOcrModel,
   DocumentParsingSettings,
   DocumentParsingSnapshot
 } from '../../shared/document-parsing-contracts'
@@ -16,12 +17,8 @@ import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection
 const settings: DocumentParsingSettings = {
   chatWorkflow: 'auto',
   knowledgeWorkflow: 'complete-index',
-  pdfOcrMode: 'auto',
-  ocrProvider: 'local',
-  localOcrEnabled: true,
   localOcrModelId: 'pp-ocrv6-tiny',
   maximumPages: 100,
-  ocrConcurrency: 1,
   pageTimeoutSeconds: 60
 }
 
@@ -139,35 +136,36 @@ const test = vi.fn(async () => ({
   preview: '扫描件识别正文',
   warnings: []
 }))
-const installOcrModel = vi.fn(async () => ({
-  ...snapshot,
-  status: {
-    ...snapshot.status,
-    localOcr: {
-      ...snapshot.status.localOcr,
-      available: true,
-      verified: true,
-      detail: '模型已安装并校验'
-    }
-  },
-  ocrModels: {
-    ...snapshot.ocrModels,
-    installed: [
-      {
-        id: 'pp-ocrv6-tiny' as const,
-        displayName: 'PP-OCRv6 Tiny',
-        source: 'download' as const,
-        installedAt: '2026-08-11T00:00:00.000Z',
-        files: modelEntry.files.map((file) => ({
-          name: file.name,
-          role: file.role,
-          size: file.download.size,
-          sha256: file.download.sha256
-        }))
+const installOcrModel =
+  vi.fn<() => Promise<DocumentParsingSnapshot>>(async () => ({
+    ...snapshot,
+    status: {
+      ...snapshot.status,
+      localOcr: {
+        ...snapshot.status.localOcr,
+        available: true,
+        verified: true,
+        detail: '模型已安装并校验'
       }
-    ]
-  }
-}))
+    },
+    ocrModels: {
+      ...snapshot.ocrModels,
+      installed: [
+        {
+          id: 'pp-ocrv6-tiny',
+          displayName: 'PP-OCRv6 Tiny',
+          source: 'download',
+          installedAt: '2026-08-11T00:00:00.000Z',
+          files: modelEntry.files.map((file) => ({
+            name: file.name,
+            role: file.role,
+            size: file.download.size,
+            sha256: file.download.sha256
+          }))
+        }
+      ]
+    }
+  }))
 const importOcrModelArchive = vi.fn(async () => snapshot)
 const exportOcrModelArchive = vi.fn(async () => snapshot)
 const openOcrModelRepository = vi.fn(async () => undefined)
@@ -212,17 +210,7 @@ describe('DocumentParsingSettingsSection', () => {
     expect(screen.getByText('质量：基础')).toBeInTheDocument()
     expect(screen.getByText('速度：快')).toBeInTheDocument()
     expect(screen.getByText('旧版 Office 转换')).toBeInTheDocument()
-    expect(
-      screen.getByRole('switch', { name: /启用本地 OCR/u })
-    ).toBeChecked()
-    expect(
-      screen.getByRole('button', { name: '本地模型' })
-    ).toHaveAttribute('aria-pressed', 'true')
-    expect(
-      screen.getByRole('button', {
-        name: '远程服务（即将支持）'
-      })
-    ).toBeDisabled()
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(screen.queryByText('隐私与云端处理')).not.toBeInTheDocument()
     expect(
       screen.queryByText('模型详情与手动导入')
@@ -237,12 +225,15 @@ describe('DocumentParsingSettingsSection', () => {
     )
     expect(openOcrModelRepository).toHaveBeenCalledWith('pp-ocrv6-tiny')
 
-    fireEvent.change(screen.getByLabelText('聊天附件'), {
+    fireEvent.change(screen.getByLabelText('聊天与成果文件'), {
       target: { value: 'fast-text' }
     })
-    fireEvent.click(
-      screen.getByRole('button', { name: '保存设置' })
-    )
+    expect(
+      screen.getByRole('button', {
+        name: '测试聊天与成果模式'
+      })
+    ).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(
@@ -275,6 +266,59 @@ describe('DocumentParsingSettingsSection', () => {
       expect.objectContaining({
         message: 'PP-OCRv6 Tiny 已安装'
       })
+    )
+  })
+
+  it('downloads and selects an uninstalled model in one action', async () => {
+    const installedMedium = {
+      ...snapshot,
+      settings: {
+        ...snapshot.settings,
+        localOcrModelId: 'pp-ocrv6-medium'
+      }
+    }
+    installOcrModel.mockResolvedValueOnce({
+      ...snapshot,
+      ocrModels: {
+        ...snapshot.ocrModels,
+        installed: [
+          ...snapshot.ocrModels.installed,
+          {
+            id: 'pp-ocrv6-medium',
+            displayName: 'PP-OCRv6 Medium',
+            source: 'download',
+            installedAt: '2026-08-11T00:00:00.000Z',
+            files: thirdModelEntry.files.map((file) => ({
+              name: file.name,
+              role: file.role,
+              size: file.download.size,
+              sha256: file.download.sha256
+            }))
+          } satisfies InstalledDocumentOcrModel
+        ]
+      }
+    })
+    update.mockResolvedValueOnce(installedMedium)
+    render(<DocumentParsingSettingsSection />)
+
+    fireEvent.change(await screen.findByLabelText('当前 OCR 模型'), {
+      target: { value: 'pp-ocrv6-medium' }
+    })
+    expect(
+      screen.getByRole('button', { name: '保存设置' })
+    ).toBeDisabled()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '下载 PP-OCRv6 Medium'
+      })
+    )
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          localOcrModelId: 'pp-ocrv6-medium'
+        })
+      )
     )
   })
 
@@ -370,7 +414,9 @@ describe('DocumentParsingSettingsSection', () => {
     await screen.findByText('PP-OCRv6 Tiny')
 
     fireEvent.click(
-      screen.getByRole('button', { name: '测试解析' })
+      screen.getByRole('button', {
+        name: '测试聊天与成果模式'
+      })
     )
 
     expect(
@@ -378,6 +424,7 @@ describe('DocumentParsingSettingsSection', () => {
         name: '解析测试结果'
       })
     ).toHaveTextContent('扫描件识别正文')
-    expect(test).toHaveBeenCalledOnce()
+    expect(test).toHaveBeenCalledWith('chat-attachment')
+    expect(update).not.toHaveBeenCalled()
   })
 })

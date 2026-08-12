@@ -102,7 +102,8 @@ import {
   documentOcrModelActionInputSchema,
   documentOcrFailureSchema,
   documentOcrResultSchema,
-  documentParsingSettingsUpdateSchema
+  documentParsingSettingsUpdateSchema,
+  documentParsingTestInputSchema
 } from '../shared/document-parsing-contracts'
 import {
   agentRuntimeSelectionSchema,
@@ -2785,11 +2786,13 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     ipcChannels.documentParsingTest,
-    async (event) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       if (!documentParsingService) {
         throw new Error('文档解析设置服务不可用')
       }
+      const { purpose } =
+        documentParsingTestInputSchema.parse(input)
       const result = await dialog.showOpenDialog(window, {
         title: '选择测试文档',
         properties: ['openFile'],
@@ -2814,7 +2817,8 @@ export function registerIpcHandlers(
         }
         return documentParsingService.diagnose(
           basename(canonicalPath),
-          await readFile(canonicalPath)
+          await readFile(canonicalPath),
+          purpose
         )
       } catch (error) {
         if (error instanceof Error && !('code' in error)) {
@@ -3436,7 +3440,13 @@ export function registerIpcHandlers(
           )
           continue
         }
-        const parsed = await parseDocument(name, file)
+        const parsed = documentParsingService
+          ? await documentParsingService.parse(
+              name,
+              file,
+              'artifact-import'
+            )
+          : await parseDocument(name, file)
         artifacts.push(
           assistantDatabase.createInlineArtifact({
             projectId,

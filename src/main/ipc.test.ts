@@ -784,6 +784,149 @@ describe('registerIpcHandlers model ZIP dialogs', () => {
   })
 })
 
+describe('registerIpcHandlers document parsing', () => {
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+    await Promise.all(
+      temporaryDirectories.splice(0).map((directory) =>
+        rm(directory, { recursive: true, force: true })
+      )
+    )
+  })
+
+  it('tests an explicit scenario and parses artifact PDFs through the shared service', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-ipc-document-parsing-')
+    )
+    temporaryDirectories.push(directory)
+    const diagnosticPath = join(directory, 'diagnostic.pdf')
+    const artifactPath = join(directory, 'artifact.pdf')
+    await writeFile(diagnosticPath, 'diagnostic')
+    await writeFile(artifactPath, 'artifact')
+    const diagnostic = {
+      fileName: 'diagnostic.pdf',
+      sourceFormat: 'PDF',
+      pageCount: 1,
+      ocrPageCount: 0,
+      characterCount: 4,
+      method: 'native',
+      durationMs: 1,
+      preview: 'text',
+      warnings: []
+    }
+    const documentParsingService = {
+      diagnose: vi.fn(async () => diagnostic),
+      parse: vi.fn(async () => ({
+        title: 'artifact',
+        sourceFormat: '.pdf',
+        content: 'parsed artifact',
+        sections: [
+          {
+            locator: '第 1 页',
+            content: 'parsed artifact',
+            method: 'native'
+          }
+        ],
+        pageCount: 1,
+        warnings: []
+      }))
+    }
+    const createInlineArtifact = vi.fn((input) => input)
+    const assistantDatabase = {
+      claimDueSchedules: vi.fn(() => []),
+      createInlineArtifact
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      assistantDatabase as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      documentParsingService as never
+    )
+
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [diagnosticPath]
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentParsingTest
+      )?.(event, { purpose: 'knowledge-index' })
+    ).resolves.toBe(diagnostic)
+    expect(documentParsingService.diagnose).toHaveBeenCalledWith(
+      'diagnostic.pdf',
+      expect.any(Buffer),
+      'knowledge-index'
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentParsingTest
+      )?.(event, { purpose: 'diagnostic' })
+    ).rejects.toThrow()
+
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [artifactPath]
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.artifactsImportFiles
+      )?.(event)
+    ).resolves.toEqual([
+      expect.objectContaining({
+        title: 'artifact.pdf',
+        content: '## 第 1 页\n\nparsed artifact'
+      })
+    ])
+    expect(documentParsingService.parse).toHaveBeenCalledWith(
+      'artifact.pdf',
+      expect.any(Buffer),
+      'artifact-import'
+    )
+
+    await dispose()
+  })
+})
+
 describe('registerIpcHandlers connection tests', () => {
   afterEach(() => {
     electronMocks.handlers.clear()

@@ -3,7 +3,13 @@ import { z } from 'zod'
 export const documentParsingPurposeSchema = z.enum([
   'chat-attachment',
   'knowledge-index',
+  'artifact-import',
   'diagnostic'
+])
+
+export const documentParsingTestPurposeSchema = z.enum([
+  'chat-attachment',
+  'knowledge-index'
 ])
 
 export const chatDocumentWorkflowSchema = z.enum([
@@ -17,14 +23,6 @@ export const knowledgeDocumentWorkflowSchema = z.enum([
   'fast-index',
   'high-fidelity'
 ])
-
-export const pdfOcrModeSchema = z.enum([
-  'auto',
-  'always',
-  'disabled'
-])
-
-export const documentOcrProviderSchema = z.literal('local')
 
 export const localOcrModelIdSchema = z
   .string()
@@ -157,12 +155,8 @@ export const documentParsingSettingsSchema = z
   .object({
     chatWorkflow: chatDocumentWorkflowSchema,
     knowledgeWorkflow: knowledgeDocumentWorkflowSchema,
-    pdfOcrMode: pdfOcrModeSchema,
-    ocrProvider: documentOcrProviderSchema,
-    localOcrEnabled: z.boolean(),
     localOcrModelId: localOcrModelIdSchema,
     maximumPages: z.number().int().min(1).max(500),
-    ocrConcurrency: z.number().int().min(1).max(4),
     pageTimeoutSeconds: z.number().int().min(10).max(300)
   })
   .strict()
@@ -199,7 +193,7 @@ export const documentParsingSnapshotSchema = z
 
 export const documentParsingTestInputSchema = z
   .object({
-    purpose: documentParsingPurposeSchema.default('diagnostic')
+    purpose: documentParsingTestPurposeSchema
   })
   .strict()
 
@@ -252,6 +246,27 @@ export const documentOcrRequestSchema = z
     pageTimeoutSeconds: z.number().int().min(10).max(300)
   })
   .strict()
+  .superRefine((request, context) => {
+    if (!request.pageNumbers) {
+      return
+    }
+    if (
+      new Set(request.pageNumbers).size !== request.pageNumbers.length
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['pageNumbers'],
+        message: 'OCR 页码不能重复'
+      })
+    }
+    if (request.pageNumbers.length > request.maximumPages) {
+      context.addIssue({
+        code: 'custom',
+        path: ['pageNumbers'],
+        message: 'OCR 页数超过当前文档限制'
+      })
+    }
+  })
 
 export const documentOcrSectionSchema = z
   .object({
@@ -279,6 +294,9 @@ export const documentOcrFailureSchema = z
 
 export type DocumentParsingPurpose = z.infer<
   typeof documentParsingPurposeSchema
+>
+export type DocumentParsingTestPurpose = z.infer<
+  typeof documentParsingTestPurposeSchema
 >
 export type DocumentParsingSettings = z.infer<
   typeof documentParsingSettingsSchema

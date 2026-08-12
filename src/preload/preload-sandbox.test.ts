@@ -50,6 +50,19 @@ describe('sandboxed preload', () => {
     expect(source).not.toContain('importOcrModel:')
   })
 
+  it('passes an explicit parsing scenario to document diagnostics', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain(
+      'test: (purpose: DocumentParsingTestPurpose)'
+    )
+    expect(source).toContain(
+      'ipcChannels.documentParsingTest,\n        { purpose }'
+    )
+  })
+
   it('exposes a removable attachment parsing progress listener', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),

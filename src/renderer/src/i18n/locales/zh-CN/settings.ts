@@ -74,7 +74,6 @@ export const settings = {
     saveAndTestRuntime: '保存并测试 {{runtime}}',
     saving: '保存中…',
     saveSettings: '保存设置',
-    testParsing: '测试解析',
     testingParsing: '正在解析…',
     select: '选择',
     selectFile: '选择文件',
@@ -217,50 +216,55 @@ export const settings = {
       conversion: '旧版 Office 转换',
       conversionUnavailable: '尚未实现，DOC、XLS、PPT 暂不可用',
       localOcr: '本地 OCR',
+      localOcrModel: '当前 OCR：{{name}}',
       ocrReady: '模型已安装并通过 SHA-256 校验，可离线使用',
       ocrUnavailable: '模型尚未安装或校验失败，请从 ModelScope 下载',
       partialNotice:
-        '基础文档解析可用。旧版 Office 转换尚未实现；扫描 PDF 使用本地 OCR。'
+        '基础文档解析可用。旧版 Office 转换尚未实现；扫描 PDF 可按场景模式使用本地 OCR。'
     },
     workflows: {
-      title: '使用场景',
-      description: '为聊天附件和知识库选择不同的解析深度',
-      chat: '聊天附件',
-      chatDescription: '控制附件加入当前请求前的解析方式',
+      title: 'PDF 解析模式',
+      description: '直接选择各场景处理 PDF 文本层与扫描页面的方式',
+      chat: '聊天与成果文件',
       knowledge: '知识库导入',
-      knowledgeDescription: '控制文档分块、索引和来源定位前的解析方式',
+      testChat: '测试聊天与成果模式',
+      testKnowledge: '测试知识库模式',
+      unsavedNotice: '当前有未保存修改；保存后可测试实际生效的模式。',
       chatOptions: {
-        auto: '自动解析（推荐）',
-        fastText: '快速文本',
-        highFidelity: '高保真解析'
+        auto: '自动识别（推荐）',
+        fastText: '仅使用文本层',
+        highFidelity: '全页 OCR'
+      },
+      chatDescriptions: {
+        auto:
+          '聊天附件和成果 PDF 优先使用文本层，仅对无有效文本的页面使用 OCR。',
+        fastText:
+          '聊天附件和成果 PDF 仅使用文本层，不运行 OCR；扫描件可能无法读取。',
+        highFidelity: '对 PDF 的每一页运行 OCR，速度较慢。'
       },
       knowledgeOptions: {
-        completeIndex: '完整索引（推荐）',
-        fastIndex: '快速索引',
-        highFidelity: '高保真索引'
+        completeIndex: '自动识别（推荐）',
+        fastIndex: '仅使用文本层',
+        highFidelity: '全页 OCR'
+      },
+      knowledgeDescriptions: {
+        'complete-index':
+          '优先使用 PDF 文本层，仅对无有效文本的页面使用 OCR。',
+        'fast-index':
+          '仅使用 PDF 文本层，不运行 OCR；扫描页面不会进入索引。',
+        'high-fidelity':
+          '对 PDF 的每一页运行 OCR 后再分块和建立索引，速度较慢。'
       }
     },
     ocr: {
       title: 'OCR 识别',
       description: '按需安装本地模型，在设备上识别扫描 PDF',
-      enabled: '启用本地 OCR',
-      enabledDescription:
-        '模型安装后仅在本机通过 ONNX Runtime WebAssembly 运行，识别时不会上传文档。',
-      model: '本地模型',
-      runtime: '运行时',
-      provider: {
-        title: 'OCR 来源',
-        description: '本地模型与远程服务二选一，切换后保存设置生效。',
-        local: '本地模型',
-        remote: '远程服务（即将支持）',
-        remoteDescription:
-          '远程服务将支持 MinerU、PaddleOCR-VL 等接口，当前版本暂不可选。'
-      },
       modelSelector: '当前 OCR 模型',
       modelSelectorDescription: '选择已保存，聊天附件和知识库将使用此模型。',
       pendingSelection: '模型选择尚未生效，点击“保存设置”后切换。',
       installedOption: '已安装',
       downloadableOption: '可下载',
+      unavailableOption: '当前版本不可用',
       openModelsDirectory: '打开模型目录',
       storagePrefix: '模型按需安装到',
       storageSuffix: '。可导出 ZIP，并在内网设备直接导入。',
@@ -283,6 +287,7 @@ export const settings = {
       },
       installed: '已安装并校验',
       download: '下载',
+      downloadAndSelect: '下载并启用',
       importZip: '导入 ZIP',
       exportZip: '导出 ZIP',
       delete: '删除',
@@ -290,14 +295,11 @@ export const settings = {
       cancel: '取消',
       openRepository: '打开 ModelScope',
       catalogUnavailable: '当前版本没有可用的 OCR 模型目录。',
-      mode: 'PDF OCR 策略',
-      modes: {
-        auto: '自动，仅识别无有效文本的页面',
-        always: '始终识别所有页面',
-        disabled: '仅使用 PDF 文本层'
-      },
-      modelLicense:
-        '模型采用 Apache License 2.0，并在加载前校验 SHA-256。',
+      selectedModelUnavailable:
+        '已保存的 OCR 模型在当前版本不可用，请从上方选择并安装其他模型。',
+      installBeforeSelecting: '请先下载该模型；下载完成后会自动设为当前模型。',
+      privacyNotice:
+        'OCR 只在需要时由上方场景模式启用，并始终在本机通过 ONNX Runtime WebAssembly 运行，不会上传文档。',
       operations: {
         preparing: '正在准备模型文件',
         downloading: '正在从 ModelScope 下载',
@@ -315,7 +317,9 @@ export const settings = {
       },
       notifications: {
         installed: '{{name}} 已安装',
+        installedAndSelected: '{{name}} 已安装并设为当前模型',
         importedZip: '{{name}} 已从 ZIP 导入',
+        importedAndSelected: '{{name}} 已导入并设为当前模型',
         exportedZip: '{{name}} 已导出为 ZIP',
         removed: 'OCR 模型已删除'
       }
@@ -323,10 +327,9 @@ export const settings = {
     advanced: {
       title: '高级解析设置',
       maximumPages: '单文档最大 OCR 页数',
-      concurrency: 'OCR 并发数',
       timeout: '每页 OCR 时间预算（秒）',
-      concurrencyHint:
-        '当前 WASM 基线按页串行执行；该值为后续批处理和硬件加速保留。'
+      description:
+        '页数限制只计算实际进入 OCR 的页面；单页超过时间预算时会终止本次解析。'
     },
     diagnostic: {
       title: '解析测试结果',

@@ -26,6 +26,7 @@ type WorkerInput = InitializeMessage | RecognizeMessage
 
 type WorkerOutput =
   | { type: 'ready' }
+  | { type: 'progress'; requestId: string; pageNumber?: number }
   | { type: 'result'; result: DocumentOcrResult }
   | { type: 'error'; requestId?: string; error: string }
 
@@ -141,6 +142,10 @@ async function renderPdfPage(
 async function recognizePdf(
   request: DocumentOcrRequest
 ): Promise<DocumentOcrResult> {
+  worker.postMessage({
+    type: 'progress',
+    requestId: request.requestId
+  } satisfies WorkerOutput)
   const pdfjs = await import('pdfjs-dist')
   pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
   const loadingTask = pdfjs.getDocument(
@@ -150,14 +155,21 @@ async function recognizePdf(
   const selectedPages = new Set(
     request.pageNumbers ??
       Array.from(
-        { length: Math.min(document.numPages, request.maximumPages) },
+        { length: document.numPages },
         (_, index) => index + 1
       )
   )
-  if (document.numPages > request.maximumPages) {
+  const invalidPage = [...selectedPages].find(
+    (pageNumber) => pageNumber > document.numPages
+  )
+  if (invalidPage !== undefined) {
+    await loadingTask.destroy()
+    throw new Error(`PDF 不包含第 ${invalidPage} 页`)
+  }
+  if (selectedPages.size > request.maximumPages) {
     await loadingTask.destroy()
     throw new Error(
-      `PDF 共 ${document.numPages} 页，超过 ${request.maximumPages} 页限制`
+      `PDF 有 ${selectedPages.size} 页需要 OCR，超过 ${request.maximumPages} 页限制`
     )
   }
   const sections: DocumentOcrResult['sections'] = []
@@ -171,6 +183,11 @@ async function recognizePdf(
       if (!selectedPages.has(pageNumber)) {
         continue
       }
+      worker.postMessage({
+        type: 'progress',
+        requestId: request.requestId,
+        pageNumber
+      } satisfies WorkerOutput)
       const page = await document.getPage(pageNumber)
       try {
         const section = await recognizeImage(
@@ -201,6 +218,11 @@ async function recognize(request: DocumentOcrRequest): Promise<DocumentOcrResult
   if (request.mimeType === 'application/pdf') {
     return recognizePdf(request)
   }
+  worker.postMessage({
+    type: 'progress',
+    requestId: request.requestId,
+    pageNumber: 1
+  } satisfies WorkerOutput)
   const section = await recognizeImage(request.data, '图片')
   return {
     requestId: request.requestId,

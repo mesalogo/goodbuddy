@@ -6,6 +6,7 @@ import type {
 
 type WorkerOutput =
   | { type: 'ready' }
+  | { type: 'progress'; requestId: string; pageNumber?: number }
   | { type: 'result'; result: DocumentOcrResult }
   | { type: 'error'; requestId?: string; error: string }
 
@@ -13,6 +14,7 @@ type PendingWorkerRequest = {
   resolve: (result: DocumentOcrResult) => void
   reject: (error: Error) => void
   timer: number
+  timeoutMs: number
 }
 
 let worker: Worker | undefined
@@ -46,6 +48,18 @@ function terminateWorker(error: Error): void {
   pending.clear()
 }
 
+function armPageTimeout(
+  requestId: string,
+  request: PendingWorkerRequest
+): void {
+  window.clearTimeout(request.timer)
+  request.timer = window.setTimeout(() => {
+    pending.delete(requestId)
+    terminateWorker(new Error('单页 OCR 解析超时'))
+    request.reject(new Error('单页 OCR 解析超时'))
+  }, request.timeoutMs)
+}
+
 async function ensureWorker(modelId: string): Promise<Worker> {
   if (worker && workerReady && workerModelId === modelId) {
     await workerReady
@@ -72,6 +86,13 @@ async function ensureWorker(modelId: string): Promise<Worker> {
       const output = event.data
       if (output.type === 'ready') {
         resolveWorkerReady?.()
+        return
+      }
+      if (output.type === 'progress') {
+        const request = pending.get(output.requestId)
+        if (request) {
+          armPageTimeout(output.requestId, request)
+        }
         return
       }
       if (output.type === 'error' && !output.requestId) {
@@ -134,21 +155,16 @@ async function recognize(
   if (cancelledRequestIds.has(request.requestId)) {
     throw new Error('本地 OCR 解析已取消')
   }
-  const pageCount = request.pageNumbers?.length ?? request.maximumPages
-  const timeoutMs = Math.min(
-    10 * 60 * 1_000,
-    Math.max(
-      request.pageTimeoutSeconds * 1_000,
-      request.pageTimeoutSeconds * pageCount * 1_000
-    )
-  )
+  const timeoutMs = request.pageTimeoutSeconds * 1_000
   return new Promise<DocumentOcrResult>((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      pending.delete(request.requestId)
-      terminateWorker(new Error('本地 OCR 解析超时'))
-      reject(new Error('本地 OCR 解析超时'))
-    }, timeoutMs)
-    pending.set(request.requestId, { resolve, reject, timer })
+    const workerRequest = {
+      resolve,
+      reject,
+      timer: 0,
+      timeoutMs
+    }
+    pending.set(request.requestId, workerRequest)
+    armPageTimeout(request.requestId, workerRequest)
     activeWorker.postMessage(
       { type: 'recognize', request },
       [request.data]

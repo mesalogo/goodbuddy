@@ -205,7 +205,18 @@ export class DocumentOcrModelManager {
   async getStatus(
     modelId: string
   ): Promise<ReturnType<typeof documentParsingModelStatusSchema.parse>> {
-    const entry = this.requireCatalogEntry(modelId)
+    const id = localOcrModelIdSchema.parse(modelId)
+    const entry = this.catalog.find((candidate) => candidate.id === id)
+    if (!entry) {
+      return documentParsingModelStatusSchema.parse({
+        id,
+        displayName: id,
+        available: false,
+        verified: false,
+        runtime: 'onnxruntime-web-wasm',
+        detail: '当前版本不再提供此 OCR 模型，请选择其他模型'
+      })
+    }
     try {
       await this.getVerifiedStatus(entry)
       return documentParsingModelStatusSchema.parse({
