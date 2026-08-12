@@ -1571,30 +1571,30 @@ export function registerIpcHandlers(
         contextManager.remove(contextId)
       }
     }
-    const remoteConversation =
-      assistantDatabase.getOrCreateRemoteConversation({
-        projectId: project.id,
-        channel,
-        accountId: 'default',
-        externalConversationId: message.conversationId,
-        conversationType: message.conversationType,
-        title: `${channelLabel} · ****${identitySuffix}`,
-        accountDisplay: senderDisplay,
-        runtimeSelection
+    try {
+      const remoteConversation =
+        assistantDatabase.getOrCreateRemoteConversation({
+          projectId: project.id,
+          channel,
+          accountId: message.accountId,
+          externalConversationId: message.conversationId,
+          conversationType: message.conversationType,
+          title: `${channelLabel} · ****${identitySuffix}`,
+          accountDisplay: senderDisplay,
+          runtimeSelection
+        })
+      assistantDatabase.appendRemoteConversationMessage({
+        conversationId: remoteConversation.id,
+        role: 'user',
+        content: parsed.prompt,
+        attachments: publicAttachments,
+        status: `${channelLabel} · ${
+          parsed.workMode === 'execute'
+            ? '执行'
+            : '对话'
+        }`
       })
-    assistantDatabase.appendRemoteConversationMessage({
-      conversationId: remoteConversation.id,
-      role: 'user',
-      content: parsed.prompt,
-      attachments: publicAttachments,
-      status: `${channelLabel} · ${
-        parsed.workMode === 'execute'
-          ? '执行'
-          : '对话'
-      }`
-    })
-    publishRemoteConversationChange()
-
+      publishRemoteConversationChange()
     const remoteTaskId = randomUUID()
     assistantDatabase.createTask({
       id: remoteTaskId,
@@ -1658,7 +1658,6 @@ export function registerIpcHandlers(
           detail: unavailable,
           status: 'failed'
         })
-        releaseRemoteContexts()
         return { status: 'failed', error: unavailable }
       }
       if (
@@ -1692,7 +1691,6 @@ export function registerIpcHandlers(
           detail: unavailable,
           status: 'failed'
         })
-        releaseRemoteContexts()
         return { status: 'failed', error: unavailable }
       }
     }
@@ -1781,8 +1779,10 @@ export function registerIpcHandlers(
       status:
         result.status === 'completed' ? 'completed' : 'failed'
     })
-    releaseRemoteContexts()
     return result
+    } finally {
+      releaseRemoteContexts()
+    }
   }
   const channelManager = channelSettingsStore
     ? new ChannelManager(channelSettingsStore, channelExecutor, {

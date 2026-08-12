@@ -20,8 +20,16 @@ export interface ChannelDriver {
 }
 
 export interface DedupStore {
-  claim(channel: string, eventId: string): boolean | Promise<boolean>
-  release(channel: string, eventId: string): void | Promise<void>
+  claim(
+    channel: string,
+    accountId: string,
+    eventId: string
+  ): boolean | Promise<boolean>
+  release(
+    channel: string,
+    accountId: string,
+    eventId: string
+  ): void | Promise<void>
 }
 
 export class MemoryDedupStore implements DedupStore {
@@ -33,8 +41,8 @@ export class MemoryDedupStore implements DedupStore {
     }
   }
 
-  claim(channel: string, eventId: string): boolean {
-    const key = this.key(channel, eventId)
+  claim(channel: string, accountId: string, eventId: string): boolean {
+    const key = this.key(channel, accountId, eventId)
     if (this.claimed.has(key)) {
       return false
     }
@@ -50,16 +58,16 @@ export class MemoryDedupStore implements DedupStore {
     return true
   }
 
-  release(channel: string, eventId: string): void {
-    this.claimed.delete(this.key(channel, eventId))
+  release(channel: string, accountId: string, eventId: string): void {
+    this.claimed.delete(this.key(channel, accountId, eventId))
   }
 
   clear(): void {
     this.claimed.clear()
   }
 
-  private key(channel: string, eventId: string): string {
-    return `${channel}\u0000${eventId}`
+  private key(channel: string, accountId: string, eventId: string): string {
+    return `${channel}\u0000${accountId}\u0000${eventId}`
   }
 }
 

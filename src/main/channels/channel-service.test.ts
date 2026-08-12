@@ -50,6 +50,7 @@ function inbound(
 ): ChannelInboundText {
   return {
     channel: 'fake',
+    accountId: 'default',
     eventId: 'event-1',
     senderId: 'allowed-user',
     conversationId: 'conversation-1',
@@ -83,6 +84,7 @@ describe('channel contracts', () => {
       })
     ).toEqual({
       channel: 'fake',
+      accountId: 'default',
       eventId: 'event-1',
       senderId: 'user-1',
       conversationId: 'direct-1',
@@ -135,7 +137,7 @@ describe('channel contracts', () => {
 })
 
 describe('ChannelService', () => {
-  it('acknowledges first and denies all senders when no allowlist is configured', async () => {
+  it('acknowledges after accepting input and denies all senders when no allowlist is configured', async () => {
     const driver = new FakeChannelDriver()
     const executor = vi.fn()
     const service = new ChannelService(driver, executor)
@@ -146,6 +148,17 @@ describe('ChannelService', () => {
     expect(driver.acknowledgements).toBe(1)
     expect(executor).not.toHaveBeenCalled()
     expect(driver.sent).toEqual([])
+    await service.stop()
+  })
+
+  it('does not acknowledge malformed input', async () => {
+    const driver = new FakeChannelDriver()
+    const service = new ChannelService(driver, vi.fn())
+    await service.start()
+
+    await driver.emit({ channel: 'fake' })
+
+    expect(driver.acknowledgements).toBe(0)
     await service.stop()
   })
 
@@ -173,6 +186,9 @@ describe('ChannelService', () => {
     })
 
     expect(driver.acknowledgements).toBe(1)
+    await vi.waitFor(() => {
+      expect(executor).toHaveBeenCalledOnce()
+    })
     expect(executor).toHaveBeenCalledWith(
       expect.objectContaining({
         text: '帮我分析',
@@ -280,9 +296,10 @@ describe('ChannelService', () => {
 
   it('deduplicates by channel and event id', async () => {
     const store = new MemoryDedupStore()
-    expect(store.claim('first', 'same-id')).toBe(true)
-    expect(store.claim('first', 'same-id')).toBe(false)
-    expect(store.claim('second', 'same-id')).toBe(true)
+    expect(store.claim('first', 'account-1', 'same-id')).toBe(true)
+    expect(store.claim('first', 'account-1', 'same-id')).toBe(false)
+    expect(store.claim('first', 'account-2', 'same-id')).toBe(true)
+    expect(store.claim('second', 'account-1', 'same-id')).toBe(true)
 
     const driver = new FakeChannelDriver()
     const executor = vi.fn(async () => ({
@@ -303,6 +320,154 @@ describe('ChannelService', () => {
     await service.stop()
   })
 
+  it('does not deduplicate matching event ids from different accounts', async () => {
+    const driver = new FakeChannelDriver()
+    const executor = vi.fn(async () => ({
+      status: 'completed',
+      output: 'done'
+    }))
+    const service = new ChannelService(driver, executor, {
+      allowedSenderIds: ['allowed-user']
+    })
+    await service.start()
+
+    await driver.emit(
+      inbound({
+        accountId: 'account-1',
+        eventId: 'shared-event',
+        conversationId: 'shared-conversation'
+      })
+    )
+    await driver.emit(
+      inbound({
+        accountId: 'account-2',
+        eventId: 'shared-event',
+        conversationId: 'shared-conversation'
+      })
+    )
+
+    await waitForSent(driver, 2)
+    expect(executor).toHaveBeenCalledTimes(2)
+    await service.stop()
+  })
+
+  it('serializes requests from the same conversation', async () => {
+    const driver = new FakeChannelDriver()
+    const finishes: Array<() => void> = []
+    const executor = vi.fn(
+      (message: ChannelInboundText) =>
+        new Promise<{ status: string; output: string }>((resolve) => {
+          finishes.push(() =>
+            resolve({
+              status: 'completed',
+              output: message.eventId
+            })
+          )
+        })
+    )
+    const service = new ChannelService(driver, executor, {
+      allowedSenderIds: ['allowed-user'],
+      maximumConcurrency: 2
+    })
+    await service.start()
+
+    await driver.emit(inbound({ eventId: 'first' }))
+    await driver.emit(inbound({ eventId: 'second' }))
+
+    expect(executor).toHaveBeenCalledOnce()
+    finishes[0]?.()
+    await vi.waitFor(() => {
+      expect(executor).toHaveBeenCalledTimes(2)
+    })
+    finishes[1]?.()
+    await waitForSent(driver, 2)
+    expect(driver.sent.map((message) => message.output)).toEqual([
+      'first',
+      'second'
+    ])
+    await service.stop()
+  })
+
+  it('keeps failed deliveries in the outbox without sending a second result', async () => {
+    class FailingDriver extends FakeChannelDriver {
+      attempts = 0
+
+      override async send(
+        message: ChannelResultMessage,
+        signal: AbortSignal
+      ): Promise<void> {
+        void message
+        void signal
+        this.attempts += 1
+        throw new Error('offline')
+      }
+    }
+
+    const driver = new FailingDriver()
+    const outbox = new MemoryOutbox()
+    const service = new ChannelService(
+      driver,
+      async () => ({ status: 'completed', output: '完成' }),
+      {
+        allowedSenderIds: ['allowed-user'],
+        outbox
+      }
+    )
+    await service.start()
+    await driver.emit(inbound({ eventId: 'delivery-failure' }))
+
+    await vi.waitFor(() => {
+      expect(driver.attempts).toBe(1)
+    })
+    expect(await outbox.listUndelivered()).toEqual([
+      expect.objectContaining({
+        state: 'failed',
+        attempts: 1,
+        message: expect.objectContaining({
+          eventId: 'delivery-failure',
+          status: 'completed'
+        })
+      })
+    ])
+    await service.stop()
+  })
+
+  it('releases the event claim when no durable result can be queued', async () => {
+    const driver = new FakeChannelDriver()
+    const store = new MemoryDedupStore()
+    const outbox = {
+      enqueue: vi.fn(() => {
+        throw new Error('database unavailable')
+      }),
+      markDelivered: vi.fn(),
+      markFailed: vi.fn(),
+      listUndelivered: vi.fn(() => [])
+    }
+    const deliveryFailure = vi.fn()
+    const executor = vi.fn(async () => ({
+      status: 'completed',
+      output: '完成'
+    }))
+    const service = new ChannelService(driver, executor, {
+      allowedSenderIds: ['allowed-user'],
+      dedupStore: store,
+      outbox,
+      onDeliveryFailure: deliveryFailure
+    })
+    await service.start()
+    await driver.emit(inbound({ eventId: 'retryable' }))
+    await vi.waitFor(() => {
+      expect(outbox.enqueue).toHaveBeenCalledOnce()
+    })
+    await driver.emit(inbound({ eventId: 'retryable' }))
+    await vi.waitFor(() => {
+      expect(outbox.enqueue).toHaveBeenCalledTimes(2)
+    })
+    expect(executor).toHaveBeenCalledTimes(2)
+    expect(deliveryFailure).toHaveBeenCalled()
+    await service.stop()
+  })
+
   it('enforces concurrency and input length limits', async () => {
     const driver = new FakeChannelDriver()
     let finish: (() => void) | undefined
@@ -320,8 +485,20 @@ describe('ChannelService', () => {
     await service.start()
 
     await driver.emit(inbound({ eventId: 'active', text: '12345' }))
-    await driver.emit(inbound({ eventId: 'busy', text: '12345' }))
-    await driver.emit(inbound({ eventId: 'too-long', text: '123456' }))
+    await driver.emit(
+      inbound({
+        eventId: 'busy',
+        conversationId: 'conversation-2',
+        text: '12345'
+      })
+    )
+    await driver.emit(
+      inbound({
+        eventId: 'too-long',
+        conversationId: 'conversation-3',
+        text: '123456'
+      })
+    )
 
     await waitForSent(driver, 2)
     expect(driver.sent).toEqual(

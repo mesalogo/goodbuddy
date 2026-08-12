@@ -1636,15 +1636,19 @@ export class AssistantDatabase {
     }
   }
 
-  claimChannelEvent(channel: string, eventId: string): boolean {
+  claimChannelEvent(
+    channel: string,
+    accountId: string,
+    eventId: string
+  ): boolean {
     const database = this.requireDatabase()
     const result = database
       .prepare(
         `INSERT OR IGNORE INTO channel_events
-          (channel, event_id, claimed_at)
-         VALUES (?, ?, ?)`
+          (channel, account_id, event_id, claimed_at)
+         VALUES (?, ?, ?, ?)`
       )
-      .run(channel, eventId, Date.now())
+      .run(channel, accountId, eventId, Date.now())
     if (result.changes === 1) {
       this.channelEventWrites += 1
       if (this.channelEventWrites % 128 === 0) {
@@ -1664,12 +1668,17 @@ export class AssistantDatabase {
     return result.changes === 1
   }
 
-  releaseChannelEvent(channel: string, eventId: string): void {
+  releaseChannelEvent(
+    channel: string,
+    accountId: string,
+    eventId: string
+  ): void {
     this.requireDatabase()
       .prepare(
-        'DELETE FROM channel_events WHERE channel = ? AND event_id = ?'
+        `DELETE FROM channel_events
+         WHERE channel = ? AND account_id = ? AND event_id = ?`
       )
-      .run(channel, eventId)
+      .run(channel, accountId, eventId)
   }
 
   enqueueChannelResult(message: ChannelResultMessage): {
@@ -4475,12 +4484,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 18) {
+    if (version.user_version > 19) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 18) {
+    if (version.user_version === 19) {
       return
     }
     if (version.user_version < 1) {
@@ -5162,9 +5171,10 @@ export class AssistantDatabase {
         database.exec(`
           CREATE TABLE IF NOT EXISTS channel_events (
             channel TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT 'default',
             event_id TEXT NOT NULL,
             claimed_at INTEGER NOT NULL,
-            PRIMARY KEY(channel, event_id)
+            PRIMARY KEY(channel, account_id, event_id)
           );
           CREATE INDEX IF NOT EXISTS channel_events_claimed_at
             ON channel_events(claimed_at);
@@ -5348,6 +5358,42 @@ export class AssistantDatabase {
           `)
         }
         database.exec('PRAGMA user_version = 18; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 19) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const eventColumns = new Set(
+          (
+            database
+              .prepare('PRAGMA table_info(channel_events)')
+              .all() as Array<{ name: string }>
+          ).map((column) => column.name)
+        )
+        if (!eventColumns.has('account_id')) {
+          database.exec(`
+            ALTER TABLE channel_events RENAME TO channel_events_legacy;
+            DROP INDEX IF EXISTS channel_events_claimed_at;
+            CREATE TABLE channel_events (
+              channel TEXT NOT NULL,
+              account_id TEXT NOT NULL DEFAULT 'default',
+              event_id TEXT NOT NULL,
+              claimed_at INTEGER NOT NULL,
+              PRIMARY KEY(channel, account_id, event_id)
+            );
+            INSERT INTO channel_events
+              (channel, account_id, event_id, claimed_at)
+            SELECT channel, 'default', event_id, claimed_at
+            FROM channel_events_legacy;
+            DROP TABLE channel_events_legacy;
+            CREATE INDEX channel_events_claimed_at
+              ON channel_events(claimed_at);
+          `)
+        }
+        database.exec('PRAGMA user_version = 19; COMMIT;')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

@@ -87,6 +87,7 @@ describe('WeComChannelDriver', () => {
     transport.emit(groupFrame('event-2', 'request-2'))
     expect(messages[0]).toEqual({
       channel: 'wecom',
+      accountId: 'bot-1',
       eventId: 'event-1',
       senderId: 'user-1',
       conversationId: 'group-1',
@@ -129,5 +130,43 @@ describe('WeComChannelDriver', () => {
     )
     await driver.stop()
     expect(transport.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('rejects unsupported attachments without consuming the reply context', async () => {
+    const transport = new FakeTransport()
+    const driver = new WeComChannelDriver({
+      botId: 'bot-1',
+      secret: 'secret',
+      transportFactory: () => transport
+    })
+    await driver.start(() => undefined)
+    transport.emit(groupFrame('media-event', 'media-request'))
+
+    const message = {
+      channel: 'wecom' as const,
+      eventId: 'media-event',
+      conversationId: 'group-1',
+      recipientId: 'user-1',
+      status: 'completed',
+      output: '文件已生成',
+      attachments: [
+        {
+          name: 'result.txt',
+          mimeType: 'text/plain',
+          size: 2,
+          kind: 'file' as const,
+          dataBase64: 'b2s='
+        }
+      ]
+    }
+    await expect(
+      driver.send(message, new AbortController().signal)
+    ).rejects.toThrow('回复失败')
+    await driver.send(
+      { ...message, attachments: undefined },
+      new AbortController().signal
+    )
+    expect(transport.replyStream).toHaveBeenCalledOnce()
+    await driver.stop()
   })
 })

@@ -98,7 +98,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 18', async () => {
+  it('migrates existing databases to schema version 19', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -127,7 +127,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(18)
+    ).toBe(19)
     expect(
       current
         .prepare(
@@ -231,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(18)
+    ).toBe(19)
     expect(
       current
         .prepare(
@@ -630,9 +630,18 @@ describe('AssistantDatabase', () => {
     const databasePath = join(directory, 'assistant.sqlite')
     const database = new AssistantDatabase(databasePath)
     database.initialize('C:\\Workspace')
-    expect(database.claimChannelEvent('weixin', 'event-1')).toBe(true)
-    expect(database.claimChannelEvent('weixin', 'event-1')).toBe(false)
-    expect(database.claimChannelEvent('dingtalk', 'event-1')).toBe(true)
+    expect(
+      database.claimChannelEvent('weixin', 'account-1', 'event-1')
+    ).toBe(true)
+    expect(
+      database.claimChannelEvent('weixin', 'account-1', 'event-1')
+    ).toBe(false)
+    expect(
+      database.claimChannelEvent('weixin', 'account-2', 'event-1')
+    ).toBe(true)
+    expect(
+      database.claimChannelEvent('dingtalk', 'account-1', 'event-1')
+    ).toBe(true)
 
     const entry = database.enqueueChannelResult({
       channel: 'weixin',
@@ -656,10 +665,56 @@ describe('AssistantDatabase', () => {
 
     const reopened = new AssistantDatabase(databasePath)
     reopened.initialize('C:\\Workspace')
-    expect(reopened.claimChannelEvent('weixin', 'event-1')).toBe(
-      false
-    )
+    expect(
+      reopened.claimChannelEvent('weixin', 'account-1', 'event-1')
+    ).toBe(false)
     reopened.close()
+  })
+
+  it('preserves legacy channel event claims while adding account identity', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-channel-event-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP TABLE channel_events;
+      CREATE TABLE channel_events (
+        channel TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        claimed_at INTEGER NOT NULL,
+        PRIMARY KEY(channel, event_id)
+      );
+      CREATE INDEX channel_events_claimed_at
+        ON channel_events(claimed_at);
+      INSERT INTO channel_events(channel, event_id, claimed_at)
+        VALUES ('weixin', 'legacy-event', 1);
+      PRAGMA user_version = 18;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(
+      migrated.claimChannelEvent(
+        'weixin',
+        'default',
+        'legacy-event'
+      )
+    ).toBe(false)
+    expect(
+      migrated.claimChannelEvent(
+        'weixin',
+        'new-account',
+        'legacy-event'
+      )
+    ).toBe(true)
+    migrated.close()
   })
 
   it('safely deletes a confirmed project and its scoped data', async () => {

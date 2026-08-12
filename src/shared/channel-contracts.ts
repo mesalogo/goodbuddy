@@ -105,6 +105,7 @@ export const channelInboundTextSchema = z
       .trim()
       .min(1)
       .max(CHANNEL_LIMITS.maximumChannelLength),
+    accountId: channelIdentifierSchema.default('default'),
     eventId: z
       .string()
       .trim()

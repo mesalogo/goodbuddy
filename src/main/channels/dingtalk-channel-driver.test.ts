@@ -66,6 +66,7 @@ describe('DingTalkChannelDriver', () => {
     expect(messages).toEqual([
       {
         channel: 'dingtalk',
+        accountId: 'client-id',
         eventId: 'event-1',
         senderId: 'user-1',
         conversationId: 'conversation-1',
@@ -176,5 +177,46 @@ describe('DingTalkChannelDriver', () => {
       'stream-1',
       { status: 'SUCCESS' }
     )
+  })
+
+  it('rejects unsupported attachments without consuming the reply context', async () => {
+    const transport = new FakeTransport()
+    const driver = new DingTalkChannelDriver({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      allowedSenderIds: ['user-1'],
+      transportFactory: {
+        create: async () => transport
+      }
+    })
+    await driver.start(() => undefined)
+    await transport.listener?.(envelope('media-event'))
+
+    const message = {
+      channel: 'dingtalk' as const,
+      eventId: 'media-event',
+      conversationId: 'conversation-1',
+      recipientId: 'user-1',
+      status: 'completed',
+      output: '文件已生成',
+      attachments: [
+        {
+          name: 'result.txt',
+          mimeType: 'text/plain',
+          size: 2,
+          kind: 'file' as const,
+          dataBase64: 'b2s='
+        }
+      ]
+    }
+    await expect(
+      driver.send(message, new AbortController().signal)
+    ).rejects.toThrow('暂不支持发送附件')
+    await driver.send(
+      { ...message, attachments: undefined },
+      new AbortController().signal
+    )
+    expect(transport.replyText).toHaveBeenCalledOnce()
+    await driver.stop()
   })
 })

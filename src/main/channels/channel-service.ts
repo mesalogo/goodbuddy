@@ -89,8 +89,8 @@ export class ChannelService {
   private readonly outbox: Outbox
   private readonly onDeliveryFailure?: (error: unknown) => void
   private readonly onDeliverySuccess?: () => void
-  private readonly tasks = new Set<Promise<void>>()
   private readonly active = new Map<string, AbortController>()
+  private readonly conversationTails = new Map<string, Promise<void>>()
   private state: ServiceState = 'idle'
   private stopPromise?: Promise<void>
 
@@ -149,18 +149,17 @@ export class ChannelService {
     this.state = 'running'
     try {
       await this.driver.start(async (rawMessage, acknowledge) => {
-        await acknowledge()
         if (this.state !== 'running') {
+          await acknowledge()
           return
         }
 
-        const task = this.process(rawMessage).catch(() => {
-          // Processing failures are converted to bounded channel results.
-        })
-        this.tasks.add(task)
-        void task.finally(() => {
-          this.tasks.delete(task)
-        })
+        try {
+          this.enqueue(rawMessage)
+          await acknowledge()
+        } catch (error) {
+          this.onDeliveryFailure?.(error)
+        }
       })
       await this.retryUndelivered()
     } catch (error) {
@@ -170,9 +169,12 @@ export class ChannelService {
   }
 
   cancel(eventId: string): boolean {
-    const controller = this.active.get(
-      this.activeKey(this.driver.channel, eventId)
-    )
+    const suffix = `\u0000${eventId}`
+    const controller = [...this.active.entries()].find(
+      ([key]) =>
+        key.startsWith(`${this.driver.channel}\u0000`) &&
+        key.endsWith(suffix)
+    )?.[1]
     if (!controller) {
       return false
     }
@@ -201,7 +203,7 @@ export class ChannelService {
     const driverStop = Promise.resolve().then(() => this.driver.stop())
     const results = await Promise.allSettled([
       driverStop,
-      ...this.tasks
+      ...this.conversationTails.values()
     ])
     const driverResult = results[0]
     if (driverResult?.status === 'rejected') {
@@ -259,73 +261,96 @@ export class ChannelService {
 
     const claimed = await this.dedupStore.claim(
       message.channel,
+      message.accountId,
       message.eventId
     )
     if (!claimed) {
       return
     }
 
-    if (message.text.length > this.maximumInputLength) {
-      await this.deliver(
-        this.result(message, {
-          status: 'rejected',
-          error: `消息过长，最多允许 ${this.maximumInputLength} 个字符`
-        }),
-        new AbortController().signal
-      )
-      return
-    }
-
-    if (this.active.size >= this.maximumConcurrency) {
-      await this.deliver(
-        this.result(message, {
-          status: 'busy',
-          error: '当前请求较多，请稍后重试'
-        }),
-        new AbortController().signal
-      )
-      return
-    }
-
-    const key = this.activeKey(message.channel, message.eventId)
-    const controller = new AbortController()
-    this.active.set(key, controller)
+    let durableResult = false
     try {
-      const rawResult = await this.execute(message, controller.signal)
-      if (controller.signal.aborted) {
-        await this.deliver(
+      if (message.text.length > this.maximumInputLength) {
+        durableResult = await this.tryDeliver(
           this.result(message, {
-            status: 'cancelled',
-            error: '请求已取消'
+            status: 'rejected',
+            error: `消息过长，最多允许 ${this.maximumInputLength} 个字符`
           }),
           new AbortController().signal
         )
         return
       }
 
-      const result = channelExecutorResultSchema.safeParse(rawResult)
-      if (!result.success) {
-        await this.deliver(
+      if (this.active.size >= this.maximumConcurrency) {
+        durableResult = await this.tryDeliver(
           this.result(message, {
-            status: 'failed',
-            error: '请求返回了无效结果'
+            status: 'busy',
+            error: '当前请求较多，请稍后重试'
           }),
-          controller.signal
+          new AbortController().signal
         )
         return
       }
-      await this.deliver(this.result(message, result.data), controller.signal)
-    } catch {
-      const cancelled = controller.signal.aborted
-      await this.deliver(
-        this.result(message, {
-          status: cancelled ? 'cancelled' : 'failed',
-          error: cancelled ? '请求已取消' : '请求处理失败'
-        }),
-        new AbortController().signal
+
+      const key = this.activeKey(
+        message.channel,
+        message.accountId,
+        message.eventId
       )
+      const controller = new AbortController()
+      this.active.set(key, controller)
+      try {
+        let rawResult: Awaited<ReturnType<ChannelExecutor>>
+        try {
+          rawResult = await this.execute(message, controller.signal)
+        } catch {
+          const cancelled = controller.signal.aborted
+          durableResult = await this.tryDeliver(
+            this.result(message, {
+              status: cancelled ? 'cancelled' : 'failed',
+              error: cancelled ? '请求已取消' : '请求处理失败'
+            }),
+            new AbortController().signal
+          )
+          return
+        }
+        if (controller.signal.aborted) {
+          durableResult = await this.tryDeliver(
+            this.result(message, {
+              status: 'cancelled',
+              error: '请求已取消'
+            }),
+            new AbortController().signal
+          )
+          return
+        }
+
+        const result = channelExecutorResultSchema.safeParse(rawResult)
+        if (!result.success) {
+          durableResult = await this.tryDeliver(
+            this.result(message, {
+              status: 'failed',
+              error: '请求返回了无效结果'
+            }),
+            controller.signal
+          )
+          return
+        }
+        durableResult = await this.tryDeliver(
+          this.result(message, result.data),
+          controller.signal
+        )
+      } finally {
+        this.active.delete(key)
+      }
     } finally {
-      this.active.delete(key)
+      if (!durableResult) {
+        await this.dedupStore.release(
+          message.channel,
+          message.accountId,
+          message.eventId
+        )
+      }
     }
   }
 
@@ -420,7 +445,7 @@ export class ChannelService {
   private async deliver(
     message: ChannelResultMessage,
     signal: AbortSignal
-  ): Promise<void> {
+  ): Promise<boolean> {
     const entry = await this.outbox.enqueue(message)
     try {
       await this.driver.send(message, signal)
@@ -429,11 +454,60 @@ export class ChannelService {
     } catch (error) {
       await this.outbox.markFailed(entry.id)
       this.onDeliveryFailure?.(error)
-      throw error
+    }
+    return true
+  }
+
+  private async tryDeliver(
+    message: ChannelResultMessage,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    try {
+      return await this.deliver(message, signal)
+    } catch (error) {
+      this.onDeliveryFailure?.(error)
+      return false
     }
   }
 
-  private activeKey(channel: string, eventId: string): string {
-    return `${channel}\u0000${eventId}`
+  private activeKey(
+    channel: string,
+    accountId: string,
+    eventId: string
+  ): string {
+    return `${channel}\u0000${accountId}\u0000${eventId}`
+  }
+
+  private enqueue(rawMessage: unknown): void {
+    const parsed = channelInboundTextSchema.safeParse(rawMessage)
+    if (!parsed.success) {
+      throw new Error('通道消息格式无效')
+    }
+    if (parsed.data.channel !== this.driver.channel) {
+      throw new Error('通道消息来源不匹配')
+    }
+    const key =
+      `${parsed.data.channel}\u0000${parsed.data.accountId}` +
+      `\u0000${parsed.data.conversationId}`
+    const previous = this.conversationTails.get(key) ?? Promise.resolve()
+    const task =
+      this.conversationTails.has(key)
+        ? previous
+            .catch(() => undefined)
+            .then(() => this.process(parsed.data))
+        : this.process(parsed.data)
+    const tail = task.then(
+      () => undefined,
+      () => undefined
+    )
+    this.conversationTails.set(key, tail)
+    void tail.finally(() => {
+      if (this.conversationTails.get(key) === tail) {
+        this.conversationTails.delete(key)
+      }
+    })
+    void task.catch(() => {
+      // The event claim is released when no durable result could be recorded.
+    })
   }
 }

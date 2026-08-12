@@ -40,12 +40,14 @@ function resultText(message: ChannelResultMessage): string {
 export class WeComChannelDriver implements ChannelDriver {
   readonly channel = 'wecom'
 
+  private readonly accountId: string
   private readonly driver: WeComDriver
   private readonly maximumContexts: number
   private readonly replyContexts = new Map<string, ReplyRecord>()
   private handler?: ChannelInboundHandler
 
   constructor(options: WeComChannelDriverOptions) {
+    this.accountId = options.botId
     this.maximumContexts = maximumReplyContexts(
       options.maximumReplyContexts
     )
@@ -86,11 +88,13 @@ export class WeComChannelDriver implements ChannelDriver {
     try {
       signal.throwIfAborted()
       await this.driver.reply(record.context, {
-        text: resultText(message)
+        text: resultText(message),
+        attachments: message.attachments
       })
     } catch {
       throw new Error('企业微信消息回复失败')
-    } finally {
+    }
+    if (!message.attachments?.length) {
       this.replyContexts.delete(message.eventId)
     }
   }
@@ -119,6 +123,7 @@ export class WeComChannelDriver implements ChannelDriver {
     this.enforceContextLimit()
     const inbound: ChannelInboundText = {
       channel: this.channel,
+      accountId: this.accountId,
       eventId: message.eventId,
       senderId: message.userId,
       conversationId: message.conversationId,

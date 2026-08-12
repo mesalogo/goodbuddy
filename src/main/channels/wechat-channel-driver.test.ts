@@ -77,6 +77,7 @@ describe('WechatChannelDriver', () => {
     expect(handler).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: 'weixin',
+        accountId: 'bot-account',
         eventId: 'event-1',
         senderId: 'sender-1',
         workMode: 'ask',

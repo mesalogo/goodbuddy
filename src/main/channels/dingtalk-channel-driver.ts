@@ -194,6 +194,7 @@ function resultText(message: ChannelResultMessage): string {
 
 export class DingTalkChannelDriver implements ChannelDriver {
   readonly channel = 'dingtalk'
+  private readonly accountId: string
 
   private readonly driver: DingTalkDriver
   private readonly maximumContexts: number
@@ -201,6 +202,7 @@ export class DingTalkChannelDriver implements ChannelDriver {
   private handler?: ChannelInboundHandler
 
   constructor(options: DingTalkChannelDriverOptions) {
+    this.accountId = options.clientId
     this.maximumContexts = maximumReplyContexts(
       options.maximumReplyContexts
     )
@@ -230,6 +232,9 @@ export class DingTalkChannelDriver implements ChannelDriver {
     message: ChannelResultMessage,
     signal: AbortSignal
   ): Promise<void> {
+    if (message.attachments?.length) {
+      throw new Error('钉钉通道暂不支持发送附件')
+    }
     const record = this.replyContexts.get(message.eventId)
     if (
       !record ||
@@ -245,7 +250,8 @@ export class DingTalkChannelDriver implements ChannelDriver {
       await this.driver.reply(record.context, resultText(message))
     } catch {
       throw new Error('钉钉消息回复失败')
-    } finally {
+    }
+    if (!message.attachments?.length) {
       this.replyContexts.delete(message.eventId)
     }
   }
@@ -276,6 +282,7 @@ export class DingTalkChannelDriver implements ChannelDriver {
     this.enforceContextLimit()
     const inbound: ChannelInboundText = {
       channel: this.channel,
+      accountId: this.accountId,
       eventId: message.dedupeKey,
       senderId: message.senderId,
       conversationId: message.conversationId,

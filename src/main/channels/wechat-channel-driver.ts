@@ -186,6 +186,7 @@ export class WechatChannelDriver implements ChannelDriver {
         this.handler?.(
           {
             channel: this.channel,
+            accountId: this.settings.accountId,
             eventId: message.eventId,
             senderId: message.senderId,
             conversationId: message.conversationId,

@@ -9,12 +9,12 @@ import type { ChannelResultMessage } from '../../shared/channel-contracts'
 export class SqliteChannelDedupStore implements DedupStore {
   constructor(private readonly database: AssistantDatabase) {}
 
-  claim(channel: string, eventId: string): boolean {
-    return this.database.claimChannelEvent(channel, eventId)
+  claim(channel: string, accountId: string, eventId: string): boolean {
+    return this.database.claimChannelEvent(channel, accountId, eventId)
   }
 
-  release(channel: string, eventId: string): void {
-    this.database.releaseChannelEvent(channel, eventId)
+  release(channel: string, accountId: string, eventId: string): void {
+    this.database.releaseChannelEvent(channel, accountId, eventId)
   }
 }
 
