@@ -98,7 +98,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 17', async () => {
+  it('migrates existing databases to schema version 18', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -127,7 +127,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(17)
+    ).toBe(18)
     expect(
       current
         .prepare(
@@ -231,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(17)
+    ).toBe(18)
     expect(
       current
         .prepare(
@@ -588,6 +588,37 @@ describe('AssistantDatabase', () => {
     expect(database.getConversation(first.id).remote?.channel).toBe(
       'weixin'
     )
+    database.close()
+  })
+
+  it('returns the latest 500 remote messages in chronological order', async () => {
+    const database = await createDatabase()
+    const project = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      channelDefaultProfileId
+    )[0]!
+    const conversation = database.getOrCreateRemoteConversation({
+      projectId: project.id,
+      channel: 'weixin',
+      accountId: 'default',
+      externalConversationId: 'long-remote-history',
+      conversationType: 'direct',
+      title: '微信 ClawBot · 长对话',
+      accountDisplay: '发送者 ****0002',
+      runtimeSelection: { provider: 'continue' }
+    })
+    for (let index = 0; index < 502; index += 1) {
+      database.appendRemoteConversationMessage({
+        conversationId: conversation.id,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `消息 ${index}`
+      })
+    }
+
+    const messages = database.getConversation(conversation.id).messages
+    expect(messages).toHaveLength(500)
+    expect(messages[0]?.content).toBe('消息 2')
+    expect(messages.at(-1)?.content).toBe('消息 501')
     database.close()
   })
 
@@ -1069,6 +1100,7 @@ describe('AssistantDatabase', () => {
           provider: 'model',
           profileId: '00000000-0000-4000-8000-000000000299'
         },
+        knowledgeRetrievalMode: 'always',
         title: '发布讨论',
         updatedAt: 1_775_000_000_000,
         messages: [
@@ -1140,7 +1172,16 @@ describe('AssistantDatabase', () => {
                 rank: -0.03,
                 retrievalChannels: ['fts', 'vector']
               }
-            ]
+            ],
+            knowledgeRetrieval: {
+              mode: 'always',
+              state: 'succeeded',
+              libraryCount: 1,
+              resultCount: 1,
+              durationMs: 42,
+              usedChannels: ['fts', 'vector'],
+              warnings: []
+            }
           }
         ]
       }
@@ -1154,6 +1195,7 @@ describe('AssistantDatabase', () => {
           provider: 'model',
           profileId: '00000000-0000-4000-8000-000000000299'
         },
+        knowledgeRetrievalMode: 'always',
         messages: [
           expect.objectContaining({
             role: 'user',
@@ -1202,7 +1244,16 @@ describe('AssistantDatabase', () => {
                 documentName: '发布说明.md',
                 retrievalChannels: ['fts', 'vector']
               })
-            ]
+            ],
+            knowledgeRetrieval: {
+              mode: 'always',
+              state: 'succeeded',
+              libraryCount: 1,
+              resultCount: 1,
+              durationMs: 42,
+              usedChannels: ['fts', 'vector'],
+              warnings: []
+            }
           })
         ]
       })
@@ -1795,6 +1846,14 @@ describe('AssistantDatabase', () => {
         expect.objectContaining({ id: secondNote.id, title: '第二篇笔记' })
       ])
     )
+    expect(database.searchMagicNotes('全局', 5)).toEqual([
+      expect.objectContaining({
+        noteId: globalNote.id,
+        noteTitle: '全局笔记',
+        content: ''
+      })
+    ])
+    expect(database.searchMagicNotes('全局', 5)[0]?.entryId).toBeUndefined()
 
     const withEntry = database.createMagicNoteEntry({
       noteId: secondNote.id,

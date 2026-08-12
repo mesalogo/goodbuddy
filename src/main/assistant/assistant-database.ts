@@ -105,6 +105,7 @@ type ConversationRow = {
   id: string
   project_id: string | null
   runtime_selection_json: string | null
+  knowledge_retrieval_mode: 'auto' | 'always' | null
   title: string
   channel: ProjectChannel | null
   external_account_id: string | null
@@ -174,6 +175,7 @@ type MessageMetadata = {
   tools?: ConversationSnapshot['messages'][number]['tools']
   sources?: string[]
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
+  knowledgeRetrieval?: ConversationSnapshot['messages'][number]['knowledgeRetrieval']
   artifactIds?: string[]
   attachments?: ConversationSnapshot['messages'][number]['attachments']
 }
@@ -1243,7 +1245,8 @@ export class AssistantDatabase {
     const database = this.requireDatabase()
     const conversations = database
       .prepare(
-        `SELECT id, project_id, runtime_selection_json, title, channel,
+        `SELECT id, project_id, runtime_selection_json,
+                knowledge_retrieval_mode, title, channel,
                 external_account_id, external_conversation_id,
                 conversation_type, account_display, updated_at
          FROM conversations
@@ -1255,10 +1258,15 @@ export class AssistantDatabase {
     const messageStatement = database.prepare(
       `SELECT id, conversation_id, role, content, state, metadata_json,
               created_at
-       FROM messages
-       WHERE conversation_id = ?
-       ORDER BY sequence ASC
-       LIMIT 500`
+       FROM (
+         SELECT id, conversation_id, role, content, state, metadata_json,
+                created_at, sequence
+         FROM messages
+         WHERE conversation_id = ?
+         ORDER BY sequence DESC
+         LIMIT 500
+       )
+       ORDER BY sequence ASC`
     )
     return conversations.map((conversation) => ({
       id: conversation.id,
@@ -1266,6 +1274,8 @@ export class AssistantDatabase {
       runtimeSelection: parseRuntimeSelection(
         conversation.runtime_selection_json
       ),
+      knowledgeRetrievalMode:
+        conversation.knowledge_retrieval_mode ?? undefined,
       ...(conversation.channel &&
       conversation.conversation_type &&
       conversation.account_display
@@ -1305,6 +1315,7 @@ export class AssistantDatabase {
             : metadata.tools,
           sources: metadata.sources,
           sourceReferences: metadata.sourceReferences,
+          knowledgeRetrieval: metadata.knowledgeRetrieval,
           artifactIds: metadata.artifactIds,
           attachments: metadata.attachments
         }
@@ -1422,9 +1433,9 @@ export class AssistantDatabase {
       `)
       const insertConversation = database.prepare(
         `INSERT INTO conversations
-          (id, project_id, runtime_selection_json, work_mode, title, status,
-           created_at, updated_at)
-         VALUES (?, ?, ?, 'ask', ?, 'active', ?, ?)`
+          (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
+           work_mode, title, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
       )
       const insertMessage = database.prepare(
         `INSERT INTO messages
@@ -1443,6 +1454,7 @@ export class AssistantDatabase {
           conversation.runtimeSelection
             ? JSON.stringify(conversation.runtimeSelection)
             : null,
+          conversation.knowledgeRetrievalMode ?? null,
           conversation.title,
           updatedAt,
           updatedAt
@@ -1465,6 +1477,7 @@ export class AssistantDatabase {
               tools: message.tools,
               sources: message.sources,
               sourceReferences: message.sourceReferences,
+              knowledgeRetrieval: message.knowledgeRetrieval,
               artifactIds: message.artifactIds,
               attachments: message.attachments
             }),
@@ -1863,16 +1876,60 @@ export class AssistantDatabase {
     }
   }
 
-  createMagicNote(input: { title: string }): MagicNoteDetail {
+  createMagicNote(input: {
+    title: string
+    content?: MagicNoteRichContent
+  }): MagicNoteDetail {
     const id = randomUUID()
     const now = new Date().toISOString()
-    this.requireDatabase()
-      .prepare(
-        `INSERT INTO magic_notes
-          (id, project_id, title, pinned, revision, created_at, updated_at)
-         VALUES (?, ?, ?, 0, 0, ?, ?)`
-      )
-      .run(id, null, input.title, now, now)
+    const database = this.requireDatabase()
+    const embeddedBytes = input.content
+      ? magicNoteEmbeddedBytes(input.content)
+      : 0
+    if (embeddedBytes > MAGIC_NOTE_MAX_NOTE_EMBED_BYTES) {
+      throw new Error('一篇笔记中的图片、视频和附件总大小不能超过 64 MB')
+    }
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database
+        .prepare(
+          `INSERT INTO magic_notes
+            (id, project_id, title, pinned, revision, created_at, updated_at)
+           VALUES (?, ?, ?, 0, ?, ?, ?)`
+        )
+        .run(id, null, input.title, input.content ? 1 : 0, now, now)
+      if (input.content) {
+        const entryId = randomUUID()
+        database
+          .prepare(
+            `INSERT INTO magic_note_entries
+              (id, note_id, content_json, plain_text, comments_json,
+               actions_json, analyzed_at, revision, created_at, updated_at,
+               image_bytes)
+             VALUES (?, ?, ?, ?, '[]', '[]', NULL, 0, ?, ?, ?)`
+          )
+          .run(
+            entryId,
+            id,
+            JSON.stringify(input.content),
+            magicNotePlainText(input.content),
+            now,
+            now,
+            embeddedBytes
+          )
+        this.syncMagicNoteTodos(
+          database,
+          id,
+          entryId,
+          input.content,
+          now
+        )
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
     return this.getMagicNote(id)
   }
 
@@ -2135,25 +2192,27 @@ export class AssistantDatabase {
       this.requireDatabase()
         .prepare(
           `SELECT n.id AS note_id, n.title AS note_title,
-                  e.id AS entry_id, e.plain_text, e.updated_at
-           FROM magic_note_entries e
-           INNER JOIN magic_notes n ON n.id = e.note_id
+                  e.id AS entry_id, COALESCE(e.plain_text, '') AS plain_text,
+                  COALESCE(e.updated_at, n.updated_at) AS updated_at
+           FROM magic_notes n
+           LEFT JOIN magic_note_entries e ON e.note_id = n.id
            WHERE n.title LIKE ? ESCAPE '\\'
               OR e.plain_text LIKE ? ESCAPE '\\'
-           ORDER BY e.updated_at DESC, e.rowid DESC
+           ORDER BY COALESCE(e.updated_at, n.updated_at) DESC,
+                    COALESCE(e.rowid, n.rowid) DESC
            LIMIT ?`
         )
         .all(pattern, pattern, limit) as Array<{
         note_id: string
         note_title: string
-        entry_id: string
+        entry_id: string | null
         plain_text: string
         updated_at: string
       }>
     ).map((row) => ({
       noteId: row.note_id,
       noteTitle: row.note_title.slice(0, 100),
-      entryId: row.entry_id,
+      entryId: row.entry_id ?? undefined,
       content: row.plain_text.slice(0, 12_000),
       updatedAt: row.updated_at
     }))
@@ -4287,12 +4346,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 17) {
+    if (version.user_version > 18) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 17) {
+    if (version.user_version === 18) {
       return
     }
     if (version.user_version < 1) {
@@ -4314,6 +4373,11 @@ export class AssistantDatabase {
         id TEXT PRIMARY KEY,
         project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
         runtime_selection_json TEXT,
+        knowledge_retrieval_mode TEXT
+          CHECK(
+            knowledge_retrieval_mode IS NULL OR
+            knowledge_retrieval_mode IN ('auto', 'always')
+          ),
         work_mode TEXT NOT NULL DEFAULT 'ask'
           CHECK(work_mode IN ('ask', 'execute')),
         title TEXT NOT NULL,
@@ -5129,6 +5193,32 @@ export class AssistantDatabase {
         }
         database.exec('PRAGMA user_version = 17')
         database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 18) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const conversationColumns = new Set(
+          (
+            database
+              .prepare('PRAGMA table_info(conversations)')
+              .all() as Array<{ name: string }>
+          ).map((column) => column.name)
+        )
+        if (!conversationColumns.has('knowledge_retrieval_mode')) {
+          database.exec(`
+            ALTER TABLE conversations
+              ADD COLUMN knowledge_retrieval_mode TEXT
+              CHECK(
+                knowledge_retrieval_mode IS NULL OR
+                knowledge_retrieval_mode IN ('auto', 'always')
+              );
+          `)
+        }
+        database.exec('PRAGMA user_version = 18; COMMIT;')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

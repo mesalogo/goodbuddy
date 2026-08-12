@@ -446,7 +446,7 @@ export type MagicNoteDraftAnalysis = {
 export type MagicNoteSearchResult = {
   noteId: string
   noteTitle: string
-  entryId: string
+  entryId?: string
   content: string
   updatedAt: string
 }
