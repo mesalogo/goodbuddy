@@ -237,6 +237,11 @@ type ScheduleRow = {
   updated_at: string
 }
 
+export type ClaimedSchedule = {
+  schedule: AssistantSchedule
+  runId: string
+}
+
 type ExpertRow = {
   id: string
   name: string
@@ -842,6 +847,13 @@ export class AssistantDatabase {
       const recoveredAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
+        database
+          .prepare(
+            `UPDATE schedule_runs
+             SET status = 'pending'
+             WHERE status = 'running'`
+          )
+          .run()
         const interruptedTasks = database
           .prepare(
             `SELECT id, error
@@ -3109,65 +3121,182 @@ export class AssistantDatabase {
     }
   }
 
-  claimDueSchedules(now = new Date()): AssistantSchedule[] {
+  claimDueSchedules(now = new Date()): ClaimedSchedule[] {
     const database = this.requireDatabase()
-    const due = (
-      database
+    const nowIso = now.toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const pending = database
+        .prepare(
+          `SELECT sr.id AS run_id, s.*
+           FROM schedule_runs sr
+           INNER JOIN schedules s ON s.id = sr.schedule_id
+           WHERE sr.status = 'pending'
+           ORDER BY sr.scheduled_for
+           LIMIT 1`
+        )
+        .get() as (ScheduleRow & { run_id: string }) | undefined
+      if (pending) {
+        database
+          .prepare(
+            `UPDATE schedule_runs
+             SET status = 'running'
+             WHERE id = ? AND status = 'pending'`
+          )
+          .run(pending.run_id)
+        database.exec('COMMIT')
+        return [{
+          schedule: toSchedule(pending),
+          runId: pending.run_id
+        }]
+      }
+
+      const row = database
         .prepare(
           `SELECT * FROM schedules
            WHERE enabled = 1 AND next_run_at <= ?
            ORDER BY next_run_at
            LIMIT 1`
         )
-        .all(now.toISOString()) as ScheduleRow[]
-    ).map(toSchedule)
-    for (const schedule of due) {
-      const next = new Date(schedule.nextRunAt)
-      if (schedule.recurrence === 'daily') {
-        const intervals =
-          Math.floor(
-            (now.getTime() - next.getTime()) / (24 * 60 * 60 * 1_000)
-          ) + 1
-        next.setUTCDate(next.getUTCDate() + intervals)
-      } else if (schedule.recurrence === 'weekly') {
-        const intervals =
-          Math.floor(
-            (now.getTime() - next.getTime()) /
-              (7 * 24 * 60 * 60 * 1_000)
-          ) + 1
-        next.setUTCDate(next.getUTCDate() + intervals * 7)
+        .get(nowIso) as ScheduleRow | undefined
+      if (!row) {
+        database.exec('COMMIT')
+        return []
+      }
+      const schedule = toSchedule(row)
+      const runId = randomUUID()
+      const inserted = database
+        .prepare(
+          `INSERT OR IGNORE INTO schedule_runs
+            (id, schedule_id, scheduled_for, task_id, status)
+           VALUES (?, ?, ?, NULL, 'running')`
+        )
+        .run(runId, schedule.id, schedule.nextRunAt)
+      if (inserted.changes !== 1) {
+        database.exec('COMMIT')
+        return []
+      }
+      database.exec('COMMIT')
+      return [{ schedule, runId }]
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  claimScheduleNow(scheduleId: string): ClaimedSchedule {
+    const schedule = this.getSchedule(scheduleId)
+    const database = this.requireDatabase()
+    const runId = randomUUID()
+    database
+      .prepare(
+        `INSERT INTO schedule_runs
+          (id, schedule_id, scheduled_for, task_id, status)
+         VALUES (?, ?, ?, NULL, 'running')`
+      )
+      .run(runId, scheduleId, new Date().toISOString())
+    return { schedule, runId }
+  }
+
+  completeScheduleRun(
+    runId: string,
+    status: 'completed' | 'failed',
+    taskId: string | undefined,
+    now = new Date()
+  ): void {
+    const database = this.requireDatabase()
+    const nowIso = now.toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = database
+        .prepare(
+          `SELECT s.*, sr.scheduled_for
+           FROM schedule_runs sr
+           INNER JOIN schedules s ON s.id = sr.schedule_id
+           WHERE sr.id = ? AND sr.status = 'running'`
+        )
+        .get(runId) as
+        | (ScheduleRow & { scheduled_for: string })
+        | undefined
+      if (!row) {
+        throw new Error('定时任务运行记录不存在或已完成')
       }
       database
         .prepare(
-          `UPDATE schedules
-           SET enabled = ?, next_run_at = ?, last_run_at = ?, updated_at = ?
-           WHERE id = ? AND next_run_at = ?`
+          `UPDATE schedule_runs
+           SET task_id = ?, status = ?
+           WHERE id = ?`
         )
-        .run(
-          schedule.recurrence === 'once' ? 0 : 1,
-          schedule.recurrence === 'once'
-            ? schedule.nextRunAt
-            : next.toISOString(),
-          now.toISOString(),
-          now.toISOString(),
-          schedule.id,
-          schedule.nextRunAt
-        )
+        .run(taskId ?? null, status, runId)
+      const schedule = toSchedule(row)
+      if (row.scheduled_for === row.next_run_at) {
+        const next = new Date(row.scheduled_for)
+        if (schedule.recurrence === 'daily') {
+          const intervals =
+            Math.floor(
+              (now.getTime() - next.getTime()) /
+                (24 * 60 * 60 * 1_000)
+            ) + 1
+          next.setUTCDate(next.getUTCDate() + intervals)
+        } else if (schedule.recurrence === 'weekly') {
+          const intervals =
+            Math.floor(
+              (now.getTime() - next.getTime()) /
+                (7 * 24 * 60 * 60 * 1_000)
+            ) + 1
+          next.setUTCDate(next.getUTCDate() + intervals * 7)
+        }
+        database
+          .prepare(
+            `UPDATE schedules
+             SET enabled = ?, next_run_at = ?, last_run_at = ?, updated_at = ?
+             WHERE id = ? AND next_run_at = ?`
+          )
+          .run(
+            schedule.recurrence === 'once' ? 0 : 1,
+            schedule.recurrence === 'once'
+              ? schedule.nextRunAt
+              : next.toISOString(),
+            nowIso,
+            nowIso,
+            schedule.id,
+            row.scheduled_for
+          )
+      } else {
+        database
+          .prepare(
+            `UPDATE schedules
+             SET last_run_at = ?, updated_at = ?
+             WHERE id = ?`
+          )
+          .run(nowIso, nowIso, schedule.id)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
-    return due
   }
 
-  claimScheduleNow(scheduleId: string): AssistantSchedule {
-    const schedule = this.getSchedule(scheduleId)
-    const now = new Date()
+  bindScheduleRunTask(scheduleId: string, taskId: string): void {
     this.requireDatabase()
       .prepare(
-        `UPDATE schedules
-         SET last_run_at = ?, updated_at = ?
+        `UPDATE schedule_runs
+         SET task_id = ?
+         WHERE schedule_id = ? AND status = 'running' AND task_id IS NULL`
+      )
+      .run(taskId, scheduleId)
+  }
+
+  getScheduleRunTaskId(runId: string): string | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT task_id
+         FROM schedule_runs
          WHERE id = ?`
       )
-      .run(now.toISOString(), now.toISOString(), scheduleId)
-    return schedule
+      .get(runId) as { task_id: string | null } | undefined
+    return row?.task_id ?? undefined
   }
 
   listHeartbeatConfigs(projectId?: string): AssistantHeartbeatConfig[] {

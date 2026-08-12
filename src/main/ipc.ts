@@ -1033,6 +1033,9 @@ export function registerIpcHandlers(
         origin: origin === 'channel' ? 'delegation' : origin
       })
     }
+    if (origin === 'schedule') {
+      assistantDatabase.bindScheduleRunTask(schedule.id, requestId)
+    }
     const modeInstruction =
       schedule.workMode === 'execute'
         ? 'Work mode: Execute. Follow the request using the selected backend. Tool actions must remain within the configured workspace, sandbox, enabled capabilities, and security policy.'
@@ -1400,8 +1403,15 @@ export function registerIpcHandlers(
     }
     scheduleTickRunning = true
     try {
-      for (const schedule of assistantDatabase.claimDueSchedules()) {
-        await trackExecution(executeSchedule(schedule))
+      for (const claim of assistantDatabase.claimDueSchedules()) {
+        const result = await trackExecution(
+          executeSchedule(claim.schedule)
+        )
+        assistantDatabase.completeScheduleRun(
+          claim.runId,
+          result.status,
+          assistantDatabase.getScheduleRunTaskId(claim.runId)
+        )
       }
       if (!shuttingDown && !executionPaused) {
         await trackExecution(heartbeatService.processDue())
@@ -3531,10 +3541,18 @@ export function registerIpcHandlers(
     if (executionPaused || shuttingDown) {
       throw new Error('本地数据维护期间暂不接受新任务')
     }
-    const schedule = assistantDatabase.claimScheduleNow(
+    const claim = assistantDatabase.claimScheduleNow(
       assistantIdSchema.parse(input)
     )
-    void trackExecution(executeSchedule(schedule)).catch(() => undefined)
+    void trackExecution(executeSchedule(claim.schedule))
+      .then((result) => {
+        assistantDatabase.completeScheduleRun(
+          claim.runId,
+          result.status,
+          assistantDatabase.getScheduleRunTaskId(claim.runId)
+        )
+      })
+      .catch(() => undefined)
   })
 
   ipcMain.handle(ipcChannels.heartbeatsList, (event, input: unknown) => {

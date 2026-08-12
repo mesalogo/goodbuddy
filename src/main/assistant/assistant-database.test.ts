@@ -955,9 +955,23 @@ describe('AssistantDatabase', () => {
       recurrence: 'daily',
       nextRunAt: '2026-07-31T00:00:00.000Z'
     })
-    expect(
-      database.claimDueSchedules(new Date('2026-07-31T00:01:00.000Z'))
-    ).toEqual([expect.objectContaining({ id: schedule.id })])
+    const [claim] = database.claimDueSchedules(
+      new Date('2026-07-31T00:01:00.000Z')
+    )
+    expect(claim?.schedule).toEqual(
+      expect.objectContaining({ id: schedule.id })
+    )
+    expect(database.listSchedules(project.id)[0]).toMatchObject({
+      id: schedule.id,
+      nextRunAt: '2026-07-31T00:00:00.000Z',
+      lastRunAt: undefined
+    })
+    database.completeScheduleRun(
+      claim!.runId,
+      'completed',
+      undefined,
+      new Date('2026-07-31T00:01:00.000Z')
+    )
     expect(database.listSchedules(project.id)[0]).toMatchObject({
       id: schedule.id,
       nextRunAt: '2026-08-01T00:00:00.000Z',
@@ -971,7 +985,13 @@ describe('AssistantDatabase', () => {
       recurrence: 'daily',
       nextRunAt: '2025-07-31T00:00:00.000Z'
     })
-    database.claimDueSchedules(
+    const [overdueClaim] = database.claimDueSchedules(
+      new Date('2026-07-31T00:01:00.000Z')
+    )
+    database.completeScheduleRun(
+      overdueClaim!.runId,
+      'completed',
+      undefined,
       new Date('2026-07-31T00:01:00.000Z')
     )
     expect(
@@ -982,6 +1002,54 @@ describe('AssistantDatabase', () => {
       nextRunAt: '2026-08-01T00:00:00.000Z'
     })
     database.close()
+  })
+
+  it('recovers a claimed schedule without swallowing its occurrence', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-schedule-recovery-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const schedule = initial.createSchedule({
+      title: '一次提醒',
+      prompt: '提醒我检查结果',
+      workMode: 'ask',
+      recurrence: 'once',
+      nextRunAt: '2026-08-13T00:00:00.000Z'
+    })
+    const [claimed] = initial.claimDueSchedules(
+      new Date('2026-08-13T00:01:00.000Z')
+    )
+    expect(claimed?.schedule.id).toBe(schedule.id)
+    initial.close()
+
+    const recovered = new AssistantDatabase(databasePath)
+    recovered.initialize('C:\\Workspace')
+    const [reclaimed] = recovered.claimDueSchedules(
+      new Date('2026-08-13T00:02:00.000Z')
+    )
+    expect(reclaimed).toMatchObject({
+      runId: claimed!.runId,
+      schedule: {
+        id: schedule.id,
+        enabled: true,
+        nextRunAt: '2026-08-13T00:00:00.000Z'
+      }
+    })
+    recovered.completeScheduleRun(
+      reclaimed!.runId,
+      'completed',
+      undefined,
+      new Date('2026-08-13T00:02:00.000Z')
+    )
+    expect(recovered.listSchedules()[0]).toMatchObject({
+      id: schedule.id,
+      enabled: false,
+      lastRunAt: '2026-08-13T00:02:00.000Z'
+    })
+    recovered.close()
   })
 
   it('durably interrupts active tasks with completion times and audit events on startup', async () => {
