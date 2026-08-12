@@ -29,7 +29,7 @@ Keep Electron security boundaries intact:
 
 ## Runtime Behavior
 
-- Ask and Plan modes must remain read-only at the runtime boundary.
+- Ask mode must remain read-only at the runtime boundary.
 - Execute mode may use tools only through the existing approval controls.
 - Preserve cancellation, timeout, bounded-output, and shutdown behavior.
 - Treat OpenCode and Continue as untrusted child runtimes. Preserve environment
