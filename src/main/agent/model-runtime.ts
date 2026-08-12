@@ -92,6 +92,7 @@ type ModelToolResponse = {
   assistantMessage?: Record<string, unknown>
   responsesOutput?: Array<Record<string, unknown>>
   usage: ModelUsageUpdate
+  streamed?: boolean
 }
 
 const maxGeneratedImageBytes = 3_900_000
@@ -886,6 +887,9 @@ function parseModelToolResponse(
     assistantMessage: {
       role: 'assistant',
       content: message.content ?? null,
+      ...(reasoning
+        ? { reasoning_content: reasoning }
+        : {}),
       ...(toolCalls.length > 0
         ? { tool_calls: message.tool_calls }
         : {})
@@ -975,6 +979,27 @@ function parseStreamBlock(
         event.type === 'message_stop') ||
       (protocol === 'openai-responses' &&
         eventRecord?.type === 'response.completed')
+  }
+}
+
+function parseSseData(
+  block: string
+): { event?: unknown; stopped: boolean } {
+  const data = block
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n')
+  if (!data) {
+    return { stopped: false }
+  }
+  if (data === '[DONE]') {
+    return { stopped: true }
+  }
+  try {
+    return { event: JSON.parse(data), stopped: false }
+  } catch {
+    return { stopped: false }
   }
 }
 
@@ -1331,14 +1356,16 @@ export class ModelAgentRuntime implements AgentRuntime {
     }
   }
 
-  private async requestToolModel(
+  private async *requestToolModel(
     messages: Array<Record<string, unknown>>,
     tools: ModelToolDefinition[],
     system: string,
     anthropic: boolean,
-    signal: AbortSignal
-  ): Promise<ModelToolResponse> {
+    signal: AbortSignal,
+    requestId: string
+  ): AsyncGenerator<RuntimeEvent, ModelToolResponse, void> {
     const responses = this.options.protocol === 'openai-responses'
+    const streamOpenAIChat = !responses && !anthropic
     const providerTools = responses
       ? tools.map((tool) => ({
           type: 'function',
@@ -1383,7 +1410,10 @@ export class ModelAgentRuntime implements AgentRuntime {
           : {
               model: this.options.model,
               max_tokens: 4096,
-              stream: false,
+              stream: true,
+              stream_options: {
+                include_usage: true
+              },
               messages,
               tools: providerTools
             }
@@ -1397,9 +1427,222 @@ export class ModelAgentRuntime implements AgentRuntime {
       body,
       signal
     })
+    if (!response.ok) {
+      const responseText = await readBoundedText(
+        response,
+        128 * 1024
+      )
+      let detail: string | undefined
+      try {
+        detail = getErrorMessage(
+          responseText.trim()
+            ? JSON.parse(responseText)
+            : undefined
+        )
+      } catch {
+        detail = undefined
+      }
+      throw new Error(
+        detail ??
+          `模型接口请求失败（HTTP ${response.status}）`
+      )
+    }
+    if (
+      streamOpenAIChat &&
+      response.headers
+        .get('content-type')
+        ?.toLocaleLowerCase()
+        .includes('text/event-stream')
+    ) {
+      if (!response.body) {
+        throw new Error('模型接口未返回流式响应')
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      const streamedToolCalls = new Map<
+        number,
+        { arguments: string; id: string; name: string }
+      >()
+      const usage: ModelUsageAccumulator = {
+        reported: false
+      }
+      let answer = ''
+      let reasoning = ''
+      let buffer = ''
+      let receivedStop = false
+      let receivedBytes = 0
+      let streamEnded = false
+
+      try {
+        while (!receivedStop) {
+          const { done, value } = await reader.read()
+          streamEnded = done
+          receivedBytes += value?.byteLength ?? 0
+          if (receivedBytes > maxChatResponseBytes) {
+            throw new Error('模型接口流式响应超过安全限制')
+          }
+          buffer += decoder.decode(value, { stream: !done }).replaceAll(
+            '\r\n',
+            '\n'
+          )
+          if (Buffer.byteLength(buffer) > maxChatResponseBytes) {
+            throw new Error('模型接口流式响应块超过安全限制')
+          }
+          const blocks = buffer.split('\n\n')
+          buffer = blocks.pop() ?? ''
+          if (done && buffer.trim()) {
+            blocks.push(buffer)
+            buffer = ''
+          }
+          for (const block of blocks) {
+            const parsed = parseSseData(block)
+            if (parsed.stopped) {
+              receivedStop = true
+              break
+            }
+            if (parsed.event === undefined) {
+              continue
+            }
+            const providerError = getErrorMessage(parsed.event)
+            if (providerError) {
+              throw new Error(providerError)
+            }
+            applyUsageUpdate(
+              usage,
+              getUsageUpdate(parsed.event, 'openai')
+            )
+            const reasoningDelta = getOpenAIReasoningDelta(
+              parsed.event
+            )
+            if (reasoningDelta) {
+              reasoning += reasoningDelta
+              yield {
+                requestId,
+                type: 'reasoning',
+                delta: reasoningDelta
+              }
+            }
+            const textDelta = getOpenAITextDelta(parsed.event)
+            if (textDelta) {
+              answer += textDelta
+              yield {
+                requestId,
+                type: 'text',
+                delta: textDelta
+              }
+            }
+            const event = getRecord(parsed.event)
+            const firstChoice = Array.isArray(event?.choices)
+              ? getRecord(event.choices[0])
+              : undefined
+            const delta = getRecord(firstChoice?.delta)
+            if (delta?.tool_calls === undefined) {
+              continue
+            }
+            if (!Array.isArray(delta.tool_calls)) {
+              throw new Error(
+                'OpenAI 模型接口返回了无效流式工具调用'
+              )
+            }
+            for (const item of delta.tool_calls) {
+              const toolDelta = getRecord(item)
+              const index = toolDelta?.index
+              if (
+                !Number.isSafeInteger(index) ||
+                (index as number) < 0 ||
+                (index as number) >= maxToolCallsPerRun
+              ) {
+                throw new Error(
+                  'OpenAI 模型接口返回了无效流式工具调用序号'
+                )
+              }
+              const functionDelta = getRecord(toolDelta?.function)
+              const current = streamedToolCalls.get(index as number) ?? {
+                arguments: '',
+                id: '',
+                name: ''
+              }
+              const next = {
+                arguments:
+                  current.arguments +
+                  (typeof functionDelta?.arguments === 'string'
+                    ? functionDelta.arguments
+                    : ''),
+                id:
+                  typeof toolDelta?.id === 'string'
+                    ? toolDelta.id
+                    : current.id,
+                name:
+                  typeof functionDelta?.name === 'string'
+                    ? functionDelta.name
+                    : current.name
+              }
+              if (
+                next.id.length > 256 ||
+                next.name.length > 128 ||
+                Buffer.byteLength(next.arguments) >
+                  maxToolArgumentBytes
+              ) {
+                throw new Error(
+                  'OpenAI 模型接口返回的流式工具调用超过安全限制'
+                )
+              }
+              streamedToolCalls.set(index as number, next)
+            }
+          }
+          if (done) {
+            break
+          }
+        }
+      } finally {
+        if (!streamEnded) {
+          await reader.cancel().catch(() => undefined)
+        }
+        reader.releaseLock()
+      }
+      if (!receivedStop) {
+        throw new Error('模型接口流式响应意外中断')
+      }
+      const rawToolCalls = [...streamedToolCalls.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([, call]) => {
+          const identity = parseToolCallIdentity(call.id, call.name)
+          return {
+            parsed: {
+              ...identity,
+              arguments: parseToolArguments(call.arguments)
+            },
+            raw: {
+              id: identity.id,
+              type: 'function',
+              function: {
+                name: identity.name,
+                arguments: call.arguments
+              }
+            }
+          }
+        })
+      return {
+        text: answer,
+        reasoning,
+        toolCalls: rawToolCalls.map((call) => call.parsed),
+        assistantMessage: {
+          role: 'assistant',
+          content: answer || null,
+          ...(reasoning
+            ? { reasoning_content: reasoning }
+            : {}),
+          ...(rawToolCalls.length > 0
+            ? { tool_calls: rawToolCalls.map((call) => call.raw) }
+            : {})
+        },
+        usage,
+        streamed: true
+      }
+    }
     const responseText = await readBoundedText(
       response,
-      response.ok ? maxChatResponseBytes : 128 * 1024
+      maxChatResponseBytes
     )
     let payload: unknown
     try {
@@ -1408,12 +1651,6 @@ export class ModelAgentRuntime implements AgentRuntime {
         : undefined
     } catch (error) {
       throw new Error('模型接口返回了无效 JSON', { cause: error })
-    }
-    if (!response.ok) {
-      throw new Error(
-        getErrorMessage(payload) ??
-          `模型接口请求失败（HTTP ${response.status}）`
-      )
     }
     const providerError = getErrorMessage(payload)
     if (providerError) {
@@ -1496,13 +1733,20 @@ export class ModelAgentRuntime implements AgentRuntime {
       if (round > 0) {
         toolSnapshot = await loadToolSnapshot()
       }
-      const response = await this.requestToolModel(
+      const responseStream = this.requestToolModel(
         messages,
         toolSnapshot.tools,
         system,
         anthropic,
-        signal
+        signal,
+        request.requestId
       )
+      let responseStep = await responseStream.next()
+      while (!responseStep.done) {
+        yield responseStep.value
+        responseStep = await responseStream.next()
+      }
+      const response = responseStep.value
       const usage = {
         reported: false
       } satisfies ModelUsageAccumulator
@@ -1517,10 +1761,12 @@ export class ModelAgentRuntime implements AgentRuntime {
         yield usageEvent
       }
       if (response.reasoning) {
-        yield {
-          requestId: request.requestId,
-          type: 'reasoning',
-          delta: response.reasoning
+        if (!response.streamed) {
+          yield {
+            requestId: request.requestId,
+            type: 'reasoning',
+            delta: response.reasoning
+          }
         }
       }
       if (response.text) {
@@ -1528,10 +1774,12 @@ export class ModelAgentRuntime implements AgentRuntime {
         if (Buffer.byteLength(answer) > 1024 * 1024) {
           throw new Error('直连模型回答超过 1MB 安全限制')
         }
-        yield {
-          requestId: request.requestId,
-          type: 'text',
-          delta: response.text
+        if (!response.streamed) {
+          yield {
+            requestId: request.requestId,
+            type: 'text',
+            delta: response.text
+          }
         }
       }
       if (response.toolCalls.length === 0) {

@@ -2511,6 +2511,7 @@ function App(): React.JSX.Element {
           return {
             ...message,
             reasoning: `${currentReasoning}${acceptedDelta}`,
+            status: undefined,
             blocks: appendMessageContentBlock(
               message.blocks,
               'reasoning',

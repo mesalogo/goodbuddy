@@ -759,7 +759,10 @@ describe('ModelAgentRuntime', () => {
       fetcher.mock.calls[0]?.[1]?.body as string
     ) as Record<string, unknown>
     expect(firstBody).toMatchObject({
-      stream: false,
+      stream: true,
+      stream_options: {
+        include_usage: true
+      },
       tools: [
         {
           type: 'function',
@@ -838,6 +841,160 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
     expect(toolProvider.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('streams reasoning while using OpenAI-compatible tools', async () => {
+    const streams = [
+      [
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                reasoning_content: '先读取文件',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call-streamed',
+                    type: 'function',
+                    function: {
+                      name: 'workspace_read_text',
+                      arguments: '{"path":'
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })}`,
+        '',
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: {
+                      arguments: '"README.md"}'
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })}`,
+        '',
+        'data: [DONE]',
+        '',
+        ''
+      ].join('\n'),
+      [
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                reasoning_content: '再整理结果'
+              }
+            }
+          ]
+        })}`,
+        '',
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                content: '文件内容已读取。'
+              }
+            }
+          ]
+        })}`,
+        '',
+        'data: [DONE]',
+        '',
+        ''
+      ].join('\n')
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(streams.shift(), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      protocol: 'openai-chat-completions',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed140',
+        conversationId: 'conversation-streamed-tools',
+        prompt: '读取 README',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.type === 'reasoning' ||
+            event.type === 'tool' ||
+            event.type === 'text'
+        )
+        .map((event) =>
+          event.type === 'tool'
+            ? `${event.type}:${event.state}`
+            : `${event.type}:${event.delta}`
+        )
+    ).toEqual([
+      'reasoning:先读取文件',
+      'tool:pending',
+      'tool:running',
+      'tool:completed',
+      'reasoning:再整理结果',
+      'text:文件内容已读取。'
+    ])
+    expect(toolProvider.callTool).toHaveBeenCalledWith(
+      'workspace_read_text',
+      { path: 'README.md' },
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        conversationId: 'conversation-streamed-tools',
+        workMode: 'execute'
+      })
+    )
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { messages: Array<Record<string, unknown>> }
+    expect(secondBody.messages).toContainEqual(
+      expect.objectContaining({
+        role: 'assistant',
+        content: null,
+        reasoning_content: '先读取文件',
+        tool_calls: [
+          expect.objectContaining({
+            id: 'call-streamed',
+            function: {
+              name: 'workspace_read_text',
+              arguments: '{"path":"README.md"}'
+            }
+          })
+        ]
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
   it('uses refreshed tool definitions in subsequent model rounds', async () => {

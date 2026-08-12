@@ -1423,6 +1423,47 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
+  it('replaces the direct-model thinking status with real reasoning', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '分析这个问题' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'status',
+        message: 'deepseek-v4-flash 正在思考'
+      })
+    })
+    expect(
+      screen.getByText('deepseek-v4-flash 正在思考')
+    ).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'reasoning',
+        delta: '正在分析真实推理内容'
+      })
+    })
+
+    expect(
+      screen.queryByText('deepseek-v4-flash 正在思考')
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('正在推理').closest('details')).toHaveAttribute(
+      'open'
+    )
+    expect(screen.getByText('正在分析真实推理内容')).toBeVisible()
+  })
+
   it('keeps a tool failure in details and hides retry after continuing', async () => {
     render(<App />)
 
