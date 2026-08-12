@@ -23,8 +23,9 @@ export const settings = {
     },
     model: {
       label: 'Model connections',
-      navigationDescription: 'LLMs, embedding models, and credentials',
-      description: 'LLMs, embedding models, and credentials'
+      navigationDescription:
+        'LLMs, embedding and rerank models, and credentials',
+      description: 'LLMs, embedding and rerank models, and credentials'
     },
     documentParsing: {
       label: 'Document parsing',
@@ -103,7 +104,7 @@ export const settings = {
   errors: {
     readSettings: 'Could not load settings',
     detectRuntimes: 'Could not detect Agent Runtimes',
-    readEmbeddingStatus: 'Could not load vector index status',
+    readEmbeddingStatus: 'Could not load embedding model status',
     requireModelConnection: 'Configure at least one model connection',
     refreshEmbeddingAfterSave:
       'Settings were saved, but the vector model status could not be refreshed',
@@ -115,10 +116,6 @@ export const settings = {
     embeddingDiagnosticUnavailable:
       'Vector diagnostics are unavailable',
     testEmbedding: 'Vector model test failed',
-    embeddingIndexUnavailable: 'The vector index service is unavailable',
-    rebuildEmbeddingIndex: 'Could not start rebuilding the vector index',
-    embeddingJobFinished: 'The current vector indexing job has ended',
-    cancelEmbeddingIndex: 'Could not cancel rebuilding the vector index',
     selectFile: 'Could not select the file',
     openRuntimeConfig: 'Could not open the Runtime configuration',
     selectWorkspace: 'Could not select the workspace folder',
@@ -395,6 +392,11 @@ export const settings = {
         description:
           'Configure the embedding model used for knowledge base semantic retrieval and GraphRAG.'
       },
+      rerank: {
+        label: 'Rerank model',
+        description:
+          'Configure learned relevance reranking for knowledge retrieval candidates.'
+      },
       speech: {
         label: 'Speech model',
         description:
@@ -461,6 +463,21 @@ export const settings = {
         'Leave blank for a local service without authentication',
       privacyDescription:
         'Only chunks from enabled knowledge bases are sent to this endpoint. The API Key is encrypted in secure system storage. If the embedding service fails, retrieval falls back to FTS5 and the evidence graph.'
+    },
+    rerank: {
+      title: 'Rerank model connection',
+      description:
+        'Uses a Cohere-compatible Rerank API to improve knowledge retrieval ordering',
+      enabled: 'Enable learned reranking',
+      endpoint: 'Rerank API URL',
+      endpointDescription:
+        'Enter the complete Cohere-compatible Rerank endpoint.',
+      modelName: 'Model name',
+      optionalApiKey: 'API Key (optional)',
+      optionalApiKeyPlaceholder:
+        'Leave blank for a local service without authentication',
+      privacyDescription:
+        'Only retrieval queries and candidate knowledge chunks are sent to this endpoint. The API Key is encrypted in secure system storage. If reranking fails, the original retrieval order is preserved.'
     }
   },
   security: {
@@ -494,7 +511,7 @@ export const settings = {
         'Automatically choose the expert role that best matches the question',
       enabled: 'Enable Smart Subagent routing',
       help:
-        'Off by default. In Ask or Plan mode, when no expert or team is explicitly selected, GoodBuddy chooses one expert. The Subagent uses the default text model in read-only mode without tools.'
+        'Off by default. In Ask mode, when no expert or team is explicitly selected, GoodBuddy chooses one expert. The Subagent uses the default text model in read-only mode without tools.'
     }
   },
   appearance: {

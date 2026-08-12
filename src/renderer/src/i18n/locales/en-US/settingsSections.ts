@@ -127,9 +127,8 @@ export const settingsSections = {
   },
   embedding: {
     label: 'Embedding model',
-    title: 'Embeddings and knowledge retrieval',
-    description:
-      'Verify the model and manage the embedding index used for knowledge retrieval',
+    title: 'Embedding model connection',
+    description: 'Review the current configuration and verify the connection',
     model: {
       heading: 'Current embedding model',
       configured: 'Configured model',
@@ -149,40 +148,6 @@ export const settingsSections = {
       test: 'Test embedding model',
       notice:
         'The test sends one real request to the current service and does not change the knowledge index.'
-    },
-    index: {
-      heading: 'Knowledge embedding index',
-      rebuildRunning: 'Rebuild in progress…',
-      rebuild: 'Rebuild embedding index',
-      emptyTitle: 'No rebuild history yet',
-      emptyDescription:
-        'Select “Rebuild embedding index” to generate retrievable embeddings for knowledge documents.',
-      statuses: {
-        queued: 'Rebuild waiting to start',
-        running: 'Rebuilding',
-        completed: 'Last rebuild succeeded',
-        failed: 'Last rebuild failed',
-        cancelled: 'Last rebuild was cancelled'
-      },
-      cancelAria: 'Cancel embedding index rebuild',
-      cancel: 'Cancel rebuild',
-      progressAria: 'Embedding index rebuild progress',
-      completed: '{{completed}} / {{total}} documents completed',
-      completedWithPeriod: '{{completed}} / {{total}} documents completed.',
-      completedAt:
-        '{{completed}} / {{total}} documents completed at {{date}}.',
-      preparing: 'Preparing documents…',
-      atomicNotice:
-        'Each document is updated atomically and becomes available for retrieval immediately. If cancelled, completed documents are kept while all others retain their previous or missing state.',
-      cancelledNotice:
-        'Completed documents keep their new embeddings. All other documents retain their previous embeddings, and documents without embeddings remain missing.',
-      failedNotice:
-        '{{completed}} / {{total}} documents completed. Documents with errors were marked as failed, while completed documents remain available for retrieval.',
-      remedyPrefix: 'Suggested action: ',
-      defaultRemedy:
-        'Check the embedding model configuration and network connection.',
-      retrySuffix:
-        ' After fixing the issue, select “Rebuild embedding index” to retry.'
     }
   },
   roles: {

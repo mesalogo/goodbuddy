@@ -4,6 +4,8 @@ import {
   ArrowRight,
   BookOpen,
   Check,
+  ChevronDown,
+  ChevronRight,
   CirclePause,
   Database,
   FilePlus2,
@@ -27,6 +29,7 @@ import {
   ZoomOut
 } from 'lucide-react'
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -34,47 +37,64 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
+import type {
+  KnowledgeDocumentItem as SharedKnowledgeDocumentItem,
+  KnowledgeEvidence as SharedKnowledgeEvidence,
+  KnowledgeGraphNode as SharedKnowledgeGraphNode,
+  KnowledgeGraphRelation as SharedKnowledgeGraphRelation,
+  KnowledgeLibrary as SharedKnowledgeLibrary,
+  KnowledgeSourceItem as SharedKnowledgeSource,
+  KnowledgeTaskItem as SharedKnowledgeTaskItem
+} from '../../shared/contracts'
+import { stripKnowledgeHighlightTags } from '../../shared/knowledge-text'
+import type {
+  KnowledgeEmbeddingIndexSnapshot
+} from '../../shared/embedding-contracts'
+import {
+  defaultKnowledgeChunkingSettings,
+  defaultKnowledgeRetrievalSettings,
+  type KnowledgeChunkPage,
+  type KnowledgeChunkUpdateInput,
+  type KnowledgeChunkingSettings,
+  type KnowledgeRetrievalResponse,
+  type KnowledgeRetrievalSettings
+} from '../../shared/knowledge-contracts'
+import {
+  defaultKnowledgeOntologySettings,
+  getKnowledgeOntologyDisplayDefinitions,
+  isRelationEndpointAllowed,
+  knowledgeOntologySettingsSchema,
+  normalizeEntityTypeAlias,
+  normalizeRelationTypeAlias,
+  type KnowledgeOntologySettings
+} from '../../shared/knowledge-ontology'
 import {
   EmptyState,
   PageHeader,
   PageTabs,
+  SegmentedControl,
   type PageTab
 } from './WorkspacePrimitives'
 import { KnowledgeGraphChart } from './KnowledgeGraphChart'
+import {
+  KnowledgeChunkManager
+} from './KnowledgeChunkManager'
+import {
+  KnowledgeRetrievalWorkbench,
+  type KnowledgeRetrievalWorkbenchResponse,
+  type KnowledgeRetrievalWorkbenchSettings
+} from './KnowledgeRetrievalWorkbench'
 import { trapTabFocus } from './dialog-focus'
+import { KnowledgeEmbeddingIndexSection } from './KnowledgeEmbeddingIndexSection'
 
-export type KnowledgeStorageMode = 'reference' | 'managed'
-export type KnowledgeGraphStrategy =
-  | 'rules'
-  | 'model'
-  | 'hybrid'
-  | 'ask'
-export type KnowledgeSourceKind = 'file' | 'directory' | 'url'
-export type KnowledgeSourceStatus =
-  | 'queued'
-  | 'syncing'
-  | 'paused'
-  | 'ready'
-  | 'failed'
-export type KnowledgeDocumentStatus =
-  | 'queued'
-  | 'parsing'
-  | 'indexing'
-  | 'ready'
-  | 'failed'
-
-export type KnowledgeLibrary = {
-  id: string
-  name: string
-  description?: string
-  storageMode: KnowledgeStorageMode
-  graphEnabled: boolean
-  graphStrategy: KnowledgeGraphStrategy
-  sourceCount: number
-  documentCount: number
-  indexedDocumentCount: number
-  updatedAt?: string
-}
+export type KnowledgeLibrary = SharedKnowledgeLibrary
+export type KnowledgeStorageMode = KnowledgeLibrary['storageMode']
+export type KnowledgeGraphStrategy = KnowledgeLibrary['graphStrategy']
+export type KnowledgeSource = SharedKnowledgeSource
+export type KnowledgeSourceKind = KnowledgeSource['kind']
+export type KnowledgeSourceStatus = KnowledgeSource['status']
+export type KnowledgeDocumentItem = SharedKnowledgeDocumentItem
+export type KnowledgeDocumentStatus = KnowledgeDocumentItem['status']
 
 export type CreateKnowledgeLibraryInput = {
   name: string
@@ -84,75 +104,10 @@ export type CreateKnowledgeLibraryInput = {
   graphStrategy: KnowledgeGraphStrategy
 }
 
-export type KnowledgeSource = {
-  id: string
-  libraryId: string
-  name: string
-  kind: KnowledgeSourceKind
-  location?: string
-  status: KnowledgeSourceStatus
-  progress?: number
-  documentCount: number
-  lastSyncedAt?: string
-  error?: string
-}
-
-export type KnowledgeDocumentItem = {
-  id: string
-  libraryId: string
-  sourceId?: string
-  name: string
-  path?: string
-  status: KnowledgeDocumentStatus
-  indexProgress?: number
-  chunkCount?: number
-  size?: number
-  updatedAt?: string
-  error?: string
-}
-
-export type KnowledgeGraphNode = {
-  id: string
-  label: string
-  type: string
-  description?: string
-  aliases?: readonly string[]
-  x: number
-  y: number
-  evidenceIds?: readonly string[]
-}
-
-export type KnowledgeGraphRelation = {
-  id: string
-  sourceId: string
-  targetId: string
-  type: string
-  description?: string
-  evidenceIds?: readonly string[]
-}
-
-export type KnowledgeEvidence = {
-  id: string
-  documentId: string
-  documentName: string
-  excerpt: string
-  location?: string
-}
-
-export type KnowledgeTaskItem = {
-  id: string
-  libraryId: string
-  sourceId?: string
-  documentId?: string
-  documentName: string
-  kind: 'parsing' | 'embedding' | 'graph'
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
-  progress: number
-  message?: string
-  createdAt: string
-  startedAt?: string
-  completedAt?: string
-}
+export type KnowledgeGraphNode = SharedKnowledgeGraphNode
+export type KnowledgeGraphRelation = SharedKnowledgeGraphRelation
+export type KnowledgeEvidence = SharedKnowledgeEvidence
+export type KnowledgeTaskItem = SharedKnowledgeTaskItem
 
 export type KnowledgeEntityUpdate = {
   label: string
@@ -214,6 +169,55 @@ export type KnowledgeWorkspaceProps = {
   onPauseSource: (sourceId: string) => void | Promise<void>
   onRetrySource: (sourceId: string) => void | Promise<void>
   onRemoveSource: (sourceId: string) => void | Promise<void>
+  onRetrieve: (
+    libraryId: string,
+    query: string,
+    settings: KnowledgeRetrievalSettings
+  ) => Promise<KnowledgeRetrievalResponse>
+  onUpdateKnowledgeSettings: (
+    libraryId: string,
+    settings: {
+      retrieval?: KnowledgeRetrievalSettings
+      chunking?: KnowledgeChunkingSettings
+      ontology?: KnowledgeOntologySettings
+    }
+  ) => void | Promise<void>
+  onListChunks: (input: {
+    libraryId: string
+    documentId: string
+    page: number
+    pageSize: number
+    search?: string
+  }) => Promise<KnowledgeChunkPage>
+  onUpdateChunk: (
+    input: KnowledgeChunkUpdateInput
+  ) => void | Promise<void>
+  onDeleteChunk: (input: {
+    knowledgeBaseId: string
+    documentId: string
+    chunkId: string
+  }) => void | Promise<void>
+  onRebuildDocument: (
+    libraryId: string,
+    documentId: string
+  ) => void | Promise<void>
+  onRebuildLibrary: (libraryId: string) => void | Promise<void>
+  onCancelRebuild: (libraryId: string) => void | Promise<void>
+  onGetEmbeddingIndex: (
+    libraryId: string
+  ) =>
+    | KnowledgeEmbeddingIndexSnapshot
+    | Promise<KnowledgeEmbeddingIndexSnapshot>
+  onRebuildEmbeddingIndex: (
+    libraryId: string
+  ) => Promise<KnowledgeEmbeddingIndexSnapshot>
+  onCancelTask: (taskId: string) => void | Promise<void>
+  onRetryTask: (taskId: string) => void | Promise<void>
+  onOpenReferenceSource: (input: {
+    knowledgeBaseId: string
+    documentId: string
+    chunkId: string
+  }) => void | Promise<void>
   onMoveNode: (
     nodeId: string,
     position: { x: number; y: number }
@@ -242,6 +246,7 @@ export type KnowledgeWorkspaceProps = {
 }
 
 type WorkspaceTab = 'documents' | 'graph' | 'tasks' | 'settings'
+type GraphWorkspaceTab = 'explore' | 'settings'
 type GraphSidebarTab = 'topology' | 'details'
 
 const storageModeLabelKeys = {
@@ -255,6 +260,14 @@ const strategyLabelKeys = {
   hybrid: 'strategies.hybrid',
   ask: 'strategies.ask'
 } as const satisfies Record<KnowledgeGraphStrategy, string>
+
+function parseAliases(value: string, limit?: number): string[] {
+  const aliases = value
+    .split(/[、,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return limit === undefined ? aliases : aliases.slice(0, limit)
+}
 
 const sourceStatusLabelKeys = {
   queued: 'sourceStatuses.queued',
@@ -273,18 +286,120 @@ const documentStatusLabelKeys = {
 } as const satisfies Record<KnowledgeDocumentStatus, string>
 
 const taskKindLabelKeys = {
+  'source-sync': 'taskKinds.sourceSync',
+  'document-process': 'taskKinds.documentProcess',
+  'document-rebuild': 'taskKinds.documentRebuild',
+  'library-rebuild': 'taskKinds.libraryRebuild',
+  'embedding-rebuild': 'taskKinds.embeddingRebuild',
+  'graph-rebuild': 'taskKinds.graphRebuild',
   parsing: 'taskKinds.parsing',
   embedding: 'taskKinds.embedding',
   graph: 'taskKinds.graph'
 } as const satisfies Record<KnowledgeTaskItem['kind'], string>
+
+const taskStageLabelKeys = {
+  queued: 'taskStages.queued',
+  syncing: 'taskStages.syncing',
+  reading: 'taskStages.reading',
+  parsing: 'taskStages.parsing',
+  chunking: 'taskStages.chunking',
+  indexing: 'taskStages.indexing',
+  embedding: 'taskStages.embedding',
+  graph: 'taskStages.graph',
+  finalizing: 'taskStages.finalizing'
+} as const satisfies Record<KnowledgeTaskItem['stage'], string>
 
 const taskStatusLabelKeys = {
   queued: 'taskStatuses.queued',
   running: 'taskStatuses.running',
   succeeded: 'taskStatuses.succeeded',
   failed: 'taskStatuses.failed',
-  skipped: 'taskStatuses.skipped'
+  cancelled: 'taskStatuses.cancelled',
+  skipped: 'taskStatuses.skipped',
+  interrupted: 'taskStatuses.interrupted'
 } as const satisfies Record<KnowledgeTaskItem['status'], string>
+
+const taskScopeLabelKeys = {
+  library: 'taskScopes.library',
+  source: 'taskScopes.source',
+  document: 'taskScopes.document'
+} as const satisfies Record<KnowledgeTaskItem['scope'], string>
+
+function toWorkbenchResponse(
+  response: KnowledgeRetrievalResponse,
+  libraryDocumentCount: number
+): KnowledgeRetrievalWorkbenchResponse {
+  const contextByChunkId = new Map(
+    response.context.groups.map((group) => [
+      group.resultChunkId,
+      group
+    ])
+  )
+  return {
+    diagnostics: {
+      durationMs: response.durationMs,
+      requestedChannels: response.diagnostics.requestedChannels,
+      usedChannels: response.diagnostics.usedChannels,
+      degradedChannels: response.diagnostics.degradedChannels,
+      candidateCounts: response.diagnostics.candidateCounts,
+      channelDurationsMs: response.diagnostics.channelDurationMs,
+      vectorScannedCount: response.diagnostics.vectorScannedCount,
+      rerank: response.diagnostics.rerank
+    },
+    results: response.results.map((result) => {
+      const context = contextByChunkId.get(result.chunkId)
+      return {
+        chunkId: result.chunkId,
+        documentId: result.documentId,
+        rank: result.rank,
+        documentName: result.documentTitle,
+        sourceName: result.sourceDisplayName,
+        locator: result.location,
+        snippet: stripKnowledgeHighlightTags(result.snippet),
+        fusedScore: result.scores.fusedScore,
+        relevance: result.relevance,
+        channels: result.channels,
+        channelDetails: {
+          fts: {
+            rank: result.scores.ftsRank
+          },
+          cjk: {
+            rank: result.scores.cjkRank
+          },
+          vector: {
+            rank: result.scores.vectorRank,
+            similarity: result.scores.vectorSimilarity
+          },
+          graph: {
+            rank: result.scores.graphRank
+          }
+        },
+        rankBeforeRerank: result.preRerankRank,
+        contextText: context?.content,
+        contextCharacterCount: context?.characterCount,
+        contextTruncated: context?.truncated
+      }
+    }),
+    context: {
+      characterCount: response.context.characterCount,
+      budget: response.settings.contextMaxCharacters,
+      truncated: response.context.truncated
+    },
+    zeroReason:
+      response.results.length > 0
+        ? undefined
+        : libraryDocumentCount === 0
+          ? 'empty-library'
+          : response.diagnostics.filteredByThresholdCount > 0
+            ? 'filtered'
+            : response.diagnostics.degradedChannels.some(
+                  (item) => item.channel === 'vector'
+                ) &&
+                response.diagnostics.usedChannels.length === 0
+              ? 'index-unavailable'
+              : 'no-match'
+  }
+}
 
 function resolvedLocale(language: string): string {
   return language || 'zh-CN'
@@ -462,45 +577,6 @@ function toErrorMessage(
     : t('errors.operationFailed')
 }
 
-function ProgressBar({
-  label,
-  progress
-}: {
-  label: string
-  progress: number | undefined
-}): React.JSX.Element {
-  const { i18n } = useTranslation('knowledge')
-  const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
-  const value = clampProgress(progress)
-  const formattedProgress = formatPercent(value / 100, locale)
-  return (
-    <div
-      aria-label={`${label} ${formattedProgress}`}
-      aria-valuemax={100}
-      aria-valuemin={0}
-      aria-valuenow={value}
-      role="progressbar"
-      style={{
-        height: 5,
-        overflow: 'hidden',
-        borderRadius: 999,
-        background: 'var(--surface-muted)'
-      }}
-    >
-      <span
-        style={{
-          display: 'block',
-          width: `${value}%`,
-          height: '100%',
-          background:
-            value === 100 ? 'var(--success)' : 'var(--accent)',
-          transition: 'width .2s ease'
-        }}
-      />
-    </div>
-  )
-}
-
 function CreateLibraryWizard({
   onCancel,
   onCreate
@@ -513,7 +589,7 @@ function CreateLibraryWizard({
   const [description, setDescription] = useState('')
   const [storageMode, setStorageMode] =
     useState<KnowledgeStorageMode>('reference')
-  const [graphEnabled, setGraphEnabled] = useState(true)
+  const [graphEnabled, setGraphEnabled] = useState(false)
   const [graphStrategy, setGraphStrategy] =
     useState<KnowledgeGraphStrategy>('rules')
   const [saving, setSaving] = useState(false)
@@ -979,10 +1055,13 @@ function DocumentsView({
   onImportFiles,
   onImportUrl,
   onPauseSource,
+  onManageChunks,
   onRemoveSource,
   onRetrySource,
   onSyncSource,
-  sources
+  onViewTasks,
+  sources,
+  tasks
 }: Pick<
   KnowledgeWorkspaceProps,
   | 'documents'
@@ -994,8 +1073,14 @@ function DocumentsView({
   | 'onRetrySource'
   | 'onSyncSource'
   | 'sources'
+  | 'tasks'
 > & {
   library: KnowledgeLibrary
+  onManageChunks: (document: KnowledgeDocumentItem) => void
+  onViewTasks: (context: {
+    documentId?: string
+    sourceId?: string
+  }) => void
 }): React.JSX.Element {
   const { i18n, t } = useTranslation('knowledge')
   const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
@@ -1060,7 +1145,11 @@ function DocumentsView({
               {t('documents.sources.title')}
             </h3>
             <p style={{ ...styles.muted, margin: '5px 0 0' }}>
-              {t('documents.sources.description')}
+              {t(
+                library.graphEnabled
+                  ? 'documents.sources.descriptionWithGraph'
+                  : 'documents.sources.description'
+              )}
             </p>
           </div>
           <div className="knowledge-documents__import-actions">
@@ -1281,7 +1370,11 @@ function DocumentsView({
               listStyle: 'none'
             }}
           >
-            {sources.map((source) => (
+            {sources.map((source) => {
+              const relatedTasks = tasks?.filter(
+                (task) => task.sourceId === source.id
+              ) ?? []
+              return (
               <li
                 className="knowledge-source-row"
                 key={source.id}
@@ -1338,6 +1431,13 @@ function DocumentsView({
                       }}
                     >
                       {t(sourceStatusLabelKeys[source.status])}
+                      {source.status === 'syncing' &&
+                      source.progress !== undefined
+                        ? ` · ${formatPercent(
+                            clampProgress(source.progress) / 100,
+                            locale
+                          )}`
+                        : ''}
                     </span>
                   </div>
                   <div style={{ ...styles.muted, marginTop: 5 }}>
@@ -1346,16 +1446,6 @@ function DocumentsView({
                       time: formatTime(source.lastSyncedAt, locale, t)
                     })}
                   </div>
-                  {source.status === 'syncing' && (
-                    <div style={{ marginTop: 8 }}>
-                      <ProgressBar
-                        label={t('documents.syncProgress', {
-                          name: source.name
-                        })}
-                        progress={source.progress}
-                      />
-                    </div>
-                  )}
                   {source.error && (
                     <div
                       style={{
@@ -1369,6 +1459,18 @@ function DocumentsView({
                   )}
                 </div>
                 <div className="knowledge-source-row__actions">
+                  {relatedTasks.length > 0 && (
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        onViewTasks({ sourceId: source.id })
+                      }
+                      type="button"
+                    >
+                      <ListChecks aria-hidden="true" size={14} />
+                      {t('actions.viewTasks')}
+                    </button>
+                  )}
                   {source.status === 'syncing' ? (
                     <button
                       aria-label={t('documents.actions.pauseSource', {
@@ -1435,7 +1537,8 @@ function DocumentsView({
                   </button>
                 </div>
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
       </section>
@@ -1504,10 +1607,7 @@ function DocumentsView({
                     {t('documents.table.columns.document')}
                   </th>
                   <th style={{ padding: '9px 10px' }}>
-                    {t('documents.table.columns.status')}
-                  </th>
-                  <th style={{ padding: '9px 10px' }}>
-                    {t('documents.table.columns.indexProgress')}
+                    {t('documents.table.columns.processingStatus')}
                   </th>
                   <th style={{ padding: '9px 10px' }}>
                     {t('documents.table.columns.chunks')}
@@ -1515,10 +1615,22 @@ function DocumentsView({
                   <th style={{ padding: '9px 10px' }}>
                     {t('documents.table.columns.size')}
                   </th>
+                  <th style={{ padding: '9px 10px' }}>
+                    {t('documents.table.columns.actions')}
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {filteredDocuments.map((document) => (
+                {filteredDocuments.map((document) => {
+                  const relatedTasks = tasks?.filter(
+                    (task) => task.documentId === document.id
+                  ) ?? []
+                  const activeTask = relatedTasks.find(
+                    (task) =>
+                      task.status === 'queued' ||
+                      task.status === 'running'
+                  )
+                  return (
                   <tr
                     key={document.id}
                     style={{
@@ -1542,20 +1654,23 @@ function DocumentsView({
                       )}
                     </td>
                     <td style={{ padding: 10 }}>
-                      <span
-                        style={{
-                          color:
-                            document.status === 'failed'
-                              ? 'var(--danger)'
-                              : document.status === 'ready'
-                                ? 'var(--success)'
-                                : document.status === 'indexing'
-                                  ? 'var(--accent)'
-                                  : 'var(--warning)'
-                        }}
-                      >
-                        {t(documentStatusLabelKeys[document.status])}
-                      </span>
+                      <div className="knowledge-document-status">
+                        <span
+                          className={`knowledge-document-status__durable knowledge-document-status__durable--${document.status}`}
+                        >
+                          {t(documentStatusLabelKeys[document.status])}
+                        </span>
+                        {activeTask && (
+                          <span className="knowledge-document-status__active">
+                            {t(taskStageLabelKeys[activeTask.stage])}
+                            {' · '}
+                            {formatPercent(
+                              clampProgress(activeTask.progress) / 100,
+                              locale
+                            )}
+                          </span>
+                        )}
+                      </div>
                       {document.error && (
                         <div
                           style={{ color: 'var(--danger)', marginTop: 4 }}
@@ -1563,18 +1678,6 @@ function DocumentsView({
                           {document.error}
                         </div>
                       )}
-                    </td>
-                    <td style={{ minWidth: 140, padding: 10 }}>
-                      <ProgressBar
-                        label={t('documents.indexProgress', {
-                          name: document.name
-                        })}
-                        progress={
-                          document.status === 'ready'
-                            ? 100
-                            : document.indexProgress
-                        }
-                      />
                     </td>
                     <td style={{ padding: 10 }}>
                       {document.chunkCount === undefined
@@ -1584,8 +1687,33 @@ function DocumentsView({
                     <td style={{ padding: 10 }}>
                       {formatSize(document.size, locale, t)}
                     </td>
+                    <td style={{ padding: 10 }}>
+                      <div className="knowledge-document-actions">
+                        {relatedTasks.length > 0 && (
+                          <button
+                            className="secondary-button"
+                            onClick={() =>
+                              onViewTasks({ documentId: document.id })
+                            }
+                            type="button"
+                          >
+                            <ListChecks aria-hidden="true" size={14} />
+                            {t('actions.viewTasks')}
+                          </button>
+                        )}
+                        <button
+                          className="secondary-button"
+                          disabled={document.status !== 'ready'}
+                          onClick={() => onManageChunks(document)}
+                          type="button"
+                        >
+                          {t('chunks.title')}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -1597,16 +1725,30 @@ function DocumentsView({
 
 function EntityEditor({
   node,
+  ontology,
   onCancel,
   onSave
 }: {
   node?: KnowledgeGraphNode
+  ontology: KnowledgeOntologySettings
   onCancel: () => void
   onSave: (update: KnowledgeEntityUpdate) => void | Promise<void>
 }): React.JSX.Element {
-  const { t } = useTranslation('knowledge')
+  const { i18n, t } = useTranslation('knowledge')
+  const display = useMemo(
+    () =>
+      getKnowledgeOntologyDisplayDefinitions(
+        ontology,
+        resolvedLocale(i18n.resolvedLanguage ?? i18n.language) === 'zh-CN'
+          ? 'zh'
+          : 'en'
+      ),
+    [i18n.language, i18n.resolvedLanguage, ontology]
+  )
   const [label, setLabel] = useState(node?.label ?? '')
-  const [type, setType] = useState(node?.type ?? '')
+  const [type, setType] = useState(
+    normalizeEntityTypeAlias(node?.type, ontology)
+  )
   const [description, setDescription] = useState(node?.description ?? '')
   const [aliases, setAliases] = useState(
     (node?.aliases ?? []).join(t('format.listSeparator'))
@@ -1623,10 +1765,7 @@ function EntityEditor({
           label: label.trim(),
           type: type.trim(),
           description: description.trim(),
-          aliases: aliases
-            .split(/[、,，]/)
-            .map((item) => item.trim())
-            .filter(Boolean)
+          aliases: parseAliases(aliases)
         })
       }}
       style={{ display: 'grid', gap: 10 }}
@@ -1642,12 +1781,18 @@ function EntityEditor({
       </label>
       <label style={styles.label}>
         {t('fields.type')}
-        <input
+        <select
           onChange={(event) => setType(event.currentTarget.value)}
           required
           style={styles.input}
           value={type}
-        />
+        >
+          {display.entityTypes.map((definition) => (
+            <option key={definition.id} value={definition.id}>
+              {definition.label} ({definition.id})
+            </option>
+          ))}
+        </select>
       </label>
       <label style={styles.label}>
         {t('fields.description')}
@@ -1685,12 +1830,14 @@ function EntityEditor({
 
 function RelationForm({
   nodes,
+  ontology,
   onCancel,
   onSave,
   relation,
   sourceId
 }: {
   nodes: readonly KnowledgeGraphNode[]
+  ontology: KnowledgeOntologySettings
   onCancel: () => void
   onSave: (
     input: KnowledgeRelationInput
@@ -1698,17 +1845,47 @@ function RelationForm({
   relation?: KnowledgeGraphRelation
   sourceId: string
 }): React.JSX.Element {
-  const { t } = useTranslation('knowledge')
+  const { i18n, t } = useTranslation('knowledge')
+  const display = useMemo(
+    () =>
+      getKnowledgeOntologyDisplayDefinitions(
+        ontology,
+        resolvedLocale(i18n.resolvedLanguage ?? i18n.language) === 'zh-CN'
+          ? 'zh'
+          : 'en'
+      ),
+    [i18n.language, i18n.resolvedLanguage, ontology]
+  )
   const [source, setSource] = useState(relation?.sourceId ?? sourceId)
   const [target, setTarget] = useState(
     relation?.targetId ??
       nodes.find((node) => node.id !== sourceId)?.id ??
       ''
   )
-  const [type, setType] = useState(relation?.type ?? '')
+  const [type, setType] = useState(
+    normalizeRelationTypeAlias(relation?.type, ontology) ?? ''
+  )
   const [description, setDescription] = useState(
     relation?.description ?? ''
   )
+  const sourceNode = nodes.find((node) => node.id === source)
+  const targetNode = nodes.find((node) => node.id === target)
+  const allowedRelationTypes = display.relationTypes.filter(
+    (definition) =>
+      !sourceNode ||
+      !targetNode ||
+      isRelationEndpointAllowed(
+        definition.id,
+        sourceNode.type,
+        targetNode.type,
+        ontology
+      )
+  )
+  const selectedType = allowedRelationTypes.some(
+    (definition) => definition.id === type
+  )
+    ? type
+    : ''
 
   return (
     <form
@@ -1769,12 +1946,26 @@ function RelationForm({
       </label>
       <label style={styles.label}>
         {t('fields.relationType')}
-        <input
+        <select
           onChange={(event) => setType(event.currentTarget.value)}
           required
           style={styles.input}
-          value={type}
-        />
+          value={selectedType}
+        >
+          <option disabled value="">
+            {t('relationEditor.selectType')}
+          </option>
+          {allowedRelationTypes.map((definition) => (
+            <option key={definition.id} value={definition.id}>
+              {definition.label} ({definition.id})
+            </option>
+          ))}
+        </select>
+        {allowedRelationTypes.length === 0 && (
+          <span className="knowledge-settings__field-help">
+            {t('relationEditor.noCompatibleTypes')}
+          </span>
+        )}
       </label>
       <label style={styles.label}>
         {t('fields.notes')}
@@ -1805,14 +1996,154 @@ function RelationForm({
 
 function KnowledgeSettingsView({
   library,
+  mode,
+  onCancelRebuild,
+  onGetEmbeddingIndex,
+  onRebuildLibrary,
+  onRebuildEmbeddingIndex,
+  onViewTasks,
+  onUpdateKnowledgeSettings,
   onUpdateLibrary
 }: {
   library: KnowledgeLibrary
+  mode: 'index' | 'graph'
+  onCancelRebuild: KnowledgeWorkspaceProps['onCancelRebuild']
+  onGetEmbeddingIndex: KnowledgeWorkspaceProps['onGetEmbeddingIndex']
+  onRebuildLibrary: KnowledgeWorkspaceProps['onRebuildLibrary']
+  onRebuildEmbeddingIndex:
+    KnowledgeWorkspaceProps['onRebuildEmbeddingIndex']
+  onViewTasks: () => void
+  onUpdateKnowledgeSettings:
+    KnowledgeWorkspaceProps['onUpdateKnowledgeSettings']
   onUpdateLibrary: KnowledgeWorkspaceProps['onUpdateLibrary']
 }): React.JSX.Element {
   const { t } = useTranslation('knowledge')
   const [saving, setSaving] = useState(false)
+  const [rebuilding, setRebuilding] = useState(false)
+  const [embeddingIndexLoading, setEmbeddingIndexLoading] =
+    useState(true)
+  const [embeddingIndex, setEmbeddingIndex] =
+    useState<KnowledgeEmbeddingIndexSnapshot>()
   const [error, setError] = useState<string>()
+  const [chunking, setChunking] = useState(
+    library.chunkingSettings ?? defaultKnowledgeChunkingSettings
+  )
+  const [ontology, setOntology] = useState<KnowledgeOntologySettings>(
+    library.ontologySettings ?? defaultKnowledgeOntologySettings
+  )
+  const [ontologyError, setOntologyError] = useState<string>()
+
+  const requestEmbeddingIndex = useCallback(
+    () => Promise.resolve(onGetEmbeddingIndex(library.id)),
+    [library.id, onGetEmbeddingIndex]
+  )
+  const updateEmbeddingIndex = useCallback(
+    (snapshot: KnowledgeEmbeddingIndexSnapshot): void => {
+      setEmbeddingIndex((current) => {
+        const currentJob = current?.indexStatus.job
+        const nextJob = snapshot.indexStatus.job
+        return current &&
+          current.knowledgeBaseId === snapshot.knowledgeBaseId &&
+          current.enabled === snapshot.enabled &&
+          current.configuration?.provider ===
+            snapshot.configuration?.provider &&
+          current.configuration?.model === snapshot.configuration?.model &&
+          current.configuration?.endpoint ===
+            snapshot.configuration?.endpoint &&
+          current.configuration?.credentialConfigured ===
+            snapshot.configuration?.credentialConfigured &&
+          current.coverage.total === snapshot.coverage.total &&
+          current.coverage.indexed === snapshot.coverage.indexed &&
+          current.coverage.missing === snapshot.coverage.missing &&
+          current.coverage.error === snapshot.coverage.error &&
+          currentJob?.id === nextJob?.id &&
+          currentJob?.status === nextJob?.status &&
+          currentJob?.progress.completed ===
+            nextJob?.progress.completed &&
+          currentJob?.progress.total === nextJob?.progress.total &&
+          currentJob?.progress.percent === nextJob?.progress.percent &&
+          currentJob?.completedAt === nextJob?.completedAt &&
+          currentJob?.error?.code === nextJob?.error?.code &&
+          currentJob?.error?.message === nextJob?.error?.message &&
+          currentJob?.error?.remedy === nextJob?.error?.remedy
+          ? current
+          : snapshot
+      })
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (mode !== 'index') {
+      return
+    }
+    let active = true
+    void requestEmbeddingIndex()
+      .then((snapshot) => {
+        if (active && snapshot.knowledgeBaseId === library.id) {
+          updateEmbeddingIndex(snapshot)
+        }
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setError(toErrorMessage(reason, t))
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setEmbeddingIndexLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [library.id, mode, requestEmbeddingIndex, t, updateEmbeddingIndex])
+
+  useEffect(() => {
+    if (mode !== 'index') {
+      return
+    }
+    const active =
+      embeddingIndex?.indexStatus.job?.status === 'queued' ||
+      embeddingIndex?.indexStatus.job?.status === 'running'
+    if (!active) {
+      return
+    }
+    let mounted = true
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const poll = async (): Promise<void> => {
+      void requestEmbeddingIndex()
+        .then((snapshot) => {
+          if (!mounted || snapshot.knowledgeBaseId !== library.id) {
+            return
+          }
+          updateEmbeddingIndex(snapshot)
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (mounted) {
+            timeout = setTimeout(() => {
+              void poll()
+            }, 350)
+          }
+        })
+    }
+    timeout = setTimeout(() => {
+      void poll()
+    }, 350)
+    return () => {
+      mounted = false
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+    }
+  }, [
+    embeddingIndex?.indexStatus.job?.status,
+    library.id,
+    mode,
+    requestEmbeddingIndex,
+    updateEmbeddingIndex
+  ])
 
   const update = async (
     change: Parameters<KnowledgeWorkspaceProps['onUpdateLibrary']>[1]
@@ -1828,18 +2159,93 @@ function KnowledgeSettingsView({
     }
   }
 
+  const saveChunking = async (): Promise<void> => {
+    setSaving(true)
+    setError(undefined)
+    try {
+      await onUpdateKnowledgeSettings(library.id, { chunking })
+    } catch (reason) {
+      setError(toErrorMessage(reason, t))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveOntology = async (): Promise<void> => {
+    const parsed = knowledgeOntologySettingsSchema.safeParse(ontology)
+    if (!parsed.success) {
+      setOntologyError(t('settings.ontology.validation'))
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    setOntologyError(undefined)
+    try {
+      await onUpdateKnowledgeSettings(library.id, {
+        ontology: parsed.data
+      })
+    } catch (reason) {
+      setError(toErrorMessage(reason, t))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const rebuildLibrary = async (): Promise<void> => {
+    setRebuilding(true)
+    setError(undefined)
+    try {
+      await onRebuildLibrary(library.id)
+    } catch (reason) {
+      setError(toErrorMessage(reason, t))
+    } finally {
+      setRebuilding(false)
+    }
+  }
+
+  const cancelRebuild = async (): Promise<void> => {
+    setError(undefined)
+    try {
+      await onCancelRebuild(library.id)
+    } catch (reason) {
+      setError(toErrorMessage(reason, t))
+    }
+  }
+
+  const rebuildEmbeddingIndex = async (): Promise<void> => {
+    setError(undefined)
+    try {
+      setEmbeddingIndex(
+        await onRebuildEmbeddingIndex(library.id)
+      )
+    } catch (reason) {
+      setError(toErrorMessage(reason, t))
+    }
+  }
+
   return (
-    <div className="knowledge-settings">
+    <div
+      className={`knowledge-settings knowledge-settings--${mode}`}
+    >
+      {mode === 'index' && (
+        <KnowledgeEmbeddingIndexSection
+          loading={embeddingIndexLoading}
+          onRebuild={() => void rebuildEmbeddingIndex()}
+          onViewTasks={onViewTasks}
+          snapshot={embeddingIndex}
+        />
+      )}
+      {mode === 'index' && (
       <section
-        aria-labelledby="knowledge-graph-settings-title"
+        aria-labelledby="knowledge-graph-capability-title"
         style={{ ...styles.surface, padding: 16 }}
       >
         <div>
-          <h3 id="knowledge-graph-settings-title" style={{ margin: 0 }}>
-            {t('graph.title')}
+          <h3 id="knowledge-graph-capability-title" style={{ margin: 0 }}>
+            {t('settings.graphCapability.title')}
           </h3>
           <p style={{ ...styles.muted, margin: '6px 0 0' }}>
-            {t('settings.description')}
+            {t('settings.graphCapability.description')}
           </p>
         </div>
         <label
@@ -1858,15 +2264,32 @@ function KnowledgeSettingsView({
           <span>
             <strong style={{ display: 'block' }}>{t('graph.enable')}</strong>
             <span style={styles.muted}>
-              {t('settings.enableDescription')}
+              {library.graphEnabled
+                ? t('settings.graphCapability.enabledDescription')
+                : t('settings.graphCapability.disabledDescription')}
             </span>
           </span>
         </label>
+      </section>
+      )}
+      {mode === 'graph' && (
+      <section
+        aria-labelledby="knowledge-graph-settings-title"
+        style={{ ...styles.surface, padding: 16 }}
+      >
+        <div>
+          <h3 id="knowledge-graph-settings-title" style={{ margin: 0 }}>
+            {t('settings.graphConfiguration.title')}
+          </h3>
+          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+            {t('settings.graphConfiguration.description')}
+          </p>
+        </div>
         <label style={styles.label}>
           {t('fields.graphExtractionStrategy')}
           <select
             aria-label={t('settings.strategyAriaLabel')}
-            disabled={!library.graphEnabled || saving}
+            disabled={saving}
             onChange={(event) =>
               void update({
                 graphStrategy:
@@ -1886,29 +2309,887 @@ function KnowledgeSettingsView({
             {t('settings.askDescription')}
           </span>
         </label>
-        {error && (
-          <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>
-            {error}
+      </section>
+      )}
+      {mode === 'index' && (
+      <section
+        aria-labelledby="knowledge-chunking-settings-title"
+        style={{ ...styles.surface, padding: 16 }}
+      >
+        <div>
+          <h3
+            id="knowledge-chunking-settings-title"
+            style={{ margin: 0 }}
+          >
+            {t('settings.chunking.title')}
+          </h3>
+          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+            {t('settings.chunking.description')}
+          </p>
+        </div>
+        <label style={styles.label}>
+          {t('settings.chunking.mode')}
+          <select
+            disabled={saving || rebuilding}
+            onChange={(event) =>
+              setChunking((current) => ({
+                ...current,
+                mode: event.currentTarget
+                  .value as KnowledgeChunkingSettings['mode']
+              }))
+            }
+            style={styles.input}
+            value={chunking.mode}
+          >
+            <option value="fixed">
+              {t('settings.chunking.modes.fixed')}
+            </option>
+            <option value="structure">
+              {t('settings.chunking.modes.structure')}
+            </option>
+            <option value="parent-child">
+              {t('settings.chunking.modes.parentChild')}
+            </option>
+          </select>
+        </label>
+        <label className="toggle-row">
+          <span>
+            <strong>{t('settings.chunking.contextualIndexing')}</strong>
+            <small>
+              {t('settings.chunking.contextualIndexingDescription')}
+            </small>
+          </span>
+          <input
+            checked={chunking.contextualIndexingEnabled}
+            disabled={saving || rebuilding}
+            onChange={(event) =>
+              setChunking((current) => ({
+                ...current,
+                contextualIndexingEnabled: event.currentTarget.checked
+              }))
+            }
+            role="switch"
+            type="checkbox"
+          />
+        </label>
+        <div className="knowledge-settings__chunking-grid">
+          <label style={styles.label}>
+            {t('settings.chunking.targetCharacters')}
+            <input
+              disabled={saving || rebuilding}
+              max={8_000}
+              min={400}
+              onChange={(event) =>
+                setChunking((current) => ({
+                  ...current,
+                  targetCharacters: Number(event.currentTarget.value)
+                }))
+              }
+              style={styles.input}
+              type="number"
+              value={chunking.targetCharacters}
+            />
+          </label>
+          <label style={styles.label}>
+            {t('settings.chunking.overlapCharacters')}
+            <input
+              disabled={saving || rebuilding}
+              max={3_200}
+              min={0}
+              onChange={(event) =>
+                setChunking((current) => ({
+                  ...current,
+                  overlapCharacters: Number(event.currentTarget.value)
+                }))
+              }
+              style={styles.input}
+              type="number"
+              value={chunking.overlapCharacters}
+            />
+          </label>
+          {chunking.mode === 'parent-child' && (
+            <>
+              <label style={styles.label}>
+                {t('settings.chunking.parentCharacters')}
+                <input
+                  disabled={saving || rebuilding}
+                  max={16_000}
+                  min={1_600}
+                  onChange={(event) =>
+                    setChunking((current) => ({
+                      ...current,
+                      parentCharacters: Number(
+                        event.currentTarget.value
+                      )
+                    }))
+                  }
+                  style={styles.input}
+                  type="number"
+                  value={chunking.parentCharacters}
+                />
+              </label>
+              <label style={styles.label}>
+                {t('settings.chunking.childCharacters')}
+                <input
+                  disabled={saving || rebuilding}
+                  max={4_000}
+                  min={300}
+                  onChange={(event) =>
+                    setChunking((current) => ({
+                      ...current,
+                      childCharacters: Number(
+                        event.currentTarget.value
+                      )
+                    }))
+                  }
+                  style={styles.input}
+                  type="number"
+                  value={chunking.childCharacters}
+                />
+              </label>
+            </>
+          )}
+        </div>
+        {library.chunkingRebuildRequired && (
+          <p className="knowledge-settings__rebuild-note" role="status">
+            {t('settings.chunking.rebuildRequired')}
           </p>
         )}
+        <div className="knowledge-settings__actions">
+          <button
+            className="primary-button"
+            disabled={saving || rebuilding}
+            onClick={() => void saveChunking()}
+            type="button"
+          >
+            {saving
+              ? t('settings.chunking.saving')
+              : t('settings.chunking.save')}
+          </button>
+          <button
+            className="secondary-button"
+            disabled={saving}
+            onClick={() =>
+              void (
+                rebuilding ? cancelRebuild() : rebuildLibrary()
+              )
+            }
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" size={15} />
+            {rebuilding
+              ? t('settings.chunking.cancelRebuild')
+              : t('settings.chunking.rebuild')}
+          </button>
+        </div>
       </section>
+      )}
+      {mode === 'graph' && (
+      <section
+        aria-labelledby="knowledge-ontology-settings-title"
+        className="knowledge-settings__ontology"
+        style={{ ...styles.surface, padding: 16 }}
+      >
+        <div>
+          <h3 id="knowledge-ontology-settings-title" style={{ margin: 0 }}>
+            {t('settings.ontology.title')}
+          </h3>
+          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+            {t('settings.ontology.description')}
+          </p>
+        </div>
+        {library.ontologyRebuildRequired && (
+          <p className="knowledge-settings__rebuild-note" role="status">
+            {t('settings.ontology.rebuildRequired')}
+          </p>
+        )}
+        <div className="knowledge-settings__definition-group">
+          <h4>{t('settings.ontology.entityTypes')}</h4>
+          {ontology.entityTypes.map((definition, index) => (
+            <fieldset
+              className="knowledge-settings__definition"
+              key={`${definition.id}-${index}`}
+            >
+              <legend>{definition.id}</legend>
+              <div className="knowledge-settings__definition-grid">
+                <label>
+                  {t('settings.ontology.id')}
+                  <input
+                    disabled={saving || definition.id === 'CONCEPT'}
+                    maxLength={64}
+                    onChange={(event) => {
+                      const id = event.currentTarget.value
+                        .toLocaleUpperCase('en-US')
+                        .replace(/[^A-Z0-9_]/g, '')
+                      setOntology((current) => ({
+                        ...current,
+                        entityTypes: current.entityTypes.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, id } : item
+                        ),
+                        relationTypes: current.relationTypes.map((relation) => ({
+                          ...relation,
+                          sourceTypes: relation.sourceTypes?.map((typeId) =>
+                            typeId === definition.id ? id : typeId
+                          ),
+                          targetTypes: relation.targetTypes?.map((typeId) =>
+                            typeId === definition.id ? id : typeId
+                          )
+                        }))
+                      }))
+                    }}
+                    value={definition.id}
+                  />
+                </label>
+                <label>
+                  {t('settings.ontology.nameZh')}
+                  <input
+                    disabled={saving}
+                    maxLength={80}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value
+                      setOntology((current) => ({
+                        ...current,
+                        entityTypes: current.entityTypes.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? {
+                                ...item,
+                                name: {
+                                  ...item.name,
+                                  zh: value
+                                }
+                              }
+                            : item
+                        )
+                      }))
+                    }}
+                    value={definition.name.zh}
+                  />
+                </label>
+                <label>
+                  {t('settings.ontology.nameEn')}
+                  <input
+                    disabled={saving}
+                    maxLength={80}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value
+                      setOntology((current) => ({
+                        ...current,
+                        entityTypes: current.entityTypes.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? {
+                                ...item,
+                                name: {
+                                  ...item.name,
+                                  en: value
+                                }
+                              }
+                            : item
+                        )
+                      }))
+                    }}
+                    value={definition.name.en}
+                  />
+                </label>
+                <label>
+                  {t('settings.ontology.aliases')}
+                  <input
+                    defaultValue={definition.aliases.join(', ')}
+                    disabled={saving}
+                    maxLength={2592}
+                    onBlur={(event) => {
+                      const value = event.currentTarget.value
+                      setOntology((current) => ({
+                        ...current,
+                        entityTypes: current.entityTypes.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? {
+                                ...item,
+                                aliases: parseAliases(value, 32)
+                              }
+                            : item
+                        )
+                      }))
+                    }}
+                  />
+                </label>
+              </div>
+            </fieldset>
+          ))}
+        </div>
+        <div className="knowledge-settings__definition-group">
+          <h4>{t('settings.ontology.relationTypes')}</h4>
+          {ontology.relationTypes.map((definition, index) => (
+            <fieldset
+              className="knowledge-settings__definition"
+              key={`${definition.id}-${index}`}
+            >
+              <legend>{definition.id}</legend>
+              <div className="knowledge-settings__definition-grid">
+                <label>
+                  {t('settings.ontology.id')}
+                  <input
+                    disabled={saving}
+                    maxLength={64}
+                    onChange={(event) => {
+                      const id = event.currentTarget.value
+                        .toLocaleUpperCase('en-US')
+                        .replace(/[^A-Z0-9_]/g, '')
+                      setOntology((current) => ({
+                        ...current,
+                        relationTypes: current.relationTypes.map(
+                          (item, itemIndex) =>
+                            itemIndex === index ? { ...item, id } : item
+                        )
+                      }))
+                    }}
+                    value={definition.id}
+                  />
+                </label>
+                <label>
+                  {t('settings.ontology.nameZh')}
+                  <input
+                    disabled={saving}
+                    maxLength={80}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value
+                      setOntology((current) => ({
+                        ...current,
+                        relationTypes: current.relationTypes.map(
+                          (item, itemIndex) =>
+                            itemIndex === index
+                              ? {
+                                  ...item,
+                                  name: {
+                                    ...item.name,
+                                    zh: value
+                                  }
+                                }
+                              : item
+                        )
+                      }))
+                    }}
+                    value={definition.name.zh}
+                  />
+                </label>
+                <label>
+                  {t('settings.ontology.nameEn')}
+                  <input
+                    disabled={saving}
+                    maxLength={80}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value
+                      setOntology((current) => ({
+                        ...current,
+                        relationTypes: current.relationTypes.map(
+                          (item, itemIndex) =>
+                            itemIndex === index
+                              ? {
+                                  ...item,
+                                  name: {
+                                    ...item.name,
+                                    en: value
+                                  }
+                                }
+                              : item
+                        )
+                      }))
+                    }}
+                    value={definition.name.en}
+                  />
+                </label>
+                <label>
+                  {t('settings.ontology.aliases')}
+                  <input
+                    defaultValue={definition.aliases.join(', ')}
+                    disabled={saving}
+                    maxLength={2592}
+                    onBlur={(event) => {
+                      const value = event.currentTarget.value
+                      setOntology((current) => ({
+                        ...current,
+                        relationTypes: current.relationTypes.map(
+                          (item, itemIndex) =>
+                            itemIndex === index
+                              ? {
+                                  ...item,
+                                  aliases: parseAliases(value, 32)
+                                }
+                              : item
+                        )
+                      }))
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="knowledge-settings__endpoint-grid">
+                {(['sourceTypes', 'targetTypes'] as const).map((field) => (
+                  <fieldset key={field}>
+                    <legend>
+                      {t(
+                        field === 'sourceTypes'
+                          ? 'settings.ontology.sourceTypes'
+                          : 'settings.ontology.targetTypes'
+                      )}
+                    </legend>
+                    <label className="knowledge-settings__all-endpoints">
+                      <input
+                        checked={!definition[field]}
+                        disabled={saving}
+                        onChange={(event) => {
+                          const checked = event.currentTarget.checked
+                          setOntology((current) => ({
+                            ...current,
+                            relationTypes: current.relationTypes.map(
+                              (item, itemIndex) =>
+                                itemIndex === index
+                                  ? {
+                                      ...item,
+                                      [field]: checked
+                                        ? undefined
+                                        : [current.entityTypes[0]!.id]
+                                    }
+                                  : item
+                            )
+                          }))
+                        }}
+                        type="checkbox"
+                      />
+                      {t('settings.ontology.anyEndpoint')}
+                    </label>
+                    {!definition[field] &&
+                      <span className="knowledge-settings__field-help">
+                        {t('settings.ontology.anyEndpointHelp')}
+                      </span>}
+                    {definition[field] &&
+                      ontology.entityTypes.map((entityType) => (
+                        <label key={entityType.id}>
+                          <input
+                            checked={definition[field]?.includes(
+                              entityType.id
+                            )}
+                            disabled={
+                              saving ||
+                              (definition[field]?.length === 1 &&
+                                definition[field]?.[0] === entityType.id)
+                            }
+                            onChange={(event) => {
+                              const checked = event.currentTarget.checked
+                              setOntology((current) => ({
+                                ...current,
+                                relationTypes: current.relationTypes.map(
+                                  (item, itemIndex) =>
+                                    itemIndex === index
+                                      ? {
+                                          ...item,
+                                          [field]: checked
+                                            ? [
+                                                ...(item[field] ?? []),
+                                                entityType.id
+                                              ]
+                                            : item[field]?.filter(
+                                                (typeId) =>
+                                                  typeId !== entityType.id
+                                              )
+                                        }
+                                      : item
+                                )
+                              }))
+                            }}
+                            type="checkbox"
+                          />
+                          {entityType.name.zh} / {entityType.name.en}
+                        </label>
+                      ))}
+                  </fieldset>
+                ))}
+              </div>
+            </fieldset>
+          ))}
+        </div>
+        {ontologyError && <p role="alert">{ontologyError}</p>}
+        <div className="knowledge-settings__actions">
+          <button
+            className="primary-button"
+            disabled={saving || rebuilding}
+            onClick={() => void saveOntology()}
+            type="button"
+          >
+            {saving
+              ? t('settings.ontology.saving')
+              : t('settings.ontology.save')}
+          </button>
+        </div>
+        <p className="knowledge-settings__field-help">
+          {t('settings.ontology.noImplicitRebuild')}
+        </p>
+      </section>
+      )}
+      {error && (
+        <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>
+          {error}
+        </p>
+      )}
     </div>
   )
 }
 
+type KnowledgeTaskFilter = 'all' | 'active' | 'failed' | 'history'
+type KnowledgeTaskContext = {
+  documentId?: string
+  sourceId?: string
+}
+type KnowledgeTaskAction = 'cancel' | 'retry'
+type KnowledgeTaskActionError = {
+  action: KnowledgeTaskAction
+  message: string
+}
+
 function KnowledgeTasksView({
+  context,
+  onCancelTask,
+  onClearContext,
+  onRetryTask,
   tasks
 }: {
+  context?: KnowledgeTaskContext
+  onCancelTask: KnowledgeWorkspaceProps['onCancelTask']
+  onClearContext: () => void
+  onRetryTask: KnowledgeWorkspaceProps['onRetryTask']
   tasks: readonly KnowledgeTaskItem[]
 }): React.JSX.Element {
   const { i18n, t } = useTranslation('knowledge')
   const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
+  const [filter, setFilter] = useState<KnowledgeTaskFilter>('all')
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () =>
+      new Set(
+        tasks
+          .filter(
+            (task) =>
+              task.status === 'queued' || task.status === 'running'
+          )
+          .map((task) => task.parentTaskId)
+          .filter((id): id is string => Boolean(id))
+      )
+  )
+  const [pendingActions, setPendingActions] = useState<
+    ReadonlyMap<string, KnowledgeTaskAction>
+  >(() => new Map())
+  const [actionErrors, setActionErrors] = useState<
+    ReadonlyMap<string, KnowledgeTaskActionError>
+  >(() => new Map())
   const activeCount = tasks.filter(
     (task) => task.status === 'queued' || task.status === 'running'
   ).length
   const failedCount = tasks.filter(
-    (task) => task.status === 'failed'
+    (task) =>
+      task.status === 'failed' || task.status === 'interrupted'
   ).length
+  const historyCount = tasks.length - activeCount - failedCount
+  const taskById = useMemo(
+    () => new Map(tasks.map((task) => [task.id, task])),
+    [tasks]
+  )
+  const childrenByParent = useMemo(() => {
+    const result = new Map<string, KnowledgeTaskItem[]>()
+    for (const task of tasks) {
+      if (!task.parentTaskId || !taskById.has(task.parentTaskId)) {
+        continue
+      }
+      const children = result.get(task.parentTaskId) ?? []
+      children.push(task)
+      result.set(task.parentTaskId, children)
+    }
+    return result
+  }, [taskById, tasks])
+  const contextTasks = useMemo(
+    () =>
+      tasks.filter(
+        (task) =>
+          (!context?.documentId ||
+            task.documentId === context.documentId) &&
+          (!context?.sourceId || task.sourceId === context.sourceId)
+      ),
+    [context, tasks]
+  )
+  const directMatches = useMemo(
+    () =>
+      contextTasks.filter((task) => {
+        if (filter === 'active') {
+          return task.status === 'queued' || task.status === 'running'
+        }
+        if (filter === 'failed') {
+          return (
+            task.status === 'failed' ||
+            task.status === 'interrupted'
+          )
+        }
+        if (filter === 'history') {
+          return ![
+            'queued',
+            'running',
+            'failed',
+            'interrupted'
+          ].includes(task.status)
+        }
+        return true
+      }),
+    [contextTasks, filter]
+  )
+  const visibleIds = useMemo(() => {
+    const result = new Set(directMatches.map((task) => task.id))
+    for (const task of directMatches) {
+      let parentId = task.parentTaskId
+      while (parentId && taskById.has(parentId)) {
+        result.add(parentId)
+        parentId = taskById.get(parentId)?.parentTaskId
+      }
+    }
+    return result
+  }, [directMatches, taskById])
+  const topLevelTasks = tasks.filter(
+    (task) =>
+      visibleIds.has(task.id) &&
+      (!task.parentTaskId || !taskById.has(task.parentTaskId))
+  )
+  const filterOptions = [
+    { value: 'all', label: t('tasks.filters.all') },
+    { value: 'active', label: t('tasks.filters.active') },
+    { value: 'failed', label: t('tasks.filters.failed') },
+    { value: 'history', label: t('tasks.filters.history') }
+  ] as const
+  const runTaskAction = async (
+    taskId: string,
+    action: KnowledgeTaskAction,
+    invoke: (taskId: string) => void | Promise<void>
+  ): Promise<void> => {
+    setPendingActions((current) => {
+      const next = new Map(current)
+      next.set(taskId, action)
+      return next
+    })
+    setActionErrors((current) => {
+      if (!current.has(taskId)) {
+        return current
+      }
+      const next = new Map(current)
+      next.delete(taskId)
+      return next
+    })
+    try {
+      await invoke(taskId)
+    } catch (reason) {
+      setActionErrors((current) => {
+        const next = new Map(current)
+        next.set(taskId, {
+          action,
+          message: toErrorMessage(reason, t)
+        })
+        return next
+      })
+    } finally {
+      setPendingActions((current) => {
+        const next = new Map(current)
+        next.delete(taskId)
+        return next
+      })
+    }
+  }
+
+  const renderTask = (
+    task: KnowledgeTaskItem,
+    nested = false
+  ): React.JSX.Element => {
+    const children = (childrenByParent.get(task.id) ?? []).filter(
+      (child) => visibleIds.has(child.id)
+    )
+    const hasChildren = children.length > 0
+    const isExpanded = expanded.has(task.id)
+    const detailsId = `knowledge-task-${task.id}-details`
+    const actionErrorId = `knowledge-task-${task.id}-action-error`
+    const pendingAction = pendingActions.get(task.id)
+    const actionError = actionErrors.get(task.id)
+    const time =
+      task.completedAt ??
+      task.updatedAt ??
+      task.startedAt ??
+      task.createdAt
+    return (
+      <li
+        className={`knowledge-task${
+          nested ? ' knowledge-task--child' : ''
+        }`}
+        data-status={task.status}
+        key={task.id}
+      >
+        <div className="knowledge-task__heading">
+          <div className="knowledge-task__identity">
+            {hasChildren ? (
+              <button
+                aria-controls={detailsId}
+                aria-expanded={isExpanded}
+                aria-label={t(
+                  isExpanded
+                    ? 'tasks.actions.collapse'
+                    : 'tasks.actions.expand',
+                  { name: task.documentName }
+                )}
+                className="knowledge-task__disclosure"
+                onClick={() =>
+                  setExpanded((current) => {
+                    const next = new Set(current)
+                    if (next.has(task.id)) {
+                      next.delete(task.id)
+                    } else {
+                      next.add(task.id)
+                    }
+                    return next
+                  })
+                }
+                type="button"
+              >
+                {isExpanded ? (
+                  <ChevronDown aria-hidden="true" size={16} />
+                ) : (
+                  <ChevronRight aria-hidden="true" size={16} />
+                )}
+              </button>
+            ) : (
+              <span
+                aria-hidden="true"
+                className="knowledge-task__disclosure-placeholder"
+              />
+            )}
+            <div>
+              <strong>{task.documentName}</strong>
+              <span>
+                <span>{t(taskKindLabelKeys[task.kind])}</span>
+                {' · '}
+                <span>{t(taskScopeLabelKeys[task.scope])}</span>
+              </span>
+            </div>
+          </div>
+          <span
+            className={`knowledge-task__status knowledge-task__status--${task.status}`}
+          >
+            {t(taskStatusLabelKeys[task.status])}
+          </span>
+        </div>
+        <div className="knowledge-task__stage">
+          <strong>{t('tasks.currentStage')}</strong>
+          <span>{t(taskStageLabelKeys[task.stage])}</span>
+          {task.completedItems !== undefined &&
+            task.totalItems !== undefined && (
+              <span>
+                {t('tasks.itemProgress', {
+                  completed: formatNumber(task.completedItems, locale),
+                  total: formatNumber(task.totalItems, locale)
+                })}
+              </span>
+            )}
+        </div>
+        <div className="knowledge-task__progress">
+          <progress
+            aria-label={t('tasks.progressAriaLabel', {
+              name: task.documentName,
+              kind: t(taskKindLabelKeys[task.kind])
+            })}
+            max={100}
+            value={clampProgress(task.progress)}
+          />
+          <span>
+            {formatPercent(clampProgress(task.progress) / 100, locale)}
+          </span>
+        </div>
+        <div className="knowledge-task__meta">
+          <span>{task.message || t('tasks.waiting')}</span>
+          <time dateTime={time}>
+            {formatDateTime(time, locale, t)}
+          </time>
+        </div>
+        {task.error && (
+          <div className="knowledge-task__error">
+            <strong>{t('tasks.errorTitle')}</strong>
+            <span>{task.error.message}</span>
+            <span>
+              {task.error.remedy ?? t('tasks.defaultRemedy')}
+            </span>
+          </div>
+        )}
+        {(task.canCancel || task.canRetry) && (
+          <div
+            aria-describedby={actionError ? actionErrorId : undefined}
+            className="knowledge-task__actions"
+          >
+            {task.canCancel && (
+              <button
+                className="secondary-button"
+                disabled={pendingAction !== undefined}
+                onClick={() =>
+                  void runTaskAction(
+                    task.id,
+                    'cancel',
+                    onCancelTask
+                  )
+                }
+                type="button"
+              >
+                {pendingAction === 'cancel' ? (
+                  <LoaderCircle aria-hidden="true" size={14} />
+                ) : (
+                  <X aria-hidden="true" size={14} />
+                )}
+                {pendingAction === 'cancel'
+                  ? t('tasks.actions.cancelling')
+                  : t('tasks.actions.cancel')}
+              </button>
+            )}
+            {task.canRetry && (
+              <button
+                className="secondary-button"
+                disabled={pendingAction !== undefined}
+                onClick={() =>
+                  void runTaskAction(task.id, 'retry', onRetryTask)
+                }
+                type="button"
+              >
+                {pendingAction === 'retry' ? (
+                  <LoaderCircle aria-hidden="true" size={14} />
+                ) : (
+                  <RotateCcw aria-hidden="true" size={14} />
+                )}
+                {pendingAction === 'retry'
+                  ? t('tasks.actions.retrying')
+                  : t('tasks.actions.retry')}
+              </button>
+            )}
+          </div>
+        )}
+        {actionError && (
+          <div
+            className="knowledge-task__action-error"
+            id={actionErrorId}
+            role="alert"
+          >
+            <strong>
+              {t(
+                actionError.action === 'cancel'
+                  ? 'tasks.actionErrors.cancelTitle'
+                  : 'tasks.actionErrors.retryTitle'
+              )}
+            </strong>
+            <span>{actionError.message}</span>
+            <span>{t('tasks.actionErrors.recovery')}</span>
+          </div>
+        )}
+        {hasChildren && isExpanded && (
+          <ol className="knowledge-task__children" id={detailsId}>
+            {children.map((child) => renderTask(child, true))}
+          </ol>
+        )}
+      </li>
+    )
+  }
 
   if (tasks.length === 0) {
     return (
@@ -1922,14 +3203,17 @@ function KnowledgeTasksView({
   }
 
   return (
-    <section aria-labelledby="knowledge-tasks-title">
+    <section
+      aria-labelledby="knowledge-tasks-title"
+      className="knowledge-tasks"
+    >
       <div className="knowledge-tasks__summary">
         <div>
           <h3 id="knowledge-tasks-title" style={{ margin: 0 }}>
             {t('tasks.title')}
           </h3>
           <p style={{ ...styles.muted, margin: '5px 0 0' }}>
-            {t('tasks.recentCount', {
+            {t('tasks.totalCount', {
               count: formatNumber(tasks.length, locale)
             })}
           </p>
@@ -1945,48 +3229,45 @@ function KnowledgeTasksView({
               count: formatNumber(failedCount, locale)
             })}
           </span>
+          <span>
+            {t('tasks.historyCount', {
+              count: formatNumber(historyCount, locale)
+            })}
+          </span>
         </div>
       </div>
+      <div className="knowledge-tasks__toolbar">
+        <SegmentedControl
+          ariaLabel={t('tasks.filters.ariaLabel')}
+          onChange={setFilter}
+          options={filterOptions}
+          value={filter}
+        />
+        {context && (
+          <div className="knowledge-tasks__context">
+            <span>{t('tasks.context.active')}</span>
+            <button
+              className="secondary-button"
+              onClick={onClearContext}
+              type="button"
+            >
+              {t('tasks.context.clear')}
+            </button>
+          </div>
+        )}
+      </div>
+      {topLevelTasks.length === 0 ? (
+        <EmptyState
+          description={t('tasks.noResultsDescription')}
+          icon={<ListChecks size={28} />}
+          level="section"
+          title={t('tasks.noResultsTitle')}
+        />
+      ) : (
       <ol className="knowledge-task-list">
-        {tasks.map((task) => (
-          <li className="knowledge-task" key={task.id}>
-            <div className="knowledge-task__heading">
-              <div>
-                <strong>{task.documentName}</strong>
-                <span>{t(taskKindLabelKeys[task.kind])}</span>
-              </div>
-              <span
-                className={`knowledge-task__status knowledge-task__status--${task.status}`}
-              >
-                {t(taskStatusLabelKeys[task.status])}
-              </span>
-            </div>
-            <div className="knowledge-task__progress">
-              <progress
-                aria-label={t('tasks.progressAriaLabel', {
-                  name: task.documentName,
-                  kind: t(taskKindLabelKeys[task.kind])
-                })}
-                max={100}
-                value={task.progress}
-              />
-              <span>
-                {formatPercent(task.progress / 100, locale)}
-              </span>
-            </div>
-            <div className="knowledge-task__meta">
-              <span>{task.message || t('tasks.waiting')}</span>
-              <time dateTime={task.completedAt ?? task.startedAt ?? task.createdAt}>
-                {formatDateTime(
-                  task.completedAt ?? task.startedAt ?? task.createdAt,
-                  locale,
-                  t
-                )}
-              </time>
-            </div>
-          </li>
-        ))}
+        {topLevelTasks.map((task) => renderTask(task))}
       </ol>
+      )}
     </section>
   )
 }
@@ -1994,11 +3275,13 @@ function KnowledgeTasksView({
 function GraphRelationPath({
   nodeMap,
   onSelectNode,
-  relation
+  relation,
+  relationLabel
 }: {
   nodeMap: ReadonlyMap<string, KnowledgeGraphNode>
   onSelectNode: (nodeId: string) => void
   relation: KnowledgeGraphRelation
+  relationLabel: (type: string) => string
 }): React.JSX.Element {
   const { t } = useTranslation('knowledge')
   const source = nodeMap.get(relation.sourceId)
@@ -2016,7 +3299,7 @@ function GraphRelationPath({
       </button>
       <span className="knowledge-graph__relation-type">
         <ArrowRight aria-hidden="true" size={13} />
-        {relation.type}
+        {relationLabel(relation.type)}
       </span>
       <button
         className="knowledge-graph__entity-link"
@@ -2067,6 +3350,7 @@ function GraphView({
   graphNodes,
   graphRelations,
   libraryId,
+  ontology,
   onCreateEntity,
   onCreateRelation,
   onDeleteEntity,
@@ -2094,9 +3378,38 @@ function GraphView({
   | 'onUpdateRelation'
 > & {
   libraryId: string
+  ontology: KnowledgeOntologySettings
 }): React.JSX.Element {
   const { i18n, t } = useTranslation('knowledge')
   const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
+  const ontologyDisplay = useMemo(
+    () =>
+      getKnowledgeOntologyDisplayDefinitions(
+        ontology,
+        locale === 'zh-CN' ? 'zh' : 'en'
+      ),
+    [locale, ontology]
+  )
+  const entityTypeLabel = useCallback(
+    (type: string) => {
+      const canonical = normalizeEntityTypeAlias(type, ontology)
+      const definition = ontologyDisplay.entityTypes.find(
+        (candidate) => candidate.id === canonical
+      )
+      return definition ? `${definition.label} (${definition.id})` : type
+    },
+    [ontology, ontologyDisplay.entityTypes]
+  )
+  const relationTypeLabel = useCallback(
+    (type: string) => {
+      const canonical = normalizeRelationTypeAlias(type, ontology)
+      const definition = ontologyDisplay.relationTypes.find(
+        (candidate) => candidate.id === canonical
+      )
+      return definition ? `${definition.label} (${definition.id})` : type
+    },
+    [ontology, ontologyDisplay.relationTypes]
+  )
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [selectedNodeId, setSelectedNodeId] = useState<string>()
@@ -2106,6 +3419,7 @@ function GraphView({
     useState<KnowledgeGraphRelation | 'new'>()
   const [mergeTargetId, setMergeTargetId] = useState('')
   const [zoom, setZoom] = useState(1)
+  const [fitViewRequest, setFitViewRequest] = useState(0)
   const [sidebarTab, setSidebarTab] =
     useState<GraphSidebarTab>('topology')
   const [reextracting, setReextracting] = useState(false)
@@ -2117,22 +3431,29 @@ function GraphView({
   )
   const types = useMemo(
     () =>
-      Array.from(new Set(graphNodes.map((node) => node.type))).sort(
-        (left, right) => left.localeCompare(right, locale)
+      Array.from(
+        new Set(
+          graphNodes.map((node) =>
+            normalizeEntityTypeAlias(node.type, ontology)
+          )
+        )
+      ).sort((left, right) =>
+        entityTypeLabel(left).localeCompare(entityTypeLabel(right), locale)
       ),
-    [graphNodes, locale]
+    [entityTypeLabel, graphNodes, locale, ontology]
   )
   const visibleNodes = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase(locale)
     return graphNodes.filter(
       (node) =>
-        (typeFilter === 'all' || node.type === typeFilter) &&
+        (typeFilter === 'all' ||
+          normalizeEntityTypeAlias(node.type, ontology) === typeFilter) &&
         (!normalized ||
           `${node.label} ${node.type} ${node.description ?? ''} ${(node.aliases ?? []).join(' ')}`
             .toLocaleLowerCase(locale)
             .includes(normalized))
     )
-  }, [graphNodes, locale, query, typeFilter])
+  }, [graphNodes, locale, ontology, query, typeFilter])
   const visibleIds = useMemo(
     () => new Set(visibleNodes.map((node) => node.id)),
     [visibleNodes]
@@ -2215,7 +3536,7 @@ function GraphView({
             <option value="all">{t('graph.allTypes')}</option>
             {types.map((type) => (
               <option key={type} value={type}>
-                {type}
+                {entityTypeLabel(type)}
               </option>
             ))}
           </select>
@@ -2236,7 +3557,7 @@ function GraphView({
             <option value="">{t('graph.selectEntity')}</option>
             {visibleNodes.map((node) => (
               <option key={node.id} value={node.id}>
-                {node.label} · {node.type}
+                {node.label} · {entityTypeLabel(node.type)}
               </option>
             ))}
           </select>
@@ -2307,6 +3628,15 @@ function GraphView({
           >
             <ZoomIn aria-hidden="true" size={16} />
           </button>
+          <button
+            className="secondary-button"
+            onClick={() => setFitViewRequest((current) => current + 1)}
+            style={styles.button}
+            type="button"
+          >
+            <RotateCcw aria-hidden="true" size={15} />
+            {t('graph.fitView')}
+          </button>
           {reextractError && (
             <span
               className="knowledge-graph__toolbar-error"
@@ -2333,6 +3663,7 @@ function GraphView({
           </div>
         ) : (
           <KnowledgeGraphChart
+            fitViewRequest={fitViewRequest}
             nodes={visibleNodes}
             onMoveNode={onMoveNode}
             onSelectNode={selectNode}
@@ -2371,6 +3702,9 @@ function GraphView({
                 })}
               </span>
             </div>
+            <p className="knowledge-graph__interaction-hint">
+              {t('graph.interactionHint')}
+            </p>
             {visibleRelations.length === 0 ? (
               <p className="knowledge-graph__panel-empty">
                 {t('graph.visibleRelations.empty')}
@@ -2389,6 +3723,7 @@ function GraphView({
                       nodeMap={nodeMap}
                       onSelectNode={selectNode}
                       relation={relation}
+                      relationLabel={relationTypeLabel}
                     />
                     {relation.description && (
                       <p>{relation.description}</p>
@@ -2419,6 +3754,7 @@ function GraphView({
           >
             <h3 style={{ marginTop: 0 }}>{t('actions.addEntity')}</h3>
             <EntityEditor
+              ontology={ontology}
               onCancel={() => {
                 setCreatingEntity(false)
                 setSidebarTab('topology')
@@ -2459,7 +3795,7 @@ function GraphView({
           >
             <div>
               <span style={{ color: 'var(--accent)', fontSize: 12 }}>
-                {selectedNode.type}
+                {entityTypeLabel(selectedNode.type)}
               </span>
               <h3 style={{ margin: '4px 0 0' }}>{selectedNode.label}</h3>
             </div>
@@ -2481,6 +3817,7 @@ function GraphView({
             <div style={{ marginTop: 14 }}>
               <EntityEditor
                 node={selectedNode}
+                ontology={ontology}
                 onCancel={() => setEditingEntity(false)}
                 onSave={async (update) => {
                   await onUpdateEntity(selectedNode.id, update)
@@ -2549,6 +3886,7 @@ function GraphView({
           {relationForm && (
             <RelationForm
               nodes={graphNodes}
+              ontology={ontology}
               onCancel={() => setRelationForm(undefined)}
               onSave={async (input) => {
                 if (relationForm === 'new') {
@@ -2577,6 +3915,7 @@ function GraphView({
                     nodeMap={nodeMap}
                     onSelectNode={selectNode}
                     relation={relation}
+                    relationLabel={relationTypeLabel}
                   />
                   {relation.description && (
                     <p>{relation.description}</p>
@@ -2780,6 +4119,19 @@ export function KnowledgeWorkspace({
   onPauseSource,
   onRetrySource,
   onRemoveSource,
+  onRetrieve,
+  onUpdateKnowledgeSettings,
+  onListChunks,
+  onUpdateChunk,
+  onDeleteChunk,
+  onRebuildDocument,
+  onRebuildLibrary,
+  onCancelRebuild,
+  onGetEmbeddingIndex,
+  onRebuildEmbeddingIndex,
+  onCancelTask,
+  onRetryTask,
+  onOpenReferenceSource,
   onMoveNode,
   onCreateEntity,
   onUpdateEntity,
@@ -2795,10 +4147,38 @@ export function KnowledgeWorkspace({
   const [creating, setCreating] = useState(false)
   const [mobileListOpen, setMobileListOpen] = useState(false)
   const [tab, setTab] = useState<WorkspaceTab>('documents')
+  const [graphTab, setGraphTab] =
+    useState<GraphWorkspaceTab>('explore')
+  const [taskContext, setTaskContext] =
+    useState<KnowledgeTaskContext>()
   const [editingLibrary, setEditingLibrary] =
     useState<KnowledgeLibrary>()
   const [deletingLibrary, setDeletingLibrary] =
     useState<KnowledgeLibrary>()
+  const [retrievalOpen, setRetrievalOpen] = useState(false)
+  const [retrievalStatus, setRetrievalStatus] =
+    useState<'idle' | 'running' | 'error' | 'success'>('idle')
+  const [retrievalError, setRetrievalError] = useState<string>()
+  const [retrievalResponse, setRetrievalResponse] =
+    useState<KnowledgeRetrievalWorkbenchResponse>()
+  const [savingRetrievalSettings, setSavingRetrievalSettings] =
+    useState(false)
+  const [chunkDocument, setChunkDocument] =
+    useState<KnowledgeDocumentItem>()
+  const [chunkPage, setChunkPage] = useState<KnowledgeChunkPage>({
+    items: [],
+    page: 1,
+    pageSize: 50,
+    totalItems: 0
+  })
+  const [chunkQuery, setChunkQuery] = useState('')
+  const [selectedChunkId, setSelectedChunkId] = useState<string>()
+  const [chunkLoading, setChunkLoading] = useState(false)
+  const [chunkError, setChunkError] = useState<string>()
+  const [savingChunkId, setSavingChunkId] = useState<string>()
+  const [deletingChunkId, setDeletingChunkId] = useState<string>()
+  const [rebuildingDocument, setRebuildingDocument] = useState(false)
+  const chunkRequestIdRef = useRef(0)
   const editLibraryTriggerRef = useRef<HTMLButtonElement>(null)
   const deleteLibraryTriggerRef = useRef<HTMLButtonElement>(null)
   const selectedLibrary =
@@ -2816,6 +4196,55 @@ export function KnowledgeWorkspace({
     ? tasks.filter((task) => task.libraryId === selectedLibrary.id)
     : []
 
+  const loadChunks = async (
+    document: KnowledgeDocumentItem,
+    page: number,
+    search: string
+  ): Promise<void> => {
+    const requestId = ++chunkRequestIdRef.current
+    setChunkLoading(true)
+    setChunkError(undefined)
+    try {
+      const result = await onListChunks({
+        libraryId: document.libraryId,
+        documentId: document.id,
+        page,
+        pageSize: chunkPage.pageSize,
+        search: search || undefined
+      })
+      if (requestId !== chunkRequestIdRef.current) {
+        return
+      }
+      setChunkPage(result)
+      setChunkQuery(search)
+    } catch (reason) {
+      if (requestId === chunkRequestIdRef.current) {
+        setChunkError(toErrorMessage(reason, t))
+      }
+    } finally {
+      if (requestId === chunkRequestIdRef.current) {
+        setChunkLoading(false)
+      }
+    }
+  }
+
+  const openChunkManager = (
+    document: KnowledgeDocumentItem,
+    chunkId?: string,
+    search = ''
+  ): void => {
+    setChunkDocument(document)
+    setSelectedChunkId(chunkId)
+    setChunkPage((current) => ({
+      items: [],
+      page: 1,
+      pageSize: current.pageSize,
+      totalItems: 0
+    }))
+    setChunkQuery(search)
+    void loadChunks(document, 1, search)
+  }
+
   useEffect(() => {
     if (
       selectedLibrary &&
@@ -2824,18 +4253,23 @@ export function KnowledgeWorkspace({
       onSelectLibrary(selectedLibrary.id)
     }
   }, [onSelectLibrary, selectedLibrary, selectedLibraryId])
-  const visibleTab = tab
+  const visibleTab =
+    tab === 'graph' && !selectedLibrary?.graphEnabled
+      ? 'settings'
+      : tab
   const workspaceTabs: ReadonlyArray<PageTab<WorkspaceTab>> = [
     {
       id: 'documents',
       label: t('tabs.documents'),
       icon: <FileText aria-hidden="true" size={15} />
     },
-    {
-      id: 'graph',
-      label: t('tabs.graph'),
-      icon: <Network aria-hidden="true" size={15} />
-    },
+    ...(selectedLibrary?.graphEnabled
+      ? [{
+          id: 'graph' as const,
+          label: t('tabs.graph'),
+          icon: <Network aria-hidden="true" size={15} />
+        }]
+      : []),
     {
       id: 'tasks',
       label: t('tabs.tasks'),
@@ -2939,6 +4373,8 @@ export function KnowledgeWorkspace({
                         onClick={() => {
                           onSelectLibrary(library.id)
                           setTab('documents')
+                          setGraphTab('explore')
+                          setTaskContext(undefined)
                           setMobileListOpen(false)
                         }}
                         style={{
@@ -3140,6 +4576,20 @@ export function KnowledgeWorkspace({
               >
                 <button
                   className="secondary-button"
+                  onClick={() => {
+                    setRetrievalStatus('idle')
+                    setRetrievalError(undefined)
+                    setRetrievalResponse(undefined)
+                    setRetrievalOpen(true)
+                  }}
+                  style={styles.button}
+                  type="button"
+                >
+                  <Search aria-hidden="true" size={15} />
+                  {t('retrieval.title')}
+                </button>
+                <button
+                  className="secondary-button"
                   onClick={() => setEditingLibrary(selectedLibrary)}
                   ref={editLibraryTriggerRef}
                   style={styles.button}
@@ -3185,53 +4635,110 @@ export function KnowledgeWorkspace({
                   onImportDirectory={onImportDirectory}
                   onImportFiles={onImportFiles}
                   onImportUrl={onImportUrl}
+                  onManageChunks={openChunkManager}
                   onPauseSource={onPauseSource}
                   onRemoveSource={onRemoveSource}
                   onRetrySource={onRetrySource}
                   onSyncSource={onSyncSource}
+                  onViewTasks={(context) => {
+                    setTaskContext(context)
+                    setTab('tasks')
+                  }}
                   sources={librarySources}
-                />
-              ) : visibleTab === 'graph' &&
-                selectedLibrary.graphEnabled ? (
-                <GraphView
-                  evidence={evidence}
-                  graphNodes={graphNodes}
-                  graphRelations={graphRelations}
-                  libraryId={selectedLibrary.id}
-                  onCreateEntity={onCreateEntity}
-                  onCreateRelation={onCreateRelation}
-                  onDeleteEntity={onDeleteEntity}
-                  onDeleteRelation={onDeleteRelation}
-                  onMergeEntities={onMergeEntities}
-                  onMoveNode={onMoveNode}
-                  onOpenEvidence={onOpenEvidence}
-                  onReextractGraph={onReextractGraph}
-                  onUpdateEntity={onUpdateEntity}
-                  onUpdateRelation={onUpdateRelation}
+                  tasks={libraryTasks}
                 />
               ) : visibleTab === 'graph' ? (
-                <EmptyState
-                  action={
-                    <button
-                      className="secondary-button"
-                      onClick={() => setTab('settings')}
-                      style={styles.button}
-                      type="button"
-                    >
-                      <Settings2 aria-hidden="true" size={15} />
-                      {t('actions.goToSettings')}
-                    </button>
-                  }
-                  description={t('graph.disabledDescription')}
-                  icon={<Network size={30} />}
-                  level="section"
-                  title={t('graph.disabledTitle')}
-                />
+                <div className="knowledge-graph-workspace">
+                  <PageTabs
+                    ariaLabel={t('graph.workspace.tabsAriaLabel')}
+                    idPrefix="knowledge-graph-workspace"
+                    onChange={setGraphTab}
+                    tabs={[
+                      {
+                        id: 'explore',
+                        label: t('graph.workspace.explore'),
+                        icon: <Network aria-hidden="true" size={15} />
+                      },
+                      {
+                        id: 'settings',
+                        label: t('graph.workspace.settings'),
+                        icon: <Settings2 aria-hidden="true" size={15} />
+                      }
+                    ]}
+                    value={graphTab}
+                    variant="segmented"
+                  />
+                  <div
+                    aria-labelledby={`knowledge-graph-workspace-tab-${graphTab}`}
+                    id={`knowledge-graph-workspace-panel-${graphTab}`}
+                    role="tabpanel"
+                  >
+                    {graphTab === 'explore' ? (
+                      <GraphView
+                        evidence={evidence}
+                        graphNodes={graphNodes}
+                        graphRelations={graphRelations}
+                        libraryId={selectedLibrary.id}
+                        ontology={
+                          selectedLibrary.ontologySettings ??
+                          defaultKnowledgeOntologySettings
+                        }
+                        onCreateEntity={onCreateEntity}
+                        onCreateRelation={onCreateRelation}
+                        onDeleteEntity={onDeleteEntity}
+                        onDeleteRelation={onDeleteRelation}
+                        onMergeEntities={onMergeEntities}
+                        onMoveNode={onMoveNode}
+                        onOpenEvidence={onOpenEvidence}
+                        onReextractGraph={onReextractGraph}
+                        onUpdateEntity={onUpdateEntity}
+                        onUpdateRelation={onUpdateRelation}
+                      />
+                    ) : (
+                      <KnowledgeSettingsView
+                        key={`${selectedLibrary.id}:graph:${selectedLibrary.updatedAt ?? ''}`}
+                        library={selectedLibrary}
+                        mode="graph"
+                        onCancelRebuild={onCancelRebuild}
+                        onGetEmbeddingIndex={onGetEmbeddingIndex}
+                        onRebuildLibrary={onRebuildLibrary}
+                        onRebuildEmbeddingIndex={onRebuildEmbeddingIndex}
+                        onViewTasks={() => {
+                          setTaskContext(undefined)
+                          setTab('tasks')
+                        }}
+                        onUpdateKnowledgeSettings={
+                          onUpdateKnowledgeSettings
+                        }
+                        onUpdateLibrary={onUpdateLibrary}
+                      />
+                    )}
+                  </div>
+                </div>
               ) : visibleTab === 'tasks' ? (
-                <KnowledgeTasksView tasks={libraryTasks} />
+                <KnowledgeTasksView
+                  context={taskContext}
+                  onCancelTask={onCancelTask}
+                  onClearContext={() => setTaskContext(undefined)}
+                  onRetryTask={onRetryTask}
+                  tasks={libraryTasks}
+                />
               ) : (
                 <KnowledgeSettingsView
+                  key={`${selectedLibrary.id}:index:${selectedLibrary.updatedAt ?? ''}`}
                   library={selectedLibrary}
+                  mode="index"
+                  onCancelRebuild={onCancelRebuild}
+                  onGetEmbeddingIndex={onGetEmbeddingIndex}
+                  onRebuildLibrary={onRebuildLibrary}
+                  onRebuildEmbeddingIndex={onRebuildEmbeddingIndex}
+                  onViewTasks={() => {
+                    setTaskContext(undefined)
+                    setTab('tasks')
+                  }}
+                  onUpdateKnowledgeSettings={
+                    onUpdateKnowledgeSettings
+                  }
                   onUpdateLibrary={onUpdateLibrary}
                 />
               )}
@@ -3253,6 +4760,175 @@ export function KnowledgeWorkspace({
           library={deletingLibrary}
           onCancel={closeDeleteDialog}
           onConfirm={() => onDeleteLibrary(deletingLibrary.id)}
+        />
+      )}
+      {retrievalOpen && selectedLibrary && (
+        <KnowledgeRetrievalWorkbench
+          error={retrievalError}
+          graphAvailable={selectedLibrary.graphEnabled}
+          libraryName={selectedLibrary.name}
+          onClose={() => setRetrievalOpen(false)}
+          onOpenSource={(result) => {
+            void Promise.resolve(
+              onOpenReferenceSource({
+                knowledgeBaseId: selectedLibrary.id,
+                documentId: result.documentId,
+                chunkId: result.chunkId
+              })
+            ).catch((reason) => {
+              setRetrievalError(toErrorMessage(reason, t))
+              setRetrievalStatus('error')
+            })
+          }}
+          onSaveDefaults={async (settings) => {
+            setSavingRetrievalSettings(true)
+            setRetrievalError(undefined)
+            try {
+              await onUpdateKnowledgeSettings(selectedLibrary.id, {
+                retrieval: {
+                  ...(
+                    selectedLibrary.retrievalSettings ??
+                    defaultKnowledgeRetrievalSettings
+                  ),
+                  ...settings
+                }
+              })
+            } catch (reason) {
+              setRetrievalError(toErrorMessage(reason, t))
+              setRetrievalStatus('error')
+            } finally {
+              setSavingRetrievalSettings(false)
+            }
+          }}
+          onTest={async ({ query, settings }) => {
+            setRetrievalStatus('running')
+            setRetrievalError(undefined)
+            try {
+              const response = await onRetrieve(
+                selectedLibrary.id,
+                query,
+                {
+                  ...(
+                    selectedLibrary.retrievalSettings ??
+                    defaultKnowledgeRetrievalSettings
+                  ),
+                  ...settings
+                }
+              )
+              setRetrievalResponse(
+                toWorkbenchResponse(
+                  response,
+                  selectedLibrary.documentCount
+                )
+              )
+              setRetrievalStatus('success')
+            } catch (reason) {
+              setRetrievalError(toErrorMessage(reason, t))
+              setRetrievalStatus('error')
+            }
+          }}
+          onViewContext={(result) => {
+            const document = libraryDocuments.find(
+              (item) => item.id === result.documentId
+            )
+            if (!document) {
+              setRetrievalError(t('chunks.documentUnavailable'))
+              setRetrievalStatus('error')
+              return
+            }
+            setRetrievalOpen(false)
+            openChunkManager(document, result.chunkId)
+          }}
+          response={retrievalResponse}
+          savingDefaults={savingRetrievalSettings}
+          settings={
+            (selectedLibrary.retrievalSettings ??
+              defaultKnowledgeRetrievalSettings) satisfies
+              KnowledgeRetrievalWorkbenchSettings
+          }
+          status={retrievalStatus}
+        />
+      )}
+      {chunkDocument && (
+        <KnowledgeChunkManager
+          deletingChunkId={deletingChunkId}
+          documentId={chunkDocument.id}
+          documentName={chunkDocument.name}
+          error={chunkError}
+          loading={chunkLoading}
+          maxChunkCharacters={48_000}
+          onClose={() => {
+            chunkRequestIdRef.current += 1
+            setChunkDocument(undefined)
+          }}
+          onDeleteChunk={async (chunkId) => {
+            setDeletingChunkId(chunkId)
+            setChunkError(undefined)
+            try {
+              await onDeleteChunk({
+                knowledgeBaseId: chunkDocument.libraryId,
+                documentId: chunkDocument.id,
+                chunkId
+              })
+              setSelectedChunkId(undefined)
+              await loadChunks(
+                chunkDocument,
+                chunkPage.page,
+                chunkQuery
+              )
+            } catch (reason) {
+              setChunkError(toErrorMessage(reason, t))
+              throw reason
+            } finally {
+              setDeletingChunkId(undefined)
+            }
+          }}
+          onList={({ page, query }) =>
+            loadChunks(chunkDocument, page, query)
+          }
+          onRebuildDocument={async () => {
+            setRebuildingDocument(true)
+            setChunkError(undefined)
+            try {
+              await onRebuildDocument(
+                chunkDocument.libraryId,
+                chunkDocument.id
+              )
+              setSelectedChunkId(undefined)
+              await loadChunks(chunkDocument, 1, '')
+            } catch (reason) {
+              setChunkError(toErrorMessage(reason, t))
+            } finally {
+              setRebuildingDocument(false)
+            }
+          }}
+          onSelectChunk={setSelectedChunkId}
+          onUpdateChunk={async (chunkId, update) => {
+            setSavingChunkId(chunkId)
+            setChunkError(undefined)
+            try {
+              await onUpdateChunk({
+                knowledgeBaseId: chunkDocument.libraryId,
+                documentId: chunkDocument.id,
+                chunkId,
+                ...update
+              })
+              await loadChunks(
+                chunkDocument,
+                chunkPage.page,
+                chunkQuery
+              )
+            } catch (reason) {
+              setChunkError(toErrorMessage(reason, t))
+            } finally {
+              setSavingChunkId(undefined)
+            }
+          }}
+          page={chunkPage}
+          query={chunkQuery}
+          rebuilding={rebuildingDocument}
+          savingChunkId={savingChunkId}
+          selectedChunkId={selectedChunkId}
         />
       )}
       </section>

@@ -530,6 +530,89 @@ const api: DesktopApi = {
     retrySource: vi.fn(async () => {}),
     removeSource: vi.fn(async () => {}),
     search: vi.fn(async () => []),
+    retrieve: vi.fn(async (input) => ({
+      query: input.query,
+      durationMs: 0,
+      settings: input.settings ?? {
+        version: 1,
+        topK: 6,
+        minimumVectorSimilarity: 0,
+        ftsWeight: 1,
+        vectorWeight: 1,
+        graphWeight: 0.8,
+        candidateMultiplier: 4,
+        contextMaxCharacters: 16_000,
+        adjacentChunkCount: 0,
+        localRerankEnabled: false,
+        rerankMode: 'none'
+      },
+      diagnostics: {
+        requestedChannels: [],
+        usedChannels: [],
+        degradedChannels: [],
+        candidateCounts: {},
+        channelDurationMs: {},
+        vectorScannedCount: 0,
+        filteredByThresholdCount: 0,
+        filteredByBudgetCount: 0,
+        rerank: {
+          requested: 'none' as const,
+          used: 'none' as const,
+          status: 'skipped' as const,
+          candidateCount: 0,
+          durationMs: 0
+        }
+      },
+      results: [],
+      context: {
+        characterCount: 0,
+        truncated: false,
+        groups: []
+      }
+    })),
+    updateSettings: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    listChunks: vi.fn(async () => ({
+      items: [],
+      page: 1,
+      pageSize: 50,
+      totalItems: 0
+    })),
+    updateChunk: vi.fn(async () => {}),
+    deleteChunk: vi.fn(async () => {}),
+    rebuildDocument: vi.fn(async () => ({
+      libraries: [],
+      sources: [],
+      documents: [],
+      graphNodes: [],
+      graphRelations: [],
+      evidence: []
+    })),
+    rebuildLibrary: vi.fn(async () => ({
+      rebuilt: 0,
+      failed: 0
+    })),
+    cancelRebuild: vi.fn(async () => true),
+    getEmbeddingIndex: vi.fn(async (knowledgeBaseId: string) => ({
+      knowledgeBaseId,
+      enabled: false,
+      coverage: { total: 0, indexed: 0, missing: 0, error: 0 },
+      indexStatus: { job: null }
+    })),
+    rebuildEmbeddingIndex: vi.fn(async (knowledgeBaseId: string) => ({
+      knowledgeBaseId,
+      enabled: false,
+      coverage: { total: 0, indexed: 0, missing: 0, error: 0 },
+      indexStatus: { job: null }
+    })),
+    cancelEmbeddingIndex: vi.fn(async () => false),
+    cancelTask: vi.fn(async () => false),
+    retryTask: vi.fn(async () => {}),
+    getReferenceContext: vi.fn(async () => {
+      throw new Error('not used')
+    }),
+    openReferenceSource: vi.fn(async () => {}),
     createEntity: vi.fn(async () => {}),
     updateEntity: vi.fn(async () => {}),
     moveEntity: vi.fn(async () => {}),
@@ -1422,7 +1505,8 @@ describe('App', () => {
     const request = run.mock.calls[0]?.[0]
     expect(request).toMatchObject({
       prompt: '发布流程是什么？',
-      knowledgeLibraryIds: [libraryId]
+      knowledgeLibraryIds: [libraryId],
+      knowledgeRetrievalMode: 'auto'
     })
     expect(api.knowledge.search).not.toHaveBeenCalled()
     expect(
@@ -1441,6 +1525,7 @@ describe('App', () => {
             libraryId,
             libraryName: '产品知识',
             documentId: crypto.randomUUID(),
+            chunkId: crypto.randomUUID(),
             documentName: `发布手册 ${batch}-${index}`,
             sourceName: `release-${batch}-${index}.md`,
             locator: `第 ${batch}-${index} 节`,
@@ -1457,6 +1542,35 @@ describe('App', () => {
     expect(
       await screen.findByText('查看 20 条证据引用')
     ).toBeInTheDocument()
+    vi.mocked(api.knowledge.getReferenceContext).mockResolvedValueOnce({
+      knowledgeBaseId: libraryId,
+      documentId: 'document-context',
+      chunkId: 'chunk-context',
+      documentTitle: '发布手册',
+      sourceDisplayName: 'release.md',
+      locator: '第 4 节',
+      matchedContent: '命中分块内容',
+      contextContent: '上文\n\n命中分块内容\n\n下文',
+      contextChunkIds: ['chunk-context'],
+      truncated: false
+    })
+    fireEvent.click(screen.getByText('查看 20 条证据引用'))
+    fireEvent.click(
+      screen.getAllByRole('button', { name: '查看上下文' })[0]!
+    )
+    expect(
+      await screen.findByRole('dialog', { name: '引用上下文' })
+    ).toBeInTheDocument()
+    expect(api.knowledge.getReferenceContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledgeBaseId: libraryId
+      })
+    )
+    fireEvent.click(
+      screen.getAllByRole('button', {
+        name: '关闭引用上下文'
+      })[0]!
+    )
     await waitFor(
       () => {
         const persistedMessages = vi
@@ -1472,10 +1586,94 @@ describe('App', () => {
             (message) => message.sourceReferences?.length === 20
           )
         expect(persisted?.sourceReferences).toHaveLength(20)
-        expect(persisted?.sources).toHaveLength(100)
+        expect(persisted?.sources).toBeUndefined()
       },
       { timeout: 2_000 }
     )
+  })
+
+  it('persists and submits always-retrieve mode for the active conversation', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
+      libraries: [
+        {
+          id: libraryId,
+          name: '产品知识',
+          description: '',
+          storageMode: 'managed',
+          graphEnabled: false,
+          graphStrategy: 'rules',
+          sourceCount: 1,
+          documentCount: 1,
+          indexedDocumentCount: 1
+        }
+      ],
+      sources: [],
+      documents: [],
+      graphNodes: [],
+      graphRelations: [],
+      evidence: []
+    })
+    render(<App />)
+    const knowledgeScope = await screen.findByRole('button', {
+      name: '选择知识库，本次已启用 1 个'
+    })
+    fireEvent.click(knowledgeScope)
+    const retrievalMode = screen.getByRole('group', {
+      name: '知识检索方式'
+    })
+    fireEvent.click(
+      within(retrievalMode).getByRole('button', {
+        name: '每次先检索'
+      })
+    )
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '必须查询发布流程' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      prompt: '必须查询发布流程',
+      knowledgeLibraryIds: [libraryId],
+      knowledgeRetrievalMode: 'always'
+    })
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'knowledge-retrieval',
+        mode: 'always',
+        state: 'degraded',
+        libraryCount: 1,
+        resultCount: 2,
+        durationMs: 18,
+        usedChannels: ['fts', 'cjk'],
+        warnings: ['向量模型未配置']
+      })
+    })
+    expect(
+      await screen.findByText('知识检索已降级')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/已检索 1 个知识库，获得 2 条结果/u)
+    ).toBeInTheDocument()
+    expect(screen.getByText('向量模型未配置')).toBeInTheDocument()
+    await waitFor(() => {
+      const snapshots = vi
+        .mocked(api.conversations.replace)
+        .mock.calls.at(-1)?.[0]
+      expect(
+        snapshots?.some(
+          (conversation) =>
+            conversation.knowledgeRetrievalMode === 'always'
+        )
+      ).toBe(true)
+    })
   })
 
   it('keeps a running response visible when cancellation fails', async () => {
@@ -2355,34 +2553,6 @@ describe('App', () => {
     ).toHaveAttribute(
       'title',
       expect.stringContaining('Runtime 和模型')
-    )
-  })
-
-  it('normalizes a legacy Plan project default to Ask', async () => {
-    vi.mocked(api.projects.list).mockResolvedValueOnce([
-      {
-        ...project,
-        defaultWorkMode: 'plan'
-      }
-    ])
-    render(<App />)
-
-    const mode = await screen.findByRole('button', {
-      name: '工作模式：Ask · 只读问答'
-    })
-    expect(mode).toBeEnabled()
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '制定发布方案' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-
-    await waitFor(() =>
-      expect(run).toHaveBeenCalledWith(
-        expect.objectContaining({
-          prompt: '制定发布方案',
-          workMode: 'ask'
-        })
-      )
     )
   })
 

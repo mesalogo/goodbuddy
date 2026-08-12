@@ -119,8 +119,8 @@ export const settingsSections = {
   },
   embedding: {
     label: '向量模型',
-    title: '向量与知识检索',
-    description: '确认模型可用，并管理知识检索使用的向量索引',
+    title: '向量模型连接',
+    description: '查看当前配置并确认向量模型连接可用',
     model: {
       heading: '当前向量模型',
       configured: '已配置模型',
@@ -138,38 +138,6 @@ export const settingsSections = {
       testing: '正在测试…',
       test: '测试向量模型',
       notice: '测试会向当前服务发送一次实际请求，不会更改知识索引。'
-    },
-    index: {
-      heading: '知识向量索引',
-      rebuildRunning: '重建进行中…',
-      rebuild: '重建向量索引',
-      emptyTitle: '还没有重建记录',
-      emptyDescription:
-        '点击“重建向量索引”，为知识文档生成可用于检索的向量。',
-      statuses: {
-        queued: '重建等待开始',
-        running: '正在重建',
-        completed: '最近一次重建成功',
-        failed: '最近一次重建失败',
-        cancelled: '最近一次重建已取消'
-      },
-      cancelAria: '取消向量索引重建',
-      cancel: '取消重建',
-      progressAria: '向量索引重建进度',
-      completed: '已完成 {{completed}} / {{total}} 篇文档',
-      completedWithPeriod: '已完成 {{completed}} / {{total}} 篇文档。',
-      completedAt:
-        '已完成 {{completed}} / {{total}} 篇文档，完成于 {{date}}。',
-      preparing: '正在准备待处理文档…',
-      atomicNotice:
-        '每篇文档会一次性更新，处理完成后立即可用于检索。取消后，已完成文档会保留，其余文档的原有或缺失状态不变。',
-      cancelledNotice:
-        '已完成文档保留新向量；其余文档保留原有向量，原本没有向量的仍保持缺失。',
-      failedNotice:
-        '已完成 {{completed}} / {{total}} 篇文档。发生错误的文档已标记为错误，已完成文档仍可用于检索。',
-      remedyPrefix: '处理建议：',
-      defaultRemedy: '请检查向量模型配置和网络连接。',
-      retrySuffix: '修复后点击“重建向量索引”重试。'
     }
   },
   roles: {

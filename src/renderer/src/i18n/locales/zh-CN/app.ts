@@ -176,8 +176,41 @@ export const app = {
       view: '查看 {{count}} 条证据引用',
       retrieval: '检索：',
       fullText: '全文',
+      cjk: '中文词组',
       vector: '向量',
-      graph: '图谱'
+      graph: '图谱',
+      viewContext: '查看上下文',
+      openSource: '打开来源',
+      openFailed: '无法打开引用来源',
+      contextTitle: '引用上下文',
+      contextDescription: '查看本次命中的分块及其相邻内容。',
+      contextLoading: '正在读取引用上下文…',
+      contextUnavailable: '引用上下文不可用',
+      contextTruncated: '上下文超过安全展示上限，已截断。',
+      closeContext: '关闭引用上下文',
+      matchedChunk: '命中分块',
+      surroundingContext: '完整上下文',
+      score: '相关度 {{score}}'
+    },
+    knowledgeRetrieval: {
+      searching: '正在检索已启用的知识库',
+      states: {
+        searching: '正在检索知识库',
+        succeeded: '知识检索完成',
+        zero: '未找到相关知识',
+        degraded: '知识检索已降级',
+        failed: '知识检索失败',
+        cancelled: '知识检索已取消'
+      },
+      summary:
+        '已检索 {{libraries}} 个知识库，获得 {{results}} 条结果，用时 {{duration}} 毫秒',
+      channels: '使用通道：{{channels}}',
+      channelNames: {
+        fts: '全文',
+        cjk: '中文词组',
+        vector: '向量',
+        graph: '图谱'
+      }
     },
     retry: '重新编辑并发送',
     status: {
@@ -324,7 +357,12 @@ export const app = {
       select: '选择知识库，本次已启用 {{count}} 个',
       title: '选择本次对话检索的知识库',
       scope: '本次对话检索范围',
-      documents: '{{count}} 个文档'
+      documents: '{{count}} 个文档',
+      modeLabel: '知识检索方式',
+      auto: '模型决定',
+      always: '每次先检索',
+      autoDescription: '由模型判断当前问题是否需要查询知识库。',
+      alwaysDescription: '在模型回答前，由 GoodBuddy 先查询一次已启用知识库。'
     },
     hints: {
       configureRuntime: '请先配置可用的模型或 Agent Runtime。',
@@ -393,6 +431,11 @@ export const app = {
     selectKnowledgeBase: '请先选择知识库',
     knowledgeGraphRebuilt: '知识图谱已重新抽取',
     knowledgeSettingsUpdated: '知识库设置已更新',
+    knowledgeRebuildCompleted: '已重建 {{count}} 个文档',
+    knowledgeRebuildPartial:
+      '知识库重建未全部完成：成功 {{rebuilt}} 个，失败 {{failed}} 个',
+    knowledgeRebuildNotRunning: '当前没有可取消的知识库重建任务',
+    knowledgeTaskNotRunning: '该任务已结束或当前无法取消',
     evidenceExcerpt: '{{source}}：{{excerpt}}'
   },
   markdown: {

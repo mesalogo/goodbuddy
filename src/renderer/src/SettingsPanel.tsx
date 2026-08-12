@@ -49,11 +49,11 @@ import type { AppearanceTheme } from './theme'
 import type { AppNotificationInput } from './notifications'
 import type {
   EmbeddingDiagnosticResult,
-  EmbeddingSettingsSnapshot
+  EmbeddingConfigurationSummary
 } from '../../shared/embedding-contracts'
 import { useUiLocale } from './i18n/UiLocaleProvider'
 
-type ModelType = 'llm' | 'embedding' | 'speech'
+type ModelType = 'llm' | 'embedding' | 'rerank' | 'speech'
 type AgentRuntimeType = RuntimeConfigActionInput['runtime']
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   supportsImageInput: boolean
@@ -301,6 +301,16 @@ export function SettingsPanel({
     clearKnowledgeEmbeddingApiKey,
     setClearKnowledgeEmbeddingApiKey
   ] = useState(false)
+  const [knowledgeRerankEnabled, setKnowledgeRerankEnabled] =
+    useState<boolean>(defaultRuntimeSettings.knowledgeRerankEnabled)
+  const [knowledgeRerankEndpoint, setKnowledgeRerankEndpoint] =
+    useState<string>(defaultRuntimeSettings.knowledgeRerankEndpoint)
+  const [knowledgeRerankModel, setKnowledgeRerankModel] =
+    useState<string>(defaultRuntimeSettings.knowledgeRerankModel)
+  const [knowledgeRerankApiKey, setKnowledgeRerankApiKey] =
+    useState('')
+  const [clearKnowledgeRerankApiKey, setClearKnowledgeRerankApiKey] =
+    useState(false)
   const [workspacePath, setWorkspacePath] = useState<string>(
     defaultRuntimeSettings.workspacePath
   )
@@ -314,8 +324,8 @@ export function SettingsPanel({
   ] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [embeddingSnapshot, setEmbeddingSnapshot] =
-    useState<EmbeddingSettingsSnapshot>()
+  const [embeddingConfiguration, setEmbeddingConfiguration] =
+    useState<EmbeddingConfigurationSummary>()
   const [embeddingDiagnostic, setEmbeddingDiagnostic] =
     useState<EmbeddingDiagnosticResult>()
   const [embeddingDiagnosticRunning, setEmbeddingDiagnosticRunning] =
@@ -424,6 +434,20 @@ export function SettingsPanel({
         setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
         setKnowledgeEmbeddingApiKey('')
         setClearKnowledgeEmbeddingApiKey(false)
+        setKnowledgeRerankEnabled(
+          value.knowledgeRerankEnabled ??
+            defaultRuntimeSettings.knowledgeRerankEnabled
+        )
+        setKnowledgeRerankEndpoint(
+          value.knowledgeRerankEndpoint ??
+            defaultRuntimeSettings.knowledgeRerankEndpoint
+        )
+        setKnowledgeRerankModel(
+          value.knowledgeRerankModel ??
+            defaultRuntimeSettings.knowledgeRerankModel
+        )
+        setKnowledgeRerankApiKey('')
+        setClearKnowledgeRerankApiKey(false)
         setWorkspacePath(value.workspacePath)
         setToolApproval(
           value.toolApproval === 'policy' ? 'policy' : 'always'
@@ -470,7 +494,7 @@ export function SettingsPanel({
       .then((snapshot) => {
         if (active) {
           setEmbeddingDiagnostic(undefined)
-          setEmbeddingSnapshot(snapshot)
+          setEmbeddingConfiguration(snapshot.configuration)
         }
       })
       .catch((reason: unknown) => {
@@ -485,16 +509,8 @@ export function SettingsPanel({
           )
         }
       })
-    const unsubscribe = embeddings.onStatus((indexStatus) => {
-      if (active) {
-        setEmbeddingSnapshot((snapshot) =>
-          snapshot ? { ...snapshot, indexStatus } : snapshot
-        )
-      }
-    })
     return () => {
       active = false
-      unsubscribe()
     }
   }, [i18n, open])
 
@@ -512,6 +528,8 @@ export function SettingsPanel({
     )
     setKnowledgeEmbeddingApiKey('')
     setClearKnowledgeEmbeddingApiKey(false)
+    setKnowledgeRerankApiKey('')
+    setClearKnowledgeRerankApiKey(false)
     setSpeechModelDraftId(undefined)
     setPersistedSpeechModelId(undefined)
     setSpeechModelSelectionDirty(false)
@@ -577,6 +595,17 @@ export function SettingsPanel({
                 value: knowledgeEmbeddingApiKey.trim()
               }
             : { action: 'keep' },
+        knowledgeRerankEnabled,
+        knowledgeRerankEndpoint,
+        knowledgeRerankModel,
+        knowledgeRerankApiKey: clearKnowledgeRerankApiKey
+          ? { action: 'clear' }
+          : knowledgeRerankApiKey.trim()
+            ? {
+                action: 'replace',
+                value: knowledgeRerankApiKey.trim()
+              }
+            : { action: 'keep' },
         workspacePath,
         apiKey: profileInputs.find(
           (profile) => profile.id === defaultProfile.id
@@ -621,6 +650,20 @@ export function SettingsPanel({
       setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
       setKnowledgeEmbeddingApiKey('')
       setClearKnowledgeEmbeddingApiKey(false)
+      setKnowledgeRerankEnabled(
+        value.knowledgeRerankEnabled ??
+          defaultRuntimeSettings.knowledgeRerankEnabled
+      )
+      setKnowledgeRerankEndpoint(
+        value.knowledgeRerankEndpoint ??
+          defaultRuntimeSettings.knowledgeRerankEndpoint
+      )
+      setKnowledgeRerankModel(
+        value.knowledgeRerankModel ??
+          defaultRuntimeSettings.knowledgeRerankModel
+      )
+      setKnowledgeRerankApiKey('')
+      setClearKnowledgeRerankApiKey(false)
       setToolApproval(
         value.toolApproval === 'policy' ? 'policy' : 'always'
       )
@@ -635,7 +678,9 @@ export function SettingsPanel({
       const embeddings = window.goodbuddy.embeddings
       if (embeddings) {
         try {
-          setEmbeddingSnapshot(await embeddings.getSnapshot())
+          setEmbeddingConfiguration(
+            (await embeddings.getSnapshot()).configuration
+          )
         } catch (reason) {
           setError(
             settingsErrorMessage(
@@ -730,49 +775,13 @@ export function SettingsPanel({
       }
       const diagnostic = await embeddings.diagnose()
       setEmbeddingDiagnostic(diagnostic)
-      setEmbeddingSnapshot(await embeddings.getSnapshot())
+      setEmbeddingConfiguration(
+        (await embeddings.getSnapshot()).configuration
+      )
     } catch (reason) {
       setError(settingsErrorMessage(reason, t('errors.testEmbedding')))
     } finally {
       setEmbeddingDiagnosticRunning(false)
-    }
-  }
-
-  const rebuildEmbeddingIndex = async (): Promise<void> => {
-    const embeddings = window.goodbuddy.embeddings
-    if (!embeddings) {
-      setError(t('errors.embeddingIndexUnavailable'))
-      return
-    }
-    setError(undefined)
-    try {
-      if (!(await save(false))) {
-        return
-      }
-      const indexStatus = await embeddings.rebuild()
-      setEmbeddingSnapshot((snapshot) =>
-        snapshot ? { ...snapshot, indexStatus } : snapshot
-      )
-    } catch (reason) {
-      setError(
-        settingsErrorMessage(reason, t('errors.rebuildEmbeddingIndex'))
-      )
-    }
-  }
-
-  const cancelEmbeddingIndex = async (jobId: string): Promise<void> => {
-    const embeddings = window.goodbuddy.embeddings
-    if (!embeddings) {
-      return
-    }
-    try {
-      if (!(await embeddings.cancel(jobId))) {
-        throw new Error(t('errors.embeddingJobFinished'))
-      }
-    } catch (reason) {
-      setError(
-        settingsErrorMessage(reason, t('errors.cancelEmbeddingIndex'))
-      )
     }
   }
 
@@ -1731,6 +1740,10 @@ export function SettingsPanel({
                   value: 'embedding'
                 },
                 {
+                  label: t('model.types.rerank.label'),
+                  value: 'rerank'
+                },
+                {
                   label: t('model.types.speech.label'),
                   value: 'speech'
                 }
@@ -1742,7 +1755,9 @@ export function SettingsPanel({
                 ? t('model.types.llm.description')
                 : modelType === 'embedding'
                   ? t('model.types.embedding.description')
-                  : t('model.types.speech.description')}
+                  : modelType === 'rerank'
+                    ? t('model.types.rerank.description')
+                    : t('model.types.speech.description')}
             </small>
           </div>
           {modelType === 'llm' && (
@@ -2225,23 +2240,114 @@ export function SettingsPanel({
               </div>
             </div>
           )}
-          {modelType === 'embedding' && embeddingSnapshot && (
+          {modelType === 'embedding' && embeddingConfiguration && (
             <EmbeddingSettingsSection
-              configuration={embeddingSnapshot.configuration}
+              configuration={embeddingConfiguration}
               diagnostic={embeddingDiagnostic}
               diagnosticRunning={embeddingDiagnosticRunning}
               disabled={saving || !knowledgeEmbeddingEnabled}
-              indexStatus={embeddingSnapshot.indexStatus}
-              onCancel={(jobId) => {
-                void cancelEmbeddingIndex(jobId)
-              }}
-              onRebuild={() => {
-                void rebuildEmbeddingIndex()
-              }}
               onTest={() => {
                 void runEmbeddingDiagnostic()
               }}
             />
+          )}
+          {modelType === 'rerank' && (
+            <div className="settings-section">
+              <div className="settings-section__title">
+                <KeyRound size={17} />
+                <div>
+                  <strong>{t('model.rerank.title')}</strong>
+                  <small>{t('model.rerank.description')}</small>
+                </div>
+              </div>
+              <div className="runtime-note">
+                <label className="toggle-row">
+                  <input
+                    checked={knowledgeRerankEnabled}
+                    onChange={(event) =>
+                      setKnowledgeRerankEnabled(event.target.checked)
+                    }
+                    role="switch"
+                    type="checkbox"
+                  />
+                  <span>{t('model.rerank.enabled')}</span>
+                </label>
+                <label className="field">
+                  <span>{t('model.rerank.endpoint')}</span>
+                  <input
+                    aria-label={t('model.rerank.endpoint')}
+                    disabled={!knowledgeRerankEnabled}
+                    inputMode="url"
+                    onChange={(event) =>
+                      setKnowledgeRerankEndpoint(event.target.value)
+                    }
+                    placeholder="https://api.cohere.com/v1/rerank"
+                    value={knowledgeRerankEndpoint}
+                  />
+                  <small>{t('model.rerank.endpointDescription')}</small>
+                </label>
+                <label className="field">
+                  <span>{t('model.rerank.modelName')}</span>
+                  <input
+                    aria-label={t('model.rerank.modelName')}
+                    disabled={!knowledgeRerankEnabled}
+                    onChange={(event) =>
+                      setKnowledgeRerankModel(event.target.value)
+                    }
+                    value={knowledgeRerankModel}
+                  />
+                </label>
+                <label className="field">
+                  <span>{t('model.rerank.optionalApiKey')}</span>
+                  <input
+                    aria-label={t('model.rerank.optionalApiKey')}
+                    autoComplete="off"
+                    disabled={
+                      !knowledgeRerankEnabled ||
+                      settings?.knowledgeRerankCredentialSource ===
+                        'environment' ||
+                      !settings?.secureStorageAvailable
+                    }
+                    onChange={(event) => {
+                      setKnowledgeRerankApiKey(event.target.value)
+                      setClearKnowledgeRerankApiKey(false)
+                    }}
+                    placeholder={
+                      settings?.knowledgeRerankApiKeyConfigured
+                        ? t('credentials.configuredPlaceholder')
+                        : t('model.rerank.optionalApiKeyPlaceholder')
+                    }
+                    type="password"
+                    value={knowledgeRerankApiKey}
+                  />
+                </label>
+                <div className="credential-state" aria-live="polite">
+                  <LockKeyhole size={15} />
+                  <span>
+                    {settings
+                      ? t(
+                          `credentials.${settings.knowledgeRerankCredentialSource ?? 'none'}`
+                        )
+                      : t('credentials.none')}
+                  </span>
+                  {settings?.knowledgeRerankCredentialSource ===
+                    'encrypted' && (
+                    <button
+                      onClick={() => {
+                        setKnowledgeRerankApiKey('')
+                        setClearKnowledgeRerankApiKey(true)
+                      }}
+                      type="button"
+                    >
+                      {clearKnowledgeRerankApiKey
+                        ? t('actions.clearAfterSave')
+                        : t('actions.clearCredential')}
+                    </button>
+                  )}
+                </div>
+                <small>{t('model.rerank.privacyDescription')}</small>
+              </div>
+            </div>
           )}
           {modelType === 'speech' && (
             <SpeechModelSettingsSection

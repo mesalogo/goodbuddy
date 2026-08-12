@@ -13,6 +13,9 @@ import {
   type KnowledgeWorkspaceProps
 } from './KnowledgeWorkspace'
 import i18n from './i18n'
+import {
+  defaultKnowledgeOntologySettings
+} from '../../shared/knowledge-ontology'
 
 const g6Mock = vi.hoisted(() => {
   const handlers = new Map<string, (event: unknown) => void>()
@@ -66,6 +69,7 @@ const library: KnowledgeWorkspaceProps['libraries'][number] = {
   sourceCount: 1,
   documentCount: 1,
   indexedDocumentCount: 1,
+  ontologySettings: defaultKnowledgeOntologySettings,
   updatedAt: '2026-07-30T08:00:00.000Z'
 }
 
@@ -148,6 +152,85 @@ function createProps(
     onPauseSource: vi.fn(),
     onRetrySource: vi.fn(),
     onRemoveSource: vi.fn(),
+    onRetrieve: vi.fn(async () => ({
+      query: 'test',
+      durationMs: 0,
+      settings: {
+        version: 1 as const,
+        topK: 6,
+        minimumVectorSimilarity: 0,
+        ftsWeight: 1,
+        vectorWeight: 1,
+        graphWeight: 0.8,
+        candidateMultiplier: 4,
+        contextMaxCharacters: 16_000,
+        adjacentChunkCount: 0,
+        localRerankEnabled: false,
+        rerankMode: 'none' as const
+      },
+      diagnostics: {
+        requestedChannels: [],
+        usedChannels: [],
+        degradedChannels: [],
+        candidateCounts: {},
+        channelDurationMs: {},
+        vectorScannedCount: 0,
+        filteredByThresholdCount: 0,
+        filteredByBudgetCount: 0,
+        rerank: {
+          requested: 'none' as const,
+          used: 'none' as const,
+          status: 'skipped' as const,
+          candidateCount: 0,
+          durationMs: 0
+        }
+      },
+      results: [],
+      context: {
+        characterCount: 0,
+        truncated: false,
+        groups: []
+      }
+    })),
+    onUpdateKnowledgeSettings: vi.fn(),
+    onListChunks: vi.fn(async () => ({
+      items: [],
+      page: 1,
+      pageSize: 50,
+      totalItems: 0
+    })),
+    onUpdateChunk: vi.fn(),
+    onDeleteChunk: vi.fn(),
+    onRebuildDocument: vi.fn(),
+    onRebuildLibrary: vi.fn(),
+    onCancelRebuild: vi.fn(),
+    onGetEmbeddingIndex: vi.fn(async () => ({
+      knowledgeBaseId: library.id,
+      enabled: true,
+      configuration: {
+        provider: 'openai-compatible',
+        model: 'nomic-embed-text',
+        endpoint: 'http://127.0.0.1:11434/v1/embeddings',
+        credentialConfigured: false
+      },
+      coverage: { total: 1, indexed: 1, missing: 0, error: 0 },
+      indexStatus: { job: null }
+    })),
+    onRebuildEmbeddingIndex: vi.fn(async () => ({
+      knowledgeBaseId: library.id,
+      enabled: true,
+      configuration: {
+        provider: 'openai-compatible',
+        model: 'nomic-embed-text',
+        endpoint: 'http://127.0.0.1:11434/v1/embeddings',
+        credentialConfigured: false
+      },
+      coverage: { total: 1, indexed: 1, missing: 0, error: 0 },
+      indexStatus: { job: null }
+    })),
+    onCancelTask: vi.fn(),
+    onRetryTask: vi.fn(),
+    onOpenReferenceSource: vi.fn(),
     onMoveNode: vi.fn(),
     onCreateEntity: vi.fn(),
     onUpdateEntity: vi.fn(),
@@ -188,10 +271,10 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.click(screen.getByLabelText(/引用原文件/))
     expect(
       screen.getByRole('switch', { name: /启用知识图谱/u })
-    ).toBeChecked()
-    fireEvent.change(screen.getByLabelText('图谱生成策略'), {
-      target: { value: 'rules' }
-    })
+    ).not.toBeChecked()
+    expect(
+      screen.queryByLabelText('图谱生成策略')
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '创建知识库' }))
 
     await waitFor(() =>
@@ -199,7 +282,7 @@ describe('KnowledgeWorkspace', () => {
         name: '客户研究',
         description: '访谈与反馈',
         storageMode: 'reference',
-        graphEnabled: true,
+        graphEnabled: false,
         graphStrategy: 'rules'
       })
     )
@@ -243,6 +326,140 @@ describe('KnowledgeWorkspace', () => {
     )
   })
 
+  it('opens the retrieval workbench and runs an isolated test query', async () => {
+    const props = createProps()
+    const onRetrieve = vi.fn(props.onRetrieve)
+    render(
+      <KnowledgeWorkspace
+        {...props}
+        onRetrieve={onRetrieve}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '检索测试' })
+    )
+    const dialog = screen.getByRole('dialog', { name: '检索测试' })
+    fireEvent.change(within(dialog).getByLabelText('检索问题'), {
+      target: { value: '如何配置离线部署？' }
+    })
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '测试检索' })
+    )
+
+    await waitFor(() =>
+      expect(onRetrieve).toHaveBeenCalledWith(
+        'library-1',
+        '如何配置离线部署？',
+        expect.objectContaining({ topK: 6 })
+      )
+    )
+  })
+
+  it('opens document chunk management from a ready document row', async () => {
+    const onListChunks = vi.fn(async () => ({
+      items: [],
+      page: 1,
+      pageSize: 50,
+      totalItems: 0
+    }))
+    render(
+      <KnowledgeWorkspace
+        {...createProps({ onListChunks })}
+      />
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '文档分块' })
+    )
+    expect(
+      screen.getByRole('dialog', { name: '文档分块' })
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(onListChunks).toHaveBeenCalledWith({
+        libraryId: 'library-1',
+        documentId: 'document-1',
+        page: 1,
+        pageSize: 50,
+        search: undefined
+      })
+    )
+  })
+
+  it('ignores stale chunk responses after opening another document', async () => {
+    let resolveFirst:
+      | ((value: Awaited<
+          ReturnType<KnowledgeWorkspaceProps['onListChunks']>
+        >) => void)
+      | undefined
+    const secondDocument = {
+      ...createProps().documents[0]!,
+      id: 'document-2',
+      name: '第二份文档.md'
+    }
+    const onListChunks = vi.fn(
+      (input: Parameters<KnowledgeWorkspaceProps['onListChunks']>[0]) => {
+        if (input.documentId === 'document-1') {
+          return new Promise<
+            Awaited<ReturnType<KnowledgeWorkspaceProps['onListChunks']>>
+          >((resolve) => {
+            resolveFirst = resolve
+          })
+        }
+        return Promise.resolve({
+          items: [
+            {
+              id: 'second-chunk',
+              ordinal: 0,
+              content: '第二份文档内容',
+              characterCount: 7,
+              enabled: true,
+              role: 'standalone' as const,
+              manuallyEdited: false
+            }
+          ],
+          page: 1,
+          pageSize: 50,
+          totalItems: 1
+        })
+      }
+    )
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          documents: [createProps().documents[0]!, secondDocument],
+          onListChunks
+        })}
+      />
+    )
+
+    const chunkButtons = screen.getAllByRole('button', { name: '文档分块' })
+    fireEvent.click(chunkButtons[0]!)
+    fireEvent.click(screen.getByRole('button', { name: '关闭文档分块' }))
+    fireEvent.click(chunkButtons[1]!)
+    expect(await screen.findByText('第二份文档内容')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveFirst?.({
+        items: [
+          {
+            id: 'stale-chunk',
+            ordinal: 0,
+            content: '过期文档内容',
+            characterCount: 6,
+            enabled: true,
+            role: 'standalone',
+            manuallyEdited: false
+          }
+        ],
+        page: 1,
+        pageSize: 50,
+        totalItems: 1
+      })
+    })
+    expect(screen.queryByText('过期文档内容')).not.toBeInTheDocument()
+    expect(screen.getByText('第二份文档内容')).toBeInTheDocument()
+  })
+
   it('switches to the graph and opens entity details', () => {
     render(<KnowledgeWorkspace {...createProps()} />)
 
@@ -264,22 +481,326 @@ describe('KnowledgeWorkspace', () => {
     expect(screen.getByText('架构说明.md')).toBeInTheDocument()
   })
 
-  it('uses shared tabs and keeps graph configuration in settings', () => {
+  it('uses controlled localized ontology types and endpoint constraints', async () => {
+    const onCreateEntity = vi.fn()
+    const onCreateRelation = vi.fn()
+    const ontologySettings = {
+      version: 1 as const,
+      entityTypes: [
+        {
+          id: 'CONCEPT',
+          name: { zh: '概念', en: 'Concept' },
+          aliases: ['概念', '产品', '技术']
+        },
+        {
+          id: 'PERSON',
+          name: { zh: '人物', en: 'Person' },
+          aliases: ['人物']
+        }
+      ],
+      relationTypes: [
+        {
+          id: 'RELATED_TO',
+          name: { zh: '相关', en: 'Related to' },
+          aliases: ['相关'],
+          sourceTypes: ['CONCEPT'],
+          targetTypes: ['CONCEPT']
+        },
+        {
+          id: 'KNOWS',
+          name: { zh: '认识', en: 'Knows' },
+          aliases: ['认识'],
+          sourceTypes: ['PERSON'],
+          targetTypes: ['PERSON']
+        }
+      ]
+    }
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          libraries: [{ ...library, ontologySettings }],
+          onCreateEntity,
+          onCreateRelation
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    fireEvent.click(screen.getByRole('button', { name: '新增实体' }))
+    const entityForm = screen.getByRole('form', { name: '新增实体' })
+    expect(within(entityForm).getByLabelText('类型').tagName).toBe('SELECT')
+    expect(
+      within(entityForm).getByRole('option', { name: '概念 (CONCEPT)' })
+    ).toBeInTheDocument()
+
+    fireEvent.change(within(entityForm).getByLabelText('名称'), {
+      target: { value: '新概念' }
+    })
+    fireEvent.click(within(entityForm).getByRole('button', {
+      name: '新增实体'
+    }))
+    await waitFor(() =>
+      expect(onCreateEntity).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'CONCEPT' })
+      )
+    )
+
+    fireEvent.change(screen.getByLabelText('选择图谱实体'), {
+      target: { value: 'entity-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '新增' }))
+    const relationForm = screen.getByRole('form', { name: '新增关系' })
+    expect(
+      within(relationForm).getByRole('option', {
+        name: '相关 (RELATED_TO)'
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(relationForm).queryByRole('option', { name: '认识 (KNOWS)' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('uses capability-aware tabs and keeps index controls separate', async () => {
     const onUpdateLibrary = vi.fn()
-    render(<KnowledgeWorkspace {...createProps({ onUpdateLibrary })} />)
+    const onRebuildEmbeddingIndex = vi.fn(async () => ({
+      knowledgeBaseId: library.id,
+      enabled: true,
+      configuration: {
+        provider: 'openai-compatible',
+        model: 'nomic-embed-text',
+        credentialConfigured: false
+      },
+      coverage: { total: 1, indexed: 1, missing: 0, error: 0 },
+      indexStatus: { job: null }
+    }))
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          onRebuildEmbeddingIndex,
+          onUpdateLibrary
+        })}
+      />
+    )
 
     const tabs = screen.getByRole('tablist', { name: '知识库视图' })
     expect(within(tabs).getAllByRole('tab').map((item) => item.textContent))
-      .toEqual(['文档与来源', '知识图谱', '任务中心', '设置'])
+      .toEqual(['文档与来源', '知识图谱', '任务中心', '索引与检索'])
     expect(
       screen.queryByRole('switch', { name: '知识图谱' })
     ).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: '设置' }))
+    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    expect(
+      await screen.findByRole('heading', { name: '向量索引' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: '本体定义' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('知识图谱抽取策略'))
+      .not.toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: '重建向量索引' })
+    )
+    expect(onRebuildEmbeddingIndex).toHaveBeenCalledWith(library.id)
     fireEvent.click(screen.getByRole('switch', { name: /启用知识图谱/u }))
     expect(onUpdateLibrary).toHaveBeenCalledWith('library-1', {
       graphEnabled: false
     })
+  })
+
+  it('hides graph navigation and graph-only controls until enabled', () => {
+    const disabledLibrary = {
+      ...library,
+      graphEnabled: false
+    }
+    render(
+      <KnowledgeWorkspace
+        {...createProps({ libraries: [disabledLibrary] })}
+      />
+    )
+
+    const tabs = screen.getByRole('tablist', { name: '知识库视图' })
+    expect(within(tabs).getAllByRole('tab').map((item) => item.textContent))
+      .toEqual(['文档与来源', '任务中心', '索引与检索'])
+    expect(screen.queryByText('本次导入的图谱抽取策略'))
+      .not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    expect(screen.getByRole('switch', { name: /启用知识图谱/u }))
+      .not.toBeChecked()
+    expect(screen.queryByLabelText('知识图谱抽取策略'))
+      .not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '本体定义' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('moves graph configuration into the enabled graph workspace', () => {
+    render(<KnowledgeWorkspace {...createProps()} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    const graphTabs = screen.getByRole('tablist', {
+      name: '知识图谱工作区'
+    })
+    expect(within(graphTabs).getAllByRole('tab').map((item) => item.textContent))
+      .toEqual(['图谱探索', '图谱设置'])
+    fireEvent.click(within(graphTabs).getByRole('tab', { name: '图谱设置' }))
+
+    expect(screen.getByLabelText('知识图谱抽取策略')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '本体定义' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: '向量索引' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('ignores stale vector status after switching libraries', async () => {
+    let resolveFirst:
+      | ((value: Awaited<
+          ReturnType<KnowledgeWorkspaceProps['onGetEmbeddingIndex']>
+        >) => void)
+      | undefined
+    const secondLibrary = {
+      ...library,
+      id: 'library-2',
+      name: '客户知识'
+    }
+    const onGetEmbeddingIndex = vi.fn((libraryId: string) => {
+      if (libraryId === library.id) {
+        return new Promise<
+          Awaited<
+            ReturnType<KnowledgeWorkspaceProps['onGetEmbeddingIndex']>
+          >
+        >((resolve) => {
+          resolveFirst = resolve
+        })
+      }
+      return Promise.resolve({
+        knowledgeBaseId: secondLibrary.id,
+        enabled: true,
+        configuration: {
+          provider: 'openai-compatible',
+          model: 'second-model',
+          credentialConfigured: false
+        },
+        coverage: { total: 2, indexed: 2, missing: 0, error: 0 },
+        indexStatus: { job: null }
+      })
+    })
+    const props = createProps({
+      libraries: [library, secondLibrary],
+      onGetEmbeddingIndex
+    })
+    const { rerender } = render(<KnowledgeWorkspace {...props} />)
+
+    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    rerender(
+      <KnowledgeWorkspace
+        {...props}
+        selectedLibraryId={secondLibrary.id}
+      />
+    )
+    expect(await screen.findByText('second-model')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveFirst?.({
+        knowledgeBaseId: library.id,
+        enabled: true,
+        configuration: {
+          provider: 'openai-compatible',
+          model: 'stale-first-model',
+          credentialConfigured: false
+        },
+        coverage: { total: 1, indexed: 1, missing: 0, error: 0 },
+        indexStatus: { job: null }
+      })
+    })
+    expect(screen.queryByText('stale-first-model')).not.toBeInTheDocument()
+    expect(screen.getByText('second-model')).toBeInTheDocument()
+  })
+
+  it('saves parent-child chunking settings without rebuilding implicitly', async () => {
+    const onUpdateKnowledgeSettings = vi.fn()
+    const onRebuildLibrary = vi.fn()
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          onRebuildLibrary,
+          onUpdateKnowledgeSettings
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    fireEvent.change(screen.getByLabelText('分块方式'), {
+      target: { value: 'parent-child' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存分块设置' })
+    )
+
+    await waitFor(() =>
+      expect(onUpdateKnowledgeSettings).toHaveBeenCalledWith(
+        'library-1',
+        {
+          chunking: expect.objectContaining({
+            mode: 'parent-child',
+            parentCharacters: 4_800,
+            childCharacters: 900
+          })
+        }
+      )
+    )
+    expect(onRebuildLibrary).not.toHaveBeenCalled()
+  })
+
+  it('saves library ontology definitions without rebuilding implicitly', async () => {
+    const onUpdateKnowledgeSettings = vi.fn()
+    const onRebuildLibrary = vi.fn()
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          onRebuildLibrary,
+          onUpdateKnowledgeSettings
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    fireEvent.click(
+      screen.getByRole('tab', { name: '图谱设置' })
+    )
+    const ontologySection = screen
+      .getByRole('heading', { name: '本体定义' })
+      .closest('section')!
+    const chineseNameInputs = within(ontologySection).getAllByLabelText(
+      '中文名称'
+    )
+    fireEvent.change(chineseNameInputs[0]!, {
+      target: { value: '人员' }
+    })
+    fireEvent.click(
+      within(ontologySection).getByRole('button', {
+        name: '保存本体定义'
+      })
+    )
+
+    await waitFor(() =>
+      expect(onUpdateKnowledgeSettings).toHaveBeenCalledWith(
+        'library-1',
+        {
+          ontology: expect.objectContaining({
+            entityTypes: expect.arrayContaining([
+              expect.objectContaining({
+                id: 'PERSON',
+                name: expect.objectContaining({ zh: '人员' })
+              })
+            ])
+          })
+        }
+      )
+    )
+    expect(onRebuildLibrary).not.toHaveBeenCalled()
   })
 
   it('shows parsing, embedding, and graph progress in the task center', () => {
@@ -292,12 +813,18 @@ describe('KnowledgeWorkspace', () => {
               libraryId: 'library-1',
               documentId: 'document-1',
               documentName: '架构说明.md',
+              scope: 'document',
               kind: 'graph',
+              stage: 'graph',
               status: 'running',
               progress: 40,
               message: '正在重新抽取知识图谱',
+              attempt: 1,
+              canCancel: true,
+              canRetry: false,
               createdAt: '2026-08-10T08:00:00.000Z',
-              startedAt: '2026-08-10T08:00:01.000Z'
+              startedAt: '2026-08-10T08:00:01.000Z',
+              updatedAt: '2026-08-10T08:00:02.000Z'
             }
           ]
         })}
@@ -314,6 +841,343 @@ describe('KnowledgeWorkspace', () => {
         name: '架构说明.md 图谱抽取进度'
       })
     ).toHaveValue(40)
+  })
+
+  it('filters tasks and discloses parent stages with errors and actions', () => {
+    const onCancelTask = vi.fn()
+    const onRetryTask = vi.fn()
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          onCancelTask,
+          onRetryTask,
+          tasks: [
+            {
+              id: 'parent-task',
+              libraryId: 'library-1',
+              documentName: '整库重建',
+              scope: 'library',
+              kind: 'library-rebuild',
+              stage: 'indexing',
+              status: 'running',
+              progress: 50,
+              completedItems: 1,
+              totalItems: 2,
+              attempt: 1,
+              canCancel: true,
+              canRetry: false,
+              createdAt: '2026-08-10T08:00:00.000Z',
+              startedAt: '2026-08-10T08:00:01.000Z',
+              updatedAt: '2026-08-10T08:00:02.000Z'
+            },
+            {
+              id: 'child-task',
+              parentTaskId: 'parent-task',
+              libraryId: 'library-1',
+              documentId: 'document-1',
+              documentName: '架构说明.md',
+              scope: 'document',
+              kind: 'embedding',
+              stage: 'embedding',
+              status: 'failed',
+              progress: 30,
+              error: {
+                message: '向量服务不可用',
+                remedy: '检查向量模型连接后重试'
+              },
+              attempt: 1,
+              canCancel: false,
+              canRetry: true,
+              createdAt: '2026-08-10T08:00:01.000Z',
+              completedAt: '2026-08-10T08:00:03.000Z',
+              updatedAt: '2026-08-10T08:00:03.000Z'
+            },
+            {
+              id: 'history-task',
+              libraryId: 'library-1',
+              documentName: '旧文档.md',
+              scope: 'document',
+              kind: 'document-process',
+              stage: 'finalizing',
+              status: 'cancelled',
+              progress: 70,
+              attempt: 1,
+              canCancel: false,
+              canRetry: false,
+              createdAt: '2026-08-09T08:00:00.000Z',
+              completedAt: '2026-08-09T08:00:03.000Z',
+              updatedAt: '2026-08-09T08:00:03.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '任务中心' }))
+    const disclosure = screen.getByRole('button', {
+      name: '展开 整库重建 的阶段任务'
+    })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('向量服务不可用')).not.toBeInTheDocument()
+    fireEvent.click(disclosure)
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('生成向量')).toBeInTheDocument()
+    expect(screen.getByText('向量服务不可用')).toBeInTheDocument()
+    expect(screen.getByText('检查向量模型连接后重试')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '取消任务' }))
+    expect(onCancelTask).toHaveBeenCalledWith('parent-task')
+    fireEvent.click(screen.getByRole('button', { name: '重试任务' }))
+    expect(onRetryTask).toHaveBeenCalledWith('child-task')
+
+    fireEvent.click(screen.getByRole('button', { name: '失败' }))
+    expect(screen.getByText('整库重建')).toBeInTheDocument()
+    expect(screen.queryByText('旧文档.md')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '历史' }))
+    expect(screen.getByText('旧文档.md')).toBeInTheDocument()
+    expect(screen.getByText('已取消')).toBeInTheDocument()
+    expect(screen.queryByText('整库重建')).not.toBeInTheDocument()
+  })
+
+  it('keeps task context and disables repeated actions while cancellation is pending', async () => {
+    let resolveCancel: (() => void) | undefined
+    const onCancelTask = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve
+        })
+    )
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          onCancelTask,
+          tasks: [
+            {
+              id: 'pending-parent',
+              libraryId: 'library-1',
+              sourceId: 'source-1',
+              documentName: '来源同步',
+              scope: 'source',
+              kind: 'source-sync',
+              stage: 'syncing',
+              status: 'running',
+              progress: 45,
+              attempt: 1,
+              canCancel: true,
+              canRetry: false,
+              createdAt: '2026-08-10T08:00:00.000Z',
+              startedAt: '2026-08-10T08:00:01.000Z',
+              updatedAt: '2026-08-10T08:00:02.000Z'
+            },
+            {
+              id: 'pending-child',
+              parentTaskId: 'pending-parent',
+              libraryId: 'library-1',
+              sourceId: 'source-1',
+              documentName: '架构说明.md',
+              scope: 'document',
+              kind: 'parsing',
+              stage: 'parsing',
+              status: 'running',
+              progress: 20,
+              attempt: 1,
+              canCancel: false,
+              canRetry: false,
+              createdAt: '2026-08-10T08:00:01.000Z',
+              startedAt: '2026-08-10T08:00:01.000Z',
+              updatedAt: '2026-08-10T08:00:02.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: '查看任务' })[0]!
+    )
+    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    const disclosure = screen.getByRole('button', {
+      name: '收起 来源同步 的阶段任务'
+    })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      screen.getByText('正在显示当前来源或文档的相关任务')
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '取消任务' }))
+    expect(onCancelTask).toHaveBeenCalledOnce()
+    const pendingButton = screen.getByRole('button', {
+      name: '正在取消…'
+    })
+    expect(pendingButton).toBeDisabled()
+    fireEvent.click(pendingButton)
+    expect(onCancelTask).toHaveBeenCalledOnce()
+    expect(
+      screen.getByRole('button', { name: '进行中' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+
+    await act(async () => {
+      resolveCancel?.()
+    })
+    expect(
+      screen.getByRole('button', { name: '取消任务' })
+    ).toBeEnabled()
+  })
+
+  it('shows a recoverable local alert when retrying a task fails', async () => {
+    const onRetryTask = vi.fn(async () => {
+      throw new Error('服务暂时不可用')
+    })
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          onRetryTask,
+          tasks: [
+            {
+              id: 'retry-task',
+              libraryId: 'library-1',
+              documentName: '失败文档.md',
+              scope: 'document',
+              kind: 'document-process',
+              stage: 'indexing',
+              status: 'failed',
+              progress: 55,
+              error: {
+                message: '索引未完成',
+                remedy: '可以重试任务'
+              },
+              attempt: 1,
+              canCancel: false,
+              canRetry: true,
+              createdAt: '2026-08-10T08:00:00.000Z',
+              completedAt: '2026-08-10T08:00:02.000Z',
+              updatedAt: '2026-08-10T08:00:02.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '任务中心' }))
+    fireEvent.click(screen.getByRole('button', { name: '失败' }))
+    const progress = screen.getByRole('progressbar', {
+      name: '失败文档.md 文档处理进度'
+    })
+    expect(progress.closest('[aria-live]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试任务' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByText('重试任务失败')).toBeInTheDocument()
+    expect(within(alert).getByText('服务暂时不可用')).toBeInTheDocument()
+    expect(
+      within(alert).getByText(
+        '任务和筛选已保留，请检查问题后再次操作。'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '失败' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('失败文档.md')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试任务' })).toBeEnabled()
+  })
+
+  it('keeps legacy orphan tasks as top-level task center entries', () => {
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          tasks: [
+            {
+              id: 'orphan-task',
+              parentTaskId: 'missing-parent',
+              libraryId: 'library-1',
+              documentName: '旧版导入任务',
+              scope: 'document',
+              kind: 'parsing',
+              stage: 'parsing',
+              status: 'interrupted',
+              progress: 20,
+              attempt: 1,
+              canCancel: false,
+              canRetry: true,
+              createdAt: '2026-08-08T08:00:00.000Z',
+              completedAt: '2026-08-08T08:00:03.000Z',
+              updatedAt: '2026-08-08T08:00:03.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '任务中心' }))
+    expect(screen.getByText('旧版导入任务')).toBeInTheDocument()
+    expect(screen.getByText('文档解析')).toBeInTheDocument()
+    expect(screen.getByText('已中断')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /展开旧版导入任务/u })
+    ).not.toBeInTheDocument()
+  })
+
+  it('deduplicates document progress and merges processing status', () => {
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          sources: [
+            {
+              ...createProps().sources[0]!,
+              status: 'syncing',
+              progress: 35
+            }
+          ],
+          documents: [
+            {
+              ...createProps().documents[0]!,
+              status: 'indexing',
+              indexProgress: 60
+            }
+          ],
+          tasks: [
+            {
+              id: 'document-task',
+              libraryId: 'library-1',
+              sourceId: 'source-1',
+              documentId: 'document-1',
+              documentName: '架构说明.md',
+              scope: 'document',
+              kind: 'document-process',
+              stage: 'embedding',
+              status: 'running',
+              progress: 60,
+              attempt: 1,
+              canCancel: true,
+              canRetry: false,
+              createdAt: '2026-08-10T08:00:00.000Z',
+              startedAt: '2026-08-10T08:00:01.000Z',
+              updatedAt: '2026-08-10T08:00:02.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(
+      screen.getByRole('columnheader', { name: '处理状态' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('columnheader', { name: '索引进度' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.getByText('同步中 · 35%')).toBeInTheDocument()
+    expect(screen.getByText('生成向量 · 60%')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getAllByRole('button', { name: '查看任务' })[0]!
+    )
+    expect(
+      screen.getByRole('tab', { name: '任务中心' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByText('正在显示当前来源或文档的相关任务')
+    ).toBeInTheDocument()
   })
 
   it('edits library metadata from the detail header', async () => {
@@ -354,21 +1218,21 @@ describe('KnowledgeWorkspace', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
     expect(
-      screen.getByRole('option', { name: 'GoodBuddy · 产品' })
+      screen.getByRole('option', { name: 'GoodBuddy · 概念 (CONCEPT)' })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('option', { name: 'Electron · 技术' })
+      screen.getByRole('option', { name: 'Electron · 概念 (CONCEPT)' })
     ).toBeInTheDocument()
     expect(screen.getByText('可见关系')).toBeInTheDocument()
-    expect(screen.getByText('使用')).toBeInTheDocument()
+    expect(screen.getByText('使用 (USES)')).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('搜索图谱实体'), {
       target: { value: 'Electron' }
     })
     expect(
-      screen.queryByRole('option', { name: 'GoodBuddy · 产品' })
+      screen.queryByRole('option', { name: 'GoodBuddy · 概念 (CONCEPT)' })
     ).not.toBeInTheDocument()
-    expect(screen.queryByText('使用')).not.toBeInTheDocument()
+    expect(screen.queryByText('使用 (USES)')).not.toBeInTheDocument()
     expect(g6Mock.graph.setOptions).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: {
@@ -386,14 +1250,14 @@ describe('KnowledgeWorkspace', () => {
       target: { value: '' }
     })
     fireEvent.change(screen.getByLabelText('筛选实体类型'), {
-      target: { value: '产品' }
+      target: { value: 'CONCEPT' }
     })
     expect(
-      screen.getByRole('option', { name: 'GoodBuddy · 产品' })
+      screen.getByRole('option', { name: 'GoodBuddy · 概念 (CONCEPT)' })
     ).toBeInTheDocument()
     expect(
-      screen.queryByRole('option', { name: 'Electron · 技术' })
-    ).not.toBeInTheDocument()
+      screen.getByRole('option', { name: 'Electron · 概念 (CONCEPT)' })
+    ).toBeInTheDocument()
   })
 
   it('provides responsive workspace and graph layout hooks', () => {
@@ -516,7 +1380,10 @@ describe('KnowledgeWorkspace', () => {
         behaviors: expect.arrayContaining([
           'drag-canvas',
           'zoom-canvas',
-          'drag-element',
+          expect.objectContaining({
+            type: 'drag-element-force',
+            fixed: true
+          }),
           expect.objectContaining({ type: 'auto-adapt-label' })
         ])
       })
@@ -560,6 +1427,14 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '放大图谱' }))
     expect(screen.getByText('115%')).toBeInTheDocument()
     expect(g6Mock.graph.zoomTo).toHaveBeenLastCalledWith(1.15, false)
+
+    const fitViewCallCount = g6Mock.graph.fitView.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '显示全部' }))
+    await waitFor(() =>
+      expect(g6Mock.graph.fitView).toHaveBeenCalledTimes(
+        fitViewCallCount + 1
+      )
+    )
 
     act(() => {
       g6Mock.handlers.get('node:click')?.({
@@ -750,7 +1625,7 @@ describe('KnowledgeWorkspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '新增' }))
     fireEvent.change(screen.getByLabelText('关系类型'), {
-      target: { value: '依赖' }
+      target: { value: 'DEPENDS_ON' }
     })
     fireEvent.change(screen.getByLabelText('说明'), {
       target: { value: '桌面运行基础' }
@@ -760,7 +1635,7 @@ describe('KnowledgeWorkspace', () => {
       expect(onCreateRelation).toHaveBeenCalledWith({
         sourceId: 'entity-1',
         targetId: 'entity-2',
-        type: '依赖',
+        type: 'DEPENDS_ON',
         description: '桌面运行基础'
       })
     )

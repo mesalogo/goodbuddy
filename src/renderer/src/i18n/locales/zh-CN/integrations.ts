@@ -228,7 +228,7 @@ export const integrations = {
       title: '联网搜索',
       subtitle: '直连模型工具 · Exa MCP · Ask / Execute',
       description:
-        '提供 web_search 和 web_fetch，只允许搜索及读取公开网页；Plan 模式不会加载。',
+        '提供 web_search 和 web_fetch，只允许搜索及读取公开网页；Ask 和 Execute 均可使用。',
       privacy:
         '查询词和公开网页地址会发送给第三方 Exa 服务，不会发送模型 API Key、本地文件或知识库内容。',
       enableAriaLabel: '启用直连模型联网搜索',

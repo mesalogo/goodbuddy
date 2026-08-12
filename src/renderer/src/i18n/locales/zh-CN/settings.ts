@@ -19,8 +19,8 @@ export const settings = {
     },
     model: {
       label: '模型连接',
-      navigationDescription: 'LLM、向量模型与凭据',
-      description: 'LLM、向量模型与凭据'
+      navigationDescription: 'LLM、向量、重排模型与凭据',
+      description: 'LLM、向量、重排模型与凭据'
     },
     documentParsing: {
       label: '文档解析',
@@ -95,7 +95,7 @@ export const settings = {
   errors: {
     readSettings: '读取设置失败',
     detectRuntimes: 'Runtime 自动检测失败',
-    readEmbeddingStatus: '读取向量索引状态失败',
+    readEmbeddingStatus: '读取向量模型状态失败',
     requireModelConnection: '请至少配置一个模型连接',
     refreshEmbeddingAfterSave: '设置已保存，但刷新向量模型状态失败',
     speechModelsUnavailable: '当前版本未提供语音模型服务',
@@ -104,10 +104,6 @@ export const settings = {
     testRuntime: 'Runtime 连接测试失败',
     embeddingDiagnosticUnavailable: '向量诊断服务不可用',
     testEmbedding: '向量模型测试失败',
-    embeddingIndexUnavailable: '向量索引服务不可用',
-    rebuildEmbeddingIndex: '启动向量索引重建失败',
-    embeddingJobFinished: '当前向量索引任务已结束',
-    cancelEmbeddingIndex: '取消向量索引重建失败',
     selectFile: '选择文件失败',
     openRuntimeConfig: '打开 Runtime 配置失败',
     selectWorkspace: '选择工作区目录失败',
@@ -362,6 +358,10 @@ export const settings = {
         label: '向量模型',
         description: '配置知识库语义检索与 GraphRAG 使用的向量模型。'
       },
+      rerank: {
+        label: '重排模型',
+        description: '配置知识检索候选结果的学习型相关性重排模型。'
+      },
       speech: {
         label: '语音模型',
         description:
@@ -423,6 +423,18 @@ export const settings = {
       optionalApiKeyPlaceholder: '本地无认证服务可留空',
       privacyDescription:
         '仅向所填接口发送已启用知识库的分块文本。API Key 由系统安全存储加密；向量服务失败时自动回退到 FTS5 与证据图谱。'
+    },
+    rerank: {
+      title: '重排模型连接',
+      description: '使用 Cohere 兼容 Rerank 接口提升知识检索排序质量',
+      enabled: '启用学习型重排',
+      endpoint: '重排接口 URL',
+      endpointDescription: '填写完整的 Cohere 兼容 Rerank 端点。',
+      modelName: '模型名称',
+      optionalApiKey: 'API Key（可选）',
+      optionalApiKeyPlaceholder: '本地无认证服务可留空',
+      privacyDescription:
+        '仅向所填接口发送检索查询和候选知识片段。API Key 由系统安全存储加密；重排服务失败时保留原始检索排序。'
     }
   },
   security: {
@@ -455,7 +467,7 @@ export const settings = {
       description: '按问题内容自动选择最匹配的专家角色',
       enabled: '启用 Subagent 智能路由',
       help:
-        '默认关闭。仅在 Ask 或 Plan 模式且未显式选择专家或团队时，自动选择 1 位专家；子专家使用默认文本模型，只读运行且不使用工具。'
+        '默认关闭。仅在 Ask 模式且未显式选择专家或团队时，自动选择 1 位专家；子专家使用默认文本模型，只读运行且不使用工具。'
     }
   },
   appearance: {

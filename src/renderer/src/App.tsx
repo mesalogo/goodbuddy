@@ -56,6 +56,7 @@ import type {
   BrowserLiveState,
   ContextAttachment,
   ContextFileSelectionProgress,
+  KnowledgeRetrievalMode,
   KnowledgeSearchReference,
   KnowledgeSnapshot,
   RuntimeSettings
@@ -104,6 +105,10 @@ import {
   type ActivityRecord
 } from './activity-store'
 import { KnowledgeWorkspace } from './KnowledgeWorkspace'
+import {
+  KnowledgeCitationDialog,
+  type KnowledgeCitationContextView
+} from './KnowledgeCitationDialog'
 import { HeartbeatCenter } from './HeartbeatCenter'
 import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -111,6 +116,7 @@ import {
   DestructiveConfirmActions,
   EmptyState,
   PageShell,
+  SegmentedControl,
   ScopeBadge
 } from './WorkspacePrimitives'
 import {
@@ -289,7 +295,7 @@ function isAgentRuntime(
 function supportsSubagentSmartRouting(
   workMode: string
 ): boolean {
-  return workMode === 'ask' || ['plan'].includes(workMode)
+  return workMode === 'ask'
 }
 
 type ToolActivity = ConversationToolActivity
@@ -303,6 +309,11 @@ type SubagentActivity = {
   reason?: string
   error?: string
 }
+
+type KnowledgeRetrievalStatus = Omit<
+  Extract<AgentEvent, { type: 'knowledge-retrieval' }>,
+  'requestId' | 'type'
+>
 
 type Message = {
   id: string
@@ -326,6 +337,7 @@ type Message = {
   question?: Extract<AgentEvent, { type: 'question' }>
   sources?: string[]
   sourceReferences?: KnowledgeSearchReference[]
+  knowledgeRetrieval?: KnowledgeRetrievalStatus
   artifactIds?: string[]
   attachments?: ConversationAttachment[]
 }
@@ -334,6 +346,7 @@ type Conversation = {
   id: string
   projectId?: string
   runtimeSelection?: AgentRuntimeSelection
+  knowledgeRetrievalMode?: KnowledgeRetrievalMode
   remote?: ConversationSnapshot['remote']
   title: string
   updatedAt: number
@@ -586,6 +599,7 @@ function createConversation(
     id: crypto.randomUUID(),
     projectId,
     runtimeSelection,
+    knowledgeRetrievalMode: 'auto',
     title: '新对话',
     updatedAt: now,
     messages: [
@@ -693,6 +707,9 @@ function isConversation(value: unknown): value is Conversation {
     (item.runtimeSelection === undefined ||
       agentRuntimeSelectionSchema.safeParse(item.runtimeSelection)
         .success) &&
+    (item.knowledgeRetrievalMode === undefined ||
+      item.knowledgeRetrievalMode === 'auto' ||
+      item.knowledgeRetrievalMode === 'always') &&
     (item.remote === undefined ||
       (typeof item.remote === 'object' &&
         item.remote !== null &&
@@ -744,6 +761,7 @@ function toConversationSnapshots(
     id: conversation.id,
     projectId: conversation.projectId,
     runtimeSelection: conversation.runtimeSelection,
+    knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
     remote: conversation.remote,
     title: conversation.title,
     updatedAt: conversation.updatedAt,
@@ -759,6 +777,7 @@ function toConversationSnapshots(
       tools: message.tools,
       sources: message.sources,
       sourceReferences: message.sourceReferences,
+      knowledgeRetrieval: message.knowledgeRetrieval,
       artifactIds: message.artifactIds,
       attachments: message.attachments
     }))
@@ -1507,6 +1526,12 @@ function App(): React.JSX.Element {
   const selectingContextFilesRef = useRef(false)
   const [imageViewerItem, setImageViewerItem] =
     useState<ImageViewerItem>()
+  const [citationDialog, setCitationDialog] = useState<{
+    reference: KnowledgeSearchReference
+    context?: KnowledgeCitationContextView
+    loading: boolean
+    error?: string
+  }>()
   const imageViewerTriggerRef = useRef<HTMLElement | undefined>(
     undefined
   )
@@ -2663,6 +2688,23 @@ function App(): React.JSX.Element {
           ].slice(-8),
           status: tRef.current('chat.status.savingImage')
         }))
+      } else if (event.type === 'knowledge-retrieval') {
+        updateMessage(run.conversationId, run.messageId, (message) => ({
+          ...message,
+          knowledgeRetrieval: {
+            mode: event.mode,
+            state: event.state,
+            libraryCount: event.libraryCount,
+            resultCount: event.resultCount,
+            durationMs: event.durationMs,
+            usedChannels: event.usedChannels,
+            warnings: event.warnings
+          },
+          status:
+            event.state === 'searching'
+              ? tRef.current('chat.knowledgeRetrieval.searching')
+              : undefined
+        }))
       } else if (event.type === 'source-references') {
         updateMessage(run.conversationId, run.messageId, (message) => {
           const referenceKey = (
@@ -2671,6 +2713,7 @@ function App(): React.JSX.Element {
             [
               reference.libraryId,
               reference.documentId,
+              reference.chunkId ?? '',
               reference.locator ?? '',
               reference.snippet
             ].join('\0')
@@ -2689,21 +2732,9 @@ function App(): React.JSX.Element {
               (reference) => !incomingKeys.has(referenceKey(reference))
             )
           ].slice(0, 20)
-          const referenceSources = references.map(
-            (reference) =>
-              `${reference.libraryName} / ${reference.documentName}${
-                reference.locator ? ` (${reference.locator})` : ''
-              }`
-          )
           return {
             ...message,
-            sourceReferences: references,
-            sources: [
-              ...new Set([
-                ...referenceSources,
-                ...(message.sources ?? [])
-              ])
-            ].slice(0, 100)
+            sourceReferences: references
           }
         })
       } else {
@@ -3937,6 +3968,53 @@ function App(): React.JSX.Element {
     })
   }
 
+  const openCitationContext = async (
+    reference: KnowledgeSearchReference
+  ): Promise<void> => {
+    setCitationDialog({
+      reference,
+      loading: true
+    })
+    if (!reference.chunkId) {
+      setCitationDialog({
+        reference,
+        loading: false,
+        error: t('chat.citations.contextUnavailable')
+      })
+      return
+    }
+    try {
+      const context =
+        await window.goodbuddy.knowledge.getReferenceContext({
+          knowledgeBaseId: reference.libraryId,
+          documentId: reference.documentId,
+          chunkId: reference.chunkId
+        })
+      setCitationDialog({
+        reference,
+        loading: false,
+        context: {
+          libraryName: reference.libraryName,
+          documentName: context.documentTitle,
+          sourceName: context.sourceDisplayName,
+          locator: context.locator,
+          matchedContent: context.matchedContent,
+          contextContent: context.contextContent,
+          truncated: context.truncated
+        }
+      })
+    } catch (reason) {
+      setCitationDialog({
+        reference,
+        loading: false,
+        error:
+          reason instanceof Error
+            ? reason.message
+            : t('chat.citations.contextUnavailable')
+      })
+    }
+  }
+
   const downloadImage = (item: ImageViewerItem): void => {
     if (!imageDataUrlPattern.test(item.src)) {
       notify({ tone: 'error', message: t('notices.imageUnavailable') })
@@ -4011,6 +4089,8 @@ function App(): React.JSX.Element {
     const attachmentSnapshot = attachments.slice(0, 8)
     const historySnapshot = activeConversation.messages
     const projectIdSnapshot = activeProjectId || undefined
+    const knowledgeRetrievalModeSnapshot =
+      activeConversation.knowledgeRetrievalMode ?? 'auto'
     const runtimeSelectionSnapshot = activeRuntimeSelection
     if (!runtimeSelectionSnapshot) {
       notify({ tone: 'info', message: t('runtime.notSelected') })
@@ -4132,6 +4212,7 @@ function App(): React.JSX.Element {
         workMode: workModeSnapshot,
         prompt: executionPrompt,
         knowledgeLibraryIds: enabledKnowledgeLibraryIds,
+        knowledgeRetrievalMode: knowledgeRetrievalModeSnapshot,
         contextIds: attachmentSnapshot.map(
           (attachment) => attachment.id
         ),
@@ -4678,7 +4759,7 @@ function App(): React.JSX.Element {
           </div>
           <div className="brand__copy">
             <strong>GoodBuddy</strong>
-            <span>AI desktop companion</span>
+            <span>Desktop workspace</span>
           </div>
         </div>
 
@@ -5500,6 +5581,51 @@ function App(): React.JSX.Element {
                       </figure>
                     ) : null
                   })}
+                  {message.knowledgeRetrieval && (
+                    <section
+                      aria-live="polite"
+                      className={`message-retrieval-status message-retrieval-status--${message.knowledgeRetrieval.state}`}
+                    >
+                      <Library aria-hidden="true" size={14} />
+                      <div>
+                        <strong>
+                          {t(
+                            `chat.knowledgeRetrieval.states.${message.knowledgeRetrieval.state}`
+                          )}
+                        </strong>
+                        <small>
+                          {t('chat.knowledgeRetrieval.summary', {
+                            libraries:
+                              message.knowledgeRetrieval.libraryCount,
+                            results:
+                              message.knowledgeRetrieval.resultCount,
+                            duration:
+                              message.knowledgeRetrieval.durationMs ?? 0
+                          })}
+                        </small>
+                        {message.knowledgeRetrieval.usedChannels.length >
+                          0 && (
+                          <small>
+                            {t('chat.knowledgeRetrieval.channels', {
+                              channels:
+                                message.knowledgeRetrieval.usedChannels
+                                  .map((channel) =>
+                                    t(
+                                      `chat.knowledgeRetrieval.channelNames.${channel}`
+                                    )
+                                  )
+                                  .join(' + ')
+                            })}
+                          </small>
+                        )}
+                        {message.knowledgeRetrieval.warnings.map(
+                          (warning) => (
+                            <p key={warning}>{warning}</p>
+                          )
+                        )}
+                      </div>
+                    </section>
+                  )}
                   {message.sources && message.sources.length > 0 && (
                     <div className="message-sources">
                       <Library size={14} />
@@ -5524,7 +5650,7 @@ function App(): React.JSX.Element {
                           {message.sourceReferences.map(
                             (reference, referenceIndex) => (
                               <li
-                                key={`${reference.documentId}:${reference.locator ?? referenceIndex}`}
+                                key={`${reference.documentId}:${reference.chunkId ?? reference.locator ?? referenceIndex}`}
                               >
                                 <strong>
                                   [{referenceIndex + 1}]{' '}
@@ -5541,6 +5667,8 @@ function App(): React.JSX.Element {
                                       .map((channel) =>
                                         channel === 'fts'
                                           ? t('chat.citations.fullText')
+                                          : channel === 'cjk'
+                                            ? t('chat.citations.cjk')
                                           : channel === 'vector'
                                             ? t('chat.citations.vector')
                                             : t('chat.citations.graph')
@@ -5548,6 +5676,55 @@ function App(): React.JSX.Element {
                                       .join(' + ')}
                                   </small>
                                 )}
+                                {reference.score !== undefined && (
+                                  <small>
+                                    {t('chat.citations.score', {
+                                      score: reference.score.toFixed(4)
+                                    })}
+                                  </small>
+                                )}
+                                <div className="message-citations__actions">
+                                  <button
+                                    className="secondary-button"
+                                    onClick={() =>
+                                      void openCitationContext(reference)
+                                    }
+                                    type="button"
+                                  >
+                                    {t('chat.citations.viewContext')}
+                                  </button>
+                                  <button
+                                    className="secondary-button"
+                                    disabled={!reference.chunkId}
+                                    onClick={() => {
+                                      if (!reference.chunkId) {
+                                        return
+                                      }
+                                      void window.goodbuddy.knowledge
+                                        .openReferenceSource({
+                                          knowledgeBaseId:
+                                            reference.libraryId,
+                                          documentId:
+                                            reference.documentId,
+                                          chunkId: reference.chunkId
+                                        })
+                                        .catch((reason) =>
+                                          notify({
+                                            tone: 'error',
+                                            message:
+                                              reason instanceof Error
+                                                ? reason.message
+                                                : t(
+                                                    'chat.citations.openFailed'
+                                                  )
+                                          })
+                                        )
+                                    }}
+                                    type="button"
+                                  >
+                                    {t('chat.citations.openSource')}
+                                  </button>
+                                </div>
                               </li>
                             )
                           )}
@@ -5998,6 +6175,47 @@ function App(): React.JSX.Element {
                             </small>
                           </label>
                         ))}
+                        <div className="knowledge-scope__retrieval-mode">
+                          <strong>
+                            {t('composer.knowledge.modeLabel')}
+                          </strong>
+                          <SegmentedControl
+                            ariaLabel={t('composer.knowledge.modeLabel')}
+                            onChange={(mode) =>
+                              setConversations((current) =>
+                                current.map((conversation) =>
+                                  conversation.id === activeId
+                                    ? {
+                                        ...conversation,
+                                        knowledgeRetrievalMode: mode,
+                                        updatedAt: Date.now()
+                                      }
+                                    : conversation
+                                )
+                              )
+                            }
+                            options={[
+                              {
+                                value: 'auto',
+                                label: t('composer.knowledge.auto')
+                              },
+                              {
+                                value: 'always',
+                                label: t('composer.knowledge.always')
+                              }
+                            ]}
+                            value={
+                              activeConversation?.knowledgeRetrievalMode ??
+                              'auto'
+                            }
+                          />
+                          <small>
+                            {activeConversation?.knowledgeRetrievalMode ===
+                            'always'
+                              ? t('composer.knowledge.alwaysDescription')
+                              : t('composer.knowledge.autoDescription')}
+                          </small>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -6460,9 +6678,121 @@ function App(): React.JSX.Element {
                   window.goodbuddy.knowledge.removeSource(sourceId)
                 )
               }
+              onRetrieve={(libraryId, query, settings) =>
+                window.goodbuddy.knowledge.retrieve({
+                  knowledgeBaseId: libraryId,
+                  query,
+                  settings
+                })
+              }
+              onUpdateKnowledgeSettings={async (
+                libraryId,
+                settings
+              ) => {
+                await runKnowledgeSourceAction(() =>
+                  window.goodbuddy.knowledge.updateSettings({
+                    knowledgeBaseId: libraryId,
+                    ...settings
+                  })
+                )
+                notify({
+                  tone: 'success',
+                  message: t('notices.knowledgeSettingsUpdated'),
+                  dedupeKey: `knowledge-retrieval-settings:${libraryId}`
+                })
+              }}
+              onListChunks={({
+                libraryId,
+                documentId,
+                page,
+                pageSize,
+                search
+              }) =>
+                window.goodbuddy.knowledge.listChunks({
+                  knowledgeBaseId: libraryId,
+                  documentId,
+                  page,
+                  pageSize,
+                  search
+                })
+              }
+              onUpdateChunk={(input) =>
+                window.goodbuddy.knowledge.updateChunk(input)
+              }
+              onDeleteChunk={(input) =>
+                window.goodbuddy.knowledge.deleteChunk(input)
+              }
+              onRebuildDocument={(libraryId, documentId) =>
+                runKnowledgeSourceAction(async () => {
+                  await window.goodbuddy.knowledge.rebuildDocument({
+                    knowledgeBaseId: libraryId,
+                    documentId
+                  })
+                })
+              }
+              onRebuildLibrary={(libraryId) =>
+                runKnowledgeSourceAction(async () => {
+                  const result =
+                    await window.goodbuddy.knowledge.rebuildLibrary({
+                      knowledgeBaseId: libraryId
+                    })
+                  if (result.failed > 0) {
+                    throw new Error(
+                      t('notices.knowledgeRebuildPartial', {
+                        rebuilt: result.rebuilt,
+                        failed: result.failed
+                      })
+                    )
+                  }
+                  notify({
+                    tone: 'success',
+                    message: t('notices.knowledgeRebuildCompleted', {
+                      count: result.rebuilt
+                    }),
+                    dedupeKey: `knowledge-rebuild:${libraryId}`
+                  })
+                })
+              }
+              onCancelRebuild={async (libraryId) => {
+                const cancelled =
+                  await window.goodbuddy.knowledge.cancelRebuild(
+                    libraryId
+                  )
+                if (!cancelled) {
+                  throw new Error(
+                    t('notices.knowledgeRebuildNotRunning')
+                  )
+                }
+              }}
+              onGetEmbeddingIndex={(libraryId) =>
+                window.goodbuddy.knowledge.getEmbeddingIndex(libraryId)
+              }
+              onRebuildEmbeddingIndex={(libraryId) =>
+                window.goodbuddy.knowledge.rebuildEmbeddingIndex(
+                  libraryId
+                )
+              }
+              onCancelTask={async (taskId) => {
+                const cancelled =
+                  await window.goodbuddy.knowledge.cancelTask(taskId)
+                if (!cancelled) {
+                  throw new Error(
+                    t('notices.knowledgeTaskNotRunning')
+                  )
+                }
+                await refreshSelectedKnowledge()
+              }}
+              onOpenReferenceSource={(input) =>
+                window.goodbuddy.knowledge.openReferenceSource(input)
+              }
               onRetrySource={(sourceId) =>
                 runKnowledgeSourceAction(() =>
                   window.goodbuddy.knowledge.retrySource(sourceId)
+                )
+              }
+              onRetryTask={(taskId) =>
+                runKnowledgeSourceAction(() =>
+                  window.goodbuddy.knowledge.retryTask(taskId)
                 )
               }
               onRetryLoad={retryKnowledgeLoad}
@@ -6577,6 +6907,26 @@ function App(): React.JSX.Element {
           }}
           onClose={() => setReleaseNotes(undefined)}
           snapshot={releaseNotes}
+        />
+      )}
+      {citationDialog && (
+        <KnowledgeCitationDialog
+          context={citationDialog.context}
+          error={citationDialog.error}
+          loading={citationDialog.loading}
+          onClose={() => setCitationDialog(undefined)}
+          onOpenSource={async () => {
+            const { reference } = citationDialog
+            if (!reference.chunkId) {
+              throw new Error(t('chat.citations.contextUnavailable'))
+            }
+            await window.goodbuddy.knowledge.openReferenceSource({
+              knowledgeBaseId: reference.libraryId,
+              documentId: reference.documentId,
+              chunkId: reference.chunkId
+            })
+          }}
+          reference={citationDialog.reference}
         />
       )}
       {imageViewerItem && (

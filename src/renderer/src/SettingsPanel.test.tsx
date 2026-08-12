@@ -17,7 +17,6 @@ import type { CapabilitySnapshot } from '../../shared/capability-contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type {
   EmbeddingDiagnosticResult,
-  EmbeddingIndexStatus,
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
 import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
@@ -51,6 +50,11 @@ const runtimeSettings: RuntimeSettings = {
   knowledgeEmbeddingModel: 'nomic-embed-text',
   knowledgeEmbeddingApiKeyConfigured: false,
   knowledgeEmbeddingCredentialSource: 'none',
+  knowledgeRerankEnabled: false,
+  knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
+  knowledgeRerankModel: 'rerank-v3.5',
+  knowledgeRerankApiKeyConfigured: false,
+  knowledgeRerankCredentialSource: 'none',
   workspacePath: 'C:\\Workspace',
   apiKeyConfigured: false,
   credentialSource: 'none',
@@ -298,17 +302,13 @@ const updateExpert = vi.fn<DesktopApi['experts']['update']>(
 const removeExpert = vi.fn<DesktopApi['experts']['remove']>(
   async () => {}
 )
-const embeddingIndexStatus: EmbeddingIndexStatus = {
-  job: null
-}
 const embeddingSnapshot: EmbeddingSettingsSnapshot = {
   configuration: {
     provider: 'openai-compatible',
     model: 'nomic-embed-text',
     endpoint: 'http://127.0.0.1:11434/v1/embeddings',
     credentialConfigured: false
-  },
-  indexStatus: embeddingIndexStatus
+  }
 }
 const getEmbeddingSnapshot = vi.fn(async () => embeddingSnapshot)
 const diagnoseEmbedding = vi.fn(
@@ -320,33 +320,6 @@ const diagnoseEmbedding = vi.fn(
     latencyMs: 128,
     checkedAt: Date.UTC(2026, 7, 5, 12, 0, 0)
   })
-)
-const rebuildEmbeddingIndex = vi.fn(
-  async (): Promise<EmbeddingIndexStatus> => ({
-    ...embeddingIndexStatus,
-    job: {
-      id: 'job-1',
-      status: 'running',
-      provider: 'openai-compatible',
-      model: 'nomic-embed-text',
-      progress: { completed: 3, total: 42, percent: (3 / 42) * 100 },
-      createdAt: Date.UTC(2026, 7, 5, 12, 0, 0),
-      startedAt: Date.UTC(2026, 7, 5, 12, 0, 1)
-    }
-  })
-)
-const cancelEmbeddingIndex = vi.fn(async () => true)
-const embeddingStatusListeners: ((status: EmbeddingIndexStatus) => void)[] = []
-const onEmbeddingStatus = vi.fn(
-  (listener: (status: EmbeddingIndexStatus) => void) => {
-    embeddingStatusListeners.push(listener)
-    return () => {
-      const index = embeddingStatusListeners.indexOf(listener)
-      if (index >= 0) {
-        embeddingStatusListeners.splice(index, 1)
-      }
-    }
-  }
 )
 let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
@@ -442,7 +415,6 @@ describe('SettingsPanel runtime files', () => {
       magicNoteCommentFormat: 'combined'
     }
     speechModelSnapshot = createSpeechModelSnapshot()
-    embeddingStatusListeners.splice(0)
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
@@ -489,10 +461,7 @@ describe('SettingsPanel runtime files', () => {
         },
         embeddings: {
           getSnapshot: getEmbeddingSnapshot,
-          diagnose: diagnoseEmbedding,
-          rebuild: rebuildEmbeddingIndex,
-          cancel: cancelEmbeddingIndex,
-          onStatus: onEmbeddingStatus
+          diagnose: diagnoseEmbedding
         },
         speechModels: {
           getSnapshot: getSpeechModelSnapshot,
@@ -1031,10 +1000,10 @@ describe('SettingsPanel runtime files', () => {
       name: '启用 Subagent 智能路由'
     })
     expect(smartRouting).not.toBeChecked()
-    expect(screen.getByText(/仅在 Ask 或 Plan 模式/)).toHaveTextContent(
+    expect(screen.getByText(/仅在 Ask 模式/)).toHaveTextContent(
       '自动选择 1 位专家'
     )
-    expect(screen.getByText(/仅在 Ask 或 Plan 模式/)).toHaveTextContent(
+    expect(screen.getByText(/仅在 Ask 模式/)).toHaveTextContent(
       '只读运行且不使用工具'
     )
 
@@ -2011,7 +1980,54 @@ describe('SettingsPanel runtime files', () => {
     })
   })
 
-  it('tests vector generation and rebuilds the index by document', async () => {
+  it('configures learned reranking as an accessible model subtype', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '重排模型' }))
+
+    const rerankSwitch = screen.getByRole('switch', {
+      name: '启用学习型重排'
+    })
+    expect(rerankSwitch).not.toBeChecked()
+    fireEvent.click(rerankSwitch)
+    fireEvent.change(screen.getByLabelText('重排接口 URL'), {
+      target: { value: 'https://rerank.example/v1/rerank' }
+    })
+    fireEvent.change(screen.getByLabelText('模型名称'), {
+      target: { value: 'vendor/rerank-large' }
+    })
+    fireEvent.change(screen.getByLabelText('API Key（可选）'), {
+      target: { value: 'rerank-secret' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          knowledgeRerankEnabled: true,
+          knowledgeRerankEndpoint:
+            'https://rerank.example/v1/rerank',
+          knowledgeRerankModel: 'vendor/rerank-large',
+          knowledgeRerankApiKey: {
+            action: 'replace',
+            value: 'rerank-secret'
+          }
+        })
+      )
+    )
+  })
+
+  it('tests vector generation without exposing index controls', async () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -2042,52 +2058,9 @@ describe('SettingsPanel runtime files', () => {
     expect(
       await within(section).findByText(/服务返回 768 维向量/u)
     ).toBeInTheDocument()
-
-    fireEvent.click(
-      within(section).getByRole('button', { name: '重建向量索引' })
-    )
-    await waitFor(() =>
-      expect(rebuildEmbeddingIndex).toHaveBeenCalledTimes(1)
-    )
     expect(
-      await within(section).findByText('已完成 3 / 42 篇文档')
-    ).toBeInTheDocument()
-    expect(
-      within(section).getByText(
-        /每篇文档会一次性更新，处理完成后立即可用于检索/
-      )
-    ).toBeInTheDocument()
-
-    fireEvent.click(
-      within(section).getByRole('button', { name: '取消向量索引重建' })
-    )
-    await waitFor(() =>
-      expect(cancelEmbeddingIndex).toHaveBeenCalledWith('job-1')
-    )
-
-    expect(embeddingStatusListeners).toHaveLength(1)
-    act(() => {
-      embeddingStatusListeners[0]?.({
-        job: {
-          id: 'job-1',
-          status: 'cancelled',
-          provider: 'openai-compatible',
-          model: 'nomic-embed-text',
-          progress: { completed: 3, total: 42, percent: (3 / 42) * 100 },
-          createdAt: Date.UTC(2026, 7, 5, 12, 0, 0),
-          startedAt: Date.UTC(2026, 7, 5, 12, 0, 1),
-          completedAt: Date.UTC(2026, 7, 5, 12, 0, 9)
-        }
-      })
-    })
-    expect(
-      within(section).getByText('已完成 3 / 42 篇文档。')
-    ).toBeInTheDocument()
-    expect(
-      within(section).getByText(
-        /已完成文档保留新向量；其余文档保留原有向量/
-      )
-    ).toBeInTheDocument()
+      within(section).queryByRole('button', { name: '重建向量索引' })
+    ).not.toBeInTheDocument()
   })
 
   it('manages heartbeat automation from Settings', async () => {

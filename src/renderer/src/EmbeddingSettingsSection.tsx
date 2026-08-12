@@ -1,35 +1,20 @@
 import {
   Activity,
-  Database,
-  FlaskConical,
-  RefreshCw,
-  XCircle
+  FlaskConical
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type {
   EmbeddingConfigurationSummary,
-  EmbeddingDiagnosticResult,
-  EmbeddingIndexJob,
-  EmbeddingIndexStatus
+  EmbeddingDiagnosticResult
 } from '../../shared/embedding-contracts'
-import { isEmbeddingIndexJobActive } from '../../shared/embedding-contracts'
+import { formatMediumDateTime } from './locale-formatters'
 
 export interface EmbeddingSettingsSectionProps {
   configuration: EmbeddingConfigurationSummary
   diagnostic?: EmbeddingDiagnosticResult | null
   diagnosticRunning?: boolean
-  indexStatus: EmbeddingIndexStatus
   disabled?: boolean
   onTest: () => void
-  onRebuild: () => void
-  onCancel?: (jobId: string) => void
-}
-
-function formatCheckedAt(timestamp: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(timestamp)
 }
 
 function DiagnosticResult({
@@ -51,7 +36,7 @@ function DiagnosticResult({
         </p>
         <small>
           {t('embedding.diagnostic.checkedAt', {
-            date: formatCheckedAt(result.checkedAt, locale)
+            date: formatMediumDateTime(result.checkedAt, locale)
           })}
         </small>
       </div>
@@ -76,123 +61,14 @@ function DiagnosticResult({
   )
 }
 
-function IndexJobStatus({
-  job,
-  disabled,
-  onCancel
-}: {
-  job: EmbeddingIndexJob
-  disabled: boolean
-  onCancel?: (jobId: string) => void
-}): React.JSX.Element {
-  const { i18n, t } = useTranslation('settingsSections')
-  const locale = i18n.resolvedLanguage ?? i18n.language
-  const active = isEmbeddingIndexJobActive(job)
-  return (
-    <div
-      aria-live="polite"
-      className="embedding-settings__job"
-      data-status={job.status}
-    >
-      <div className="embedding-settings__job-header">
-        <div>
-          <strong>{t(`embedding.index.statuses.${job.status}`)}</strong>
-          <small>
-            {job.provider} · {job.model}
-          </small>
-        </div>
-        {active && onCancel && (
-          <button
-            aria-label={t('embedding.index.cancelAria')}
-            className="secondary-button"
-            disabled={disabled}
-            onClick={() => onCancel(job.id)}
-            type="button"
-          >
-            <XCircle aria-hidden="true" size={13} />
-            {t('embedding.index.cancel')}
-          </button>
-        )}
-      </div>
-      {active && (
-        <>
-          <progress
-            aria-label={t('embedding.index.progressAria')}
-            max={100}
-            {...(job.progress.total > 0
-              ? { value: job.progress.percent }
-              : {})}
-          />
-          <p>
-            {job.progress.total > 0
-              ? t('embedding.index.completed', {
-                  completed: job.progress.completed,
-                  total: job.progress.total
-                })
-              : t('embedding.index.preparing')}
-          </p>
-          <p className="settings-notice">
-            {t('embedding.index.atomicNotice')}
-          </p>
-        </>
-      )}
-      {job.status === 'completed' && (
-        <p>
-          {job.completedAt
-            ? t('embedding.index.completedAt', {
-                completed: job.progress.completed,
-                total: job.progress.total,
-                date: formatCheckedAt(job.completedAt, locale)
-              })
-            : t('embedding.index.completedWithPeriod', {
-                completed: job.progress.completed,
-                total: job.progress.total
-              })}
-        </p>
-      )}
-      {job.status === 'cancelled' && (
-        <>
-          <p>
-            {t('embedding.index.completedWithPeriod', {
-              completed: job.progress.completed,
-              total: job.progress.total
-            })}
-          </p>
-          <p>{t('embedding.index.cancelledNotice')}</p>
-        </>
-      )}
-      {job.status === 'failed' && job.error && (
-        <div role="alert">
-          <p>{job.error.message}</p>
-          <p>
-            {t('embedding.index.failedNotice', {
-              completed: job.progress.completed,
-              total: job.progress.total
-            })}
-          </p>
-          <p>
-            {t('embedding.index.remedyPrefix')}
-            {job.error.remedy ?? t('embedding.index.defaultRemedy')}
-            {t('embedding.index.retrySuffix')}
-          </p>
-        </div>
-      )}
-    </div>
-  )
-}
-
 export function EmbeddingSettingsSection({
   configuration,
   diagnostic,
   diagnosticRunning = false,
-  indexStatus,
   disabled = false,
-  onTest,
-  onRebuild,
-  onCancel
+  onTest
 }: EmbeddingSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
-  const active = isEmbeddingIndexJobActive(indexStatus.job)
 
   return (
     <section
@@ -262,43 +138,6 @@ export function EmbeddingSettingsSection({
         </div>
       </div>
 
-      <div
-        aria-labelledby="embedding-index-heading"
-        className="embedding-settings__group"
-      >
-        <div className="embedding-settings__subheading">
-          <div>
-            <Database aria-hidden="true" size={15} />
-            <h3 id="embedding-index-heading">
-              {t('embedding.index.heading')}
-            </h3>
-          </div>
-          <button
-            className="secondary-button"
-            disabled={disabled || active}
-            onClick={onRebuild}
-            type="button"
-          >
-            <RefreshCw aria-hidden="true" size={13} />
-            {active
-              ? t('embedding.index.rebuildRunning')
-              : t('embedding.index.rebuild')}
-          </button>
-        </div>
-
-        {indexStatus.job ? (
-          <IndexJobStatus
-            disabled={disabled}
-            job={indexStatus.job}
-            onCancel={onCancel}
-          />
-        ) : (
-          <div className="embedding-settings__empty">
-            <strong>{t('embedding.index.emptyTitle')}</strong>
-            <p>{t('embedding.index.emptyDescription')}</p>
-          </div>
-        )}
-      </div>
     </section>
   )
 }

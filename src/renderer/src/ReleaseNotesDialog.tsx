@@ -6,7 +6,7 @@ import type {
   ReleaseNote,
   ReleaseNotesSnapshot
 } from '../../shared/release-notes-contracts'
-import { trapTabFocus } from './dialog-focus'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type { UiLocale } from './i18n'
 
 type ReleaseNotesDialogProps = {
@@ -80,29 +80,18 @@ export function ReleaseNotesDialog({
 }: ReleaseNotesDialogProps): React.JSX.Element {
   const { t } = useTranslation('app')
   const dialogRef = useRef<HTMLElement>(null)
-  const restoreFocusRef = useRef<HTMLElement | null>(null)
   const [closing, setClosing] = useState(false)
   const [error, setError] = useState<string>()
   const titleId = useId()
   const descriptionId = useId()
 
-  useEffect(() => {
-    restoreFocusRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null
-    const appShell = document.querySelector<HTMLElement>('.app-shell')
-    const wasInert = appShell?.inert ?? false
-    if (appShell) {
-      appShell.inert = true
-    }
-    return () => {
-      if (appShell) {
-        appShell.inert = wasInert
-      }
-      restoreFocusRef.current?.focus()
-    }
-  }, [])
+  useEffect(
+    () =>
+      activateModalFocus(
+        () => dialogRef.current?.querySelector<HTMLElement>('button') ?? null
+      ),
+    []
+  )
 
   const close = async (): Promise<void> => {
     if (closing) {

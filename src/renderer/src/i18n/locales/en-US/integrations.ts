@@ -243,7 +243,7 @@ export const integrations = {
       title: 'Web search',
       subtitle: 'Direct-model tool · Exa MCP · Ask / Execute',
       description:
-        'Provides web_search and web_fetch for public web search and reading only. The tools are unavailable in Plan mode.',
+        'Provides web_search and web_fetch for public web search and reading only. The tools are available in Ask and Execute.',
       privacy:
         'Queries and public webpage addresses are sent to the third-party Exa service. Model API keys, local files, and knowledge content are not sent.',
       enableAriaLabel: 'Enable direct-model web search',

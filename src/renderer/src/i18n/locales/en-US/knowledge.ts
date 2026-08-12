@@ -5,8 +5,7 @@ export const knowledge = {
   page: {
     eyebrow: 'Knowledge',
     title: 'Knowledge Base',
-    description:
-      'Organize files, folders, and web sources into traceable indexes and graphs that work across projects.'
+    description: 'Manage files, folders, and web sources, then inspect their indexes and graph.'
   },
   actions: {
     cancel: 'Cancel',
@@ -34,6 +33,7 @@ export const knowledge = {
     edit: 'Edit',
     delete: 'Delete',
     add: 'Add',
+    viewTasks: 'View tasks',
     backToLibraryList: 'Back to library list',
     goToSettings: 'Go to settings'
   },
@@ -82,16 +82,40 @@ export const knowledge = {
     failed: 'Processing failed'
   },
   taskKinds: {
+    sourceSync: 'Source sync',
+    documentProcess: 'Document processing',
+    documentRebuild: 'Document rebuild',
+    libraryRebuild: 'Library rebuild',
+    embeddingRebuild: 'Embedding index rebuild',
+    graphRebuild: 'Knowledge graph rebuild',
     parsing: 'Document parsing',
     embedding: 'Embedding',
     graph: 'Graph extraction'
+  },
+  taskStages: {
+    queued: 'Waiting to start',
+    syncing: 'Syncing source',
+    reading: 'Reading content',
+    parsing: 'Parsing document',
+    chunking: 'Creating chunks',
+    indexing: 'Building index',
+    embedding: 'Creating embeddings',
+    graph: 'Extracting graph',
+    finalizing: 'Finalizing'
   },
   taskStatuses: {
     queued: 'Waiting',
     running: 'In progress',
     succeeded: 'Completed',
     failed: 'Failed',
-    skipped: 'Skipped'
+    cancelled: 'Cancelled',
+    skipped: 'Skipped',
+    interrupted: 'Interrupted'
+  },
+  taskScopes: {
+    library: 'Library scope',
+    source: 'Source scope',
+    document: 'Document scope'
   },
   format: {
     neverSynced: 'Never synced',
@@ -133,6 +157,262 @@ export const knowledge = {
       'This library references original files. Deleting it removes only indexes and graphs, not the original files on disk.',
     triggerAriaLabel: 'Delete library {{name}}'
   },
+  retrieval: {
+    eyebrow: 'Current library: {{libraryName}}',
+    title: 'Retrieval test',
+    description:
+      'Validate retrieval from this library with temporary settings. This test does not create a conversation, call an LLM, or modify knowledge content.',
+    close: 'Close retrieval test',
+    query: {
+      title: 'Test question',
+      help: 'Enter a real question to inspect channels, ranking, and final context.',
+      label: 'Retrieval question',
+      placeholder: 'For example: How do I configure document parsing offline?',
+      count: '{{count}} / 4000 characters'
+    },
+    pipeline: {
+      recall: {
+        title: 'Recall candidates',
+        summary: 'Up to {{count}} fused candidates',
+        pending: 'Enter valid settings to calculate'
+      },
+      rerank: {
+        title: 'Local reranking',
+        enabled: 'Rerank up to {{count}} candidates',
+        disabled: 'Off; keep fused ranking'
+      },
+      select: {
+        title: 'Final results',
+        summary: 'Keep the top {{count}} chunks'
+      },
+      context: {
+        title: 'Assemble context',
+        summary: '{{count}} character budget'
+      }
+    },
+    settings: {
+      title: 'Settings for this test',
+      temporary:
+        'These changes apply only to this test. Save them as the current library defaults to keep using them.',
+      groups: {
+        recall: {
+          title: 'Candidate recall',
+          description:
+            'Control the initial search pool, filtering threshold, and each channel’s influence on fused ranking.'
+        },
+        output: {
+          title: 'Reranking and context',
+          description:
+            'Control candidate ordering, final result count, and the context sent to the model.'
+        }
+      },
+      candidateMultiplier: 'Recall multiplier',
+      candidateMultiplierHelp:
+        'From 2 to 10; currently recalls up to {{count}} fused candidates',
+      channelWeights: 'Channel fusion share (100% total)',
+      topK: 'Final result count',
+      topKHelp: 'Keep 1 to 20 results after reranking',
+      vectorSimilarity: 'Minimum vector similarity (%)',
+      vectorSimilarityHelp:
+        'From 0% to 100%; 0% keeps all non-negative similarities',
+      ftsWeight: 'Full-text share',
+      vectorWeight: 'Vector share',
+      graphWeight: 'Graph share',
+      weightHelp:
+        'Used as a relative fusion share; available channels should normally total 100%',
+      graphUnavailable:
+        'The graph is disabled for this library, so this weight is not currently used.',
+      contextBudget: 'Context character budget',
+      contextBudgetHelp: 'From 2,000 to 48,000',
+      adjacentCount: 'Adjacent chunk count',
+      adjacentCountHelp: 'Merge 0 to 2 chunks before and after each match',
+      localRerank: 'Enable local reranking',
+      localRerankHelp:
+        'Deterministically rerank every fused candidate recalled for this run without calling another AI model, so no separate rerank count is needed.',
+      rerankMode: 'Reranking method',
+      rerankModeHelp:
+        'Learned reranking calls the configured Cohere/Jina-compatible model and reports safe fallback details.',
+      rerankModes: {
+        none: 'No reranking',
+        local: 'Local rules',
+        learned: 'Learned model'
+      }
+    },
+    validation: {
+      queryRequired: 'Enter a test question.',
+      queryTooLong: 'The test question cannot exceed 4,000 characters.',
+      topK: 'Top K must be an integer from 1 to 20.',
+      candidateMultiplier:
+        'The recall multiplier must be an integer from 2 to 10.',
+      vectorSimilarity:
+        'Minimum vector similarity must be between 0% and 100%.',
+      weight: 'Channel fusion shares must be between 0% and 100%.',
+      weightTotal:
+        'Fusion shares for the available retrieval channels must total 100%.',
+      activeWeight:
+        'At least one currently available retrieval channel must have a weight greater than 0.',
+      contextBudget:
+        'The context budget must be an integer from 2,000 to 48,000.',
+      adjacentCount:
+        'The adjacent chunk count must be an integer from 0 to 2.'
+    },
+    actions: {
+      test: 'Test retrieval',
+      running: 'Retrieving…',
+      saveDefaults: 'Save as defaults',
+      savingDefaults: 'Saving…',
+      viewContext: 'View chunk',
+      openSource: 'Open source'
+    },
+    states: {
+      runningTitle: 'Searching the current library',
+      runningDescription:
+        'Scanning bounded candidates and assembling context.',
+      errorTitle: 'Retrieval test failed',
+      errorDescription:
+        'Check the library index status or adjust the settings, then try again.'
+    },
+    channels: {
+      fts: 'Full text',
+      cjk: 'CJK',
+      vector: 'Vector',
+      graph: 'Graph'
+    },
+    diagnostics: {
+      duration: 'Total duration',
+      milliseconds: '{{count}} ms',
+      requested: 'Requested channels',
+      used: 'Used channels',
+      none: 'None',
+      vectorScanned: 'Vectors scanned',
+      channelSummary: '{{candidates}} candidates · {{duration}} ms',
+      degradedTitle: 'This retrieval was degraded',
+      rerank: 'Reranking',
+      rerankSummary:
+        'Requested {{requested}}, used {{used}} · {{status}} · {{count}} candidates · {{duration}} ms',
+      rerankStatuses: {
+        skipped: 'Skipped',
+        applied: 'Applied',
+        fallback: 'Fallback',
+        failed: 'Failed'
+      }
+    },
+    zero: {
+      'empty-library': {
+        title: 'This library has no searchable content',
+        description:
+          'Import and finish indexing a document before testing again.'
+      },
+      'index-unavailable': {
+        title: 'The current index is unavailable',
+        description:
+          'Check parsing and index status, repair failed items, and try again.'
+      },
+      'no-match': {
+        title: 'No relevant content found',
+        description:
+          'Try different keywords, use a specific name from the source, or increase Top K.'
+      },
+      filtered: {
+        title: 'Results were removed by the threshold',
+        description:
+          'Lower the minimum vector similarity or check the channel weights, then try again.'
+      }
+    },
+    results: {
+      title: 'Retrieval results ({{count}})',
+      contextSummary:
+        'Final context: {{count}} / {{budget}} characters',
+      truncated: 'Truncated',
+      listAriaLabel: 'Retrieval results',
+      resultAriaLabel: 'Result {{rank}}, {{documentName}}',
+      unknownLocator: 'Unknown location',
+      relevance: 'Relevance',
+      fusedScore: 'Fused score',
+      channelDetail:
+        'Rank {{rank}} · raw score {{score}} · similarity {{similarity}}',
+      beforeRerank: 'Rank before reranking',
+      context: 'Context',
+      contextDetail: '{{count}} characters · {{truncated}}',
+      complete: 'Complete',
+      diagnostics: 'Result diagnostics',
+      actualContext: 'View actual context'
+    }
+  },
+  chunks: {
+    title: 'Document chunks',
+    documentUnavailable:
+      'The document for this retrieval result is currently unavailable.',
+    description:
+      'Search, preview, and maintain the bounded chunk list for this document.',
+    close: 'Close document chunks',
+    listAriaLabel: 'Document chunk list',
+    syncWarningTitle: 'Manual changes may be replaced.',
+    syncWarning:
+      'Syncing the source or rebuilding the document may recreate chunks from the original content. Deleting a chunk does not delete the original file.',
+    search: {
+      label: 'Search chunks in this document',
+      placeholder: 'Search headings, locations, or content',
+      action: 'Search'
+    },
+    loadErrorTitle: 'The chunk operation did not finish',
+    loadingTitle: 'Loading chunks',
+    loadingDescription: 'Reading chunks on the current page.',
+    zeroTitle: 'No chunks match',
+    zeroDescription:
+      'Change the search query or rebuild the document to regenerate chunks.',
+    ordinal: 'Chunk {{count}}',
+    headingSeparator: ' · {{heading}}',
+    parentMetadata: ' · parent {{parentId}}',
+    unknownLocator: 'Unknown location',
+    characterCount: '{{count}} characters',
+    enabled: 'Include in retrieval',
+    enabledAriaLabel: 'Enable chunk {{count}}',
+    roles: {
+      standalone: 'Standalone',
+      parent: 'Parent',
+      child: 'Child'
+    },
+    pagination: {
+      ariaLabel: 'Chunk pagination',
+      previous: 'Previous chunk page',
+      next: 'Next chunk page',
+      summary: 'Page {{page}} of {{total}}, {{count}} total'
+    },
+    editor: {
+      title: 'Edit chunk {{count}}',
+      metadata: '{{role}} · {{locator}}',
+      manuallyEdited: 'Manually edited',
+      role: 'Chunk role',
+      parent: 'Parent chunk ID',
+      content: 'Chunk content',
+      count: '{{count}} / {{max}} characters',
+      save: 'Save chunk',
+      saving: 'Saving…',
+      noSelectionTitle: 'Select a chunk',
+      noSelectionDescription:
+        'Select a chunk from the list to view its complete content and parent-child relationship.'
+    },
+    validation: {
+      contentRequired: 'Chunk content cannot be empty.',
+      contentTooLong: 'Chunk content cannot exceed {{count}} characters.'
+    },
+    delete: {
+      trigger: 'Delete chunk',
+      triggerAriaLabel: 'Delete chunk {{count}}',
+      confirmAriaLabel: 'Confirm deletion of chunk {{count}}',
+      confirm: 'Delete chunk',
+      deleting: 'Deleting…',
+      message:
+        'Deleting chunk {{count}} removes its full-text, CJK, vector, and graph evidence. A source sync or rebuild may recreate it; the original file is not deleted.'
+    },
+    rebuild: {
+      action: 'Rebuild document',
+      running: 'Rebuilding…',
+      description:
+        'Rebuilding reads the source again; a failed rebuild should preserve the last usable index.'
+    }
+  },
   graph: {
     title: 'Knowledge graph',
     enable: 'Enable knowledge graph',
@@ -153,11 +433,14 @@ export const knowledge = {
     entityPickerAriaLabel: 'Select graph entity',
     zoomOutAriaLabel: 'Zoom out graph',
     zoomInAriaLabel: 'Zoom in graph',
+    fitView: 'Show all',
+    interactionHint:
+      'Drag nodes to arrange them. Drag the canvas to pan, and use the wheel to zoom.',
     empty: 'This library does not have any generated entity relations yet.',
     topologyAriaLabel: 'Graph topology',
     visibleRelations: {
       title: 'Visible relations',
-      description: 'Updates with the current search and type filter.',
+      description: 'Shows relations in the current filter results.',
       count: '{{count}} relations',
       empty: 'No relations are visible with the current filters.',
       listAriaLabel: 'Visible relations list'
@@ -182,15 +465,19 @@ export const knowledge = {
     },
     detailsAriaLabel: 'Graph details',
     detailsPrompt: 'Select a graph node to view entity details.',
-    disabledTitle: 'Knowledge graph is disabled',
-    disabledDescription:
-      'Enable the knowledge graph in Settings to view entity relations and re-extract them.'
+    workspace: {
+      tabsAriaLabel: 'Knowledge graph workspace',
+      explore: 'Graph explorer',
+      settings: 'Graph settings'
+    }
   },
   documents: {
     sources: {
       title: 'Content sources',
       description:
-        'Imported content is parsed, indexed, and added to the graph automatically.',
+        'Imported content is parsed and added to the retrieval index automatically.',
+      descriptionWithGraph:
+        'Imported content is parsed, indexed for retrieval, and added to the knowledge graph with the current strategy.',
       emptyTitle: 'No content sources connected',
       emptyDescription:
         'Choose files, a folder, or a URL, or drag files into the area above.',
@@ -225,8 +512,10 @@ export const knowledge = {
         document: 'Document',
         status: 'Status',
         indexProgress: 'Index progress',
+        processingStatus: 'Processing status',
         chunks: 'Chunks',
-        size: 'Size'
+        size: 'Size',
+        actions: 'Actions'
       }
     },
     search: {
@@ -241,7 +530,10 @@ export const knowledge = {
   },
   relationEditor: {
     editAriaLabel: 'Edit relation',
-    addAriaLabel: 'Add relation'
+    addAriaLabel: 'Add relation',
+    selectType: 'Select a relation type',
+    noCompatibleTypes:
+      'No relation type allows the current source and target types.'
   },
   settings: {
     description:
@@ -250,7 +542,111 @@ export const knowledge = {
       'When enabled, newly imported and resynced documents use the selected graph strategy.',
     strategyAriaLabel: 'Knowledge graph extraction strategy',
     askDescription:
-      '“Ask when needed” does not generate a graph automatically and cannot run re-extraction.'
+      '“Ask when needed” does not generate a graph automatically and cannot run re-extraction.',
+    graphCapability: {
+      title: 'Optional capabilities',
+      description:
+        'Enable extra capabilities when needed. Disabled capabilities stay out of the workspace.',
+      enabledDescription:
+        'The knowledge graph is enabled. Explore relations and manage graph settings from Knowledge graph.',
+      disabledDescription:
+        'Enable it to expose graph exploration, extraction strategy, and ontology definitions.'
+    },
+    graphConfiguration: {
+      title: 'Extraction method',
+      description:
+        'Control how new imports, resyncs, and explicit rebuilds generate entities, relations, and evidence.'
+    },
+    chunking: {
+      title: 'Chunking strategy',
+      description:
+        'Configure chunking for future imports and rebuilds. Saving does not immediately rewrite existing documents.',
+      mode: 'Chunking mode',
+      modes: {
+        fixed: 'Fixed length',
+        structure: 'Document structure',
+        parentChild: 'Parent-child'
+      },
+      targetCharacters: 'Target characters',
+      overlapCharacters: 'Overlap characters',
+      contextualIndexing: 'Enable contextual indexing',
+      contextualIndexingDescription:
+        'Add the document title, heading path, page, and block type to retrieval and embedding text while keeping citations source-faithful.',
+      parentCharacters: 'Parent chunk characters',
+      childCharacters: 'Child chunk characters',
+      rebuildRequired:
+        'Settings changed. Rebuild existing documents to apply them everywhere.',
+      save: 'Save chunking settings',
+      saving: 'Saving…',
+      rebuild: 'Rebuild entire library',
+      rebuilding: 'Rebuilding…',
+      cancelRebuild: 'Cancel rebuild'
+    },
+    ontology: {
+      title: 'Ontology definitions',
+      description:
+        'Control entity types, relation types, and relation endpoint constraints for this library. IDs use uppercase letters, numbers, and underscores.',
+      entityTypes: 'Entity types',
+      relationTypes: 'Relation types',
+      id: 'Canonical ID',
+      nameZh: 'Chinese name',
+      nameEn: 'English name',
+      aliases: 'Aliases (comma-separated, up to 32)',
+      sourceTypes: 'Allowed source types',
+      targetTypes: 'Allowed target types',
+      anyEndpoint: 'Allow any entity type',
+      anyEndpointHelp: 'No endpoint constraint is set.',
+      save: 'Save ontology definitions',
+      saving: 'Saving…',
+      validation:
+        'Fix duplicate IDs, duplicate aliases, empty names, or invalid endpoint constraints.',
+      rebuildRequired:
+        'Ontology definitions changed. Explicitly rebuild existing documents to normalize the current graph again.',
+      noImplicitRebuild:
+        'Saving updates only this library’s settings. It does not rebuild documents or the graph automatically.'
+    },
+    vectorIndex: {
+      title: 'Embedding index',
+      description:
+        'Review coverage for this library with the current embedding model and rebuild only this library.',
+      rebuild: 'Rebuild embedding index',
+      rebuilding: 'Rebuilding…',
+      cancel: 'Cancel rebuild',
+      cancelAria: 'Cancel this library embedding index rebuild',
+      loading: 'Loading embedding index status…',
+      disabledTitle: 'Embedding model is disabled',
+      disabledDescription:
+        'Enable and save an embedding model under Model connections, then return here to rebuild this library.',
+      currentModel: 'Current embedding model',
+      coverage: {
+        indexed: 'Indexed',
+        missing: 'Missing',
+        error: 'Error',
+        total: 'Total documents'
+      },
+      statuses: {
+        queued: 'Waiting to rebuild',
+        running: 'Rebuilding',
+        completed: 'Last rebuild succeeded',
+        failed: 'Last rebuild failed',
+        cancelled: 'Last rebuild was cancelled'
+      },
+      progressAria: 'Current library embedding index rebuild progress',
+      progress: '{{completed}} / {{total}} documents completed',
+      preparing: 'Preparing documents…',
+      completedAt:
+        '{{completed}} / {{total}} documents completed. {{date}}',
+      atomicNotice:
+        'Each document is updated atomically. If cancelled, completed documents keep new embeddings and all others remain unchanged.',
+      cancelledNotice:
+        '{{completed}} / {{total}} documents completed. All others remain unchanged.',
+      defaultRemedy:
+        'Check the embedding model configuration and network connection, then retry.',
+      activeTitle: 'An embedding index task is running',
+      activeDescription:
+        'Open the Task center for details, progress, and available actions.',
+      viewTasks: 'View details in Task center'
+    }
   },
   tasks: {
     emptyDescription:
@@ -258,16 +654,50 @@ export const knowledge = {
     emptyTitle: 'No knowledge tasks yet',
     title: 'Task center',
     recentCount: '{{count}} recent tasks',
+    totalCount: '{{count}} tasks',
     activeCount: '{{count}} in progress',
     failedCount: '{{count}} failed',
+    historyCount: '{{count}} in history',
     progressAriaLabel: '{{name}} {{kind}} progress',
-    waiting: 'Waiting to process'
+    waiting: 'Waiting to process',
+    currentStage: 'Current stage',
+    itemProgress: '{{completed}} / {{total}} items',
+    errorTitle: 'Task failed',
+    defaultRemedy: 'Check the related configuration or source, then retry.',
+    noResultsTitle: 'No tasks match',
+    noResultsDescription:
+      'Choose another filter or clear the current object filter.',
+    filters: {
+      ariaLabel: 'Filter knowledge tasks',
+      all: 'All',
+      active: 'Active',
+      failed: 'Failed',
+      history: 'History'
+    },
+    context: {
+      active: 'Showing tasks related to the current source or document',
+      clear: 'Clear object filter'
+    },
+    actionErrors: {
+      cancelTitle: 'Could not cancel task',
+      retryTitle: 'Could not retry task',
+      recovery:
+        'The task and filters were preserved. Resolve the issue and try again.'
+    },
+    actions: {
+      expand: 'Expand stage tasks for {{name}}',
+      collapse: 'Collapse stage tasks for {{name}}',
+      cancel: 'Cancel task',
+      cancelling: 'Cancelling…',
+      retry: 'Retry task',
+      retrying: 'Retrying…'
+    }
   },
   tabs: {
     documents: 'Documents and sources',
     graph: 'Knowledge graph',
     tasks: 'Task center',
-    settings: 'Settings'
+    settings: 'Index and retrieval'
   },
   workspace: {
     ariaLabel: 'Knowledge workspace',

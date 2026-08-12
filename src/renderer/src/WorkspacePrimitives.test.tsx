@@ -103,6 +103,12 @@ describe('WorkspacePrimitives', () => {
       /button\s*>\s*svg,\s*button\s*>\s*svg\s+\*\s*\{[^}]*pointer-events:\s*none;/u
     )
     expect(stylesheet).toMatch(
+      /button\s*>\s*svg\s*\{[^}]*display:\s*block;[^}]*flex:\s*0 0 auto;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.primary-button,\s*\.secondary-button,\s*\.danger-button\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*gap:\s*var\(--space-2\);/u
+    )
+    expect(stylesheet).toMatch(
       /button:focus-visible,\s*input:focus-visible,\s*select:focus-visible,\s*textarea:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\);/u
     )
     expect(stylesheet).toMatch(
@@ -138,6 +144,24 @@ describe('WorkspacePrimitives', () => {
     )
     expect(stylesheet).toMatch(
       /\.page-shell--master-detail\s*\{[^}]*padding:\s*var\(--page-gutter\);/u
+    )
+  })
+
+  it('keeps knowledge settings cards separated as page sections', () => {
+    expect(stylesheet).toMatch(
+      /\.knowledge-settings\s*\{[^}]*display:\s*grid;[^}]*width:\s*min\(920px,\s*100%\);[^}]*gap:\s*var\(--space-6\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-settings--index\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-settings--graph\s*\{[^}]*grid-template-columns:\s*minmax\(280px,\s*0\.7fr\)\s*minmax\(0,\s*1\.3fr\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-settings\s*>\s*section\s*\{[^}]*display:\s*grid;[^}]*gap:\s*var\(--space-4\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-settings__toggle\s*\{[^}]*display:\s*grid;[^}]*align-items:\s*flex-start;[^}]*justify-content:\s*initial;[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\);/u
     )
   })
 

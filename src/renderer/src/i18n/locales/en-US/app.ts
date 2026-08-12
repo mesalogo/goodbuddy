@@ -181,8 +181,43 @@ export const app = {
       view: 'View {{count}} evidence references',
       retrieval: 'Retrieved by: ',
       fullText: 'Full text',
+      cjk: 'CJK terms',
       vector: 'Vector',
-      graph: 'Graph'
+      graph: 'Graph',
+      viewContext: 'View context',
+      openSource: 'Open source',
+      openFailed: 'Could not open the citation source',
+      contextTitle: 'Citation context',
+      contextDescription:
+        'Review the matched chunk and its surrounding content.',
+      contextLoading: 'Loading citation context…',
+      contextUnavailable: 'Citation context is unavailable',
+      contextTruncated:
+        'Context exceeded the safe display limit and was truncated.',
+      closeContext: 'Close citation context',
+      matchedChunk: 'Matched chunk',
+      surroundingContext: 'Full context',
+      score: 'Relevance {{score}}'
+    },
+    knowledgeRetrieval: {
+      searching: 'Searching the enabled knowledge bases',
+      states: {
+        searching: 'Searching knowledge bases',
+        succeeded: 'Knowledge retrieval completed',
+        zero: 'No relevant knowledge found',
+        degraded: 'Knowledge retrieval was degraded',
+        failed: 'Knowledge retrieval failed',
+        cancelled: 'Knowledge retrieval was cancelled'
+      },
+      summary:
+        'Searched {{libraries}} libraries, found {{results}} results in {{duration}} ms',
+      channels: 'Channels used: {{channels}}',
+      channelNames: {
+        fts: 'Full text',
+        cjk: 'CJK terms',
+        vector: 'Vector',
+        graph: 'Graph'
+      }
     },
     retry: 'Edit and send again',
     status: {
@@ -342,7 +377,14 @@ export const app = {
       select: 'Select knowledge bases, {{count}} enabled',
       title: 'Select knowledge bases for this conversation',
       scope: 'Retrieval scope for this conversation',
-      documents: '{{count}} documents'
+      documents: '{{count}} documents',
+      modeLabel: 'Knowledge retrieval mode',
+      auto: 'Model decides',
+      always: 'Always retrieve first',
+      autoDescription:
+        'Let the model decide whether the current question needs knowledge.',
+      alwaysDescription:
+        'GoodBuddy searches the enabled knowledge bases before the model answers.'
     },
     hints: {
       configureRuntime: 'Configure an available model or Agent Runtime first.',
@@ -421,6 +463,13 @@ export const app = {
     selectKnowledgeBase: 'Select a knowledge base first',
     knowledgeGraphRebuilt: 'Knowledge graph extracted again',
     knowledgeSettingsUpdated: 'Knowledge base settings updated',
+    knowledgeRebuildCompleted: 'Rebuilt {{count}} documents',
+    knowledgeRebuildPartial:
+      'Library rebuild was incomplete: {{rebuilt}} succeeded, {{failed}} failed',
+    knowledgeRebuildNotRunning:
+      'There is no active library rebuild to cancel',
+    knowledgeTaskNotRunning:
+      'This task has finished or cannot currently be cancelled',
     evidenceExcerpt: '{{source}}: {{excerpt}}'
   },
   markdown: {

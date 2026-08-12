@@ -33,6 +33,7 @@ type KnowledgeGraphChartProps = {
   nodes: readonly ChartKnowledgeGraphNode[]
   relations: readonly ChartKnowledgeGraphRelation[]
   selectedNodeId?: string
+  fitViewRequest: number
   zoom: number
   onMoveNode: (nodeId: string, position: { x: number; y: number }) => void
   onSelectNode: (nodeId: string) => void
@@ -269,7 +270,10 @@ function createPresentation(
     behaviors: [
       'drag-canvas',
       'zoom-canvas',
-      'drag-element',
+      {
+        type: 'drag-element-force',
+        fixed: true
+      },
       {
         type: 'auto-adapt-label',
         sortNode: { type: 'degree' },
@@ -313,6 +317,7 @@ export function KnowledgeGraphChart({
   nodes,
   relations,
   selectedNodeId,
+  fitViewRequest,
   zoom,
   onMoveNode,
   onSelectNode,
@@ -331,6 +336,7 @@ export function KnowledgeGraphChart({
   const relationsRef = useRef(relations)
   const selectedNodeIdRef = useRef(selectedNodeId)
   const zoomRef = useRef(zoom)
+  const fitViewRequestRef = useRef(fitViewRequest)
   const appliedZoomRef = useRef<number | undefined>(undefined)
   const renderVersionRef = useRef(0)
   const renderedRevisionRef = useRef<string | undefined>(undefined)
@@ -362,6 +368,44 @@ export function KnowledgeGraphChart({
   useEffect(() => {
     zoomRef.current = zoom
   }, [zoom])
+
+  useEffect(() => {
+    if (fitViewRequestRef.current === fitViewRequest) {
+      return
+    }
+    fitViewRequestRef.current = fitViewRequest
+    const graph = graphRef.current
+    if (
+      !graph ||
+      renderedRevisionRef.current !== dataRevision
+    ) {
+      return
+    }
+    void graph
+      .fitView(
+        {
+          when: 'always',
+          direction: 'both'
+        },
+        false
+      )
+      .then(() => {
+        if (graphRef.current !== graph) {
+          return
+        }
+        const nextZoom = graph.getZoom()
+        if (Number.isFinite(nextZoom)) {
+          zoomRef.current = nextZoom
+          appliedZoomRef.current = nextZoom
+          onZoomChangeRef.current(nextZoom)
+        }
+      })
+      .catch((error: unknown) => {
+        if (graphRef.current === graph) {
+          setRenderError(graphErrorMessage(error, renderErrorFallback))
+        }
+      })
+  }, [dataRevision, fitViewRequest, renderErrorFallback])
 
   useEffect(() => {
     if (typeof MutationObserver !== 'function') {

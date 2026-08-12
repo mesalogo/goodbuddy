@@ -34,3 +34,24 @@ export function trapTabFocus(
     first.focus()
   }
 }
+
+export function activateModalFocus(
+  initialFocus: () => HTMLElement | null
+): () => void {
+  const restoreFocus =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
+  const appShell = document.querySelector<HTMLElement>('.app-shell')
+  const wasInert = appShell?.inert ?? false
+  if (appShell) {
+    appShell.inert = true
+  }
+  initialFocus()?.focus()
+  return () => {
+    if (appShell) {
+      appShell.inert = wasInert
+    }
+    restoreFocus?.focus()
+  }
+}
