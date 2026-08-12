@@ -4891,6 +4891,11 @@ button > svg {
   font-weight: 650;
 }
 
+.model-service-form {
+  display: grid;
+  gap: var(--space-3);
+}
+
 .runtime-source-options {
   display: grid;
   min-width: 0;

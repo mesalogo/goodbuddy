@@ -134,6 +134,12 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('separates model service fields from credential status', () => {
+    expect(stylesheet).toMatch(
+      /\.model-service-form\s*\{[^}]*display:\s*grid;[^}]*gap:\s*var\(--space-3\);/u
+    )
+  })
+
   it('uses the design-system page gutters at each window width', () => {
     expect(stylesheet).toMatch(/--page-gutter:\s*32px;/u)
     expect(stylesheet).toMatch(

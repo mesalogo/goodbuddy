@@ -1931,6 +1931,11 @@ describe('SettingsPanel runtime files', () => {
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
     expect(
+      screen
+        .getByLabelText('API Key（可选）')
+        .closest('.runtime-note')
+    ).toHaveClass('model-service-form')
+    expect(
       screen.getByText('向量模型连接', { selector: 'strong' })
     ).toBeInTheDocument()
     expect(
@@ -1995,6 +2000,11 @@ describe('SettingsPanel runtime files', () => {
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(screen.getByRole('button', { name: '重排模型' }))
 
+    expect(
+      screen
+        .getByLabelText('API Key（可选）')
+        .closest('.runtime-note')
+    ).toHaveClass('model-service-form')
     const rerankSwitch = screen.getByRole('switch', {
       name: '启用学习型重排'
     })

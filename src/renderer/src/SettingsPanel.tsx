@@ -2147,7 +2147,7 @@ export function SettingsPanel({
                   <small>{t('model.embedding.description')}</small>
                 </div>
               </div>
-              <div className="runtime-note">
+              <div className="runtime-note model-service-form">
                 <label className="toggle-row">
                   <input
                     checked={knowledgeEmbeddingEnabled}
@@ -2260,7 +2260,7 @@ export function SettingsPanel({
                   <small>{t('model.rerank.description')}</small>
                 </div>
               </div>
-              <div className="runtime-note">
+              <div className="runtime-note model-service-form">
                 <label className="toggle-row">
                   <input
                     checked={knowledgeRerankEnabled}
