@@ -1,10 +1,23 @@
-import { memo, useMemo } from 'react'
+import {
+  Children,
+  isValidElement,
+  lazy,
+  memo,
+  Suspense,
+  useMemo
+} from 'react'
 import rehypeKatex from 'rehype-katex'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { Components } from 'react-markdown'
 import { useTranslation } from 'react-i18next'
+
+const MermaidDiagram = lazy(() =>
+  import('./MermaidDiagram').then((module) => ({
+    default: module.MermaidDiagram
+  }))
+)
 
 const linkComponent: Components['a'] = ({
   children,
@@ -19,9 +32,46 @@ const linkComponent: Components['a'] = ({
   )
 }
 
-function markdownComponents(tableAriaLabel: string): Components {
+function markdownComponents(
+  tableAriaLabel: string,
+  mermaidLoadingLabel: string
+): Components {
   return {
     a: linkComponent,
+    pre: ({ children, node, ...properties }) => {
+      void node
+      const child = Children.count(children) === 1
+        ? Children.only(children)
+        : undefined
+      if (
+        isValidElement<{
+          children?: React.ReactNode
+          className?: string
+        }>(child) &&
+        /(?:^|\s)language-mermaid(?:\s|$)/iu.test(
+          child.props.className ?? ''
+        )
+      ) {
+        const source = String(child.props.children ?? '').replace(
+          /\n$/u,
+          ''
+        )
+        return (
+          <Suspense
+            fallback={
+              <figure aria-busy="true" className="mermaid-diagram">
+                <figcaption role="status">
+                  {mermaidLoadingLabel}
+                </figcaption>
+              </figure>
+            }
+          >
+            <MermaidDiagram source={source} />
+          </Suspense>
+        )
+      }
+      return <pre {...properties}>{children}</pre>
+    },
     table: ({ children, node, ...properties }) => {
       void node
       return (
@@ -149,7 +199,11 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 }: MarkdownRendererProps): React.JSX.Element {
   const { t } = useTranslation('app')
   const components = useMemo(
-    () => markdownComponents(t('markdown.scrollableTable')),
+    () =>
+      markdownComponents(
+        t('markdown.scrollableTable'),
+        t('markdown.mermaidLoading')
+      ),
     [t]
   )
 

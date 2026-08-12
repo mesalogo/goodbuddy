@@ -1,0 +1,205 @@
+.mermaid-diagram {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  margin: var(--space-3) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.mermaid-diagram__actions {
+  position: absolute;
+  z-index: 1;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  gap: 2px;
+}
+
+.mermaid-diagram__actions .icon-button {
+  width: 30px;
+  height: 30px;
+}
+
+.mermaid-diagram__viewport {
+  min-width: 0;
+  padding: var(--space-4);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.mermaid-diagram__viewport:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.mermaid-diagram__viewport > svg {
+  display: block;
+  min-width: min(100%, 320px);
+  max-width: none !important;
+  height: auto;
+  min-height: 80px;
+  margin-inline: auto;
+  font-family: var(--font-family-ui);
+}
+
+.markdown-content .mermaid-diagram__source {
+  max-height: 320px;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+  overflow: auto;
+}
+
+.mermaid-diagram__loading,
+.mermaid-diagram--error > figcaption {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+
+.mermaid-diagram--error {
+  border-color: var(--danger-border);
+  background: var(--danger-subtle);
+}
+
+.mermaid-diagram--error > figcaption {
+  color: var(--danger-strong);
+}
+
+.markdown-content .mermaid-diagram--error > pre {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--danger-border);
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+}
+
+.mermaid-viewer-backdrop {
+  position: fixed;
+  z-index: 120;
+  display: grid;
+  padding: var(--space-4);
+  background: var(--overlay-backdrop);
+  inset: 38px 0 0;
+  place-items: center;
+}
+
+.mermaid-viewer {
+  display: grid;
+  width: min(1280px, 100%);
+  height: min(860px, calc(100vh - 70px));
+  min-height: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-dialog);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.mermaid-viewer__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.mermaid-viewer__header > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mermaid-viewer__header strong {
+  color: var(--text-primary);
+  font-size: var(--font-section-title);
+}
+
+.mermaid-viewer__header small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.4;
+}
+
+.mermaid-viewer__controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.mermaid-viewer__zoom {
+  min-width: 48px;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.mermaid-viewer__canvas {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-6);
+  overflow: auto;
+  background: var(--surface-subtle);
+  cursor: grab;
+  overscroll-behavior: contain;
+  place-items: center;
+  touch-action: none;
+}
+
+.mermaid-viewer__canvas--dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.mermaid-viewer__canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.mermaid-viewer__diagram {
+  display: grid;
+  min-width: max-content;
+  min-height: max-content;
+  transform-origin: center;
+  place-items: center;
+}
+
+.mermaid-viewer__diagram > svg {
+  display: block;
+  max-width: none !important;
+  height: auto;
+  font-family: var(--font-family-ui);
+}
+
+@media (max-width: 720px) {
+  .mermaid-viewer-backdrop {
+    padding: var(--space-2);
+  }
+
+  .mermaid-viewer {
+    height: calc(100vh - 54px);
+  }
+
+  .mermaid-viewer__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .mermaid-viewer__controls {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

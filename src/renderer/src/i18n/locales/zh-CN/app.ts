@@ -439,6 +439,21 @@ export const app = {
     evidenceExcerpt: '{{source}}：{{excerpt}}'
   },
   markdown: {
-    scrollableTable: '表格，可横向滚动'
+    scrollableTable: '表格，可横向滚动',
+    mermaidDiagram: 'Mermaid 图表，可横向滚动',
+    mermaidLoading: '正在绘制 Mermaid 图表…',
+    mermaidError: '无法绘制 Mermaid 图表，已保留原始图表代码。',
+    mermaidActions: 'Mermaid 图表操作',
+    mermaidViewSource: '查看源码',
+    mermaidHideSource: '隐藏源码',
+    mermaidOpenViewer: '打开大图',
+    mermaidViewerTitle: 'Mermaid 大图',
+    mermaidViewerHint: '使用滚轮或按钮缩放，拖动画布浏览。',
+    mermaidViewerCanvas: '可缩放、可拖动的 Mermaid 图表',
+    mermaidZoomOut: '缩小图表',
+    mermaidZoomIn: '放大图表',
+    mermaidResetZoom: '重置缩放',
+    mermaidZoomLevel: '当前缩放比例',
+    mermaidCloseViewer: '关闭 Mermaid 大图'
   }
 } as const

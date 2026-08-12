@@ -473,6 +473,23 @@ export const app = {
     evidenceExcerpt: '{{source}}: {{excerpt}}'
   },
   markdown: {
-    scrollableTable: 'Table, horizontally scrollable'
+    scrollableTable: 'Table, horizontally scrollable',
+    mermaidDiagram: 'Mermaid diagram, horizontally scrollable',
+    mermaidLoading: 'Rendering Mermaid diagram…',
+    mermaidError:
+      'The Mermaid diagram could not be rendered. Its source is shown below.',
+    mermaidActions: 'Mermaid diagram actions',
+    mermaidViewSource: 'View source',
+    mermaidHideSource: 'Hide source',
+    mermaidOpenViewer: 'Open large diagram',
+    mermaidViewerTitle: 'Large Mermaid diagram',
+    mermaidViewerHint:
+      'Use the mouse wheel or buttons to zoom, and drag the canvas to pan.',
+    mermaidViewerCanvas: 'Zoomable, pannable Mermaid diagram',
+    mermaidZoomOut: 'Zoom out diagram',
+    mermaidZoomIn: 'Zoom in diagram',
+    mermaidResetZoom: 'Reset zoom',
+    mermaidZoomLevel: 'Current zoom level',
+    mermaidCloseViewer: 'Close large Mermaid diagram'
   }
 } satisfies TranslationShape<typeof chineseApp>

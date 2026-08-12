@@ -13,6 +13,7 @@ import type {
   KnowledgeGraphNode,
   KnowledgeGraphRelation
 } from '../../shared/contracts'
+import { useDocumentTheme } from './use-document-theme'
 
 type ChartKnowledgeGraphNode = Omit<
   KnowledgeGraphNode,
@@ -347,7 +348,7 @@ export function KnowledgeGraphChart({
     () => graphRevision(nodes, relations),
     [nodes, relations]
   )
-  const [themeRevision, setThemeRevision] = useState(0)
+  const documentTheme = useDocumentTheme()
   const [renderError, setRenderError] = useState<string>()
 
   useEffect(() => {
@@ -406,20 +407,6 @@ export function KnowledgeGraphChart({
         }
       })
   }, [dataRevision, fitViewRequest, renderErrorFallback])
-
-  useEffect(() => {
-    if (typeof MutationObserver !== 'function') {
-      return
-    }
-    const observer = new MutationObserver(() => {
-      setThemeRevision((revision) => revision + 1)
-    })
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme']
-    })
-    return () => observer.disconnect()
-  }, [])
 
   useEffect(() => {
     const container = containerRef.current
@@ -583,7 +570,7 @@ export function KnowledgeGraphChart({
     locale,
     relationFallback,
     renderErrorFallback,
-    themeRevision
+    documentTheme
   ])
 
   useEffect(() => {

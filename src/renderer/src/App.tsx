@@ -2120,7 +2120,9 @@ function App(): React.JSX.Element {
       ).length +
       assistantTasks.filter(
         (task) =>
-          taskIds.has(task.id) && task.status !== 'completed'
+          taskIds.has(task.id) &&
+          task.status !== 'completed' &&
+          task.status !== 'cancelled'
       ).length
     )
   }, [assistantMemories, assistantTasks, heartbeatEntries])

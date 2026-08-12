@@ -4314,6 +4314,82 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('excludes ignored heartbeat suggestions from the navigation badge', async () => {
+    const heartbeatId = '00000000-0000-4000-8000-000000000701'
+    const cancelledTaskId = '00000000-0000-4000-8000-000000000801'
+    const pendingTaskId = '00000000-0000-4000-8000-000000000802'
+    vi.mocked(api.heartbeats.list).mockResolvedValue([
+      {
+        id: heartbeatId,
+        projectId,
+        name: '每日回顾',
+        timezone: 'Asia/Shanghai',
+        recurrence: { type: 'daily', localTime: '09:00' },
+        enabled: true,
+        lookbackHours: 24,
+        retentionDays: 30,
+        nextRunAt: '2026-08-05T01:00:00.000Z',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z'
+      }
+    ])
+    vi.mocked(api.heartbeats.history).mockResolvedValue({
+      runs: [],
+      entries: [
+        {
+          id: '00000000-0000-4000-8000-000000000901',
+          configId: heartbeatId,
+          runId: '00000000-0000-4000-8000-000000000902',
+          scheduledFor: '2026-08-04T01:00:00.000Z',
+          summary: '建议处理两个后续行动。',
+          highlights: [],
+          proposedMemoryIds: [],
+          followUpTaskIds: [cancelledTaskId, pendingTaskId],
+          createdAt: '2026-08-04T01:00:00.000Z'
+        }
+      ]
+    })
+    vi.mocked(api.tasks.list).mockResolvedValue([
+      {
+        id: cancelledTaskId,
+        projectId,
+        title: '已忽略建议',
+        instructions: '无需继续处理。',
+        origin: 'assistant',
+        status: 'cancelled',
+        createdAt: '2026-08-04T01:00:00.000Z'
+      },
+      {
+        id: pendingTaskId,
+        projectId,
+        title: '待处理建议',
+        instructions: '继续处理此建议。',
+        origin: 'assistant',
+        status: 'paused',
+        createdAt: '2026-08-04T01:00:00.000Z'
+      }
+    ])
+
+    try {
+      render(<App />)
+
+      expect(
+        await screen.findByLabelText('1 条待处理建议')
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByLabelText('2 条待处理建议')
+      ).not.toBeInTheDocument()
+    } finally {
+      cleanup()
+      vi.mocked(api.heartbeats.list).mockResolvedValue([])
+      vi.mocked(api.heartbeats.history).mockResolvedValue({
+        runs: [],
+        entries: []
+      })
+      vi.mocked(api.tasks.list).mockResolvedValue([])
+    }
+  })
+
   it('shows retryable page-local knowledge errors without an empty-state flash', async () => {
     vi.mocked(api.knowledge.getSnapshot).mockRejectedValueOnce(
       new Error('知识数据库暂时不可用')
