@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeEvent } from './runtime'
+import { randomUUID } from 'node:crypto'
 import {
   ContinueHostRunError,
   type ContinueHostAdapterOptions
@@ -630,6 +631,90 @@ describe('ContinueAgentRuntime', () => {
       }),
       expect.objectContaining({ type: 'text', delta: '再回答' })
     ])
+  })
+
+  it('fails instead of silently dropping an overflowing stream queue', async () => {
+    mocks.runHost.mockImplementation(
+      async (
+        _prompt,
+        _signal,
+        _authorize,
+        options
+      ) => {
+        for (let index = 0; index < 1_001; index += 1) {
+          options?.onEvent?.({
+            type: 'text',
+            delta: String(index)
+          })
+        }
+        return { text: 'done', streamedText: true }
+      }
+    )
+    const stream = createRuntime().run(
+      {
+        requestId: randomUUID(),
+        conversationId: 'overflow-conversation',
+        prompt: 'test'
+      },
+      new AbortController().signal
+    )
+
+    await expect(async () => {
+      for await (const _event of stream) {
+        void _event
+      }
+    }).rejects.toThrow('流式事件积压超过安全限制')
+  })
+
+  it('aborts the host run when stream consumption ends early', async () => {
+    let resolveHost: (() => void) | undefined
+    const hostFinished = new Promise<void>((resolve) => {
+      resolveHost = resolve
+    })
+    let hostSignal: AbortSignal | undefined
+    mocks.runHost.mockImplementation(
+      async (
+        _prompt,
+        signal,
+        _authorize,
+        options
+      ) => {
+        hostSignal = signal
+        await options?.onEvent?.({
+          type: 'text',
+          delta: 'partial'
+        })
+        await new Promise<void>((resolve) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              resolve()
+              resolveHost?.()
+            },
+            { once: true }
+          )
+        })
+        throw signal.reason
+      }
+    )
+    const stream = createRuntime().run(
+      {
+        requestId: randomUUID(),
+        conversationId: 'early-close-conversation',
+        prompt: 'test'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'text', delta: 'partial' }
+    })
+    await stream.return()
+    await hostFinished
+    expect(hostSignal?.aborted).toBe(true)
   })
 
   it('emits terminal tool audits before a failed Continue run', async () => {

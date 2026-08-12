@@ -51,6 +51,7 @@ export type ContinueRuntimeOptions = {
 // The prompt reaches the Continue host through a local HTTP POST body, so no
 // platform command-line limit applies to it.
 const MAX_CONTINUE_PROMPT_CHARACTERS = 128_000
+const MAX_QUEUED_STREAM_EVENTS = 1_000
 const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
 
 function continueToolFailureMessage(tool: ContinueHostTool): string {
@@ -331,7 +332,12 @@ export class ContinueAgentRuntime implements AgentRuntime {
       let streamFinished = false
       let streamResult: ContinueHostRunResult | undefined
       let streamError: unknown
+      const hostController = new AbortController()
+      const hostSignal = AbortSignal.any([signal, hostController.signal])
       const onEvent = (event: ContinueHostStreamEvent): void => {
+        if (queuedEvents.length >= MAX_QUEUED_STREAM_EVENTS) {
+          throw new Error('Continue 流式事件积压超过安全限制')
+        }
         queuedEvents.push(event)
         wakeStream?.()
         wakeStream = undefined
@@ -339,7 +345,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
       const hostRun = host
         .run(
           conversationContext,
-          signal,
+          hostSignal,
           authorize,
           {
             workMode: request.workMode,
@@ -361,31 +367,36 @@ export class ContinueAgentRuntime implements AgentRuntime {
           wakeStream?.()
           wakeStream = undefined
         })
-
-      while (!streamFinished || queuedEvents.length > 0) {
-        if (queuedEvents.length === 0) {
-          await new Promise<void>((resolve) => {
-            wakeStream = resolve
-          })
-          continue
+      try {
+        while (!streamFinished || queuedEvents.length > 0) {
+          if (queuedEvents.length === 0) {
+            await new Promise<void>((resolve) => {
+              wakeStream = resolve
+            })
+            continue
+          }
+          const event = queuedEvents.shift()!
+          if (event.type === 'tool') {
+            emittedTools.set(event.tool.callId, event.tool)
+          }
+          yield event.type === 'text'
+            ? {
+                requestId: request.requestId,
+                type: 'text',
+                delta: event.delta
+              }
+            : toContinueToolEvent(
+                request.requestId,
+                event.tool,
+                false
+              )
         }
-        const event = queuedEvents.shift()!
-        if (event.type === 'tool') {
-          emittedTools.set(event.tool.callId, event.tool)
-        }
-        yield event.type === 'text'
-          ? {
-              requestId: request.requestId,
-              type: 'text',
-              delta: event.delta
-            }
-          : toContinueToolEvent(
-              request.requestId,
-              event.tool,
-              false
-            )
+      } finally {
+        hostController.abort(new Error('Continue 流式消费已结束'))
+        wakeStream?.()
+        wakeStream = undefined
+        await hostRun
       }
-      await hostRun
       if (streamError) {
         throw streamError
       }
@@ -396,7 +407,19 @@ export class ContinueAgentRuntime implements AgentRuntime {
     } catch (error) {
       if (error instanceof ContinueHostRunError) {
         for (const tool of error.tools) {
-          yield toContinueToolEvent(request.requestId, tool, true)
+          const terminalEvent = toContinueToolEvent(
+            request.requestId,
+            tool,
+            true
+          )
+          const previous = emittedTools.get(tool.callId)
+          if (
+            !previous ||
+            previous.state !== tool.state ||
+            previous.error !== tool.error
+          ) {
+            yield terminalEvent
+          }
         }
       }
       throw error

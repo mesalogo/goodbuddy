@@ -38,6 +38,7 @@ import {
   safeToolErrorDetail
 } from './approval-summary'
 import { stageRuntimeSkillPackages } from './runtime-skill-packages'
+import { readBoundedResponseText } from './bounded-response'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -49,6 +50,8 @@ const maximumMessageBytes = 20 * 1024 * 1024
 const maximumConfigBytes = 1024 * 1024
 const maximumConfiguredMcpServers = 100
 const maximumStreamEvents = 5_000
+const maximumStreamEventBytes = 2 * 1024 * 1024
+const maximumExecutionMilliseconds = 10 * 60_000
 const knowledgeMcpName = 'goodbuddy-knowledge'
 export const continueConfigurationRequiredMessage =
   'Continue 尚未配置模型连接，请在设置中选择 GoodBuddy 模型连接或指定 Continue 配置文件'
@@ -116,7 +119,8 @@ const stateSchema = z.object({
   goodbuddyEvents: z
     .array(continueHostStreamEventSchema)
     .max(maximumStreamEvents)
-    .optional()
+    .optional(),
+  goodbuddyEventsOverflow: z.boolean().optional()
 })
 
 type ContinueHostState = z.infer<typeof stateSchema>
@@ -704,17 +708,17 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       streamCallbacksMarker,
-      'a={onContent:u=>{u&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"text",delta:u})},onContentComplete:u=>{},onToolStart:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:u,state:"running",input:(()=>{try{return JSON.stringify(l).slice(0,4e3)}catch{return"[无法序列化]"}})()})},onToolResult:(u,l,c,d)=>{d&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:d,name:l,state:c==="done"?"completed":"failed",output:String(u).slice(0,16e3)})},onToolError:(u,l,c)=>{c&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEvents.push({type:"tool",callId:c,name:l??"unknown",state:"failed",error:String(u).slice(0,1e3)})},onToolPermissionRequest:'
+      'a={onContent:u=>{if(!u)return;let l=String(u);e.goodbuddyEventsBytes+=Buffer.byteLength(l);l.length<=1e5&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push({type:"text",delta:l}):e.goodbuddyEventsOverflow=!0},onContentComplete:u=>{},onToolStart:(u,l,c)=>{if(!c)return;let d={type:"tool",callId:c,name:u,state:"running",input:(()=>{try{return JSON.stringify(l).slice(0,4e3)}catch{return"[无法序列化]"}})()};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(d));e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(d):e.goodbuddyEventsOverflow=!0},onToolResult:(u,l,c,d)=>{if(!d)return;let p={type:"tool",callId:d,name:l,state:c==="done"?"completed":"failed",output:String(u).slice(0,16e3)};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(p));e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(p):e.goodbuddyEventsOverflow=!0},onToolError:(u,l,c)=>{if(!c)return;let d={type:"tool",callId:c,name:l??"unknown",state:"failed",error:String(u).slice(0,1e3)};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(d));e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(d):e.goodbuddyEventsOverflow=!0},onToolPermissionRequest:'
     )
     patched = replaceExactly(
       patched,
       serverStateMarker,
-      'pendingPermission:null,goodbuddyEvents:[]},B='
+      'pendingPermission:null,goodbuddyEvents:[],goodbuddyEventsBytes:0,goodbuddyEventsOverflow:!1},B='
     )
     patched = replaceExactly(
       patched,
       serverStateEndpointMarker,
-      'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission),ce=M.goodbuddyEvents.splice(0);Te.json({...ue,goodbuddyEvents:ce})})'
+      'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission),ce=M.goodbuddyEvents.splice(0),de=M.goodbuddyEventsOverflow;M.goodbuddyEventsBytes=0,M.goodbuddyEventsOverflow=!1;Te.json({...ue,goodbuddyEvents:ce,goodbuddyEventsOverflow:de})})'
     )
     patched = replaceExactly(
       patched,
@@ -839,14 +843,10 @@ export class ContinueHostAdapter {
       redirect: 'error',
       signal: init.signal
     })
-    const contentLength = Number(response.headers.get('content-length') ?? 0)
-    if (contentLength > maximumStateBytes) {
-      throw new Error('Continue 宿主响应超过安全大小限制')
-    }
-    const body = await response.text()
-    if (Buffer.byteLength(body) > maximumStateBytes) {
-      throw new Error('Continue 宿主响应超过安全大小限制')
-    }
+    const body = await readBoundedResponseText(response, {
+      maxBytes: maximumStateBytes,
+      tooLargeMessage: 'Continue 宿主响应超过安全大小限制'
+    })
     if (!response.ok) {
       throw new Error(`Continue 宿主请求失败（HTTP ${response.status}）`)
     }
@@ -861,22 +861,33 @@ export class ContinueHostAdapter {
     signal: AbortSignal
   ): Promise<ContinueHostState> {
     const expiresAt = Date.now() + 30_000
-    while (Date.now() < expiresAt) {
-      signal.throwIfAborted()
-      const childFailure = getChildFailure()
-      if (childFailure) {
-        throw childFailure
+    const timeoutSignal = AbortSignal.timeout(30_000)
+    const startupSignal = AbortSignal.any([signal, timeoutSignal])
+    try {
+      while (Date.now() < expiresAt) {
+        startupSignal.throwIfAborted()
+        const childFailure = getChildFailure()
+        if (childFailure) {
+          throw childFailure
+        }
+        if (child.exitCode !== null) {
+          throw new Error('Continue 宿主在启动期间退出')
+        }
+        try {
+          return stateSchema.parse(
+            await this.request(origin, token, '/state', {
+              signal: startupSignal
+            })
+          )
+        } catch {
+          await delay(150, startupSignal)
+        }
       }
-      if (child.exitCode !== null) {
-        throw new Error('Continue 宿主在启动期间退出')
+    } catch (error) {
+      if (timeoutSignal.aborted && !signal.aborted) {
+        throw new Error('Continue 宿主启动超时', { cause: error })
       }
-      try {
-        return stateSchema.parse(
-          await this.request(origin, token, '/state', { signal })
-        )
-      } catch {
-        await delay(150, signal)
-      }
+      throw error
     }
     throw new Error('Continue 宿主启动超时')
   }
@@ -1150,6 +1161,7 @@ export class ContinueHostAdapter {
 
     let observedTools: ContinueHostTool[] = []
     let streamedText = false
+    let executionTimeoutSignal: AbortSignal | undefined
     try {
       const initialState = await this.waitForStartup(
         child,
@@ -1159,6 +1171,13 @@ export class ContinueHostAdapter {
         signal
       )
       const startIndex = initialState.session.history.length
+      executionTimeoutSignal = AbortSignal.timeout(
+        maximumExecutionMilliseconds
+      )
+      const executionSignal = AbortSignal.any([
+        signal,
+        executionTimeoutSignal
+      ])
       const message =
         runOptions.images && runOptions.images.length > 0
           ? [
@@ -1178,13 +1197,13 @@ export class ContinueHostAdapter {
       await this.request(origin, token, '/message', {
         method: 'POST',
         body: messageBody,
-        signal
+        signal: executionSignal
       })
 
-      const expiresAt = Date.now() + 10 * 60_000
+      const expiresAt = Date.now() + maximumExecutionMilliseconds
       const handledPermissionIds = new Set<string>()
       while (Date.now() < expiresAt) {
-        signal.throwIfAborted()
+        executionSignal.throwIfAborted()
         if (childFailure) {
           throw childFailure
         }
@@ -1194,8 +1213,19 @@ export class ContinueHostAdapter {
           )
         }
         const state = stateSchema.parse(
-          await this.request(origin, token, '/state', { signal })
+          await this.request(origin, token, '/state', {
+            signal: executionSignal
+          })
         )
+        if (state.goodbuddyEventsOverflow) {
+          throw new Error('Continue 宿主流式事件超过安全限制')
+        }
+        const streamEventBytes = Buffer.byteLength(
+          JSON.stringify(state.goodbuddyEvents ?? [])
+        )
+        if (streamEventBytes > maximumStreamEventBytes) {
+          throw new Error('Continue 宿主流式事件超过安全限制')
+        }
         observedTools = mergeContinueTools(
           observedTools,
           extractContinueTools(state.session.history, startIndex)
@@ -1265,7 +1295,7 @@ export class ContinueHostAdapter {
               requestId: pending.requestId,
               approved: decision !== 'deny'
             }),
-            signal
+            signal: executionSignal
           })
         }
         if (
@@ -1308,16 +1338,22 @@ export class ContinueHostAdapter {
               : {})
           }
         }
-        await delay(150, signal)
+        await delay(150, executionSignal)
       }
       throw new Error('Continue 宿主执行超时')
     } catch (error) {
       if (error instanceof ContinueHostRunError) {
         throw error
       }
+      const normalizedError =
+        executionTimeoutSignal?.aborted && !signal.aborted
+          ? new Error('Continue 宿主执行超时', { cause: error })
+          : error
       throw new ContinueHostRunError(
-        error instanceof Error ? error.message : 'Continue 宿主执行失败',
-        { cause: error, tools: observedTools }
+        normalizedError instanceof Error
+          ? normalizedError.message
+          : 'Continue 宿主执行失败',
+        { cause: normalizedError, tools: observedTools }
       )
     } finally {
       signal.removeEventListener('abort', abort)

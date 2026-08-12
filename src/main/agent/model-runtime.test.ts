@@ -321,6 +321,228 @@ describe('ModelAgentRuntime', () => {
     await expect(consume()).rejects.toThrow('意外中断')
   })
 
+  it('rejects malformed SSE JSON instead of silently skipping it', async () => {
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        new Response('data: {invalid}\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'test'
+        },
+        new AbortController().signal
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('无效的流式 JSON')
+  })
+
+  it('parses CRLF event separators split across response chunks', async () => {
+    const payload = createEventStream('split CRLF').replaceAll('\n', '\r\n')
+    const splitAt = payload.indexOf('\r\n\r\n') + 3
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(payload.slice(0, splitAt))
+        )
+        controller.enqueue(
+          new TextEncoder().encode(payload.slice(splitAt))
+        )
+        controller.close()
+      }
+    })
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'test'
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: 'split CRLF'
+      })
+    )
+  })
+
+  it('aborts a model request that exceeds the runtime timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new ModelAgentRuntime({
+        apiKey: 'test-key',
+        baseUrl: 'https://bigtoken.ai',
+        model: 'sonnet-5',
+        protocol: 'anthropic-messages',
+        authentication: 'api-key',
+        requestTimeoutMs: 50,
+        fetcher: vi.fn<typeof fetch>(
+          async (_input, init) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener(
+                'abort',
+                () => reject(init.signal?.reason),
+                { once: true }
+              )
+            })
+        )
+      })
+      const stream = runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'test'
+        },
+        new AbortController().signal
+      )
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { type: 'status' }
+      })
+      const result = stream.next()
+      const assertion = expect(result).rejects.toThrow(
+        '模型接口请求超时'
+      )
+
+      await vi.advanceTimersByTimeAsync(50)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('aborts a stalled response body after headers arrive', async () => {
+    vi.useFakeTimers()
+    try {
+      let responseSignal: AbortSignal | null | undefined
+      const runtime = new ModelAgentRuntime({
+        apiKey: 'test-key',
+        baseUrl: 'https://bigtoken.ai',
+        model: 'sonnet-5',
+        protocol: 'anthropic-messages',
+        authentication: 'api-key',
+        requestTimeoutMs: 50,
+        fetcher: vi.fn<typeof fetch>(async (_input, init) => {
+          responseSignal = init?.signal
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                init?.signal?.addEventListener(
+                  'abort',
+                  () => controller.error(init.signal?.reason),
+                  { once: true }
+                )
+              }
+            }),
+            {
+              status: 200,
+              headers: { 'content-type': 'text/event-stream' }
+            }
+          )
+        })
+      })
+      const stream = runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'test'
+        },
+        new AbortController().signal
+      )
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { type: 'status' }
+      })
+      const result = stream.next()
+      const assertion = expect(result).rejects.toThrow(
+        '模型接口请求超时'
+      )
+
+      await vi.advanceTimersByTimeAsync(50)
+      await assertion
+      expect(responseSignal?.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds the total ordinary streaming response size', async () => {
+    const chunk = new TextEncoder().encode(
+      `data: ${JSON.stringify({
+        type: 'content_block_delta',
+        delta: {
+          type: 'text_delta',
+          text: 'x'.repeat(65_000)
+        }
+      })}\n\n`
+    )
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk)
+      }
+    })
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'test'
+        },
+        new AbortController().signal
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow(
+      '流式响应超过安全限制'
+    )
+  })
+
   it('preserves bounded provider error messages', async () => {
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',

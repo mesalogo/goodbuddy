@@ -7,7 +7,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -165,8 +165,14 @@ describe('ContinueHostAdapter', () => {
       'let r=[eS.join(hu.continueHome,AKt)],o='
     )
     expect(bundle).toContain('goodbuddyEvents:[]')
+    expect(bundle).toContain('goodbuddyEventsBytes:0')
+    expect(bundle).toContain('goodbuddyEventsBytes+=Buffer.byteLength')
+    expect(bundle).toContain('goodbuddyEventsBytes<=2097152')
+    expect(bundle).toContain('l.length<=1e5')
+    expect(bundle).toContain('goodbuddyEventsOverflow:!1')
+    expect(bundle).toContain('goodbuddyEventsOverflow=!0')
     expect(bundle).toContain('goodbuddyEvents:ce')
-    expect(bundle).toContain('type:"text",delta:u')
+    expect(bundle).toContain('type:"text",delta:l')
     expect(bundle).toContain('onToolStart?.(c.name,c.arguments,c.id)')
     expect(bundle).toContain(
       'function ZZo(e){let t=[];if(e.allow)'
@@ -992,6 +998,57 @@ describe('ContinueHostAdapter', () => {
       ]
     })
     expect(killed).toBe(true)
+  })
+
+  it('fails when the patched host reports dropped stream events', async () => {
+    const distribution = await createDistribution()
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/state')) {
+          stateRequests += 1
+          return Response.json({
+            session: { history: [] },
+            isProcessing: stateRequests > 1,
+            messageQueueLength: 0,
+            pendingPermission: null,
+            goodbuddyEventsOverflow: stateRequests > 1
+          })
+        }
+        return Response.json({})
+      })
+    )
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost: () => ({
+        exitCode: null,
+        killed: false,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true
+      }),
+      modelProfile: {
+        id: randomUUID(),
+        name: 'Local model',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
+      }
+    })
+
+    await expect(
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        async () => 'deny'
+      )
+    ).rejects.toThrow('流式事件超过安全限制')
   })
 
   it('uses auto mode and returns audit metadata for agent tools', async () => {
