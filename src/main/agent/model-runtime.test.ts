@@ -453,6 +453,92 @@ describe('ModelAgentRuntime', () => {
     expect(toolProvider.listTools).not.toHaveBeenCalled()
   })
 
+  it('streams OpenAI-compatible reasoning deltas before the answer', async () => {
+    const stream = [
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              reasoning_content: '先分析'
+            }
+          }
+        ]
+      })}`,
+      '',
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              reasoning_content: '，再验证'
+            }
+          }
+        ]
+      })}`,
+      '',
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              content: '最终回答'
+            }
+          }
+        ]
+      })}`,
+      '',
+      'data: [DONE]',
+      '',
+      ''
+    ].join('\n')
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-reasoner',
+      protocol: 'openai-chat-completions',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed128',
+        conversationId: 'conversation-deepseek-reasoning',
+        prompt: '分析这个问题'
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(
+      events.filter(
+        (event) => event.type === 'reasoning' || event.type === 'text'
+      )
+    ).toEqual([
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed128',
+        type: 'reasoning',
+        delta: '先分析'
+      },
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed128',
+        type: 'reasoning',
+        delta: '，再验证'
+      },
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed128',
+        type: 'text',
+        delta: '最终回答'
+      }
+    ])
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
   it('keeps browser and workspace tools out of Ask mode', async () => {
       const fetcher = vi.fn<typeof fetch>(async () =>
         new Response('data: {"choices":[{"delta":{"content":"只读回答"}}]}\n\ndata: [DONE]\n\n', {

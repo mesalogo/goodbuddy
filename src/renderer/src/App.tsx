@@ -5446,11 +5446,7 @@ function App(): React.JSX.Element {
                           <details
                             className="message-reasoning"
                             key={item.block.id}
-                            open={
-                              message.state === 'streaming' &&
-                              message.blocks?.at(-1)?.id ===
-                                item.block.id
-                            }
+                            open={message.state === 'streaming'}
                           >
                             <summary>
                               {message.state === 'streaming'

@@ -1399,6 +1399,11 @@ describe('App', () => {
         (_, element) => element?.textContent === rawToolOutput
       )
     ).toBeVisible()
+    const activeReasoning = screen.getAllByText('正在推理')
+    expect(activeReasoning).toHaveLength(2)
+    for (const reasoning of activeReasoning) {
+      expect(reasoning.closest('details')).toHaveAttribute('open')
+    }
 
     act(() => {
       if (!request) {
