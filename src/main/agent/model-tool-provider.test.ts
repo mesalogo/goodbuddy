@@ -253,9 +253,9 @@ describe('ModelToolProvider', () => {
     expect(askTools.map((tool) => tool.name)).toEqual([
       'knowledge_list',
       'knowledge_search',
-      'note_search',
       'note_list',
-      'note_get'
+      'note_get',
+      'note_search'
     ])
     expect(
       JSON.stringify(
@@ -338,12 +338,24 @@ describe('ModelToolProvider', () => {
     )
     await provider.callTool(
       'note_create',
-      { title: '发布计划' },
+      { title: '发布计划', content: '核对构建产物' },
       signal,
       { ...askContext, workMode: 'execute' }
     )
     expect(createMagicNote).toHaveBeenCalledWith('main-only-token', {
-      title: '发布计划'
+      title: '发布计划',
+      content: '核对构建产物'
+    })
+    expect(
+      executeTools.find((tool) => tool.name === 'note_create')?.inputSchema
+    ).toMatchObject({
+      properties: {
+        content: {
+          type: 'string',
+          maxLength: 48_000
+        }
+      },
+      required: ['title']
     })
     const deleteTool = executeTools.find(
       (tool) => tool.name === 'note_delete'

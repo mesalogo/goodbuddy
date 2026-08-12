@@ -300,28 +300,31 @@ describe('KnowledgeMcpGateway', () => {
     ).toThrow('unavailable')
 
     const created = gateway.createMagicNote(writeToken, {
-      title: '发布计划'
+      title: '发布计划',
+      content: '核对构建产物'
     })
     expect(gateway.listMagicNotes(readToken)).toEqual([
       expect.objectContaining({
         id: created.id,
         title: '发布计划',
-        revision: 0
+        revision: 1,
+        entryCount: 1
       })
     ])
+    expect(created.entries[0]?.content).toBe('核对构建产物')
     const withEntry = gateway.createMagicNoteEntry(writeToken, {
       noteId: created.id,
-      content: '核对构建产物'
+      content: '通知发布负责人'
     })
-    const entry = withEntry.entries[0]!
-    expect(entry.content).toBe('核对构建产物')
+    const entry = withEntry.entries[1]!
+    expect(entry.content).toBe('通知发布负责人')
 
     const updatedEntry = gateway.updateMagicNoteEntry(writeToken, {
       entryId: entry.id,
       content: '核对六个平台构建产物',
       expectedRevision: entry.revision
     })
-    expect(updatedEntry.entries[0]?.content).toBe(
+    expect(updatedEntry.entries[1]?.content).toBe(
       '核对六个平台构建产物'
     )
     expect(() =>
@@ -333,9 +336,11 @@ describe('KnowledgeMcpGateway', () => {
 
     const withoutEntry = gateway.deleteMagicNoteEntry(writeToken, {
       entryId: entry.id,
-      expectedRevision: updatedEntry.entries[0]!.revision
+      expectedRevision: updatedEntry.entries[1]!.revision
     })
-    expect(withoutEntry.entries).toEqual([])
+    expect(withoutEntry.entries).toEqual([
+      expect.objectContaining({ content: '核对构建产物' })
+    ])
     expect(
       gateway.deleteMagicNote(writeToken, {
         noteId: created.id,
