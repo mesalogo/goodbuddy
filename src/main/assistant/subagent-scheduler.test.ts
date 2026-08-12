@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { vi } from 'vitest'
 import { SubagentScheduler } from './subagent-scheduler'
 
 describe('SubagentScheduler', () => {
@@ -49,6 +50,51 @@ describe('SubagentScheduler', () => {
     controller.abort(new Error('cancelled'))
     await expect(queued).rejects.toThrow('cancelled')
     await expect(blocker).rejects.toThrow('120 秒')
+    scheduler.dispose()
+  })
+
+  it('holds its concurrency slot until aborted work finishes cleanup', async () => {
+    const scheduler = new SubagentScheduler({
+      concurrency: 1,
+      queueLimit: 1,
+      timeoutMs: 1_000
+    })
+    const controller = new AbortController()
+    let finishCleanup!: () => void
+    const cleanupGate = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    const started: string[] = []
+    const first = scheduler.schedule(async (signal) => {
+      started.push('first')
+      await new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      await cleanupGate
+      return 'first'
+    }, controller.signal)
+    const second = scheduler.schedule(async () => {
+      started.push('second')
+      return 'second'
+    })
+
+    await vi.waitFor(() => expect(started).toEqual(['first']))
+    controller.abort(new Error('cancelled'))
+    await expect(first).rejects.toThrow('cancelled')
+    await Promise.resolve()
+    expect(started).toEqual(['first'])
+
+    let idle = false
+    const idlePromise = scheduler.waitForIdle().then(() => {
+      idle = true
+    })
+    await Promise.resolve()
+    expect(idle).toBe(false)
+
+    finishCleanup()
+    await expect(second).resolves.toBe('second')
+    await idlePromise
+    expect(started).toEqual(['first', 'second'])
     scheduler.dispose()
   })
 })

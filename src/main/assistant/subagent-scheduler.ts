@@ -131,8 +131,12 @@ export class SubagentScheduler {
       }
       controller.signal.addEventListener('abort', onAbort, { once: true })
     })
-    void Promise.race([workPromise, abortPromise])
-      .then(entry.resolve, entry.reject)
+    void Promise.race([workPromise, abortPromise]).then(
+      entry.resolve,
+      entry.reject
+    )
+    void workPromise
+      .catch(() => undefined)
       .finally(() => {
         clearTimeout(timeout)
         entry.signal?.removeEventListener('abort', forwardAbort)

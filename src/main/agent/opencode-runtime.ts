@@ -544,6 +544,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
   >()
   private embeddedRunTail: Promise<void> = Promise.resolve()
+  private readonly conversationRunTails = new Map<string, Promise<void>>()
   private readonly dependencies: OpenCodeRuntimeDependencies
 
   constructor(
@@ -588,6 +589,47 @@ export class OpenCodeRuntime implements AgentRuntime {
       return release
     } catch (error) {
       release()
+      throw error
+    } finally {
+      signal.removeEventListener('abort', abort)
+    }
+  }
+
+  private async acquireConversationRun(
+    conversationId: string,
+    signal: AbortSignal
+  ): Promise<() => void> {
+    signal.throwIfAborted()
+    const previous =
+      this.conversationRunTails.get(conversationId) ?? Promise.resolve()
+    let releaseGate!: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve
+    })
+    const tail = previous.then(
+      () => gate,
+      () => gate
+    )
+    this.conversationRunTails.set(conversationId, tail)
+    let abort!: () => void
+    const aborted = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason)
+    })
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      await Promise.race([previous, aborted])
+      signal.throwIfAborted()
+      return () => {
+        releaseGate()
+        if (this.conversationRunTails.get(conversationId) === tail) {
+          this.conversationRunTails.delete(conversationId)
+        }
+      }
+    } catch (error) {
+      releaseGate()
+      if (this.conversationRunTails.get(conversationId) === tail) {
+        this.conversationRunTails.delete(conversationId)
+      }
       throw error
     } finally {
       signal.removeEventListener('abort', abort)
@@ -1030,13 +1072,18 @@ export class OpenCodeRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
-    const release = this.usesEmbeddedPermissionMediation()
+    const releaseEmbedded = this.usesEmbeddedPermissionMediation()
       ? await this.acquireEmbeddedRun(signal)
       : undefined
+    const releaseConversation = await this.acquireConversationRun(
+      request.conversationId,
+      signal
+    )
     try {
       yield* this.runUnlocked(request, signal)
     } finally {
-      release?.()
+      releaseConversation()
+      releaseEmbedded?.()
     }
   }
 
@@ -1643,6 +1690,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     this.clientInitialization = undefined
     this.sessions.clear()
     this.sessionInitializations.clear()
+    this.conversationRunTails.clear()
     await server?.close()
   }
 

@@ -15,6 +15,7 @@ import type { createOpencodeClient } from '@opencode-ai/sdk/v2'
 import type spawn from 'cross-spawn'
 import { describe, expect, it, vi } from 'vitest'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import type { RuntimeEvent } from './runtime'
 import {
   OpenCodeRuntime,
   type OpenCodeRuntimeDependencies
@@ -1078,6 +1079,109 @@ describe('OpenCodeRuntime embedded launcher', () => {
       directory: process.cwd()
     })
     expect(runtime.requiresToolApproval).toBe(false)
+  })
+
+  it('serializes external runs that share one conversation session', async () => {
+    const child = fakeChild()
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let subscriptionCount = 0
+    const promptAsync = vi.fn().mockResolvedValue({
+      data: true,
+      error: undefined
+    })
+    const client = {
+      session: {
+        create: vi.fn().mockResolvedValue({
+          data: { id: 'session-1' },
+          error: undefined
+        }),
+        update: vi.fn().mockResolvedValue({
+          data: { id: 'session-1' },
+          error: undefined
+        }),
+        promptAsync,
+        abort: vi.fn().mockResolvedValue({
+          data: true,
+          error: undefined
+        })
+      },
+      event: {
+        subscribe: vi.fn().mockImplementation(async () => {
+          subscriptionCount += 1
+          const current = subscriptionCount
+          return {
+            stream: (async function* () {
+              if (current === 1) {
+                await firstGate
+              }
+              yield {
+                type: 'session.idle',
+                properties: { sessionID: 'session-1' }
+              }
+            })()
+          }
+        })
+      },
+      tool: {
+        ids: vi.fn().mockResolvedValue({
+          data: [],
+          error: undefined
+        })
+      }
+    } as unknown as ReturnType<typeof createOpencodeClient>
+    const { deps } = dependencies(child, {
+      createClient: vi.fn(
+        () => client
+      ) as unknown as typeof createOpencodeClient
+    })
+    const runtime = new OpenCodeRuntime(
+      options({
+        baseUrl: 'http://127.0.0.1:4096',
+        embedded: false
+      }),
+      deps
+    )
+    const request = {
+      requestId: '00000000-0000-4000-8000-000000000101',
+      conversationId: 'shared-conversation',
+      prompt: 'first',
+      workMode: 'execute' as const
+    }
+    const collect = async (
+      stream: AsyncGenerator<RuntimeEvent, void, void>
+    ): Promise<RuntimeEvent[]> => {
+      const events: RuntimeEvent[] = []
+      for await (const event of stream) {
+        events.push(event)
+      }
+      return events
+    }
+    const first = collect(runtime.run(
+      request,
+      new AbortController().signal
+    ))
+    await vi.waitFor(() => expect(promptAsync).toHaveBeenCalledTimes(1))
+    const second = collect(
+      runtime.run(
+        {
+          ...request,
+          requestId: '00000000-0000-4000-8000-000000000102',
+          prompt: 'second'
+        },
+        new AbortController().signal
+      )
+    )
+    await Promise.resolve()
+    expect(promptAsync).toHaveBeenCalledTimes(1)
+
+    releaseFirst()
+    await first
+    await second
+    expect(promptAsync).toHaveBeenCalledTimes(2)
+    await runtime.dispose()
   })
 
   it('loads assigned Skills before prompting', async () => {
