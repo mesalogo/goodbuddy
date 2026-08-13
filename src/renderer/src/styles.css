@@ -3085,13 +3085,8 @@ button > svg {
   display: grid;
   min-width: 0;
   padding: 17px 8px;
-  border-top: 1px solid transparent;
   gap: 12px;
   grid-template-columns: 30px minmax(0, 1fr);
-}
-
-.message + .message {
-  border-top-color: var(--border-subtle);
 }
 
 .message--user {
@@ -9448,7 +9443,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .assistant-sidebar__tabs,
   .assistant-sidebar__context,
   .assistant-sidebar__preview > header,
-  .message + .message,
   .divider,
   .runtime-picker__divider,
   .settings-panel__header,
