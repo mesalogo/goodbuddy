@@ -3075,6 +3075,7 @@ button > svg {
 
 .message-list {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   padding-bottom: 20px;
   gap: 4px;
@@ -3082,10 +3083,11 @@ button > svg {
 
 .message {
   display: grid;
+  min-width: 0;
   padding: 17px 8px;
   border-top: 1px solid transparent;
   gap: 12px;
-  grid-template-columns: 30px 1fr;
+  grid-template-columns: 30px minmax(0, 1fr);
 }
 
 .message + .message {
@@ -3093,7 +3095,7 @@ button > svg {
 }
 
 .message--user {
-  grid-template-columns: 1fr 30px;
+  grid-template-columns: minmax(0, 1fr) 30px;
 }
 
 .message__avatar {
@@ -3117,6 +3119,7 @@ button > svg {
 
 .message__body {
   min-width: 0;
+  max-width: 100%;
 }
 
 .message--user .message__body {
@@ -3326,7 +3329,15 @@ button > svg {
 
 .message-blocks {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.message-blocks > .message__content {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message-blocks .message-reasoning,
@@ -3399,6 +3410,8 @@ button > svg {
 }
 
 .markdown-table-scroll {
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
   margin: 0.8em 0;
   overflow-x: auto;
