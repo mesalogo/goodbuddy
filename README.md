@@ -1,5 +1,7 @@
 # GoodBuddy
 
+[English](README.en.md) | 简体中文
+
 安全、跨平台、本地优先的桌面 AI 助手与 Agent 工作空间。
 
 ![GoodBuddy 工作空间](docs/screenshots/workspace-overview.png)
