@@ -2,6 +2,42 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.8.20",
+      "releasedAt": "2026-08-13",
+      "notes": {
+        "zh-CN": {
+          "features": [
+            "全面升级本地知识库，新增中文、全文、向量与知识图谱混合检索、本地及学习型重排、检索诊断工作台，并重新组织文档、图谱、任务和索引工作区。",
+            "重新组织 MCP 设置，并支持为自定义 MCP 服务选择启用动态工具列表更新；现有服务默认保持原有行为。",
+            "新增 KaTeX 数学公式渲染，支持在聊天 Markdown 中显示行内公式和块级公式。",
+            "新增交互式 Mermaid 图表渲染，支持查看源码、放大、缩放和拖动，并在渲染失败时回退到源码。"
+          ],
+          "fixes": [
+            "修复异常退出后会话、笔记、运行中消息、工具调用和定时任务状态可能丢失或不一致的问题。",
+            "修复企业微信、钉钉和微信等远程通道消息发送失败后可能丢失的问题，未投递消息现在会持久化并重试。",
+            "修复知识索引任务在重启后状态不准确，以及索引重建中断或失败时可能暴露不完整结果的问题。",
+            "提升模型流式响应和文档提取的稳定性，对异常大的响应、工具参数和文档提供明确限制及错误提示。",
+            "修复直连模型使用工具时推理内容流式显示不完整、聊天宽表格溢出，以及部分设置和作用域工具保存不可靠的问题。"
+          ]
+        },
+        "en-US": {
+          "features": [
+            "Upgraded the local knowledge base with hybrid Chinese, full-text, vector, and knowledge-graph retrieval, local and learning-based reranking, a retrieval diagnostics workbench, and reorganized document, graph, task, and indexing workspaces.",
+            "Reorganized MCP settings and added opt-in dynamic tool-list updates for custom MCP services, while preserving existing behavior by default.",
+            "Added KaTeX math rendering for inline and block formulas in chat Markdown.",
+            "Added interactive Mermaid diagram rendering with source viewing, zooming, panning, and source fallback when rendering fails."
+          ],
+          "fixes": [
+            "Fixed lost or inconsistent conversation, note, in-progress message, tool-call, and scheduled-task states after an unexpected shutdown.",
+            "Fixed messages being lost after delivery failures on remote channels such as WeCom, DingTalk, and WeChat; undelivered messages are now persisted and retried.",
+            "Fixed inaccurate knowledge-index task states after restart and incomplete results becoming visible when an index rebuild was interrupted or failed.",
+            "Improved stability for model streaming and document extraction by enforcing clear limits and errors for unusually large responses, tool arguments, and documents.",
+            "Fixed incomplete streamed reasoning during direct-model tool use, overflowing wide chat tables, and unreliable persistence for some settings and scoped tools."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.8.19",
       "releasedAt": "2026-08-11",
       "notes": {
