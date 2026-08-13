@@ -8,6 +8,7 @@ import activity from './locales/zh-CN/activity'
 import magicNotes from './locales/zh-CN/magicNotes'
 import integrations from './locales/zh-CN/integrations'
 import workspace from './locales/zh-CN/workspace'
+import warnings from './locales/zh-CN/warnings'
 
 declare module 'i18next' {
   interface CustomTypeOptions {
@@ -22,6 +23,7 @@ declare module 'i18next' {
       magicNotes: typeof magicNotes
       integrations: typeof integrations
       workspace: typeof workspace
+      warnings: typeof warnings
     }
     returnNull: false
   }

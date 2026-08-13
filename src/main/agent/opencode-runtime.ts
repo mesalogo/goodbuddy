@@ -565,6 +565,10 @@ export class OpenCodeRuntime implements AgentRuntime {
     return this.options.embedded && !this.options.baseUrl
   }
 
+  get supportsScopedDataTools(): boolean {
+    return this.usesEmbeddedPermissionMediation()
+  }
+
   private async acquireEmbeddedRun(
     signal: AbortSignal
   ): Promise<() => void> {

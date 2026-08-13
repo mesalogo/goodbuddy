@@ -740,6 +740,8 @@ describe('App', () => {
       expect(
         screen.getByRole('button', { name: 'Chat' })
       ).toBeInTheDocument()
+      expect(screen.getByText('Desktop workspace')).toBeInTheDocument()
+      expect(screen.getByText('GOODBUDDY WORKSPACE')).toBeInTheDocument()
       expect(
         screen.getByRole('heading', {
           name: 'What would you like to accomplish today?'
@@ -758,6 +760,13 @@ describe('App', () => {
       cleanup()
       await changeUiLocale('zh-CN')
     }
+  })
+
+  it('renders localized workspace branding in Chinese', async () => {
+    render(<App />)
+
+    expect(await screen.findByText('桌面工作区')).toBeInTheDocument()
+    expect(screen.getByText('GOODBUDDY 工作台')).toBeInTheDocument()
   })
 
   it('keeps Settings open when the interface language changes', async () => {
@@ -3278,7 +3287,7 @@ describe('App', () => {
     )
   })
 
-  it('normalizes a legacy Auto conversation to the explicit default Runtime', async () => {
+  it('preserves a legacy Auto conversation without silently persisting a replacement', async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: '00000000-0000-4000-8000-000000000020',
@@ -3306,17 +3315,14 @@ describe('App', () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: '00000000-0000-4000-8000-000000000020',
-            runtimeSelection: {
-              provider: 'model',
-              profileId: modelProfileId
-            }
+            runtimeSelection: { provider: 'auto' }
           })
         ])
       )
     )
   })
 
-  it('rebinds a loaded conversation when its model profile was removed', async () => {
+  it('keeps a removed model selection visible until the user replaces it', async () => {
     const removedProfileId =
       '00000000-0000-4000-8000-000000000099'
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
@@ -3341,9 +3347,6 @@ describe('App', () => {
     ])
     render(<App />)
 
-    expect(
-      await screen.findByRole('button', { name: /默认模型.*sonnet-5/u })
-    ).toBeInTheDocument()
     await waitFor(() =>
       expect(api.conversations.replace).toHaveBeenLastCalledWith(
         expect.arrayContaining([
@@ -3351,7 +3354,7 @@ describe('App', () => {
             id: '00000000-0000-4000-8000-000000000022',
             runtimeSelection: {
               provider: 'model',
-              profileId: modelProfileId
+              profileId: removedProfileId
             }
           })
         ])

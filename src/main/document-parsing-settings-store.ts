@@ -1,18 +1,18 @@
-import { randomBytes } from 'node:crypto'
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile
-} from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 import {
   documentParsingSettingsSchema,
   documentParsingSettingsUpdateSchema,
   type DocumentParsingSettings
 } from '../shared/document-parsing-contracts'
+import type { SettingsWarning } from '../shared/settings-warning-contracts'
+import {
+  assertSupportedSettingsVersion,
+  isolateCorruptSettingsFile,
+  isMissingFileError,
+  UnsupportedSettingsVersionError,
+  writeJsonFileAtomically
+} from './settings-file-utils'
 
 const CURRENT_SETTINGS_VERSION = 3
 
@@ -96,40 +96,34 @@ function migrateLegacySettings(
   }
 }
 
-function isMissingFile(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === 'object' &&
-    'code' in error &&
-    error.code === 'ENOENT'
-  )
-}
-
 export class DocumentParsingSettingsStore {
   private settings?: StoredDocumentParsingSettings
+  private settingsLoad?: Promise<StoredDocumentParsingSettings>
+  private warnings: SettingsWarning[] = []
   private updateQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly filePath: string) {}
 
   private async isolateCorruptFile(): Promise<void> {
-    const isolatedPath =
-      `${this.filePath}.corrupt-${Date.now()}-` +
-      randomBytes(6).toString('hex')
-    try {
-      await rename(this.filePath, isolatedPath)
-    } catch (error) {
-      if (!isMissingFile(error)) {
-        throw new Error('文档解析设置损坏且无法隔离', {
-          cause: error
-        })
-      }
-    }
+    await isolateCorruptSettingsFile(
+      this.filePath,
+      '文档解析设置损坏且无法隔离'
+    )
   }
 
-  private async loadStored(): Promise<StoredDocumentParsingSettings> {
+  private loadStored(): Promise<StoredDocumentParsingSettings> {
     if (this.settings) {
-      return this.settings
+      return Promise.resolve(this.settings)
     }
+    if (!this.settingsLoad) {
+      this.settingsLoad = this.readStored().finally(() => {
+        this.settingsLoad = undefined
+      })
+    }
+    return this.settingsLoad
+  }
+
+  private async readStored(): Promise<StoredDocumentParsingSettings> {
     try {
       const contents = await readFile(this.filePath, 'utf8')
       let parsed: unknown
@@ -137,12 +131,19 @@ export class DocumentParsingSettingsStore {
         parsed = JSON.parse(contents) as unknown
       } catch {
         await this.isolateCorruptFile()
+        this.warnings = [{ code: 'document-parsing-settings-recovered' }]
         this.settings = {
           version: CURRENT_SETTINGS_VERSION,
           ...defaultDocumentParsingSettings
         }
         return this.settings
       }
+      assertSupportedSettingsVersion(
+        parsed,
+        CURRENT_SETTINGS_VERSION,
+        (version) =>
+          `当前 GoodBuddy 不支持文档解析设置版本 ${version}，请升级应用后重试`
+      )
       const result =
         storedDocumentParsingSettingsSchema.safeParse(parsed)
       if (!result.success) {
@@ -170,6 +171,7 @@ export class DocumentParsingSettingsStore {
           return this.settings
         }
         await this.isolateCorruptFile()
+        this.warnings = [{ code: 'document-parsing-settings-recovered' }]
         this.settings = {
           version: CURRENT_SETTINGS_VERSION,
           ...defaultDocumentParsingSettings
@@ -178,7 +180,10 @@ export class DocumentParsingSettingsStore {
       }
       this.settings = result.data
     } catch (error) {
-      if (!isMissingFile(error)) {
+      if (error instanceof UnsupportedSettingsVersionError) {
+        throw error
+      }
+      if (!isMissingFileError(error)) {
         throw new Error('无法读取文档解析设置', { cause: error })
       }
       this.settings = {
@@ -195,6 +200,10 @@ export class DocumentParsingSettingsStore {
     return documentParsingSettingsSchema.parse(settings)
   }
 
+  getWarnings(): readonly SettingsWarning[] {
+    return this.warnings
+  }
+
   update(input: unknown): Promise<DocumentParsingSettings> {
     const operation = this.updateQueue.then(async () => {
       const updates = documentParsingSettingsUpdateSchema.parse(input)
@@ -202,25 +211,9 @@ export class DocumentParsingSettingsStore {
         version: CURRENT_SETTINGS_VERSION,
         ...updates
       }
-      await mkdir(dirname(this.filePath), { recursive: true })
-      const temporaryPath =
-        `${this.filePath}.${process.pid}.` +
-        `${randomBytes(6).toString('hex')}.tmp`
-      try {
-        await writeFile(
-          temporaryPath,
-          `${JSON.stringify(next, null, 2)}\n`,
-          {
-            encoding: 'utf8',
-            mode: 0o600,
-            flag: 'wx'
-          }
-        )
-        await rename(temporaryPath, this.filePath)
-      } finally {
-        await rm(temporaryPath, { force: true })
-      }
+      await writeJsonFileAtomically(this.filePath, next)
       this.settings = next
+      this.warnings = []
       return this.get()
     })
     this.updateQueue = operation.then(

@@ -16,3 +16,27 @@ export async function waitForCleanup(
   }
   return completed
 }
+
+export type CleanupOperation = () => unknown | Promise<unknown>
+
+export async function settleCleanupPhases(
+  phases: readonly (readonly CleanupOperation[])[]
+): Promise<void> {
+  for (const phase of phases) {
+    await Promise.allSettled(
+      phase.map((operation) => Promise.resolve().then(operation))
+    )
+  }
+}
+
+export async function runCleanupBeforeDeadline(
+  cleanup: Promise<unknown>,
+  timeoutMs: number,
+  finalize: () => unknown | Promise<unknown>
+): Promise<boolean> {
+  const completed = await waitForCleanup(cleanup, timeoutMs)
+  if (completed) {
+    await finalize()
+  }
+  return completed
+}

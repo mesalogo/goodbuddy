@@ -7,6 +7,7 @@ import {
   waitFor,
   within
 } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantExpert } from '../../shared/assistant-contracts'
 import type {
@@ -570,6 +571,31 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
 
     fireEvent.click(
+      screen.getByRole('tab', { name: 'Model connections' })
+    )
+    expect(
+      await screen.findByRole('button', {
+        name: 'Edit model connection Default model'
+      })
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Name')).toHaveValue('Default model')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save settings' })
+    )
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          modelProfiles: expect.arrayContaining([
+            expect.objectContaining({
+              id: modelProfileId,
+              name: '默认模型'
+            })
+          ])
+        })
+      )
+    )
+
+    fireEvent.click(
       screen.getByRole('tab', { name: 'Agent Runtime' })
     )
     expect(
@@ -587,6 +613,69 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText(/OpenCode and Continue are bundled with GoodBuddy/u)
+    ).toBeInTheDocument()
+  })
+
+  it('does not translate user-defined model connection names', async () => {
+    const userProfileId = '00000000-0000-4000-8000-000000000099'
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelProfiles: [
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          name: 'My renamed model'
+        },
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          id: userProfileId,
+          name: '默认模型'
+        }
+      ]
+    })
+    await changeUiLocale('en-US')
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Model connections' })
+    )
+    expect(
+      await screen.findByRole('button', {
+        name: 'Edit model connection My renamed model'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Edit model connection 默认模型'
+      })
+    ).toBeInTheDocument()
+  })
+
+  it('localizes structured Runtime recovery warnings', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      warnings: [{ code: 'runtime-settings-recovered' }]
+    })
+    await changeUiLocale('en-US')
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    expect(
+      await screen.findByText(/The Runtime settings file was corrupt/u)
     ).toBeInTheDocument()
   })
 
@@ -617,7 +706,6 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(onMagicNotesEnabledChange).toHaveBeenCalledWith(true)
-
     fireEvent.click(
       screen.getByRole('button', { name: '保存后自动' })
     )
@@ -636,6 +724,59 @@ describe('SettingsPanel runtime files', () => {
         magicNoteCommentFormat: 'structured'
       })
     )
+  })
+
+  it('refreshes built-in Notes MCP after enabling Magic Notes', async () => {
+    function Harness(): React.JSX.Element {
+      const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
+      return (
+        <SettingsPanel
+          {...heartbeatSettingsProps}
+          magicNotesEnabled={magicNotesEnabled}
+          onMagicNotesEnabledChange={setMagicNotesEnabled}
+          open
+          onClearLocalData={vi.fn(async () => {})}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      )
+    }
+
+    render(
+      <Harness />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    const noteServerToggle = await screen.findByRole('button', {
+      name: '展开服务器 笔记'
+    })
+    expect(noteServerToggle.closest('article')).toHaveClass(
+      'mcp-server-card--disabled'
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    fireEvent.click(
+      await screen.findByRole('switch', {
+        name: '显示魔法笔记入口'
+      })
+    )
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        magicNotesEnabled: true
+      })
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('button', { name: '展开服务器 笔记' })
+          .closest('article')
+      ).not.toHaveClass('mcp-server-card--disabled')
+    )
+    expect(
+      screen.getByText('内置 MCP Server · 按模式读写 · 按对话授权')
+    ).toBeInTheDocument()
   })
 
   it('keeps page navigation beside an independently scrollable panel', () => {
@@ -757,6 +898,77 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(screen.queryByText('设置已保存')).not.toBeInTheDocument()
+  })
+
+  it('submits configured model values while environment values are effective', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelBaseUrl: 'https://environment.example/v1',
+      modelName: 'environment-model',
+      apiKeyConfigured: true,
+      credentialSource: 'environment',
+      modelProfiles: [
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          baseUrl: 'https://environment.example/v1',
+          modelName: 'environment-model',
+          apiKeyConfigured: true,
+          credentialSource: 'environment'
+        }
+      ],
+      configured: {
+        modelProfiles: [
+          {
+            ...runtimeSettings.modelProfiles[0]!,
+            baseUrl: 'https://stored.example/v1',
+            modelName: 'stored-model',
+            apiKeyConfigured: true,
+            credentialSource: 'environment'
+          }
+        ],
+        opencodeBaseUrl: '',
+        opencodeBinaryPath: '',
+        opencodeConfigPath: '',
+        continueBinaryPath: '',
+        continueConfigPath: '',
+        workspacePath: 'C:\\Workspace',
+        opencodeModelSource: runtimeSettings.opencodeModelSource,
+        continueModelSource: runtimeSettings.continueModelSource
+      }
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByDisplayValue('C:\\Workspace')
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    expect(
+      await screen.findByDisplayValue('https://environment.example/v1')
+    ).toBeDisabled()
+    expect(screen.getByDisplayValue('environment-model')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelBaseUrl: 'https://stored.example/v1',
+          modelName: 'stored-model',
+          modelProfiles: [
+            expect.objectContaining({
+              baseUrl: 'https://stored.example/v1',
+              modelName: 'stored-model',
+              apiKey: { action: 'keep' }
+            })
+          ]
+        })
+      )
+    )
   })
 
   it('applies a speech model draft only when Settings is saved', async () => {

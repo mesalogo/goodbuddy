@@ -35,7 +35,10 @@ import type { WeixinBindingSnapshot } from '../../shared/weixin-channel-contract
 import type { AppNotificationInput } from './notifications'
 import { trapTabFocus } from './dialog-focus'
 import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
+import {
+  SettingsCategoryHeader,
+  SettingsWarningList
+} from './SettingsPrimitives'
 
 type ChannelDraft = {
   enabled: boolean
@@ -455,6 +458,8 @@ function ChannelEditor({
           <small>
             {settings.source === 'environment'
               ? t('channels.credential.environmentSource')
+              : settings.source === 'unreadable'
+                ? t('channels.credential.secretUnreadable')
               : settings.secretConfigured
                 ? t('channels.credential.secretSaved')
                 : t('channels.credential.secretMissing')}
@@ -1327,7 +1332,7 @@ export function ChannelSettingsSection({
         aria-label={t('channels.sectionAriaLabel')}
         className="settings-section channel-settings"
       >
-      {snapshot.warning && <p className="settings-warning">{snapshot.warning}</p>}
+      <SettingsWarningList warnings={snapshot.warnings} />
 
       <div className="channel-settings__tabs">
         <PageTabs

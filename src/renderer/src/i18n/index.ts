@@ -9,6 +9,7 @@ import { magicNotes as englishMagicNotes } from './locales/en-US/magicNotes'
 import { settings as englishSettings } from './locales/en-US/settings'
 import { settingsSections as englishSettingsSections } from './locales/en-US/settingsSections'
 import { workspace as englishWorkspace } from './locales/en-US/workspace'
+import { warnings as englishWarnings } from './locales/en-US/warnings'
 import { activity as chineseActivity } from './locales/zh-CN/activity'
 import { app as chineseApp } from './locales/zh-CN/app'
 import { heartbeat as chineseHeartbeat } from './locales/zh-CN/heartbeat'
@@ -18,6 +19,7 @@ import { magicNotes as chineseMagicNotes } from './locales/zh-CN/magicNotes'
 import { settings as chineseSettings } from './locales/zh-CN/settings'
 import { settingsSections as chineseSettingsSections } from './locales/zh-CN/settingsSections'
 import { workspace as chineseWorkspace } from './locales/zh-CN/workspace'
+import { warnings as chineseWarnings } from './locales/zh-CN/warnings'
 
 export const supportedUiLocales = ['zh-CN', 'en-US'] as const
 export type UiLocale = (typeof supportedUiLocales)[number]
@@ -32,7 +34,8 @@ export const i18nResources = {
     magicNotes: chineseMagicNotes,
     settings: chineseSettings,
     settingsSections: chineseSettingsSections,
-    workspace: chineseWorkspace
+    workspace: chineseWorkspace,
+    warnings: chineseWarnings
   },
   'en-US': {
     activity: englishActivity,
@@ -43,7 +46,8 @@ export const i18nResources = {
     magicNotes: englishMagicNotes,
     settings: englishSettings,
     settingsSections: englishSettingsSections,
-    workspace: englishWorkspace
+    workspace: englishWorkspace,
+    warnings: englishWarnings
   }
 } as const
 

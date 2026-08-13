@@ -42,7 +42,6 @@ import {
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
-  repairAgentRuntimeSelection,
   repairChannelRuntimeSelection,
   type AgentRuntimeSelection,
   type RuntimeSelectionRepairSettings
@@ -1363,7 +1362,8 @@ export class AssistantDatabase {
       .prepare(
         `SELECT id, runtime_selection_json, channel
          FROM conversations
-         WHERE runtime_selection_json IS NOT NULL`
+         WHERE runtime_selection_json IS NOT NULL
+           AND channel IS NOT NULL`
       )
       .all() as Array<{
         id: string
@@ -1410,9 +1410,7 @@ export class AssistantDatabase {
         if (!current) {
           continue
         }
-        const next = conversation.channel
-          ? repairChannelRuntimeSelection(current, settings)
-          : repairAgentRuntimeSelection(current, settings)
+        const next = repairChannelRuntimeSelection(current, settings)
         if (
           agentRuntimeSelectionKey(next) ===
           agentRuntimeSelectionKey(current)

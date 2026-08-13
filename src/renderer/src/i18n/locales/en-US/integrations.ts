@@ -70,6 +70,7 @@ export const integrations = {
       environmentSource: 'Provided by environment variables',
       secretSaved: 'Secret saved with encryption',
       secretMissing: 'Secret not configured',
+      secretUnreadable: 'Secret saved, but currently unreadable',
       readOnly:
         'This channel is managed by environment variables. Change the launch environment and restart the app.',
       enable: 'Enable the {{channel}} channel',

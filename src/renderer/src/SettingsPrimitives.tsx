@@ -1,8 +1,38 @@
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import {
+  settingsWarningKey,
+  type SettingsWarning
+} from '../../shared/settings-warning-contracts'
 import {
   settingsCategories,
   type SettingsCategoryId
 } from './settings-categories'
+import { translateSettingsWarning } from './settings-warnings'
+
+export function SettingsWarningList({
+  warnings
+}: {
+  warnings?: readonly SettingsWarning[]
+}): React.JSX.Element | null {
+  const { t } = useTranslation('warnings')
+  if (!warnings?.length) {
+    return null
+  }
+  return (
+    <>
+      {warnings.map((warning) => (
+        <p
+          className="settings-warning"
+          key={settingsWarningKey(warning)}
+          role="alert"
+        >
+          {translateSettingsWarning(warning, t)}
+        </p>
+      ))}
+    </>
+  )
+}
 
 export function SettingsCategoryHeader({
   actions,

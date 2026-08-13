@@ -1,14 +1,9 @@
 import {
-  mkdir,
   readFile,
   realpath,
-  rename,
-  rm,
-  stat,
-  writeFile
+  stat
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname } from 'node:path'
 import { z } from 'zod'
 import {
   continueModeSchema,
@@ -23,17 +18,28 @@ import {
   runtimeProviderSchema,
   runtimeSandboxModeSchema,
   toolApprovalPolicySchema,
-  RuntimeSettings,
+  type RuntimeSettings,
   type RuntimeSettingsInput
 } from '../shared/contracts'
+import {
+  settingsWarningsEqual,
+  type SettingsWarning
+} from '../shared/settings-warning-contracts'
+import {
+  assertSupportedSettingsVersion,
+  isolateCorruptSettingsFile,
+  isMissingFileError,
+  UnsupportedSettingsVersionError,
+  writeJsonFileAtomically
+} from './settings-file-utils'
+import {
+  decryptSettingsCredential,
+  encryptedSettingsCredentialSchema,
+  encryptSettingsCredential,
+  type SettingsCredentialCipher
+} from './settings-credential-cipher'
 
-const credentialSchema = z
-  .object({
-    formatVersion: z.literal(1),
-    scheme: z.literal('electron-safe-storage'),
-    ciphertextBase64: z.string()
-  })
-  .optional()
+const credentialSchema = encryptedSettingsCredentialSchema.optional()
 
 const version4StoredSettingsSchema = z.object({
   version: z.literal(4),
@@ -179,8 +185,6 @@ const storedSettingsSchema = version13StoredSettingsSchema
     knowledgeRerankCredential: credentialSchema
   })
 
-class UnsupportedRuntimeSettingsVersionError extends Error {}
-
 type StoredSettings = z.infer<typeof storedSettingsSchema>
 type Version10StoredSettings = z.infer<
   typeof version10StoredSettingsSchema
@@ -239,11 +243,7 @@ const embeddingCredentialPayloadSchema = z.object({
 
 const rerankCredentialPayloadSchema = embeddingCredentialPayloadSchema
 
-export type CredentialCipher = {
-  isAvailable: () => boolean
-  encrypt: (value: string) => Buffer
-  decrypt: (value: Buffer) => string
-}
+export type CredentialCipher = SettingsCredentialCipher
 
 export type ResolvedRuntimeSettings = {
   provider: RuntimeSettings['provider']
@@ -278,6 +278,11 @@ export type ResolvedRuntimeSettings = {
   workspacePath: string
   toolApproval: RuntimeSettings['toolApproval']
 }
+
+export type RuntimePolicySettings = Pick<
+  ResolvedRuntimeSettings,
+  'subagentSmartRoutingEnabled' | 'toolApproval'
+>
 
 export type ResolvedModelProfile = {
   id: string
@@ -345,6 +350,15 @@ const defaultSettings: StoredSettings = {
 function migrateContinueCommand(command: string): string {
   const value = command.trim()
   return value === 'cn' ? '' : value
+}
+
+function normalizeModelBaseUrl(value: string): string {
+  const url = new URL(value)
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('模型服务地址必须使用 HTTP 或 HTTPS')
+  }
+  url.pathname = url.pathname.replace(/\/+$/u, '')
+  return url.toString().replace(/\/$/u, '')
 }
 
 function compatibleTextProfileId(
@@ -445,14 +459,21 @@ function migrateVersion10(
 }
 
 function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
-  const fallbackProfileId = compatibleTextProfileId(settings)
+  const modelProfiles = settings.modelProfiles.map((profile) => ({
+    ...profile,
+    baseUrl: normalizeModelBaseUrl(profile.baseUrl)
+  }))
+  const fallbackProfileId = compatibleTextProfileId({
+    modelProfiles,
+    defaultModelProfileId: settings.defaultModelProfileId
+  })
   const normalizeSource = (
     source: RuntimeSettings['opencodeModelSource']
   ): RuntimeSettings['opencodeModelSource'] => {
     if (source.kind === 'platform') {
       return source
     }
-    const profile = settings.modelProfiles.find(
+    const profile = modelProfiles.find(
       (candidate) => candidate.id === source.profileId
     )
     if (profile && isAgentRuntimeModelProtocol(profile.protocol)) {
@@ -463,14 +484,21 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
       : { kind: 'platform' }
   }
   const opencodeBaseUrl = settings.opencodeBaseUrl.trim()
-  const defaultModelProfileId = settings.modelProfiles.some(
+  if (opencodeBaseUrl) {
+    const url = new URL(opencodeBaseUrl)
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      throw new Error('OpenCode 地址必须使用 HTTP 或 HTTPS')
+    }
+  }
+  const defaultModelProfileId = modelProfiles.some(
     (profile) => profile.id === settings.defaultModelProfileId
   )
     ? settings.defaultModelProfileId
-    : settings.modelProfiles[0]!.id
+    : modelProfiles[0]!.id
 
   return {
     ...settings,
+    modelProfiles,
     provider:
       settings.provider === 'auto' ? 'model' : settings.provider,
     defaultModelProfileId,
@@ -558,15 +586,27 @@ function migrateVersion5(
 function migrateVersion6(
   settings: z.infer<typeof version6StoredSettingsSchema>
 ): StoredSettings {
-  const endpoint = new URL(settings.knowledgeEmbeddingBaseUrl)
-  endpoint.pathname = `${endpoint.pathname.replace(/\/+$/u, '')}/v1/embeddings`
+  let knowledgeEmbeddingBaseUrl: string =
+    defaultRuntimeSettings.knowledgeEmbeddingBaseUrl
+  try {
+    const endpoint = new URL(settings.knowledgeEmbeddingBaseUrl)
+    if (['http:', 'https:'].includes(endpoint.protocol)) {
+      const path = endpoint.pathname.replace(/\/+$/u, '')
+      if (!/\/v1\/embeddings$/iu.test(path)) {
+        endpoint.pathname = `${path}/v1/embeddings`
+      }
+      knowledgeEmbeddingBaseUrl = endpoint.toString()
+    }
+  } catch {
+    // Preserve the rest of the legacy settings and repair only this endpoint.
+  }
   return migrateVersion10({
     ...settings,
     version: 10,
     subagentSmartRoutingEnabled:
       defaultRuntimeSettings.subagentSmartRoutingEnabled,
     intranetCompatibilityEnabled: true,
-    knowledgeEmbeddingBaseUrl: endpoint.toString(),
+    knowledgeEmbeddingBaseUrl,
     modelProfiles: settings.modelProfiles.map((profile) => ({
       ...profile,
       imageGenerationQuality:
@@ -613,15 +653,10 @@ function migrateVersion9(
   })
 }
 
-function normalizeModelBaseUrl(value: string): string {
-  const url = new URL(value)
-  url.pathname = url.pathname.replace(/\/+$/u, '')
-  return url.toString().replace(/\/$/u, '')
-}
-
 export class RuntimeSettingsStore {
   private settings?: StoredSettings
-  private loadWarning?: string
+  private settingsLoad?: Promise<StoredSettings>
+  private loadWarnings: SettingsWarning[] = []
   private updateQueue: Promise<void> = Promise.resolve()
 
   constructor(
@@ -630,25 +665,28 @@ export class RuntimeSettingsStore {
     private readonly environment: NodeJS.ProcessEnv = process.env
   ) {}
 
-  private async load(): Promise<StoredSettings> {
+  private load(): Promise<StoredSettings> {
     if (this.settings) {
-      return this.settings
+      return Promise.resolve(this.settings)
     }
+    if (!this.settingsLoad) {
+      this.settingsLoad = this.readSettings().finally(() => {
+        this.settingsLoad = undefined
+      })
+    }
+    return this.settingsLoad
+  }
 
+  private async readSettings(): Promise<StoredSettings> {
     try {
       const contents = await readFile(this.filePath, 'utf8')
       const parsed: unknown = JSON.parse(contents)
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        'version' in parsed &&
-        typeof parsed.version === 'number' &&
-        parsed.version > 14
-      ) {
-        throw new UnsupportedRuntimeSettingsVersionError(
-          `当前 GoodBuddy 不支持 Runtime 设置版本 ${parsed.version}，请升级应用后重试`
-        )
-      }
+      assertSupportedSettingsVersion(
+        parsed,
+        14,
+        (version) =>
+          `当前 GoodBuddy 不支持 Runtime 设置版本 ${version}，请升级应用后重试`
+      )
       const current = storedSettingsSchema.safeParse(parsed)
       if (current.success) {
         this.settings = current.data
@@ -772,23 +810,15 @@ export class RuntimeSettingsStore {
       }
       this.settings = normalizeStoredSettings(this.settings)
     } catch (error) {
-      if (error instanceof UnsupportedRuntimeSettingsVersionError) {
+      if (error instanceof UnsupportedSettingsVersionError) {
         throw error
       }
-      if (
-        !(
-          error &&
-          typeof error === 'object' &&
-          'code' in error &&
-          error.code === 'ENOENT'
-        )
-      ) {
-        this.loadWarning =
-          'Runtime 设置文件已损坏，已隔离原文件并恢复默认设置'
-        await rename(
+      if (!isMissingFileError(error)) {
+        await isolateCorruptSettingsFile(
           this.filePath,
-          `${this.filePath}.corrupt-${Date.now()}`
-        ).catch(() => undefined)
+          'Runtime 设置已损坏且无法隔离'
+        )
+        this.loadWarnings = [{ code: 'runtime-settings-recovered' }]
       }
       this.settings = { ...defaultSettings }
     }
@@ -798,52 +828,70 @@ export class RuntimeSettingsStore {
   private getStoredApiKey(
     profile: StoredSettings['modelProfiles'][number]
   ): string | undefined {
-    if (!profile.credential || !this.cipher.isAvailable()) {
+    if (!profile.credential) {
       return undefined
+    }
+    const warning = (code: SettingsWarning['code']): undefined => {
+      this.addWarning({ code, subject: profile.name })
+      return undefined
+    }
+    if (!this.cipher.isAvailable()) {
+      return warning('runtime-model-credential-unreadable')
     }
     try {
       const payload = credentialPayloadSchema.parse(
-        JSON.parse(
-          this.cipher.decrypt(
-            Buffer.from(profile.credential.ciphertextBase64, 'base64')
-          )
-        )
+        decryptSettingsCredential(this.cipher, profile.credential)
       )
       if (payload.origin !== new URL(profile.baseUrl).origin) {
-        this.loadWarning =
-          `模型连接“${profile.name}”的服务地址与已保存 API Key 不匹配，请重新输入或清除 API Key`
-        return undefined
+        return warning('runtime-model-credential-binding-mismatch')
       }
+      this.removeWarnings(
+        [
+          'runtime-model-credential-unreadable',
+          'runtime-model-credential-binding-mismatch'
+        ],
+        profile.name
+      )
       return payload.apiKey
     } catch {
-      return undefined
+      return warning('runtime-model-credential-unreadable')
     }
   }
 
   private getStoredEmbeddingApiKey(
     settings: StoredSettings
   ): string | undefined {
-    if (
-      !settings.knowledgeEmbeddingCredential ||
-      !this.cipher.isAvailable()
-    ) {
+    if (!settings.knowledgeEmbeddingCredential) {
+      return undefined
+    }
+    if (!this.cipher.isAvailable()) {
+      this.addWarning({
+        code: 'runtime-embedding-credential-unreadable'
+      })
       return undefined
     }
     try {
       const payload = embeddingCredentialPayloadSchema.parse(
-        JSON.parse(
-          this.cipher.decrypt(
-            Buffer.from(
-              settings.knowledgeEmbeddingCredential.ciphertextBase64,
-              'base64'
-            )
-          )
+        decryptSettingsCredential(
+          this.cipher,
+          settings.knowledgeEmbeddingCredential
         )
       )
-      return payload.endpoint === settings.knowledgeEmbeddingBaseUrl
-        ? payload.apiKey
-        : undefined
+      if (payload.endpoint !== settings.knowledgeEmbeddingBaseUrl) {
+        this.addWarning({
+          code: 'runtime-embedding-credential-binding-mismatch'
+        })
+        return undefined
+      }
+      this.removeWarnings([
+        'runtime-embedding-credential-unreadable',
+        'runtime-embedding-credential-binding-mismatch'
+      ])
+      return payload.apiKey
     } catch {
+      this.addWarning({
+        code: 'runtime-embedding-credential-unreadable'
+      })
       return undefined
     }
   }
@@ -851,26 +899,62 @@ export class RuntimeSettingsStore {
   private getStoredRerankApiKey(
     settings: StoredSettings
   ): string | undefined {
-    if (!settings.knowledgeRerankCredential || !this.cipher.isAvailable()) {
+    if (!settings.knowledgeRerankCredential) {
+      return undefined
+    }
+    if (!this.cipher.isAvailable()) {
+      this.addWarning({
+        code: 'runtime-rerank-credential-unreadable'
+      })
       return undefined
     }
     try {
       const payload = rerankCredentialPayloadSchema.parse(
-        JSON.parse(
-          this.cipher.decrypt(
-            Buffer.from(
-              settings.knowledgeRerankCredential.ciphertextBase64,
-              'base64'
-            )
-          )
+        decryptSettingsCredential(
+          this.cipher,
+          settings.knowledgeRerankCredential
         )
       )
-      return payload.endpoint === settings.knowledgeRerankEndpoint
-        ? payload.apiKey
-        : undefined
+      if (payload.endpoint !== settings.knowledgeRerankEndpoint) {
+        this.addWarning({
+          code: 'runtime-rerank-credential-binding-mismatch'
+        })
+        return undefined
+      }
+      this.removeWarnings([
+        'runtime-rerank-credential-unreadable',
+        'runtime-rerank-credential-binding-mismatch'
+      ])
+      return payload.apiKey
     } catch {
+      this.addWarning({
+        code: 'runtime-rerank-credential-unreadable'
+      })
       return undefined
     }
+  }
+
+  private addWarning(warning: SettingsWarning): void {
+    if (
+      !this.loadWarnings.some(
+        (current) => settingsWarningsEqual(current, warning)
+      )
+    ) {
+      this.loadWarnings.push(warning)
+    }
+  }
+
+  private removeWarnings(
+    codes: readonly SettingsWarning['code'][],
+    subject?: string
+  ): void {
+    this.loadWarnings = this.loadWarnings.filter(
+      (warning) =>
+        !(
+          codes.includes(warning.code) &&
+          (subject === undefined || warning.subject === subject)
+        )
+    )
   }
 
   private getEnvironmentApiKey(): string | undefined {
@@ -903,7 +987,7 @@ export class RuntimeSettingsStore {
         ? this.getEnvironmentApiKey()
         : undefined
     const storedApiKey =
-      profile.authentication === 'api-key'
+      profile.authentication === 'api-key' && !environmentApiKey
         ? this.getStoredApiKey(profile)
         : undefined
     const environmentBaseUrl =
@@ -918,6 +1002,14 @@ export class RuntimeSettingsStore {
     const model = environmentApiKey
       ? environmentModel || defaultRuntimeSettings.modelName
       : profile.modelName
+    const credentialSource: RuntimeSettings['credentialSource'] =
+      environmentApiKey
+        ? 'environment'
+        : storedApiKey
+          ? 'encrypted'
+          : profile.credential
+            ? 'unreadable'
+            : 'none'
     return {
       apiKey: environmentApiKey ?? storedApiKey,
       baseUrl,
@@ -926,52 +1018,45 @@ export class RuntimeSettingsStore {
       authentication: profile.authentication,
       supportsImageInput: profile.supportsImageInput,
       imageGenerationQuality: profile.imageGenerationQuality,
-      credentialSource: environmentApiKey
-        ? 'environment'
-        : storedApiKey
-          ? 'encrypted'
-          : 'none'
+      credentialSource
     }
   }
 
-  private resolveProfile(
+  private resolveModelProfiles(
     settings: StoredSettings,
-    profileId: string
-  ): ResolvedModelProfile | undefined {
-    const profile = settings.modelProfiles.find(
-      (candidate) => candidate.id === profileId
+    effective: ReturnType<
+      RuntimeSettingsStore['resolveEffectiveModelSettings']
+    >
+  ): ResolvedModelProfile[] {
+    return settings.modelProfiles.map((profile) =>
+      profile.id === settings.defaultModelProfileId
+        ? {
+            id: profile.id,
+            name: profile.name,
+            baseUrl: effective.baseUrl,
+            modelName: effective.model,
+            protocol: effective.protocol,
+            authentication: effective.authentication,
+            supportsImageInput: effective.supportsImageInput,
+            imageGenerationQuality:
+              effective.imageGenerationQuality,
+            apiKey: effective.apiKey
+          }
+        : {
+            id: profile.id,
+            name: profile.name,
+            baseUrl: profile.baseUrl,
+            modelName: profile.modelName,
+            protocol: profile.protocol,
+            authentication: profile.authentication,
+            supportsImageInput: profile.supportsImageInput,
+            imageGenerationQuality: profile.imageGenerationQuality,
+            apiKey:
+              profile.authentication === 'api-key'
+                ? this.getStoredApiKey(profile)
+                : undefined
+          }
     )
-    if (!profile) {
-      return undefined
-    }
-    if (profile.id === settings.defaultModelProfileId) {
-      const effective = this.resolveEffectiveModelSettings(settings)
-      return {
-        id: profile.id,
-        name: profile.name,
-        baseUrl: effective.baseUrl,
-        modelName: effective.model,
-        protocol: effective.protocol,
-        authentication: effective.authentication,
-        supportsImageInput: effective.supportsImageInput,
-        imageGenerationQuality: effective.imageGenerationQuality,
-        apiKey: effective.apiKey
-      }
-    }
-    return {
-      id: profile.id,
-      name: profile.name,
-      baseUrl: profile.baseUrl,
-      modelName: profile.modelName,
-      protocol: profile.protocol,
-      authentication: profile.authentication,
-      supportsImageInput: profile.supportsImageInput,
-      imageGenerationQuality: profile.imageGenerationQuality,
-      apiKey:
-        profile.authentication === 'api-key'
-          ? this.getStoredApiKey(profile)
-          : undefined
-    }
   }
 
   private resolveAgentSettings(settings: StoredSettings): {
@@ -1022,48 +1107,81 @@ export class RuntimeSettingsStore {
   private toPublicSettings(settings: StoredSettings): RuntimeSettings {
     const effective = this.resolveEffectiveModelSettings(settings)
     const agent = this.resolveAgentSettings(settings)
+    const environmentApiKeyConfigured = Boolean(
+      this.getEnvironmentApiKey()
+    )
+    const resolvedModelProfiles = this.resolveModelProfiles(
+      settings,
+      effective
+    )
+    const resolvedProfilesById = new Map(
+      resolvedModelProfiles.map((profile) => [profile.id, profile])
+    )
     const modelProfiles = settings.modelProfiles.map((profile) => {
       const isDefault = profile.id === settings.defaultModelProfileId
-      const apiKey =
-        profile.authentication === 'api-key'
-          ? this.getStoredApiKey(profile)
-          : undefined
+      const resolved = resolvedProfilesById.get(profile.id)
+      if (!resolved) {
+        throw new Error(`模型连接不存在：${profile.id}`)
+      }
+      const apiKey = resolved.apiKey
       return {
         id: profile.id,
         name: profile.name,
-        baseUrl: isDefault
-          ? effective.baseUrl
-          : profile.baseUrl,
-        modelName: isDefault ? effective.model : profile.modelName,
-        protocol: isDefault
-          ? effective.protocol
-          : profile.protocol,
-        authentication: isDefault
-          ? effective.authentication
-          : profile.authentication,
-        supportsImageInput: isDefault
-          ? effective.supportsImageInput
-          : profile.supportsImageInput,
-        imageGenerationQuality: isDefault
-          ? effective.imageGenerationQuality
-          : profile.imageGenerationQuality,
-        apiKeyConfigured: isDefault
-          ? Boolean(effective.apiKey)
-          : Boolean(apiKey),
+        baseUrl: resolved.baseUrl,
+        modelName: resolved.modelName,
+        protocol: resolved.protocol,
+        authentication: resolved.authentication,
+        supportsImageInput: resolved.supportsImageInput,
+        imageGenerationQuality:
+          resolved.imageGenerationQuality ??
+          defaultRuntimeSettings.imageGenerationQuality,
+        apiKeyConfigured: Boolean(apiKey),
         credentialSource: isDefault
           ? effective.credentialSource
           : apiKey
             ? ('encrypted' as const)
-            : ('none' as const)
+            : profile.credential
+              ? ('unreadable' as const)
+              : ('none' as const)
+      }
+    })
+    const configuredModelProfiles = settings.modelProfiles.map((profile) => {
+      const environmentManaged =
+        profile.id === settings.defaultModelProfileId &&
+        profile.authentication === 'api-key' &&
+        environmentApiKeyConfigured
+      const apiKey = resolvedProfilesById.get(profile.id)?.apiKey
+      return {
+        id: profile.id,
+        name: profile.name,
+        baseUrl: profile.baseUrl,
+        modelName: profile.modelName,
+        protocol: profile.protocol,
+        authentication: profile.authentication,
+        supportsImageInput: profile.supportsImageInput,
+        imageGenerationQuality:
+          profile.imageGenerationQuality ??
+          defaultRuntimeSettings.imageGenerationQuality,
+        apiKeyConfigured: environmentManaged || Boolean(apiKey),
+        credentialSource: environmentManaged
+          ? ('environment' as const)
+          : apiKey
+            ? ('encrypted' as const)
+            : profile.credential
+              ? ('unreadable' as const)
+              : ('none' as const)
       }
     })
     const embeddingEnvironmentApiKey =
       this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim()
-    const embeddingStoredApiKey =
-      this.getStoredEmbeddingApiKey(settings)
+    const embeddingStoredApiKey = embeddingEnvironmentApiKey
+      ? undefined
+      : this.getStoredEmbeddingApiKey(settings)
     const rerankEnvironmentApiKey =
       this.environment.GOODBUDDY_RERANK_API_KEY?.trim()
-    const rerankStoredApiKey = this.getStoredRerankApiKey(settings)
+    const rerankStoredApiKey = rerankEnvironmentApiKey
+      ? undefined
+      : this.getStoredRerankApiKey(settings)
     return {
       provider: settings.provider,
       modelBaseUrl: effective.baseUrl,
@@ -1092,7 +1210,9 @@ export class RuntimeSettingsStore {
         ? 'environment'
         : embeddingStoredApiKey
           ? 'encrypted'
-          : 'none',
+          : settings.knowledgeEmbeddingCredential
+            ? 'unreadable'
+            : 'none',
       knowledgeRerankEnabled: settings.knowledgeRerankEnabled,
       knowledgeRerankEndpoint: settings.knowledgeRerankEndpoint,
       knowledgeRerankModel: settings.knowledgeRerankModel,
@@ -1103,7 +1223,9 @@ export class RuntimeSettingsStore {
         ? 'environment'
         : rerankStoredApiKey
           ? 'encrypted'
-          : 'none',
+          : settings.knowledgeRerankCredential
+            ? 'unreadable'
+            : 'none',
       workspacePath: agent.workspacePath,
       apiKeyConfigured: Boolean(effective.apiKey),
       credentialSource: effective.credentialSource,
@@ -1115,7 +1237,20 @@ export class RuntimeSettingsStore {
       continueModelSource: settings.continueModelSource,
       secureStorageAvailable: this.cipher.isAvailable(),
       toolApproval: settings.toolApproval,
-      warning: this.loadWarning
+      configured: {
+        modelProfiles: configuredModelProfiles,
+        opencodeBaseUrl: settings.opencodeBaseUrl,
+        opencodeBinaryPath: settings.opencodeBinaryPath,
+        opencodeConfigPath: settings.opencodeConfigPath,
+        continueBinaryPath: settings.continueBinaryPath,
+        continueConfigPath: settings.continueConfigPath,
+        workspacePath: settings.workspacePath || homedir(),
+        opencodeModelSource: settings.opencodeModelSource,
+        continueModelSource: settings.continueModelSource
+      },
+      ...(this.loadWarnings.length > 0
+        ? { warnings: [...this.loadWarnings] }
+        : {})
     }
   }
 
@@ -1123,24 +1258,31 @@ export class RuntimeSettingsStore {
     return this.toPublicSettings(await this.load())
   }
 
+  async getPolicySettings(): Promise<RuntimePolicySettings> {
+    const settings = await this.load()
+    return {
+      subagentSmartRoutingEnabled:
+        settings.subagentSmartRoutingEnabled,
+      toolApproval: settings.toolApproval
+    }
+  }
+
   async getResolvedSettings(): Promise<ResolvedRuntimeSettings> {
     const settings = await this.load()
     const effective = this.resolveEffectiveModelSettings(settings)
     const agent = this.resolveAgentSettings(settings)
+    const modelProfiles = this.resolveModelProfiles(settings, effective)
+    const profilesById = new Map(
+      modelProfiles.map((profile) => [profile.id, profile])
+    )
     const opencodeModelProfile =
       !agent.opencodeBaseUrl &&
       settings.opencodeModelSource.kind === 'profile'
-        ? this.resolveProfile(
-            settings,
-            settings.opencodeModelSource.profileId
-          )
+        ? profilesById.get(settings.opencodeModelSource.profileId)
         : undefined
     const continueModelProfile =
       settings.continueModelSource.kind === 'profile'
-        ? this.resolveProfile(
-            settings,
-            settings.continueModelSource.profileId
-          )
+        ? profilesById.get(settings.continueModelSource.profileId)
         : undefined
     return {
       provider: settings.provider,
@@ -1151,13 +1293,7 @@ export class RuntimeSettingsStore {
       supportsImageInput: effective.supportsImageInput,
       imageGenerationQuality: effective.imageGenerationQuality,
       apiKey: effective.apiKey,
-      modelProfiles: settings.modelProfiles.map((profile) => {
-        const resolved = this.resolveProfile(settings, profile.id)
-        if (!resolved) {
-          throw new Error(`模型连接不存在：${profile.id}`)
-        }
-        return resolved
-      }),
+      modelProfiles,
       defaultModelProfileId: settings.defaultModelProfileId,
       opencodeModelProfile,
       continueModelProfile,
@@ -1248,7 +1384,15 @@ export class RuntimeSettingsStore {
         const existing = current.modelProfiles.find(
           (candidate) => candidate.id === profile.id
         )
-        const normalizedBaseUrl = normalizeModelBaseUrl(profile.baseUrl)
+        const environmentManaged =
+          profile.id === current.defaultModelProfileId &&
+          profile.authentication === 'api-key' &&
+          profile.apiKey.action === 'keep' &&
+          existing !== undefined &&
+          Boolean(this.getEnvironmentApiKey())
+        const normalizedBaseUrl = normalizeModelBaseUrl(
+          environmentManaged ? existing.baseUrl : profile.baseUrl
+        )
         if (
           profile.authentication === 'api-key' &&
           profile.apiKey.action === 'keep' &&
@@ -1264,7 +1408,9 @@ export class RuntimeSettingsStore {
           id: profile.id,
           name: profile.name,
           baseUrl: normalizedBaseUrl,
-          modelName: profile.modelName,
+          modelName: environmentManaged
+            ? existing.modelName
+            : profile.modelName,
           protocol: profile.protocol,
           authentication: profile.authentication,
           supportsImageInput: profile.supportsImageInput ?? false,
@@ -1280,19 +1426,14 @@ export class RuntimeSettingsStore {
           profile.authentication === 'api-key' &&
           profile.apiKey.action === 'replace'
         ) {
-          nextProfile.credential = {
-            formatVersion: 1,
-            scheme: 'electron-safe-storage',
-            ciphertextBase64: this.cipher
-              .encrypt(
-                JSON.stringify({
-                  version: 1,
-                  apiKey: profile.apiKey.value,
-                  origin: new URL(normalizedBaseUrl).origin
-                })
-              )
-              .toString('base64')
-          }
+          nextProfile.credential = encryptSettingsCredential(
+            this.cipher,
+            {
+              version: 1,
+              apiKey: profile.apiKey.value,
+              origin: new URL(normalizedBaseUrl).origin
+            }
+          )
         }
         return nextProfile
       })
@@ -1319,19 +1460,14 @@ export class RuntimeSettingsStore {
       knowledgeEmbeddingCredential =
         current.knowledgeEmbeddingCredential
     } else if (embeddingApiKeyUpdate.action === 'replace') {
-      knowledgeEmbeddingCredential = {
-        formatVersion: 1,
-        scheme: 'electron-safe-storage',
-        ciphertextBase64: this.cipher
-          .encrypt(
-            JSON.stringify({
-              version: 1,
-              apiKey: embeddingApiKeyUpdate.value,
-              endpoint: embeddingEndpoint
-            })
-          )
-          .toString('base64')
-      }
+      knowledgeEmbeddingCredential = encryptSettingsCredential(
+        this.cipher,
+        {
+          version: 1,
+          apiKey: embeddingApiKeyUpdate.value,
+          endpoint: embeddingEndpoint
+        }
+      )
     }
 
     const rerankEndpoint = new URL(
@@ -1355,19 +1491,14 @@ export class RuntimeSettingsStore {
     ) {
       knowledgeRerankCredential = current.knowledgeRerankCredential
     } else if (rerankApiKeyUpdate.action === 'replace') {
-      knowledgeRerankCredential = {
-        formatVersion: 1,
-        scheme: 'electron-safe-storage',
-        ciphertextBase64: this.cipher
-          .encrypt(
-            JSON.stringify({
-              version: 1,
-              apiKey: rerankApiKeyUpdate.value,
-              endpoint: rerankEndpoint
-            })
-          )
-          .toString('base64')
-      }
+      knowledgeRerankCredential = encryptSettingsCredential(
+        this.cipher,
+        {
+          version: 1,
+          apiKey: rerankApiKeyUpdate.value,
+          endpoint: rerankEndpoint
+        }
+      )
     }
 
     const [
@@ -1490,19 +1621,9 @@ export class RuntimeSettingsStore {
       toolApproval: input.toolApproval
     }
 
-    await mkdir(dirname(this.filePath), { recursive: true })
-    const temporaryPath = `${this.filePath}.${process.pid}.tmp`
-    try {
-      await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600
-      })
-      await rename(temporaryPath, this.filePath)
-    } finally {
-      await rm(temporaryPath, { force: true })
-    }
+    await writeJsonFileAtomically(this.filePath, next)
     this.settings = next
-    this.loadWarning = undefined
+    this.loadWarnings = []
     return this.toPublicSettings(next)
   }
 

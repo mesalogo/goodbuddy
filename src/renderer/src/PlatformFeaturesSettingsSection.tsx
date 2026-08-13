@@ -6,7 +6,10 @@ import type {
 } from '../../shared/application-settings-contracts'
 import type { MagicNoteCommentFormat } from '../../shared/magic-notes-contracts'
 import { SegmentedControl } from './WorkspacePrimitives'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
+import {
+  SettingsCategoryHeader,
+  SettingsWarningList
+} from './SettingsPrimitives'
 
 type PlatformFeaturesSettingsSectionProps = {
   onMagicNotesEnabledChange: (enabled: boolean) => void
@@ -116,6 +119,7 @@ export function PlatformFeaturesSettingsSection({
         error={error}
         headingId="platform-features-heading"
       />
+      <SettingsWarningList warnings={settings?.warnings} />
       <section
         aria-label={t('platformFeatures.label')}
         className="settings-section"

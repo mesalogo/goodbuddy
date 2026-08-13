@@ -80,6 +80,32 @@ describe('RemoteDelegationService', () => {
     ).toHaveLength(2)
   })
 
+  it('shares one in-flight poll between concurrent callers', async () => {
+    let releaseTransport!: () => void
+    const transportReleased = new Promise<void>((resolve) => {
+      releaseTransport = resolve
+    })
+    const transport = vi.fn(async () => {
+      await transportReleased
+      return { status: 204, body: '' }
+    })
+    const service = new RemoteDelegationService({
+      endpoint: 'https://delegate.example',
+      token: 'test-token',
+      lookup: async () => [{ address: '1.1.1.1', family: 4 }],
+      transport,
+      onTask: vi.fn()
+    })
+
+    const first = service.pollOnce()
+    const second = service.pollOnce()
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce())
+    releaseTransport()
+
+    await Promise.all([first, second])
+    expect(transport).toHaveBeenCalledOnce()
+  })
+
   it('drains a durable outbox before accepting another task', async () => {
     const records = new Map<
       string,
@@ -157,7 +183,7 @@ describe('RemoteDelegationService', () => {
 
     const polling = service.pollOnce()
     await vi.waitFor(() => expect(observedSignal).toBeDefined())
-    service.stop()
+    await service.stop()
 
     await expect(polling).rejects.toBeDefined()
     expect(observedSignal?.aborted).toBe(true)

@@ -192,10 +192,14 @@ describe('ChannelSettingsStore', () => {
     )
 
     const initial = await store.snapshot()
-    expect(initial.warning).toContain('已损坏')
+    expect(initial.warnings).toContainEqual({
+      code: 'channel-settings-recovered'
+    })
     expect(
-      await readdir(join(filePath, '..'))
-    ).toContain('channel-settings.json.corrupt-1234')
+      (await readdir(join(filePath, '..'))).some((name) =>
+        name.startsWith('channel-settings.json.corrupt-1234-')
+      )
+    ).toBe(true)
 
     await store.apply({
       dingtalk: {
@@ -215,6 +219,9 @@ describe('ChannelSettingsStore', () => {
     expect((await readdir(join(filePath, '..'))).some(
       (name) => name.endsWith('.tmp')
     )).toBe(false)
+    await expect(store.snapshot()).resolves.not.toHaveProperty(
+      'warnings'
+    )
   })
 
   it('encrypts Weixin binding credentials and removes them on disconnect', async () => {
@@ -251,4 +258,293 @@ describe('ChannelSettingsStore', () => {
     })
     expect((await store.resolve('weixin')).token).toBeUndefined()
   })
+
+  it('defers version 2 Weixin migration until safe storage recovers', async () => {
+    const filePath = await settingsPath()
+    let available = false
+    const cipher = createCipher()
+    const dynamicCipher: ChannelCredentialCipher = {
+      ...cipher,
+      isAvailable: () => available
+    }
+    const legacyCredential = {
+      formatVersion: 1,
+      scheme: 'electron-safe-storage',
+      ciphertextBase64: cipher
+        .encrypt(
+          JSON.stringify({
+            version: 1,
+            channel: 'weixin',
+            secret: 'legacy-weixin-token'
+          })
+        )
+        .toString('base64')
+    }
+    const legacySettings = JSON.stringify({
+      version: 2,
+      weixin: {
+        enabled: true,
+        credential: legacyCredential,
+        accountId: 'account-legacy',
+        userId: 'user-legacy',
+        baseUrl: 'https://ilinkai.weixin.qq.com'
+      },
+      wecom: {
+        enabled: false,
+        botId: '',
+        allowedSenderIds: [],
+        allowGroupMessages: false
+      },
+      dingtalk: {
+        enabled: false,
+        clientId: '',
+        allowedSenderIds: [],
+        allowGroupMessages: false
+      }
+    })
+    await writeFile(filePath, legacySettings, 'utf8')
+    const store = new ChannelSettingsStore(filePath, dynamicCipher, {})
+
+    await expect(store.snapshot()).rejects.toThrow(
+      '安全存储暂不可用'
+    )
+    expect(await readFile(filePath, 'utf8')).toBe(legacySettings)
+    expect(
+      (await readdir(join(filePath, '..'))).some((name) =>
+        name.startsWith('channel-settings.json.corrupt-')
+      )
+    ).toBe(false)
+
+    available = true
+    await expect(store.snapshot()).resolves.toMatchObject({
+      weixin: {
+        enabled: true,
+        bindingConfigured: true,
+        source: 'encrypted'
+      }
+    })
+    await expect(store.resolve('weixin')).resolves.toMatchObject({
+      accountId: 'account-legacy',
+      userId: 'user-legacy',
+      token: 'legacy-weixin-token'
+    })
+    expect(
+      JSON.parse(await readFile(filePath, 'utf8'))
+    ).toMatchObject({
+      version: 3,
+      weixin: {
+        enabled: true,
+        credential: expect.any(Object)
+      }
+    })
+  })
+
+  it('preserves settings created by a newer unsupported version', async () => {
+    const filePath = await settingsPath()
+    const futureSettings = JSON.stringify({
+      version: 99,
+      futureField: 'keep-me'
+    })
+    await writeFile(filePath, futureSettings, 'utf8')
+    const store = new ChannelSettingsStore(
+      filePath,
+      createCipher(),
+      {}
+    )
+
+    await expect(store.snapshot()).rejects.toThrow(
+      '不支持通道设置版本 99'
+    )
+    expect(await readFile(filePath, 'utf8')).toBe(futureSettings)
+    expect(
+      (await readdir(join(filePath, '..'))).some((name) =>
+        name.startsWith('channel-settings.json.corrupt-')
+      )
+    ).toBe(false)
+  })
+
+  it('does not start Weixin with a temporarily unavailable credential', async () => {
+    const filePath = await settingsPath()
+    const availableStore = new ChannelSettingsStore(
+      filePath,
+      createCipher(),
+      {}
+    )
+    await availableStore.saveWeixinBinding({
+      accountId: 'account-123',
+      userId: 'user-123',
+      baseUrl: 'https://ilinkai.weixin.qq.com',
+      token: 'private-token'
+    })
+
+    const unavailableStore = new ChannelSettingsStore(
+      filePath,
+      createCipher(false),
+      {}
+    )
+    await expect(unavailableStore.resolve('weixin')).resolves.toMatchObject({
+      enabled: false,
+      source: 'none'
+    })
+    await expect(unavailableStore.snapshot()).resolves.toMatchObject({
+      weixin: {
+        enabled: false,
+        bindingConfigured: false
+      },
+      warnings: expect.arrayContaining([
+        { code: 'channel-weixin-secure-storage-unavailable' }
+      ])
+    })
+    expect(
+      JSON.parse(await readFile(filePath, 'utf8'))
+    ).toMatchObject({
+      version: 3,
+      weixin: {
+        enabled: true,
+        credential: expect.any(Object)
+      }
+    })
+
+    await unavailableStore.apply({
+      wecom: {
+        enabled: false,
+        botId: 'bot-id',
+        secret: { action: 'keep' },
+        allowedSenderIds: [],
+        allowGroupMessages: false
+      }
+    })
+    expect(
+      JSON.parse(await readFile(filePath, 'utf8'))
+    ).toMatchObject({
+      weixin: {
+        enabled: true,
+        credential: expect.any(Object)
+      }
+    })
+  })
+
+  it('distinguishes unreadable channel credentials from missing secrets', async () => {
+    const filePath = await settingsPath()
+    const availableStore = new ChannelSettingsStore(
+      filePath,
+      createCipher(),
+      {}
+    )
+    await availableStore.apply({
+      wecom: {
+        enabled: false,
+        botId: 'bot-id',
+        secret: { action: 'replace', value: 'private-secret' },
+        allowedSenderIds: ['sender-a'],
+        allowGroupMessages: false
+      }
+    })
+    const unreadableStore = new ChannelSettingsStore(
+      filePath,
+      {
+        ...createCipher(),
+        decrypt: () => {
+          throw new Error('cannot decrypt')
+        }
+      },
+      {}
+    )
+
+    await expect(unreadableStore.snapshot()).resolves.toMatchObject({
+      wecom: {
+        secretConfigured: false,
+        source: 'unreadable'
+      },
+      warnings: expect.arrayContaining([
+        { code: 'channel-wecom-credential-unreadable' }
+      ])
+    })
+
+    await unreadableStore.apply({
+      wecom: {
+        enabled: false,
+        botId: 'replacement-bot',
+        secret: { action: 'clear' },
+        allowedSenderIds: ['sender-a'],
+        allowGroupMessages: false
+      }
+    })
+    await expect(unreadableStore.snapshot()).resolves.toMatchObject({
+      wecom: {
+        source: 'none'
+      }
+    })
+    expect(
+      (await unreadableStore.snapshot()).warnings ?? []
+    ).not.toContainEqual({
+      code: 'channel-wecom-credential-unreadable'
+    })
+  })
 })
+
+  it.each(['wecom', 'dingtalk'] as const)(
+    'clears an unreadable %s credential warning after decryption recovers',
+    async (channel) => {
+      const filePath = await settingsPath()
+      const availableCipher = createCipher()
+      const availableStore = new ChannelSettingsStore(
+        filePath,
+        availableCipher,
+        {}
+      )
+      await availableStore.apply(
+        channel === 'wecom'
+          ? {
+              wecom: {
+                enabled: false,
+                botId: 'bot-id',
+                secret: { action: 'replace', value: 'private-secret' },
+                allowedSenderIds: ['sender-a'],
+                allowGroupMessages: false
+              }
+            }
+          : {
+              dingtalk: {
+                enabled: false,
+                clientId: 'client-id',
+                secret: { action: 'replace', value: 'private-secret' },
+                allowedSenderIds: ['sender-a'],
+                allowGroupMessages: false
+              }
+            }
+      )
+      let decryptAvailable = false
+      const recoveringStore = new ChannelSettingsStore(
+        filePath,
+        {
+          ...availableCipher,
+          decrypt: (value) => {
+            if (!decryptAvailable) {
+              throw new Error('secure storage is temporarily unavailable')
+            }
+            return availableCipher.decrypt(value)
+          }
+        },
+        {}
+      )
+      const warningCode =
+        channel === 'wecom'
+          ? 'channel-wecom-credential-unreadable'
+          : 'channel-dingtalk-credential-unreadable'
+
+      await expect(recoveringStore.snapshot()).resolves.toMatchObject({
+        [channel]: { source: 'unreadable' },
+        warnings: expect.arrayContaining([{ code: warningCode }])
+      })
+
+      decryptAvailable = true
+      await expect(recoveringStore.resolve(channel)).resolves.toMatchObject({
+        source: 'encrypted',
+        secret: 'private-secret'
+      })
+      expect((await recoveringStore.snapshot()).warnings ?? []).not.toContainEqual(
+        { code: warningCode }
+      )
+    }
+  )

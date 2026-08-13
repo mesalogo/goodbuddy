@@ -170,7 +170,10 @@ export class DocumentParsingService {
         conversionAvailable: false,
         localOcr
       },
-      ocrModels
+      ocrModels,
+      ...(this.settingsStore.getWarnings().length > 0
+        ? { warnings: [...this.settingsStore.getWarnings()] }
+        : {})
     })
   }
 

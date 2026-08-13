@@ -31,7 +31,10 @@ import type {
   WebSearchTestResult
 } from '../../shared/capability-contracts'
 import { trapTabFocus } from './dialog-focus'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
+import {
+  SettingsCategoryHeader,
+  SettingsWarningList
+} from './SettingsPrimitives'
 import { PageTabs } from './WorkspacePrimitives'
 
 const configurableMcpTargets: RuntimeTarget[] = ['model']
@@ -85,7 +88,11 @@ function editorFromServer(server: McpServerSummary): McpEditor {
   }
 }
 
-export function McpSettingsSection(): React.JSX.Element {
+export function McpSettingsSection({
+  magicNotesEnabled = false
+}: {
+  magicNotesEnabled?: boolean
+}): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const tRef = useRef(t)
   useEffect(() => {
@@ -106,7 +113,6 @@ export function McpSettingsSection(): React.JSX.Element {
     disabled: t('mcp.diagnosticStatuses.disabled')
   }
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>()
-  const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
   const [editor, setEditor] = useState<McpEditor>()
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
@@ -155,20 +161,6 @@ export function McpSettingsSection(): React.JSX.Element {
             ? reason.message
             : tRef.current('mcp.errors.load')
         )
-      })
-  }, [])
-
-  useEffect(() => {
-    const getSettings = window.goodbuddy.updates?.getSettings
-    if (!getSettings) {
-      return
-    }
-    void getSettings()
-      .then((settings) => {
-        setMagicNotesEnabled(settings.magicNotesEnabled)
-      })
-      .catch(() => {
-        setMagicNotesEnabled(false)
       })
   }, [])
 
@@ -417,6 +409,7 @@ export function McpSettingsSection(): React.JSX.Element {
         error={!editor ? error : undefined}
         headingId="mcp-settings-heading"
       />
+      <SettingsWarningList warnings={snapshot?.warnings} />
       <PageTabs
         ariaLabel={t('mcp.tabs.ariaLabel')}
         idPrefix="mcp-settings"

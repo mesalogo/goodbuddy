@@ -62,6 +62,7 @@ export const integrations = {
       environmentSource: '由环境变量提供',
       secretSaved: 'Secret 已加密保存',
       secretMissing: 'Secret 尚未配置',
+      secretUnreadable: 'Secret 已保存，但当前无法读取',
       readOnly:
         '当前通道由环境变量管理。请在启动环境中修改配置后重启应用。',
       enable: '启用{{channel}}通道',

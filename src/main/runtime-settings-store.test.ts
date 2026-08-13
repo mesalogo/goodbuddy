@@ -7,7 +7,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   runtimeSettingsInputSchema,
   type RuntimeSettingsInput
@@ -456,6 +456,29 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(true)
   })
 
+  it('rejects non-HTTP model profile URLs during legacy migration', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      modelProfiles: Array<{ baseUrl: string }>
+    }
+    persisted.version = 6
+    persisted.modelProfiles[0]!.baseUrl = 'file:///tmp/model'
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migratedStore = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migratedStore.getPublicSettings()).resolves.toMatchObject({
+      provider: 'model',
+      warnings: [{ code: 'runtime-settings-recovered' }]
+    })
+    expect(
+      (await readdir(join(filePath, '..'))).some((name) =>
+        name.startsWith('runtime-settings.json.corrupt-')
+      )
+    ).toBe(true)
+  })
+
   it('encrypts an OpenAI-compatible embedding API key and binds it to the full endpoint', async () => {
     const { filePath, store } = await createStore()
     await store.update(
@@ -582,6 +605,81 @@ describe('RuntimeSettingsStore', () => {
     )
   })
 
+  it('does not warn about unreadable stored credentials shadowed by environment keys', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        apiKey: { action: 'replace', value: 'stored-model-secret' },
+        knowledgeEmbeddingApiKey: {
+          action: 'replace',
+          value: 'stored-embedding-secret'
+        },
+        knowledgeRerankApiKey: {
+          action: 'replace',
+          value: 'stored-rerank-secret'
+        }
+      })
+    )
+    const environmentStore = new RuntimeSettingsStore(
+      filePath,
+      {
+        ...cipher,
+        decrypt: () => {
+          throw new Error('stored credential is unreadable')
+        }
+      },
+      {
+        GOODBUDDY_MODEL_API_KEY: 'environment-model-secret',
+        GOODBUDDY_EMBEDDING_API_KEY: 'environment-embedding-secret',
+        GOODBUDDY_RERANK_API_KEY: 'environment-rerank-secret'
+      }
+    )
+
+    const publicSettings = await environmentStore.getPublicSettings()
+    expect(publicSettings).toMatchObject({
+      credentialSource: 'environment',
+      knowledgeEmbeddingCredentialSource: 'environment',
+      knowledgeRerankCredentialSource: 'environment'
+    })
+    expect(publicSettings.warnings ?? []).toEqual([])
+    await expect(environmentStore.getResolvedSettings()).resolves.toMatchObject({
+      apiKey: 'environment-model-secret',
+      knowledgeEmbeddingApiKey: 'environment-embedding-secret',
+      knowledgeRerankApiKey: 'environment-rerank-secret'
+    })
+  })
+
+  it('reads Runtime policy without decrypting stored credentials', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        subagentSmartRoutingEnabled: true,
+        toolApproval: 'policy',
+        apiKey: { action: 'replace', value: 'stored-model-secret' },
+        knowledgeEmbeddingApiKey: {
+          action: 'replace',
+          value: 'stored-embedding-secret'
+        },
+        knowledgeRerankApiKey: {
+          action: 'replace',
+          value: 'stored-rerank-secret'
+        }
+      })
+    )
+    const decrypt = vi.fn(cipher.decrypt)
+    const policyStore = new RuntimeSettingsStore(
+      filePath,
+      { ...cipher, decrypt },
+      {}
+    )
+
+    await expect(policyStore.getPolicySettings()).resolves.toEqual({
+      subagentSmartRoutingEnabled: true,
+      toolApproval: 'policy'
+    })
+    expect(decrypt).not.toHaveBeenCalled()
+  })
+
   it('clears rerank credentials and rejects replacement without secure storage', async () => {
     const { filePath, store } = await createStore()
     await store.update(
@@ -646,6 +744,57 @@ describe('RuntimeSettingsStore', () => {
         expect.objectContaining({ imageGenerationQuality: 'auto' })
       ]
     })
+  })
+
+  it('keeps an already complete version 6 embedding endpoint unchanged', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    persisted.version = 6
+    persisted.knowledgeEmbeddingBaseUrl =
+      'https://vectors.example/custom/v1/embeddings'
+    delete persisted.knowledgeEmbeddingCredential
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migratedStore = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migratedStore.getPublicSettings()).resolves.toMatchObject({
+      knowledgeEmbeddingBaseUrl:
+        'https://vectors.example/custom/v1/embeddings'
+    })
+  })
+
+  it('repairs only an invalid version 6 embedding endpoint', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        provider: 'continue',
+        workspacePath: 'preserve-this-workspace'
+      })
+    )
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    persisted.version = 6
+    persisted.knowledgeEmbeddingBaseUrl = 'not a URL'
+    delete persisted.knowledgeEmbeddingCredential
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migratedStore = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migratedStore.getPublicSettings()).resolves.toMatchObject({
+      provider: 'continue',
+      workspacePath: 'preserve-this-workspace',
+      knowledgeEmbeddingBaseUrl:
+        'http://127.0.0.1:11434/v1/embeddings'
+    })
+    expect(
+      (await readdir(join(filePath, '..'))).some((name) =>
+        name.startsWith('runtime-settings.json.corrupt-')
+      )
+    ).toBe(false)
   })
 
   it('defaults image quality when migrating version 7 settings', async () => {
@@ -912,6 +1061,78 @@ describe('RuntimeSettingsStore', () => {
       apiKey: 'generic-key',
       modelBaseUrl: 'https://generic.example',
       modelName: 'generic-model'
+    })
+  })
+
+  it('keeps configured model values when environment values are effective', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        modelBaseUrl: 'https://stored.example/v1',
+        modelName: 'stored-model',
+        apiKey: { action: 'replace', value: 'stored-key' }
+      })
+    )
+    const environmentStore = new RuntimeSettingsStore(filePath, cipher, {
+      GOODBUDDY_MODEL_API_KEY: 'environment-key',
+      GOODBUDDY_MODEL_BASE_URL: 'https://environment.example/v1',
+      GOODBUDDY_MODEL_NAME: 'environment-model'
+    })
+
+    const publicSettings = await environmentStore.getPublicSettings()
+    expect(publicSettings).toMatchObject({
+      modelBaseUrl: 'https://environment.example/v1',
+      modelName: 'environment-model',
+      credentialSource: 'environment',
+      modelProfiles: [
+        expect.objectContaining({
+          baseUrl: 'https://environment.example/v1',
+          modelName: 'environment-model',
+          credentialSource: 'environment'
+        })
+      ],
+      configured: {
+        modelProfiles: [
+          expect.objectContaining({
+            baseUrl: 'https://stored.example/v1',
+            modelName: 'stored-model',
+            credentialSource: 'environment'
+          })
+        ]
+      }
+    })
+
+    const defaultProfile = publicSettings.configured!.modelProfiles[0]!
+    await environmentStore.update(
+      settings({
+        modelBaseUrl: defaultProfile.baseUrl,
+        modelName: defaultProfile.modelName,
+        modelProtocol: defaultProfile.protocol,
+        modelAuthentication: defaultProfile.authentication,
+        imageGenerationQuality: defaultProfile.imageGenerationQuality,
+        modelProfiles: publicSettings.configured!.modelProfiles.map(
+          (profile) => ({
+          id: profile.id,
+          name: profile.name,
+          baseUrl: profile.baseUrl,
+          modelName: profile.modelName,
+          protocol: profile.protocol,
+          authentication: profile.authentication,
+          supportsImageInput: profile.supportsImageInput,
+          imageGenerationQuality: profile.imageGenerationQuality,
+          apiKey: { action: 'keep' }
+          })
+        ),
+        defaultModelProfileId: publicSettings.defaultModelProfileId
+      })
+    )
+
+    await expect(
+      new RuntimeSettingsStore(filePath, cipher, {}).getResolvedSettings()
+    ).resolves.toMatchObject({
+      modelBaseUrl: 'https://stored.example/v1',
+      modelName: 'stored-model',
+      apiKey: 'stored-key'
     })
   })
 
@@ -1319,11 +1540,103 @@ describe('RuntimeSettingsStore', () => {
 
     await expect(store.getPublicSettings()).resolves.toMatchObject({
       provider: 'model',
-      warning: expect.stringContaining('已损坏')
+      warnings: [{ code: 'runtime-settings-recovered' }]
     })
     const files = await readdir(join(filePath, '..'))
     expect(
       files.some((name) => name.startsWith('runtime-settings.json.corrupt-'))
     ).toBe(true)
+  })
+
+  it('distinguishes an unreadable saved credential from a missing credential', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        apiKey: {
+          action: 'replace',
+          value: 'credential-that-will-become-unreadable'
+        }
+      })
+    )
+    const unreadable = new RuntimeSettingsStore(
+      filePath,
+      {
+        ...cipher,
+        decrypt: () => {
+          throw new Error('cannot decrypt')
+        }
+      },
+      {}
+    )
+
+    await expect(unreadable.getPublicSettings()).resolves.toMatchObject({
+      apiKeyConfigured: false,
+      credentialSource: 'unreadable',
+      modelProfiles: [
+        expect.objectContaining({
+          credentialSource: 'unreadable'
+        })
+      ],
+      warnings: [
+        expect.objectContaining({
+          code: 'runtime-model-credential-unreadable',
+          subject: '默认模型'
+        })
+      ]
+    })
+  })
+
+  it('clears credential warnings after secure storage recovers', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        apiKey: {
+          action: 'replace',
+          value: 'recoverable-model-credential'
+        },
+        knowledgeEmbeddingApiKey: {
+          action: 'replace',
+          value: 'recoverable-embedding-credential'
+        },
+        knowledgeRerankApiKey: {
+          action: 'replace',
+          value: 'recoverable-rerank-credential'
+        }
+      })
+    )
+    let decryptAvailable = false
+    const recoveringStore = new RuntimeSettingsStore(
+      filePath,
+      {
+        ...cipher,
+        decrypt: (value) => {
+          if (!decryptAvailable) {
+            throw new Error('secure storage is temporarily unavailable')
+          }
+          return cipher.decrypt(value)
+        }
+      },
+      {}
+    )
+
+    await expect(recoveringStore.getPublicSettings()).resolves.toMatchObject({
+      warnings: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'runtime-model-credential-unreadable'
+        }),
+        { code: 'runtime-embedding-credential-unreadable' },
+        { code: 'runtime-rerank-credential-unreadable' }
+      ])
+    })
+
+    decryptAvailable = true
+    await expect(recoveringStore.getPublicSettings()).resolves.toMatchObject({
+      apiKeyConfigured: true,
+      knowledgeEmbeddingApiKeyConfigured: true,
+      knowledgeRerankApiKeyConfigured: true
+    })
+    expect((await recoveringStore.getPublicSettings()).warnings ?? []).toEqual(
+      []
+    )
   })
 })

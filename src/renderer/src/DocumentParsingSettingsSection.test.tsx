@@ -199,6 +199,36 @@ describe('DocumentParsingSettingsSection', () => {
 
   afterEach(() => cleanup())
 
+  it.each([
+    ['zh-CN', '正在加载…'],
+    ['en-US', 'Loading…']
+  ] as const)('localizes the loading state in %s', async (locale, label) => {
+    await changeUiLocale(locale)
+    getSnapshot.mockImplementationOnce(
+      () => new Promise(() => undefined)
+    )
+
+    render(<DocumentParsingSettingsSection />)
+
+    expect(screen.getByText(label)).toBeInTheDocument()
+  })
+
+  it('localizes recovered document parsing settings warnings', async () => {
+    await changeUiLocale('en-US')
+    getSnapshot.mockResolvedValueOnce({
+      ...snapshot,
+      warnings: [{ code: 'document-parsing-settings-recovered' }]
+    })
+
+    render(<DocumentParsingSettingsSection />)
+
+    expect(
+      await screen.findByText(
+        /The document parsing settings file was corrupt/u
+      )
+    ).toBeInTheDocument()
+  })
+
   it('shows actual capability status and saves workflow settings', async () => {
     const onNotify = vi.fn()
     render(

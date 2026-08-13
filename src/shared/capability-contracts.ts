@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { settingsWarningsSchema } from './settings-warning-contracts'
 
 const controlCharacterFreeString = (maximumLength: number) =>
   z
@@ -331,7 +332,8 @@ export const capabilitySnapshotSchema = z
       .array(computerCapabilityConfigSummarySchema)
       .max(2)
       .optional(),
-    browserProfiles: browserProfilesSummarySchema.optional()
+    browserProfiles: browserProfilesSummarySchema.optional(),
+    warnings: settingsWarningsSchema.optional()
   })
   .strict()
 export type CapabilitySnapshot = z.infer<typeof capabilitySnapshotSchema>

@@ -69,10 +69,11 @@ export class WechatBindingController {
     return this.snapshot()
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.generation += 1
     this.stopClient()
     this.snapshotValue = { status: 'stopped' }
+    await this.credentialSave
   }
 
   private handleMessage(
@@ -83,12 +84,13 @@ export class WechatBindingController {
       return
     }
     if (message.type === 'credential') {
+      if (this.savingCredential) {
+        return
+      }
       this.savingCredential = true
-      this.credentialSave = this.credentialSave
+      this.stopClient()
+      const save = this.credentialSave
         .then(async () => {
-          if (generation !== this.generation) {
-            return
-          }
           this.stopClient()
           await this.store.saveWeixinBinding({
             accountId: message.accountId,
@@ -120,9 +122,13 @@ export class WechatBindingController {
                 : '微信绑定保存失败'
           })
         })
+      const trackedSave = save
         .finally(() => {
-          this.savingCredential = false
+          if (this.credentialSave === trackedSave) {
+            this.savingCredential = false
+          }
         })
+      this.credentialSave = trackedSave
       return
     }
     if (message.type === 'qr') {

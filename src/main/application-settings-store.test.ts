@@ -266,9 +266,10 @@ describe('ApplicationSettingsStore', () => {
     const { directory, filePath, store } = await createStore()
     await writeFile(filePath, data, 'utf8')
 
-    await expect(store.get()).resolves.toEqual(
-      defaultApplicationSettings
-    )
+    await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
+      warnings: [{ code: 'application-settings-recovered' }]
+    })
     const entries = await readdir(directory)
     expect(entries).toHaveLength(1)
     expect(entries[0]).toMatch(
@@ -277,6 +278,25 @@ describe('ApplicationSettingsStore', () => {
     expect(await readFile(join(directory, entries[0] ?? ''), 'utf8')).toBe(
       data
     )
+  })
+
+  it('preserves settings created by a newer unsupported version', async () => {
+    const { directory, filePath, store } = await createStore()
+    const futureSettings = JSON.stringify({
+      version: 99,
+      futureField: 'keep-me'
+    })
+    await writeFile(filePath, futureSettings, 'utf8')
+
+    await expect(store.get()).rejects.toThrow(
+      '不支持应用设置版本 99'
+    )
+    expect(await readFile(filePath, 'utf8')).toBe(futureSettings)
+    expect(
+      (await readdir(directory)).some((name) =>
+        name.startsWith('application-settings.json.corrupt-')
+      )
+    ).toBe(false)
   })
 
   it('does not classify an I/O failure as corrupt settings', async () => {

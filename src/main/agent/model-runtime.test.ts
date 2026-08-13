@@ -1096,7 +1096,9 @@ describe('ModelAgentRuntime', () => {
                 tool_calls: [
                   {
                     index: 0,
+                    id: '',
                     function: {
+                      name: '',
                       arguments: '"README.md"}'
                     }
                   }
@@ -1217,6 +1219,86 @@ describe('ModelAgentRuntime', () => {
       })
     )
     expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('synthesizes and pairs a missing OpenAI Chat tool call id', async () => {
+    const responses = [
+      {
+        id: 'chatcmpl-missing-call-id-1',
+        model: 'qwen3',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  type: 'function',
+                  function: {
+                    name: 'workspace_read_text',
+                    arguments: '{"path":"README.md"}'
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        id: 'chatcmpl-missing-call-id-2',
+        model: 'qwen3',
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '读取完成。'
+            }
+          }
+        ]
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider: createToolProvider()
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed143',
+        conversationId: 'conversation-chat-fallback-id',
+        prompt: '读取 README',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      void _event
+    }
+
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { messages: Array<Record<string, unknown>> }
+    const assistant = secondBody.messages.at(-2) as {
+      tool_calls: Array<Record<string, unknown>>
+    }
+    const result = secondBody.messages.at(-1) as {
+      tool_call_id: string
+    }
+    const toolCallId = assistant.tool_calls[0]?.id
+    expect(toolCallId).toEqual(
+      expect.stringMatching(/^goodbuddy_call_[0-9a-f]{32}$/u)
+    )
+    expect(result).toMatchObject({
+      role: 'tool',
+      tool_call_id: toolCallId
+    })
   })
 
   it('uses refreshed tool definitions in subsequent model rounds', async () => {
@@ -1833,6 +1915,81 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it('pairs a missing Responses call_id with the function-call item id', async () => {
+    const responses = [
+      {
+        id: 'resp-tool-fallback-1',
+        model: 'gpt-5',
+        output: [
+          {
+            id: 'fc-responses-fallback-1',
+            type: 'function_call',
+            name: 'workspace_read_text',
+            arguments: '{"path":"README.md"}'
+          }
+        ]
+      },
+      {
+        id: 'resp-tool-fallback-2',
+        model: 'gpt-5',
+        output: [
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              {
+                type: 'output_text',
+                text: '读取完成。'
+              }
+            ]
+          }
+        ]
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider: createToolProvider()
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed141',
+        conversationId: 'conversation-responses-fallback-id',
+        prompt: '读取 README',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      void _event
+    }
+
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { input: Array<Record<string, unknown>> }
+    expect(secondBody.input).toContainEqual(
+      expect.objectContaining({
+        id: 'fc-responses-fallback-1',
+        type: 'function_call',
+        call_id: 'fc-responses-fallback-1'
+      })
+    )
+    expect(secondBody.input).toContainEqual(
+      expect.objectContaining({
+        type: 'function_call_output',
+        call_id: 'fc-responses-fallback-1'
+      })
+    )
+  })
+
   it('fails closed when a direct-model tool is denied', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json({
@@ -1977,6 +2134,70 @@ describe('ModelAgentRuntime', () => {
           ]
         }
       ]
+    })
+  })
+
+  it('synthesizes and pairs a missing Anthropic tool_use id', async () => {
+    const responses = [
+      {
+        id: 'message-tool-missing-id-1',
+        model: 'claude',
+        content: [
+          {
+            type: 'tool_use',
+            name: 'workspace_read_text',
+            input: { path: 'notes.md' }
+          }
+        ]
+      },
+      {
+        id: 'message-tool-missing-id-2',
+        model: 'claude',
+        content: [{ type: 'text', text: '读取完成。' }]
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider: createToolProvider()
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed142',
+        conversationId: 'conversation-anthropic-fallback-id',
+        prompt: '读取 notes',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      void _event
+    }
+
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { messages: Array<Record<string, unknown>> }
+    const assistant = secondBody.messages.at(-2) as {
+      content: Array<Record<string, unknown>>
+    }
+    const result = secondBody.messages.at(-1) as {
+      content: Array<Record<string, unknown>>
+    }
+    const toolUseId = assistant.content[0]?.id
+    expect(toolUseId).toEqual(
+      expect.stringMatching(/^goodbuddy_call_[0-9a-f]{32}$/u)
+    )
+    expect(result.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: toolUseId
     })
   })
 

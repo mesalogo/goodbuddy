@@ -6,7 +6,10 @@ import type {
   VersionCheckResult
 } from '../../shared/application-settings-contracts'
 import type { AppInfo } from '../../shared/contracts'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
+import {
+  SettingsCategoryHeader,
+  SettingsWarningList
+} from './SettingsPrimitives'
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
@@ -137,6 +140,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
         error={error}
         headingId="update-settings-heading"
       />
+      <SettingsWarningList warnings={settings?.warnings} />
       <section
         aria-label={t('updates.label')}
         className="settings-section update-settings"

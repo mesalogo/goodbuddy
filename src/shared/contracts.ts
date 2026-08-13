@@ -86,6 +86,7 @@ import type {
   DocumentParsingSnapshot,
   DocumentParsingTestPurpose
 } from './document-parsing-contracts'
+import type { SettingsWarning } from './settings-warning-contracts'
 import type {
   KnowledgeChunkDeleteInput,
   KnowledgeChunkPage,
@@ -601,7 +602,19 @@ export type ModelConnectionSettings = {
   supportsImageInput?: boolean
   imageGenerationQuality: ImageGenerationQuality
   apiKeyConfigured: boolean
-  credentialSource: 'none' | 'encrypted' | 'environment'
+  credentialSource: 'none' | 'encrypted' | 'environment' | 'unreadable'
+}
+
+export type ConfiguredRuntimeSettings = {
+  modelProfiles: ModelConnectionSettings[]
+  opencodeBaseUrl: string
+  opencodeBinaryPath: string
+  opencodeConfigPath: string
+  continueBinaryPath: string
+  continueConfigPath: string
+  workspacePath: string
+  opencodeModelSource: RuntimeModelSource
+  continueModelSource: RuntimeModelSource
 }
 
 export type RuntimeSettings = {
@@ -625,22 +638,31 @@ export type RuntimeSettings = {
   knowledgeEmbeddingBaseUrl: string
   knowledgeEmbeddingModel: string
   knowledgeEmbeddingApiKeyConfigured: boolean
-  knowledgeEmbeddingCredentialSource: 'none' | 'encrypted' | 'environment'
+  knowledgeEmbeddingCredentialSource:
+    | 'none'
+    | 'encrypted'
+    | 'environment'
+    | 'unreadable'
   knowledgeRerankEnabled?: boolean
   knowledgeRerankEndpoint?: string
   knowledgeRerankModel?: string
   knowledgeRerankApiKeyConfigured?: boolean
-  knowledgeRerankCredentialSource?: 'none' | 'encrypted' | 'environment'
+  knowledgeRerankCredentialSource?:
+    | 'none'
+    | 'encrypted'
+    | 'environment'
+    | 'unreadable'
   workspacePath: string
   apiKeyConfigured: boolean
-  credentialSource: 'none' | 'encrypted' | 'environment'
+  credentialSource: 'none' | 'encrypted' | 'environment' | 'unreadable'
   modelProfiles: ModelConnectionSettings[]
   defaultModelProfileId: string
   opencodeModelSource: RuntimeModelSource
   continueModelSource: RuntimeModelSource
   secureStorageAvailable: boolean
   toolApproval: RuntimeSettingsInput['toolApproval']
-  warning?: string
+  configured?: ConfiguredRuntimeSettings
+  warnings?: SettingsWarning[]
 }
 
 export type ContextAttachment = ConversationAttachment

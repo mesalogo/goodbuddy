@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { magicNoteCommentFormatSchema } from './magic-notes-contracts'
+import { settingsWarningsSchema } from './settings-warning-contracts'
 
 export const magicNoteCommentModeSchema = z.enum([
   'immediate',
@@ -11,7 +12,7 @@ export type MagicNoteCommentMode = z.infer<
   typeof magicNoteCommentModeSchema
 >
 
-export const applicationSettingsSchema = z
+const applicationPreferencesSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
     magicNotesEnabled: z.boolean(),
@@ -20,7 +21,13 @@ export const applicationSettingsSchema = z
   })
   .strict()
 
-export const applicationSettingsUpdateSchema = applicationSettingsSchema
+export const applicationSettingsSchema = applicationPreferencesSchema
+  .extend({
+    warnings: settingsWarningsSchema.optional()
+  })
+  .strict()
+
+export const applicationSettingsUpdateSchema = applicationPreferencesSchema
   .partial()
   .refine((input) => Object.keys(input).length > 0, {
     message: 'At least one application setting is required'

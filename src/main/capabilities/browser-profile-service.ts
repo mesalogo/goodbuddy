@@ -3,10 +3,7 @@ import {
   lstat,
   mkdir,
   readFile,
-  realpath,
-  rename,
-  rm,
-  writeFile
+  realpath
 } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { z } from 'zod'
@@ -14,6 +11,10 @@ import {
   browserProfileIdSchema,
   browserProfileNameSchema
 } from '../../shared/capability-contracts'
+import {
+  isMissingFileError,
+  writeJsonFileAtomically
+} from '../settings-file-utils'
 
 const MAX_PROFILES = 32
 const MAX_REFERENCES = 64
@@ -204,12 +205,7 @@ export class FileBrowserProfileStore implements BrowserProfileStore {
       }
       return JSON.parse(await readFile(filePath, 'utf8')) as unknown
     } catch (error) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
+      if (isMissingFileError(error)) {
         return undefined
       }
       throw error
@@ -217,36 +213,22 @@ export class FileBrowserProfileStore implements BrowserProfileStore {
   }
 
   async save(state: BrowserProfileState): Promise<void> {
-    const { root, filePath } = await this.prepareRoot()
+    const { filePath } = await this.prepareRoot()
     try {
       const targetDetails = await lstat(filePath)
       if (targetDetails.isSymbolicLink() || !targetDetails.isFile()) {
         throw new Error('Browser profile storage file must be a regular file')
       }
     } catch (error) {
-      if (
-        !(
-          error &&
-          typeof error === 'object' &&
-          'code' in error &&
-          error.code === 'ENOENT'
-        )
-      ) {
+      if (!isMissingFileError(error)) {
         throw error
       }
     }
 
-    const temporaryPath = join(root, `.${this.fileName}.${randomUUID()}.tmp`)
-    try {
-      await writeFile(
-        temporaryPath,
-        `${JSON.stringify(browserProfileStateSchema.parse(state), null, 2)}\n`,
-        { encoding: 'utf8', mode: 0o600, flag: 'wx' }
-      )
-      await rename(temporaryPath, filePath)
-    } finally {
-      await rm(temporaryPath, { force: true })
-    }
+    await writeJsonFileAtomically(
+      filePath,
+      browserProfileStateSchema.parse(state)
+    )
   }
 }
 

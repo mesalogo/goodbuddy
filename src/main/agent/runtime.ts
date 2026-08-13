@@ -51,6 +51,8 @@ export interface AgentRuntime {
   readonly runtimeId?: AgentRuntimeStatus['id']
   readonly requiresToolApproval: boolean
   readonly supportsToolExecution: boolean
+  /** Whether request-scoped GoodBuddy data tools can reach this runtime. */
+  readonly supportsScopedDataTools?: boolean
   readonly capability?: 'chat' | 'image-generation'
   getStatus(): Promise<AgentRuntimeStatus>
   testConnection?(): Promise<AgentRuntimeStatus>

@@ -9,7 +9,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantExpert,
@@ -26,6 +26,7 @@ import type {
 } from '../../shared/contracts'
 import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import {
+  defaultModelProfileId as builtInDefaultModelProfileId,
   defaultRuntimeSettings,
   isAgentRuntimeModelProtocol
 } from '../../shared/contracts'
@@ -40,7 +41,10 @@ import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
+import {
+  SettingsCategoryHeader,
+  SettingsWarningList
+} from './SettingsPrimitives'
 import {
   settingsCategoryList,
   type SettingsCategoryId
@@ -81,6 +85,7 @@ type SettingsPanelProps = {
   onRunHeartbeat: (heartbeatId: string) => Promise<void>
   appearanceTheme?: AppearanceTheme
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
+  magicNotesEnabled?: boolean
   onMagicNotesEnabledChange?: (enabled: boolean) => void
 }
 
@@ -118,6 +123,118 @@ function toModelProfileDrafts(
     apiKey: '',
     clearApiKey: false
   }))
+}
+
+function configuredRuntimeSettings(
+  settings: RuntimeSettings
+): NonNullable<RuntimeSettings['configured']> {
+  return settings.configured ?? {
+    modelProfiles: settings.modelProfiles,
+    opencodeBaseUrl: settings.opencodeBaseUrl,
+    opencodeBinaryPath: settings.opencodeBinaryPath,
+    opencodeConfigPath: settings.opencodeConfigPath,
+    continueBinaryPath: settings.continueBinaryPath,
+    continueConfigPath: settings.continueConfigPath,
+    workspacePath: settings.workspacePath,
+    opencodeModelSource: settings.opencodeModelSource,
+    continueModelSource: settings.continueModelSource
+  }
+}
+
+type RuntimeDraftSelection =
+  | string
+  | ((selectedId: string) => string)
+
+function hydrateRuntimeSettings(
+  value: RuntimeSettings,
+  setters: {
+    settings: (value: RuntimeSettings) => void
+    provider: (value: RuntimeSettings['provider']) => void
+    modelProfiles: (value: ModelProfileDraft[]) => void
+    selectedModelProfileId: (value: RuntimeDraftSelection) => void
+    defaultModelProfileId: (value: string) => void
+    opencodeModelSource: (value: RuntimeModelSource) => void
+    continueModelSource: (value: RuntimeModelSource) => void
+    opencodeBaseUrl: (value: string) => void
+    opencodeBinaryPath: (value: string) => void
+    opencodeConfigPath: (value: string) => void
+    continueBinaryPath: (value: string) => void
+    continueConfigPath: (value: string) => void
+    continueMode: (value: RuntimeSettings['continueMode']) => void
+    runtimeSandboxMode: (
+      value: RuntimeSettings['runtimeSandboxMode']
+    ) => void
+    knowledgeEmbeddingEnabled: (value: boolean) => void
+    knowledgeEmbeddingBaseUrl: (value: string) => void
+    knowledgeEmbeddingModel: (value: string) => void
+    knowledgeEmbeddingApiKey: (value: string) => void
+    clearKnowledgeEmbeddingApiKey: (value: boolean) => void
+    knowledgeRerankEnabled: (value: boolean) => void
+    knowledgeRerankEndpoint: (value: string) => void
+    knowledgeRerankModel: (value: string) => void
+    knowledgeRerankApiKey: (value: string) => void
+    clearKnowledgeRerankApiKey: (value: boolean) => void
+    workspacePath: (value: string) => void
+    toolApproval: (value: RuntimeSettingsInput['toolApproval']) => void
+    subagentSmartRoutingEnabled: (value: boolean) => void
+  },
+  preserveSelectedProfile = false
+): void {
+  const configured = configuredRuntimeSettings(value)
+  setters.settings(value)
+  setters.provider(value.provider)
+  setters.modelProfiles(toModelProfileDrafts(value))
+  const fallbackProfileId = value.modelProfiles.some(
+    (profile) => profile.id === value.defaultModelProfileId
+  )
+    ? value.defaultModelProfileId
+    : value.modelProfiles[0]?.id ?? ''
+  setters.selectedModelProfileId(
+    preserveSelectedProfile
+      ? (selectedId) =>
+          value.modelProfiles.some(
+            (profile) => profile.id === selectedId
+          )
+            ? selectedId
+            : fallbackProfileId
+      : fallbackProfileId
+  )
+  setters.defaultModelProfileId(value.defaultModelProfileId)
+  setters.opencodeModelSource(configured.opencodeModelSource)
+  setters.continueModelSource(configured.continueModelSource)
+  setters.opencodeBaseUrl(configured.opencodeBaseUrl)
+  setters.opencodeBinaryPath(configured.opencodeBinaryPath)
+  setters.opencodeConfigPath(configured.opencodeConfigPath)
+  setters.continueBinaryPath(configured.continueBinaryPath)
+  setters.continueConfigPath(configured.continueConfigPath)
+  setters.continueMode(value.continueMode)
+  setters.runtimeSandboxMode(value.runtimeSandboxMode)
+  setters.knowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
+  setters.knowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
+  setters.knowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
+  setters.knowledgeEmbeddingApiKey('')
+  setters.clearKnowledgeEmbeddingApiKey(false)
+  setters.knowledgeRerankEnabled(
+    value.knowledgeRerankEnabled ??
+      defaultRuntimeSettings.knowledgeRerankEnabled
+  )
+  setters.knowledgeRerankEndpoint(
+    value.knowledgeRerankEndpoint ??
+      defaultRuntimeSettings.knowledgeRerankEndpoint
+  )
+  setters.knowledgeRerankModel(
+    value.knowledgeRerankModel ??
+      defaultRuntimeSettings.knowledgeRerankModel
+  )
+  setters.knowledgeRerankApiKey('')
+  setters.clearKnowledgeRerankApiKey(false)
+  setters.workspacePath(configured.workspacePath)
+  setters.toolApproval(
+    value.toolApproval === 'policy' ? 'policy' : 'always'
+  )
+  setters.subagentSmartRoutingEnabled(
+    value.subagentSmartRoutingEnabled
+  )
 }
 
 type RuntimeConfigCardProps = {
@@ -246,6 +363,7 @@ export function SettingsPanel({
   onExpertsChanged = () => {},
   appearanceTheme = 'system',
   onAppearanceThemeChange = () => {},
+  magicNotesEnabled = false,
   onMagicNotesEnabledChange = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
   const { i18n, t } = useTranslation('settings')
@@ -322,6 +440,13 @@ export function SettingsPanel({
     subagentSmartRoutingEnabled,
     setSubagentSmartRoutingEnabled
   ] = useState(false)
+  const modelProfileDisplayName = (
+    profile: Pick<ModelProfileDraft, 'id' | 'name'>
+  ): string =>
+    profile.id === builtInDefaultModelProfileId &&
+    profile.name === '默认模型'
+      ? t('model.profile.seededDefaultName')
+      : profile.name
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [embeddingConfiguration, setEmbeddingConfiguration] =
@@ -350,6 +475,47 @@ export function SettingsPanel({
   const [agentRuntimeType, setAgentRuntimeType] =
     useState<AgentRuntimeType>('opencode')
   const settingsBodyRef = useRef<HTMLDivElement>(null)
+  const hydrateSettings = useCallback(
+    (
+      value: RuntimeSettings,
+      preserveSelectedProfile = false
+    ): void => {
+      hydrateRuntimeSettings(
+        value,
+        {
+        settings: setSettings,
+        provider: setProvider,
+        modelProfiles: setModelProfiles,
+        selectedModelProfileId: setSelectedModelProfileId,
+        defaultModelProfileId: setDefaultModelProfileId,
+        opencodeModelSource: setOpencodeModelSource,
+        continueModelSource: setContinueModelSource,
+        opencodeBaseUrl: setOpencodeBaseUrl,
+        opencodeBinaryPath: setOpencodeBinaryPath,
+        opencodeConfigPath: setOpencodeConfigPath,
+        continueBinaryPath: setContinueBinaryPath,
+        continueConfigPath: setContinueConfigPath,
+        continueMode: setContinueMode,
+        runtimeSandboxMode: setRuntimeSandboxMode,
+        knowledgeEmbeddingEnabled: setKnowledgeEmbeddingEnabled,
+        knowledgeEmbeddingBaseUrl: setKnowledgeEmbeddingBaseUrl,
+        knowledgeEmbeddingModel: setKnowledgeEmbeddingModel,
+        knowledgeEmbeddingApiKey: setKnowledgeEmbeddingApiKey,
+        clearKnowledgeEmbeddingApiKey: setClearKnowledgeEmbeddingApiKey,
+        knowledgeRerankEnabled: setKnowledgeRerankEnabled,
+        knowledgeRerankEndpoint: setKnowledgeRerankEndpoint,
+        knowledgeRerankModel: setKnowledgeRerankModel,
+        knowledgeRerankApiKey: setKnowledgeRerankApiKey,
+        clearKnowledgeRerankApiKey: setClearKnowledgeRerankApiKey,
+        workspacePath: setWorkspacePath,
+        toolApproval: setToolApproval,
+        subagentSmartRoutingEnabled: setSubagentSmartRoutingEnabled
+        },
+        preserveSelectedProfile
+      )
+    },
+    []
+  )
   const configurationTab =
     activeTab === 'model' ||
     activeTab === 'runtime' ||
@@ -409,52 +575,7 @@ export function SettingsPanel({
         setPersistedSpeechModelId(undefined)
         setSpeechModelSelectionDirty(false)
         setAgentRuntimeType('opencode')
-        setSettings(value)
-        setProvider(value.provider)
-        setModelProfiles(toModelProfileDrafts(value))
-        setSelectedModelProfileId(
-          value.modelProfiles.some(
-            (profile) => profile.id === value.defaultModelProfileId
-          )
-            ? value.defaultModelProfileId
-            : value.modelProfiles[0]?.id ?? ''
-        )
-        setDefaultModelProfileId(value.defaultModelProfileId)
-        setOpencodeModelSource(value.opencodeModelSource)
-        setContinueModelSource(value.continueModelSource)
-        setOpencodeBaseUrl(value.opencodeBaseUrl)
-        setOpencodeBinaryPath(value.opencodeBinaryPath)
-        setOpencodeConfigPath(value.opencodeConfigPath)
-        setContinueBinaryPath(value.continueBinaryPath)
-        setContinueConfigPath(value.continueConfigPath)
-        setContinueMode(value.continueMode)
-        setRuntimeSandboxMode(value.runtimeSandboxMode)
-        setKnowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
-        setKnowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
-        setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
-        setKnowledgeEmbeddingApiKey('')
-        setClearKnowledgeEmbeddingApiKey(false)
-        setKnowledgeRerankEnabled(
-          value.knowledgeRerankEnabled ??
-            defaultRuntimeSettings.knowledgeRerankEnabled
-        )
-        setKnowledgeRerankEndpoint(
-          value.knowledgeRerankEndpoint ??
-            defaultRuntimeSettings.knowledgeRerankEndpoint
-        )
-        setKnowledgeRerankModel(
-          value.knowledgeRerankModel ??
-            defaultRuntimeSettings.knowledgeRerankModel
-        )
-        setKnowledgeRerankApiKey('')
-        setClearKnowledgeRerankApiKey(false)
-        setWorkspacePath(value.workspacePath)
-        setToolApproval(
-          value.toolApproval === 'policy' ? 'policy' : 'always'
-        )
-        setSubagentSmartRoutingEnabled(
-          value.subagentSmartRoutingEnabled
-        )
+        hydrateSettings(value)
       })
       .catch((reason: unknown) => {
         setError(
@@ -475,7 +596,7 @@ export function SettingsPanel({
           )
         )
       })
-  }, [i18n, open])
+  }, [hydrateSettings, i18n, open])
 
   useEffect(() => {
     if (open && settingsBodyRef.current) {
@@ -550,32 +671,52 @@ export function SettingsPanel({
       if (!defaultProfile) {
         throw new Error(t('errors.requireModelConnection'))
       }
-      const profileInputs = modelProfiles.map((profile) => ({
-        id: profile.id,
-        name: profile.name,
-        baseUrl: profile.baseUrl,
-        modelName: profile.modelName,
-        protocol: profile.protocol,
-        authentication: profile.authentication,
-        supportsImageInput: profile.supportsImageInput,
-        imageGenerationQuality: profile.imageGenerationQuality,
-        apiKey: profile.clearApiKey
-          ? ({ action: 'clear' } as const)
-          : profile.apiKey.trim()
-            ? ({
-                action: 'replace',
-                value: profile.apiKey.trim()
-              } as const)
-            : ({ action: 'keep' } as const)
-      }))
+      const configuredProfiles = new Map(
+        settings?.configured?.modelProfiles.map((profile) => [
+          profile.id,
+          profile
+        ])
+      )
+      const profileInputs = modelProfiles.map((profile) => {
+        const configured = configuredProfiles.get(profile.id)
+        const environmentManaged =
+          profile.credentialSource === 'environment' &&
+          configured !== undefined
+        return {
+          id: profile.id,
+          name: profile.name,
+          baseUrl: environmentManaged
+            ? configured.baseUrl
+            : profile.baseUrl,
+          modelName: environmentManaged
+            ? configured.modelName
+            : profile.modelName,
+          protocol: profile.protocol,
+          authentication: profile.authentication,
+          supportsImageInput: profile.supportsImageInput,
+          imageGenerationQuality: profile.imageGenerationQuality,
+          apiKey: profile.clearApiKey
+            ? ({ action: 'clear' } as const)
+            : profile.apiKey.trim()
+              ? ({
+                  action: 'replace',
+                  value: profile.apiKey.trim()
+                } as const)
+              : ({ action: 'keep' } as const)
+        }
+      })
+      const defaultProfileInput =
+        profileInputs.find(
+          (profile) => profile.id === defaultProfile.id
+        ) ?? profileInputs[0]!
       const value = await window.goodbuddy.settings.updateRuntime({
         provider,
-        modelBaseUrl: defaultProfile.baseUrl,
-        modelName: defaultProfile.modelName,
-        modelProtocol: defaultProfile.protocol,
-        modelAuthentication: defaultProfile.authentication,
+        modelBaseUrl: defaultProfileInput.baseUrl,
+        modelName: defaultProfileInput.modelName,
+        modelProtocol: defaultProfileInput.protocol,
+        modelAuthentication: defaultProfileInput.authentication,
         imageGenerationQuality:
-          defaultProfile.imageGenerationQuality,
+          defaultProfileInput.imageGenerationQuality,
         opencodeBaseUrl,
         opencodeEmbedded: !opencodeBaseUrl,
         opencodeBinaryPath,
@@ -607,9 +748,7 @@ export function SettingsPanel({
               }
             : { action: 'keep' },
         workspacePath,
-        apiKey: profileInputs.find(
-          (profile) => profile.id === defaultProfile.id
-        )!.apiKey,
+        apiKey: defaultProfileInput.apiKey,
         modelProfiles: profileInputs,
         defaultModelProfileId: defaultProfile.id,
         opencodeModelSource,
@@ -628,48 +767,7 @@ export function SettingsPanel({
         )
         selectedSpeechModelId = speechSnapshot.selectedModelId
       }
-      setSettings(value)
-      setModelProfiles(toModelProfileDrafts(value))
-      setSelectedModelProfileId((selectedId) =>
-        value.modelProfiles.some((profile) => profile.id === selectedId)
-          ? selectedId
-          : value.defaultModelProfileId
-      )
-      setDefaultModelProfileId(value.defaultModelProfileId)
-      setOpencodeModelSource(value.opencodeModelSource)
-      setContinueModelSource(value.continueModelSource)
-      setOpencodeBaseUrl(value.opencodeBaseUrl)
-      setOpencodeBinaryPath(value.opencodeBinaryPath)
-      setOpencodeConfigPath(value.opencodeConfigPath)
-      setContinueBinaryPath(value.continueBinaryPath)
-      setContinueConfigPath(value.continueConfigPath)
-      setContinueMode(value.continueMode)
-      setRuntimeSandboxMode(value.runtimeSandboxMode)
-      setKnowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
-      setKnowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
-      setKnowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
-      setKnowledgeEmbeddingApiKey('')
-      setClearKnowledgeEmbeddingApiKey(false)
-      setKnowledgeRerankEnabled(
-        value.knowledgeRerankEnabled ??
-          defaultRuntimeSettings.knowledgeRerankEnabled
-      )
-      setKnowledgeRerankEndpoint(
-        value.knowledgeRerankEndpoint ??
-          defaultRuntimeSettings.knowledgeRerankEndpoint
-      )
-      setKnowledgeRerankModel(
-        value.knowledgeRerankModel ??
-          defaultRuntimeSettings.knowledgeRerankModel
-      )
-      setKnowledgeRerankApiKey('')
-      setClearKnowledgeRerankApiKey(false)
-      setToolApproval(
-        value.toolApproval === 'policy' ? 'policy' : 'always'
-      )
-      setSubagentSmartRoutingEnabled(
-        value.subagentSmartRoutingEnabled
-      )
+      hydrateSettings(value, true)
       if (speechModelSelectionDirty) {
         setSpeechModelDraftId(selectedSpeechModelId)
         setPersistedSpeechModelId(selectedSpeechModelId)
@@ -987,7 +1085,10 @@ export function SettingsPanel({
     .filter((profile) =>
       isAgentRuntimeModelProtocol(profile.protocol)
     )
-    .map(({ id, name }) => ({ id, name }))
+    .map(({ id, name }) => ({
+      id,
+      name: modelProfileDisplayName({ id, name })
+    }))
   const savedRoleDefaultModelProfileId =
     savedRoleModelProfiles.some(
       (profile) => profile.id === settings?.defaultModelProfileId
@@ -1246,9 +1347,7 @@ export function SettingsPanel({
           )}
           {activeTab === 'runtime' && (
             <>
-              {settings?.warning && (
-                <p className="settings-warning">{settings.warning}</p>
-              )}
+              <SettingsWarningList warnings={settings?.warnings} />
           <div className="settings-section">
             <div className="settings-section__title">
               <FolderOpen size={17} />
@@ -1327,12 +1426,16 @@ export function SettingsPanel({
                     })
                   : activeRuntimeModelProfile
                     ? t('runtime.followGoodBuddy', {
-                        name: activeRuntimeModelProfile.name,
+                        name: modelProfileDisplayName(
+                          activeRuntimeModelProfile
+                        ),
                         model: activeRuntimeModelProfile.modelName
                       })
                     : defaultTextModelProfile
                       ? t('runtime.followGoodBuddy', {
-                          name: defaultTextModelProfile.name,
+                          name: modelProfileDisplayName(
+                            defaultTextModelProfile
+                          ),
                           model: defaultTextModelProfile.modelName
                         })
                       : t('runtime.noCompatibleModel')}
@@ -1415,7 +1518,7 @@ export function SettingsPanel({
                           key={profile.id}
                           value={profile.id}
                         >
-                          {profile.name}
+                          {modelProfileDisplayName(profile)}
                           {isOpenCodeCompatible(profile)
                             ? ''
                             : t('runtime.incompatibleSuffix')}
@@ -1440,7 +1543,12 @@ export function SettingsPanel({
                     path={opencodeConfigPath}
                     runtime="opencode"
                     runtimeLabel="OpenCode"
-                    savedPath={settings?.opencodeConfigPath}
+                    savedPath={
+                      settings
+                        ? configuredRuntimeSettings(settings)
+                            .opencodeConfigPath
+                        : undefined
+                    }
                   />
                 )}
                 {opencodeModelSource.kind === 'platform' &&
@@ -1548,12 +1656,16 @@ export function SettingsPanel({
                     })
                   : activeRuntimeModelProfile
                     ? t('runtime.followGoodBuddy', {
-                        name: activeRuntimeModelProfile.name,
+                        name: modelProfileDisplayName(
+                          activeRuntimeModelProfile
+                        ),
                         model: activeRuntimeModelProfile.modelName
                       })
                     : defaultTextModelProfile
                       ? t('runtime.followGoodBuddy', {
-                          name: defaultTextModelProfile.name,
+                          name: modelProfileDisplayName(
+                            defaultTextModelProfile
+                          ),
                           model: defaultTextModelProfile.modelName
                         })
                       : t('runtime.noCompatibleModel')}
@@ -1634,7 +1746,7 @@ export function SettingsPanel({
                           key={profile.id}
                           value={profile.id}
                         >
-                          {profile.name}
+                          {modelProfileDisplayName(profile)}
                           {isContinueCompatible(profile)
                             ? ''
                             : t('runtime.incompatibleSuffix')}
@@ -1658,7 +1770,12 @@ export function SettingsPanel({
                     path={continueConfigPath}
                     runtime="continue"
                     runtimeLabel="Continue"
-                    savedPath={settings?.continueConfigPath}
+                    savedPath={
+                      settings
+                        ? configuredRuntimeSettings(settings)
+                            .continueConfigPath
+                        : undefined
+                    }
                   />
                 )}
                 <label className="field">
@@ -1798,7 +1915,7 @@ export function SettingsPanel({
                             : undefined
                         }
                         aria-label={t('model.profile.editAriaLabel', {
-                          name: profile.name
+                          name: modelProfileDisplayName(profile)
                         })}
                         onClick={() =>
                           setSelectedModelProfileId(profile.id)
@@ -1806,7 +1923,7 @@ export function SettingsPanel({
                         type="button"
                       >
                         <span className="model-connection-list__name">
-                          <strong>{profile.name}</strong>
+                          <strong>{modelProfileDisplayName(profile)}</strong>
                           <small>{profile.modelName}</small>
                         </span>
                         <span className="model-connection-list__badges">
@@ -1836,7 +1953,7 @@ export function SettingsPanel({
                   <div className="settings-section__title">
                     <div>
                       <strong id={`model-connection-${profile.id}`}>
-                        {profile.name}
+                        {modelProfileDisplayName(profile)}
                       </strong>
                       <small>{t('model.profile.detail')}</small>
                     </div>
@@ -1858,7 +1975,7 @@ export function SettingsPanel({
                     )}
                     <button
                       aria-label={t('model.profile.deleteAriaLabel', {
-                        name: profile.name
+                        name: modelProfileDisplayName(profile)
                       })}
                       className="danger-button danger-button--quiet"
                       disabled={modelProfiles.length <= 1}
@@ -1877,7 +1994,7 @@ export function SettingsPanel({
                           name: event.target.value
                         })
                       }
-                      value={profile.name}
+                      value={modelProfileDisplayName(profile)}
                     />
                   </label>
                   <label className="field">
@@ -1912,7 +2029,7 @@ export function SettingsPanel({
                     <select
                       aria-label={t(
                         'model.profile.protocolAriaLabel',
-                        { name: profile.name }
+                        { name: modelProfileDisplayName(profile) }
                       )}
                       onChange={(event) =>
                         {
@@ -1979,7 +2096,7 @@ export function SettingsPanel({
                     <select
                       aria-label={t(
                         'model.profile.authenticationAriaLabel',
-                        { name: profile.name }
+                        { name: modelProfileDisplayName(profile) }
                       )}
                       onChange={(event) => {
                         const authentication = event.target
@@ -2027,7 +2144,7 @@ export function SettingsPanel({
                         <select
                           aria-label={t(
                             'model.profile.imageQualityAriaLabel',
-                            { name: profile.name }
+                            { name: modelProfileDisplayName(profile) }
                           )}
                           onChange={(event) =>
                             updateModelProfile(profile.id, {
@@ -2530,7 +2647,11 @@ export function SettingsPanel({
             </>
           )}
           {activeTab === 'skills' && <SkillsSettingsSection />}
-          {activeTab === 'mcp' && <McpSettingsSection />}
+          {activeTab === 'mcp' && (
+            <McpSettingsSection
+              magicNotesEnabled={magicNotesEnabled}
+            />
+          )}
           {activeTab === 'about' && <UpdateSettingsSection />}
           </div>
         </div>

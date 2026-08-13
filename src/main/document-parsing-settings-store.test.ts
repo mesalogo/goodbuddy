@@ -47,6 +47,7 @@ describe('DocumentParsingSettingsStore', () => {
     await expect(store.get()).resolves.toEqual(
       defaultDocumentParsingSettings
     )
+    expect(store.getWarnings()).toEqual([])
     await expect(readdir(directory)).resolves.toEqual([])
   })
 
@@ -143,10 +144,32 @@ describe('DocumentParsingSettingsStore', () => {
     await expect(store.get()).resolves.toEqual(
       defaultDocumentParsingSettings
     )
+    expect(store.getWarnings()).toEqual([
+      { code: 'document-parsing-settings-recovered' }
+    ])
     const entries = await readdir(directory)
     expect(entries).toHaveLength(1)
     expect(entries[0]).toMatch(
       /^document-parsing-settings\.json\.corrupt-\d+-[a-f0-9]{12}$/u
     )
+  })
+
+  it('preserves settings created by a newer unsupported version', async () => {
+    const { directory, filePath, store } = await createStore()
+    const futureSettings = JSON.stringify({
+      version: 99,
+      futureField: 'keep-me'
+    })
+    await writeFile(filePath, futureSettings, 'utf8')
+
+    await expect(store.get()).rejects.toThrow(
+      '不支持文档解析设置版本 99'
+    )
+    expect(await readFile(filePath, 'utf8')).toBe(futureSettings)
+    expect(
+      (await readdir(directory)).some((name) =>
+        name.startsWith('document-parsing-settings.json.corrupt-')
+      )
+    ).toBe(false)
   })
 })

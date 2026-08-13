@@ -1,12 +1,4 @@
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile
-} from 'node:fs/promises'
-import { randomBytes } from 'node:crypto'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 import {
   applicationSettingsSchema,
@@ -14,6 +6,14 @@ import {
   type ApplicationSettings
 } from '../shared/application-settings-contracts'
 import { releaseVersionSchema } from '../shared/release-notes-contracts'
+import type { SettingsWarning } from '../shared/settings-warning-contracts'
+import {
+  assertSupportedSettingsVersion,
+  isolateCorruptSettingsFile,
+  isMissingFileError,
+  UnsupportedSettingsVersionError,
+  writeJsonFileAtomically
+} from './settings-file-utils'
 export {
   applicationSettingsSchema,
   applicationSettingsUpdateSchema
@@ -70,36 +70,19 @@ export const defaultApplicationSettings: ApplicationSettings = {
   magicNoteCommentFormat: 'combined'
 }
 
-function isMissingFile(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === 'object' &&
-    'code' in error &&
-    error.code === 'ENOENT'
-  )
-}
-
 export class ApplicationSettingsStore {
   private settings?: StoredApplicationSettings
   private settingsLoad?: Promise<StoredApplicationSettings>
+  private warnings: SettingsWarning[] = []
   private updateQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly filePath: string) {}
 
   private async isolateCorruptFile(): Promise<void> {
-    const isolatedPath =
-      `${this.filePath}.corrupt-${Date.now()}-` +
-      randomBytes(6).toString('hex')
-    try {
-      await rename(this.filePath, isolatedPath)
-    } catch (error) {
-      if (!isMissingFile(error)) {
-        throw new Error(
-          'Application settings are corrupt and could not be isolated',
-          { cause: error }
-        )
-      }
-    }
+    await isolateCorruptSettingsFile(
+      this.filePath,
+      'Application settings are corrupt and could not be isolated'
+    )
   }
 
   private async loadStored(): Promise<StoredApplicationSettings> {
@@ -122,6 +105,7 @@ export class ApplicationSettingsStore {
         parsed = JSON.parse(contents) as unknown
       } catch {
         await this.isolateCorruptFile()
+        this.warnings = [{ code: 'application-settings-recovered' }]
         this.settings = {
           version: CURRENT_SETTINGS_VERSION,
           lastSeenReleaseNotesVersion: null,
@@ -129,6 +113,12 @@ export class ApplicationSettingsStore {
         }
         return this.settings
       }
+      assertSupportedSettingsVersion(
+        parsed,
+        CURRENT_SETTINGS_VERSION,
+        (version) =>
+          `当前 GoodBuddy 不支持应用设置版本 ${version}，请升级应用后重试`
+      )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
         const versionFourResult =
@@ -179,6 +169,7 @@ export class ApplicationSettingsStore {
           return this.settings
         }
         await this.isolateCorruptFile()
+        this.warnings = [{ code: 'application-settings-recovered' }]
         this.settings = {
           version: CURRENT_SETTINGS_VERSION,
           lastSeenReleaseNotesVersion: null,
@@ -188,7 +179,10 @@ export class ApplicationSettingsStore {
       }
       this.settings = result.data
     } catch (error) {
-      if (!isMissingFile(error)) {
+      if (error instanceof UnsupportedSettingsVersionError) {
+        throw error
+      }
+      if (!isMissingFileError(error)) {
         throw new Error('Application settings could not be read', {
           cause: error
         })
@@ -208,7 +202,10 @@ export class ApplicationSettingsStore {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
       magicNotesEnabled: stored.magicNotesEnabled,
       magicNoteCommentMode: stored.magicNoteCommentMode,
-      magicNoteCommentFormat: stored.magicNoteCommentFormat
+      magicNoteCommentFormat: stored.magicNoteCommentFormat,
+      ...(this.warnings.length > 0
+        ? { warnings: [...this.warnings] }
+        : {})
     }
   }
 
@@ -217,24 +214,7 @@ export class ApplicationSettingsStore {
   }
 
   private async persist(next: StoredApplicationSettings): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true })
-    const temporaryPath =
-      `${this.filePath}.${process.pid}.` +
-      `${randomBytes(6).toString('hex')}.tmp`
-    try {
-      await writeFile(
-        temporaryPath,
-        `${JSON.stringify(next, null, 2)}\n`,
-        {
-          encoding: 'utf8',
-          mode: 0o600,
-          flag: 'wx'
-        }
-      )
-      await rename(temporaryPath, this.filePath)
-    } finally {
-      await rm(temporaryPath, { force: true })
-    }
+    await writeJsonFileAtomically(this.filePath, next)
     this.settings = next
   }
 
@@ -248,6 +228,7 @@ export class ApplicationSettingsStore {
         version: CURRENT_SETTINGS_VERSION
       }
       await this.persist(next)
+      this.warnings = []
       return {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         magicNotesEnabled: next.magicNotesEnabled,

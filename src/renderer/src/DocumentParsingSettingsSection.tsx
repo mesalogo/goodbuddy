@@ -29,7 +29,10 @@ import type {
   DocumentParsingTestPurpose
 } from '../../shared/document-parsing-contracts'
 import type { AppNotificationInput } from './notifications'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
+import {
+  SettingsCategoryHeader,
+  SettingsWarningList
+} from './SettingsPrimitives'
 
 type DocumentParsingSettingsSectionProps = {
   onNotify?: (notification: AppNotificationInput) => void
@@ -402,7 +405,9 @@ export function DocumentParsingSettingsSection({
           error={error ?? unavailableError}
         />
         {!error && !unavailableError && (
-          <p className="settings-empty">Loading…</p>
+          <p className="settings-empty">
+            {t('documentParsing.loading')}
+          </p>
         )}
       </>
     )
@@ -453,6 +458,7 @@ export function DocumentParsingSettingsSection({
         category="document-parsing"
         error={error}
       />
+      <SettingsWarningList warnings={snapshot.warnings} />
       {settingsDirty && (
         <p
           className="settings-notice"

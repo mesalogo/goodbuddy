@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
@@ -845,6 +852,98 @@ describe('CapabilityService', () => {
     const persisted = await readFile(filePath, 'utf8')
     expect(persisted).toContain('"version": 4')
     expect(persisted).toContain('"allowDynamicTools": false')
+  })
+
+  it('preserves capabilities created by a newer unsupported version', async () => {
+    const { directory, filePath, builtinRoot, importedRoot } =
+      await createService()
+    const futureCapabilities = JSON.stringify({
+      version: 99,
+      skills: {
+        'document-writing': {
+          enabled: false,
+          assignments: ['model']
+        }
+      },
+      mcpServers: [{ futureTransport: 'keep-me' }],
+      webSearch: { enabled: false },
+      futureField: 'keep-me'
+    })
+    await writeFile(filePath, futureCapabilities, 'utf8')
+    const service = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+
+    await expect(service.getSnapshot()).rejects.toThrow(
+      '不支持能力设置版本 99'
+    )
+    expect(await readFile(filePath, 'utf8')).toBe(futureCapabilities)
+    expect(
+      (await readdir(directory)).some((name) =>
+        name.startsWith('capabilities.json.corrupt-')
+      )
+    ).toBe(false)
+  })
+
+  it('continues isolating truly corrupt capability settings', async () => {
+    const { directory, filePath, service } = await createService()
+    await writeFile(filePath, '{not-json', 'utf8')
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      webSearch: { enabled: false },
+      mcpServers: [],
+      warnings: [{ code: 'capability-settings-recovered' }]
+    })
+    const entries = await readdir(directory)
+    expect(
+      entries.some((name) =>
+        name.startsWith('capabilities.json.corrupt-')
+      )
+    ).toBe(true)
+  })
+
+  it('clears the recovery warning after a reviewed capability change', async () => {
+    const { filePath, service } = await createService()
+    await writeFile(filePath, '{not-json', 'utf8')
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      warnings: [{ code: 'capability-settings-recovered' }]
+    })
+    await expect(
+      service.setWebSearchEnabled(true)
+    ).resolves.not.toHaveProperty('warnings')
+  })
+
+  it('preserves corrupt capability settings when isolation fails', async () => {
+    const { directory, filePath } = await createService()
+    const corruptContents = '{not-json'
+    await writeFile(filePath, corruptContents, 'utf8')
+    const service = new CapabilityService(
+      filePath,
+      join(directory, 'builtin'),
+      join(directory, 'imported'),
+      cipher,
+      {
+        browserProfiles: new BrowserProfileService(
+          new MemoryBrowserProfileStore()
+        ),
+        settingsFileOperations: {
+          rename: vi.fn(async () => {
+            throw Object.assign(new Error('rename denied'), {
+              code: 'EACCES'
+            })
+          })
+        }
+      }
+    )
+
+    await expect(service.getSnapshot()).rejects.toThrow(
+      '能力设置已损坏且无法隔离'
+    )
+    expect(await readFile(filePath, 'utf8')).toBe(corruptContents)
   })
 
   it('gates enablement on the supported platform and architecture', async () => {

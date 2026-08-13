@@ -136,6 +136,7 @@ export const settings = {
     none: 'Not configured',
     encrypted: 'Encrypted in secure system storage',
     environment: 'Provided by an environment variable',
+    unreadable: 'Saved, but currently unreadable',
     configuredPlaceholder: 'Configured; leave blank to keep it',
     enterApiKey: 'Enter API Key',
     noAuthentication: 'No authentication',
@@ -224,6 +225,7 @@ export const settings = {
     }
   },
   documentParsing: {
+    loading: 'Loading…',
     status: {
       title: 'Runtime status',
       description: 'Capabilities currently available on this device',
@@ -409,6 +411,7 @@ export const settings = {
       }
     },
     profile: {
+      seededDefaultName: 'Default model',
       generatedName: 'Model connection {{count}}',
       title: 'LLM model connections',
       description:

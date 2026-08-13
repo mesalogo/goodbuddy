@@ -3,6 +3,7 @@ import {
   projectChannelSchema,
   type ProjectChannel
 } from './assistant-contracts'
+import { settingsWarningsSchema } from './settings-warning-contracts'
 
 export const CHANNEL_SETTINGS_LIMITS = {
   maximumIdentifierLength: 256,
@@ -106,7 +107,8 @@ export type ChannelSettingsApply = z.infer<
 export const channelCredentialSourceSchema = z.enum([
   'none',
   'encrypted',
-  'environment'
+  'environment',
+  'unreadable'
 ])
 export type ChannelCredentialSource = z.infer<
   typeof channelCredentialSourceSchema
@@ -186,12 +188,7 @@ export const channelSettingsSnapshotSchema = z
     weixin: weixinChannelSettingsSchema,
     wecom: weComChannelSettingsSchema,
     dingtalk: dingTalkChannelSettingsSchema,
-    warning: z
-      .string()
-      .trim()
-      .min(1)
-      .max(CHANNEL_SETTINGS_LIMITS.maximumWarningLength)
-      .optional()
+    warnings: settingsWarningsSchema.optional()
   })
   .strict()
 export type ChannelSettingsSnapshot = z.infer<

@@ -124,6 +124,7 @@ export const settings = {
     none: '尚未配置',
     encrypted: '已由系统安全存储加密',
     environment: '由环境变量提供',
+    unreadable: '已保存，但当前无法读取',
     configuredPlaceholder: '已配置，留空保持不变',
     enterApiKey: '输入 API Key',
     noAuthentication: '无需认证',
@@ -205,6 +206,7 @@ export const settings = {
     }
   },
   documentParsing: {
+    loading: '正在加载…',
     status: {
       title: '运行状态',
       description: '显示当前设备实际可用的解析能力',
@@ -372,6 +374,7 @@ export const settings = {
       }
     },
     profile: {
+      seededDefaultName: '默认模型',
       generatedName: '模型连接 {{count}}',
       title: 'LLM 模型连接',
       description:

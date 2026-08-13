@@ -65,7 +65,10 @@ import { SpeechModelManager } from './speech/speech-model-manager'
 import { SpeechTranscriptionService } from './speech/speech-transcription-service'
 import { GlobalTlsPolicy } from './global-tls-policy'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
-import { waitForCleanup } from './shutdown'
+import {
+  runCleanupBeforeDeadline,
+  settleCleanupPhases
+} from './shutdown'
 import { DocumentParsingSettingsStore } from './document-parsing-settings-store'
 import { DocumentOcrModelManager } from './document-ocr-model-manager'
 import { DocumentOcrBroker } from './document-ocr-broker'
@@ -104,6 +107,7 @@ let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
 let documentOcrBroker: DocumentOcrBroker | undefined
 let documentOcrModelManager: DocumentOcrModelManager | undefined
+let stopRuntimeReconfiguration: (() => Promise<void>) | undefined
 
 function createEmbeddingProvider(
   settings: ResolvedRuntimeSettings
@@ -425,8 +429,10 @@ if (hasSingleInstanceLock) {
       defaultWorkspace,
       initialRuntimeSettings.defaultModelProfileId
     )
-    assistantDatabase.repairConversationRuntimeSelections(
-      initialRuntimeSettings
+    channelSettingsStore.reportRuntimeSelectionRepairs(
+      assistantDatabase.repairConversationRuntimeSelections(
+        initialRuntimeSettings
+      )
     )
     knowledgeGateway = new KnowledgeMcpGateway(knowledgeService, {
       magicNotesDatabase: assistantDatabase
@@ -483,8 +489,11 @@ if (hasSingleInstanceLock) {
         webSearchEnabled: webSearchCapability?.enabled
       })
     }
-    const createConfiguredRuntime = async (): Promise<AgentRuntime> => {
-      const settings = await settingsStore.getResolvedSettings()
+    const createConfiguredRuntime = async (
+      resolvedSettings?: ResolvedRuntimeSettings
+    ): Promise<AgentRuntime> => {
+      const settings =
+        resolvedSettings ?? await settingsStore.getResolvedSettings()
       return createRuntimeWithCapabilities(
         settings,
         getConfiguredRuntimeTarget(settings)
@@ -522,6 +531,41 @@ if (hasSingleInstanceLock) {
       }
     })
 
+    let runtimeReconfigurationQueue: Promise<void> = Promise.resolve()
+    let runtimeReconfigurationClosing = false
+    const reconfigureRuntimes = (): Promise<void> => {
+      const operation = runtimeReconfigurationQueue.then(async () => {
+        if (runtimeReconfigurationClosing) {
+          throw new Error('Runtime 配置正在关闭')
+        }
+        const settings = await settingsStore.getResolvedSettings()
+        if (knowledgeService) {
+          await knowledgeService.setEmbeddingProvider(
+            createEmbeddingProvider(settings)
+          )
+          await knowledgeService.setRerankProvider(
+            createRerankProvider(settings)
+          )
+        }
+        if (runtime) {
+          await runtime.replace(
+            await createConfiguredRuntime(settings)
+          )
+        }
+        await selectedRuntimeManager?.reset()
+        await subagentService.replaceRuntimes(
+          createDefaultModelRuntime(defaultWorkspace, settings),
+          createSubagentProfileRuntimes(defaultWorkspace, settings)
+        )
+      })
+      runtimeReconfigurationQueue = operation.catch(() => undefined)
+      return operation
+    }
+    stopRuntimeReconfiguration = async () => {
+      runtimeReconfigurationClosing = true
+      await runtimeReconfigurationQueue
+    }
+
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
@@ -533,27 +577,7 @@ if (hasSingleInstanceLock) {
       assistantDatabase,
       approvalBroker,
       bundledRuntimePaths,
-      async () => {
-        const settings = await settingsStore.getResolvedSettings()
-        if (knowledgeService) {
-          void knowledgeService
-            .setEmbeddingProvider(createEmbeddingProvider(settings))
-            .catch(() => undefined)
-          void knowledgeService
-            .setRerankProvider(createRerankProvider(settings))
-            .catch(() => undefined)
-        }
-        if (runtime) {
-          await runtime.replace(
-            await createConfiguredRuntime()
-          )
-        }
-        await selectedRuntimeManager?.reset()
-        await subagentService.replaceRuntimes(
-          createDefaultModelRuntime(defaultWorkspace, settings),
-          createSubagentProfileRuntimes(defaultWorkspace, settings)
-        )
-      },
+      reconfigureRuntimes,
       async () => {
         await browserService?.clearSessions()
       },
@@ -604,27 +628,28 @@ app.on('before-quit', (event) => {
   cleanupStarted = true
   void (async () => {
     try {
-      const cleanup = Promise.allSettled([
-        Promise.resolve().then(() => removeIpcHandlers?.()),
-        Promise.resolve().then(() => runtime?.dispose()),
-        Promise.resolve().then(() => selectedRuntimeManager?.dispose()),
-        Promise.resolve().then(() => knowledgeGateway?.dispose()),
-        Promise.resolve().then(() => knowledgeService?.dispose()),
-        Promise.resolve().then(() => browserService?.dispose()),
-        Promise.resolve().then(() => globalTlsPolicy?.dispose()),
-        Promise.resolve().then(() => documentOcrModelManager?.dispose()),
-        Promise.resolve().then(() => documentOcrBroker?.dispose())
+      const cleanup = settleCleanupPhases([
+        [() => removeIpcHandlers?.()],
+        [() => stopRuntimeReconfiguration?.()],
+        [
+          () => runtime?.dispose(),
+          () => selectedRuntimeManager?.dispose(),
+          () => browserService?.dispose(),
+          () => globalTlsPolicy?.dispose(),
+          () => documentOcrModelManager?.dispose(),
+          () => documentOcrBroker?.dispose()
+        ],
+        [() => knowledgeGateway?.dispose()],
+        [() => knowledgeService?.dispose()]
       ])
       globalShortcut.unregisterAll()
       tray?.destroy()
-      await waitForCleanup(cleanup, 8_000)
-    } finally {
-      try {
+      await runCleanupBeforeDeadline(cleanup, 8_000, () => {
         assistantDatabase?.close()
-      } finally {
-        cleanupComplete = true
-        app.exit(0)
-      }
+      })
+    } finally {
+      cleanupComplete = true
+      app.exit(0)
     }
   })()
 })

@@ -2,6 +2,9 @@ import type { TranslationShape } from '../../resource-types'
 import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
+  brand: {
+    desktopWorkspace: 'Desktop workspace'
+  },
   notifications: {
     success: 'Success',
     error: 'Error',
@@ -125,6 +128,7 @@ export const app = {
     user: 'You',
     assistantResult: 'Assistant result {{index}}',
     welcome: {
+      eyebrow: 'GOODBUDDY WORKSPACE',
       title: 'What would you like to accomplish today?',
       description:
         'Ask a question, organize information, or connect OpenCode for file search and development tools.'

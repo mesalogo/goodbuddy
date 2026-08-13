@@ -38,6 +38,21 @@ import {
   type RuntimeTarget,
   type SkillSummary
 } from '../../shared/capability-contracts'
+import type { SettingsWarning } from '../../shared/settings-warning-contracts'
+import {
+  assertSupportedSettingsVersion,
+  isolateCorruptSettingsFile,
+  isMissingFileError,
+  type SettingsFileOperations,
+  UnsupportedSettingsVersionError,
+  writeJsonFileAtomically
+} from '../settings-file-utils'
+import {
+  decryptSettingsCredential,
+  encryptedSettingsCredentialSchema,
+  encryptSettingsCredential,
+  type SettingsCredentialCipher
+} from '../settings-credential-cipher'
 import {
   BrowserProfileService,
   FileBrowserProfileStore,
@@ -90,13 +105,8 @@ const skillStateSchema = z
   })
   .strict()
 
-const encryptedSecretSchema = z
-  .object({
-    formatVersion: z.literal(1),
-    scheme: z.literal('electron-safe-storage'),
-    ciphertextBase64: z.string()
-  })
-  .optional()
+const encryptedSecretSchema =
+  encryptedSettingsCredentialSchema.optional()
 
 const storedMcpCommonShape = {
   id: mcpServerIdSchema,
@@ -199,11 +209,7 @@ const secretPayloadSchema = z
   })
   .strict()
 
-export type CapabilityCipher = {
-  isAvailable: () => boolean
-  encrypt: (value: string) => Buffer
-  decrypt: (value: Buffer) => string
-}
+export type CapabilityCipher = SettingsCredentialCipher
 
 export type ResolvedMcpServer = McpServerSummary & {
   secret?: string
@@ -226,6 +232,7 @@ export type CapabilityServiceOptions = Readonly<{
   browserProfiles?: BrowserProfileService
   diagnostics?: CapabilityDiagnostics
   availableComputerCapabilityImplementations?: readonly ComputerCapabilityImplementationKind[]
+  settingsFileOperations?: Partial<SettingsFileOperations>
 }>
 
 function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabilities'] {
@@ -241,12 +248,14 @@ function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabili
   }
 }
 
-function emptyStoredCapabilities(): StoredCapabilities {
+function emptyStoredCapabilities(
+  webSearchEnabled = true
+): StoredCapabilities {
   return {
     version: 4,
     skills: {},
     mcpServers: [],
-    webSearch: { enabled: true },
+    webSearch: { enabled: webSearchEnabled },
     computerCapabilities: defaultComputerCapabilityStates()
   }
 }
@@ -303,12 +312,7 @@ async function listSkills(
   try {
     entries = await readdir(root, { withFileTypes: true })
   } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      error.code === 'ENOENT'
-    ) {
+    if (isMissingFileError(error)) {
       return []
     }
     throw error
@@ -550,12 +554,14 @@ async function extractSkillZip(
 export class CapabilityService {
   private state?: StoredCapabilities
   private loadPromise?: Promise<StoredCapabilities>
+  private warnings: SettingsWarning[] = []
   private updateQueue: Promise<void> = Promise.resolve()
   private readonly platform: NodeJS.Platform
   private readonly architecture: string
   private readonly electronTarget: boolean
   private readonly browserProfiles: BrowserProfileService
   private readonly diagnostics: CapabilityDiagnostics
+  private readonly settingsFileOperations?: Partial<SettingsFileOperations>
   private readonly availableComputerCapabilityImplementations: ReadonlySet<ComputerCapabilityImplementationKind>
 
   constructor(
@@ -574,6 +580,7 @@ export class CapabilityService {
         'managed-browser-driver'
       ]
     )
+    this.settingsFileOperations = options.settingsFileOperations
     this.browserProfiles =
       options.browserProfiles ??
       new BrowserProfileService(
@@ -635,6 +642,9 @@ export class CapabilityService {
     let shouldPersist = false
     try {
       const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
+      assertSupportedSettingsVersion(raw, 4, (version) =>
+        `当前 GoodBuddy 不支持能力设置版本 ${version}，请升级应用后重试`
+      )
       const version = z
         .object({
           version: z.union([
@@ -676,19 +686,21 @@ export class CapabilityService {
         loaded = storedCapabilitiesSchema.parse(raw)
       }
     } catch (error) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
+      if (error instanceof UnsupportedSettingsVersionError) {
+        throw error
+      }
+      if (isMissingFileError(error)) {
         loaded = emptyStoredCapabilities()
       } else {
-        await rename(
+        await isolateCorruptSettingsFile(
           this.filePath,
-          `${this.filePath}.corrupt-${Date.now()}`
-        ).catch(() => undefined)
-        loaded = emptyStoredCapabilities()
+          '能力设置已损坏且无法隔离',
+          Date.now,
+          this.settingsFileOperations
+        )
+        this.warnings = [{ code: 'capability-settings-recovered' }]
+        loaded = emptyStoredCapabilities(false)
+        shouldPersist = true
       }
     }
     const migrateMcpAssignments = loaded.mcpServers.some((server) =>
@@ -741,15 +753,25 @@ export class CapabilityService {
 
   private async persist(state: StoredCapabilities): Promise<void> {
     const validated = storedCapabilitiesSchema.parse(state)
-    await mkdir(dirname(this.filePath), { recursive: true })
-    const temporaryPath = `${this.filePath}.${process.pid}.tmp`
-    await writeFile(
-      temporaryPath,
-      `${JSON.stringify(validated, null, 2)}\n`,
-      { encoding: 'utf8', mode: 0o600 }
+    await writeJsonFileAtomically(
+      this.filePath,
+      validated,
+      this.settingsFileOperations
     )
-    await rename(temporaryPath, this.filePath)
     this.state = validated
+  }
+
+  private clearRecoveryWarnings(): void {
+    this.warnings = this.warnings.filter(
+      (warning) => warning.code !== 'capability-settings-recovered'
+    )
+  }
+
+  private async persistUserChange(
+    state: StoredCapabilities
+  ): Promise<void> {
+    await this.persist(state)
+    this.clearRecoveryWarnings()
   }
 
   private async getSkillCatalog(): Promise<
@@ -823,7 +845,10 @@ export class CapabilityService {
           riskSummary: capability.riskSummary
         })
       ),
-      browserProfiles: this.toBrowserProfilesSummary(browserProfileState)
+      browserProfiles: this.toBrowserProfilesSummary(browserProfileState),
+      ...(this.warnings.length > 0
+        ? { warnings: [...this.warnings] }
+        : {})
     }
   }
 
@@ -835,7 +860,7 @@ export class CapabilityService {
   setWebSearchEnabled(enabled: boolean): Promise<CapabilitySnapshot> {
     return this.queue(async () => {
       const state = await this.load()
-      await this.persist({
+      await this.persistUserChange({
         ...state,
         webSearch: { enabled }
       })
@@ -898,7 +923,7 @@ export class CapabilityService {
         }
       }
       const state = await this.load()
-      await this.persist({
+      await this.persistUserChange({
         ...state,
         computerCapabilities: {
           ...state.computerCapabilities,
@@ -965,7 +990,7 @@ export class CapabilityService {
         }
       }
       try {
-        await this.persist(nextState)
+        await this.persistUserChange(nextState)
       } catch (error) {
         if (profileId) {
           try {
@@ -992,7 +1017,7 @@ export class CapabilityService {
               previousProfileId,
               reference
             )
-            await this.persist(state)
+            await this.persistUserChange(state)
             if (profileId) {
               await this.browserProfiles.removeReference(
                 profileId,
@@ -1064,6 +1089,7 @@ export class CapabilityService {
       await this.browserProfiles.createProfile(
         browserProfileNameSchema.parse(name)
       )
+      this.clearRecoveryWarnings()
       return this.getSnapshot()
     })
   }
@@ -1077,6 +1103,7 @@ export class CapabilityService {
         browserProfileIdSchema.parse(profileId),
         browserProfileNameSchema.parse(name)
       )
+      this.clearRecoveryWarnings()
       return this.getSnapshot()
     })
   }
@@ -1086,6 +1113,7 @@ export class CapabilityService {
       await this.browserProfiles.setDefaultProfile(
         browserProfileIdSchema.parse(profileId)
       )
+      this.clearRecoveryWarnings()
       return this.getSnapshot()
     })
   }
@@ -1095,6 +1123,7 @@ export class CapabilityService {
       await this.browserProfiles.deleteProfile(
         browserProfileIdSchema.parse(profileId)
       )
+      this.clearRecoveryWarnings()
       return this.getSnapshot()
     })
   }
@@ -1125,7 +1154,7 @@ export class CapabilityService {
       await readSkill(temporaryPath, 'imported', skill.id)
       await rename(temporaryPath, targetPath)
       const state = await this.load()
-      await this.persist({
+      await this.persistUserChange({
         ...state,
         skills: {
           ...state.skills,
@@ -1223,7 +1252,7 @@ export class CapabilityService {
       const state = await this.load()
       const skills = { ...state.skills }
       delete skills[id]
-      await this.persist({ ...state, skills })
+      await this.persistUserChange({ ...state, skills })
       return this.getSnapshot()
     })
   }
@@ -1255,7 +1284,7 @@ export class CapabilityService {
         throw new Error('Skill 不存在')
       }
       const state = await this.load()
-      await this.persist({
+      await this.persistUserChange({
         ...state,
         skills: {
           ...state.skills,
@@ -1311,19 +1340,11 @@ export class CapabilityService {
         if (!this.cipher.isAvailable()) {
           throw new Error('系统安全存储不可用，MCP 访问令牌未保存')
         }
-        credential = {
-          formatVersion: 1 as const,
-          scheme: 'electron-safe-storage' as const,
-          ciphertextBase64: this.cipher
-            .encrypt(
-              JSON.stringify({
-                version: 1,
-                serverId: id,
-                secret: value.secret.value
-              })
-            )
-            .toString('base64')
-        }
+        credential = encryptSettingsCredential(this.cipher, {
+          version: 1,
+          serverId: id,
+          secret: value.secret.value
+        })
       }
       const stored: StoredMcpServer =
         value.transport === 'stdio'
@@ -1354,7 +1375,7 @@ export class CapabilityService {
             server.id === id ? stored : server
           )
         : [...state.mcpServers, stored]
-      await this.persist({ ...state, mcpServers: nextServers })
+      await this.persistUserChange({ ...state, mcpServers: nextServers })
       return this.getSnapshot()
     })
   }
@@ -1366,7 +1387,7 @@ export class CapabilityService {
       if (!state.mcpServers.some((server) => server.id === id)) {
         throw new Error('MCP Server 不存在')
       }
-      await this.persist({
+      await this.persistUserChange({
         ...state,
         mcpServers: state.mcpServers.filter((server) => server.id !== id)
       })
@@ -1388,11 +1409,7 @@ export class CapabilityService {
       }
       try {
         const payload = secretPayloadSchema.parse(
-          JSON.parse(
-            this.cipher.decrypt(
-              Buffer.from(server.credential.ciphertextBase64, 'base64')
-            )
-          )
+          decryptSettingsCredential(this.cipher, server.credential)
         )
         if (payload.serverId === id) {
           secret = payload.secret

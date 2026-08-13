@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { settingsWarningsSchema } from './settings-warning-contracts'
 
 export const maximumDocumentExtractedCharacters = 5_000_000
 export const maximumDocumentOcrSectionCharacters = 1_000_000
@@ -192,7 +193,8 @@ export const documentParsingSnapshotSchema = z
   .object({
     settings: documentParsingSettingsSchema,
     status: documentParsingStatusSchema,
-    ocrModels: documentOcrModelSnapshotSchema
+    ocrModels: documentOcrModelSnapshotSchema,
+    warnings: settingsWarningsSchema.optional()
   })
   .strict()
 

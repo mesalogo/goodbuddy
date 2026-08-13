@@ -157,7 +157,7 @@ export class RemoteDelegationService {
   private readonly pendingResults = new Map<string, RemoteResult>()
   private interval?: NodeJS.Timeout
   private activeRequest?: AbortController
-  private polling = false
+  private activePoll?: Promise<void>
 
   constructor(private readonly options: RemoteDelegationOptions) {
     this.endpoint = normalizeEndpoint(options.endpoint)
@@ -179,19 +179,29 @@ export class RemoteDelegationService {
     void this.pollOnce().catch(() => undefined)
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.interval) {
       clearInterval(this.interval)
       this.interval = undefined
     }
     this.activeRequest?.abort()
+    await this.activePoll?.catch(() => undefined)
   }
 
-  async pollOnce(): Promise<void> {
-    if (this.polling) {
-      return
+  pollOnce(): Promise<void> {
+    if (this.activePoll) {
+      return this.activePoll
     }
-    this.polling = true
+    const operation = this.performPoll()
+    this.activePoll = operation
+    return operation.finally(() => {
+      if (this.activePoll === operation) {
+        this.activePoll = undefined
+      }
+    })
+  }
+
+  private async performPoll(): Promise<void> {
     const controller = new AbortController()
     this.activeRequest = controller
     try {
@@ -260,7 +270,6 @@ export class RemoteDelegationService {
       if (this.activeRequest === controller) {
         this.activeRequest = undefined
       }
-      this.polling = false
     }
   }
 

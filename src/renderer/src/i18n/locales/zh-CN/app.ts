@@ -1,4 +1,7 @@
 export const app = {
+  brand: {
+    desktopWorkspace: '桌面工作区'
+  },
   notifications: {
     success: '成功',
     error: '错误',
@@ -121,6 +124,7 @@ export const app = {
     user: '用户',
     assistantResult: '助手成果 {{index}}',
     welcome: {
+      eyebrow: 'GOODBUDDY 工作台',
       title: '今天想一起完成什么？',
       description:
         '快速提问、梳理信息，或连接 OpenCode 使用文件搜索和开发工具。'

@@ -139,6 +139,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
   readonly runtimeId = 'continue'
   readonly requiresToolApproval = false
   readonly supportsToolExecution = true
+  readonly supportsScopedDataTools = true
   private detection?: Promise<RuntimeBinaryDetection>
   private readonly hostAdapters = new Map<
     RuntimeSettings['continueMode'],

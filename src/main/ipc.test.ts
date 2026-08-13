@@ -10,6 +10,12 @@ import { AssistantDatabase } from './assistant/assistant-database'
 import { registerIpcHandlers } from './ipc'
 
 type InvokeHandler = (event: unknown, input?: unknown) => unknown
+type KnowledgeGrantMock = (
+  requestId: string,
+  libraryIds: readonly string[],
+  signal: AbortSignal,
+  access: 'read' | 'write'
+) => string
 
 const electronMocks = vi.hoisted(() => {
   const handlers = new Map<string, InvokeHandler>()
@@ -274,6 +280,18 @@ describe('registerIpcHandlers computer capabilities', () => {
     ).toThrow()
     expect(capabilityService.createBrowserProfile).not.toHaveBeenCalled()
 
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesCreateBrowserProfile
+      )?.(event, {
+        name: '工作配置'
+      })
+    ).resolves.toEqual(snapshot)
+    expect(capabilityService.createBrowserProfile).toHaveBeenCalledWith(
+      '工作配置'
+    )
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(3)
+
     expect(() =>
       electronMocks.handlers.get(
         ipcChannels.capabilitiesDiagnoseComputer
@@ -338,6 +356,163 @@ vi.mock('./channels/channel-env', () => ({
     }
   )
 }))
+
+describe('registerIpcHandlers lifecycle tracking', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+    channelMocks.stop.mockResolvedValue(undefined)
+  })
+
+  it('waits for a pending settings update and Runtime reload during cleanup', async () => {
+    let releaseUpdate!: () => void
+    const updateReleased = new Promise<void>((resolve) => {
+      releaseUpdate = resolve
+    })
+    const workspace = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-ipc-settings-')
+    )
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const savedSettings = {
+      provider: 'model',
+      modelBaseUrl: 'https://bigtoken.ai',
+      modelName: 'sonnet-5',
+      modelProtocol: 'anthropic-messages',
+      modelAuthentication: 'api-key',
+      imageGenerationQuality: 'auto',
+      opencodeBaseUrl: '',
+      opencodeEmbedded: true,
+      opencodeBinaryPath: '',
+      opencodeConfigPath: '',
+      continueBinaryPath: '',
+      continueConfigPath: '',
+      continueMode: 'chat',
+      runtimeSandboxMode: 'auto',
+      subagentSmartRoutingEnabled: false,
+      knowledgeEmbeddingEnabled: false,
+      knowledgeEmbeddingBaseUrl:
+        'http://127.0.0.1:11434/v1/embeddings',
+      knowledgeEmbeddingModel: 'nomic-embed-text',
+      knowledgeEmbeddingApiKeyConfigured: false,
+      knowledgeEmbeddingCredentialSource: 'none',
+      knowledgeRerankEnabled: false,
+      knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
+      knowledgeRerankModel: 'rerank-v3.5',
+      knowledgeRerankApiKeyConfigured: false,
+      knowledgeRerankCredentialSource: 'none',
+      workspacePath: workspace,
+      apiKeyConfigured: false,
+      credentialSource: 'none',
+      modelProfiles: [],
+      defaultModelProfileId: '00000000-0000-4000-8000-000000000001',
+      opencodeModelSource: { kind: 'platform' },
+      continueModelSource: { kind: 'platform' },
+      secureStorageAvailable: true,
+      toolApproval: 'always'
+    }
+    const update = vi.fn(async () => {
+      await updateReleased
+      return savedSettings
+    })
+    let releaseReload!: () => void
+    const reloadReleased = new Promise<void>((resolve) => {
+      releaseReload = resolve
+    })
+    const onRuntimeSettingsChanged = vi.fn(async () => {
+      await reloadReleased
+    })
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      { update } as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      {
+        claimDueSchedules: vi.fn(() => []),
+        repairConversationRuntimeSelections: vi.fn()
+      } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      onRuntimeSettingsChanged
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const input = {
+      provider: savedSettings.provider,
+      modelBaseUrl: savedSettings.modelBaseUrl,
+      modelName: savedSettings.modelName,
+      modelProtocol: savedSettings.modelProtocol,
+      modelAuthentication: savedSettings.modelAuthentication,
+      imageGenerationQuality: savedSettings.imageGenerationQuality,
+      opencodeBaseUrl: savedSettings.opencodeBaseUrl,
+      opencodeEmbedded: savedSettings.opencodeEmbedded,
+      opencodeBinaryPath: savedSettings.opencodeBinaryPath,
+      opencodeConfigPath: savedSettings.opencodeConfigPath,
+      continueBinaryPath: savedSettings.continueBinaryPath,
+      continueConfigPath: savedSettings.continueConfigPath,
+      continueMode: savedSettings.continueMode,
+      runtimeSandboxMode: savedSettings.runtimeSandboxMode,
+      knowledgeEmbeddingEnabled:
+        savedSettings.knowledgeEmbeddingEnabled,
+      knowledgeEmbeddingBaseUrl:
+        savedSettings.knowledgeEmbeddingBaseUrl,
+      knowledgeEmbeddingModel: savedSettings.knowledgeEmbeddingModel,
+      knowledgeRerankEnabled: savedSettings.knowledgeRerankEnabled,
+      knowledgeRerankEndpoint: savedSettings.knowledgeRerankEndpoint,
+      knowledgeRerankModel: savedSettings.knowledgeRerankModel,
+      workspacePath: savedSettings.workspacePath,
+      apiKey: { action: 'keep' as const },
+      toolApproval: savedSettings.toolApproval
+    }
+
+    try {
+      const pendingUpdate = Promise.resolve(
+        electronMocks.handlers.get(ipcChannels.runtimeSettingsUpdate)?.(
+          event,
+          input
+        )
+      )
+      await vi.waitFor(() => expect(update).toHaveBeenCalledOnce())
+
+      let cleanupComplete = false
+      const cleanup = dispose().then(() => {
+        cleanupComplete = true
+      })
+      await Promise.resolve()
+      expect(cleanupComplete).toBe(false)
+
+      releaseUpdate()
+      await vi.waitFor(() =>
+        expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+      )
+      expect(cleanupComplete).toBe(false)
+
+      releaseReload()
+      await expect(pendingUpdate).resolves.toBe(savedSettings)
+      await cleanup
+      expect(cleanupComplete).toBe(true)
+    } finally {
+      releaseUpdate()
+      releaseReload()
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('registerIpcHandlers knowledge snapshot ontology', () => {
   afterEach(() => {
@@ -1193,7 +1368,11 @@ describe('registerIpcHandlers Runtime config actions', () => {
     await writeFile(configPath, 'name: Test', 'utf8')
     const getPublicSettings = vi.fn(async () => ({
       opencodeConfigPath: '',
-      continueConfigPath: configPath
+      continueConfigPath: process.execPath,
+      configured: {
+        opencodeConfigPath: '',
+        continueConfigPath: configPath
+      }
     }))
     const webContents = {
       mainFrame: { url: 'file:///goodbuddy/index.html' },
@@ -1259,7 +1438,11 @@ describe('registerIpcHandlers Runtime config actions', () => {
 
     getPublicSettings.mockResolvedValueOnce({
       opencodeConfigPath: '',
-      continueConfigPath: process.execPath
+      continueConfigPath: configPath,
+      configured: {
+        opencodeConfigPath: '',
+        continueConfigPath: process.execPath
+      }
     })
     await expect(
       electronMocks.handlers.get(
@@ -1571,7 +1754,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             profileId: '00000000-0000-4000-8000-000000000001'
           },
           kind: 'channel',
-          channel: 'wecom',
+        channel: 'wecom',
           status: 'active',
           createdAt: '2026-08-04T00:00:00.000Z',
           updatedAt: '2026-08-04T00:00:00.000Z'
@@ -1633,11 +1816,21 @@ describe('registerIpcHandlers agent terminal state', () => {
         subagentSmartRoutingEnabled: smartRoutingEnabled
       })
     )
+    const getPolicySettings = vi.fn(
+      async (): Promise<Record<string, unknown>> => ({
+        toolApproval,
+        subagentSmartRoutingEnabled: smartRoutingEnabled
+      })
+    )
+    const getApplicationSettings = vi.fn(async () => ({
+      magicNotesEnabled
+    }))
     const dispose = registerIpcHandlers(
       window as never,
       runtime as never,
       'CommandOrControl+Shift+Space',
       {
+        getPolicySettings,
         getResolvedSettings
       } as never,
       {} as never,
@@ -1654,7 +1847,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       subagentService as never,
       undefined,
       {
-        get: vi.fn(async () => ({ magicNotesEnabled }))
+        get: getApplicationSettings
       } as never,
       undefined,
       undefined,
@@ -1668,6 +1861,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       assistantDatabase,
       contextManager,
       dispose,
+      getApplicationSettings,
+      getPolicySettings,
       getResolvedSettings,
       clearHandler: electronMocks.handlers.get(
         ipcChannels.appClearLocalData
@@ -1707,6 +1902,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const knowledgeGateway = {
       grant: vi.fn(() => 'capability'),
+      getAvailableToolNames: vi.fn(() => ['knowledge_search']),
       drainReferences: vi.fn(() => []),
       revoke: vi.fn()
     }
@@ -1769,6 +1965,22 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const knowledgeGateway = {
       grant: vi.fn(() => 'capability'),
+      getAvailableToolNames: vi.fn(() => {
+        const grantCallCount = knowledgeGateway.grant.mock.calls.length
+        return grantCallCount === 1
+          ? ['note_list', 'note_get', 'note_search']
+          : [
+              'note_list',
+              'note_get',
+              'note_search',
+              'note_create',
+              'note_update',
+              'note_entry_create',
+              'note_entry_update',
+              'note_entry_delete',
+              'note_delete'
+            ]
+      }),
       drainReferences: vi.fn(() => []),
       revoke: vi.fn()
     }
@@ -1831,6 +2043,74 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it.each(['ask', 'execute'] as const)(
+    'does not grant or advertise scoped data tools to external OpenCode in %s mode',
+    async (workMode) => {
+    let receivedRequest:
+      | {
+          knowledgeCapabilityToken?: string
+          trustedInstructions?: string
+        }
+      | undefined
+    const externalOpenCode = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      supportsScopedDataTools: false,
+      async *run(request: {
+        requestId: string
+        knowledgeCapabilityToken?: string
+        trustedInstructions?: string
+      }) {
+        receivedRequest = request
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'must-not-be-granted'),
+      getAvailableToolNames: vi.fn(() => ['note_list']),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      externalOpenCode,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      true
+    )
+    const requestId = '00000000-0000-4000-8000-000000000025'
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'external-opencode',
+      prompt: '读取笔记',
+      workMode,
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+
+    expect(knowledgeGateway.grant).not.toHaveBeenCalled()
+    expect(receivedRequest?.knowledgeCapabilityToken).toBeUndefined()
+    expect(receivedRequest?.trustedInstructions).not.toContain(
+      'note_list'
+    )
+    expect(receivedRequest?.trustedInstructions).not.toContain(
+      'Available GoodBuddy data tools:'
+    )
+    await harness.dispose()
+    }
+  )
+
   it('accepts an authorized knowledge library after the first 100 entries', async () => {
     const libraries = Array.from({ length: 101 }, (_, index) => ({
       id: `00000000-0000-4000-8000-${index
@@ -1841,6 +2121,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const listKnowledgeBases = vi.fn(() => libraries)
     const knowledgeGateway = {
       grant: vi.fn(() => 'capability'),
+      getAvailableToolNames: vi.fn(() => ['knowledge_search']),
       drainReferences: vi.fn(() => []),
       revoke: vi.fn()
     }
@@ -1882,7 +2163,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(knowledgeGateway.grant).toHaveBeenCalledWith(
       requestId,
       [libraries[100]!.id],
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      'none'
     )
     await harness.dispose()
   })
@@ -1912,6 +2194,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
     const knowledgeGateway = {
       grant: vi.fn(() => 'capability'),
+      getAvailableToolNames: vi.fn(() => ['knowledge_search']),
       drainReferences: vi.fn(() => [reference]),
       revoke: vi.fn()
     }
@@ -1948,7 +2231,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(knowledgeGateway.grant).toHaveBeenCalledWith(
       requestId,
       [libraryId],
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      'none'
     )
     const publicEvents = harness.webContents.send.mock.calls
       .filter(([channel]) => channel === ipcChannels.agentEvent)
@@ -2057,6 +2341,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     ])
     const knowledgeGateway = {
       grant: vi.fn(() => 'capability'),
+      getAvailableToolNames: vi.fn(() => ['knowledge_search']),
       drainReferences: vi.fn(() => []),
       revoke: vi.fn()
     }
@@ -2333,6 +2618,67 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('rejects an active duplicate before resolving Runtime or settings again', async () => {
+    let releaseRun!: () => void
+    const runReleased = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    let markRunStarted!: () => void
+    const runStarted = new Promise<void>((resolve) => {
+      markRunStarted = resolve
+    })
+    const selectedRuntime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        markRunStarted()
+        await runReleased
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => selectedRuntime),
+      getStatus: vi.fn(),
+      releaseConversation: vi.fn(async () => undefined)
+    }
+    const harness = createHarness(
+      selectedRuntime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    const event = trustedEvent(harness.webContents)
+    const request = {
+      requestId: '00000000-0000-4000-8000-000000000013',
+      conversationId: 'duplicate-request',
+      projectId: '00000000-0000-4000-8000-000000000101',
+      prompt: 'run once',
+      workMode: 'ask' as const
+    }
+
+    await harness.handler?.(event, request)
+    await runStarted
+    await expect(harness.handler?.(event, request)).rejects.toThrow(
+      '请求正在执行'
+    )
+
+    expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
+    expect(harness.getApplicationSettings).toHaveBeenCalledOnce()
+    expect(harness.contextManager.enrichRequest).toHaveBeenCalledOnce()
+
+    releaseRun()
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        request.requestId,
+        'completed'
+      )
+    )
+    await harness.dispose()
+  })
+
   it('aborts active work and clears browser sessions before assistant data', async () => {
     const lifecycle: string[] = []
     let markStarted!: () => void
@@ -2386,6 +2732,48 @@ describe('registerIpcHandlers agent terminal state', () => {
       'browser-cleared',
       'assistant-cleared'
     ])
+    await harness.dispose()
+  })
+
+  it('coalesces concurrent local-data clear requests', async () => {
+    let releaseClear!: () => void
+    const clearBlocked = new Promise<void>((resolve) => {
+      releaseClear = resolve
+    })
+    const onBeforeClearLocalData = vi.fn(async () => {
+      await clearBlocked
+    })
+    const runtime = {
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn()
+    }
+    const harness = createHarness(runtime, onBeforeClearLocalData)
+    const event = trustedEvent(harness.webContents)
+
+    const firstClear = harness.clearHandler?.(event)
+    const secondClear = harness.clearHandler?.(event)
+
+    expect(firstClear).toBe(secondClear)
+    await vi.waitFor(() => {
+      expect(onBeforeClearLocalData).toHaveBeenCalledOnce()
+    })
+    await expect(
+      harness.handler?.(event, {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-during-clear',
+        prompt: 'do not start',
+        workMode: 'execute'
+      })
+    ).rejects.toThrow('本地数据维护期间暂不接受新任务')
+
+    releaseClear()
+    await expect(firstClear).resolves.toBeUndefined()
+    expect(
+      harness.assistantDatabase.clearAssistantData
+    ).toHaveBeenCalledOnce()
     await harness.dispose()
   })
 
@@ -2655,6 +3043,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       )
     )
     expect(runtime.run).not.toHaveBeenCalled()
+    expect(harness.getPolicySettings).toHaveBeenCalledOnce()
+    expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(subagentService.run).toHaveBeenCalledWith(
       expect.objectContaining({ expert, routingMode: 'smart' })
     )
@@ -2899,6 +3289,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
     ).resolves.toBe('deny')
     expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(harness.getPolicySettings).not.toHaveBeenCalled()
+    expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(harness.assistantDatabase.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
         title: '企业微信远程请求',
@@ -2909,6 +3301,128 @@ describe('registerIpcHandlers agent terminal state', () => {
     )
     await harness.dispose()
   })
+
+  it.each([
+    ['weixin', '微信 ClawBot'],
+    ['wecom', '企业微信'],
+    ['dingtalk', '钉钉']
+  ] as const)(
+    'grants read-only Magic Notes tools to %s channel Ask requests',
+    async (channel, channelLabel) => {
+      let receivedRequest:
+        | {
+            knowledgeCapabilityToken?: string
+            prompt: string
+            trustedInstructions?: string
+            workMode: string
+          }
+        | undefined
+      const runtime = {
+        capability: 'chat',
+        async *run(request: {
+          requestId: string
+          knowledgeCapabilityToken?: string
+          prompt: string
+          trustedInstructions?: string
+          workMode: string
+        }) {
+          receivedRequest = request
+          yield {
+            requestId: request.requestId,
+            type: 'tool',
+            callId: `call-${channel}-note-list`,
+            name: 'note_list',
+            state: 'completed',
+            summary: '读取笔记列表'
+          }
+          yield { requestId: request.requestId, type: 'done' }
+        }
+      }
+      const knowledgeGateway = {
+        grant: vi.fn<KnowledgeGrantMock>(() =>
+          'channel-notes-capability'
+        ),
+        getAvailableToolNames: vi.fn(() => [
+          'note_list',
+          'note_get',
+          'note_search'
+        ]),
+        drainReferences: vi.fn(() => []),
+        revoke: vi.fn()
+      }
+      const harness = createHarness(
+        runtime,
+        undefined,
+        'always',
+        undefined,
+        false,
+        undefined,
+        undefined,
+        knowledgeGateway,
+        true
+      )
+      vi.mocked(
+        harness.assistantDatabase.listProjects
+      ).mockReturnValue([
+        {
+          id: '00000000-0000-4000-8000-000000000401',
+          name: channelLabel,
+          description: `${channelLabel}远程消息与受控任务`,
+          rootPath: 'C:\\ProjectWorkspace',
+          defaultWorkMode: 'ask',
+          runtimeSelection: {
+            provider: 'model',
+            profileId: '00000000-0000-4000-8000-000000000001'
+          },
+          kind: 'channel',
+          channel,
+          status: 'active',
+          createdAt: '2026-08-04T00:00:00.000Z',
+          updatedAt: '2026-08-04T00:00:00.000Z'
+        }
+      ])
+      const executor = channelMocks.executor
+      if (!executor) {
+        throw new Error('Expected channel executor')
+      }
+
+      await expect(
+        executor(
+          {
+            channel,
+            eventId: `event-${channel}-notes`,
+            senderId: 'user-1',
+            conversationId: `conversation-${channel}-notes`,
+            conversationType: 'direct',
+            text: '读取我的笔记',
+            mentioned: false,
+            workMode: 'ask'
+          },
+          new AbortController().signal
+        )
+      ).resolves.toMatchObject({ status: 'completed' })
+      const requestId =
+        vi.mocked(knowledgeGateway.grant).mock.calls[0]?.[0]
+      expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+        requestId,
+        [],
+        expect.any(AbortSignal),
+        'read'
+      )
+      expect(receivedRequest).toMatchObject({
+        knowledgeCapabilityToken: 'channel-notes-capability',
+        workMode: 'ask',
+        trustedInstructions: expect.stringContaining(
+          'note_list, note_get, note_search'
+        )
+      })
+      expect(receivedRequest?.prompt).toContain('读取我的笔记')
+      expect(knowledgeGateway.revoke).toHaveBeenCalledWith(
+        'channel-notes-capability'
+      )
+      await harness.dispose()
+    }
+  )
 
   it('persists remote media and passes it through the existing context path', async () => {
     let receivedRequest:
@@ -3191,6 +3705,179 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('grants Magic Notes write tools to channel Execute requests', async () => {
+    let receivedRequest:
+      | {
+          knowledgeCapabilityToken?: string
+          trustedInstructions?: string
+          workMode: string
+        }
+      | undefined
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      getStatus: vi.fn(async () => ({
+        id: 'model',
+        label: 'Direct model',
+        available: true,
+        supportsToolExecution: true
+      })),
+      async *run(request: {
+        requestId: string
+        knowledgeCapabilityToken?: string
+        trustedInstructions?: string
+        workMode: string
+      }) {
+        receivedRequest = request
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn<KnowledgeGrantMock>(() =>
+        'channel-notes-write-capability'
+      ),
+      getAvailableToolNames: vi.fn(() => [
+        'note_list',
+        'note_get',
+        'note_search',
+        'note_create',
+        'note_update',
+        'note_entry_create',
+        'note_entry_update',
+        'note_entry_delete',
+        'note_delete'
+      ]),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      true
+    )
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+
+    await expect(
+      executor(
+        {
+          channel: 'wecom',
+          eventId: 'event-execute-notes',
+          senderId: 'user-1',
+          conversationId: 'conversation-execute-notes',
+          conversationType: 'direct',
+          text: '/execute 创建一条笔记',
+          mentioned: false,
+          workMode: 'ask'
+        },
+        new AbortController().signal
+      )
+    ).resolves.toMatchObject({ status: 'completed' })
+    const requestId =
+      vi.mocked(knowledgeGateway.grant).mock.calls[0]?.[0]
+    expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+      requestId,
+      [],
+      expect.any(AbortSignal),
+      'write'
+    )
+    expect(receivedRequest).toMatchObject({
+      knowledgeCapabilityToken: 'channel-notes-write-capability',
+      workMode: 'execute',
+      trustedInstructions: expect.stringContaining('note_create')
+    })
+    expect(receivedRequest?.trustedInstructions).toContain(
+      'note_delete'
+    )
+    expect(knowledgeGateway.revoke).toHaveBeenCalledWith(
+      'channel-notes-write-capability'
+    )
+    await harness.dispose()
+  })
+
+  it('does not grant or advertise Magic Notes to external OpenCode channels', async () => {
+    let receivedRequest:
+      | {
+          knowledgeCapabilityToken?: string
+          trustedInstructions?: string
+        }
+      | undefined
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      supportsScopedDataTools: false,
+      getStatus: vi.fn(async () => ({
+        id: 'opencode',
+        label: 'External OpenCode',
+        available: true,
+        supportsToolExecution: true
+      })),
+      async *run(request: {
+        requestId: string
+        knowledgeCapabilityToken?: string
+        trustedInstructions?: string
+      }) {
+        receivedRequest = request
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn<KnowledgeGrantMock>(() => 'must-not-be-granted'),
+      getAvailableToolNames: vi.fn(() => ['note_list']),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      selectedRuntime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      true
+    )
+    const executor = channelMocks.executor
+    if (!executor) {
+      throw new Error('Expected channel executor')
+    }
+    const result = await executor(
+      {
+          channel: 'wecom',
+        eventId: 'event-external-opencode',
+        senderId: 'friend',
+        conversationId: 'external-opencode',
+        conversationType: 'direct',
+        text: '读取我的笔记',
+        mentioned: true,
+        workMode: 'ask'
+      },
+      new AbortController().signal
+    )
+    if (result.status === 'failed') {
+      throw new Error(result.error)
+    }
+    expect(result).toMatchObject({ status: 'completed' })
+
+    expect(knowledgeGateway.grant).not.toHaveBeenCalled()
+    expect(receivedRequest?.knowledgeCapabilityToken).toBeUndefined()
+    expect(receivedRequest?.trustedInstructions).not.toContain(
+      'note_list'
+    )
+    await harness.dispose()
+  })
+
   it('routes remote Execute to a configured Agent Runtime without a GoodBuddy approval callback', async () => {
     let receivedAuthorize: unknown = 'not-called'
     const configuredProfileId =
@@ -3374,6 +4061,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(receivedAuthorize).toEqual(expect.any(Function))
     expect(decision).toBe('once')
     expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(harness.getPolicySettings).toHaveBeenCalledOnce()
+    expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(
       harness.assistantDatabase.updateTaskStatus
     ).not.toHaveBeenCalledWith(requestId, 'waiting_approval')
@@ -3429,6 +4118,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     )
     expect(decision).toBe('deny')
     expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    expect(harness.getPolicySettings).toHaveBeenCalledOnce()
+    expect(harness.getResolvedSettings).not.toHaveBeenCalled()
     expect(harness.webContents.send).not.toHaveBeenCalledWith(
       ipcChannels.agentEvent,
       expect.objectContaining({ type: 'approval' })

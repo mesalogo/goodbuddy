@@ -1,12 +1,4 @@
-import { randomUUID } from 'node:crypto'
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile
-} from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 import {
   CHANNEL_SETTINGS_LIMITS,
@@ -21,17 +13,28 @@ import {
   type WeComChannelSettingsInput
 } from '../../shared/channel-settings-contracts'
 import { weixinAccountDisplay } from '../../shared/weixin-channel-contracts'
+import {
+  settingsWarningsEqual,
+  type SettingsWarning
+} from '../../shared/settings-warning-contracts'
+import {
+  assertSupportedSettingsVersion,
+  isolateCorruptSettingsFile,
+  isMissingFileError,
+  UnsupportedSettingsVersionError,
+  writeJsonFileAtomically
+} from '../settings-file-utils'
+import {
+  decryptSettingsCredential,
+  encryptedSettingsCredentialSchema,
+  encryptSettingsCredential,
+  type SettingsCredentialCipher
+} from '../settings-credential-cipher'
 
-export interface ChannelCredentialCipher {
-  isAvailable(): boolean
-  encrypt(value: string): Buffer
-  decrypt(value: Buffer): string
-}
+export type ChannelCredentialCipher = SettingsCredentialCipher
 
-const encryptedCredentialSchema = z
-  .object({
-    formatVersion: z.literal(1),
-    scheme: z.literal('electron-safe-storage'),
+const encryptedCredentialSchema = encryptedSettingsCredentialSchema
+  .extend({
     ciphertextBase64: z
       .string()
       .min(1)
@@ -112,6 +115,8 @@ type StoredEncryptedCredential = z.infer<
   typeof encryptedCredentialSchema
 >
 
+class DeferredWeixinMigrationError extends Error {}
+
 const credentialPayloadSchema = z
   .object({
     version: z.literal(1),
@@ -161,7 +166,7 @@ type EnvironmentChannel = {
   secret?: string
   allowedSenderIds: readonly string[]
   allowGroupMessages: boolean
-  error?: string
+  warning?: SettingsWarning
 }
 
 export type ResolvedChannelSettings =
@@ -184,7 +189,7 @@ export type ResolvedChannelSettings =
       secret?: string
       allowedSenderIds: readonly string[]
       allowGroupMessages: boolean
-      source: 'none' | 'encrypted' | 'environment'
+      source: 'none' | 'encrypted' | 'environment' | 'unreadable'
       readOnly: boolean
     }
   | {
@@ -194,7 +199,7 @@ export type ResolvedChannelSettings =
       secret?: string
       allowedSenderIds: readonly string[]
       allowGroupMessages: boolean
-      source: 'none' | 'encrypted' | 'environment'
+      source: 'none' | 'encrypted' | 'environment' | 'unreadable'
       readOnly: boolean
     }
 
@@ -220,15 +225,6 @@ const defaultStoredSettings: StoredSettings = {
 const defaultStatus = (enabled: boolean): ChannelRuntimeStatus => ({
   state: enabled ? 'stopped' : 'disabled'
 })
-
-function isMissingFile(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === 'object' &&
-    'code' in error &&
-    error.code === 'ENOENT'
-  )
-}
 
 function boundedEnvironmentValue(
   environment: NodeJS.ProcessEnv,
@@ -319,15 +315,27 @@ export type WeixinBinding = z.infer<typeof weixinBindingSchema>
 
 export class ChannelSettingsStore {
   private settings?: StoredSettings
-  private warning?: string
+  private settingsLoad?: Promise<StoredSettings>
+  private temporarilyDisabledWeixin = false
+  private warnings: SettingsWarning[] = []
+  private runtimeRepairWarning?: SettingsWarning
   private updateQueue: Promise<void> = Promise.resolve()
+  private readonly environmentChannels: Record<
+    CredentialChannel,
+    EnvironmentChannel
+  >
 
   constructor(
     private readonly filePath: string,
     private readonly cipher: ChannelCredentialCipher,
     private readonly environment: NodeJS.ProcessEnv = process.env,
     private readonly now: () => number = Date.now
-  ) {}
+  ) {
+    this.environmentChannels = {
+      wecom: this.readEnvironmentChannel('wecom'),
+      dingtalk: this.readEnvironmentChannel('dingtalk')
+    }
+  }
 
   async snapshot(
     statuses: Partial<Record<ManagedChannel, ChannelRuntimeStatus>> = {}
@@ -339,9 +347,17 @@ export class ChannelSettingsStore {
     ])
     const weComEnvironment = this.environmentChannel('wecom')
     const dingTalkEnvironment = this.environmentChannel('dingtalk')
-    const environmentWarning =
-      weComEnvironment.error ?? dingTalkEnvironment.error
-    const warning = this.warning ?? environmentWarning
+    const warnings = [
+      ...this.warnings,
+      ...(this.runtimeRepairWarning ? [this.runtimeRepairWarning] : []),
+      ...(weComEnvironment.warning ? [weComEnvironment.warning] : []),
+      ...(dingTalkEnvironment.warning ? [dingTalkEnvironment.warning] : [])
+    ].filter(
+      (warning, index, values) =>
+        values.findIndex(
+          (candidate) => settingsWarningsEqual(candidate, warning)
+        ) === index
+    )
     return {
       weixin: {
         enabled: weixin.enabled,
@@ -360,12 +376,9 @@ export class ChannelSettingsStore {
         allowGroupMessages: wecom.allowGroupMessages,
         status:
           statuses.wecom ??
-          (weComEnvironment.error === undefined
+          (weComEnvironment.warning === undefined
             ? defaultStatus(wecom.enabled)
-            : {
-                state: 'error',
-                lastError: weComEnvironment.error
-              })
+            : { state: 'error' })
       },
       dingtalk: {
         enabled: dingtalk.enabled,
@@ -377,15 +390,22 @@ export class ChannelSettingsStore {
         allowGroupMessages: dingtalk.allowGroupMessages,
         status:
           statuses.dingtalk ??
-          (dingTalkEnvironment.error === undefined
+          (dingTalkEnvironment.warning === undefined
             ? defaultStatus(dingtalk.enabled)
-            : {
-                state: 'error',
-                lastError: dingTalkEnvironment.error
-              })
+            : { state: 'error' })
       },
-      ...(warning === undefined ? {} : { warning })
+      ...(warnings.length > 0 ? { warnings } : {})
     }
+  }
+
+  reportRuntimeSelectionRepairs(count: number): void {
+    this.runtimeRepairWarning =
+      count > 0
+        ? {
+            code: 'channel-runtime-selections-repaired',
+            count
+          }
+        : undefined
   }
 
   getSnapshot(
@@ -409,9 +429,16 @@ export class ChannelSettingsStore {
       const settings = await this.load()
       const stored = settings.weixin
       const binding = this.decryptWeixinBinding(stored)
+      if (this.temporarilyDisabledWeixin && binding) {
+        this.temporarilyDisabledWeixin = false
+        this.removeWarnings([
+          'channel-weixin-credential-unreadable',
+          'channel-weixin-secure-storage-unavailable'
+        ])
+      }
       return {
         channel,
-        enabled: stored.enabled,
+        enabled: stored.enabled && !this.temporarilyDisabledWeixin,
         accountId: binding?.accountId ?? '',
         userId: binding?.userId ?? '',
         baseUrl: binding?.baseUrl ?? '',
@@ -448,12 +475,18 @@ export class ChannelSettingsStore {
     const settings = await this.load()
     const stored = settings[channel]
     const secret = this.decryptCredential(channel, stored)
+    const credentialUnreadable =
+      stored.credential !== undefined && secret === undefined
     const common = {
       enabled: stored.enabled,
       ...(secret === undefined ? {} : { secret }),
       allowedSenderIds: [...stored.allowedSenderIds],
       allowGroupMessages: stored.allowGroupMessages,
-      source: secret === undefined ? ('none' as const) : ('encrypted' as const),
+      source: credentialUnreadable
+        ? ('unreadable' as const)
+        : secret === undefined
+          ? ('none' as const)
+          : ('encrypted' as const),
       readOnly: false
     }
     return channel === 'wecom'
@@ -484,7 +517,12 @@ export class ChannelSettingsStore {
       }
       await this.persist(current)
       this.settings = current
-      this.warning = undefined
+      this.temporarilyDisabledWeixin = false
+      this.removeWarnings([
+        'channel-weixin-credential-unreadable',
+        'channel-weixin-secure-storage-unavailable',
+        'channel-weixin-legacy-binding-invalid'
+      ])
       snapshot = await this.snapshot()
     }
     const operation = this.updateQueue.then(update, update)
@@ -504,7 +542,12 @@ export class ChannelSettingsStore {
       }
       await this.persist(current)
       this.settings = current
-      this.warning = undefined
+      this.temporarilyDisabledWeixin = false
+      this.removeWarnings([
+        'channel-weixin-credential-unreadable',
+        'channel-weixin-secure-storage-unavailable',
+        'channel-weixin-legacy-binding-invalid'
+      ])
       snapshot = await this.snapshot()
     }
     const operation = this.updateQueue.then(update, update)
@@ -557,12 +600,30 @@ export class ChannelSettingsStore {
       )
     }
 
-    this.validateEnabledWeixin(current.weixin)
+    if (!this.temporarilyDisabledWeixin || input.weixin !== undefined) {
+      this.validateEnabledWeixin(current.weixin)
+    }
     this.validateEnabledCredentialChannel('wecom', current.wecom)
     this.validateEnabledCredentialChannel('dingtalk', current.dingtalk)
     await this.persist(current)
     this.settings = current
-    this.warning = undefined
+    if (!this.temporarilyDisabledWeixin) {
+      this.removeWarnings([
+        'channel-weixin-credential-unreadable',
+        'channel-weixin-secure-storage-unavailable',
+        'channel-weixin-legacy-binding-invalid'
+      ])
+    }
+    const resolvedWarningCodes: SettingsWarning['code'][] = [
+      'channel-settings-recovered'
+    ]
+    if (input.wecom !== undefined) {
+      resolvedWarningCodes.push('channel-wecom-credential-unreadable')
+    }
+    if (input.dingtalk !== undefined) {
+      resolvedWarningCodes.push('channel-dingtalk-credential-unreadable')
+    }
+    this.removeWarnings(resolvedWarningCodes)
     return this.snapshot()
   }
 
@@ -652,34 +713,47 @@ export class ChannelSettingsStore {
     if (!this.cipher.isAvailable()) {
       throw new Error('系统安全存储不可用，无法保存通道 Secret')
     }
-    const encrypted = this.cipher.encrypt(
-      JSON.stringify({ version: 1, channel, secret })
-    )
-    return {
-      formatVersion: 1,
-      scheme: 'electron-safe-storage',
-      ciphertextBase64: encrypted.toString('base64')
-    }
+    return encryptSettingsCredential(this.cipher, {
+      version: 1,
+      channel,
+      secret
+    })
   }
 
   private decryptCredential(
     channel: CredentialChannel,
     stored: StoredCredentialChannel
   ): string | undefined {
-    if (stored.credential === undefined || !this.cipher.isAvailable()) {
+    if (stored.credential === undefined) {
       return undefined
+    }
+    const warn = (): undefined => {
+      this.addWarning({
+        code:
+          channel === 'wecom'
+            ? 'channel-wecom-credential-unreadable'
+            : 'channel-dingtalk-credential-unreadable'
+      })
+      return undefined
+    }
+    if (!this.cipher.isAvailable()) {
+      return warn()
     }
     try {
       const payload = credentialPayloadSchema.parse(
-        JSON.parse(
-          this.cipher.decrypt(
-            Buffer.from(stored.credential.ciphertextBase64, 'base64')
-          )
-        )
+        decryptSettingsCredential(this.cipher, stored.credential)
       )
-      return payload.channel === channel ? payload.secret : undefined
+      if (payload.channel !== channel) {
+        return warn()
+      }
+      this.removeWarnings([
+        channel === 'wecom'
+          ? 'channel-wecom-credential-unreadable'
+          : 'channel-dingtalk-credential-unreadable'
+      ])
+      return payload.secret
     } catch {
-      return undefined
+      return warn()
     }
   }
 
@@ -689,21 +763,14 @@ export class ChannelSettingsStore {
     if (!this.cipher.isAvailable()) {
       throw new Error('系统安全存储不可用，无法保存微信绑定')
     }
-    const encrypted = this.cipher.encrypt(
-      JSON.stringify({
-        version: 2,
-        channel: 'weixin',
-        accountId: binding.accountId,
-        userId: binding.userId,
-        baseUrl: binding.baseUrl,
-        token: binding.token
-      })
-    )
-    return {
-      formatVersion: 1,
-      scheme: 'electron-safe-storage',
-      ciphertextBase64: encrypted.toString('base64')
-    }
+    return encryptSettingsCredential(this.cipher, {
+      version: 2,
+      channel: 'weixin',
+      accountId: binding.accountId,
+      userId: binding.userId,
+      baseUrl: binding.baseUrl,
+      token: binding.token
+    })
   }
 
   private decryptWeixinBinding(
@@ -714,81 +781,38 @@ export class ChannelSettingsStore {
     }
     try {
       return weixinCredentialPayloadSchema.parse(
-        JSON.parse(
-          this.cipher.decrypt(
-            Buffer.from(stored.credential.ciphertextBase64, 'base64')
-          )
-        )
+        decryptSettingsCredential(this.cipher, stored.credential)
       )
     } catch {
       return undefined
     }
   }
 
-  private async load(): Promise<StoredSettings> {
+  private load(): Promise<StoredSettings> {
     if (this.settings !== undefined) {
-      return this.settings
+      return Promise.resolve(this.settings)
     }
+    if (!this.settingsLoad) {
+      this.settingsLoad = this.readSettings().finally(() => {
+        this.settingsLoad = undefined
+      })
+    }
+    return this.settingsLoad
+  }
+
+  private async readSettings(): Promise<StoredSettings> {
     try {
       const raw: unknown = JSON.parse(await readFile(this.filePath, 'utf8'))
+      assertSupportedSettingsVersion(raw, 3, (version) =>
+        `当前 GoodBuddy 不支持通道设置版本 ${version}，请升级应用后重试`
+      )
       const current = storedSettingsSchema.safeParse(raw)
       if (current.success) {
-        this.settings = current.data
+        this.settings = this.normalizeStoredSettings(current.data)
       } else {
         const versionTwo = versionTwoStoredSettingsSchema.safeParse(raw)
         if (versionTwo.success) {
-          const legacyWeixin = versionTwo.data.weixin
-          let token: string | undefined
-          if (
-            legacyWeixin.credential &&
-            this.cipher.isAvailable()
-          ) {
-            try {
-              const payload = credentialPayloadSchema.parse(
-                JSON.parse(
-                  this.cipher.decrypt(
-                    Buffer.from(
-                      legacyWeixin.credential.ciphertextBase64,
-                      'base64'
-                    )
-                  )
-                )
-              )
-              token =
-                payload.channel === 'weixin'
-                  ? payload.secret
-                  : undefined
-            } catch {
-              token = undefined
-            }
-          }
-          const binding =
-            token &&
-            legacyWeixin.accountId &&
-            legacyWeixin.userId &&
-            legacyWeixin.baseUrl
-              ? {
-                  accountId: legacyWeixin.accountId,
-                  userId: legacyWeixin.userId,
-                  baseUrl: legacyWeixin.baseUrl,
-                  token
-                }
-              : undefined
-          this.settings = {
-            version: 3,
-            weixin: {
-              enabled: binding ? legacyWeixin.enabled : false,
-              ...(binding
-                ? { credential: this.encryptWeixinBinding(binding) }
-                : {})
-            },
-            wecom: versionTwo.data.wecom,
-            dingtalk: versionTwo.data.dingtalk
-          }
-          if (legacyWeixin.enabled && !binding) {
-            this.warning =
-              '旧版微信绑定无法安全迁移，请重新扫码绑定'
-          }
+          this.settings = this.migrateVersionTwo(versionTwo.data)
         } else {
           const legacy = legacyStoredSettingsSchema.parse(raw)
           this.settings = {
@@ -803,38 +827,114 @@ export class ChannelSettingsStore {
         await this.persist(this.settings)
       }
     } catch (error) {
-      if (!isMissingFile(error)) {
-        this.warning = '通道设置文件已损坏，已隔离原文件并恢复默认设置'
-        await rename(
+      if (
+        error instanceof UnsupportedSettingsVersionError ||
+        error instanceof DeferredWeixinMigrationError
+      ) {
+        throw error
+      }
+      if (!isMissingFileError(error)) {
+        await isolateCorruptSettingsFile(
           this.filePath,
-          `${this.filePath}.corrupt-${this.now()}`
-        ).catch(() => undefined)
+          '通道设置已损坏且无法隔离',
+          this.now
+        )
+        this.warnings = [{ code: 'channel-settings-recovered' }]
       }
       this.settings = cloneStored(defaultStoredSettings)
     }
     return this.settings
   }
 
-  private async persist(settings: StoredSettings): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true })
-    const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`
-    try {
-      await writeFile(
-        temporaryPath,
-        `${JSON.stringify(settings, null, 2)}\n`,
-        {
-          encoding: 'utf8',
-          mode: 0o600,
-          flag: 'wx'
-        }
+  private normalizeStoredSettings(settings: StoredSettings): StoredSettings {
+    if (
+      settings.weixin.credential &&
+      this.decryptWeixinBinding(settings.weixin) === undefined
+    ) {
+      this.temporarilyDisabledWeixin = true
+      this.addWarning({
+        code: this.cipher.isAvailable()
+          ? 'channel-weixin-credential-unreadable'
+          : 'channel-weixin-secure-storage-unavailable'
+      })
+    } else {
+      this.temporarilyDisabledWeixin = false
+    }
+    return settings
+  }
+
+  private migrateVersionTwo(
+    settings: z.infer<typeof versionTwoStoredSettingsSchema>
+  ): StoredSettings {
+    const legacyWeixin = settings.weixin
+    if (legacyWeixin.credential && !this.cipher.isAvailable()) {
+      throw new DeferredWeixinMigrationError(
+        '系统安全存储暂不可用，旧版微信绑定尚未迁移；原设置已保留，请恢复安全存储后重试'
       )
-      await rename(temporaryPath, this.filePath)
-    } finally {
-      await rm(temporaryPath, { force: true })
+    }
+    let token: string | undefined
+    if (legacyWeixin.credential) {
+      try {
+        const payload = credentialPayloadSchema.parse(
+          decryptSettingsCredential(
+            this.cipher,
+            legacyWeixin.credential
+          )
+        )
+        token =
+          payload.channel === 'weixin' ? payload.secret : undefined
+      } catch {
+        throw new DeferredWeixinMigrationError(
+          '旧版微信绑定无法解密，原设置已保留；请恢复原安全存储后重试'
+        )
+      }
+    }
+    const binding =
+      token &&
+      legacyWeixin.accountId &&
+      legacyWeixin.userId &&
+      legacyWeixin.baseUrl
+        ? {
+            accountId: legacyWeixin.accountId,
+            userId: legacyWeixin.userId,
+            baseUrl: legacyWeixin.baseUrl,
+            token
+          }
+        : undefined
+    if (legacyWeixin.credential && !binding) {
+      throw new DeferredWeixinMigrationError(
+        '旧版微信绑定信息不完整或无法验证，原设置已保留；请恢复原配置后重试'
+      )
+    }
+    if (legacyWeixin.enabled && !binding) {
+      this.addWarning({
+        code: 'channel-weixin-legacy-binding-invalid'
+      })
+    }
+    return {
+      version: 3,
+      weixin: {
+        enabled: binding ? legacyWeixin.enabled : false,
+        ...(binding
+          ? { credential: this.encryptWeixinBinding(binding) }
+          : {})
+      },
+      wecom: settings.wecom,
+      dingtalk: settings.dingtalk
     }
   }
 
+  private async persist(settings: StoredSettings): Promise<void> {
+    await writeJsonFileAtomically(this.filePath, settings)
+  }
+
   private environmentChannel(channel: CredentialChannel): EnvironmentChannel {
+    return this.environmentChannels[channel]
+  }
+
+  private readEnvironmentChannel(
+    channel: CredentialChannel
+  ): EnvironmentChannel {
     const prefix =
       channel === 'wecom' ? 'GOODBUDDY_WECOM' : 'GOODBUDDY_DINGTALK'
     const idName =
@@ -903,11 +1003,31 @@ export class ChannelSettingsStore {
       senders.value.length > 0
         ? {}
         : {
-            error:
-              channel === 'wecom'
-                ? '企业微信环境变量配置无效或不完整'
-                : '钉钉环境变量配置无效或不完整'
+            warning: {
+              code:
+                channel === 'wecom'
+                  ? 'channel-wecom-environment-invalid'
+                  : 'channel-dingtalk-environment-invalid'
+            }
           })
     }
+  }
+
+  private addWarning(warning: SettingsWarning): void {
+    if (
+      !this.warnings.some(
+        (current) => settingsWarningsEqual(current, warning)
+      )
+    ) {
+      this.warnings.push(warning)
+    }
+  }
+
+  private removeWarnings(
+    codes: readonly SettingsWarning['code'][]
+  ): void {
+    this.warnings = this.warnings.filter(
+      (warning) => !codes.includes(warning.code)
+    )
   }
 }

@@ -65,9 +65,12 @@ import { maximumPastedImageBytes } from '../../shared/contracts'
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
-  repairAgentRuntimeSelection,
   type AgentRuntimeSelection
 } from '../../shared/runtime-selection-contracts'
+import {
+  getDefaultRuntimeSelection,
+  getRuntimeSelectionForProvider
+} from './runtime-selection'
 import type {
   AssistantProject,
   AssistantArtifact,
@@ -802,45 +805,6 @@ function mergeArtifacts(
   )
 }
 
-function getDefaultRuntimeSelection(
-  settings: RuntimeSettings
-): AgentRuntimeSelection {
-  if (settings.provider === 'model') {
-    return {
-      provider: 'model',
-      profileId: settings.defaultModelProfileId
-    }
-  }
-  if (settings.provider === 'opencode') {
-    return {
-      provider: 'opencode',
-      ...(settings.opencodeModelSource.kind === 'profile'
-        ? { profileId: settings.opencodeModelSource.profileId }
-        : {})
-    }
-  }
-  if (settings.provider === 'continue') {
-    return {
-      provider: 'continue',
-      ...(settings.continueModelSource.kind === 'profile'
-        ? { profileId: settings.continueModelSource.profileId }
-        : {})
-    }
-  }
-  if (settings.opencodeBaseUrl || settings.opencodeEmbedded) {
-    return {
-      provider: 'opencode',
-      ...(settings.opencodeModelSource.kind === 'profile'
-        ? { profileId: settings.opencodeModelSource.profileId }
-        : {})
-    }
-  }
-  return {
-    provider: 'model',
-    profileId: settings.defaultModelProfileId
-  }
-}
-
 function getProjectDefaultRuntimeSelection(
   project: AssistantProject | undefined,
   settings: RuntimeSettings
@@ -848,7 +812,7 @@ function getProjectDefaultRuntimeSelection(
   const selection = project?.runtimeSelection
   return !selection || selection.provider === 'auto'
     ? getDefaultRuntimeSelection(settings)
-    : repairAgentRuntimeSelection(selection, settings)
+    : selection
 }
 
 function getRuntimeSelectionLabel(
@@ -859,6 +823,7 @@ function getRuntimeSelectionLabel(
     directModel: string
     automatic: string
     automaticSelection: string
+    modelUnavailable: string
   }
 ): string {
   if (!selection || !settings) {
@@ -870,34 +835,34 @@ function getRuntimeSelectionLabel(
           (candidate) => candidate.id === selection.profileId
         )
       : undefined
+  const requestedProfileMissing =
+    'profileId' in selection &&
+    Boolean(selection.profileId) &&
+    profile === undefined
   if (selection.provider === 'model') {
     return profile
       ? `${profile.name} · ${profile.modelName}`
-      : status?.label ?? labels.directModel
+      : requestedProfileMissing
+        ? labels.modelUnavailable
+        : status?.label ?? labels.directModel
   }
   if (selection.provider === 'opencode') {
-    return profile ? `OpenCode · ${profile.name}` : 'OpenCode'
+    return profile
+      ? `OpenCode · ${profile.name}`
+      : requestedProfileMissing
+        ? `OpenCode · ${labels.modelUnavailable}`
+        : 'OpenCode'
   }
   if (selection.provider === 'continue') {
-    return profile ? `Continue · ${profile.name}` : 'Continue'
+    return profile
+      ? `Continue · ${profile.name}`
+      : requestedProfileMissing
+        ? `Continue · ${labels.modelUnavailable}`
+        : 'Continue'
   }
   return status
     ? `${labels.automatic} · ${status.label}`
     : labels.automaticSelection
-}
-
-function getConfiguredAgentRuntimeSelection(
-  settings: RuntimeSettings,
-  provider: 'opencode' | 'continue'
-): AgentRuntimeSelection {
-  const source =
-    provider === 'opencode'
-      ? settings.opencodeModelSource
-      : settings.continueModelSource
-  return {
-    provider,
-    ...(source.kind === 'profile' ? { profileId: source.profileId } : {})
-  }
 }
 
 function getConfiguredAgentRuntimeSource(
@@ -910,7 +875,7 @@ function getConfiguredAgentRuntimeSource(
     useOwnConfiguration: (runtime: string) => string
   }
 ): { label: string; detail: string } {
-  const selection = getConfiguredAgentRuntimeSelection(settings, provider)
+  const selection = getRuntimeSelectionForProvider(provider, settings)
   const profile =
     'profileId' in selection
       ? settings.modelProfiles.find(
@@ -1766,7 +1731,8 @@ function App(): React.JSX.Element {
     () => ({
       directModel: t('runtime.directModel'),
       automatic: t('runtime.automatic'),
-      automaticSelection: t('runtime.automaticSelection')
+      automaticSelection: t('runtime.automaticSelection'),
+      modelUnavailable: t('runtime.modelUnavailable')
     }),
     [t]
   )
@@ -1787,10 +1753,10 @@ function App(): React.JSX.Element {
     runtimeLabels
   )
   const openCodeMenuSelection = runtimeSettings
-    ? getConfiguredAgentRuntimeSelection(runtimeSettings, 'opencode')
+    ? getRuntimeSelectionForProvider('opencode', runtimeSettings)
     : undefined
   const continueMenuSelection = runtimeSettings
-    ? getConfiguredAgentRuntimeSelection(runtimeSettings, 'continue')
+    ? getRuntimeSelectionForProvider('continue', runtimeSettings)
     : undefined
   const openCodeMenuSource = runtimeSettings
     ? getConfiguredAgentRuntimeSource(
@@ -1865,48 +1831,6 @@ function App(): React.JSX.Element {
       conversations
     }
   }, [activeId, conversations])
-
-  useEffect(() => {
-    if (!runtimeSettings || !conversationStoreReady) {
-      return
-    }
-    const timeout = setTimeout(() => {
-      setConversations((current) => {
-        let changed = false
-        const next = current.map((conversation) => {
-          const project = projects.find(
-            (candidate) => candidate.id === conversation.projectId
-          )
-          const defaultSelection = getProjectDefaultRuntimeSelection(
-            project,
-            runtimeSettings
-          )
-          const selection =
-            !conversation.runtimeSelection ||
-            conversation.runtimeSelection.provider === 'auto'
-              ? defaultSelection
-              : repairAgentRuntimeSelection(
-                  conversation.runtimeSelection,
-                  runtimeSettings
-                )
-          if (
-            conversation.runtimeSelection &&
-            agentRuntimeSelectionKey(conversation.runtimeSelection) ===
-              agentRuntimeSelectionKey(selection)
-          ) {
-            return conversation
-          }
-          changed = true
-          return {
-            ...conversation,
-            runtimeSelection: selection
-          }
-        })
-        return changed ? next : current
-      })
-    }, 0)
-    return () => clearTimeout(timeout)
-  }, [conversationStoreReady, projects, runtimeSettings])
 
   useEffect(() => {
     const selection = activeRuntimeSelectionRef.current
@@ -4762,7 +4686,7 @@ function App(): React.JSX.Element {
           </div>
           <div className="brand__copy">
             <strong>GoodBuddy</strong>
-            <span>Desktop workspace</span>
+            <span>{t('brand.desktopWorkspace')}</span>
           </div>
         </div>
 
@@ -5299,7 +5223,7 @@ function App(): React.JSX.Element {
               <div className="welcome__badge">
                 <Sparkles size={18} />
               </div>
-              <p className="eyebrow">GOODBUDDY WORKSPACE</p>
+              <p className="eyebrow">{t('chat.welcome.eyebrow')}</p>
               <h1>{t('chat.welcome.title')}</h1>
               <p className="welcome__description">
                 {t('chat.welcome.description')}
@@ -6849,6 +6773,7 @@ function App(): React.JSX.Element {
           <SettingsPanel
             appearanceTheme={appearanceTheme}
             heartbeats={assistantHeartbeats}
+            magicNotesEnabled={magicNotesEnabled}
             onAppearanceThemeChange={setAppearanceTheme}
             onClearLocalData={clearLocalData}
             onClose={() => setView('chat')}

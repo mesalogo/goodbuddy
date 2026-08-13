@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type {
   ApprovalDecision,
   AgentRuntimeStatus,
@@ -725,21 +726,30 @@ function getChatToolImageCarrierContent(
   ]
 }
 
+function createToolCallId(): string {
+  return `goodbuddy_call_${randomBytes(16).toString('hex')}`
+}
+
 function parseToolCallIdentity(
   id: unknown,
-  name: unknown
+  name: unknown,
+  fallbackId?: unknown
 ): { id: string; name: string } {
+  const resolvedId =
+    typeof id === 'string' && id.length > 0
+      ? id
+      : typeof fallbackId === 'string' && fallbackId.length > 0
+        ? fallbackId
+        : createToolCallId()
   if (
-    typeof id !== 'string' ||
-    id.length === 0 ||
-    id.length > 256 ||
+    resolvedId.length > 256 ||
     typeof name !== 'string' ||
     name.length === 0 ||
     name.length > 128
   ) {
-    throw new Error('模型返回了无效的工具调用标识')
+    throw new Error('模型返回了无效的工具调用标识或名称')
   }
-  return { id, name }
+  return { id: resolvedId, name }
 }
 
 function parseModelToolResponse(
@@ -771,6 +781,7 @@ function parseModelToolResponse(
         reasoning.push(record.thinking)
       } else if (record.type === 'tool_use') {
         const identity = parseToolCallIdentity(record.id, record.name)
+        record.id = identity.id
         toolCalls.push({
           ...identity,
           arguments: parseToolArguments(record.input)
@@ -845,8 +856,10 @@ function parseModelToolResponse(
       } else if (output.type === 'function_call') {
         const identity = parseToolCallIdentity(
           output.call_id,
-          output.name
+          output.name,
+          output.id
         )
+        output.call_id = identity.id
         toolCalls.push({
           ...identity,
           arguments: parseToolArguments(output.arguments)
@@ -893,6 +906,7 @@ function parseModelToolResponse(
         toolCall.id,
         functionCall.name
       )
+      toolCall.id = identity.id
       toolCalls.push({
         ...identity,
         arguments: parseToolArguments(functionCall.arguments)
@@ -1109,6 +1123,10 @@ export class ModelAgentRuntime implements AgentRuntime {
   }
 
   get supportsToolExecution(): boolean {
+    return this.capability === 'chat'
+  }
+
+  get supportsScopedDataTools(): boolean {
     return this.capability === 'chat'
   }
 
@@ -1665,11 +1683,13 @@ export class ModelAgentRuntime implements AgentRuntime {
                   ? functionDelta.arguments
                   : ''),
               id:
-                typeof toolDelta?.id === 'string'
+                typeof toolDelta?.id === 'string' &&
+                toolDelta.id.length > 0
                   ? toolDelta.id
                   : current.id,
               name:
-                typeof functionDelta?.name === 'string'
+                typeof functionDelta?.name === 'string' &&
+                functionDelta.name.length > 0
                   ? functionDelta.name
                   : current.name
             }

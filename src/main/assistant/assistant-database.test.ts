@@ -1386,7 +1386,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('rebinds persisted conversations whose model profile was removed', async () => {
+  it('repairs unattended channel selections without rebinding ordinary conversations', async () => {
     const database = await createDatabase()
     const removedProfileId =
       '00000000-0000-4000-8000-000000000291'
@@ -1478,7 +1478,7 @@ describe('AssistantDatabase', () => {
         },
         continueModelSource: { kind: 'platform' }
       })
-    ).toBe(7)
+    ).toBe(4)
     expect(
       database
         .listConversations()
@@ -1486,9 +1486,9 @@ describe('AssistantDatabase', () => {
         .sort((left, right) => left.title.localeCompare(right.title))
         .map((conversation) => conversation.runtimeSelection)
     ).toEqual([
-      { provider: 'model', profileId: defaultProfileId },
-      { provider: 'opencode', profileId: runtimeProfileId },
-      { provider: 'continue' },
+      { provider: 'model', profileId: removedProfileId },
+      { provider: 'opencode', profileId: removedProfileId },
+      { provider: 'continue', profileId: removedProfileId },
       { provider: 'model', profileId: runtimeProfileId }
     ])
     expect(database.getProject(channelProject.id).runtimeSelection).toEqual({

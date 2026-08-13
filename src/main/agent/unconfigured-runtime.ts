@@ -11,6 +11,7 @@ export class UnconfiguredAgentRuntime implements AgentRuntime {
   readonly runtimeId = 'setup'
   readonly requiresToolApproval = false
   readonly supportsToolExecution = false
+  readonly supportsScopedDataTools = false
 
   getStatus(): Promise<AgentRuntimeStatus> {
     return Promise.resolve({

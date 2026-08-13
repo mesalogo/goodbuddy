@@ -18,8 +18,11 @@ import {
   normalizeInteractiveWorkMode
 } from '../../shared/assistant-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
-import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import { trapTabFocus } from './dialog-focus'
+import {
+  getDefaultRuntimeSelection,
+  getRuntimeSelectionForProvider
+} from './runtime-selection'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
@@ -34,43 +37,6 @@ type ProjectSwitcherProps = {
     projectId: string,
     input: ProjectCreateInput
   ) => Promise<AssistantProject>
-}
-
-function runtimeSelectionForProvider(
-  provider: 'model' | 'opencode' | 'continue',
-  settings: RuntimeSettings
-): AgentRuntimeSelection {
-  if (provider === 'model') {
-    return {
-      provider,
-      profileId: settings.defaultModelProfileId
-    }
-  }
-  const source =
-    provider === 'opencode'
-      ? settings.opencodeModelSource
-      : settings.continueModelSource
-  return {
-    provider,
-    ...(source.kind === 'profile' ? { profileId: source.profileId } : {})
-  }
-}
-
-function defaultRuntimeSelection(
-  settings: RuntimeSettings
-): AgentRuntimeSelection {
-  if (settings.provider === 'model') {
-    return runtimeSelectionForProvider('model', settings)
-  }
-  if (settings.provider === 'opencode') {
-    return runtimeSelectionForProvider('opencode', settings)
-  }
-  if (settings.provider === 'continue') {
-    return runtimeSelectionForProvider('continue', settings)
-  }
-  return settings.opencodeBaseUrl || settings.opencodeEmbedded
-    ? runtimeSelectionForProvider('opencode', settings)
-    : runtimeSelectionForProvider('model', settings)
 }
 
 export function ProjectSwitcher({
@@ -157,7 +123,7 @@ export function ProjectSwitcher({
           ? draft
           : {
               ...draft,
-              runtimeSelection: defaultRuntimeSelection(runtimeSettings)
+              runtimeSelection: getDefaultRuntimeSelection(runtimeSettings)
             }
       if (dialogMode === 'settings' && activeProject) {
         await onUpdate(activeProject.id, input)
@@ -276,7 +242,7 @@ export function ProjectSwitcher({
               rootPath: '',
               defaultWorkMode: 'ask',
               runtimeSelection: runtimeSettings
-                ? defaultRuntimeSelection(runtimeSettings)
+                ? getDefaultRuntimeSelection(runtimeSettings)
                 : undefined
             })
             restoreFocusTarget.current = 'create'
@@ -308,7 +274,7 @@ export function ProjectSwitcher({
               runtimeSelection:
                 activeProject.runtimeSelection ??
                 (runtimeSettings
-                  ? defaultRuntimeSelection(runtimeSettings)
+                  ? getDefaultRuntimeSelection(runtimeSettings)
                   : undefined)
             })
             restoreFocusTarget.current = 'settings'
@@ -441,7 +407,7 @@ export function ProjectSwitcher({
                   onChange={(event) =>
                     setDraft((current) => ({
                       ...current,
-                      runtimeSelection: runtimeSelectionForProvider(
+                      runtimeSelection: getRuntimeSelectionForProvider(
                         event.target.value as
                           | 'model'
                           | 'opencode'
@@ -454,7 +420,7 @@ export function ProjectSwitcher({
                     draft.runtimeSelection?.provider === 'auto'
                       ? 'model'
                       : (draft.runtimeSelection?.provider ??
-                        defaultRuntimeSelection(runtimeSettings)
+                        getDefaultRuntimeSelection(runtimeSettings)
                           .provider)
                   }
                 >
