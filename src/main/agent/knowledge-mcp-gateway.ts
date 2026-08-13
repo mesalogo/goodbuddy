@@ -12,12 +12,15 @@ import { stripKnowledgeHighlightTags } from '../../shared/knowledge-text'
 import {
   knowledgeToolNames,
   knowledgeScopedDataToolCatalog,
+  goodbuddyConfigReadToolNames,
+  goodbuddyConfigWriteToolNames,
   magicNoteScopedDataToolCatalog,
   magicNoteReadToolNames,
   magicNoteWriteToolNames,
   maximumScopedToolCount,
   scopedDataToolByName,
   scopedReadToolNames,
+  type GoodBuddyConfigToolName,
   type ScopedDataToolName
 } from '../../shared/scoped-data-tools'
 import type { KnowledgeService } from '../knowledge/knowledge-service'
@@ -32,6 +35,10 @@ import {
   magicNotePlainText,
   validateMagicNoteRichContent
 } from '../magic-notes/rich-content'
+import type {
+  GoodBuddyConfigApplyAuthorizer,
+  GoodBuddyConfigService
+} from '../goodbuddy-config-service'
 
 const MAX_REQUEST_BODY_BYTES = 64 * 1024
 const MAX_RESULT_BYTES = 128 * 1024
@@ -128,6 +135,9 @@ type Capability = {
   requestId: string
   libraryIds: readonly string[]
   magicNotesAccess: MagicNotesCapabilityAccess
+  configAccess: MagicNotesCapabilityAccess
+  configWorkspacePath?: string
+  authorizeConfigApply?: GoodBuddyConfigApplyAuthorizer
   expiresAt: number
   signal: AbortSignal
   references: Map<string, KnowledgeSearchReference>
@@ -139,6 +149,7 @@ export type KnowledgeMcpGatewayOptions = {
   maximumBodyBytes?: number
   now?: () => number
   magicNotesDatabase?: MagicNotesDatabase
+  configService?: GoodBuddyConfigService
 }
 
 function toMagicNoteToolSummary(
@@ -224,6 +235,7 @@ export class KnowledgeMcpGateway {
   private readonly capabilityTtlMs: number
   private readonly maximumBodyBytes: number
   private readonly magicNotesDatabase?: MagicNotesDatabase
+  private readonly configService?: GoodBuddyConfigService
   private server?: Server
   private endpoint?: string
 
@@ -244,6 +256,7 @@ export class KnowledgeMcpGateway {
       options.maximumBodyBytes ?? MAX_REQUEST_BODY_BYTES
     this.now = options.now ?? Date.now
     this.magicNotesDatabase = options.magicNotesDatabase
+    this.configService = options.configService
   }
 
   async start(): Promise<void> {
@@ -289,14 +302,23 @@ export class KnowledgeMcpGateway {
     requestId: string,
     authorizedLibraryIds: readonly string[],
     signal: AbortSignal,
-    magicNotesAccess: MagicNotesCapabilityAccess = 'none'
+    magicNotesAccess: MagicNotesCapabilityAccess = 'none',
+    config?: {
+      access: MagicNotesCapabilityAccess
+      workspacePath: string
+      authorizeApply?: GoodBuddyConfigApplyAuthorizer
+    }
   ): string | undefined {
     const effectiveMagicNotesAccess = this.magicNotesDatabase
       ? magicNotesAccess
       : 'none'
+    const effectiveConfigAccess = this.configService
+      ? config?.access ?? 'none'
+      : 'none'
     if (
       authorizedLibraryIds.length === 0 &&
-      effectiveMagicNotesAccess === 'none'
+      effectiveMagicNotesAccess === 'none' &&
+      effectiveConfigAccess === 'none'
     ) {
       return undefined
     }
@@ -311,6 +333,13 @@ export class KnowledgeMcpGateway {
       requestId,
       libraryIds,
       magicNotesAccess: effectiveMagicNotesAccess,
+      configAccess: effectiveConfigAccess,
+      ...(effectiveConfigAccess !== 'none'
+        ? {
+            configWorkspacePath: config?.workspacePath,
+            authorizeConfigApply: config?.authorizeApply
+          }
+        : {}),
       expiresAt: this.now() + this.capabilityTtlMs,
       signal,
       references: new Map(),
@@ -330,6 +359,7 @@ export class KnowledgeMcpGateway {
     }
     capability.removeAbortListener()
     this.capabilities.delete(token)
+    this.configService?.revokeRequest(capability.requestId)
   }
 
   drainReferences(
@@ -474,8 +504,79 @@ export class KnowledgeMcpGateway {
         : []),
       ...(capability.magicNotesAccess === 'write'
         ? magicNoteWriteToolNames
+        : []),
+      ...(capability.configAccess !== 'none'
+        ? goodbuddyConfigReadToolNames
+        : []),
+      ...(capability.configAccess === 'write'
+        ? goodbuddyConfigWriteToolNames
         : [])
     ]
+  }
+
+  private requireConfig(
+    token: string,
+    requiredAccess: Exclude<MagicNotesCapabilityAccess, 'none'>
+  ): {
+    capability: Capability
+    service: GoodBuddyConfigService
+    workspacePath: string
+  } {
+    const capability = this.getCapability(token)
+    const allowed =
+      capability.configAccess === 'write' ||
+      (requiredAccess === 'read' && capability.configAccess === 'read')
+    if (
+      !allowed ||
+      !this.configService ||
+      !capability.configWorkspacePath
+    ) {
+      throw new Error('GoodBuddy configuration capability is unavailable')
+    }
+    return {
+      capability,
+      service: this.configService,
+      workspacePath: capability.configWorkspacePath
+    }
+  }
+
+  async callGoodBuddyConfigTool(
+    token: string,
+    name: GoodBuddyConfigToolName,
+    input: unknown,
+    signal?: AbortSignal
+  ): Promise<Record<string, unknown>> {
+    const requiredAccess =
+      name === 'goodbuddy_config_apply' ? 'write' : 'read'
+    const { capability, service, workspacePath } =
+      this.requireConfig(token, requiredAccess)
+    const effectiveSignal = signal
+      ? AbortSignal.any([signal, capability.signal])
+      : capability.signal
+    effectiveSignal.throwIfAborted()
+    switch (name) {
+      case 'goodbuddy_config_capabilities':
+        return { capabilities: service.getCapabilities(input) }
+      case 'goodbuddy_config_get':
+        return { config: await service.getSnapshot(input) }
+      case 'goodbuddy_config_plan':
+        return {
+          plan: await service.plan(
+            capability.requestId,
+            workspacePath,
+            input
+          )
+        }
+      case 'goodbuddy_config_apply':
+        return {
+          result: await service.apply(
+            capability.requestId,
+            input,
+            effectiveSignal,
+            capability.authorizeConfigApply
+          )
+        }
+    }
   }
 
   private requireMagicNotes(
@@ -686,6 +787,11 @@ export class KnowledgeMcpGateway {
         return { note: this.deleteMagicNoteEntry(token, input) }
       case 'note_delete':
         return this.deleteMagicNote(token, input)
+      case 'goodbuddy_config_capabilities':
+      case 'goodbuddy_config_get':
+      case 'goodbuddy_config_plan':
+      case 'goodbuddy_config_apply':
+        return this.callGoodBuddyConfigTool(token, name, input)
     }
   }
 
@@ -750,7 +856,14 @@ export class KnowledgeMcpGateway {
         {
           title: definition.title,
           description: definition.description,
-          inputSchema: definition.inputSchema.shape
+          inputSchema: definition.inputSchema,
+          annotations: {
+            readOnlyHint: definition.access === 'read',
+            destructiveHint:
+              name === 'goodbuddy_config_apply' ||
+              name === 'note_delete' ||
+              name === 'note_entry_delete'
+          }
         },
         async (input: Record<string, unknown>) => ({
           content: [

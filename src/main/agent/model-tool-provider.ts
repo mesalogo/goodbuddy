@@ -17,6 +17,7 @@ import { isIP } from 'node:net'
 import { z } from 'zod'
 import { builtinModelTools } from '../../shared/builtin-model-tools'
 import {
+  goodbuddyConfigWriteToolNames,
   magicNoteWriteToolNames,
   maximumScopedToolCount,
   scopedDataToolByName,
@@ -77,6 +78,9 @@ const webFetchTool = builtinModelTools.find(
 )!
 const magicNoteWriteToolNameSet = new Set<string>(
   magicNoteWriteToolNames
+)
+const goodbuddyConfigWriteToolNameSet = new Set<string>(
+  goodbuddyConfigWriteToolNames
 )
 const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
 const scopedToolJsonSchemas = new Map(
@@ -543,7 +547,10 @@ export class ModelToolProvider implements ModelToolProviderLike {
         return [
           {
             name: definition.name,
-            displayName: definition.displayName,
+            displayName:
+              'displayName' in definition
+                ? definition.displayName
+                : definition.title,
             description: definition.description,
             inputSchema,
             source: 'builtin'
@@ -1047,6 +1054,17 @@ export class ModelToolProvider implements ModelToolProviderLike {
         allowPermanent: false
       }
     }
+    if (goodbuddyConfigWriteToolNameSet.has(tool.name)) {
+      return {
+        scopeKey: 'model:goodbuddy-config:apply',
+        title: '允许应用 GoodBuddy 配置计划？',
+        description:
+          '该操作会修改 GoodBuddy 应用偏好或扩展能力。主进程还会显示计划中的具体变更并再次要求确认。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
     if (tool.name === 'web_search' || tool.name === 'web_fetch') {
       return {
         scopeKey: `model:web:${tool.name}`,
@@ -1292,6 +1310,30 @@ export class ModelToolProvider implements ModelToolProviderLike {
             argumentsValue
           ),
           '笔记删除结果无法序列化'
+        )
+      )
+    }
+    if (
+      name === 'goodbuddy_config_capabilities' ||
+      name === 'goodbuddy_config_get' ||
+      name === 'goodbuddy_config_plan' ||
+      name === 'goodbuddy_config_apply'
+    ) {
+      if (
+        !this.knowledgeGateway ||
+        !context.knowledgeCapabilityToken
+      ) {
+        throw new Error('GoodBuddy 配置授权不可用')
+      }
+      return createTextToolResult(
+        boundedJson(
+          await this.knowledgeGateway.callGoodBuddyConfigTool(
+            context.knowledgeCapabilityToken,
+            name,
+            argumentsValue,
+            signal
+          ),
+          'GoodBuddy 配置工具结果无法序列化'
         )
       )
     }

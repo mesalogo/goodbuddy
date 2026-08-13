@@ -39,6 +39,7 @@ import {
 } from './approval-summary'
 import { stageRuntimeSkillPackages } from './runtime-skill-packages'
 import { readBoundedResponseText } from './bounded-response'
+import { scopedReadToolNames } from '../../shared/scoped-data-tools'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -1058,20 +1059,10 @@ export class ContinueHostAdapter {
       runOptions.workMode === 'ask' &&
       runOptions.knowledgeCapability
     ) {
-      args.push(
-        '--allow',
-        'knowledge_list',
-        '--allow',
-        'knowledge_search',
-        '--allow',
-        'note_list',
-        '--allow',
-        'note_get',
-        '--allow',
-        'note_search',
-        '--exclude',
-        '*'
-      )
+      for (const toolName of scopedReadToolNames) {
+        args.push('--allow', toolName)
+      }
+      args.push('--exclude', '*')
     } else if (runOptions.workMode === 'execute') {
       args.push('--auto')
     } else if (this.options.mode === 'chat') {

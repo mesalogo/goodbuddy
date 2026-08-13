@@ -775,8 +775,8 @@ describe('SettingsPanel runtime files', () => {
       ).not.toHaveClass('mcp-server-card--disabled')
     )
     expect(
-      screen.getByText('内置 MCP Server · 按模式读写 · 按对话授权')
-    ).toBeInTheDocument()
+      screen.getAllByText('内置 MCP Server · 按模式读写 · 按对话授权')
+    ).not.toHaveLength(0)
   })
 
   it('keeps page navigation beside an independently scrollable panel', () => {
@@ -2603,7 +2603,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getAllByRole('button', {
-        name: /(?:展开|收起)服务器 (?:知识库|笔记)/u
+        name: /(?:展开|收起)服务器 (?:知识库|笔记|GoodBuddy 配置)/u
       })
     ).toHaveLength(builtinMcpServers.length)
     expect(

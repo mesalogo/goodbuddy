@@ -74,6 +74,7 @@ import { DocumentOcrModelManager } from './document-ocr-model-manager'
 import { DocumentOcrBroker } from './document-ocr-broker'
 import { DocumentParsingService } from './document-parsing-service'
 import { ReleaseNotesService } from './release-notes-service'
+import { GoodBuddyConfigService } from './goodbuddy-config-service'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -434,8 +435,13 @@ if (hasSingleInstanceLock) {
         initialRuntimeSettings
       )
     )
+    const goodbuddyConfigService = new GoodBuddyConfigService(
+      applicationSettingsStore,
+      capabilityService
+    )
     knowledgeGateway = new KnowledgeMcpGateway(knowledgeService, {
-      magicNotesDatabase: assistantDatabase
+      magicNotesDatabase: assistantDatabase,
+      configService: goodbuddyConfigService
     })
     await knowledgeGateway.start()
     const subagentService = new SubagentService(
@@ -595,7 +601,8 @@ if (hasSingleInstanceLock) {
       documentParsingService,
       documentOcrModelManager,
       documentOcrBroker,
-      releaseNotesService
+      releaseNotesService,
+      goodbuddyConfigService
     )
     loadMainWindow(mainWindow)
 

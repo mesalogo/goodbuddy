@@ -215,6 +215,9 @@ describe('ModelToolProvider', () => {
     const createMagicNote = vi.fn(() => ({
       id: '00000000-0000-4000-8000-000000000701'
     }))
+    const callGoodBuddyConfigTool = vi.fn(async () => ({
+      capabilities: { server: 'goodbuddy_config' }
+    }))
     const gateway = {
       listLibraries,
       search,
@@ -222,6 +225,7 @@ describe('ModelToolProvider', () => {
       listMagicNotes,
       getMagicNote,
       createMagicNote,
+      callGoodBuddyConfigTool,
       getAvailableToolNames: vi.fn(() => [
         'knowledge_list',
         'knowledge_search',
@@ -233,7 +237,11 @@ describe('ModelToolProvider', () => {
         'note_entry_create',
         'note_entry_update',
         'note_entry_delete',
-        'note_delete'
+        'note_delete',
+        'goodbuddy_config_capabilities',
+        'goodbuddy_config_get',
+        'goodbuddy_config_plan',
+        'goodbuddy_config_apply'
       ])
     } as unknown as KnowledgeMcpGateway
     const provider = new ModelToolProvider(
@@ -255,7 +263,10 @@ describe('ModelToolProvider', () => {
       'knowledge_search',
       'note_list',
       'note_get',
-      'note_search'
+      'note_search',
+      'goodbuddy_config_capabilities',
+      'goodbuddy_config_get',
+      'goodbuddy_config_plan'
     ])
     expect(
       JSON.stringify(
@@ -306,6 +317,18 @@ describe('ModelToolProvider', () => {
     expect(getMagicNote).toHaveBeenCalledWith('main-only-token', {
       noteId: '00000000-0000-4000-8000-000000000701'
     })
+    await provider.callTool(
+      'goodbuddy_config_capabilities',
+      {},
+      signal,
+      askContext
+    )
+    expect(callGoodBuddyConfigTool).toHaveBeenCalledWith(
+      'main-only-token',
+      'goodbuddy_config_capabilities',
+      {},
+      signal
+    )
 
     await expect(
       provider.listTools(
@@ -333,7 +356,11 @@ describe('ModelToolProvider', () => {
         'note_entry_create',
         'note_entry_update',
         'note_entry_delete',
-        'note_delete'
+        'note_delete',
+        'goodbuddy_config_capabilities',
+        'goodbuddy_config_get',
+        'goodbuddy_config_plan',
+        'goodbuddy_config_apply'
       ])
     )
     await provider.callTool(
@@ -375,6 +402,20 @@ describe('ModelToolProvider', () => {
       allowPermanent: false,
       description: expect.stringContaining('永久删除')
     })
+    const configApplyTool = executeTools.find(
+      (tool) => tool.name === 'goodbuddy_config_apply'
+    )!
+    expect(
+      provider.getApproval(
+        configApplyTool,
+        { planId: '00000000-0000-4000-8000-000000000702' },
+        '{"planId":"00000000-0000-4000-8000-000000000702"}',
+        { ...askContext, workMode: 'execute' }
+      )
+    ).toMatchObject({
+      scopeKey: 'model:goodbuddy-config:apply',
+      allowPermanent: false
+    })
   })
 
   it('reserves all scoped data tool slots for Execute', async () => {
@@ -394,7 +435,11 @@ describe('ModelToolProvider', () => {
         'note_entry_create',
         'note_entry_update',
         'note_entry_delete',
-        'note_delete'
+        'note_delete',
+        'goodbuddy_config_capabilities',
+        'goodbuddy_config_get',
+        'goodbuddy_config_plan',
+        'goodbuddy_config_apply'
       ])
     } as unknown as KnowledgeMcpGateway
     const context = {
@@ -414,7 +459,7 @@ describe('ModelToolProvider', () => {
       }))
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(86)
+      tools: createTools(82)
     })
     const validProvider = new ModelToolProvider(
       workspace,
@@ -428,7 +473,7 @@ describe('ModelToolProvider', () => {
     await validProvider.dispose()
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(87)
+      tools: createTools(83)
     })
     const overflowingProvider = new ModelToolProvider(
       workspace,

@@ -78,6 +78,78 @@ afterEach(async () => {
 })
 
 describe('KnowledgeMcpGateway', () => {
+  it('exposes GoodBuddy config reads in Ask and apply only in Execute', async () => {
+    const { service } = createService()
+    const configService = {
+      getCapabilities: vi.fn(() => ({ server: 'goodbuddy_config' })),
+      getSnapshot: vi.fn(async () => ({ application: {}, skills: [], mcpServers: [] })),
+      plan: vi.fn(async () => ({ planId: 'plan' })),
+      apply: vi.fn(async () => ({ status: 'applied' })),
+      revokeRequest: vi.fn()
+    }
+    const gateway = new KnowledgeMcpGateway(service, {
+      configService: configService as never
+    })
+    gateways.push(gateway)
+    const readToken = gateway.grant(
+      'config-read',
+      [],
+      new AbortController().signal,
+      'none',
+      { access: 'read', workspacePath: process.cwd() }
+    )!
+    const authorizeApply = vi.fn(async () => true)
+    const writeToken = gateway.grant(
+      'config-write',
+      [],
+      new AbortController().signal,
+      'none',
+      {
+        access: 'write',
+        workspacePath: process.cwd(),
+        authorizeApply
+      }
+    )!
+
+    expect(gateway.getAvailableToolNames(readToken)).toEqual([
+      'goodbuddy_config_capabilities',
+      'goodbuddy_config_get',
+      'goodbuddy_config_plan'
+    ])
+    expect(gateway.getAvailableToolNames(writeToken)).toEqual([
+      'goodbuddy_config_capabilities',
+      'goodbuddy_config_get',
+      'goodbuddy_config_plan',
+      'goodbuddy_config_apply'
+    ])
+    await gateway.callGoodBuddyConfigTool(
+      readToken,
+      'goodbuddy_config_capabilities',
+      {}
+    )
+    expect(configService.getCapabilities).toHaveBeenCalledWith({})
+    await expect(
+      gateway.callGoodBuddyConfigTool(
+        readToken,
+        'goodbuddy_config_apply',
+        { planId: crypto.randomUUID() }
+      )
+    ).rejects.toThrow('unavailable')
+    await gateway.callGoodBuddyConfigTool(
+      writeToken,
+      'goodbuddy_config_apply',
+      { planId: crypto.randomUUID() }
+    )
+    expect(configService.apply).toHaveBeenCalledWith(
+      'config-write',
+      expect.any(Object),
+      expect.any(AbortSignal),
+      authorizeApply
+    )
+    gateway.revoke(writeToken)
+    expect(configService.revokeRequest).toHaveBeenCalledWith('config-write')
+  })
+
   it('keeps scope server-side, strips markup, bounds model arguments, and drains references', async () => {
     const { service, searchHybridMany } = createService()
     const gateway = new KnowledgeMcpGateway(service)

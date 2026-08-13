@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  goodbuddyConfigTools,
+  type GoodBuddyConfigToolName
+} from './goodbuddy-config-tools'
 
 export type ScopedDataToolAccess = 'read' | 'write'
 
@@ -230,10 +234,12 @@ export const magicNoteScopedDataTools = [
 
 export const scopedDataTools = [
   ...knowledgeScopedDataTools,
-  ...magicNoteScopedDataTools
+  ...magicNoteScopedDataTools,
+  ...goodbuddyConfigTools
 ] as const
 
 export type ScopedDataToolName = (typeof scopedDataTools)[number]['name']
+export type { GoodBuddyConfigToolName }
 
 export const scopedDataToolByName = new Map<
   ScopedDataToolName,
@@ -251,6 +257,14 @@ export const magicNoteReadToolNames = magicNoteScopedDataTools
   .map((tool) => tool.name)
 
 export const magicNoteWriteToolNames = magicNoteScopedDataTools
+  .filter((tool) => tool.access === 'write')
+  .map((tool) => tool.name)
+
+export const goodbuddyConfigReadToolNames = goodbuddyConfigTools
+  .filter((tool) => tool.access === 'read')
+  .map((tool) => tool.name)
+
+export const goodbuddyConfigWriteToolNames = goodbuddyConfigTools
   .filter((tool) => tool.access === 'write')
   .map((tool) => tool.name)
 

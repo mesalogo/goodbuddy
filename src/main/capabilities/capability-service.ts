@@ -225,6 +225,12 @@ export type RuntimeSkillContext = {
   packages: RuntimeSkillPackage[]
 }
 
+export type SkillImportInspection = {
+  sourcePath: string
+  digest: string
+  skills: Array<Omit<SkillSummary, 'enabled' | 'assignments'>>
+}
+
 export type CapabilityServiceOptions = Readonly<{
   platform?: NodeJS.Platform
   architecture?: string
@@ -278,9 +284,23 @@ async function readSkill(
     throw new Error(`${basename(directoryPath)} 的 SKILL.md 无效或过大`)
   }
   const content = await readFile(filePath, 'utf8')
+  return parseSkillContent(
+    content,
+    basename(directoryPath),
+    source,
+    expectedId
+  )
+}
+
+function parseSkillContent(
+  content: string,
+  displayName: string,
+  source: SkillSummary['source'],
+  expectedId: string | null
+): Omit<SkillSummary, 'enabled' | 'assignments'> {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]+)$/u.exec(content)
   if (!match?.[1] || !match[2]?.trim()) {
-    throw new Error(`${basename(directoryPath)} 的 SKILL.md 格式无效`)
+    throw new Error(`${displayName} 的 SKILL.md 格式无效`)
   }
   const metadata = skillMetadataSchema.parse(parseYaml(match[1]))
   // Standard SKILL.md files identify the skill by `name`; GoodBuddy packages
@@ -288,7 +308,7 @@ async function readSkill(
   const identifier = skillIdSchema.safeParse(metadata.id ?? metadata.name)
   if (!identifier.success) {
     throw new Error(
-      `${basename(directoryPath)} 的 SKILL.md 缺少可用的 Skill ID，请提供小写连字符格式的 id 或 name`
+      `${displayName} 的 SKILL.md 缺少可用的 Skill ID，请提供小写连字符格式的 id 或 name`
     )
   }
   if (expectedId !== null && identifier.data !== expectedId) {
@@ -376,53 +396,103 @@ async function discoverSkillDirectories(root: string): Promise<string[]> {
   return found.sort((left, right) => left.localeCompare(right))
 }
 
-async function copySkillPackage(
-  sourceRoot: string,
-  targetRoot: string
-): Promise<void> {
+type SkillPackageFile = {
+  relativePath: string
+  contents: Buffer
+}
+
+async function captureSkillPackage(
+  sourceRoot: string
+): Promise<SkillPackageFile[]> {
   let fileCount = 0
   let totalBytes = 0
+  const files: SkillPackageFile[] = []
 
-  const copyDirectory = async (
+  const captureDirectory = async (
     source: string,
-    target: string,
+    relativeRoot: string,
     depth: number
   ): Promise<void> => {
     if (depth > MAX_SKILL_DEPTH) {
       throw new Error('Skill 目录层级超过安全限制')
     }
-    await mkdir(target, { recursive: true })
-    const entries = await readdir(source, { withFileTypes: true })
+    const entries = (await readdir(source, { withFileTypes: true })).sort(
+      (left, right) => left.name.localeCompare(right.name)
+    )
     for (const entry of entries) {
       const sourcePath = join(source, entry.name)
-      const targetPath = join(target, entry.name)
+      const relativePath = relativeRoot
+        ? `${relativeRoot}/${entry.name}`
+        : entry.name
       const details = await lstat(sourcePath)
       if (details.isSymbolicLink()) {
         throw new Error('Skill 包不能包含符号链接')
       }
       if (details.isDirectory()) {
-        await copyDirectory(sourcePath, targetPath, depth + 1)
+        await captureDirectory(sourcePath, relativePath, depth + 1)
         continue
       }
       if (!details.isFile()) {
         throw new Error('Skill 包只能包含普通文件和目录')
       }
+      const contents = await readFile(sourcePath)
+      if (contents.byteLength !== details.size) {
+        throw new Error('Skill 内容在读取期间已发生变化，请重试')
+      }
       fileCount += 1
-      totalBytes += details.size
+      totalBytes += contents.byteLength
       if (
         fileCount > MAX_SKILL_PACKAGE_FILES ||
-        details.size > MAX_SKILL_FILE_BYTES ||
+        contents.byteLength > MAX_SKILL_FILE_BYTES ||
         totalBytes > MAX_SKILL_PACKAGE_BYTES
       ) {
         throw new Error('Skill 包大小或文件数量超过安全限制')
       }
-      await writeFile(targetPath, await readFile(sourcePath), {
-        mode: 0o600
-      })
+      files.push({ relativePath, contents })
     }
   }
 
-  await copyDirectory(sourceRoot, targetRoot, 0)
+  await captureDirectory(sourceRoot, '', 0)
+  return files.sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath)
+  )
+}
+
+function digestSkillFiles(files: readonly SkillPackageFile[]): string {
+  const packageHash = createHash('sha256')
+  for (const file of files) {
+    packageHash.update(
+      `file\0${file.relativePath}\0${file.contents.byteLength}\0`
+    )
+    packageHash.update(file.contents)
+    packageHash.update('\0')
+  }
+  return packageHash.digest('hex')
+}
+
+async function writeSkillPackageFiles(
+  files: readonly SkillPackageFile[],
+  targetRoot: string
+): Promise<void> {
+  await mkdir(targetRoot, { recursive: true })
+  for (const file of files) {
+    const targetPath = join(targetRoot, ...file.relativePath.split('/'))
+    await mkdir(dirname(targetPath), { recursive: true })
+    await writeFile(targetPath, file.contents, { mode: 0o600 })
+  }
+}
+
+async function copySkillPackage(
+  sourceRoot: string,
+  targetRoot: string
+): Promise<string> {
+  const files = await captureSkillPackage(sourceRoot)
+  await writeSkillPackageFiles(files, targetRoot)
+  return digestSkillFiles(files)
+}
+
+async function digestSkillPackage(sourceRoot: string): Promise<string> {
+  return digestSkillFiles(await captureSkillPackage(sourceRoot))
 }
 
 function parseSkillZipPath(path: string): string[] {
@@ -462,10 +532,12 @@ function isIgnoredSkillZipPath(segments: readonly string[]): boolean {
   )
 }
 
-async function extractSkillZip(
-  archivePath: string,
-  targetRoot: string
-): Promise<string | undefined> {
+type ParsedSkillZip = {
+  directoryName?: string
+  files: SkillPackageFile[]
+}
+
+async function parseSkillZip(archivePath: string): Promise<ParsedSkillZip> {
   const archiveDetails = await stat(archivePath)
   if (
     !archiveDetails.isFile() ||
@@ -537,18 +609,27 @@ async function extractSkillZip(
     }
   }
 
-  await mkdir(targetRoot, { recursive: true })
-  for (const [archiveName, contents] of Object.entries(files)) {
-    const segments = selectedPaths.get(archiveName)
-    if (!segments) {
-      continue
-    }
-    const relativeSegments = segments.slice(packageRoot.length)
-    const targetPath = join(targetRoot, ...relativeSegments)
-    await mkdir(dirname(targetPath), { recursive: true })
-    await writeFile(targetPath, contents, { mode: 0o600 })
+  return {
+    ...(packageRoot.at(-1)
+      ? { directoryName: packageRoot.at(-1) }
+      : {}),
+    files: Object.entries(files)
+      .flatMap(([archiveName, contents]) => {
+        const segments = selectedPaths.get(archiveName)
+        if (!segments) {
+          return []
+        }
+        return [
+          {
+            relativePath: segments.slice(packageRoot.length).join('/'),
+            contents: Buffer.from(contents)
+          }
+        ]
+      })
+      .sort((left, right) =>
+        left.relativePath.localeCompare(right.relativePath)
+      )
   }
-  return packageRoot.at(-1)
 }
 
 export class CapabilityService {
@@ -852,6 +933,21 @@ export class CapabilityService {
     }
   }
 
+  async getConfigurationDigest(): Promise<string> {
+    const state = await this.load()
+    const sanitized = {
+      ...state,
+      mcpServers: state.mcpServers.map((server) => ({
+        ...server,
+        credentialConfigured: Boolean(server.credential),
+        credential: undefined
+      }))
+    }
+    return createHash('sha256')
+      .update(JSON.stringify(sanitized))
+      .digest('hex')
+  }
+
   async getWebSearchCapabilityStatus(): Promise<{ enabled: boolean }> {
     const state = await this.load()
     return { enabled: state.webSearch.enabled }
@@ -1128,10 +1224,15 @@ export class CapabilityService {
     })
   }
 
-  private async importSkillDirectory(
+  private async stageSkillDirectory(
     sourceDirectory: string,
-    expectedId: string | null | undefined
-  ): Promise<string> {
+    expectedId: string | null | undefined,
+    expectedPackageDigest?: string
+  ): Promise<{
+    skill: Omit<SkillSummary, 'enabled' | 'assignments'>
+    temporaryPath: string
+    targetPath: string
+  }> {
     const temporaryPath = join(
       this.importedSkillsRoot,
       `.import-${randomUUID()}`
@@ -1150,26 +1251,174 @@ export class CapabilityService {
       if (await pathExists(targetPath)) {
         throw new Error('同名 Skill 已导入，请先删除后重试')
       }
-      await copySkillPackage(sourceDirectory, temporaryPath)
+      const copiedDigest = await copySkillPackage(
+        sourceDirectory,
+        temporaryPath
+      )
+      if (
+        expectedPackageDigest !== undefined &&
+        copiedDigest !== expectedPackageDigest
+      ) {
+        throw new Error(
+          'Skill 内容在确认后已发生变化，请重新生成导入计划'
+        )
+      }
       await readSkill(temporaryPath, 'imported', skill.id)
-      await rename(temporaryPath, targetPath)
-      const state = await this.load()
-      await this.persistUserChange({
-        ...state,
-        skills: {
-          ...state.skills,
-          [skill.id]: defaultSkillState()
-        }
-      })
-      return skill.id
+      return { skill, temporaryPath, targetPath }
     } catch (error) {
       await rm(temporaryPath, { recursive: true, force: true })
       throw error
     }
   }
 
-  importSkill(sourcePath: string): Promise<CapabilitySnapshot> {
+  private async importSkillDirectory(
+    sourceDirectory: string,
+    expectedId: string | null | undefined,
+    initialState: z.infer<typeof skillStateSchema> = defaultSkillState(),
+    expectedPackageDigest?: string
+  ): Promise<string> {
+    const staged = await this.stageSkillDirectory(
+      sourceDirectory,
+      expectedId,
+      expectedPackageDigest
+    )
+    try {
+      await rename(staged.temporaryPath, staged.targetPath)
+      const state = await this.load()
+      await this.persistUserChange({
+        ...state,
+        skills: {
+          ...state.skills,
+          [staged.skill.id]: skillStateSchema.parse(initialState)
+        }
+      })
+      return staged.skill.id
+    } catch (error) {
+      await rm(staged.temporaryPath, { recursive: true, force: true })
+      throw error
+    }
+  }
+
+  async inspectSkillImport(
+    sourcePath: string
+  ): Promise<SkillImportInspection> {
+    const canonicalSource = await realpath(sourcePath)
+    const sourceDetails = await stat(canonicalSource)
+    const isDirectory = sourceDetails.isDirectory()
+    const isZip =
+      sourceDetails.isFile() &&
+      extname(canonicalSource).toLowerCase() === '.zip'
+    if (!isDirectory && !isZip) {
+      throw new Error('所选 Skill 路径必须是目录或 .zip 文件')
+    }
+    let directories: string[]
+    let expectedId: string | null | undefined
+    let zipFiles: SkillPackageFile[] | undefined
+    if (isZip) {
+      const parsedZip = await parseSkillZip(canonicalSource)
+      zipFiles = parsedZip.files
+      directories = []
+      expectedId = parsedZip.directoryName ?? null
+    } else {
+      directories = await discoverSkillDirectories(canonicalSource)
+      if (directories.length === 0) {
+        throw new Error(
+          '所选目录及其子目录中没有找到 SKILL.md，请选择 Skill 目录或包含多个 Skill 的目录'
+        )
+      }
+    }
+
+    const skills = isZip
+      ? [
+          parseSkillContent(
+            zipFiles
+              ?.find((file) => file.relativePath === 'SKILL.md')
+              ?.contents.toString('utf8') ?? '',
+            expectedId ?? 'Skill ZIP',
+            'imported',
+            expectedId ?? null
+          )
+        ]
+      : await Promise.all(
+          directories.map((directory) =>
+            readSkill(
+              directory,
+              'imported',
+              directories.length === 1 ? undefined : null
+            )
+          )
+        )
+    const ids = new Set(skills.map((skill) => skill.id))
+    if (ids.size !== skills.length) {
+      throw new Error('所选目录包含重复的 Skill ID')
+    }
+    const [builtins, imported] = await Promise.all([
+      listSkills(this.builtinSkillsRoot, 'builtin'),
+      listSkills(this.importedSkillsRoot, 'imported')
+    ])
+    const unavailableIds = new Set([
+      ...builtins.map((skill) => skill.id),
+      ...imported.map((skill) => skill.id)
+    ])
+    const conflict = skills.find((skill) => unavailableIds.has(skill.id))
+    if (conflict) {
+      throw new Error(
+        builtins.some((skill) => skill.id === conflict.id)
+          ? `导入的 Skill ID 与内置 Skill 冲突：${conflict.id}`
+          : `同名 Skill 已导入：${conflict.id}`
+      )
+    }
+    const packageDigests = isZip
+      ? [digestSkillFiles(zipFiles ?? [])]
+      : await Promise.all(
+          directories.map((directory) => digestSkillPackage(directory))
+        )
+    const digest = createHash('sha256')
+      .update(
+        skills
+          .map((skill, index) => ({
+            id: skill.id,
+            digest: packageDigests[index]
+          }))
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((item) => `${item.id}\0${item.digest}`)
+          .join('\0')
+      )
+      .digest('hex')
+    return {
+      sourcePath: canonicalSource,
+      digest,
+      skills
+    }
+  }
+
+  importSkill(
+    sourcePath: string,
+    expectedDigest?: string,
+    initialState?: {
+      enabled: boolean
+      assignments: CapabilityAssignments
+    }
+  ): Promise<CapabilitySnapshot> {
     return this.queue(async () => {
+      let inspectedPackageDigests: string[] | undefined
+      if (expectedDigest !== undefined) {
+        const inspection = await this.inspectSkillImport(sourcePath)
+        if (inspection.digest !== expectedDigest) {
+          throw new Error(
+            'Skill 内容在确认后已发生变化，请重新生成导入计划'
+          )
+        }
+        const inspectedSource = await realpath(sourcePath)
+        const inspectedDetails = await stat(inspectedSource)
+        if (inspectedDetails.isDirectory()) {
+          inspectedPackageDigests = await Promise.all(
+            (await discoverSkillDirectories(inspectedSource)).map(
+              (directory) => digestSkillPackage(directory)
+            )
+          )
+        }
+      }
       const canonicalSource = await realpath(sourcePath)
       const sourceDetails = await stat(canonicalSource)
       const isDirectory = sourceDetails.isDirectory()
@@ -1187,13 +1436,34 @@ export class CapabilityService {
           `.extract-${randomUUID()}`
         )
         try {
-          const archiveDirectoryName = await extractSkillZip(
-            canonicalSource,
-            extractPath
-          )
+          const parsedZip = await parseSkillZip(canonicalSource)
+          if (expectedDigest !== undefined) {
+            const skillContent = parsedZip.files
+              .find((file) => file.relativePath === 'SKILL.md')
+              ?.contents.toString('utf8') ?? ''
+            const skill = parseSkillContent(
+              skillContent,
+              parsedZip.directoryName ?? 'Skill ZIP',
+              'imported',
+              parsedZip.directoryName ?? null
+            )
+            const currentDigest = createHash('sha256')
+              .update(
+                `${skill.id}\0${digestSkillFiles(parsedZip.files)}`
+              )
+              .digest('hex')
+            if (currentDigest !== expectedDigest) {
+              throw new Error(
+                'Skill 内容在确认后已发生变化，请重新生成导入计划'
+              )
+            }
+          }
+          await writeSkillPackageFiles(parsedZip.files, extractPath)
           await this.importSkillDirectory(
             extractPath,
-            archiveDirectoryName ?? null
+            parsedZip.directoryName ?? null,
+            initialState,
+            digestSkillFiles(parsedZip.files)
           )
         } finally {
           await rm(extractPath, { recursive: true, force: true })
@@ -1207,32 +1477,62 @@ export class CapabilityService {
           '所选目录及其子目录中没有找到 SKILL.md，请选择 Skill 目录或包含多个 Skill 的目录'
         )
       }
-      const failures: string[] = []
-      let importedCount = 0
-      for (const directory of directories) {
+      if (
+        expectedDigest !== undefined &&
+        inspectedPackageDigests?.length !== directories.length
+      ) {
+        throw new Error(
+          'Skill 内容在确认后已发生变化，请重新生成导入计划'
+        )
+      }
+      const stagedSkills: Array<{
+        skill: Omit<SkillSummary, 'enabled' | 'assignments'>
+        temporaryPath: string
+        targetPath: string
+      }> = []
+      for (const [index, directory] of directories.entries()) {
         try {
           // A suite directory may nest skills below its own name, so the
           // directory name is only authoritative for a single-skill import.
-          await this.importSkillDirectory(
+          const staged = await this.stageSkillDirectory(
             directory,
-            directories.length === 1 ? undefined : null
+            directories.length === 1 ? undefined : null,
+            expectedDigest !== undefined
+              ? inspectedPackageDigests?.[index]
+              : undefined
           )
-          importedCount += 1
+          stagedSkills.push(staged)
         } catch (error) {
-          failures.push(
-            `${basename(directory)}：${
-              error instanceof Error ? error.message : '导入失败'
-            }`
+          await Promise.allSettled(
+            stagedSkills.map((staged) =>
+              rm(staged.temporaryPath, { recursive: true, force: true })
+            )
           )
+          throw error
         }
       }
-      if (importedCount === 0) {
-        throw new Error(`Skill 导入失败。${failures.join('；')}`)
-      }
-      if (failures.length > 0) {
-        throw new Error(
-          `已导入 ${importedCount} 个 Skill，${failures.length} 个失败。${failures.join('；')}`
+      const state = await this.load()
+      const nextSkills = { ...state.skills }
+      for (const staged of stagedSkills) {
+        nextSkills[staged.skill.id] = skillStateSchema.parse(
+          initialState ?? defaultSkillState()
         )
+      }
+      const installedPaths: string[] = []
+      try {
+        for (const staged of stagedSkills) {
+          await rename(staged.temporaryPath, staged.targetPath)
+          installedPaths.push(staged.targetPath)
+        }
+        await this.persistUserChange({ ...state, skills: nextSkills })
+      } catch (error) {
+        await Promise.allSettled(
+          [
+            ...stagedSkills.map((staged) => staged.temporaryPath),
+            ...installedPaths
+          ].map((path) => rm(path, { recursive: true, force: true }))
+        )
+        throw error
       }
       return this.getSnapshot()
     })

@@ -4,6 +4,7 @@ import {
   knowledgeScopedDataTools,
   magicNoteScopedDataTools
 } from './scoped-data-tools'
+import { goodbuddyConfigTools } from './goodbuddy-config-tools'
 
 export type BuiltinMcpServerSummary = {
   id: string
@@ -49,5 +50,19 @@ export const builtinMcpServers = [
     access: 'mixed',
     authorization: 'conversation-scoped',
     requiresFeature: 'magic-notes'
+  },
+  {
+    id: 'goodbuddy-config',
+    name: 'GoodBuddy 配置',
+    description:
+      '发现常见配置示例，读取脱敏配置，并通过计划和原生确认管理应用偏好、Skills 与 MCP。',
+    tools: goodbuddyConfigTools.map(({ name, summary, access }) => ({
+      name,
+      description: summary,
+      access
+    })),
+    assignments: ['model', 'opencode', 'continue'],
+    access: 'mixed',
+    authorization: 'conversation-scoped'
   }
 ] as const satisfies readonly BuiltinMcpServerSummary[]

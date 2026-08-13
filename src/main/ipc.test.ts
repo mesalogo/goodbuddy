@@ -1730,7 +1730,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     selectedRuntimes?: Record<string, unknown>,
     knowledgeServiceOverride?: Record<string, unknown>,
     knowledgeGateway?: Record<string, unknown>,
-    magicNotesEnabled = false
+    magicNotesEnabled = false,
+    goodbuddyConfigService?: Record<string, unknown>
   ) {
     const assistantDatabase = {
       claimDueSchedules: vi.fn(() => []),
@@ -1825,6 +1826,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const getApplicationSettings = vi.fn(async () => ({
       magicNotesEnabled
     }))
+    const onRuntimeSettingsChanged = vi.fn(async () => {})
     const dispose = registerIpcHandlers(
       window as never,
       runtime as never,
@@ -1841,7 +1843,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       assistantDatabase as never,
       approvalBroker as never,
       {} as never,
-      vi.fn(async () => {}),
+      onRuntimeSettingsChanged,
       onBeforeClearLocalData,
       undefined,
       subagentService as never,
@@ -1854,7 +1856,13 @@ describe('registerIpcHandlers agent terminal state', () => {
       undefined,
       selectedRuntimes as never,
       undefined,
-      knowledgeGateway as never
+      knowledgeGateway as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      goodbuddyConfigService as never
     )
     return {
       approvalBroker,
@@ -1864,6 +1872,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       getApplicationSettings,
       getPolicySettings,
       getResolvedSettings,
+      onRuntimeSettingsChanged,
       clearHandler: electronMocks.handlers.get(
         ipcChannels.appClearLocalData
       ),
@@ -4123,6 +4132,202 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(harness.webContents.send).not.toHaveBeenCalledWith(
       ipcChannels.agentEvent,
       expect.objectContaining({ type: 'approval' })
+    )
+    await harness.dispose()
+  })
+
+  it('routes local config apply through native approval and denies policy mode', async () => {
+    for (const [toolApproval, expectedAuthorized] of [
+      ['always', true],
+      ['policy', false]
+    ] as const) {
+      let authorizeConfigApply:
+        | ((
+            event: {
+              requestId: string
+              planId: string
+              summary: string
+              risk: 'high'
+              reload: 'after-current-request'
+              destructive: boolean
+            },
+            signal: AbortSignal
+          ) => Promise<boolean>)
+        | undefined
+      const requestId = `3f496642-f47d-4e0a-8944-a32c77b0d6e${expectedAuthorized ? '1' : '2'}`
+      const knowledgeGateway = {
+        grant: vi.fn(
+          (
+            _requestId: string,
+            _libraryIds: readonly string[],
+            _signal: AbortSignal,
+            _magicNotesAccess: string,
+            config: {
+              authorizeApply?: typeof authorizeConfigApply
+            }
+          ) => {
+            authorizeConfigApply = config.authorizeApply
+            return 'config-capability'
+          }
+        ),
+        getAvailableToolNames: vi.fn(() => [
+          'goodbuddy_config_capabilities',
+          'goodbuddy_config_get',
+          'goodbuddy_config_plan',
+          'goodbuddy_config_apply'
+        ]),
+        drainReferences: vi.fn(() => []),
+        revoke: vi.fn()
+      }
+      const goodbuddyConfigService = {
+        takePendingReload: vi.fn(() => 'none'),
+        revokeRequest: vi.fn(),
+        clear: vi.fn()
+      }
+      const runtime = {
+        runtimeId: 'model',
+        capability: 'chat',
+        supportsToolExecution: true,
+        async *run(request: { requestId: string }) {
+          const authorized = await authorizeConfigApply?.(
+            {
+              requestId: request.requestId,
+              planId: '11111111-1111-4111-8111-111111111111',
+              summary: '删除一个 MCP Server',
+              risk: 'high',
+              reload: 'after-current-request',
+              destructive: true
+            },
+            new AbortController().signal
+          )
+          expect(authorized).toBe(expectedAuthorized)
+          yield { requestId: request.requestId, type: 'done' }
+        }
+      }
+      const harness = createHarness(
+        runtime,
+        undefined,
+        toolApproval,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        knowledgeGateway,
+        false,
+        goodbuddyConfigService
+      )
+      harness.getResolvedSettings.mockResolvedValue({
+        workspacePath: 'C:\\Workspace'
+      })
+      harness.approvalBroker.request.mockResolvedValue('once')
+
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId,
+        conversationId: `conversation-${requestId}`,
+        prompt: '删除 MCP',
+        workMode: 'execute'
+      })
+
+      await vi.waitFor(() =>
+        expect(
+          harness.assistantDatabase.updateTaskStatus
+        ).toHaveBeenCalledWith(requestId, 'completed')
+      )
+      if (expectedAuthorized) {
+        expect(harness.approvalBroker.request).toHaveBeenCalledWith(
+          expect.objectContaining({
+            requestId,
+            conversationId: `goodbuddy-config:${requestId}`,
+            scopeKey:
+              'goodbuddy-config:11111111-1111-4111-8111-111111111111',
+            title: '允许高风险 GoodBuddy 配置变更？',
+            toolName: 'goodbuddy_config_apply',
+            allowPermanent: false
+          }),
+          expect.any(AbortSignal),
+          expect.any(Function)
+        )
+      } else {
+        expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+      }
+      await harness.dispose()
+    }
+  })
+
+  it('coalesces config reload until all active requests finish', async () => {
+    const completions = new Map<string, () => void>()
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        await new Promise<void>((resolve) => {
+          completions.set(request.requestId, resolve)
+        })
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'config-capability'),
+      getAvailableToolNames: vi.fn(() => [
+        'goodbuddy_config_capabilities'
+      ]),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const goodbuddyConfigService = {
+      takePendingReload: vi.fn(() => 'after-current-request'),
+      revokeRequest: vi.fn(),
+      clear: vi.fn()
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      false,
+      goodbuddyConfigService
+    )
+    harness.getResolvedSettings.mockResolvedValue({
+      workspacePath: 'C:\\Workspace'
+    })
+    const requestIds = [
+      '3f496642-f47d-4e0a-8944-a32c77b0d6e3',
+      '3f496642-f47d-4e0a-8944-a32c77b0d6e4'
+    ]
+    for (const requestId of requestIds) {
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId,
+        conversationId: `conversation-${requestId}`,
+        prompt: '配置 Runtime',
+        workMode: 'execute'
+      })
+    }
+    await vi.waitFor(() => expect(completions.size).toBe(2))
+
+    completions.get(requestIds[0]!)?.()
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestIds[0], 'completed')
+    )
+    expect(harness.onRuntimeSettingsChanged).not.toHaveBeenCalled()
+
+    completions.get(requestIds[1]!)?.()
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestIds[1], 'completed')
+    )
+    await vi.waitFor(() =>
+      expect(harness.onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+    )
+    expect(goodbuddyConfigService.takePendingReload).toHaveBeenCalledTimes(
+      2
     )
     await harness.dispose()
   })
