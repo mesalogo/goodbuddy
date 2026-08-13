@@ -14,7 +14,8 @@ import { useTranslation } from 'react-i18next'
 import type {
   AssistantExpert,
   AssistantHeartbeatConfig,
-  HeartbeatCreateInput
+  HeartbeatCreateInput,
+  ProjectChannel
 } from '../../shared/assistant-contracts'
 import type {
   AgentRuntimeDetection,
@@ -70,6 +71,8 @@ const settingsTabs = settingsCategoryList.map(({ id }) => id)
 type SettingsPanelProps = {
   open: boolean
   presentation?: 'modal' | 'page'
+  initialCategory?: SettingsCategoryId
+  initialChannel?: ProjectChannel
   onClose: () => void
   onSaved: (settings: RuntimeSettings) => void
   onNotify?: (notification: AppNotificationInput) => void
@@ -351,6 +354,8 @@ function RuntimeConfigCard({
 export function SettingsPanel({
   open,
   presentation = 'modal',
+  initialCategory,
+  initialChannel,
   onClose,
   onSaved,
   onNotify = () => {},
@@ -461,7 +466,7 @@ export function SettingsPanel({
   const [detection, setDetection] = useState<AgentRuntimeDetection>()
   const [detecting, setDetecting] = useState(false)
   const [activeTab, setActiveTab] =
-    useState<SettingsCategoryId>('runtime')
+    useState<SettingsCategoryId>(initialCategory ?? 'runtime')
   const [modelType, setModelType] = useState<ModelType>('llm')
   const [speechModelDraftId, setSpeechModelDraftId] = useState<
     string | null | undefined
@@ -2610,7 +2615,10 @@ export function SettingsPanel({
             </div>
           )}
           {activeTab === 'channels' && (
-            <ChannelSettingsSection onNotify={onNotify} />
+            <ChannelSettingsSection
+              initialChannel={initialChannel}
+              onNotify={onNotify}
+            />
           )}
           {activeTab === 'roles' && (
             <>

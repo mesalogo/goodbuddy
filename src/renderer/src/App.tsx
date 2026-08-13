@@ -89,6 +89,7 @@ import type {
   ConversationToolActivity,
   ProjectCreateInput,
   InteractiveWorkMode,
+  ProjectChannel,
   WorkspaceChanges
 } from '../../shared/assistant-contracts'
 import {
@@ -132,6 +133,7 @@ import {
   type SidebarArtifact
 } from './RightAssistantSidebar'
 import { SettingsPanel } from './SettingsPanel'
+import type { SettingsCategoryId } from './settings-categories'
 import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
 import goodbuddyLightIcon from './assets/goodbuddy-light.png'
 import {
@@ -1448,6 +1450,10 @@ function App(): React.JSX.Element {
     Record<string, BrowserLiveState>
   >({})
   const [view, setView] = useState<WorkspaceView>('chat')
+  const [settingsInitialCategory, setSettingsInitialCategory] =
+    useState<SettingsCategoryId>()
+  const [settingsInitialChannel, setSettingsInitialChannel] =
+    useState<ProjectChannel>()
   const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [conversationActionsId, setConversationActionsId] = useState('')
@@ -5204,7 +5210,11 @@ function App(): React.JSX.Element {
                 action={
                   <button
                     className="secondary-button"
-                    onClick={() => setView('settings')}
+                    onClick={() => {
+                      setSettingsInitialCategory('channels')
+                      setSettingsInitialChannel(activeProject.channel)
+                      setView('settings')
+                    }}
                     type="button"
                   >
                     {t('chat.remote.openSettings')}
@@ -6773,10 +6783,16 @@ function App(): React.JSX.Element {
           <SettingsPanel
             appearanceTheme={appearanceTheme}
             heartbeats={assistantHeartbeats}
+            initialCategory={settingsInitialCategory}
+            initialChannel={settingsInitialChannel}
             magicNotesEnabled={magicNotesEnabled}
             onAppearanceThemeChange={setAppearanceTheme}
             onClearLocalData={clearLocalData}
-            onClose={() => setView('chat')}
+            onClose={() => {
+              setSettingsInitialCategory(undefined)
+              setSettingsInitialChannel(undefined)
+              setView('chat')
+            }}
             onCreateHeartbeat={createHeartbeat}
             onExpertsChanged={(experts) => {
               setAssistantExperts(experts)

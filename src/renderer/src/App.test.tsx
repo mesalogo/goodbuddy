@@ -2709,6 +2709,13 @@ describe('App', () => {
       ])
     )
     expect(screen.getAllByText('尚无远程会话').length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: '打开设置' }))
+
+    const channelSettingsTab = await screen.findByRole('tab', {
+      name: '消息通道'
+    })
+    expect(channelSettingsTab).toHaveAttribute('aria-selected', 'true')
   })
 
   it('shows client-created remote conversations without obsolete approval copy', async () => {

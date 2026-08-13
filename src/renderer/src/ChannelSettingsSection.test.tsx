@@ -616,6 +616,35 @@ describe('ChannelSettingsSection', () => {
     ).toBeInTheDocument()
   })
 
+  it('opens the requested channel configuration', async () => {
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        channels: {
+          ...bindingApi(),
+          getSnapshot: vi.fn(async () => snapshot),
+          apply: vi.fn(),
+          testConnection: vi.fn()
+        },
+        projects: {
+          list: vi.fn(async () => projects),
+          update: vi.fn()
+        },
+        settings: settingsApi()
+      } as unknown as DesktopApi
+    })
+
+    render(<ChannelSettingsSection initialChannel="wecom" />)
+
+    expect(
+      await screen.findByRole('tab', { name: '企业微信' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute(
+      'aria-labelledby',
+      'channel-settings-tab-wecom'
+    )
+  })
+
   it('renders English channel copy while preserving project data', async () => {
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,

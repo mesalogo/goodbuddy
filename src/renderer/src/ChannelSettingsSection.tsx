@@ -972,8 +972,10 @@ function WeixinChannelEditor({
 }
 
 export function ChannelSettingsSection({
+  initialChannel = 'weixin',
   onNotify = () => undefined
 }: {
+  initialChannel?: ProjectChannel
   onNotify?: (notification: AppNotificationInput) => void
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
@@ -999,7 +1001,7 @@ export function ChannelSettingsSection({
   const [bindingOpen, setBindingOpen] = useState(false)
   const [bindingError, setBindingError] = useState<string>()
   const [activeChannel, setActiveChannel] =
-    useState<ProjectChannel>('weixin')
+    useState<ProjectChannel>(initialChannel)
   const [drafts, setDrafts] = useState<
     Record<CredentialChannel, ChannelDraft>
   >({
