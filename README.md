@@ -1,155 +1,75 @@
 # GoodBuddy
 
-面向全球专业工作场景的安全、跨平台桌面智能助手。
-
-GoodBuddy 将模型连接、Agent Runtime、本地知识库、知识图谱、远程消息通道、任务协作和持续成长能力组织在同一个桌面工作空间中。它不是简单的聊天窗口，而是一套可审计、可控制、可长期使用的个人智能工作环境。
+安全、跨平台、本地优先的桌面 AI 助手与 Agent 工作空间。
 
 ![GoodBuddy 工作空间](docs/screenshots/workspace-overview.png)
 
-## 为什么选择 GoodBuddy
+## 核心能力
 
-### 安全可控的 Agent 执行
-
-GoodBuddy 通过统一的 Agent Runtime 控制层接入直连模型、OpenCode 和 Continue。工具不会被直接暴露给界面，所有执行都受到工作模式、权限策略和运行边界约束。
-
-- `Ask`：只读问答，不调用工具。
-- `Execute`：选择该模式即授权当前交互运行使用已启用的受控工具。
-- 可在设置中禁止直连模型执行所有工具；工具调用仍记录到活动。
-- 统一处理取消、超时、输出边界、进程退出和异常恢复。
-
-### 数据主权与本地优先
-
-- 会话、任务、成果、记忆、知识库和图谱保存在本地 SQLite。
-- API Key 通过系统安全存储加密，不以明文写入配置。
-- Electron Main、Preload、Renderer 严格分层，Renderer 仅能使用类型化 IPC。
-- 子进程使用环境变量白名单，避免继承无关凭据。
-- 默认不依赖 GoodBuddy 云端账户，也不代理用户的模型流量。
-
-### 跨平台、开放协议与自托管
-
-GoodBuddy 面向全球用户提供跨平台发布、开放模型协议、远程消息通道、离线语音和本地或私有网络部署能力。下表只列当前代码与发布流程覆盖的目标；具体操作系统版本、设备、桌面环境和网络组合仍应在目标环境完成安装、启动、模型调用和桌面集成验收。
-
-#### 支持的平台
-
-| 操作系统 | 处理器架构 | 交付形式 |
-| --- | --- | --- |
-| Windows | `x64`、`arm64` | NSIS 安装包、便携 ZIP |
-| macOS | `x64`、`arm64` | DMG、ZIP |
-| Linux | `x64`、`arm64` | AppImage、DEB |
-
-六组系统与架构目标均由原生 GitHub Actions Runner 构建和校验，并生成包含 SHA-256 哈希的发布清单。其他操作系统和处理器架构目前不提供正式发布包。
-
-#### 模型与服务连接
-
-GoodBuddy 不绑定特定模型厂商。用户可以通过 OpenAI Responses、OpenAI 兼容 Chat Completions、Anthropic Messages、OpenAI Images Generations 和 OpenAI 兼容 Embeddings 接口连接云端服务、本机模型、私有服务或企业网关。支持自定义服务地址、API Key 和无需认证的受控连接；文本、推理、工具、图片和上下文能力取决于所连接服务的具体实现。
-
-#### 消息通道、离线语音与自托管能力
-
-| 类别 | 已支持项 | 说明 |
-| --- | --- | --- |
-| 消息通道 | 微信 ClawBot、企业微信、钉钉 | 支持独立通道项目与远程会话；提供加密凭据、连接测试、动态启停、发送者范围和状态诊断 |
-| 微信附件 | 文字、图片和文件 | 微信 ClawBot 使用本机扫码绑定；单条消息最多 4 个附件，解密后合计不超过 12MB |
-| 远程 Runtime | 直连文本模型、OpenCode、Continue | 每个通道使用系统管理项目和独立远程会话，支持 Ask / Execute 与活动审计 |
-| 离线语音（SenseVoice） | SenseVoiceSmall INT8 | 支持中文、粤语、英语、日语和韩语，适合本地 CPU |
-| 中英及中粤英离线语音 | Paraformer 中英双语 INT8、Paraformer 中粤英三语 INT8 | 分别面向普通话与英语，以及普通话、粤语和英语的快速本地识别 |
-| 多语言离线语音 | Whisper Tiny、Small、Medium 多语言 INT8 | 提供从轻量快速到高质量的多语言识别选择 |
-| 界面语言与字体 | 简体中文、English；Inter Variable、Noto Sans SC Variable | 语言与字体资源随应用打包，不依赖远程字体服务 |
-| 本地数据 | SQLite、FTS5、本地知识库与知识图谱 | 会话、任务、成果、记忆和知识数据默认保存在本机 |
-| 自托管模型与网关 | 自定义 HTTP(S) 地址、API Key 或无需认证 | 可连接本机、私有网络、企业网关和自托管模型服务 |
-| 私有网络连接兼容性 | HTTP、自签名证书、无效或过期证书 | GoodBuddy 进程管理的连接采用宽松证书策略；外部浏览器以及微信凭据和媒体端点仍执行各自的严格校验 |
-| MCP | `stdio`、Streamable HTTP、SSE | 可接入本机或远程 MCP Server；远程连接支持 Bearer Token |
-| Agent Runtime | 内置 OpenCode、Continue | 支持自定义程序路径、配置路径、模型来源和服务地址；Linux 内置 OpenCode 可使用 bubblewrap 严格沙箱 |
-
-> 自定义端点表示 GoodBuddy 已实现对应协议并允许用户配置服务地址，不等同于对每个服务商、模型版本或套餐逐一完成认证。
-
-## 核心功能
-
-### 一体化智能工作空间
-
-- Projects 与独立对话上下文。
-- 专家角色和最多三个只读专家并行分析。
-- 任务、活动、成果、记忆和自动化集中管理。
-- 支持文件、桌面截图、应用窗口、剪贴板和语音上下文。
-- 显示真实 Git 工作区变更。
-- 支持远程任务委派与持久化结果发件箱。
-- Skills 与 MCP 能力按需接入。
-
-### 远程消息通道与微信 ClawBot
-
-微信 ClawBot、企业微信和钉钉分别使用系统管理的通道项目。远程发送者拥有独立会话，任务、活动和成果持续归属于对应通道与项目。
-
-- 微信 ClawBot 使用本机扫码绑定，支持个人微信私聊文字、图片和文件。
-- 单条微信消息最多 4 个附件，解密后合计不超过 12MB；图片和支持的文档进入现有受控上下文。
-- 通道可选择直连文本模型、OpenCode 或 Continue。OpenCode/Continue 始终跟随“Agent Runtime”中的全局配置，不在通道中维护第二套 Runtime 配置。
-- 远程消息支持 Ask 与 Execute。Execute 不显示通道专属逐次审批，但仍受发送者范围、项目目录、Runtime、沙箱、能力开关和活动审计约束。
-- 当前任务生成的图片可以返回微信；明确要求文件时可将本次最终文本生成为 Markdown 附件，不自动发送已有工作区文件。
-- “断开本机绑定”只停止本机收发并清除本地凭据，不会删除通道项目、远程会话或历史，也不承诺解除微信服务端授权。
-
-完整设计、安全边界和联调状态见[远程消息通道项目与微信 ClawBot 集成 PRD](docs/features/wechat-clawbot-channel-project-prd.md)。
-
-### 本地知识库与知识图谱
-
-文件、目录和网页内容可以按知识库独立管理。GoodBuddy 会完成解析、索引、检索和图谱构建，并保留可追溯的来源与证据。
+- **安全执行**：`Ask` 保持只读；`Execute` 仅运行已启用且受边界约束的工具，并保留活动记录。
+- **本地优先**：会话、任务、成果、记忆、知识库和图谱保存在本地 SQLite；API Key 由系统安全存储加密。
+- **多 Runtime**：支持直连模型、OpenCode 和 Continue，统一处理取消、超时、输出限制和进程退出。
+- **开放连接**：支持 OpenAI Responses、OpenAI 兼容 Chat Completions、Anthropic Messages、OpenAI Images、Embeddings、Skills 和 MCP。
+- **知识工作区**：支持文件、目录和网页导入，以及全文、词组、向量和图谱混合检索。
+- **工作管理**：集中管理 Projects、对话、任务、活动、成果、记忆、魔法笔记和智能心跳。
+- **远程通道**：支持微信 ClawBot、企业微信和钉钉，每个发送者使用独立远程会话。
+- **桌面上下文**：可选择文件、截图、应用窗口、剪贴板和语音作为上下文。
+- **离线语音**：支持 SenseVoice、Paraformer 和 Whisper 本地模型。
+- **富文本回答**：支持 Markdown、LaTeX 公式和受控 Mermaid 图表。
 
 ![GoodBuddy 知识工作区](docs/screenshots/knowledge-workspace.png)
 
-- SQLite FTS5、中文词组、向量和图谱混合检索，并提供可调权重、本地重排与有界上下文。
-- 检索测试工作台展示候选数量、通道降级、耗时、排名、分数和实际送入模型的上下文。
-- 支持固定长度、结构化和父子分块，以及分块搜索、编辑、停用、删除和可取消重建。
-- 对话可选择由模型按需检索或每次先检索，并展示检索状态与可打开上下文的来源引用。
-- 支持规则、模型和混合图谱抽取。
-- 支持实体、关系、别名、证据与来源位置追溯。
-- 图谱可搜索、筛选、缩放和拖动节点。
-- 支持实体编辑、合并以及关系维护。
-- 文档解析包含压缩包展开限制、路径校验和敏感字段过滤。
-
 ![GoodBuddy 知识图谱](docs/screenshots/knowledge-graph.png)
-
-### 魔法笔记
-
-魔法笔记提供本地优先的笔记与待办工作台，支持范围管理、编辑、筛选和受控 AI 评论。
 
 ![GoodBuddy 魔法笔记](docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
 
-### 智能心跳
-
-智能心跳让 GoodBuddy 不只响应当前问题，还能定期回顾近期工作，沉淀长期记忆，发现风险，并将洞察转化为可处理的建议。
-
 ![GoodBuddy 智能心跳](docs/screenshots/smart-heartbeat.png)
 
-- 按项目或全局配置周期回顾计划。
-- 展示心跳健康、记忆沉淀、洞察发现和行动转化。
-- 提供成长趋势、最新报告和可审计的运行轨迹。
-- 建议记忆可确认或忽略。
-- 后续任务可带入 Ask 对话、标记完成或忽略。
-- 支持手动运行、暂停、恢复和安全删除计划。
+完整功能和路线图见 [FEATURES.md](FEATURES.md)。
 
-### 多 Runtime 与模型连接
+## 安装
 
-| 能力 | 适用场景 | 控制方式 |
+从 [GitHub Releases](https://github.com/mesalogo/goodbuddy/releases) 下载：
+
+| 系统 | 架构 | 格式 |
 | --- | --- | --- |
-| 直连模型 | 问答、知识总结、受控工具执行、图像生成 | Ask 只读；Execute 自动授权已启用的工作区、浏览器与 MCP 工具，可设置为全部禁止 |
-| OpenCode | 完整编码与工作区任务 | Execute 不弹 GoodBuddy 审批，保留 Runtime 自身权限、取消和活动记录 |
-| Continue | Agent 编码与工作区任务 | Execute 不弹 GoodBuddy 审批，使用独立宿主、取消和活动记录 |
+| Windows | `x64`、`arm64` | NSIS、便携 ZIP |
+| macOS | `x64`、`arm64` | DMG、ZIP |
+| Linux | `x64`、`arm64` | AppImage、DEB |
 
-消息通道选择 OpenCode 或 Continue 时只选择 Runtime 类型，具体模型来源、自有配置、可执行文件和服务地址统一复用“Agent Runtime”设置，并在每次远程请求开始时解析当前全局配置。
+当前尚未配置代码签名和 macOS notarization，系统可能显示安全提示。
 
-## 功能矩阵与路线图
+## 从源码运行
 
-以下为仓库首页的简要路线图；完整能力说明、状态和重大规划统一记录在 [FEATURES.md](FEATURES.md)。
+需要 Node.js 24 和 npm：
 
-- [x] [跨平台桌面工作空间与安全上下文](FEATURES.md#桌面基础工作空间与上下文)
-- [x] [多 Runtime、模型连接、Skills 与 MCP](FEATURES.md#agent-runtime-与模型连接)
-- [x] [本地知识库、向量检索与知识图谱](FEATURES.md#skillsmcp-与知识库)
-- [x] [任务、成果、记忆与智能心跳](FEATURES.md#工作管理长期协作与工作流)
-- [x] [微信 ClawBot、企业微信与钉钉消息通道](FEATURES.md#浏览器通信语音与应用维护)
-- [x] [本地录音与离线转写](FEATURES.md#浏览器通信语音与应用维护)
-- [x] [魔法笔记 / Magic Notes](FEATURES.md#知识工作空间与魔法笔记)：本地优先的笔记与待办工作台，支持受控 AI 评论。
-- [ ] [Agent 框架、受控工作流与团队协作](FEATURES.md#agent-框架与协作能力)
-- [ ] [多云远程沙盒 Agent](FEATURES.md#多云远程沙盒-agent)
+```bash
+git clone https://github.com/mesalogo/goodbuddy.git
+cd goodbuddy
+npm ci
+npm run dev
+```
 
-`[x]` 表示当前已提供，`[ ]` 表示开发中或规划中；未完成项目不代表已包含在当前发布版本中。
+构建与打包说明见 [BUILD.md](BUILD.md)。
 
-## 隐私说明
+## 隐私与安全
 
-模型请求只会发送到用户选择的模型连接。本地数据保存在当前系统的应用数据目录中；远程委派仅在用户显式配置端点和令牌后启用。为兼容受控私有网络，GoodBuddy 进程管理的连接允许 HTTP，并接受无效、自签名或过期的 HTTPS 证书；交由外部浏览器打开的 URL 仍遵循浏览器自身的证书策略。微信凭据和媒体端点不受该策略放宽，始终只允许经过校验的腾讯微信 HTTPS 主机与重定向。
+- 模型请求只发送到用户选择的服务。
+- 本地数据默认保存在系统应用数据目录。
+- Renderer 不接触原始 Electron API 或模型凭据。
+- 远程委派仅在用户配置端点和令牌后启用。
+- 内网兼容模式允许应用内 HTTP 和非标准 HTTPS 证书；微信凭据和媒体端点仍执行严格校验。
+
+## 参与贡献
+
+欢迎提交 Issue 和 Pull Request。请先阅读 [AGENTS.md](AGENTS.md)，提交前运行：
+
+```bash
+npm test
+npm run typecheck
+npm run lint
+```
+
+## 开源许可
+
+GoodBuddy 的原创代码采用 [0BSD License](LICENSE)，可自由使用、修改、分发和商用。第三方组件和资源遵循各自许可证。
