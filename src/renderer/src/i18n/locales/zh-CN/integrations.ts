@@ -82,7 +82,7 @@ export const integrations = {
     qr: {
       title: '绑定微信 ClawBot',
       instructions:
-        '请在微信中依次打开“设置 → ClawBot → 开始扫一扫”，扫描下方二维码。二维码不会发送到第三方页面。',
+        '请在微信中依次打开“设置 → 插件 → ClawBot → 开始扫一扫”，扫描下方二维码。二维码不会发送到第三方页面。',
       close: '关闭微信绑定',
       imageAlt: '微信 ClawBot 绑定二维码',
       generating: '正在生成二维码…',
