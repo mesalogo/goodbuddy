@@ -94,7 +94,28 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).toMatch(/--font-caption:\s*11px/u)
     expect(stylesheet).toMatch(/font-synthesis:\s*style/u)
     expect(stylesheet).toContain(
-      '"Inter Variable", "Noto Sans SC Variable"'
+      '"Inter Variable", "Segoe UI Variable", "SF Pro Text", "PingFang SC"'
+    )
+    expect(stylesheet).toContain(
+      '"Microsoft YaHei UI", "Noto Sans SC Variable"'
+    )
+    expect(stylesheet).toMatch(
+      /\.nav-item span:nth-child\(2\)\s*\{[^}]*font-size:\s*var\(--font-body\);[^}]*font-weight:\s*500;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.section-label\s*\{[^}]*font-size:\s*var\(--font-caption\);[^}]*font-weight:\s*600;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-item span\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-item small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.markdown-content\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer__input textarea\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.6;/u
     )
   })
 

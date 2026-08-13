@@ -69,8 +69,8 @@
   --font-body: 13px;
   --font-caption: 11px;
   --font-family-ui:
-    "Inter Variable", "Noto Sans SC Variable", "Segoe UI Variable",
-    "SF Pro Text", "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC",
+    "Inter Variable", "Segoe UI Variable", "SF Pro Text", "PingFang SC",
+    "Microsoft YaHei UI", "Noto Sans SC Variable", "Noto Sans CJK SC",
     sans-serif;
   --font-family-mono:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
@@ -1518,13 +1518,14 @@ textarea:focus-visible {
 
 .brand__copy strong {
   font-size: 15px;
+  font-weight: 600;
   letter-spacing: 0.01em;
 }
 
 .brand__copy span {
   color: var(--text-muted);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-size: var(--font-caption);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -1549,7 +1550,7 @@ textarea:focus-visible {
   border-radius: var(--radius-control);
   background: var(--surface-raised);
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: var(--font-body);
 }
 
 .project-create-backdrop {
@@ -1721,7 +1722,7 @@ textarea:focus-visible {
   border-radius: 5px;
   background: rgb(255 255 255 / 12%);
   color: var(--text-on-accent);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .sidebar-search {
@@ -1790,13 +1791,13 @@ textarea:focus-visible {
 
 .nav-item span:nth-child(2) {
   flex: 1;
-  font-size: 12px;
-  font-weight: 550;
+  font-size: var(--font-body);
+  font-weight: 500;
 }
 
 .nav-item__hint {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .nav-item__badge {
@@ -1807,7 +1808,7 @@ textarea:focus-visible {
   border-radius: 999px;
   background: var(--danger-solid);
   color: var(--text-on-accent);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 700;
   place-items: center;
 }
@@ -1827,9 +1828,9 @@ textarea:focus-visible {
   padding: 0 9px;
   margin: 0 0 7px;
   color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-size: var(--font-caption);
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -1866,14 +1867,14 @@ textarea:focus-visible {
 .conversation-item span {
   flex: 1;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--font-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .conversation-item small {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .conversation-source-badge {
@@ -1931,8 +1932,8 @@ textarea:focus-visible {
   border-radius: var(--radius-control);
   background: var(--accent-subtle);
   color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
+  font-size: var(--font-caption);
+  font-weight: 600;
 }
 
 .user-card__copy {
@@ -1944,12 +1945,13 @@ textarea:focus-visible {
 
 .user-card__copy strong {
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: var(--font-body);
+  font-weight: 600;
 }
 
 .user-card__copy small {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .workspace {
@@ -2906,8 +2908,8 @@ button > svg {
   color: var(--text-primary);
   flex: 0 1 auto;
   gap: 6px;
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--font-body);
+  font-weight: 600;
 }
 
 .conversation-title span {
@@ -2936,8 +2938,8 @@ button > svg {
   margin-right: 8px;
   background: var(--surface-raised);
   color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 650;
+  font-size: var(--font-caption);
+  font-weight: 600;
   gap: 6px;
 }
 
@@ -2998,9 +3000,9 @@ button > svg {
 .eyebrow {
   margin: 0 0 8px;
   color: var(--accent);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
+  font-size: var(--font-caption);
+  font-weight: 700;
+  letter-spacing: 0.12em;
 }
 
 .welcome h1 {
@@ -3014,7 +3016,7 @@ button > svg {
 .welcome__description {
   margin: 12px 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-body);
 }
 
 .quick-actions {
@@ -3064,13 +3066,14 @@ button > svg {
 
 .quick-actions strong {
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: var(--font-body);
+  font-weight: 600;
 }
 
 .quick-actions small {
   color: var(--text-muted);
-  font-size: 10px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .message-list {
@@ -3250,18 +3253,19 @@ button > svg {
 
 .message__meta strong {
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .message__meta span {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .markdown-content {
   color: var(--text-primary);
-  font-size: 13px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
@@ -3467,7 +3471,7 @@ button > svg {
 .message-generated-image figcaption {
   margin-top: 5px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .message-generated-image > .message-image-actions {
@@ -3479,7 +3483,7 @@ button > svg {
   align-items: flex-start;
   margin-top: 8px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   gap: 7px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -4176,7 +4180,7 @@ button > svg {
   resize: none;
   background: transparent !important;
   color: var(--text-primary);
-  font-size: var(--font-body);
+  font-size: 14px;
   line-height: 1.6;
 }
 
