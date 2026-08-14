@@ -12,12 +12,9 @@ import {
   startControlledDeepSeekHarnessHost,
   type ControlledHarnessHost
 } from './deepseek-harness-host'
-import { installHarnessChildProcessWindowGuard } from './agent/deepseek-harness-child-process'
 
 const parentPort = process.parentPort
 const restoreDiagnostics = installHarnessDiagnosticGuard()
-const restoreChildProcessWindowGuard =
-  installHarnessChildProcessWindowGuard()
 // The Windows ACL sandbox launches its JavaScript runner through
 // `process.execPath`. Inside an Electron UtilityProcess that path is Electron,
 // so descendants must opt into Electron's supported Node execution mode.
@@ -44,7 +41,6 @@ async function close(): Promise<void> {
   closed = true
   await host?.dispose().catch(() => undefined)
   transport?.dispose()
-  restoreChildProcessWindowGuard()
   restoreDiagnostics()
 }
 
