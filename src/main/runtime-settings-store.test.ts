@@ -43,7 +43,6 @@ function settings(
     continueConfigPath: '',
     continueMode: 'chat',
     deepseekHarnessModelSource: { kind: 'platform' },
-    runtimeSandboxMode: 'auto',
     knowledgeEmbeddingEnabled: false,
     knowledgeEmbeddingBaseUrl:
       'http://127.0.0.1:11434/v1/embeddings',
@@ -229,6 +228,7 @@ describe('RuntimeSettingsStore', () => {
     versionFifteen.version = 15
     versionFifteen.deepseekHarnessBinaryPath =
       'C:\\untrusted\\custom-harness.js'
+    versionFifteen.runtimeSandboxMode = 'strict'
     await writeFile(filePath, JSON.stringify(versionFifteen), 'utf8')
 
     const migrated = new RuntimeSettingsStore(filePath, cipher, {
@@ -246,6 +246,13 @@ describe('RuntimeSettingsStore', () => {
     expect(resolvedSettings).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
+    expect(publicSettings).not.toHaveProperty('runtimeSandboxMode')
+    expect(publicSettings.configured).not.toHaveProperty(
+      'runtimeSandboxMode'
+    )
+    expect(resolvedSettings).not.toHaveProperty(
+      'runtimeSandboxMode'
+    )
     await migrated.update(settings())
     const persisted = JSON.parse(
       await readFile(filePath, 'utf8')
@@ -254,6 +261,7 @@ describe('RuntimeSettingsStore', () => {
     expect(persisted).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
+    expect(persisted).not.toHaveProperty('runtimeSandboxMode')
   })
 
   it('accepts compatible gateways and rejects incompatible Harness profiles', () => {

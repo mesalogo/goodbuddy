@@ -135,16 +135,12 @@ function setup(
             supports: {
               cancellation: true,
               sessionRelease: true,
-              oneShotApproval: true,
               reasoningEvents: true,
               toolEvents: true,
               usageEvents: true,
               credentialResolution: true
             },
-            sandbox: {
-              provider: 'test',
-              enforcement: 'full'
-            }
+            execution: { mode: 'host' }
           }
         }
         if (method === 'goodbuddy/session/prepare') {
@@ -404,7 +400,6 @@ describe('DeepSeekHarnessRuntime', () => {
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-test',
       credentialRefs: [],
-      requiredSandboxEnforcement: undefined,
       skillPackages: []
     })
     expect(harness.requests).toContainEqual({

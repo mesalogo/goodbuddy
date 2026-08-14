@@ -14,13 +14,6 @@ import { GOODBUDDY_HARNESS_MAX_STEP_TOKENS } from './agent/goodbuddy-harness-con
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
-const expectedSandbox =
-  process.platform === 'win32'
-    ? { provider: 'windows-acl', enforcement: 'partial' as const }
-    : process.platform === 'darwin'
-      ? { provider: 'seatbelt', enforcement: 'full' as const }
-      : { provider: 'local-linux', enforcement: 'full' as const }
-
 async function readAllMessages(
   readable: ReadableStream<unknown>
 ): Promise<unknown[]> {
@@ -41,7 +34,6 @@ describe('controlled DeepSeek Harness host', () => {
         provider: 'goodbuddy',
         model: 'deepseek-test',
         harnessVersion: '0.1.0-rc.6',
-        sandbox: { provider: 'test', enforcement: 'full' },
         credentialRefs: ['GOODBUDDY_API_KEY'],
         dshHome: 'C:\\controlled-dsh-home',
         skillPackages: []
@@ -69,7 +61,7 @@ describe('controlled DeepSeek Harness host', () => {
     }
   })
 
-  it('verifies the real local sandbox before advertising capabilities', async () => {
+  it('starts the controlled host with local execution providers', async () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'goodbuddy-harness-host-'))
     )
@@ -89,7 +81,6 @@ describe('controlled DeepSeek Harness host', () => {
       provider: 'goodbuddy',
       model: 'qwen-plus',
       harnessVersion: '0.1.0-rc.6',
-      sandbox: expectedSandbox,
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       stream: {
@@ -98,6 +89,29 @@ describe('controlled DeepSeek Harness host', () => {
       } as never
     })
 
+    expect(host.context.fs.sandboxMode).toBeUndefined()
+    expect(host.context.shell.sandboxMode).toBeUndefined()
+    expect(
+      host.context.shell.resolve({
+        command: 'echo goodbuddy-host-execution'
+      }).workdir
+    ).toBe(root)
+    const execution = await host.context.shell.run(
+      host.context.shell.resolve({
+        command:
+          process.platform === 'win32'
+            ? 'Write-Output goodbuddy-host-execution'
+            : 'printf goodbuddy-host-execution'
+      })
+    )
+    expect(execution).toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+      aborted: false
+    })
+    expect(execution.stdout.text).toContain(
+      'goodbuddy-host-execution'
+    )
     await host.dispose()
   })
 
@@ -122,7 +136,6 @@ describe('controlled DeepSeek Harness host', () => {
       provider: 'goodbuddy',
       model: 'deepseek-test',
       harnessVersion: '0.1.0-rc.6',
-      sandbox: expectedSandbox,
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
       stream: {
@@ -170,7 +183,6 @@ describe('controlled DeepSeek Harness host', () => {
       provider: 'goodbuddy',
       model: 'deepseek-test',
       harnessVersion: '0.1.0-rc.6',
-      sandbox: expectedSandbox,
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [
         { id: 'web-3d-game', directory: skillDirectory }

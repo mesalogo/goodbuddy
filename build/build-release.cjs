@@ -52,8 +52,6 @@ const harnessHostEntry =
 const harnessBundleManifest = 'out/main/package.json'
 const harnessPackageVersions = {
   '@deepseek-ai/dsh-agent': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-sandbox-windows-acl': '0.1.0-rc.6',
-  '@deepseek-ai/node-addon-landlock-run': '0.1.1',
   'node-pty': '1.1.0'
 }
 const koffiVersion = '3.1.4'
@@ -497,20 +495,13 @@ function targetHarnessPaths(options) {
       options.platform === 'linux'
         ? 'build/Release/pty.node'
         : `prebuilds/${platformName}-${options.arch}/pty.node`,
-    nodePtyDirectory: `${platformName}-${options.arch}`,
-    landlockPackage:
-      options.platform === 'linux'
-        ? `@deepseek-ai/node-addon-landlock-run-linux-${options.arch}`
-        : undefined
+    nodePtyDirectory: `${platformName}-${options.arch}`
   }
 }
 
 function targetRuntimePackageNames(options) {
   const target = targetHarnessPaths(options)
-  return [
-    target.koffiPackage,
-    ...(target.landlockPackage ? [target.landlockPackage] : [])
-  ]
+  return [target.koffiPackage]
 }
 
 function lockedTargetRuntimePackage(packageName) {
@@ -874,74 +865,6 @@ function verifyHarnessPackage(
         `DeepSeek Harness node-pty spawn-helper 不可执行：${helper}`
       )
     }
-  }
-
-  if (target.landlockPackage) {
-    const targetLandlockManifest = readJson(
-      `node_modules/${target.landlockPackage}/package.json`,
-      `${target.landlockPackage} 元数据`
-    )
-    if (
-      targetLandlockManifest.version !==
-      harnessPackageVersions[
-        '@deepseek-ai/node-addon-landlock-run'
-      ]
-    ) {
-      throw new Error(
-        `${target.landlockPackage} 版本错误：期望 ${harnessPackageVersions['@deepseek-ai/node-addon-landlock-run']}，实际 ${String(targetLandlockManifest.version)}`
-      )
-    }
-    const launcher = join(
-      unpackedRoot,
-      'node_modules',
-      ...target.landlockPackage.split('/'),
-      'bin',
-      'landlock-run'
-    )
-    assertBinaryArchitecture(
-      launcher,
-      options.arch,
-      'DeepSeek Harness Landlock launcher'
-    )
-    const launcherMetadata = asarEntryMetadata(
-      asarPath,
-      entries,
-      `node_modules/${target.landlockPackage}/bin/landlock-run`,
-      'DeepSeek Harness Landlock launcher 元数据',
-      statAsarFile
-    )
-    if (
-      !('unpacked' in launcherMetadata) ||
-      !launcherMetadata.unpacked
-    ) {
-      throw new Error(
-        'DeepSeek Harness Landlock launcher 未从 ASAR 解包'
-      )
-    }
-    if ((statSync(launcher).mode & 0o111) === 0) {
-      throw new Error(
-        `DeepSeek Harness Landlock launcher 不可执行：${launcher}`
-      )
-    }
-  }
-
-  if (options.platform === 'windows') {
-    assertAsarEntry(
-      entries,
-      'node_modules/@deepseek-ai/dsh-sandbox-windows-acl/lib/runner.js',
-      'DeepSeek Harness Windows ACL runner'
-    )
-    assertFile(
-      join(
-        unpackedRoot,
-        'node_modules',
-        '@deepseek-ai',
-        'dsh-sandbox-windows-acl',
-        'lib',
-        'runner.js'
-      ),
-      'DeepSeek Harness 可执行 Windows ACL runner'
-    )
   }
 
   for (const license of harnessLicenseFiles) {

@@ -22,7 +22,6 @@ import type {
 } from '../capabilities/capability-service'
 import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { ContinueHostLauncher } from './continue-host-adapter'
-import { resolveRuntimeSandbox } from './runtime-sandbox'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { ModelToolProviderLike } from './model-tool-provider'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
@@ -105,9 +104,6 @@ export function createAgentRuntime(
   const embedded = !baseUrl
   const workspace = settings?.workspacePath || defaultWorkspace
   const provider = settings?.provider ?? defaultRuntimeSettings.provider
-  const sandboxMode =
-    settings?.runtimeSandboxMode ??
-    defaultRuntimeSettings.runtimeSandboxMode
 
   if (provider === 'deepseek-harness') {
     const profile = settings?.deepseekHarnessModelProfile
@@ -122,9 +118,6 @@ export function createAgentRuntime(
     if (!capabilities.deepseekHarnessLauncher) {
       throw new Error('DeepSeek Harness 受控 Host 启动器不可用')
     }
-    if (sandboxMode === 'off') {
-      throw new Error('DeepSeek Harness Execute 需要启用 Runtime 沙箱')
-    }
     return new DeepSeekHarnessRuntime({
       defaultWorkspace: workspace,
       baseUrl: profile.baseUrl,
@@ -133,8 +126,6 @@ export function createAgentRuntime(
       credentialRefs: {
         GOODBUDDY_HARNESS_MODEL_API_KEY: profile.apiKey
       },
-      requiredSandboxEnforcement:
-        sandboxMode === 'strict' ? 'full' : 'partial',
       skillPackages: capabilities.skillPackages,
       toolProvider: new ModelToolProvider(
         workspace,
@@ -168,7 +159,6 @@ export function createAgentRuntime(
         settings?.continueConfigPath ??
         process.env.GOODBUDDY_CONTINUE_CONFIG?.trim() ??
         '',
-      runtimeSandboxMode: sandboxMode,
       modelProfile: settings?.continueModelProfile,
       skillInstructions: capabilities.skillInstructions,
       skillPackages: capabilities.skillPackages,
@@ -208,7 +198,6 @@ export function createAgentRuntime(
       modelProfile: settings?.opencodeModelProfile,
       skillInstructions: capabilities.skillInstructions,
       skillPackages: capabilities.skillPackages,
-      sandbox: resolveRuntimeSandbox(sandboxMode),
       defaultWorkspace: workspace,
       knowledgeGateway: capabilities.knowledgeGateway
     })

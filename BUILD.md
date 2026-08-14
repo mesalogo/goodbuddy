@@ -187,5 +187,5 @@ npm run smoke:deepseek-harness
 ```
 
 该命令先生成 production bundle，再从 CommonJS Electron 主入口启动实际
-`utilityProcess`，等待固定 Host 完成沙箱探测与内部 ready 握手。它不会发起
+`utilityProcess`，等待固定 Host 完成本地主机执行器初始化与内部 ready 握手。它不会发起
 模型请求，也不会读取或传递 API Key。

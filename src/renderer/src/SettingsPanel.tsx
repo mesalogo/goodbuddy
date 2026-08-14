@@ -169,9 +169,6 @@ function hydrateRuntimeSettings(
     continueBinaryPath: (value: string) => void
     continueConfigPath: (value: string) => void
     continueMode: (value: RuntimeSettings['continueMode']) => void
-    runtimeSandboxMode: (
-      value: RuntimeSettings['runtimeSandboxMode']
-    ) => void
     knowledgeEmbeddingEnabled: (value: boolean) => void
     knowledgeEmbeddingBaseUrl: (value: string) => void
     knowledgeEmbeddingModel: (value: string) => void
@@ -219,7 +216,6 @@ function hydrateRuntimeSettings(
   setters.continueBinaryPath(configured.continueBinaryPath)
   setters.continueConfigPath(configured.continueConfigPath)
   setters.continueMode(value.continueMode)
-  setters.runtimeSandboxMode(value.runtimeSandboxMode)
   setters.knowledgeEmbeddingEnabled(value.knowledgeEmbeddingEnabled)
   setters.knowledgeEmbeddingBaseUrl(value.knowledgeEmbeddingBaseUrl)
   setters.knowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
@@ -486,10 +482,6 @@ export function SettingsPanel({
     useState<RuntimeSettingsInput['continueMode']>(
       defaultRuntimeSettings.continueMode
     )
-  const [runtimeSandboxMode, setRuntimeSandboxMode] =
-    useState<RuntimeSettingsInput['runtimeSandboxMode']>(
-      defaultRuntimeSettings.runtimeSandboxMode
-    )
   const [knowledgeEmbeddingEnabled, setKnowledgeEmbeddingEnabled] =
     useState<boolean>(defaultRuntimeSettings.knowledgeEmbeddingEnabled)
   const [knowledgeEmbeddingBaseUrl, setKnowledgeEmbeddingBaseUrl] =
@@ -580,7 +572,6 @@ export function SettingsPanel({
         continueBinaryPath: setContinueBinaryPath,
         continueConfigPath: setContinueConfigPath,
         continueMode: setContinueMode,
-        runtimeSandboxMode: setRuntimeSandboxMode,
         knowledgeEmbeddingEnabled: setKnowledgeEmbeddingEnabled,
         knowledgeEmbeddingBaseUrl: setKnowledgeEmbeddingBaseUrl,
         knowledgeEmbeddingModel: setKnowledgeEmbeddingModel,
@@ -814,7 +805,6 @@ export function SettingsPanel({
         continueBinaryPath,
         continueConfigPath,
         continueMode,
-        runtimeSandboxMode,
         knowledgeEmbeddingEnabled,
         knowledgeEmbeddingBaseUrl,
         knowledgeEmbeddingModel,
@@ -2739,32 +2729,6 @@ export function SettingsPanel({
           {activeTab === 'security' && (
             <>
           <div className="settings-section">
-            <label className="field">
-            <span>{t('security.sandbox.label')}</span>
-            <select
-              aria-label={t('security.sandbox.label')}
-              value={runtimeSandboxMode}
-              onChange={(event) =>
-                setRuntimeSandboxMode(
-                  event.target
-                    .value as RuntimeSettingsInput['runtimeSandboxMode']
-                )
-              }
-            >
-              <option value="auto">
-                {t('security.sandbox.options.auto')}
-              </option>
-              <option value="strict">
-                {t('security.sandbox.options.strict')}
-              </option>
-              <option value="off">
-                {t('security.sandbox.options.off')}
-              </option>
-            </select>
-            <small>
-              {t('security.sandbox.description')}
-            </small>
-            </label>
             <label className="field">
             <span>{t('security.toolPolicy.label')}</span>
             <select

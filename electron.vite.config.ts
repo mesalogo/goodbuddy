@@ -11,14 +11,13 @@ export default defineConfig({
           '@deepseek-ai/cordis',
           '@deepseek-ai/dsh-agent',
           '@deepseek-ai/dsh-agent-loop',
-          '@deepseek-ai/dsh-bash-sandbox',
+          '@deepseek-ai/dsh-bash-local',
           '@deepseek-ai/dsh-credentials',
-          '@deepseek-ai/dsh-fs-sandbox',
+          '@deepseek-ai/dsh-fs-local',
           '@deepseek-ai/dsh-llm',
           '@deepseek-ai/dsh-llm-pi-ai',
-          '@deepseek-ai/dsh-pwsh-sandbox',
+          '@deepseek-ai/dsh-pwsh-local',
           '@deepseek-ai/dsh-sandbox',
-          '@deepseek-ai/dsh-sandbox-local',
           '@deepseek-ai/dsh-sandbox-policy',
           '@deepseek-ai/dsh-session',
           '@deepseek-ai/dsh-shell-env',
@@ -51,9 +50,7 @@ export default defineConfig({
         external: [
           'node-pty',
           'koffi',
-          /^@koromix\/koffi-/u,
-          '@deepseek-ai/dsh-sandbox-windows-acl/runner',
-          /^@deepseek-ai\/node-addon-landlock-run-/u
+          /^@koromix\/koffi-/u
         ],
         output: {
           entryFileNames(chunk) {

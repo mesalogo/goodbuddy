@@ -17,7 +17,6 @@ import {
   runtimeModelSourceSchema,
   runtimePathSchema,
   runtimeProviderSchema,
-  runtimeSandboxModeSchema,
   toolApprovalPolicySchema,
   type RuntimeSettings,
   type RuntimeSettingsInput
@@ -41,6 +40,11 @@ import {
 } from './settings-credential-cipher'
 
 const credentialSchema = encryptedSettingsCredentialSchema.optional()
+const legacyRuntimeSandboxModeSchema = z.enum([
+  'off',
+  'auto',
+  'strict'
+])
 
 const version4StoredSettingsSchema = z.object({
   version: z.literal(4),
@@ -99,7 +103,7 @@ const version6StoredSettingsSchema = version5StoredSettingsSchema
       .array(version6StoredModelProfileSchema)
       .min(1)
       .max(20),
-    runtimeSandboxMode: runtimeSandboxModeSchema.default('auto'),
+    runtimeSandboxMode: legacyRuntimeSandboxModeSchema.default('auto'),
     knowledgeEmbeddingEnabled: z.boolean().default(false),
     knowledgeEmbeddingBaseUrl: z
       .string()
@@ -195,7 +199,11 @@ const version15StoredSettingsSchema = version14StoredSettingsSchema
   })
 
 const storedSettingsSchema = version15StoredSettingsSchema
-  .omit({ version: true, deepseekHarnessBinaryPath: true })
+  .omit({
+    version: true,
+    deepseekHarnessBinaryPath: true,
+    runtimeSandboxMode: true
+  })
   .extend({
     version: z.literal(16)
   })
@@ -288,7 +296,6 @@ export type ResolvedRuntimeSettings = {
   continueBinaryPath: string
   continueConfigPath: string
   continueMode: RuntimeSettings['continueMode']
-  runtimeSandboxMode: RuntimeSettings['runtimeSandboxMode']
   subagentSmartRoutingEnabled: boolean
   knowledgeEmbeddingEnabled: boolean
   knowledgeEmbeddingBaseUrl: string
@@ -352,7 +359,6 @@ const defaultSettings: StoredSettings = {
   continueConfigPath: defaultRuntimeSettings.continueConfigPath,
   continueMode: defaultRuntimeSettings.continueMode,
   deepseekHarnessModelSource: { kind: 'platform' },
-  runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
   subagentSmartRoutingEnabled:
     defaultRuntimeSettings.subagentSmartRoutingEnabled,
   knowledgeEmbeddingEnabled:
@@ -451,8 +457,13 @@ function migrateVersion13(
 function migrateVersion14(
   settings: Version14StoredSettings
 ): StoredSettings {
+  const {
+    runtimeSandboxMode: _obsolete,
+    ...current
+  } = settings
+  void _obsolete
   return {
-    ...settings,
+    ...current,
     version: 16,
     deepseekHarnessModelSource: { kind: 'platform' }
   }
@@ -463,9 +474,11 @@ function migrateVersion15(
 ): StoredSettings {
   const {
     deepseekHarnessBinaryPath: _obsolete,
+    runtimeSandboxMode: _obsoleteSandbox,
     ...current
   } = settings
   void _obsolete
+  void _obsoleteSandbox
   return {
     ...current,
     version: 16
@@ -606,7 +619,7 @@ function migrateVersion4(
     continueBinaryPath: settings.continueBinaryPath,
     continueConfigPath: settings.continueConfigPath,
     continueMode: settings.continueMode,
-    runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
+    runtimeSandboxMode: 'auto',
     subagentSmartRoutingEnabled:
       defaultRuntimeSettings.subagentSmartRoutingEnabled,
     intranetCompatibilityEnabled: true,
@@ -627,7 +640,7 @@ function migrateVersion5(
   return migrateVersion10({
     ...settings,
     version: 10,
-    runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
+    runtimeSandboxMode: 'auto',
     subagentSmartRoutingEnabled:
       defaultRuntimeSettings.subagentSmartRoutingEnabled,
     intranetCompatibilityEnabled: true,
@@ -1172,7 +1185,6 @@ export class RuntimeSettingsStore {
     continueBinaryPath: string
     continueConfigPath: string
     continueMode: RuntimeSettings['continueMode']
-    runtimeSandboxMode: RuntimeSettings['runtimeSandboxMode']
     workspacePath: string
   } {
     const continueBinaryEnvironment =
@@ -1201,7 +1213,6 @@ export class RuntimeSettingsStore {
         this.environment.GOODBUDDY_CONTINUE_CONFIG?.trim() ||
         settings.continueConfigPath,
       continueMode: settings.continueMode,
-      runtimeSandboxMode: settings.runtimeSandboxMode,
       workspacePath:
         this.environment.GOODBUDDY_WORKSPACE?.trim() ||
         settings.workspacePath ||
@@ -1302,7 +1313,6 @@ export class RuntimeSettingsStore {
       continueBinaryPath: agent.continueBinaryPath,
       continueConfigPath: agent.continueConfigPath,
       continueMode: agent.continueMode,
-      runtimeSandboxMode: agent.runtimeSandboxMode,
       subagentSmartRoutingEnabled:
         settings.subagentSmartRoutingEnabled,
       knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
@@ -1740,7 +1750,6 @@ export class RuntimeSettingsStore {
       continueBinaryPath,
       continueConfigPath,
       continueMode: input.continueMode,
-      runtimeSandboxMode: input.runtimeSandboxMode,
       subagentSmartRoutingEnabled:
         input.subagentSmartRoutingEnabled ??
         current.subagentSmartRoutingEnabled,

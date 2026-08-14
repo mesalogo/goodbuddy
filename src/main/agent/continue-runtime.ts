@@ -32,7 +32,6 @@ export type ContinueRuntimeOptions = {
   binaryPath: string
   bundledBinaryPath?: string
   configPath: string
-  runtimeSandboxMode?: RuntimeSettings['runtimeSandboxMode']
   defaultWorkspace: string
   hostCacheRoot: string
   skillInstructions?: string
@@ -186,16 +185,6 @@ export class ContinueAgentRuntime implements AgentRuntime {
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
-    if (this.options.runtimeSandboxMode === 'strict') {
-      return {
-        id: 'continue',
-        label: 'Continue CLI',
-        available: false,
-        supportsToolExecution: this.supportsToolExecution,
-        detail:
-          'Continue 宿主暂不支持严格 OS 沙箱，请改用自动模式或嵌入式 OpenCode'
-      }
-    }
     if (
       !hasContinueModelConfiguration(
         this.options.configPath,
@@ -236,7 +225,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
       available: detection.available,
       supportsToolExecution: this.supportsToolExecution,
       detail: detection.available
-        ? `${detection.detail}；Ask 可搜索已启用知识库，Execute 工具调用自动放行并保留审计；未启用 OS 进程沙箱`
+        ? `${detection.detail}；Ask 可搜索已启用知识库，Execute 工具调用自动放行并保留审计；工具以当前用户权限运行`
         : detection.detail
     }
   }
@@ -246,11 +235,6 @@ export class ContinueAgentRuntime implements AgentRuntime {
     signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
-    if (this.options.runtimeSandboxMode === 'strict') {
-      throw new Error(
-        'Continue 宿主暂不支持严格 OS 沙箱，请改用自动模式或嵌入式 OpenCode'
-      )
-    }
     if (
       request.images?.length &&
       this.options.modelProfile &&

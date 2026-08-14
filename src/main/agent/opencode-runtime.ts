@@ -39,10 +39,6 @@ import {
   runtimePrivacyEnvironment
 } from './process-environment'
 import {
-  buildBubblewrapLaunch,
-  type RuntimeSandboxResolution
-} from './runtime-sandbox'
-import {
   boundedToolDetail,
   safeToolErrorDetail
 } from './approval-summary'
@@ -388,7 +384,6 @@ export type OpenCodeRuntimeOptions = {
   modelProfile?: ResolvedModelProfile
   skillInstructions?: string
   skillPackages?: RuntimeSkillPackage[]
-  sandbox?: RuntimeSandboxResolution
   knowledgeGateway?: KnowledgeMcpGateway
 }
 
@@ -741,13 +736,6 @@ export class OpenCodeRuntime implements AgentRuntime {
     ) {
       throw new Error('OpenCode 独立模型连接尚未配置 API Key')
     }
-    const sandbox = this.options.sandbox
-    if (
-      sandbox?.status.mode === 'strict' &&
-      !sandbox.status.available
-    ) {
-      throw new Error(sandbox.status.detail)
-    }
     const skillIds = this.getNativeSkillIds()
     const registration = await this.createSkillRegistration()
     try {
@@ -813,25 +801,11 @@ export class OpenCodeRuntime implements AgentRuntime {
         '--hostname=127.0.0.1',
         `--port=${port}`
       ]
-      const launch =
-        sandbox?.status.available && sandbox.binaryPath
-          ? buildBubblewrapLaunch({
-              binaryPath: sandbox.binaryPath,
-              command: binaryPath,
-              args: serverArgs,
-              workspace: this.options.defaultWorkspace,
-              readOnlyPaths: this.options.configPath.trim()
-                ? [resolve(this.options.configPath)]
-                : [],
-              writablePaths: [registration.root],
-              platform: this.dependencies.platform
-            })
-          : { command: binaryPath, args: serverArgs }
 
       return await new Promise<OpenCodeServer>((resolveServer, reject) => {
         const child = this.dependencies.spawn(
-          launch.command,
-          launch.args,
+          binaryPath,
+          serverArgs,
           {
             cwd: this.options.defaultWorkspace,
             env,
@@ -1019,9 +993,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         available: true,
         supportsToolExecution: this.supportsToolExecution,
         detail: this.server
-          ? this.options.sandbox
-            ? `由 GoodBuddy 管理本机 OpenCode 进程；${this.options.sandbox.status.detail}`
-            : '由 GoodBuddy 管理本机 OpenCode 进程'
+          ? '由 GoodBuddy 以当前用户权限管理本机 OpenCode 进程'
           : `已连接 ${this.options.baseUrl}`
       }
     } catch (error) {

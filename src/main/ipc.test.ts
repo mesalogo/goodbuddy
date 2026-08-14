@@ -398,7 +398,6 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       continueBinaryPath: '',
       continueConfigPath: '',
       continueMode: 'chat',
-      runtimeSandboxMode: 'auto',
       subagentSmartRoutingEnabled: false,
       knowledgeEmbeddingEnabled: false,
       knowledgeEmbeddingBaseUrl:
@@ -466,7 +465,6 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       continueBinaryPath: savedSettings.continueBinaryPath,
       continueConfigPath: savedSettings.continueConfigPath,
       continueMode: savedSettings.continueMode,
-      runtimeSandboxMode: savedSettings.runtimeSandboxMode,
       knowledgeEmbeddingEnabled:
         savedSettings.knowledgeEmbeddingEnabled,
       knowledgeEmbeddingBaseUrl:
@@ -3230,7 +3228,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             (await authorize?.({
               scopeKey: 'deepseek-harness:write_file',
               title: '写入文件',
-              description: '一次性沙箱升级'
+              description: '主机工具执行'
             })) ?? 'missing'
           )
         }

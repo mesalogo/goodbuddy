@@ -60,10 +60,7 @@
       "node_modules/node-pty/prebuilds/**/*",
       "node_modules/node-pty/build/Release/**/*",
       "node_modules/koffi/**/*",
-      "node_modules/@koromix/koffi-*/**/*",
-      "node_modules/@deepseek-ai/dsh-sandbox-windows-acl/**/*",
-      "node_modules/@deepseek-ai/node-addon-landlock-run/**/*",
-      "node_modules/@deepseek-ai/node-addon-landlock-run-*/**/*"
+      "node_modules/@koromix/koffi-*/**/*"
     ],
     "npmRebuild": false,
     "compression": "maximum",
@@ -220,14 +217,13 @@
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
     "@deepseek-ai/dsh-agent-loop": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-bash-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-bash-local": "0.1.0-rc.6",
     "@deepseek-ai/dsh-credentials": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-fs-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-fs-local": "0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
     "@deepseek-ai/dsh-llm-pi-ai": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-pwsh-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-pwsh-local": "0.1.0-rc.6",
     "@deepseek-ai/dsh-sandbox": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-sandbox-local": "0.1.0-rc.6",
     "@deepseek-ai/dsh-sandbox-policy": "0.1.0-rc.6",
     "@deepseek-ai/dsh-session": "0.1.0-rc.6",
     "@deepseek-ai/dsh-shell-env": "0.1.0-rc.6",
@@ -302,8 +298,6 @@
     "vitest": "^4.1.10"
   },
   "optionalDependencies": {
-    "@deepseek-ai/node-addon-landlock-run-linux-arm64": "0.1.1",
-    "@deepseek-ai/node-addon-landlock-run-linux-x64": "0.1.1",
     "@koromix/koffi-darwin-arm64": "3.1.4",
     "@koromix/koffi-darwin-x64": "3.1.4",
     "@koromix/koffi-linux-arm64": "3.1.4",

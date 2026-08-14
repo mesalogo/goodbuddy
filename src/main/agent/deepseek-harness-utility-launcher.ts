@@ -17,13 +17,6 @@ export const DEEPSEEK_HARNESS_HOST_VERSION = '0.1.0-rc.6'
 export const DEEPSEEK_HARNESS_CREDENTIAL_REF =
   'GOODBUDDY_HARNESS_MODEL_API_KEY'
 
-const sandboxSchema = z
-  .object({
-    provider: z.string().min(1).max(64),
-    enforcement: z.enum(['full', 'partial'])
-  })
-  .strict()
-
 const skillPackageSchema = z
   .object({
     id: z
@@ -47,7 +40,6 @@ export const controlledHarnessHostConfigSchema = z
     provider: z.literal('goodbuddy'),
     model: z.string().min(1).max(128),
     harnessVersion: z.literal(DEEPSEEK_HARNESS_HOST_VERSION),
-    sandbox: sandboxSchema,
     credentialRefs: z
       .tuple([z.literal(DEEPSEEK_HARNESS_CREDENTIAL_REF)])
       .readonly(),
@@ -146,14 +138,6 @@ export type DeepSeekHarnessUtilityLauncherOptions = {
   startupTimeoutMs?: number
 }
 
-function expectedSandbox(): ControlledHarnessBootstrapConfig['sandbox'] {
-  return process.platform === 'win32'
-    ? { provider: 'windows-acl', enforcement: 'partial' }
-    : process.platform === 'darwin'
-      ? { provider: 'seatbelt', enforcement: 'full' }
-      : { provider: 'local-linux', enforcement: 'full' }
-}
-
 function hasControlCharacter(value: string): boolean {
   for (const character of value) {
     const codePoint = character.codePointAt(0)
@@ -222,15 +206,6 @@ export function createDeepSeekHarnessUtilityLauncher(
     ) {
       throw new Error(
         'DeepSeek Harness Host、工作区或隔离目录类型无效'
-      )
-    }
-    const sandbox = expectedSandbox()
-    if (
-      options.requiredSandboxEnforcement === 'full' &&
-      sandbox.enforcement !== 'full'
-    ) {
-      throw new Error(
-        'DeepSeek Harness 当前平台只能提供部分沙箱强制'
       )
     }
     if (!isDeepSeekHarnessCompatibleBaseUrl(options.baseUrl)) {
@@ -334,7 +309,6 @@ export function createDeepSeekHarnessUtilityLauncher(
           provider: 'goodbuddy',
           model: options.model,
           harnessVersion: DEEPSEEK_HARNESS_HOST_VERSION,
-          sandbox,
           credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
           skillPackages: canonicalSkillPackages,
           maxFrameBytes: 1024 * 1024

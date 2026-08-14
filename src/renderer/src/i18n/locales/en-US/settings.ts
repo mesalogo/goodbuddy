@@ -540,16 +540,6 @@ export const settings = {
     }
   },
   security: {
-    sandbox: {
-      label: 'Runtime OS sandbox',
-      options: {
-        auto: 'Automatic (prefer on Linux)',
-        strict: 'Strict (refuse to run when unavailable)',
-        off: 'Off'
-      },
-      description:
-        'Initial strict isolation supports the embedded OpenCode Runtime on Linux when bubblewrap is installed. External Runtimes and Continue are never incorrectly reported as sandboxed.'
-    },
     toolPolicy: {
       label: 'Direct model tool security policy',
       always: 'Automatically authorize enabled tools in Execute',

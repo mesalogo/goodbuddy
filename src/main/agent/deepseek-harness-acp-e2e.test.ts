@@ -32,14 +32,6 @@ const MCP_CALL_ID = 'e2e-mcp-call'
 const ASK_MCP_CALL_ID = 'e2e-ask-mcp-call'
 const MICRO_DELTA_COUNT = 30_000
 
-function expectedSandbox() {
-  return process.platform === 'win32'
-    ? { provider: 'windows-acl', enforcement: 'partial' as const }
-    : process.platform === 'darwin'
-      ? { provider: 'seatbelt', enforcement: 'full' as const }
-      : { provider: 'local-linux', enforcement: 'full' as const }
-}
-
 function deferred<T>() {
   let resolvePromise!: (value: T) => void
   const promise = new Promise<T>((resolve) => {
@@ -321,7 +313,6 @@ function createInProcessLaunch(
         provider: 'goodbuddy',
         model: options.model,
         harnessVersion: '0.1.0-rc.6',
-        sandbox: expectedSandbox(),
         credentialRefs: options.credentialRefs,
         skillPackages: options.skillPackages,
         stream: createBoundedNdJsonStream(

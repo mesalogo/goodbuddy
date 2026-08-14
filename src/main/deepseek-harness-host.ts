@@ -4,14 +4,11 @@ import { isAbsolute, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import SandboxedBash from '@deepseek-ai/dsh-bash-sandbox'
-import SandboxedPwsh from '@deepseek-ai/dsh-pwsh-sandbox'
-import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
+import LocalBash from '@deepseek-ai/dsh-bash-local'
+import LocalPwsh from '@deepseek-ai/dsh-pwsh-local'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import * as PiAiLlm from '@deepseek-ai/dsh-llm-pi-ai'
-import ApprovalService from '@deepseek-ai/dsh-user-approval'
-import LocalSandbox from '@deepseek-ai/dsh-sandbox-local'
-import SandboxPolicy from '@deepseek-ai/dsh-sandbox-policy'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import LocalSubprocess from '@deepseek-ai/dsh-subprocess-local'
@@ -29,7 +26,6 @@ import {
   type GoodBuddyHarnessControlConfig
 } from './agent/goodbuddy-harness-control-plane'
 import type { Stream } from '@agentclientprotocol/sdk'
-import type { SandboxEnforcement } from '@deepseek-ai/dsh-sandbox'
 import { isDeepSeekHarnessCompatibleBaseUrl } from '../shared/deepseek-harness-compatibility'
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024
@@ -37,7 +33,7 @@ const MAX_DIAGNOSTIC_BYTES = 64 * 1024
 
 export type ControlledHarnessHostConfig = Omit<
   GoodBuddyHarnessControlConfig,
-  'stream' | 'skills'
+  'stream' | 'skills' | 'execution'
 > & {
   workspace: string
   baseUrl: string
@@ -59,12 +55,6 @@ export type ControlledHarnessHost = {
 
 export type ControlledHarnessHostStartupCode =
   | 'HOST_PLUGIN_GRAPH_FAILED'
-  | 'HOST_SANDBOX_CONFIGURATION_FAILED'
-  | 'HOST_SANDBOX_EXECUTION_FAILED'
-  | 'HOST_SANDBOX_PROBE_ABORTED'
-  | 'HOST_SANDBOX_PROBE_EXIT_FAILED'
-  | 'HOST_SANDBOX_PROBE_RUNNER_FAILED'
-  | 'HOST_SANDBOX_PROBE_TIMED_OUT'
   | 'HOST_CONTROL_PLANE_FAILED'
 
 export class ControlledHarnessHostStartupError extends Error {
@@ -74,55 +64,6 @@ export class ControlledHarnessHostStartupError extends Error {
   ) {
     super(code, options)
     this.name = 'ControlledHarnessHostStartupError'
-  }
-}
-
-async function verifySandboxExecution(
-  ctx: Context,
-  expected: GoodBuddyHarnessControlConfig['sandbox'],
-  workspace: string
-): Promise<void> {
-  const result = await ctx.shell.run(
-    ctx.shell.resolve({
-      command:
-        process.platform === 'win32'
-          ? 'Write-Output goodbuddy-sandbox-probe'
-          : 'printf goodbuddy-sandbox-probe',
-      workdir: workspace,
-      timeoutMs: 10_000,
-      stdoutMaxBytes: 1_024,
-      sandboxPolicy: {
-        mode: 'read-only',
-        workspaceRoot: workspace
-      }
-    })
-  )
-  if (
-    result.sandbox?.enforcement !== expected.enforcement
-  ) {
-    throw new Error(
-      'Controlled Harness sandbox execution probe failed'
-    )
-  }
-  if (result.timedOut) {
-    throw new ControlledHarnessHostStartupError(
-      'HOST_SANDBOX_PROBE_TIMED_OUT'
-    )
-  }
-  if (result.aborted) {
-    throw new ControlledHarnessHostStartupError(
-      'HOST_SANDBOX_PROBE_ABORTED'
-    )
-  }
-  if (result.sandbox?.runnerFailed) {
-    throw new ControlledHarnessHostStartupError(
-      'HOST_SANDBOX_PROBE_RUNNER_FAILED'
-    )
-  }
-  if (result.exitCode !== 0) {
-    throw new ControlledHarnessHostStartupError(
-      'HOST_SANDBOX_PROBE_EXIT_FAILED'
-    )
   }
 }
 
@@ -231,55 +172,6 @@ async function loadControlledSkills(
   )
 }
 
-function sandboxProviderName(): string {
-  return process.platform === 'win32'
-    ? 'windows-acl'
-    : process.platform === 'darwin'
-      ? 'seatbelt'
-      : 'local-linux'
-}
-
-function verifySandbox(
-  sandbox: {
-    confine(
-      argv: readonly string[],
-      policy: {
-        mode: 'read-only'
-        workspaceRoot: string
-      }
-    ): {
-      enforcement: SandboxEnforcement
-    }
-  },
-  config: ControlledHarnessHostConfig
-): GoodBuddyHarnessControlConfig['sandbox'] {
-  const expectedEnforcement: SandboxEnforcement =
-    process.platform === 'win32' ? 'partial' : 'full'
-  const probe = sandbox.confine(
-    process.platform === 'win32'
-      ? ['cmd.exe', '/d', '/s', '/c', 'exit 0']
-      : ['/usr/bin/env', 'true'],
-    {
-      mode: 'read-only',
-      workspaceRoot: config.workspace
-    }
-  )
-  if (probe.enforcement !== expectedEnforcement) {
-    throw new Error(
-      'Controlled Harness sandbox enforcement probe returned an unexpected result'
-    )
-  }
-  if (config.sandbox.enforcement !== probe.enforcement) {
-    throw new Error(
-      'Controlled Harness sandbox capability does not match the verified provider'
-    )
-  }
-  return {
-    provider: sandboxProviderName(),
-    enforcement: probe.enforcement
-  }
-}
-
 /**
  * Boots a fixed, programmatic Cordis graph. It never imports app-boot, a
  * profile loader, settings-file, local credentials, persistence, telemetry,
@@ -326,24 +218,18 @@ export async function startControlledDeepSeekHarnessHost(
         }
       }
     },
-    {
-      plugin: SandboxPolicy,
-      config: {
-        mode: 'read-only',
-        workspaceRoot: config.workspace
-      }
-    },
-    { plugin: ApprovalService, config: { policy: 'never' } },
     { plugin: LocalSubprocess },
-    { plugin: LocalSandbox },
-    { plugin: SandboxedFileSystem, config: { cwd: config.workspace } },
+    { plugin: LocalFileSystem, config: { cwd: config.workspace } },
     { plugin: ShellEnv, config: { dshHome: config.dshHome } },
     {
       plugin:
         process.platform === 'win32'
-          ? SandboxedPwsh
-          : SandboxedBash,
-      config: { timeoutMs: 60_000 }
+          ? LocalPwsh
+          : LocalBash,
+      config: {
+        cwd: config.workspace,
+        timeoutMs: 60_000
+      }
     },
     { plugin: ToolFs },
     {
@@ -376,14 +262,6 @@ export async function startControlledDeepSeekHarnessHost(
         'Controlled Harness credential provider failed to start'
       )
     }
-    startupCode = 'HOST_SANDBOX_CONFIGURATION_FAILED'
-    const verifiedSandbox = verifySandbox(ctx.sandbox, config)
-    startupCode = 'HOST_SANDBOX_EXECUTION_FAILED'
-    await verifySandboxExecution(
-      ctx,
-      verifiedSandbox,
-      config.workspace
-    )
     startupCode = 'HOST_CONTROL_PLANE_FAILED'
     const rawStream =
       config.stream ??
@@ -395,7 +273,7 @@ export async function startControlledDeepSeekHarnessHost(
     const controlPlane = new GoodBuddyHarnessControlPlane(ctx, {
       ...config,
       skills,
-      sandbox: verifiedSandbox,
+      execution: { mode: 'host' },
       stream: createBoundedAcpStream(
         rawStream,
         config.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES

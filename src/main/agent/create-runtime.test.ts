@@ -55,7 +55,6 @@ function settings(
     continueBinaryPath: '',
     continueConfigPath: '',
     continueMode: 'chat',
-    runtimeSandboxMode: 'off',
     subagentSmartRoutingEnabled: false,
     knowledgeEmbeddingEnabled: false,
     knowledgeEmbeddingBaseUrl:
@@ -93,8 +92,7 @@ describe('createAgentRuntime model compatibility', () => {
           modelProtocol: defaultProfile.protocol,
           modelAuthentication: defaultProfile.authentication,
           apiKey: defaultProfile.apiKey,
-          modelProfiles: [defaultProfile],
-          runtimeSandboxMode: 'auto'
+          modelProfiles: [defaultProfile]
         }),
         { deepseekHarnessLauncher: vi.fn() }
       )
@@ -120,8 +118,7 @@ describe('createAgentRuntime model compatibility', () => {
         provider: 'deepseek-harness',
         modelProfiles: [profile],
         defaultModelProfileId: profile.id,
-        deepseekHarnessModelProfile: profile,
-        runtimeSandboxMode: 'auto'
+        deepseekHarnessModelProfile: profile
       }),
       { deepseekHarnessLauncher: vi.fn() }
     )

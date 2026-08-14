@@ -165,7 +165,6 @@ const api: DesktopApi = {
       continueBinaryPath: '',
       continueConfigPath: '',
       continueMode: 'chat',
-      runtimeSandboxMode: 'auto',
       subagentSmartRoutingEnabled: false,
       knowledgeEmbeddingEnabled: false,
       knowledgeEmbeddingBaseUrl:
@@ -216,7 +215,6 @@ const api: DesktopApi = {
         continueBinaryPath: input.continueBinaryPath,
         continueConfigPath: input.continueConfigPath,
         continueMode: input.continueMode,
-        runtimeSandboxMode: input.runtimeSandboxMode,
         subagentSmartRoutingEnabled:
           input.subagentSmartRoutingEnabled ?? false,
         knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,

@@ -331,7 +331,8 @@ describe('OpenCodeRuntime embedded launcher', () => {
 
     await expect(runtime.getStatus()).resolves.toMatchObject({
       available: true,
-      detail: '由 GoodBuddy 管理本机 OpenCode 进程'
+      detail:
+        '由 GoodBuddy 以当前用户权限管理本机 OpenCode 进程'
     })
     expect(detectBinary).toHaveBeenCalledWith(
       'opencode',

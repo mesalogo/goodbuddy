@@ -15,12 +15,6 @@ import {
 
 const parentPort = process.parentPort
 const restoreDiagnostics = installHarnessDiagnosticGuard()
-// The Windows ACL sandbox launches its JavaScript runner through
-// `process.execPath`. Inside an Electron UtilityProcess that path is Electron,
-// so descendants must opt into Electron's supported Node execution mode.
-if (process.platform === 'win32') {
-  process.env.ELECTRON_RUN_AS_NODE = '1'
-}
 let host: ControlledHarnessHost | undefined
 let transport:
   | ReturnType<typeof createDeepSeekHarnessHostTransport>

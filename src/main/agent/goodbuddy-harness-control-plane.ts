@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import {
   AgentSideConnection,
@@ -25,13 +25,7 @@ import {
   SessionId,
   type SessionEvent
 } from '@deepseek-ai/dsh-session'
-import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
-import { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
-import type {
-  ToolDefinition,
-  ToolExecution,
-  ToolExecutionResult
-} from '@deepseek-ai/dsh-tools'
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import * as ToolSkill from '@deepseek-ai/dsh-tool-skill'
 
 export const GOODBUDDY_CONTROL_PROTOCOL_VERSION = 1
@@ -50,8 +44,13 @@ export const GOODBUDDY_HARNESS_MAX_STEP_TOKENS = 16 * 1024
 const DELTA_BATCH_CHARACTERS = 4 * 1024
 const DELTA_BATCH_INTERVAL_MS = 100
 const MAX_SUMMARY_CHARACTERS = 4_000
-const MAX_FINGERPRINT_BYTES = 4 * 1024 * 1024
 const MAX_MCP_PROXY_RESULT_BYTES = 256 * 1024
+const ASK_BLOCKED_TOOL_NAMES = new Set([
+  'bash',
+  'pwsh',
+  'write',
+  'edit'
+])
 const GOODBUDDY_EXECUTION_GUIDANCE = [
   'GoodBuddy controlled execution rules:',
   '- In Execute mode, act through the available tools instead of writing a long implementation plan.',
@@ -70,15 +69,13 @@ export type GoodBuddyHarnessCapabilities = {
   supports: {
     cancellation: true
     sessionRelease: true
-    oneShotApproval: true
     reasoningEvents: boolean
     toolEvents: boolean
     usageEvents: boolean
     credentialResolution: true
   }
-  sandbox: {
-    provider: string
-    enforcement: 'full' | 'partial'
+  execution: {
+    mode: 'host'
   }
 }
 
@@ -87,7 +84,7 @@ export type GoodBuddyHarnessControlConfig = {
   model: string
   workspace: string
   harnessVersion: string
-  sandbox: GoodBuddyHarnessCapabilities['sandbox']
+  execution: GoodBuddyHarnessCapabilities['execution']
   credentialRefs: readonly string[]
   skills: readonly {
     name: string
@@ -109,10 +106,10 @@ type OwnedSession = {
   handle: AgentHandle
   preparation?: Preparation
   proxyToolDisposers: Map<string, () => void>
-  sandboxRetries: GoodBuddySandboxRetryLedger
   inflight?: {
     requestId: string
     messageId: string
+    mode: GoodBuddyWorkMode
     turn?: number
     endReason?: string
     turnError?: unknown
@@ -209,155 +206,9 @@ function parseProxyToolCatalog(
   })
 }
 
-type DeniedToolCall = {
-  toolName: string
-  operationFingerprint: string
-}
-
 type CredentialResolver = (
   ref: string
 ) => Promise<string | undefined>
-
-function argumentsFingerprint(value: unknown): string | undefined {
-  try {
-    const serialized = JSON.stringify(value, (_key, nested) => {
-      if (
-        nested &&
-        typeof nested === 'object' &&
-        !Array.isArray(nested)
-      ) {
-        return Object.fromEntries(
-          Object.entries(nested as Record<string, unknown>).sort(
-            ([left], [right]) => left.localeCompare(right)
-          )
-        )
-      }
-      return nested
-    })
-    if (
-      serialized === undefined ||
-      Buffer.byteLength(serialized, 'utf8') >
-        MAX_FINGERPRINT_BYTES
-    ) {
-      return undefined
-    }
-    return createHash('sha256').update(serialized).digest('hex')
-  } catch {
-    return undefined
-  }
-}
-
-function isSandboxDenial(
-  result: Readonly<ToolExecutionResult>
-): boolean {
-  const sandboxValue =
-    !result.isError &&
-    result.value &&
-    typeof result.value === 'object' &&
-    !Array.isArray(result.value)
-      ? (result.value as Record<string, unknown>).sandbox
-      : undefined
-  return (
-    (result.isError &&
-      result.error.info?.code === 'FS_SANDBOX_DENIED') ||
-    result.content.some(
-      (content) =>
-        content.type === 'text' &&
-        content.text.includes('[sandbox: file access denied under ')
-    ) ||
-    (!!sandboxValue &&
-      typeof sandboxValue === 'object' &&
-      !Array.isArray(sandboxValue) &&
-      (sandboxValue as Record<string, unknown>).denied === true)
-  )
-}
-
-function requestedEscalation(
-  value: unknown
-): {
-  mode: 'workspace-write' | 'danger-full-access'
-  operationFingerprint: string
-} | undefined {
-  if (
-    !value ||
-    typeof value !== 'object' ||
-    Array.isArray(value)
-  ) {
-    return undefined
-  }
-  const argumentsRecord = value as Record<string, unknown>
-  const mode = argumentsRecord.sandbox_permissions
-  if (
-    (mode !== 'workspace-write' &&
-      mode !== 'danger-full-access') ||
-    typeof argumentsRecord.justification !== 'string' ||
-    !argumentsRecord.justification.trim()
-  ) {
-    return undefined
-  }
-  const operationArguments = { ...argumentsRecord }
-  delete operationArguments.sandbox_permissions
-  delete operationArguments.justification
-  const operationFingerprint = argumentsFingerprint(
-    operationArguments
-  )
-  return operationFingerprint
-    ? {
-        mode,
-        operationFingerprint
-      }
-    : undefined
-}
-
-export class GoodBuddySandboxRetryLedger {
-  private readonly deniedToolCalls = new Map<
-    string,
-    DeniedToolCall
-  >()
-
-  clear(): void {
-    this.deniedToolCalls.clear()
-  }
-
-  record(
-    execution: Readonly<ToolExecution>,
-    result: Readonly<ToolExecutionResult>
-  ): void {
-    if (!isSandboxDenial(result)) {
-      return
-    }
-    const operationFingerprint = argumentsFingerprint(
-      execution.arguments
-    )
-    if (!operationFingerprint) {
-      return
-    }
-    this.deniedToolCalls.set(execution.callId, {
-      toolName: execution.name,
-      operationFingerprint
-    })
-  }
-
-  consumeRetry(toolName: string, argumentsValue: unknown): boolean {
-    const escalation = requestedEscalation(argumentsValue)
-    if (escalation?.mode !== 'danger-full-access') {
-      return false
-    }
-    const denied = [...this.deniedToolCalls.entries()]
-      .reverse()
-      .find(
-        ([, candidate]) =>
-          candidate.toolName === toolName &&
-          candidate.operationFingerprint ===
-            escalation.operationFingerprint
-      )
-    if (!denied) {
-      return false
-    }
-    this.deniedToolCalls.delete(denied[0])
-    return true
-  }
-}
 
 /**
  * Memory-only credential provider. It deliberately has no writable operation
@@ -615,13 +466,12 @@ export class GoodBuddyHarnessControlPlane {
       supports: {
         cancellation: true,
         sessionRelease: true,
-        oneShotApproval: true,
         reasoningEvents: true,
         toolEvents: true,
         usageEvents: true,
         credentialResolution: true
       },
-      sandbox: this.config.sandbox
+      execution: this.config.execution
     }
   }
 
@@ -682,9 +532,9 @@ export class GoodBuddyHarnessControlPlane {
       this.sendEvent(sessionId, event)
     )
     inflight.eventTail = queued.catch((error: unknown) => {
-        inflight.eventError ??= error
-        record.handle.agent.cancel({ kind: 'user' })
-      })
+      inflight.eventError ??= error
+      record.handle.agent.cancel({ kind: 'user' })
+    })
   }
 
   private flushPendingDelta(sessionId: string): void {
@@ -797,6 +647,23 @@ export class GoodBuddyHarnessControlPlane {
       return
     }
     this.observing = true
+    this.ctx.on('tools/execute', async (exec, next) => {
+      const sessionId = exec.agent?.session.id
+      const record = sessionId
+        ? this.sessions.get(sessionId)
+        : undefined
+      if (
+        record &&
+        record.handle.agent === exec.agent &&
+        record.inflight?.mode === 'ask' &&
+        ASK_BLOCKED_TOOL_NAMES.has(exec.name)
+      ) {
+        throw new Error(
+          `Ask 模式不允许执行修改或命令工具：${exec.name}`
+        )
+      }
+      return next()
+    })
     this.ctx.on(
       'session/event',
       (session, event: SessionEvent) => {
@@ -878,92 +745,6 @@ export class GoodBuddyHarnessControlPlane {
         }
       }
     )
-    this.ctx.on(
-      'tools/result',
-      (
-        exec: Readonly<ToolExecution>,
-        result: Readonly<ToolExecutionResult>
-      ) => {
-        const sessionId = exec.agent?.session.id
-        if (!sessionId) {
-          return
-        }
-        const record = this.sessions.get(sessionId)
-        if (
-          record?.handle.agent !== exec.agent ||
-          !record.inflight
-        ) {
-          return
-        }
-        record.sandboxRetries.record(exec, result)
-      }
-    )
-    this.ctx.on('approval/request', async (request, next) => {
-      const record = this.sessions.get(request.agent.session.id)
-      if (
-        !record ||
-        record.handle.agent !== request.agent ||
-        !record.inflight ||
-        !this.connection
-      ) {
-        return next()
-      }
-      const matchingRetry = request.callId
-        ? record.handle.agent.session.events
-            .filter(
-              (
-                event
-              ): event is Extract<
-                SessionEvent,
-                { type: 'tool/call' }
-              > =>
-                event.type === 'tool/call' &&
-                event.data.callId === request.callId
-            )
-            .at(-1)
-        : undefined
-      let retryArguments: unknown
-      if (matchingRetry) {
-        try {
-          retryArguments = JSON.parse(matchingRetry.data.arguments)
-        } catch {
-          return 'rejected'
-        }
-      }
-      if (
-        !matchingRetry ||
-        !record.sandboxRetries.consumeRetry(
-          request.toolName,
-          retryArguments
-        )
-      ) {
-        return 'rejected'
-      }
-      const response = await this.connection.requestPermission({
-        sessionId: request.agent.session.id,
-        toolCall: {
-          toolCallId:
-            request.callId ?? `approval-${randomUUID()}`,
-          title: request.reason ?? request.toolName
-        },
-        options: [
-          {
-            optionId: 'allow-once',
-            name: 'Allow once',
-            kind: 'allow_once'
-          },
-          {
-            optionId: 'reject-once',
-            name: 'Reject',
-            kind: 'reject_once'
-          }
-        ]
-      })
-      return response.outcome.outcome === 'selected' &&
-        response.outcome.optionId === 'allow-once'
-        ? 'allowed-once'
-        : 'rejected'
-    })
   }
 
   private queueUsage(sessionId: string, usage: TokenUsage): void {
@@ -1150,12 +931,9 @@ export class GoodBuddyHarnessControlPlane {
             await Promise.all([skillTool, skillRegistrations])
           }
         })
-        setSandboxMode(handle.agent.session, 'read-only')
-        setApprovalPolicy(handle.agent.session, 'never')
         this.sessions.set(sessionId, {
           handle,
-          proxyToolDisposers: new Map(),
-          sandboxRetries: new GoodBuddySandboxRetryLedger()
+          proxyToolDisposers: new Map()
         })
         return {
           sessionId,
@@ -1187,16 +965,6 @@ export class GoodBuddyHarnessControlPlane {
             'a single-use goodbuddy/session/prepare is required'
           )
         }
-        setSandboxMode(
-          record.handle.agent.session,
-          preparation.mode === 'ask'
-            ? 'read-only'
-            : 'workspace-write'
-        )
-        setApprovalPolicy(
-          record.handle.agent.session,
-          preparation.mode === 'ask' ? 'never' : 'ask'
-        )
         if (preparation.mode === 'execute') {
           await this.refreshProxyTools(params.sessionId, record)
         } else {
@@ -1205,7 +973,6 @@ export class GoodBuddyHarnessControlPlane {
           }
           record.proxyToolDisposers.clear()
         }
-        record.sandboxRetries.clear()
         const text = promptText(params.prompt)
         if (!text.trim()) {
           throw RequestError.invalidParams(
@@ -1222,6 +989,7 @@ export class GoodBuddyHarnessControlPlane {
             record.inflight = {
               requestId: preparation.requestId,
               messageId: message.id,
+              mode: preparation.mode,
               resolve,
               reject,
               emittedCharacters: 0,

@@ -136,7 +136,6 @@ export type DeepSeekHarnessLaunchOptions = {
   baseUrl: string
   model: string
   credentialRefs: readonly string[]
-  requiredSandboxEnforcement?: 'full' | 'partial'
   skillPackages: readonly RuntimeSkillPackage[]
 }
 
@@ -154,7 +153,6 @@ export type DeepSeekHarnessRuntimeOptions = {
   maxEventCharacters?: number
   maxRequestOutputCharacters?: number
   credentialRefs?: Readonly<Record<string, string>>
-  requiredSandboxEnforcement?: 'full' | 'partial'
   skillPackages?: RuntimeSkillPackage[]
   toolProvider?: ModelToolProviderLike
   loadAcpSdk?: () => Promise<DeepSeekHarnessAcpSdk>
@@ -184,15 +182,13 @@ type GoodBuddyHarnessCapabilities = {
   supports: {
     cancellation: boolean
     sessionRelease: boolean
-    oneShotApproval: boolean
     reasoningEvents: boolean
     toolEvents: boolean
     usageEvents: boolean
     credentialResolution: boolean
   }
-  sandbox: {
-    provider: string
-    enforcement: 'full' | 'partial'
+  execution: {
+    mode: 'host'
   }
 }
 
@@ -603,23 +599,11 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
       typeof capabilities.harnessVersion !== 'string' ||
       !supports?.cancellation ||
       !supports.sessionRelease ||
-      !supports.oneShotApproval ||
       !supports.credentialResolution ||
-      !capabilities.sandbox ||
-      !['full', 'partial'].includes(
-        capabilities.sandbox.enforcement
-      )
+      capabilities.execution?.mode !== 'host'
     ) {
       throw new Error(
         'DeepSeek Harness 内部控制面必需能力握手失败'
-      )
-    }
-    if (
-      this.options.requiredSandboxEnforcement === 'full' &&
-      capabilities.sandbox.enforcement !== 'full'
-    ) {
-      throw new Error(
-        'DeepSeek Harness 沙箱仅部分强制，严格模式拒绝启动'
       )
     }
     return capabilities
@@ -710,8 +694,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           credentialRefs: Object.keys(
             this.options.credentialRefs ?? {}
           ),
-          requiredSandboxEnforcement:
-            this.options.requiredSandboxEnforcement,
           skillPackages: this.options.skillPackages ?? []
         }),
         this.initializationTimeoutMs,
@@ -963,7 +945,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         label: 'DeepSeek Harness',
         available: true,
         supportsToolExecution: true,
-        detail: `DeepSeek Harness ${this.state?.capabilities.harnessVersion ?? ''} · ${this.state?.capabilities.sandbox.provider ?? 'sandbox'} ${this.state?.capabilities.sandbox.enforcement ?? 'unknown'}`
+        detail: `DeepSeek Harness ${this.state?.capabilities.harnessVersion ?? ''} · 当前用户权限`
       }
     } catch (error) {
       return {

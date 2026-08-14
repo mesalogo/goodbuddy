@@ -252,7 +252,6 @@ export const toolApprovalPolicySchema = z.enum([
 ])
 
 export const continueModeSchema = z.enum(['chat', 'agent'])
-export const runtimeSandboxModeSchema = z.enum(['off', 'auto', 'strict'])
 export const modelProtocolSchema = z.enum([
   'anthropic-messages',
   'openai-responses',
@@ -297,7 +296,6 @@ export const defaultRuntimeSettings = {
   continueBinaryPath: '',
   continueConfigPath: '',
   continueMode: 'chat',
-  runtimeSandboxMode: 'auto',
   subagentSmartRoutingEnabled: false,
   knowledgeEmbeddingEnabled: false,
   knowledgeEmbeddingBaseUrl:
@@ -421,7 +419,6 @@ export const runtimeSettingsInputSchema = z
     continueBinaryPath: runtimePathSchema,
     continueConfigPath: runtimePathSchema,
     continueMode: continueModeSchema,
-    runtimeSandboxMode: runtimeSandboxModeSchema,
     subagentSmartRoutingEnabled: z.boolean().optional(),
     knowledgeEmbeddingEnabled: z.boolean(),
     knowledgeEmbeddingBaseUrl: z.string().url().max(2_048),
@@ -661,7 +658,6 @@ export type RuntimeSettings = {
   continueBinaryPath: string
   continueConfigPath: string
   continueMode: RuntimeSettingsInput['continueMode']
-  runtimeSandboxMode: RuntimeSettingsInput['runtimeSandboxMode']
   subagentSmartRoutingEnabled: boolean
   knowledgeEmbeddingEnabled: boolean
   knowledgeEmbeddingBaseUrl: string

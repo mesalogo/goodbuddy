@@ -43,7 +43,6 @@ const runtimeSettings: RuntimeSettings = {
   continueBinaryPath: '',
   continueConfigPath: '',
   continueMode: 'chat',
-  runtimeSandboxMode: 'auto',
   subagentSmartRoutingEnabled: false,
   knowledgeEmbeddingEnabled: false,
   knowledgeEmbeddingBaseUrl:

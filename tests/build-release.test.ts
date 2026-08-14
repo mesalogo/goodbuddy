@@ -278,7 +278,7 @@ describe('release build arguments', () => {
     ).toBe(false)
   })
 
-  it('pins and unpacks every target-specific Harness native package', () => {
+  it('pins and unpacks only the required Harness native packages', () => {
     const packageJson = require('../package.json') as {
       build: {
         asarUnpack: string[]
@@ -297,17 +297,10 @@ describe('release build arguments', () => {
         'node_modules/node-pty/prebuilds/**/*',
         'node_modules/node-pty/build/Release/**/*',
         'node_modules/koffi/**/*',
-        'node_modules/@koromix/koffi-*/**/*',
-        'node_modules/@deepseek-ai/dsh-sandbox-windows-acl/**/*',
-        'node_modules/@deepseek-ai/node-addon-landlock-run/**/*',
-        'node_modules/@deepseek-ai/node-addon-landlock-run-*/**/*'
+        'node_modules/@koromix/koffi-*/**/*'
       ])
     )
     expect(packageJson.optionalDependencies).toEqual({
-      '@deepseek-ai/node-addon-landlock-run-linux-arm64':
-        '0.1.1',
-      '@deepseek-ai/node-addon-landlock-run-linux-x64':
-        '0.1.1',
       '@koromix/koffi-darwin-arm64': '3.1.4',
       '@koromix/koffi-darwin-x64': '3.1.4',
       '@koromix/koffi-linux-arm64': '3.1.4',
@@ -330,10 +323,7 @@ describe('release build arguments', () => {
         platform: 'linux',
         formats: ['AppImage', 'deb']
       })
-    ).toEqual([
-      '@koromix/koffi-linux-x64',
-      '@deepseek-ai/node-addon-landlock-run-linux-x64'
-    ])
+    ).toEqual(['@koromix/koffi-linux-x64'])
   })
 
   it('validates packed target dependency metadata and archive integrity', () => {

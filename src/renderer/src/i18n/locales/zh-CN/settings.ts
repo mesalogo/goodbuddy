@@ -490,16 +490,6 @@ export const settings = {
     }
   },
   security: {
-    sandbox: {
-      label: 'Runtime OS 沙箱',
-      options: {
-        auto: '自动（Linux 优先启用）',
-        strict: '严格（不可用时拒绝运行）',
-        off: '关闭'
-      },
-      description:
-        '首期严格隔离适用于安装 bubblewrap 的 Linux 嵌入式 OpenCode。外部 Runtime 与 Continue 不会被误标为已沙箱。'
-    },
     toolPolicy: {
       label: '直连模型工具安全策略',
       always: 'Execute 自动授权已启用的工具',

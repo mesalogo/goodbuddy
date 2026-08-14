@@ -182,16 +182,6 @@ async function run() {
       provider: 'goodbuddy',
       model: 'qwen-plus',
       harnessVersion: '0.1.0-rc.6',
-      sandbox: {
-        provider:
-          process.platform === 'win32'
-            ? 'windows-acl'
-            : process.platform === 'darwin'
-              ? 'seatbelt'
-              : 'local-linux',
-        enforcement:
-          process.platform === 'win32' ? 'partial' : 'full'
-      },
       credentialRefs: ['GOODBUDDY_HARNESS_MODEL_API_KEY'],
       skillPackages: [],
       maxFrameBytes: 1024 * 1024

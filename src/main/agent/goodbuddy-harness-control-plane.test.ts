@@ -7,34 +7,8 @@ import {
   GOODBUDDY_PREPARE,
   GoodBuddyCredentialProvider,
   GoodBuddyHarnessControlPlane,
-  GoodBuddySandboxRetryLedger,
   createBoundedAcpStream
 } from './goodbuddy-harness-control-plane'
-
-function execution(
-  callId: string,
-  name: string,
-  args: Record<string, unknown>
-) {
-  return {
-    callId,
-    rootCallId: callId,
-    name,
-    arguments: args,
-    signal: new AbortController().signal,
-    token: Symbol('execution')
-  } as never
-}
-
-const sandboxDenied = {
-  isError: false,
-  value: {
-    sandbox: {
-      denied: true
-    }
-  },
-  content: []
-} as const
 
 function controlPlane() {
   return new GoodBuddyHarnessControlPlane({} as Context, {
@@ -42,7 +16,7 @@ function controlPlane() {
     model: 'deepseek-test',
     workspace: resolve('workspace'),
     harnessVersion: '0.1.0-rc.6',
-    sandbox: { provider: 'test', enforcement: 'full' },
+    execution: { mode: 'host' },
     credentialRefs: ['GOODBUDDY_API_KEY'],
     skills: []
   })
@@ -80,7 +54,7 @@ function stubAgentContext() {
     model: 'deepseek-test',
     workspace: resolve('workspace'),
     harnessVersion: '0.1.0-rc.6',
-    sandbox: { provider: 'test', enforcement: 'full' },
+    execution: { mode: 'host' },
     credentialRefs: ['GOODBUDDY_API_KEY'],
     skills: [],
     maxEventCharacters: 10_000,
@@ -97,6 +71,7 @@ function stubAgentContext() {
         inflight: {
           requestId: string
           messageId: string
+          mode: 'ask' | 'execute'
           resolve: (reason: string) => void
           reject: (error: unknown) => void
           emittedCharacters: number
@@ -113,6 +88,7 @@ function stubAgentContext() {
     inflight: {
       requestId: 'request-output',
       messageId: 'message-output',
+      mode: 'ask',
       resolve: vi.fn(),
       reject: vi.fn(),
       emittedCharacters: 0,
@@ -150,10 +126,9 @@ describe('GoodBuddy Harness internal control plane', () => {
       supports: {
         cancellation: true,
         sessionRelease: true,
-        oneShotApproval: true,
         credentialResolution: true
       },
-      sandbox: { enforcement: 'full' }
+      execution: { mode: 'host' }
     })
   })
 
@@ -261,73 +236,26 @@ describe('GoodBuddy Harness internal control plane', () => {
     ).toBeGreaterThan(180)
   })
 
-  it('requires a matching real denial and consumes it once', () => {
-    const ledger = new GoodBuddySandboxRetryLedger()
-    const deniedArguments = {
-      command: 'type C:\\outside\\file.txt',
-      description: 'Read an outside file'
-    }
-    const retry = {
-      ...deniedArguments,
-      sandbox_permissions: 'danger-full-access',
-      justification: 'The requested file is outside the workspace.'
-    }
-
-    expect(ledger.consumeRetry('pwsh', retry)).toBe(false)
-    ledger.record(
-      execution('denial-1', 'pwsh', deniedArguments),
-      sandboxDenied as never
-    )
-    expect(
-      ledger.consumeRetry('pwsh', {
-        ...retry,
-        command: 'type C:\\different\\file.txt'
-      })
-    ).toBe(false)
-    expect(ledger.consumeRetry('bash', retry)).toBe(false)
-    expect(ledger.consumeRetry('pwsh', retry)).toBe(true)
-    expect(ledger.consumeRetry('pwsh', retry)).toBe(false)
-  })
-
-  it('rejects non-denials, narrow escalation, and reordered ambiguity', () => {
-    const ledger = new GoodBuddySandboxRetryLedger()
-    const deniedArguments = {
-      description: 'Read an outside file',
-      command: 'cat /outside/file'
-    }
-    ledger.record(execution('success', 'bash', deniedArguments), {
+  it('blocks mutating and shell tools in Ask while allowing reads', async () => {
+    const { listeners, handle } = stubAgentContext()
+    const executeTool = listeners.get('tools/execute')!
+    const next = vi.fn(async () => ({
       isError: false,
       value: {},
       content: []
-    } as never)
-    expect(
-      ledger.consumeRetry('bash', {
-        command: 'cat /outside/file',
-        description: 'Read an outside file',
-        sandbox_permissions: 'danger-full-access',
-        justification: 'The requested file is outside the workspace.'
-      })
-    ).toBe(false)
+    }))
+    const request = (name: string) => ({
+      name,
+      agent: handle.agent
+    })
 
-    ledger.record(
-      execution('denial-2', 'bash', deniedArguments),
-      sandboxDenied as never
-    )
-    expect(
-      ledger.consumeRetry('bash', {
-        command: 'cat /outside/file',
-        description: 'Read an outside file',
-        sandbox_permissions: 'workspace-write',
-        justification: 'Retry in workspace-write.'
-      })
-    ).toBe(false)
-    expect(
-      ledger.consumeRetry('bash', {
-        command: 'cat /outside/file',
-        description: 'Read an outside file',
-        sandbox_permissions: 'danger-full-access',
-        justification: 'The requested file is outside the workspace.'
-      })
-    ).toBe(true)
+    for (const name of ['write', 'edit', 'bash', 'pwsh']) {
+      await expect(
+        Promise.resolve(executeTool(request(name), next))
+      ).rejects.toThrow('Ask 模式不允许')
+    }
+    await expect(
+      Promise.resolve(executeTool(request('read'), next))
+    ).resolves.toMatchObject({ isError: false })
   })
 })
