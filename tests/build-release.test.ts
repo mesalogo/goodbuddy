@@ -6,6 +6,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,11 +45,27 @@ interface ReleaseBuilderModule {
     arguments_: string[],
     environment?: { platform: string; arch: string }
   ) => ReleaseOptions
+  parsePackedPackageMetadata: (
+    output: string,
+    expected: {
+      name: string
+      version: string
+      integrity: string
+    }
+  ) => {
+    name: string
+    version: string
+    integrity: string
+    filename: string
+  }
   replaceOutput: (
     stagingDirectory: string,
     destination: string,
     options: ReleaseOptions
   ) => void
+  targetRuntimePackageNames: (
+    options: ReleaseOptions
+  ) => string[]
   verifyHarnessPackage: (
     resources: string,
     options: ReleaseOptions,
@@ -73,6 +90,10 @@ interface ReleaseBuilderModule {
     options: ReleaseOptions
   ) => void
   verifyPortableZip: (filePath: string) => void
+  verifyArchiveIntegrity: (
+    filePath: string,
+    expectedIntegrity: string
+  ) => void
   writeManifest: (
     directory: string,
     options: ReleaseOptions
@@ -294,6 +315,80 @@ describe('release build arguments', () => {
       '@koromix/koffi-win32-arm64': '3.1.4',
       '@koromix/koffi-win32-x64': '3.1.4'
     })
+  })
+
+  it('identifies the native packages required by each release target', () => {
+    expect(
+      releaseBuilder.targetRuntimePackageNames({
+        ...windowsOptions,
+        arch: 'arm64'
+      })
+    ).toEqual(['@koromix/koffi-win32-arm64'])
+    expect(
+      releaseBuilder.targetRuntimePackageNames({
+        ...windowsOptions,
+        platform: 'linux',
+        formats: ['AppImage', 'deb']
+      })
+    ).toEqual([
+      '@koromix/koffi-linux-x64',
+      '@deepseek-ai/node-addon-landlock-run-linux-x64'
+    ])
+  })
+
+  it('validates packed target dependency metadata and archive integrity', () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-release-dependency-test-')
+    )
+    const archive = join(directory, 'target.tgz')
+    const contents = Buffer.from('locked target dependency')
+    writeFileSync(archive, contents)
+    const integrity = `sha512-${createHash('sha512')
+      .update(contents)
+      .digest('base64')}`
+    const expected = {
+      name: '@koromix/koffi-win32-arm64',
+      version: '3.1.4',
+      integrity
+    }
+
+    try {
+      expect(
+        releaseBuilder.parsePackedPackageMetadata(
+          JSON.stringify([
+            {
+              ...expected,
+              filename: 'koffi-win32-arm64.tgz'
+            }
+          ]),
+          expected
+        )
+      ).toMatchObject({
+        ...expected,
+        filename: 'koffi-win32-arm64.tgz'
+      })
+      releaseBuilder.verifyArchiveIntegrity(archive, integrity)
+      expect(() =>
+        releaseBuilder.verifyArchiveIntegrity(
+          archive,
+          `sha512-${Buffer.alloc(64).toString('base64')}`
+        )
+      ).toThrow('完整性校验失败')
+      expect(() =>
+        releaseBuilder.parsePackedPackageMetadata(
+          JSON.stringify([
+            {
+              ...expected,
+              version: '3.1.5',
+              filename: 'koffi-win32-arm64.tgz'
+            }
+          ]),
+          expected
+        )
+      ).toThrow('元数据不匹配')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('keeps Web3D test fixtures out of release resources', () => {

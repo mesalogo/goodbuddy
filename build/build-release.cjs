@@ -1,9 +1,12 @@
 const { spawn } = require('node:child_process')
+const { createHash } = require('node:crypto')
 const {
   createReadStream,
   createWriteStream,
   existsSync,
   closeSync,
+  mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
@@ -14,6 +17,7 @@ const {
   writeFileSync
 } = require('node:fs')
 const { once } = require('node:events')
+const { tmpdir } = require('node:os')
 const {
   basename,
   dirname,
@@ -35,6 +39,9 @@ const { sha256File } = require('./file-hash.cjs')
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(
   readFileSync(join(root, 'package.json'), 'utf8')
+)
+const packageLock = JSON.parse(
+  readFileSync(join(root, 'package-lock.json'), 'utf8')
 )
 const productName = packageJson.build?.productName ?? packageJson.name
 const releaseRoot = join(root, 'dist', 'release')
@@ -205,6 +212,29 @@ function npmInvocation(environment = process.env) {
       prefixArgs: [environment.npm_execpath]
     }
   }
+  const npmCli = [
+    join(
+      dirname(process.execPath),
+      'node_modules',
+      'npm',
+      'bin',
+      'npm-cli.js'
+    ),
+    join(
+      dirname(dirname(process.execPath)),
+      'lib',
+      'node_modules',
+      'npm',
+      'bin',
+      'npm-cli.js'
+    )
+  ].find((candidate) => existsSync(candidate))
+  if (npmCli) {
+    return {
+      command: process.execPath,
+      prefixArgs: [npmCli]
+    }
+  }
   return {
     command: process.platform === 'win32' ? 'npm.cmd' : 'npm',
     prefixArgs: []
@@ -241,6 +271,38 @@ function run(command, args, environment = process.env) {
         `命令执行失败（code ${code ?? 1}）：${command} ${args.join(' ')}`
       )
       error.outputTail = outputTail
+      rejectRun(error)
+    })
+  })
+}
+
+function runCapture(command, args, environment = process.env) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, {
+      cwd: root,
+      env: environment,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => {
+      stdout = `${stdout}${chunk}`.slice(-1024 * 1024)
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-64 * 1024)
+    })
+    child.once('error', rejectRun)
+    child.once('close', (code) => {
+      if (code === 0) {
+        resolveRun(stdout)
+        return
+      }
+      const error = new Error(
+        `命令执行失败（code ${code ?? 1}）：${command} ${args.join(' ')}`
+      )
+      error.outputTail = stderr
       rejectRun(error)
     })
   })
@@ -440,6 +502,195 @@ function targetHarnessPaths(options) {
       options.platform === 'linux'
         ? `@deepseek-ai/node-addon-landlock-run-linux-${options.arch}`
         : undefined
+  }
+}
+
+function targetRuntimePackageNames(options) {
+  const target = targetHarnessPaths(options)
+  return [
+    target.koffiPackage,
+    ...(target.landlockPackage ? [target.landlockPackage] : [])
+  ]
+}
+
+function lockedTargetRuntimePackage(packageName) {
+  const expectedVersion =
+    packageJson.optionalDependencies?.[packageName]
+  const lockEntry =
+    packageLock.packages?.[`node_modules/${packageName}`]
+  if (
+    typeof expectedVersion !== 'string' ||
+    lockEntry?.version !== expectedVersion ||
+    typeof lockEntry.resolved !== 'string' ||
+    typeof lockEntry.integrity !== 'string'
+  ) {
+    throw new Error(
+      `目标 Runtime 依赖未完整锁定：${packageName}`
+    )
+  }
+  return {
+    name: packageName,
+    version: expectedVersion,
+    resolved: lockEntry.resolved,
+    integrity: lockEntry.integrity
+  }
+}
+
+function parsePackedPackageMetadata(output, expected) {
+  let entries
+  try {
+    entries = JSON.parse(output)
+  } catch (error) {
+    throw new Error(
+      `目标 Runtime 依赖 npm pack 输出无效：${expected.name}`,
+      { cause: error }
+    )
+  }
+  const metadata =
+    Array.isArray(entries) && entries.length === 1
+      ? entries[0]
+      : undefined
+  if (
+    metadata?.name !== expected.name ||
+    metadata.version !== expected.version ||
+    metadata.integrity !== expected.integrity ||
+    typeof metadata.filename !== 'string' ||
+    basename(metadata.filename) !== metadata.filename
+  ) {
+    throw new Error(
+      `目标 Runtime 依赖 npm pack 元数据不匹配：${expected.name}`
+    )
+  }
+  return metadata
+}
+
+function verifyArchiveIntegrity(filePath, expectedIntegrity) {
+  const match = /^(sha(?:256|384|512))-(\S+)$/u.exec(
+    expectedIntegrity
+  )
+  if (!match) {
+    throw new Error(`不支持的依赖完整性格式：${expectedIntegrity}`)
+  }
+  const actual = createHash(match[1])
+    .update(readFileSync(filePath))
+    .digest('base64')
+  if (actual !== match[2]) {
+    throw new Error(`目标 Runtime 依赖完整性校验失败：${filePath}`)
+  }
+}
+
+function installedPackageMatches(packageName, expectedVersion) {
+  const manifestPath = join(
+    root,
+    'node_modules',
+    ...packageName.split('/'),
+    'package.json'
+  )
+  if (!existsSync(manifestPath)) {
+    return false
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  if (
+    manifest.name !== packageName ||
+    manifest.version !== expectedVersion
+  ) {
+    throw new Error(
+      `目标 Runtime 依赖版本错误：${packageName}`
+    )
+  }
+  return true
+}
+
+async function stageTargetRuntimeDependencies(options) {
+  const missing = targetRuntimePackageNames(options)
+    .map(lockedTargetRuntimePackage)
+    .filter(
+      (dependency) =>
+        !installedPackageMatches(
+          dependency.name,
+          dependency.version
+        )
+    )
+  if (missing.length === 0) {
+    return () => undefined
+  }
+
+  const stagingRoot = mkdtempSync(
+    join(tmpdir(), 'goodbuddy-release-dependencies-')
+  )
+  const stagedDirectories = []
+  const cleanup = () => {
+    for (const directory of stagedDirectories.reverse()) {
+      rmSync(directory, { recursive: true, force: true })
+    }
+    rmSync(stagingRoot, { recursive: true, force: true })
+  }
+
+  try {
+    const npm = npmInvocation()
+    for (const [index, dependency] of missing.entries()) {
+      const archiveDirectory = join(
+        stagingRoot,
+        `package-${index}`
+      )
+      mkdirSync(archiveDirectory, { recursive: true })
+      const output = await runCapture(npm.command, [
+        ...npm.prefixArgs,
+        'pack',
+        `${dependency.name}@${dependency.version}`,
+        '--ignore-scripts',
+        '--json',
+        '--pack-destination',
+        archiveDirectory
+      ])
+      const metadata = parsePackedPackageMetadata(
+        output,
+        dependency
+      )
+      const archivePath = join(
+        archiveDirectory,
+        metadata.filename
+      )
+      verifyArchiveIntegrity(archivePath, dependency.integrity)
+
+      const destination = join(
+        root,
+        'node_modules',
+        ...dependency.name.split('/')
+      )
+      if (existsSync(destination)) {
+        throw new Error(
+          `拒绝覆盖目标 Runtime 依赖目录：${destination}`
+        )
+      }
+      mkdirSync(destination, { recursive: true })
+      stagedDirectories.push(destination)
+      await run('tar', [
+        '-xzf',
+        archivePath,
+        '-C',
+        destination,
+        '--strip-components',
+        '1'
+      ])
+      if (
+        !installedPackageMatches(
+          dependency.name,
+          dependency.version
+        )
+      ) {
+        throw new Error(
+          `目标 Runtime 依赖暂存失败：${dependency.name}`
+        )
+      }
+      console.log(
+        `已暂存目标 Runtime 依赖：${dependency.name}@${dependency.version}`
+      )
+    }
+    return cleanup
+  } catch (error) {
+    cleanup()
+    throw error
   }
 }
 
@@ -1278,6 +1529,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 
   rmSync(stagingDirectory, { recursive: true, force: true })
+  let cleanupTargetDependencies = () => undefined
   try {
     if (!options.skipBuild) {
       const npm = npmInvocation()
@@ -1286,6 +1538,8 @@ async function main(argv = process.argv.slice(2)) {
         [...npm.prefixArgs, 'run', 'build']
       )
     }
+    cleanupTargetDependencies =
+      await stageTargetRuntimeDependencies(options)
     await run(
       process.execPath,
       builderArguments,
@@ -1322,6 +1576,7 @@ async function main(argv = process.argv.slice(2)) {
       )
     }
   } finally {
+    cleanupTargetDependencies()
     rmSync(stagingDirectory, { recursive: true, force: true })
   }
 }
@@ -1333,9 +1588,13 @@ module.exports = {
   detectBinaryArchitecture,
   normalizePlatform,
   parseArguments,
+  parsePackedPackageMetadata,
   platformDefinitions,
   replaceOutput,
+  stageTargetRuntimeDependencies,
+  targetRuntimePackageNames,
   verifyHarnessPackage,
+  verifyArchiveIntegrity,
   verifyUnpackedOutput,
   verifyArtifacts,
   verifyArtifactSignature,
