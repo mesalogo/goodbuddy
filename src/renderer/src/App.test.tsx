@@ -1325,6 +1325,36 @@ describe('App', () => {
       .closest('details')
     expect(streamingReasoning).toHaveAttribute('open')
     expect(screen.getByText('先检查项目结构')).toBeInTheDocument()
+    const reasoningContent =
+      streamingReasoning!.querySelector<HTMLElement>(
+        '.message-reasoning__content'
+      )
+    if (!reasoningContent) {
+      throw new Error('Missing reasoning content')
+    }
+    const reasoningScrollTo = vi.fn()
+    reasoningContent.scrollTo = reasoningScrollTo
+    Object.defineProperty(reasoningContent, 'scrollHeight', {
+      configurable: true,
+      value: 640
+    })
+
+    act(() => {
+      if (!request) {
+        throw new Error('Missing request')
+      }
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'reasoning',
+        delta: '，再确认依赖'
+      })
+    })
+
+    expect(reasoningScrollTo).toHaveBeenLastCalledWith({
+      top: 640,
+      behavior: 'auto'
+    })
+    expect(screen.getByText('先检查项目结构，再确认依赖')).toBeInTheDocument()
 
     act(() => {
       if (!request) {

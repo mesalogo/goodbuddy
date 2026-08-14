@@ -524,6 +524,43 @@ function groupMessageBlocks(
   return items
 }
 
+function MessageReasoning({
+  content,
+  streaming
+}: {
+  content: string
+  streaming: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation('app')
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!streaming || !contentRef.current) {
+      return
+    }
+    contentRef.current.scrollTo({
+      top: contentRef.current.scrollHeight,
+      behavior: 'auto'
+    })
+  }, [content, streaming])
+
+  return (
+    <details className="message-reasoning" open={streaming}>
+      <summary>
+        {streaming
+          ? t('chat.reasoning.streaming')
+          : t('chat.reasoning.complete')}
+      </summary>
+      <div
+        className="markdown-content message-reasoning__content"
+        ref={contentRef}
+      >
+        <MarkdownRenderer>{content}</MarkdownRenderer>
+      </div>
+    </details>
+  )
+}
+
 function ToolExecutionList({
   tools
 }: {
@@ -5380,22 +5417,11 @@ function App(): React.JSX.Element {
                             tools={item.tools}
                           />
                         ) : item.block.type === 'reasoning' ? (
-                          <details
-                            className="message-reasoning"
+                          <MessageReasoning
+                            content={item.block.content}
                             key={item.block.id}
-                            open={message.state === 'streaming'}
-                          >
-                            <summary>
-                              {message.state === 'streaming'
-                                ? t('chat.reasoning.streaming')
-                                : t('chat.reasoning.complete')}
-                            </summary>
-                            <div className="markdown-content message-reasoning__content">
-                              <MarkdownRenderer>
-                                {item.block.content}
-                              </MarkdownRenderer>
-                            </div>
-                          </details>
+                            streaming={message.state === 'streaming'}
+                          />
                         ) : (
                           <div
                             className="markdown-content message__content"
@@ -5411,22 +5437,11 @@ function App(): React.JSX.Element {
                   ) : (
                     <>
                       {message.reasoning && (
-                        <details
-                          className="message-reasoning"
+                        <MessageReasoning
+                          content={message.reasoning}
                           key={`${message.id}-${message.state}`}
-                          open={message.state === 'streaming'}
-                        >
-                          <summary>
-                            {message.state === 'streaming'
-                              ? t('chat.reasoning.streaming')
-                              : t('chat.reasoning.complete')}
-                          </summary>
-                          <div className="markdown-content message-reasoning__content">
-                            <MarkdownRenderer>
-                              {message.reasoning}
-                            </MarkdownRenderer>
-                          </div>
-                        </details>
+                          streaming={message.state === 'streaming'}
+                        />
                       )}
                       {message.content && (
                         <div className="markdown-content message__content">
