@@ -14,6 +14,7 @@ import type {
   AssistantProject,
   AssistantSchedule,
   AssistantTask,
+  ConversationMessage,
   ConversationSnapshot,
   ExpertCreateInput,
   ExpertUpdateInput,
@@ -21,6 +22,7 @@ import type {
   HeartbeatSummaryOutput,
   HeartbeatUpdateInput,
   LegacyWorkMode,
+  LocalConversationSaveBatch,
   MemoryCreateInput,
   ModelUsageCallInput,
   ProjectChannel,
@@ -749,6 +751,80 @@ function interruptActiveToolBlocks(
   )
 }
 
+function toConversationSnapshot(
+  conversation: ConversationRow,
+  messages: MessageRow[]
+): ConversationSnapshot {
+  return {
+    id: conversation.id,
+    projectId: conversation.project_id ?? undefined,
+    runtimeSelection: parseRuntimeSelection(
+      conversation.runtime_selection_json
+    ),
+    knowledgeRetrievalMode:
+      conversation.knowledge_retrieval_mode ?? undefined,
+    ...(conversation.channel &&
+    conversation.conversation_type &&
+    conversation.account_display
+      ? {
+          remote: {
+            channel: conversation.channel,
+            accountDisplay: conversation.account_display,
+            conversationType: conversation.conversation_type
+          }
+        }
+      : {}),
+    title: conversation.title,
+    updatedAt: Date.parse(conversation.updated_at),
+    messages: messages.map((message) => {
+      const metadata = JSON.parse(
+        message.metadata_json
+      ) as MessageMetadata
+      const interrupted = message.state === 'streaming'
+      return {
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        reasoning: metadata.reasoning,
+        blocks: interrupted
+          ? interruptActiveToolBlocks(metadata.blocks)
+          : metadata.blocks,
+        createdAt:
+          metadata.createdAt ?? Date.parse(message.created_at),
+        state: interrupted ? ('error' as const) : message.state,
+        status: interrupted
+          ? interruptedMessageStatus
+          : metadata.status,
+        tools: interrupted
+          ? interruptActiveTools(metadata.tools)
+          : metadata.tools,
+        sources: metadata.sources,
+        sourceReferences: metadata.sourceReferences,
+        knowledgeRetrieval: metadata.knowledgeRetrieval,
+        artifactIds: metadata.artifactIds,
+        attachments: metadata.attachments
+      }
+    })
+  }
+}
+
+function serializeConversationMessageMetadata(
+  message: ConversationMessage
+): string {
+  return JSON.stringify({
+    createdAt: message.createdAt,
+    status: message.status,
+    reasoning: message.reasoning,
+    blocks: message.blocks,
+    tools: message.tools,
+    sources: message.sources,
+    sourceReferences: message.sourceReferences,
+    knowledgeRetrieval: message.knowledgeRetrieval,
+    artifactIds: message.artifactIds,
+    attachments: message.attachments
+  })
+}
+
 export class AssistantDatabase {
   private database?: DatabaseSync
   private channelEventWrites = 0
@@ -1279,69 +1355,45 @@ export class AssistantDatabase {
        )
        ORDER BY sequence ASC`
     )
-    return conversations.map((conversation) => ({
-      id: conversation.id,
-      projectId: conversation.project_id ?? undefined,
-      runtimeSelection: parseRuntimeSelection(
-        conversation.runtime_selection_json
-      ),
-      knowledgeRetrievalMode:
-        conversation.knowledge_retrieval_mode ?? undefined,
-      ...(conversation.channel &&
-      conversation.conversation_type &&
-      conversation.account_display
-        ? {
-            remote: {
-              channel: conversation.channel,
-              accountDisplay: conversation.account_display,
-              conversationType: conversation.conversation_type
-            }
-          }
-        : {}),
-      title: conversation.title,
-      updatedAt: Date.parse(conversation.updated_at),
-      messages: (
+    return conversations.map((conversation) =>
+      toConversationSnapshot(
+        conversation,
         messageStatement.all(conversation.id) as MessageRow[]
-      ).map((message) => {
-        const metadata = JSON.parse(
-          message.metadata_json
-        ) as MessageMetadata
-        const interrupted = message.state === 'streaming'
-        return {
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          reasoning: metadata.reasoning,
-          blocks: interrupted
-            ? interruptActiveToolBlocks(metadata.blocks)
-            : metadata.blocks,
-          createdAt:
-            metadata.createdAt ?? Date.parse(message.created_at),
-          state: interrupted ? ('error' as const) : message.state,
-          status: interrupted
-            ? interruptedMessageStatus
-            : metadata.status,
-          tools: interrupted
-            ? interruptActiveTools(metadata.tools)
-            : metadata.tools,
-          sources: metadata.sources,
-          sourceReferences: metadata.sourceReferences,
-          knowledgeRetrieval: metadata.knowledgeRetrieval,
-          artifactIds: metadata.artifactIds,
-          attachments: metadata.attachments
-        }
-      })
-    }))
+      )
+    )
   }
 
   getConversation(conversationId: string): ConversationSnapshot {
-    const conversation = this.listConversations().find(
-      (candidate) => candidate.id === conversationId
-    )
+    const database = this.requireDatabase()
+    const conversation = database
+      .prepare(
+        `SELECT id, project_id, runtime_selection_json,
+                knowledge_retrieval_mode, title, channel,
+                external_account_id, external_conversation_id,
+                conversation_type, account_display, updated_at
+         FROM conversations
+         WHERE id = ? AND status = 'active'`
+      )
+      .get(conversationId) as ConversationRow | undefined
     if (!conversation) {
       throw new Error('对话不存在')
     }
-    return conversation
+    const messages = database
+      .prepare(
+        `SELECT id, conversation_id, role, content, state, metadata_json,
+                created_at
+         FROM (
+           SELECT id, conversation_id, role, content, state,
+                  metadata_json, created_at, sequence
+           FROM messages
+           WHERE conversation_id = ?
+           ORDER BY sequence DESC
+           LIMIT 500
+         )
+         ORDER BY sequence ASC`
+      )
+      .all(conversationId) as MessageRow[]
+    return toConversationSnapshot(conversation, messages)
   }
 
   repairConversationRuntimeSelections(
@@ -1500,6 +1552,167 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+  }
+
+  saveLocalConversations(batch: LocalConversationSaveBatch): void {
+    const database = this.requireDatabase()
+    const findConversation = database.prepare(
+      'SELECT channel FROM conversations WHERE id = ?'
+    )
+    const insertConversation = database.prepare(
+      `INSERT INTO conversations
+        (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
+         work_mode, title, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
+    )
+    const updateConversation = database.prepare(
+      `UPDATE conversations
+       SET project_id = ?, runtime_selection_json = ?,
+           knowledge_retrieval_mode = ?, title = ?, status = 'active',
+           updated_at = ?
+       WHERE id = ? AND channel IS NULL`
+    )
+    const findMessage = database.prepare(
+      `SELECT conversation_id, role
+       FROM messages
+       WHERE id = ?`
+    )
+    const nextSequence = database.prepare(
+      `SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
+       FROM messages
+       WHERE conversation_id = ?`
+    )
+    const insertMessage = database.prepare(
+      `INSERT INTO messages
+        (id, conversation_id, request_id, role, content, state, sequence,
+         metadata_json, created_at)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`
+    )
+    const updateMessage = database.prepare(
+      `UPDATE messages
+       SET content = ?, state = ?, metadata_json = ?
+       WHERE id = ?`
+    )
+    const trimMessages = database.prepare(
+      `DELETE FROM messages
+       WHERE id IN (
+         SELECT id
+         FROM messages
+         WHERE conversation_id = ?
+         ORDER BY sequence DESC
+         LIMIT -1 OFFSET 500
+       )`
+    )
+
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const save of batch) {
+        const { header } = save
+        const existingConversation = findConversation.get(
+          header.id
+        ) as { channel: ProjectChannel | null } | undefined
+        const updatedAt = new Date(header.updatedAt).toISOString()
+        if (existingConversation?.channel) {
+          throw new Error('本地对话 ID 与远程对话冲突')
+        }
+        if (existingConversation) {
+          const result = updateConversation.run(
+            header.projectId ?? null,
+            header.runtimeSelection
+              ? JSON.stringify(header.runtimeSelection)
+              : null,
+            header.knowledgeRetrievalMode ?? null,
+            header.title,
+            updatedAt,
+            header.id
+          )
+          if (result.changes !== 1) {
+            throw new Error('无法更新本地对话')
+          }
+        } else {
+          insertConversation.run(
+            header.id,
+            header.projectId ?? null,
+            header.runtimeSelection
+              ? JSON.stringify(header.runtimeSelection)
+              : null,
+            header.knowledgeRetrievalMode ?? null,
+            header.title,
+            updatedAt,
+            updatedAt
+          )
+        }
+
+        let sequence = (
+          nextSequence.get(header.id) as { sequence: number }
+        ).sequence
+        let insertedMessage = false
+        for (const message of save.messages) {
+          const existingMessage = findMessage.get(message.id) as
+            | {
+                conversation_id: string
+                role: MessageRow['role']
+              }
+            | undefined
+          if (existingMessage) {
+            if (existingMessage.conversation_id !== header.id) {
+              throw new Error('消息 ID 已属于其他对话')
+            }
+            if (existingMessage.role !== message.role) {
+              throw new Error('消息角色不能更改')
+            }
+            updateMessage.run(
+              message.content,
+              message.state,
+              serializeConversationMessageMetadata(message),
+              message.id
+            )
+            continue
+          }
+          insertMessage.run(
+            message.id,
+            header.id,
+            message.role,
+            message.content,
+            message.state,
+            sequence,
+            serializeConversationMessageMetadata(message),
+            new Date(message.createdAt).toISOString()
+          )
+          sequence += 1
+          insertedMessage = true
+        }
+        if (insertedMessage) {
+          trimMessages.run(header.id)
+        }
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  deleteLocalConversation(conversationId: string): boolean {
+    const database = this.requireDatabase()
+    const conversation = database
+      .prepare('SELECT channel FROM conversations WHERE id = ?')
+      .get(conversationId) as
+      | { channel: ProjectChannel | null }
+      | undefined
+    if (!conversation) {
+      return false
+    }
+    if (conversation.channel) {
+      throw new Error('远程对话不能作为本地对话删除')
+    }
+    return (
+      database
+        .prepare(
+          'DELETE FROM conversations WHERE id = ? AND channel IS NULL'
+        )
+        .run(conversationId).changes === 1
+    )
   }
 
   getOrCreateRemoteConversation(input: {

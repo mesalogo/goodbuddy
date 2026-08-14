@@ -105,6 +105,24 @@ describe('activity-store', () => {
     )
   })
 
+  it('drops the oldest records until the stored JSON fits the load bound', () => {
+    const records = Array.from(
+      { length: MAX_ACTIVITY_RECORDS },
+      (_, index) => ({
+        ...makeRecord(index),
+        detail: 'x'.repeat(4_000)
+      })
+    )
+
+    expect(saveActivityRecords(records)).toBe(true)
+    const serialized = localStorage.getItem(ACTIVITY_STORAGE_KEY)
+    expect(serialized?.length).toBeLessThanOrEqual(2_000_000)
+    const restored = loadActivityRecords()
+    expect(restored.length).toBeGreaterThan(0)
+    expect(restored.length).toBeLessThan(MAX_ACTIVITY_RECORDS)
+    expect(restored[0]?.id).toBe('activity-0')
+  })
+
   it('reports rejected writes without throwing', () => {
     const rejectingStorage = {
       setItem: () => {

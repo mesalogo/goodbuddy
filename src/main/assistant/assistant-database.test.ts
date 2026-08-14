@@ -1386,6 +1386,429 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it('incrementally saves local changes without replacing unrelated or remote data', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-incremental-conversations-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const project = database.listProjects()[0]!
+    const conversationId =
+      '00000000-0000-4000-8000-000000000501'
+    const unrelatedId =
+      '00000000-0000-4000-8000-000000000502'
+    const streamingMessageId =
+      '00000000-0000-4000-8000-000000000503'
+    const newMessageId =
+      '00000000-0000-4000-8000-000000000504'
+    database.replaceConversations([
+      {
+        id: conversationId,
+        projectId: project.id,
+        title: '增量对话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: streamingMessageId,
+            role: 'assistant',
+            content: '生成中',
+            createdAt: 1_775_000_000_001,
+            state: 'streaming',
+            status: '正在生成'
+          }
+        ]
+      },
+      {
+        id: unrelatedId,
+        title: '不相关本地对话',
+        updatedAt: 1_775_000_000_002,
+        messages: []
+      }
+    ])
+    const channelProject = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      channelDefaultProfileId
+    )[0]!
+    const remote = database.getOrCreateRemoteConversation({
+      projectId: channelProject.id,
+      channel: 'weixin',
+      accountId: 'default',
+      externalConversationId: 'incremental-preserved',
+      conversationType: 'direct',
+      title: '保留的远程对话',
+      accountDisplay: '发送者 ****0501'
+    })
+    const raw = new DatabaseSync(databasePath)
+    raw
+      .prepare('UPDATE messages SET request_id = ? WHERE id = ?')
+      .run('preserved-request-id', streamingMessageId)
+    raw.close()
+
+    const save = [
+      {
+        header: {
+          id: conversationId,
+          projectId: project.id,
+          title: '增量对话（已完成）',
+          updatedAt: 1_775_000_001_000
+        },
+        messages: [
+          {
+            id: streamingMessageId,
+            role: 'assistant' as const,
+            content: '生成完成',
+            createdAt: 1_775_000_000_001,
+            state: 'complete' as const,
+            status: '已完成'
+          },
+          {
+            id: newMessageId,
+            role: 'user' as const,
+            content: '继续',
+            createdAt: 1_775_000_001_000,
+            state: 'complete' as const
+          }
+        ]
+      }
+    ]
+    database.saveLocalConversations(save)
+    database.saveLocalConversations(save)
+
+    expect(database.getConversation(conversationId)).toMatchObject({
+      title: '增量对话（已完成）',
+      messages: [
+        {
+          id: streamingMessageId,
+          content: '生成完成',
+          state: 'complete',
+          status: '已完成'
+        },
+        {
+          id: newMessageId,
+          content: '继续',
+          state: 'complete'
+        }
+      ]
+    })
+    expect(database.getConversation(unrelatedId).title).toBe(
+      '不相关本地对话'
+    )
+    expect(database.getConversation(remote.id).remote?.channel).toBe(
+      'weixin'
+    )
+
+    const durable = new DatabaseSync(databasePath)
+    expect(
+      durable
+        .prepare(
+          `SELECT id, sequence, request_id
+           FROM messages
+           WHERE conversation_id = ?
+           ORDER BY sequence`
+        )
+        .all(conversationId)
+    ).toEqual([
+      {
+        id: streamingMessageId,
+        sequence: 0,
+        request_id: 'preserved-request-id'
+      },
+      {
+        id: newMessageId,
+        sequence: 1,
+        request_id: null
+      }
+    ])
+    durable.close()
+    database.close()
+  })
+
+  it('keeps incremental local conversation storage bounded to 500 messages', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-bounded-local-conversation-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const project = database.listProjects()[0]!
+    const conversationId =
+      '00000000-0000-4000-8000-000000000521'
+    const messageId = (index: number): string =>
+      `00000000-0000-4000-8001-${String(index).padStart(12, '0')}`
+    database.replaceConversations([
+      {
+        id: conversationId,
+        projectId: project.id,
+        title: '有界增量对话',
+        updatedAt: 1_775_000_000_000,
+        messages: Array.from({ length: 500 }, (_, index) => ({
+          id: messageId(index),
+          role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+          content: `消息 ${index}`,
+          createdAt: 1_775_000_000_000 + index,
+          state: 'complete' as const
+        }))
+      }
+    ])
+
+    const newestMessageId = messageId(500)
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          projectId: project.id,
+          title: '有界增量对话',
+          updatedAt: 1_775_000_001_000
+        },
+        messages: [
+          {
+            id: newestMessageId,
+            role: 'user',
+            content: '最新消息',
+            createdAt: 1_775_000_001_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+
+    const restored = database.getConversation(conversationId)
+    expect(restored.messages).toHaveLength(500)
+    expect(restored.messages[0]?.id).toBe(messageId(1))
+    expect(restored.messages.at(-1)?.id).toBe(newestMessageId)
+    const raw = new DatabaseSync(databasePath)
+    expect(
+      raw
+        .prepare(
+          `SELECT COUNT(*) AS count, MIN(sequence) AS minimum,
+                  MAX(sequence) AS maximum
+           FROM messages
+           WHERE conversation_id = ?`
+        )
+        .get(conversationId)
+    ).toEqual({
+      count: 500,
+      minimum: 1,
+      maximum: 500
+    })
+    raw.close()
+    database.close()
+  })
+
+  it('rolls back incremental saves when message ownership or role changes', async () => {
+    const database = await createDatabase()
+    const firstConversationId =
+      '00000000-0000-4000-8000-000000000511'
+    const secondConversationId =
+      '00000000-0000-4000-8000-000000000512'
+    const firstMessageId =
+      '00000000-0000-4000-8000-000000000513'
+    const secondMessageId =
+      '00000000-0000-4000-8000-000000000514'
+    const rolledBackMessageId =
+      '00000000-0000-4000-8000-000000000515'
+    database.replaceConversations([
+      {
+        id: firstConversationId,
+        title: '第一对话',
+        updatedAt: 1,
+        messages: [
+          {
+            id: firstMessageId,
+            role: 'user',
+            content: '第一条',
+            createdAt: 1,
+            state: 'complete'
+          }
+        ]
+      },
+      {
+        id: secondConversationId,
+        title: '第二对话',
+        updatedAt: 2,
+        messages: [
+          {
+            id: secondMessageId,
+            role: 'assistant',
+            content: '第二条',
+            createdAt: 2,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+
+    expect(() =>
+      database.saveLocalConversations([
+        {
+          header: {
+            id: firstConversationId,
+            title: '不应提交的标题',
+            updatedAt: 3
+          },
+          messages: [
+            {
+              id: rolledBackMessageId,
+              role: 'user',
+              content: '不应提交',
+              createdAt: 3,
+              state: 'complete'
+            },
+            {
+              id: secondMessageId,
+              role: 'assistant',
+              content: '错误归属',
+              createdAt: 2,
+              state: 'complete'
+            }
+          ]
+        }
+      ])
+    ).toThrow('消息 ID 已属于其他对话')
+    expect(database.getConversation(firstConversationId)).toMatchObject({
+      title: '第一对话',
+      messages: [{ id: firstMessageId }]
+    })
+
+    expect(() =>
+      database.saveLocalConversations([
+        {
+          header: {
+            id: firstConversationId,
+            title: '仍不应提交的标题',
+            updatedAt: 4
+          },
+          messages: [
+            {
+              id: firstMessageId,
+              role: 'assistant',
+              content: '错误角色',
+              createdAt: 1,
+              state: 'complete'
+            }
+          ]
+        }
+      ])
+    ).toThrow('消息角色不能更改')
+    expect(database.getConversation(firstConversationId)).toMatchObject({
+      title: '第一对话',
+      messages: [
+        {
+          id: firstMessageId,
+          role: 'user',
+          content: '第一条'
+        }
+      ]
+    })
+    database.close()
+  })
+
+  it('explicitly deletes only local conversations and cascades messages', async () => {
+    const database = await createDatabase()
+    const localId = '00000000-0000-4000-8000-000000000521'
+    database.replaceConversations([
+      {
+        id: localId,
+        title: '待删除本地对话',
+        updatedAt: 1,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000522',
+            role: 'user',
+            content: '待删除消息',
+            createdAt: 1,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    const channelProject = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      channelDefaultProfileId
+    )[0]!
+    const remote = database.getOrCreateRemoteConversation({
+      projectId: channelProject.id,
+      channel: 'weixin',
+      accountId: 'default',
+      externalConversationId: 'protected-delete',
+      conversationType: 'direct',
+      title: '受保护远程对话',
+      accountDisplay: '发送者 ****0521'
+    })
+    database.appendRemoteConversationMessage({
+      conversationId: remote.id,
+      role: 'user',
+      content: '远程消息'
+    })
+
+    expect(database.deleteLocalConversation(localId)).toBe(true)
+    expect(database.deleteLocalConversation(localId)).toBe(false)
+    expect(() =>
+      database.getConversation(localId)
+    ).toThrow('对话不存在')
+    expect(() =>
+      database.deleteLocalConversation(remote.id)
+    ).toThrow('远程对话不能作为本地对话删除')
+    expect(() =>
+      database.saveLocalConversations([
+        {
+          header: {
+            id: remote.id,
+            title: '冲突本地标题',
+            updatedAt: 2
+          },
+          messages: []
+        }
+      ])
+    ).toThrow('本地对话 ID 与远程对话冲突')
+    expect(database.getConversation(remote.id)).toMatchObject({
+      title: '受保护远程对话',
+      messages: [{ content: '远程消息' }]
+    })
+    database.close()
+  })
+
+  it('gets a targeted conversation outside the latest 100', async () => {
+    const database = await createDatabase()
+    database.saveLocalConversations(
+      Array.from({ length: 100 }, (_, index) => ({
+        header: {
+          id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+          title: `较新对话 ${index}`,
+          updatedAt: index + 2
+        },
+        messages: []
+      }))
+    )
+    const oldestId = '00000000-0000-4000-8000-000000000999'
+    database.saveLocalConversations([
+      {
+        header: {
+          id: oldestId,
+          title: '第 101 个对话',
+          updatedAt: 1
+        },
+        messages: []
+      }
+    ])
+
+    expect(database.listConversations()).toHaveLength(100)
+    expect(
+      database.listConversations().some(
+        (conversation) => conversation.id === oldestId
+      )
+    ).toBe(false)
+    expect(database.getConversation(oldestId)).toMatchObject({
+      id: oldestId,
+      title: '第 101 个对话',
+      messages: []
+    })
+    database.close()
+  })
+
   it('repairs unattended channel selections without rebinding ordinary conversations', async () => {
     const database = await createDatabase()
     const removedProfileId =

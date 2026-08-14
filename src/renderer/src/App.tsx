@@ -38,8 +38,13 @@ import {
   X
 } from 'lucide-react'
 import {
+  Component,
+  lazy,
+  Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -84,10 +89,13 @@ import type {
   AssistantExpert,
   AssistantTask,
   TokenUsageSummary,
+  ConversationMessage,
   ConversationSnapshot,
   ConversationAttachment,
   ConversationMessageBlock,
   ConversationToolActivity,
+  LocalConversationHeader,
+  LocalConversationSaveBatch,
   ProjectCreateInput,
   InteractiveWorkMode,
   ProjectChannel,
@@ -109,13 +117,10 @@ import {
   upsertActivityRecord,
   type ActivityRecord
 } from './activity-store'
-import { KnowledgeWorkspace } from './KnowledgeWorkspace'
 import {
   KnowledgeCitationDialog,
   type KnowledgeCitationContextView
 } from './KnowledgeCitationDialog'
-import { HeartbeatCenter } from './HeartbeatCenter'
-import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import {
   DestructiveConfirmActions,
@@ -133,7 +138,6 @@ import {
   type PendingSidebarApproval,
   type SidebarArtifact
 } from './RightAssistantSidebar'
-import { SettingsPanel } from './SettingsPanel'
 import type { SettingsCategoryId } from './settings-categories'
 import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
 import goodbuddyLightIcon from './assets/goodbuddy-light.png'
@@ -157,6 +161,30 @@ import type {
 } from './notifications'
 import type { ReleaseNotesSnapshot } from '../../shared/release-notes-contracts'
 import { ReleaseNotesDialog } from './ReleaseNotesDialog'
+
+const KnowledgeWorkspace = lazy(async () => {
+  const module = await import('./KnowledgeWorkspace')
+  return { default: module.KnowledgeWorkspace }
+})
+
+const HeartbeatCenter = lazy(async () => {
+  const module = await import('./HeartbeatCenter')
+  return { default: module.HeartbeatCenter }
+})
+
+const MagicNotesWorkspace = lazy(async () => {
+  const module = await import('./MagicNotesWorkspace')
+  return { default: module.MagicNotesWorkspace }
+})
+
+const SettingsPanel = lazy(async () => {
+  const module = await import('./SettingsPanel')
+  return { default: module.SettingsPanel }
+})
+
+const messageRenderBatchSize = 80
+const conversationPersistenceIntervalMs = 500
+const conversationSearchSnapshotDelayMs = 250
 
 type AppNotification = {
   id: string
@@ -204,6 +232,58 @@ function appNotificationReducer(
     .filter((notification) => notification.tone !== 'error')
     .slice(-4)
   return [...errors, ...transient]
+}
+
+function RouteLoadingStatus({
+  label
+}: {
+  label: string
+}): React.JSX.Element {
+  return (
+    <div
+      aria-busy="true"
+      aria-label={label}
+      aria-live="polite"
+      className="route-loading-status"
+      role="status"
+    >
+      <LoaderCircle aria-hidden="true" size={20} />
+      <span>{label}</span>
+    </div>
+  )
+}
+
+class RouteErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false }
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+
+  render(): ReactNode {
+    return this.state.failed ? this.props.fallback : this.props.children
+  }
+}
+
+function RouteLoadError({
+  message,
+  reloadLabel
+}: {
+  message: string
+  reloadLabel: string
+}): React.JSX.Element {
+  return (
+    <div className="route-load-error" role="alert">
+      <CircleAlert aria-hidden="true" size={20} />
+      <strong>{message}</strong>
+      <button onClick={() => window.location.reload()} type="button">
+        {reloadLabel}
+      </button>
+    </div>
+  )
 }
 
 function AppNotificationItem({
@@ -735,6 +815,14 @@ function loadConversations(
   }
 }
 
+function hasConversationMigrationStorage(): boolean {
+  try {
+    return localStorage.getItem(storageKey) !== null
+  } catch {
+    return false
+  }
+}
+
 function loadActiveProjectId(): string | undefined {
   try {
     return localStorage.getItem(activeProjectStorageKey) || undefined
@@ -803,31 +891,91 @@ function isConversation(value: unknown): value is Conversation {
 function toConversationSnapshots(
   conversations: Conversation[]
 ): ConversationSnapshot[] {
-  return conversations.slice(0, 100).map((conversation) => ({
+  return conversations
+    .filter((conversation) => !conversation.remote)
+    .slice(0, 100)
+    .map((conversation) => ({
+      id: conversation.id,
+      projectId: conversation.projectId,
+      runtimeSelection: conversation.runtimeSelection,
+      knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+      title: conversation.title,
+      updatedAt: conversation.updatedAt,
+      messages: conversation.messages
+        .slice(-500)
+        .map(toConversationMessage)
+    }))
+}
+
+function toConversationMessage(message: Message): ConversationMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    reasoning: message.reasoning,
+    blocks: message.blocks,
+    createdAt: message.createdAt,
+    state: message.state,
+    status: message.status,
+    tools: message.tools,
+    sources: message.sources,
+    sourceReferences: message.sourceReferences,
+    knowledgeRetrieval: message.knowledgeRetrieval,
+    artifactIds: message.artifactIds,
+    attachments: message.attachments
+  }
+}
+
+function toLocalConversationHeader(
+  conversation: Conversation
+): LocalConversationHeader {
+  return {
     id: conversation.id,
     projectId: conversation.projectId,
     runtimeSelection: conversation.runtimeSelection,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
-    remote: conversation.remote,
     title: conversation.title,
-    updatedAt: conversation.updatedAt,
-    messages: conversation.messages.slice(-500).map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      reasoning: message.reasoning,
-      blocks: message.blocks,
-      createdAt: message.createdAt,
-      state: message.state,
-      status: message.status,
-      tools: message.tools,
-      sources: message.sources,
-      sourceReferences: message.sourceReferences,
-      knowledgeRetrieval: message.knowledgeRetrieval,
-      artifactIds: message.artifactIds,
-      attachments: message.attachments
-    }))
-  }))
+    updatedAt: conversation.updatedAt
+  }
+}
+
+function createLocalConversationSaveBatch(
+  conversations: readonly Conversation[],
+  persisted: ReadonlyMap<string, Conversation>,
+  deletingConversationIds: ReadonlySet<string>
+): {
+  batch: LocalConversationSaveBatch
+  acknowledgements: Conversation[]
+} {
+  const batch: LocalConversationSaveBatch = []
+  const acknowledgements: Conversation[] = []
+  for (const conversation of conversations) {
+    if (
+      conversation.remote ||
+      deletingConversationIds.has(conversation.id) ||
+      persisted.get(conversation.id) === conversation
+    ) {
+      continue
+    }
+    const previous = persisted.get(conversation.id)
+    const previousMessages = new Map(
+      previous?.messages.map((message) => [message.id, message]) ?? []
+    )
+    batch.push({
+      header: toLocalConversationHeader(conversation),
+      messages: conversation.messages
+        .filter(
+          (message) => previousMessages.get(message.id) !== message
+        )
+        .slice(-500)
+        .map(toConversationMessage)
+    })
+    acknowledgements.push(conversation)
+    if (batch.length === 100) {
+      break
+    }
+  }
+  return { batch, acknowledgements }
 }
 
 function mergeArtifacts(
@@ -1307,6 +1455,9 @@ function App(): React.JSX.Element {
     tRef.current = t
   }, [t])
   const locale = i18n.resolvedLanguage === 'en-US' ? 'en-US' : 'zh-CN'
+  const conversationMigrationStoragePresent = useRef(
+    hasConversationMigrationStorage()
+  )
   const [conversations, setConversations] = useState(() =>
     loadConversations(
       t('conversation.greeting'),
@@ -1316,6 +1467,14 @@ function App(): React.JSX.Element {
   const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? '')
   const activeConversationIdRef = useRef(activeId)
   const conversationsRef = useRef(conversations)
+  const persistedLocalConversationsRef = useRef(
+    new Map<string, Conversation>()
+  )
+  const conversationPersistenceQueueRef =
+    useRef<Promise<void>>(Promise.resolve())
+  const conversationPersistencePausedRef = useRef(false)
+  const deletingLocalConversationIdsRef = useRef(new Set<string>())
+  const flushConversationPersistenceAfterRenderRef = useRef(false)
   const [unreadConversationIds, setUnreadConversationIds] = useState<
     Set<string>
   >(() => new Set())
@@ -1509,6 +1668,9 @@ function App(): React.JSX.Element {
     useState<ProjectChannel>()
   const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const deferredSearchQuery = useDeferredValue(searchQuery)
+  const [searchConversationSnapshot, setSearchConversationSnapshot] =
+    useState(conversations)
   const [conversationActionsId, setConversationActionsId] = useState('')
   const [confirmingConversationId, setConfirmingConversationId] =
     useState('')
@@ -1591,6 +1753,7 @@ function App(): React.JSX.Element {
   const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>(
     loadActivityRecords
   )
+  const activityRecordsRef = useRef(activityRecords)
   const activeRuns = useRef(new Map<string, ActiveRun>())
   const preparingConversations = useRef(new Set<string>())
   const hydratingArtifactIds = useRef(new Set<string>())
@@ -1599,6 +1762,17 @@ function App(): React.JSX.Element {
   const scrollRef = useRef<HTMLElement>(null)
   const chatPinnedToBottomRef = useRef(true)
   const chatScrollContextRef = useRef(`${view}:${activeId}`)
+  const prependScrollPositionRef = useRef<{
+    conversationId: string
+    scrollHeight: number
+    scrollTop: number
+  } | undefined>(undefined)
+  const finalRevealedMessageIdRef = useRef<string | undefined>(undefined)
+  const messageArticleRefs = useRef(new Map<string, HTMLElement>())
+  const [visibleMessageWindow, setVisibleMessageWindow] = useState(() => ({
+    conversationId: activeId,
+    count: messageRenderBatchSize
+  }))
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
@@ -1678,9 +1852,20 @@ function App(): React.JSX.Element {
     }
   }, [closeNarrowSidebar, narrowWindow, sidebarOpen])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     conversationsRef.current = conversations
   }, [conversations])
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      return
+    }
+    const timeout = window.setTimeout(
+      () => setSearchConversationSnapshot(conversations),
+      conversationSearchSnapshotDelayMs
+    )
+    return () => window.clearTimeout(timeout)
+  }, [conversations, searchQuery])
 
   useEffect(() => {
     projectsRef.current = projects
@@ -1801,6 +1986,70 @@ function App(): React.JSX.Element {
     () => conversations.find((conversation) => conversation.id === activeId),
     [activeId, conversations]
   )
+  const visibleMessageCount =
+    visibleMessageWindow.conversationId === activeId
+      ? visibleMessageWindow.count
+      : messageRenderBatchSize
+  const visibleMessageStartIndex = Math.max(
+    0,
+    (activeConversation?.messages.length ?? 0) - visibleMessageCount
+  )
+  const visibleMessages =
+    activeConversation?.messages.slice(visibleMessageStartIndex) ?? []
+  const hiddenMessageCount = visibleMessageStartIndex
+
+  const revealEarlierMessages = useCallback((): void => {
+    const scrollContainer = scrollRef.current
+    if (scrollContainer) {
+      prependScrollPositionRef.current = {
+        conversationId: activeId,
+        scrollHeight: scrollContainer.scrollHeight,
+        scrollTop: scrollContainer.scrollTop
+      }
+    }
+    const currentCount =
+      visibleMessageWindow.conversationId === activeId
+        ? visibleMessageWindow.count
+        : messageRenderBatchSize
+    if (
+      activeConversation &&
+      currentCount + messageRenderBatchSize >=
+        activeConversation.messages.length
+    ) {
+      finalRevealedMessageIdRef.current =
+        activeConversation.messages[0]?.id
+    }
+    setVisibleMessageWindow({
+      conversationId: activeId,
+      count: currentCount + messageRenderBatchSize
+    })
+  }, [activeConversation, activeId, visibleMessageWindow])
+
+  useLayoutEffect(() => {
+    const previous = prependScrollPositionRef.current
+    if (!previous) {
+      return
+    }
+    prependScrollPositionRef.current = undefined
+    if (previous.conversationId !== activeId) {
+      return
+    }
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    scrollContainer.scrollTop =
+      previous.scrollTop +
+      (scrollContainer.scrollHeight - previous.scrollHeight)
+    const finalRevealedMessageId = finalRevealedMessageIdRef.current
+    finalRevealedMessageIdRef.current = undefined
+    if (finalRevealedMessageId) {
+      messageArticleRefs.current
+        .get(finalRevealedMessageId)
+        ?.focus({ preventScroll: true })
+    }
+  }, [activeId, visibleMessageWindow])
+
   const activeRuntimeSelection = useMemo(
     () =>
       activeConversation?.runtimeSelection ??
@@ -2050,8 +2299,11 @@ function App(): React.JSX.Element {
     [activeProjectId, projects]
   )
   const filteredConversations = useMemo(() => {
-    const query = searchQuery.trim().toLocaleLowerCase()
-    return conversations.filter(
+    const query = deferredSearchQuery.trim().toLocaleLowerCase()
+    const candidates = query
+      ? searchConversationSnapshot
+      : conversations
+    return candidates.filter(
       (conversation) =>
         (!activeProjectId ||
           conversation.projectId === activeProjectId) &&
@@ -2063,7 +2315,13 @@ function App(): React.JSX.Element {
           message.content.toLocaleLowerCase().includes(query)
         ))
     )
-  }, [activeProject, activeProjectId, conversations, searchQuery])
+  }, [
+    activeProject,
+    activeProjectId,
+    conversations,
+    deferredSearchQuery,
+    searchConversationSnapshot
+  ])
   const pendingSidebarApprovals = useMemo<PendingSidebarApproval[]>(
     () =>
       conversations.flatMap((conversation) =>
@@ -2866,6 +3124,7 @@ function App(): React.JSX.Element {
           }
         })
         activeRuns.current.delete(event.requestId)
+        flushConversationPersistenceAfterRenderRef.current = true
       }
     },
     [
@@ -2892,25 +3151,86 @@ function App(): React.JSX.Element {
     viewRef.current = view
   }, [view])
 
+  const persistLocalConversationChanges = useCallback((): void => {
+    const operation = conversationPersistenceQueueRef.current.then(
+      async () => {
+        if (conversationPersistencePausedRef.current) {
+          return
+        }
+        const { batch, acknowledgements } =
+          createLocalConversationSaveBatch(
+            conversationsRef.current,
+            persistedLocalConversationsRef.current,
+            deletingLocalConversationIdsRef.current
+          )
+        if (batch.length === 0) {
+          return
+        }
+        await window.goodbuddy.conversations.saveLocal(batch)
+        for (const conversation of acknowledgements) {
+          persistedLocalConversationsRef.current.set(
+            conversation.id,
+            conversation
+          )
+        }
+      }
+    )
+    conversationPersistenceQueueRef.current =
+      operation.catch(() => undefined)
+    void operation.catch(() => {
+      notify({
+        tone: 'error',
+        message: tRef.current(
+          'notices.conversationPersistenceFailed'
+        ),
+        dedupeKey: 'conversation-persistence'
+      })
+    })
+  }, [])
+
   useEffect(() => {
     if (!conversationStoreReady) {
       return
     }
-    const timeout = setTimeout(() => {
-      void window.goodbuddy.conversations
-        .replace(toConversationSnapshots(conversations))
-        .catch(() => {
-          notify({
-            tone: 'error',
-            message: tRef.current(
-              'notices.conversationPersistenceFailed'
-            ),
-            dedupeKey: 'conversation-persistence'
-          })
-        })
-    }, 500)
-    return () => clearTimeout(timeout)
-  }, [conversationStoreReady, conversations])
+    persistLocalConversationChanges()
+    const interval = window.setInterval(
+      persistLocalConversationChanges,
+      conversationPersistenceIntervalMs
+    )
+    return () => {
+      window.clearInterval(interval)
+      persistLocalConversationChanges()
+    }
+  }, [conversationStoreReady, persistLocalConversationChanges])
+
+  useEffect(() => {
+    if (
+      !conversationStoreReady ||
+      !flushConversationPersistenceAfterRenderRef.current
+    ) {
+      return
+    }
+    flushConversationPersistenceAfterRenderRef.current = false
+    persistLocalConversationChanges()
+  }, [
+    conversationStoreReady,
+    conversations,
+    persistLocalConversationChanges
+  ])
+
+  useEffect(
+    () =>
+      window.goodbuddy.app.onBeforeQuit(async () => {
+        saveActivityRecords(activityRecordsRef.current)
+        if (!conversationStoreReady) {
+          return
+        }
+        flushConversationPersistenceAfterRenderRef.current = false
+        persistLocalConversationChanges()
+        await conversationPersistenceQueueRef.current
+      }),
+    [conversationStoreReady, persistLocalConversationChanges]
+  )
 
   useEffect(() => {
     if (!conversationStoreReady) {
@@ -2993,8 +3313,19 @@ function App(): React.JSX.Element {
   }, [conversationStoreReady])
 
   useEffect(() => {
-    saveActivityRecords(activityRecords)
+    activityRecordsRef.current = activityRecords
+    const timeout = window.setTimeout(() => {
+      saveActivityRecords(activityRecords)
+    }, 250)
+    return () => window.clearTimeout(timeout)
   }, [activityRecords])
+
+  useEffect(
+    () => () => {
+      saveActivityRecords(activityRecordsRef.current)
+    },
+    []
+  )
 
   useEffect(() => {
     let active = true
@@ -3016,14 +3347,34 @@ function App(): React.JSX.Element {
         setWorkMode(
           normalizeInteractiveWorkMode(project.defaultWorkMode)
         )
-        let nextConversations: Conversation[] =
-          persistedConversations.length > 0
-            ? persistedConversations
-            : migrationConversations.current.map((conversation) =>
-            conversation.projectId || project.kind === 'channel'
-              ? conversation
-              : { ...conversation, projectId: project.id }
+        const persistedLocalConversations =
+          persistedConversations.filter(
+            (conversation) => !conversation.remote
           )
+        const persistedConversationIds = new Set(
+          persistedConversations.map((conversation) => conversation.id)
+        )
+        const shouldMigrateLocalStorage =
+          conversationMigrationStoragePresent.current ||
+          persistedConversations.length === 0
+        const migratedLocalConversations =
+          shouldMigrateLocalStorage
+            ? migrationConversations.current
+                .filter(
+                  (conversation) =>
+                    !conversation.remote &&
+                    !persistedConversationIds.has(conversation.id)
+                )
+                .map((conversation) =>
+                  conversation.projectId || project.kind === 'channel'
+                    ? conversation
+                    : { ...conversation, projectId: project.id }
+                )
+            : []
+        let nextConversations: Conversation[] = [
+          ...persistedConversations,
+          ...migratedLocalConversations
+        ]
         let projectConversation = nextConversations.find(
           (conversation) =>
             conversation.projectId === project.id &&
@@ -3041,17 +3392,71 @@ function App(): React.JSX.Element {
             ...nextConversations
           ]
         }
-        if (persistedConversations.length === 0) {
-          await window.goodbuddy.conversations.replace(
-            toConversationSnapshots(nextConversations)
+        const acknowledgedLocalConversations = new Map(
+          persistedLocalConversations.map((conversation) => [
+            conversation.id,
+            conversation
+          ])
+        )
+        if (
+          nextConversations.some(
+            (conversation) =>
+              !conversation.remote &&
+              acknowledgedLocalConversations.get(conversation.id) !==
+                conversation
           )
+        ) {
+          if (persistedConversations.length === 0) {
+            const migratedSnapshots =
+              toConversationSnapshots(nextConversations)
+            await window.goodbuddy.conversations.replace(
+              migratedSnapshots
+            )
+            const migratedSnapshotIds = new Set(
+              migratedSnapshots.map((conversation) => conversation.id)
+            )
+            for (const conversation of nextConversations) {
+              if (migratedSnapshotIds.has(conversation.id)) {
+                acknowledgedLocalConversations.set(
+                  conversation.id,
+                  conversation
+                )
+              }
+            }
+          }
+          while (true) {
+            const migration = createLocalConversationSaveBatch(
+              nextConversations,
+              acknowledgedLocalConversations,
+              new Set()
+            )
+            if (migration.batch.length === 0) {
+              break
+            }
+            await window.goodbuddy.conversations.saveLocal(
+              migration.batch
+            )
+            for (const conversation of migration.acknowledgements) {
+              acknowledgedLocalConversations.set(
+                conversation.id,
+                conversation
+              )
+            }
+          }
         }
         if (!active) {
           return
         }
+        persistedLocalConversationsRef.current =
+          acknowledgedLocalConversations
         setConversations(nextConversations)
         setActiveId(projectConversation?.id ?? '')
-        localStorage.removeItem(storageKey)
+        try {
+          localStorage.removeItem(storageKey)
+          conversationMigrationStoragePresent.current = false
+        } catch {
+          // The SQLite migration has already completed successfully.
+        }
         setConversationStoreReady(true)
       })
       .catch((reason: unknown) => {
@@ -3857,6 +4262,27 @@ function App(): React.JSX.Element {
       setDeletingConversationId('')
       return
     }
+    const deletingConversation = conversations.find(
+      (conversation) => conversation.id === conversationId
+    )
+    if (deletingConversation && !deletingConversation.remote) {
+      deletingLocalConversationIdsRef.current.add(conversationId)
+      try {
+        await conversationPersistenceQueueRef.current
+        await window.goodbuddy.conversations.deleteLocal(conversationId)
+        persistedLocalConversationsRef.current.delete(conversationId)
+      } catch {
+        deletingLocalConversationIdsRef.current.delete(conversationId)
+        notify({
+          tone: 'error',
+          message: t(
+            'notices.deleteConversationPersistenceFailed'
+          )
+        })
+        setDeletingConversationId('')
+        return
+      }
+    }
     setConfirmingConversationId('')
     setDeletingConversationId('')
     if (conversationActionsId === conversationId) {
@@ -3882,6 +4308,8 @@ function App(): React.JSX.Element {
     const remaining = conversations.filter(
       (conversation) => conversation.id !== conversationId
     )
+    conversationsRef.current = remaining
+    deletingLocalConversationIdsRef.current.delete(conversationId)
     const projectRemaining = remaining.filter(
       (conversation) => conversation.projectId === activeProjectId
     )
@@ -4726,54 +5154,63 @@ function App(): React.JSX.Element {
   }
 
   const clearLocalData = async (): Promise<void> => {
-    for (const requestId of activeRuns.current.keys()) {
-      await window.goodbuddy.agent.cancel(requestId)
+    conversationPersistencePausedRef.current = true
+    try {
+      await conversationPersistenceQueueRef.current
+      for (const requestId of activeRuns.current.keys()) {
+        await window.goodbuddy.agent.cancel(requestId)
+      }
+      activeRuns.current.clear()
+      for (const attachment of attachments) {
+        await window.goodbuddy.context.remove(attachment.id)
+      }
+      for (const library of knowledgeSnapshot.libraries) {
+        await window.goodbuddy.knowledge.deleteLibrary(library.id)
+      }
+      await window.goodbuddy.app.clearLocalData()
+      const conversation = createConversation(
+        activeProjectId || undefined,
+        runtimeSettings
+          ? getProjectDefaultRuntimeSelection(
+              activeProject,
+              runtimeSettings
+            )
+          : undefined,
+        t('conversation.greeting')
+      )
+      conversationsRef.current = [conversation]
+      persistedLocalConversationsRef.current.clear()
+      setConversations([conversation])
+      setActiveId(conversation.id)
+      setActivityRecords([])
+      setAssistantTasks([])
+      setTokenUsage(emptyTokenUsage)
+      setAssistantArtifacts([])
+      setAssistantMemories([])
+      setAssistantSchedules([])
+      setAssistantHeartbeats([])
+      setHeartbeatEntries([])
+      setHeartbeatRuns([])
+      setKnowledgeSnapshot({
+        libraries: [],
+        sources: [],
+        documents: [],
+        graphNodes: [],
+        graphRelations: [],
+        evidence: []
+      })
+      setEnabledKnowledgeLibraryIds([])
+      updateAttachments([])
+      setInput('')
+      setView('chat')
+      notify({
+        tone: 'success',
+        message: t('notices.localDataCleared')
+      })
+    } finally {
+      conversationPersistencePausedRef.current = false
+      persistLocalConversationChanges()
     }
-    activeRuns.current.clear()
-    for (const attachment of attachments) {
-      await window.goodbuddy.context.remove(attachment.id)
-    }
-    for (const library of knowledgeSnapshot.libraries) {
-      await window.goodbuddy.knowledge.deleteLibrary(library.id)
-    }
-    await window.goodbuddy.app.clearLocalData()
-    const conversation = createConversation(
-      activeProjectId || undefined,
-      runtimeSettings
-        ? getProjectDefaultRuntimeSelection(
-            activeProject,
-            runtimeSettings
-          )
-        : undefined,
-      t('conversation.greeting')
-    )
-    setConversations([conversation])
-    setActiveId(conversation.id)
-    setActivityRecords([])
-    setAssistantTasks([])
-    setTokenUsage(emptyTokenUsage)
-    setAssistantArtifacts([])
-    setAssistantMemories([])
-    setAssistantSchedules([])
-    setAssistantHeartbeats([])
-    setHeartbeatEntries([])
-    setHeartbeatRuns([])
-    setKnowledgeSnapshot({
-      libraries: [],
-      sources: [],
-      documents: [],
-      graphNodes: [],
-      graphRelations: [],
-      evidence: []
-    })
-    setEnabledKnowledgeLibraryIds([])
-    updateAttachments([])
-    setInput('')
-    setView('chat')
-    notify({
-      tone: 'success',
-      message: t('notices.localDataCleared')
-    })
   }
 
   const isRunning =
@@ -5161,7 +5598,7 @@ function App(): React.JSX.Element {
           {filteredConversations.length === 0 && (
             <p className="conversation-empty">
               {activeProject?.kind === 'channel' &&
-              !searchQuery.trim()
+              !deferredSearchQuery.trim()
                 ? t('conversation.noRemote')
                 : t('conversation.noMatches')}
             </p>
@@ -5382,10 +5819,33 @@ function App(): React.JSX.Element {
           )}
 
           <div className="message-list">
-            {activeConversation?.messages.map((message, messageIndex) => (
-              <article
+            {hiddenMessageCount > 0 && (
+              <button
+                className="load-earlier-messages"
+                onClick={revealEarlierMessages}
+                type="button"
+              >
+                {t('chat.loadEarlierMessages', {
+                  count: hiddenMessageCount
+                })}
+              </button>
+            )}
+            {activeConversation &&
+              visibleMessages.map((message, visibleMessageIndex) => {
+                const messageIndex =
+                  visibleMessageStartIndex + visibleMessageIndex
+                return (
+                  <article
                 className={`message message--${message.role}`}
                 key={message.id}
+                ref={(element) => {
+                  if (element) {
+                    messageArticleRefs.current.set(message.id, element)
+                  } else {
+                    messageArticleRefs.current.delete(message.id)
+                  }
+                }}
+                tabIndex={-1}
               >
                 <div className="message__avatar">
                   {message.role === 'assistant' ? (
@@ -5931,8 +6391,9 @@ function App(): React.JSX.Element {
                     </button>
                     )}
                 </div>
-              </article>
-            ))}
+                  </article>
+                )
+              })}
           </div>
             </section>
             {showScrollToBottom && (
@@ -6624,11 +7085,41 @@ function App(): React.JSX.Element {
           </PageShell>
         ) : view === 'magic-notes' && magicNotesEnabled ? (
           <PageShell variant="master-detail">
-            <MagicNotesWorkspace onNotify={notify} />
+            <RouteErrorBoundary
+              key="magic-notes"
+              fallback={
+                <RouteLoadError
+                  message={t('route.loadFailed')}
+                  reloadLabel={t('route.reload')}
+                />
+              }
+            >
+              <Suspense
+                fallback={
+                  <RouteLoadingStatus label={t('route.loading')} />
+                }
+              >
+                <MagicNotesWorkspace onNotify={notify} />
+              </Suspense>
+            </RouteErrorBoundary>
           </PageShell>
         ) : view === 'knowledge' ? (
           <PageShell variant="master-detail">
-            <KnowledgeWorkspace
+            <RouteErrorBoundary
+              key="knowledge"
+              fallback={
+                <RouteLoadError
+                  message={t('route.loadFailed')}
+                  reloadLabel={t('route.reload')}
+                />
+              }
+            >
+              <Suspense
+                fallback={
+                  <RouteLoadingStatus label={t('route.loading')} />
+                }
+              >
+                <KnowledgeWorkspace
               documents={knowledgeSnapshot.documents}
               evidence={knowledgeSnapshot.evidence}
               graphNodes={knowledgeSnapshot.graphNodes}
@@ -6908,11 +7399,27 @@ function App(): React.JSX.Element {
               selectedLibraryId={knowledgeSnapshot.selectedLibraryId}
               sources={knowledgeSnapshot.sources}
               tasks={knowledgeSnapshot.tasks}
-            />
+                />
+              </Suspense>
+            </RouteErrorBoundary>
           </PageShell>
         ) : view === 'heartbeat' ? (
           <PageShell variant="dashboard">
-            <HeartbeatCenter
+            <RouteErrorBoundary
+              key="heartbeat"
+              fallback={
+                <RouteLoadError
+                  message={t('route.loadFailed')}
+                  reloadLabel={t('route.reload')}
+                />
+              }
+            >
+              <Suspense
+                fallback={
+                  <RouteLoadingStatus label={t('route.loading')} />
+                }
+              >
+                <HeartbeatCenter
               configs={assistantHeartbeats}
               currentProjectName={activeProject?.name}
               entries={heartbeatEntries}
@@ -6930,10 +7437,26 @@ function App(): React.JSX.Element {
               onUseFollowUpTask={useHeartbeatTask}
               runs={heartbeatRuns}
               tasks={assistantTasks}
-            />
+                />
+              </Suspense>
+            </RouteErrorBoundary>
           </PageShell>
         ) : view === 'settings' ? (
-          <SettingsPanel
+          <RouteErrorBoundary
+            key="settings"
+            fallback={
+              <RouteLoadError
+                message={t('route.loadFailed')}
+                reloadLabel={t('route.reload')}
+              />
+            }
+          >
+            <Suspense
+              fallback={
+                <RouteLoadingStatus label={t('route.loading')} />
+              }
+            >
+              <SettingsPanel
             appearanceTheme={appearanceTheme}
             heartbeats={assistantHeartbeats}
             initialCategory={settingsInitialCategory}
@@ -6972,7 +7495,9 @@ function App(): React.JSX.Element {
             onSetHeartbeatPaused={setHeartbeatPaused}
             open
             presentation="page"
-          />
+              />
+            </Suspense>
+          </RouteErrorBoundary>
         ) : (
           <PageShell variant="dashboard">
             <ActivityPanel

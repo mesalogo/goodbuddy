@@ -137,6 +137,83 @@ export type ConversationMessageBlock = z.infer<
   typeof conversationMessageBlockSchema
 >
 
+export const conversationMessageSchema = z
+  .object({
+    id: assistantIdSchema,
+    role: z.enum(['user', 'assistant']),
+    content: z.string().max(1_000_000),
+    reasoning: z.string().optional(),
+    blocks: conversationMessageBlocksSchema.optional(),
+    createdAt: z.number().int().nonnegative(),
+    state: z.enum(['streaming', 'complete', 'error']),
+    status: z.string().max(4_000).optional(),
+    tools: z.array(conversationToolActivitySchema).max(100).optional(),
+    sources: z.array(z.string().max(8_192)).max(100).optional(),
+    sourceReferences: z
+      .array(
+        z
+          .object({
+            libraryId: assistantIdSchema,
+            libraryName: z.string().max(200),
+            documentId: assistantIdSchema,
+            chunkId: assistantIdSchema.optional(),
+            documentName: z.string().max(500),
+            sourceName: z.string().max(500),
+            sourceLocation: z.string().max(4_096).optional(),
+            locator: z.string().max(1_000).optional(),
+            snippet: z.string().max(16_000),
+            rank: z.number().finite(),
+            score: z.number().finite().optional(),
+            lexicalRank: z.number().int().positive().optional(),
+            vectorRank: z.number().int().positive().optional(),
+            graphRank: z.number().int().positive().optional(),
+            similarity: z.number().min(-1).max(1).optional(),
+            retrievalChannels: z
+              .array(z.enum(['fts', 'cjk', 'vector', 'graph']))
+              .max(4)
+              .optional(),
+            evidenceIds: z
+              .array(assistantIdSchema)
+              .max(100)
+              .optional()
+          })
+          .strict()
+      )
+      .max(20)
+      .optional(),
+    knowledgeRetrieval: z
+      .object({
+        mode: z.literal('always'),
+        state: z.enum([
+          'searching',
+          'succeeded',
+          'zero',
+          'degraded',
+          'failed',
+          'cancelled'
+        ]),
+        libraryCount: z.number().int().min(1).max(20),
+        resultCount: z.number().int().nonnegative().max(20),
+        durationMs: z.number().int().nonnegative().optional(),
+        usedChannels: z
+          .array(z.enum(['fts', 'cjk', 'vector', 'graph']))
+          .max(4),
+        warnings: z.array(z.string().max(500)).max(20)
+      })
+      .strict()
+      .optional(),
+    artifactIds: z.array(assistantIdSchema).max(8).optional(),
+    attachments: z
+      .array(conversationAttachmentSchema)
+      .max(8)
+      .optional()
+  })
+  .strict()
+
+export type ConversationMessage = z.infer<
+  typeof conversationMessageSchema
+>
+
 export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
@@ -154,80 +231,7 @@ export const conversationSnapshotSchema = z
     title: z.string().trim().min(1).max(200),
     updatedAt: z.number().int().nonnegative(),
     messages: z
-      .array(
-        z
-          .object({
-            id: assistantIdSchema,
-            role: z.enum(['user', 'assistant']),
-            content: z.string().max(1_000_000),
-            reasoning: z.string().optional(),
-            blocks: conversationMessageBlocksSchema.optional(),
-            createdAt: z.number().int().nonnegative(),
-            state: z.enum(['streaming', 'complete', 'error']),
-            status: z.string().max(4_000).optional(),
-            tools: z.array(conversationToolActivitySchema).max(100).optional(),
-            sources: z.array(z.string().max(8_192)).max(100).optional(),
-            sourceReferences: z
-              .array(
-                z
-                  .object({
-                    libraryId: assistantIdSchema,
-                    libraryName: z.string().max(200),
-                    documentId: assistantIdSchema,
-                    chunkId: assistantIdSchema.optional(),
-                    documentName: z.string().max(500),
-                    sourceName: z.string().max(500),
-                    sourceLocation: z.string().max(4_096).optional(),
-                    locator: z.string().max(1_000).optional(),
-                    snippet: z.string().max(16_000),
-                    rank: z.number().finite(),
-                    score: z.number().finite().optional(),
-                    lexicalRank: z.number().int().positive().optional(),
-                    vectorRank: z.number().int().positive().optional(),
-                    graphRank: z.number().int().positive().optional(),
-                    similarity: z.number().min(-1).max(1).optional(),
-                    retrievalChannels: z
-                      .array(z.enum(['fts', 'cjk', 'vector', 'graph']))
-                      .max(4)
-                      .optional(),
-                    evidenceIds: z
-                      .array(assistantIdSchema)
-                      .max(100)
-                      .optional()
-                  })
-                  .strict()
-              )
-              .max(20)
-              .optional(),
-            knowledgeRetrieval: z
-              .object({
-                mode: z.literal('always'),
-                state: z.enum([
-                  'searching',
-                  'succeeded',
-                  'zero',
-                  'degraded',
-                  'failed',
-                  'cancelled'
-                ]),
-                libraryCount: z.number().int().min(1).max(20),
-                resultCount: z.number().int().nonnegative().max(20),
-                durationMs: z.number().int().nonnegative().optional(),
-                usedChannels: z
-                  .array(z.enum(['fts', 'cjk', 'vector', 'graph']))
-                  .max(4),
-                warnings: z.array(z.string().max(500)).max(20)
-              })
-              .strict()
-              .optional(),
-            artifactIds: z.array(assistantIdSchema).max(8).optional(),
-            attachments: z
-              .array(conversationAttachmentSchema)
-              .max(8)
-              .optional()
-          })
-          .strict()
-      )
+      .array(conversationMessageSchema)
       .max(500)
   })
   .strict()
@@ -238,6 +242,35 @@ export type ConversationSnapshot = z.infer<
 export const conversationSnapshotsSchema = z
   .array(conversationSnapshotSchema)
   .max(100)
+
+export const localConversationHeaderSchema = conversationSnapshotSchema
+  .omit({
+    messages: true,
+    remote: true
+  })
+
+export type LocalConversationHeader = z.infer<
+  typeof localConversationHeaderSchema
+>
+
+export const localConversationSaveSchema = z
+  .object({
+    header: localConversationHeaderSchema,
+    messages: z.array(conversationMessageSchema).max(500)
+  })
+  .strict()
+
+export type LocalConversationSaveInput = z.infer<
+  typeof localConversationSaveSchema
+>
+
+export const localConversationSaveBatchSchema = z
+  .array(localConversationSaveSchema)
+  .max(100)
+
+export type LocalConversationSaveBatch = z.infer<
+  typeof localConversationSaveBatchSchema
+>
 
 export type AssistantProject = ProjectCreateInput & {
   id: string

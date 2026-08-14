@@ -3126,7 +3126,30 @@ button > svg {
   gap: 4px;
 }
 
+.load-earlier-messages {
+  align-self: center;
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.load-earlier-messages:hover {
+  border-color: var(--accent-selected);
+  color: var(--text-primary);
+}
+
+.load-earlier-messages:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .message {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 160px;
   display: grid;
   min-width: 0;
   padding: 17px 8px;
@@ -3136,6 +3159,56 @@ button > svg {
 
 .message--user {
   grid-template-columns: minmax(0, 1fr) 30px;
+}
+
+.route-loading-status {
+  display: flex;
+  min-height: min(360px, 50vh);
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.route-loading-status > svg {
+  animation: route-loading-spin 1s linear infinite;
+}
+
+.route-load-error {
+  display: flex;
+  min-height: min(360px, 50vh);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.route-load-error > svg {
+  color: var(--danger-solid);
+}
+
+.route-load-error > button {
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.route-load-error > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes route-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .message__avatar {

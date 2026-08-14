@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
 import type { AssistantProject } from '../shared/assistant-contracts'
-import type { BrowserLiveState } from '../shared/contracts'
+import type { AgentEvent, BrowserLiveState } from '../shared/contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { registerIpcHandlers } from './ipc'
@@ -1715,6 +1715,177 @@ describe('registerIpcHandlers token usage', () => {
   })
 })
 
+describe('registerIpcHandlers local conversation persistence', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates and forwards incremental saves and explicit deletions', async () => {
+    const assistantDatabase = {
+      claimDueSchedules: vi.fn(() => []),
+      saveLocalConversations: vi.fn(),
+      deleteLocalConversation: vi.fn(() => true)
+    }
+    const webContents = {
+      mainFrame: {
+        url: 'file:///goodbuddy/index.html'
+      },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html')
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      assistantDatabase as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => {})
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const conversationId =
+      '00000000-0000-4000-8000-000000000301'
+    const messageId = '00000000-0000-4000-8000-000000000302'
+    const batch = [
+      {
+        header: {
+          id: conversationId,
+          title: '增量会话',
+          updatedAt: 1
+        },
+        messages: [
+          {
+            id: messageId,
+            role: 'assistant' as const,
+            content: '增量内容',
+            createdAt: 1,
+            state: 'streaming' as const
+          }
+        ]
+      }
+    ]
+
+    expect(
+      electronMocks.handlers.get(
+        ipcChannels.conversationsSaveLocal
+      )?.(event, batch)
+    ).toBeUndefined()
+    expect(
+      assistantDatabase.saveLocalConversations
+    ).toHaveBeenCalledWith(batch)
+    expect(
+      electronMocks.handlers.get(
+        ipcChannels.conversationsDeleteLocal
+      )?.(event, conversationId)
+    ).toBe(true)
+    expect(
+      assistantDatabase.deleteLocalConversation
+    ).toHaveBeenCalledWith(conversationId)
+
+    expect(() =>
+      electronMocks.handlers.get(
+        ipcChannels.conversationsSaveLocal
+      )?.(event, [
+        {
+          ...batch[0],
+          header: {
+            ...batch[0]!.header,
+            remote: {
+              channel: 'weixin',
+              accountDisplay: 'remote',
+              conversationType: 'direct'
+            }
+          }
+        }
+      ])
+    ).toThrow()
+    expect(() =>
+      electronMocks.handlers.get(
+        ipcChannels.conversationsDeleteLocal
+      )?.(event, 'not-a-uuid')
+    ).toThrow()
+
+    await dispose()
+  })
+
+  it('waits for the renderer persistence acknowledgement before removing handlers', async () => {
+    const assistantDatabase = {
+      claimDueSchedules: vi.fn(() => [])
+    }
+    const webContents = {
+      mainFrame: {
+        url: 'file:///goodbuddy/index.html'
+      },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      assistantDatabase as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => {})
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    electronMocks.handlers.get(
+      ipcChannels.appRendererPersistenceReady
+    )?.(event)
+
+    const disposal = dispose()
+    await vi.waitFor(() =>
+      expect(webContents.send).toHaveBeenCalledWith(
+        ipcChannels.appRendererPersistenceRequest,
+        expect.any(String)
+      )
+    )
+    expect(
+      electronMocks.handlers.has(ipcChannels.conversationsSaveLocal)
+    ).toBe(true)
+    const requestId = webContents.send.mock.calls.find(
+      ([channel]) =>
+        channel === ipcChannels.appRendererPersistenceRequest
+    )?.[1]
+    expect(requestId).toEqual(expect.any(String))
+    electronMocks.handlers.get(
+      ipcChannels.appRendererPersistenceComplete
+    )?.(event, requestId)
+
+    await disposal
+    expect(
+      electronMocks.handlers.has(ipcChannels.conversationsSaveLocal)
+    ).toBe(false)
+  })
+})
+
 describe('registerIpcHandlers agent terminal state', () => {
   afterEach(() => {
     electronMocks.handlers.clear()
@@ -2255,6 +2426,105 @@ describe('registerIpcHandlers agent terminal state', () => {
       { requestId, type: 'done' }
     ])
     expect(knowledgeGateway.revoke).toHaveBeenCalledWith('capability')
+    await harness.dispose()
+  })
+
+  it('coalesces burst deltas while preserving output and terminal order', async () => {
+    const deltas = Array.from(
+      { length: 100 },
+      (_, index) => `chunk-${index};`
+    )
+    const expectedOutput = deltas.join('')
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        for (const delta of deltas) {
+          yield {
+            requestId: request.requestId,
+            type: 'text',
+            delta
+          }
+        }
+        yield {
+          requestId: request.requestId,
+          type: 'tool',
+          callId: 'call-burst',
+          name: 'read',
+          state: 'completed',
+          summary: 'read completed'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const requestId = '00000000-0000-4000-8000-000000000025'
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'burst-stream',
+      prompt: 'stream',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+
+    const persistedEvents =
+      harness.assistantDatabase.appendTaskEvent.mock.calls
+        .filter(([taskId]) => taskId === requestId)
+        .map(([, , payload]) => payload)
+    const publicEvents = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, payload]) => payload)
+      .filter((payload) => payload.requestId === requestId)
+    expect(persistedEvents).toHaveLength(3)
+    expect(publicEvents).toHaveLength(4)
+    expect(persistedEvents.map((event) => event.type)).toEqual([
+      'text',
+      'tool',
+      'done'
+    ])
+    expect(publicEvents.map((event) => event.type)).toEqual([
+      'text',
+      'text',
+      'tool',
+      'done'
+    ])
+    expect(publicEvents[0]).toEqual({
+      requestId,
+      type: 'text',
+      delta: deltas[0]
+    })
+    expect(persistedEvents[0]).toEqual({
+      requestId,
+      type: 'text',
+      delta: expectedOutput
+    })
+    expect(
+      publicEvents
+        .filter(
+          (
+            event
+          ): event is Extract<AgentEvent, { type: 'text' }> =>
+            event.type === 'text'
+        )
+        .map((event) => event.delta)
+        .join('')
+    ).toBe(expectedOutput)
+    expect(
+      harness.assistantDatabase.createTextArtifact
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: requestId,
+        content: expectedOutput
+      })
+    )
     await harness.dispose()
   })
 

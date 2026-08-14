@@ -20,12 +20,37 @@ const speechRecognitionMocks = vi.hoisted(() => ({
   startPcmRecording: vi.fn()
 }))
 
+const lazyRouteMocks = vi.hoisted(() => {
+  let pending: Promise<void> | undefined
+  let releasePending: (() => void) | undefined
+  return {
+    suspendKnowledgeRoute(): void {
+      pending = new Promise((resolve) => {
+        releasePending = resolve
+      })
+    },
+    releaseKnowledgeRoute(): void {
+      releasePending?.()
+      releasePending = undefined
+      pending = undefined
+    },
+    async waitForKnowledgeRoute(): Promise<void> {
+      await pending
+    }
+  }
+})
+
 vi.mock('./speech-recognition', async (importOriginal) => ({
   ...(await importOriginal<
     typeof import('./speech-recognition')
   >()),
   startPcmRecording: speechRecognitionMocks.startPcmRecording
 }))
+
+vi.mock('./KnowledgeWorkspace', async (importOriginal) => {
+  await lazyRouteMocks.waitForKnowledgeRoute()
+  return importOriginal<typeof import('./KnowledgeWorkspace')>()
+})
 
 import App from './App'
 import { loadActivityRecords } from './activity-store'
@@ -41,6 +66,7 @@ let fileSelectionProgressListener:
   | undefined
 let newConversationListener: (() => void) | undefined
 let maximizedChangedListener: ((maximized: boolean) => void) | undefined
+let beforeQuitListener: (() => Promise<void>) | undefined
 const removeMaximizedChangedListener = vi.fn()
 const run = vi.fn<DesktopApi['agent']['run']>()
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
@@ -75,6 +101,12 @@ const api: DesktopApi = {
     onMaximizedChanged: vi.fn((listener) => {
       maximizedChangedListener = listener
       return removeMaximizedChangedListener
+    }),
+    onBeforeQuit: vi.fn((listener) => {
+      beforeQuitListener = listener
+      return () => {
+        beforeQuitListener = undefined
+      }
     }),
     clearLocalData: vi.fn(async () => {}),
     onNewConversation: vi.fn((listener) => {
@@ -289,6 +321,8 @@ const api: DesktopApi = {
   conversations: {
     list: vi.fn(async () => []),
     replace: vi.fn(async () => {}),
+    saveLocal: vi.fn(async () => {}),
+    deleteLocal: vi.fn(async () => true),
     onChanged: vi.fn(() => () => undefined)
   },
   workspace: {
@@ -664,7 +698,21 @@ describe('App', () => {
     delete document.documentElement.dataset.theme
     document.documentElement.style.colorScheme = ''
     vi.clearAllMocks()
+    vi.mocked(api.conversations.list).mockReset().mockResolvedValue([])
+    vi.mocked(api.conversations.replace)
+      .mockReset()
+      .mockResolvedValue()
+    vi.mocked(api.conversations.saveLocal)
+      .mockReset()
+      .mockResolvedValue()
+    vi.mocked(api.conversations.deleteLocal)
+      .mockReset()
+      .mockResolvedValue(true)
+    vi.mocked(api.conversations.onChanged)
+      .mockReset()
+      .mockReturnValue(() => undefined)
     newConversationListener = undefined
+    beforeQuitListener = undefined
     browserListener = undefined
     fileSelectionProgressListener = undefined
     maximizedChangedListener = undefined
@@ -772,6 +820,122 @@ describe('App', () => {
 
     expect(await screen.findByText('桌面工作区')).toBeInTheDocument()
     expect(screen.getByText('GOODBUDDY 工作台')).toBeInTheDocument()
+  })
+
+  it('shows an accessible fallback while a lazy route loads', async () => {
+    lazyRouteMocks.suspendKnowledgeRoute()
+    try {
+      render(<App />)
+
+      fireEvent.click(
+        await screen.findByRole('button', { name: '知识库' })
+      )
+
+      const loading = screen.getByRole('status', {
+        name: '正在加载页面…'
+      })
+      expect(loading).toHaveAttribute('aria-live', 'polite')
+      expect(loading).toHaveAttribute('aria-busy', 'true')
+      await act(async () => lazyRouteMocks.releaseKnowledgeRoute())
+      expect(
+        await screen.findByRole('heading', {
+          level: 1,
+          name: '知识库'
+        })
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('status', { name: '正在加载页面…' })
+      ).not.toBeInTheDocument()
+    } finally {
+      lazyRouteMocks.releaseKnowledgeRoute()
+    }
+  })
+
+  it('preserves title, message, and project filtering with deferred search', async () => {
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000411',
+        projectId,
+        title: '标题里的 Alpha',
+        updatedAt: 1_775_000_000_003,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000412',
+            role: 'assistant',
+            content: '普通正文',
+            createdAt: 1_775_000_000_003,
+            state: 'complete'
+          }
+        ]
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000413',
+        projectId,
+        title: '正文命中的会话',
+        updatedAt: 1_775_000_000_002,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000414',
+            role: 'user',
+            content: '这里包含 Beta Needle',
+            createdAt: 1_775_000_000_002,
+            state: 'complete'
+          }
+        ]
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000415',
+        projectId: '00000000-0000-4000-8000-000000000999',
+        title: '其他项目里的 Alpha',
+        updatedAt: 1_775_000_000_001,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000416',
+            role: 'user',
+            content: 'Beta Needle',
+            createdAt: 1_775_000_000_001,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    const { container } = render(<App />)
+    const search = await screen.findByLabelText('搜索对话')
+    const conversationList =
+      container.querySelector<HTMLElement>('.conversation-list')
+    if (!conversationList) {
+      throw new Error('Missing conversation list')
+    }
+    expect(
+      await within(conversationList).findByText('标题里的 Alpha')
+    ).toBeInTheDocument()
+    expect(
+      within(conversationList).queryByText('其他项目里的 Alpha')
+    ).not.toBeInTheDocument()
+
+    fireEvent.change(search, { target: { value: 'beta needle' } })
+    expect(search).toHaveValue('beta needle')
+    await waitFor(() => {
+      expect(
+        within(conversationList).getByText('正文命中的会话')
+      ).toBeInTheDocument()
+      expect(
+        within(conversationList).queryByText('标题里的 Alpha')
+      ).not.toBeInTheDocument()
+    })
+
+    fireEvent.change(search, { target: { value: 'ALPHA' } })
+    await waitFor(() => {
+      expect(
+        within(conversationList).getByText('标题里的 Alpha')
+      ).toBeInTheDocument()
+      expect(
+        within(conversationList).queryByText('正文命中的会话')
+      ).not.toBeInTheDocument()
+      expect(
+        within(conversationList).queryByText('其他项目里的 Alpha')
+      ).not.toBeInTheDocument()
+    })
   })
 
   it('keeps Settings open when the interface language changes', async () => {
@@ -1225,6 +1389,69 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('renders the latest 80 messages and preserves scroll when revealing earlier messages', async () => {
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000421',
+        projectId,
+        title: '超长会话',
+        updatedAt: 1_775_000_000_000,
+        messages: Array.from({ length: 161 }, (_, index) => ({
+          id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `历史消息 ${String(index).padStart(3, '0')}`,
+          createdAt: 1_775_000_000_000 + index,
+          state: 'complete' as const
+        }))
+      }
+    ])
+    const { container } = render(<App />)
+
+    expect(await screen.findByText('历史消息 160')).toBeInTheDocument()
+    expect(screen.queryByText('历史消息 080')).not.toBeInTheDocument()
+    expect(container.querySelectorAll('.message')).toHaveLength(80)
+    const chat = container.querySelector<HTMLElement>('.chat')
+    if (!chat) {
+      throw new Error('Missing chat scroll container')
+    }
+    Object.defineProperties(chat, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: {
+        configurable: true,
+        get: () => container.querySelectorAll('.message').length * 10
+      },
+      scrollTop: {
+        configurable: true,
+        writable: true,
+        value: 125
+      }
+    })
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '加载更早的消息（还剩 81 条）'
+      })
+    )
+
+    expect(container.querySelectorAll('.message')).toHaveLength(160)
+    expect(screen.getByText('历史消息 001')).toBeInTheDocument()
+    expect(screen.queryByText('历史消息 000')).not.toBeInTheDocument()
+    expect(chat.scrollTop).toBe(925)
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '加载更早的消息（还剩 1 条）'
+      })
+    )
+    expect(container.querySelectorAll('.message')).toHaveLength(161)
+    expect(screen.getByText('历史消息 000')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /加载更早的消息/u })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText('历史消息 000').closest('article')
+    ).toHaveFocus()
+  })
+
   it('keeps the reader position while a response continues below', async () => {
     render(<App />)
     fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
@@ -1335,6 +1562,68 @@ describe('App', () => {
         })
       ).not.toBeInTheDocument()
     )
+    expect(api.conversations.deleteLocal).toHaveBeenCalledWith(
+      expect.any(String)
+    )
+  })
+
+  it('keeps a local conversation visible when deleting its persisted record fails', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000431'
+    const title = '删除失败时保留的本地会话'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: conversationId,
+        projectId,
+        title,
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000432',
+            role: 'assistant',
+            content: '需要保留的消息',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    vi.mocked(api.conversations.deleteLocal).mockRejectedValueOnce(
+      new Error('delete failed')
+    )
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByLabelText(`更多会话操作 ${title}`)
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: `删除对话 ${title}` })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `确认永久删除对话 ${title}`
+      })
+    )
+
+    await waitFor(() =>
+      expect(api.conversations.deleteLocal).toHaveBeenCalledWith(
+        conversationId
+      )
+    )
+    expect(
+      await screen.findByText('删除本地会话失败，已保留当前对话')
+    ).toBeInTheDocument()
+    expect(screen.getByText('需要保留的消息')).toBeInTheDocument()
+    const dialog = screen.getByRole('alertdialog', {
+      name: `确认永久删除对话 ${title}`
+    })
+    expect(
+      dialog
+    ).toBeInTheDocument()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(
+      await screen.findByLabelText(`更多会话操作 ${title}`)
+    ).toBeInTheDocument()
   })
 
   it('keeps a conversation when cancelling its active task fails', async () => {
@@ -1576,6 +1865,155 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
+  it('persists only the changed conversation and streamed assistant message', async () => {
+    const activeConversationId =
+      '00000000-0000-4000-8000-000000000441'
+    const activeMessageId =
+      '00000000-0000-4000-8000-000000000442'
+    const unrelatedConversationId =
+      '00000000-0000-4000-8000-000000000443'
+    const unrelatedMessageId =
+      '00000000-0000-4000-8000-000000000444'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: activeConversationId,
+        projectId,
+        title: '增量持久化会话',
+        updatedAt: 1_775_000_000_002,
+        messages: [
+          {
+            id: activeMessageId,
+            role: 'assistant',
+            content: '原有消息',
+            createdAt: 1_775_000_000_002,
+            state: 'complete'
+          }
+        ]
+      },
+      {
+        id: unrelatedConversationId,
+        projectId,
+        title: '无关会话',
+        updatedAt: 1_775_000_000_001,
+        messages: [
+          {
+            id: unrelatedMessageId,
+            role: 'assistant',
+            content: '不应重复保存',
+            createdAt: 1_775_000_000_001,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    render(<App />)
+    expect(await screen.findByText('原有消息')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '只更新当前会话' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    await waitFor(() =>
+      expect(api.conversations.saveLocal).toHaveBeenCalled()
+    )
+    vi.mocked(api.conversations.saveLocal).mockClear()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: '流式增量'
+      })
+    })
+
+    await waitFor(
+      () => {
+        const batch = vi
+          .mocked(api.conversations.saveLocal)
+          .mock.calls.at(-1)?.[0]
+        expect(batch).toHaveLength(1)
+        expect(batch?.[0]?.header.id).toBe(activeConversationId)
+        expect(batch?.[0]?.messages).toEqual([
+          expect.objectContaining({
+            role: 'assistant',
+            content: '流式增量',
+            state: 'streaming'
+          })
+        ])
+        expect(
+          batch?.some(
+            (entry) => entry.header.id === unrelatedConversationId
+          )
+        ).toBe(false)
+        expect(
+          batch?.flatMap((entry) => entry.messages).some(
+            (message) =>
+              message.id === activeMessageId ||
+              message.id === unrelatedMessageId ||
+              message.role === 'user'
+          )
+        ).toBe(false)
+      },
+      { timeout: 2_000 }
+    )
+  })
+
+  it('flushes pending local conversation changes before quit', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000445'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: conversationId,
+        projectId,
+        title: '退出持久化会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000446',
+            role: 'assistant',
+            content: '已有内容',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    render(<App />)
+    expect(await screen.findByText('已有内容')).toBeInTheDocument()
+    vi.mocked(api.conversations.saveLocal).mockClear()
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '退出前必须保存' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    expect(
+      await screen.findByText('退出前必须保存')
+    ).toBeInTheDocument()
+    if (!beforeQuitListener) {
+      throw new Error('Missing before-quit persistence listener')
+    }
+
+    await act(async () => beforeQuitListener?.())
+
+    expect(api.conversations.saveLocal).toHaveBeenCalledWith([
+      expect.objectContaining({
+        header: expect.objectContaining({ id: conversationId }),
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: '退出前必须保存',
+            state: 'complete'
+          })
+        ])
+      })
+    ])
+  })
+
   it('replaces the direct-model thinking status with real reasoning', async () => {
     render(<App />)
 
@@ -1773,9 +2211,9 @@ describe('App', () => {
     await waitFor(
       () => {
         const persistedMessages = vi
-          .mocked(api.conversations.replace)
-          .mock.calls.flatMap(([conversations]) =>
-            conversations.flatMap((conversation) => conversation.messages)
+          .mocked(api.conversations.saveLocal)
+          .mock.calls.flatMap(([batch]) =>
+            batch.flatMap((conversation) => conversation.messages)
           )
         const persisted = persistedMessages
           .filter((message) => message.role === 'assistant')
@@ -1864,12 +2302,12 @@ describe('App', () => {
     expect(screen.getByText('向量模型未配置')).toBeInTheDocument()
     await waitFor(() => {
       const snapshots = vi
-        .mocked(api.conversations.replace)
-        .mock.calls.at(-1)?.[0]
+        .mocked(api.conversations.saveLocal)
+        .mock.calls.flatMap(([batch]) => batch)
       expect(
         snapshots?.some(
           (conversation) =>
-            conversation.knowledgeRetrievalMode === 'always'
+            conversation.header.knowledgeRetrievalMode === 'always'
         )
       ).toBe(true)
     })
@@ -2007,7 +2445,7 @@ describe('App', () => {
     expect(anchorClick).toHaveBeenCalledOnce()
     await waitFor(
       () =>
-        expect(api.conversations.replace).toHaveBeenCalledWith(
+        expect(api.conversations.saveLocal).toHaveBeenCalledWith(
           expect.arrayContaining([
             expect.objectContaining({
               messages: expect.arrayContaining([
@@ -2844,14 +3282,14 @@ describe('App', () => {
           setTimeout(resolve, 550)
         })
     )
-    expect(api.conversations.replace).not.toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          projectId: channelProject.id,
-          remote: undefined
-        })
-      ])
-    )
+    const savedChannelHeaders = vi
+      .mocked(api.conversations.saveLocal)
+      .mock.calls.flatMap(([batch]) => batch.map((entry) => entry.header))
+    expect(
+      savedChannelHeaders.some(
+        (header) => header.projectId === channelProject.id
+      )
+    ).toBe(false)
     expect(screen.getAllByText('尚无远程会话').length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole('button', { name: '打开设置' }))
@@ -3447,10 +3885,238 @@ describe('App', () => {
     )
   })
 
+  it('persists metadata-only retrieval and Runtime changes without rewriting messages', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000451'
+    const existingMessageId =
+      '00000000-0000-4000-8000-000000000452'
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const secondProfileId =
+      '00000000-0000-4000-8000-000000000453'
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      modelProfiles: [
+        ...settings.modelProfiles,
+        {
+          id: secondProfileId,
+          name: '仅元数据模型',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          protocol: 'openai-chat-completions',
+          authentication: 'none',
+          imageGenerationQuality: 'auto',
+          apiKeyConfigured: false,
+          credentialSource: 'none'
+        }
+      ]
+    })
+    vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
+      libraries: [
+        {
+          id: libraryId,
+          name: '产品知识',
+          description: '',
+          storageMode: 'managed',
+          graphEnabled: false,
+          graphStrategy: 'rules',
+          sourceCount: 1,
+          documentCount: 1,
+          indexedDocumentCount: 1
+        }
+      ],
+      sources: [],
+      documents: [],
+      graphNodes: [],
+      graphRelations: [],
+      evidence: []
+    })
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: conversationId,
+        projectId,
+        runtimeSelection: {
+          provider: 'model',
+          profileId: modelProfileId
+        },
+        knowledgeRetrievalMode: 'auto',
+        title: '元数据会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: existingMessageId,
+            role: 'assistant',
+            content: '现有消息不应重写',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    vi.mocked(api.agent.getStatus).mockImplementation(
+      async (selection) => ({
+        id: 'model',
+        label:
+          selection?.provider === 'model' &&
+          selection.profileId === secondProfileId
+            ? 'qwen3'
+            : 'sonnet-5',
+        available: true,
+        supportsToolExecution: true,
+        detail: 'Ready'
+      })
+    )
+    render(<App />)
+
+    const knowledgeScope = await screen.findByRole('button', {
+      name: '选择知识库，本次已启用 1 个'
+    })
+    fireEvent.click(knowledgeScope)
+    fireEvent.click(
+      within(
+        screen.getByRole('group', { name: '知识检索方式' })
+      ).getByRole('button', { name: '每次先检索' })
+    )
+    await waitFor(
+      () =>
+        expect(api.conversations.saveLocal).toHaveBeenCalledWith([
+          {
+            header: expect.objectContaining({
+              id: conversationId,
+              knowledgeRetrievalMode: 'always'
+            }),
+            messages: []
+          }
+        ]),
+      { timeout: 2_000 }
+    )
+
+    vi.mocked(api.conversations.saveLocal).mockClear()
+    fireEvent.click(
+      screen.getByRole('button', { name: /sonnet-5/u })
+    )
+    fireEvent.click(
+      screen.getByRole('menuitemradio', {
+        name: /^仅元数据模型.*qwen3$/u
+      })
+    )
+    await waitFor(
+      () =>
+        expect(api.conversations.saveLocal).toHaveBeenCalledWith([
+          {
+            header: expect.objectContaining({
+              id: conversationId,
+              runtimeSelection: {
+                provider: 'model',
+                profileId: secondProfileId
+              },
+              knowledgeRetrievalMode: 'always'
+            }),
+            messages: []
+          }
+        ]),
+      { timeout: 2_000 }
+    )
+    const savedMessages = vi
+      .mocked(api.conversations.saveLocal)
+      .mock.calls.flatMap(([batch]) =>
+        batch.flatMap((entry) => entry.messages)
+      )
+    expect(
+      savedMessages.some((message) => message.id === existingMessageId)
+    ).toBe(false)
+  })
+
+  it('migrates legacy startup conversations with replace when SQLite has no local conversation', async () => {
+    const legacyConversation = {
+      id: '00000000-0000-4000-8000-000000000461',
+      title: '待迁移旧会话',
+      updatedAt: 1_775_000_000_000,
+      messages: [
+        {
+          id: '00000000-0000-4000-8000-000000000462',
+          role: 'assistant' as const,
+          content: '旧版浏览器存储消息',
+          createdAt: 1_775_000_000_000,
+          state: 'complete' as const
+        }
+      ]
+    }
+    localStorage.setItem(
+      'goodbuddy.conversations.v1',
+      JSON.stringify([legacyConversation])
+    )
+    render(<App />)
+
+    expect(
+      await screen.findByText('旧版浏览器存储消息')
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.conversations.replace).toHaveBeenCalledWith([
+        expect.objectContaining({
+          ...legacyConversation,
+          projectId
+        })
+      ])
+    )
+    expect(api.conversations.saveLocal).not.toHaveBeenCalled()
+  })
+
+  it('does not let remote rows displace legacy local conversations during migration', async () => {
+    const legacyConversations = [0, 1].map((index) => ({
+      id: `00000000-0000-4000-8000-${String(470 + index).padStart(12, '0')}`,
+      title: `待迁移本地会话 ${index}`,
+      updatedAt: 1_775_000_000_000 + index,
+      messages: [
+        {
+          id: `00000000-0000-4000-8001-${String(470 + index).padStart(12, '0')}`,
+          role: 'assistant' as const,
+          content: `待迁移消息 ${index}`,
+          createdAt: 1_775_000_000_000 + index,
+          state: 'complete' as const
+        }
+      ]
+    }))
+    localStorage.setItem(
+      'goodbuddy.conversations.v1',
+      JSON.stringify(legacyConversations)
+    )
+    const remoteProjectId =
+      '00000000-0000-4000-8000-000000000499'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(
+      Array.from({ length: 100 }, (_, index) => ({
+        id: `00000000-0000-4000-8002-${String(index).padStart(12, '0')}`,
+        projectId: remoteProjectId,
+        remote: {
+          channel: 'weixin' as const,
+          accountDisplay: `远程联系人 ${index}`,
+          conversationType: 'direct' as const
+        },
+        title: `远程会话 ${index}`,
+        updatedAt: 1_775_000_100_000 + index,
+        messages: []
+      }))
+    )
+    render(<App />)
+
+    await waitFor(() =>
+      expect(api.conversations.saveLocal).toHaveBeenCalled()
+    )
+    expect(api.conversations.replace).not.toHaveBeenCalled()
+    const migrated =
+      vi.mocked(api.conversations.saveLocal).mock.calls[0]?.[0] ?? []
+    expect(migrated.map((conversation) => conversation.header.id)).toEqual(
+      expect.arrayContaining(
+        legacyConversations.map((conversation) => conversation.id)
+      )
+    )
+  })
+
   it('preserves a legacy Auto conversation without silently persisting a replacement', async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: '00000000-0000-4000-8000-000000000020',
+        projectId,
         runtimeSelection: { provider: 'auto' },
         title: '旧自动对话',
         updatedAt: 1,
@@ -3468,18 +4134,10 @@ describe('App', () => {
     render(<App />)
 
     expect(
-      await screen.findByRole('button', { name: /默认模型.*sonnet-5/u })
+      await screen.findByRole('button', { name: /自动.*sonnet-5/u })
     ).toBeInTheDocument()
-    await waitFor(() =>
-      expect(api.conversations.replace).toHaveBeenLastCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: '00000000-0000-4000-8000-000000000020',
-            runtimeSelection: { provider: 'auto' }
-          })
-        ])
-      )
-    )
+    expect(api.conversations.replace).not.toHaveBeenCalled()
+    expect(api.conversations.saveLocal).not.toHaveBeenCalled()
   })
 
   it('keeps a removed model selection visible until the user replaces it', async () => {
@@ -3488,6 +4146,7 @@ describe('App', () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: '00000000-0000-4000-8000-000000000022',
+        projectId,
         runtimeSelection: {
           provider: 'model',
           profileId: removedProfileId
@@ -3507,19 +4166,14 @@ describe('App', () => {
     ])
     render(<App />)
 
-    await waitFor(() =>
-      expect(api.conversations.replace).toHaveBeenLastCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: '00000000-0000-4000-8000-000000000022',
-            runtimeSelection: {
-              provider: 'model',
-              profileId: removedProfileId
-            }
-          })
-        ])
-      )
-    )
+    expect(
+      await screen.findByText('旧消息')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /模型配置不可用/u })
+    ).toBeInTheDocument()
+    expect(api.conversations.replace).not.toHaveBeenCalled()
+    expect(api.conversations.saveLocal).not.toHaveBeenCalled()
   })
 
   it('keeps model Runtime selection scoped to its conversation', async () => {
@@ -3614,14 +4268,17 @@ describe('App', () => {
 
     await waitFor(
       () =>
-        expect(api.conversations.replace).toHaveBeenLastCalledWith(
+        expect(api.conversations.saveLocal).toHaveBeenLastCalledWith(
           expect.arrayContaining([
             expect.objectContaining({
-              title: '第二模型对话',
-              runtimeSelection: {
-                provider: 'model',
-                profileId: secondProfileId
-              }
+              header: expect.objectContaining({
+                title: '第二模型对话',
+                runtimeSelection: {
+                  provider: 'model',
+                  profileId: secondProfileId
+                }
+              }),
+              messages: expect.any(Array)
             })
           ])
         ),
@@ -4855,7 +5512,9 @@ describe('App', () => {
       expect(
         screen.getByRole('button', { name: '新建笔记' })
       ).toBeInTheDocument()
-      expect(api.magicNotes.list).toHaveBeenCalled()
+      await waitFor(() =>
+        expect(api.magicNotes.list).toHaveBeenCalled()
+      )
       expect(
         screen.queryByLabelText('切换助手工作栏')
       ).not.toBeInTheDocument()

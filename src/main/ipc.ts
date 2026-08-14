@@ -131,6 +131,7 @@ import {
 import {
   assistantIdSchema,
   conversationSnapshotsSchema,
+  localConversationSaveBatchSchema,
   memoryCreateSchema,
   normalizeInteractiveWorkMode,
   projectChannelLabels,
@@ -241,6 +242,7 @@ import {
   analyzeMagicNoteEntry,
   analyzeMagicTodo
 } from './magic-notes/magic-note-analyzer'
+import { AgentEventBuffer } from './agent-event-buffer'
 
 const requestIdSchema = z.string().uuid()
 const GOODBUDDY_RELEASES_URL =
@@ -832,6 +834,7 @@ export function registerIpcHandlers(
   goodbuddyConfigService?: GoodBuddyConfigService
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
+  const activeEventBuffers = new Map<string, { flush(): void }>()
   const pendingAgentQuestions = new Map<
     string,
     { requestId: string; runtime: AgentRuntime }
@@ -840,6 +843,8 @@ export function registerIpcHandlers(
   let shuttingDown = false
   let executionPaused = false
   let clearLocalDataOperation: Promise<void> | undefined
+  let rendererPersistenceReady = false
+  const pendingRendererPersistence = new Map<string, () => void>()
   let pendingGoodBuddyConfigReload = false
   let goodBuddyConfigReloadQueue: Promise<void> = Promise.resolve()
   const executionTracker = createPromiseTracker()
@@ -900,6 +905,40 @@ export function registerIpcHandlers(
 
   for (const channel of channels) {
     ipcMain.removeHandler(channel)
+  }
+
+  const requestRendererPersistence = async (): Promise<void> => {
+    if (
+      !rendererPersistenceReady ||
+      window.isDestroyed() ||
+      (typeof window.webContents.isDestroyed === 'function' &&
+        window.webContents.isDestroyed())
+    ) {
+      return
+    }
+    const requestId = randomUUID()
+    const completion = new Promise<void>((resolve) => {
+      const finish = (): void => {
+        clearTimeout(timeout)
+        pendingRendererPersistence.delete(requestId)
+        resolve()
+      }
+      pendingRendererPersistence.set(requestId, finish)
+      const timeout = setTimeout(finish, 1_500)
+      timeout.unref?.()
+    })
+    window.webContents.send(
+      ipcChannels.appRendererPersistenceRequest,
+      requestId
+    )
+    await completion
+  }
+
+  const waitForRendererQuiescence = async (): Promise<void> => {
+    await Promise.allSettled([
+      executionTracker.drain(),
+      maintenanceTracker.drain()
+    ])
   }
 
   const notifyMaximizedChanged = (): void => {
@@ -967,6 +1006,7 @@ export function registerIpcHandlers(
       },
       signal,
       (approvalEvent) => {
+        activeEventBuffers.get(event.requestId)?.flush()
         if (!window.isDestroyed()) {
           window.webContents.send(ipcChannels.agentEvent, approvalEvent)
         }
@@ -1029,6 +1069,7 @@ export function registerIpcHandlers(
     parentTaskId: string,
     event: Extract<AgentEvent, { type: 'subagent' }>
   ): void => {
+    activeEventBuffers.get(parentTaskId)?.flush()
     assistantDatabase.appendTaskEvent(
       parentTaskId,
       event.type,
@@ -1218,6 +1259,16 @@ export function registerIpcHandlers(
     let knowledgeCapabilityToken: string | undefined
     const resultAttachments: ChannelMediaAttachment[] = []
     const artifactIds: string[] = []
+    const eventBuffer = new AgentEventBuffer({
+      onError: (error) => controller.abort(error),
+      onEvent: (event) => {
+        assistantDatabase.appendTaskEvent(
+          requestId,
+          event.type,
+          event
+        )
+      }
+    })
     try {
       const requestRuntime =
         remoteContext?.runtime ??
@@ -1296,6 +1347,7 @@ export function registerIpcHandlers(
             },
             controller.signal,
             (approvalEvent) => {
+              eventBuffer.flush()
               if (!window.isDestroyed()) {
                 window.webContents.send(
                   ipcChannels.agentEvent,
@@ -1380,11 +1432,7 @@ export function registerIpcHandlers(
         if (taskEvent.type === 'artifact') {
           artifactIds.push(taskEvent.artifactId)
         }
-        assistantDatabase.appendTaskEvent(
-          requestId,
-          taskEvent.type,
-          taskEvent
-        )
+        eventBuffer.push(taskEvent)
         if (taskEvent.type === 'tool' && remoteContext) {
           publishRemoteActivity({
             requestId,
@@ -1474,6 +1522,7 @@ export function registerIpcHandlers(
         ...(artifactIds.length > 0 ? { artifactIds } : {})
       }
     } catch (error) {
+      eventBuffer.flush()
       const message = safeRuntimeError(error, '定时任务执行失败')
       assistantDatabase.updateTaskStatus(
         requestId,
@@ -1492,6 +1541,7 @@ export function registerIpcHandlers(
       })
       return { status: 'failed', error: message }
     } finally {
+      eventBuffer.close()
       externalSignal?.removeEventListener(
         'abort',
         abortFromExternal
@@ -2040,6 +2090,25 @@ export function registerIpcHandlers(
     }
   })
 
+  registerHandler(
+    ipcChannels.appRendererPersistenceReady,
+    (event) => {
+      assertTrustedSender(event, window)
+      rendererPersistenceReady = true
+    },
+    false
+  )
+
+  registerHandler(
+    ipcChannels.appRendererPersistenceComplete,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const requestId = requestIdSchema.parse(input)
+      pendingRendererPersistence.get(requestId)?.()
+    },
+    false
+  )
+
   registerHandler(ipcChannels.appShow, (event) => {
     assertTrustedSender(event, window)
     showWindow(window)
@@ -2280,10 +2349,58 @@ export function registerIpcHandlers(
     const execution = (async () => {
       let outputText = ''
       let completed = false
-      let persistedRuntimeError = false
+      let runtimeErrorEvent:
+        | Extract<AgentEvent, { type: 'error' }>
+        | undefined
       let executionRequest = request
       let preflightReferences: KnowledgeSearchReference[] = []
       let referencesPublished = false
+      const persistedEventBuffer = new AgentEventBuffer({
+        onError: (error) => controller.abort(error),
+        onEvent: (event) => {
+          assistantDatabase.appendTaskEvent(
+            request.requestId,
+            event.type,
+            event
+          )
+        }
+      })
+      const publicEventBuffer = new AgentEventBuffer({
+        flushIntervalMs: 16,
+        onError: (error) => controller.abort(error),
+        onEvent: (event) => {
+          if (!window.isDestroyed()) {
+            window.webContents.send(ipcChannels.agentEvent, event)
+          }
+        }
+      })
+      let publicStreamType: 'text' | 'reasoning' | undefined
+      const eventBuffer = {
+        push: (event: AgentEvent): void => {
+          const streamType =
+            event.type === 'text' || event.type === 'reasoning'
+              ? event.type
+              : undefined
+          const startsStreamSegment =
+            streamType !== undefined && streamType !== publicStreamType
+          publicStreamType = streamType
+          publicEventBuffer.push(event)
+          if (startsStreamSegment) {
+            publicEventBuffer.flush()
+          }
+          persistedEventBuffer.push(event)
+        },
+        flush: (): void => {
+          publicStreamType = undefined
+          publicEventBuffer.flush()
+          persistedEventBuffer.flush()
+        },
+        close: (): void => {
+          publicEventBuffer.close()
+          persistedEventBuffer.close()
+        }
+      }
+      activeEventBuffers.set(request.requestId, eventBuffer)
       const toolStates = new Map<
         string,
         Extract<AgentEvent, { type: 'tool' }>
@@ -2294,17 +2411,7 @@ export function registerIpcHandlers(
           { type: 'knowledge-retrieval' }
         >
       ): void => {
-        assistantDatabase.appendTaskEvent(
-          request.requestId,
-          retrievalEvent.type,
-          retrievalEvent
-        )
-        if (!window.isDestroyed()) {
-          window.webContents.send(
-            ipcChannels.agentEvent,
-            retrievalEvent
-          )
-        }
+        eventBuffer.push(retrievalEvent)
       }
       const publishReferences = (): void => {
         if (referencesPublished) {
@@ -2337,17 +2444,7 @@ export function registerIpcHandlers(
           type: 'source-references',
           references
         }
-        assistantDatabase.appendTaskEvent(
-          request.requestId,
-          referenceEvent.type,
-          referenceEvent
-        )
-        if (!window.isDestroyed()) {
-          window.webContents.send(
-            ipcChannels.agentEvent,
-            referenceEvent
-          )
-        }
+        eventBuffer.push(referenceEvent)
       }
       try {
         controller.signal.throwIfAborted()
@@ -2593,12 +2690,7 @@ export function registerIpcHandlers(
             })
           }
           if (publicEvent.type === 'error') {
-            assistantDatabase.appendTaskEvent(
-              request.requestId,
-              publicEvent.type,
-              publicEvent
-            )
-            persistedRuntimeError = true
+            runtimeErrorEvent = publicEvent
             throw new Error(publicEvent.message)
           }
           if (publicEvent.type === 'done') {
@@ -2615,12 +2707,15 @@ export function registerIpcHandlers(
               )
             }
             publishReferences()
+            eventBuffer.flush()
+            assistantDatabase.appendTaskEvent(
+              request.requestId,
+              publicEvent.type,
+              publicEvent
+            )
+          } else {
+            eventBuffer.push(publicEvent)
           }
-          assistantDatabase.appendTaskEvent(
-            request.requestId,
-            publicEvent.type,
-            publicEvent
-          )
           if (publicEvent.type === 'done') {
             completed = true
             if (outputText.trim()) {
@@ -2641,9 +2736,12 @@ export function registerIpcHandlers(
               title: 'GoodBuddy 任务已完成',
               body: '任务结果已保存到成果工作栏。'
             })
-          }
-          if (!window.isDestroyed()) {
-            window.webContents.send(ipcChannels.agentEvent, publicEvent)
+            if (!window.isDestroyed()) {
+              window.webContents.send(
+                ipcChannels.agentEvent,
+                publicEvent
+              )
+            }
           }
           if (completed) {
             break
@@ -2654,27 +2752,31 @@ export function registerIpcHandlers(
         }
       } catch (error) {
         publishReferences()
+        eventBuffer.flush()
         const errorMessage = controller.signal.aborted
           ? '请求已取消'
           : safeRuntimeError(error, 'Agent Runtime 执行失败')
+        const agentEvent: AgentEvent =
+          runtimeErrorEvent && !controller.signal.aborted
+            ? runtimeErrorEvent
+            : {
+                requestId: request.requestId,
+                type: 'error',
+                status: controller.signal.aborted
+                  ? 'cancelled'
+                  : 'failed',
+                message: errorMessage
+              }
         assistantDatabase.updateTaskStatus(
           request.requestId,
           controller.signal.aborted ? 'cancelled' : 'failed',
           errorMessage
         )
-        const agentEvent: AgentEvent = {
-          requestId: request.requestId,
-          type: 'error',
-          status: controller.signal.aborted ? 'cancelled' : 'failed',
-          message: errorMessage
-        }
-        if (!persistedRuntimeError) {
-          assistantDatabase.appendTaskEvent(
-            request.requestId,
-            agentEvent.type,
-            agentEvent
-          )
-        }
+        assistantDatabase.appendTaskEvent(
+          request.requestId,
+          agentEvent.type,
+          agentEvent
+        )
         showDesktopNotificationWhenUnfocused(window, {
           title: controller.signal.aborted
             ? 'GoodBuddy 任务已取消'
@@ -2685,6 +2787,8 @@ export function registerIpcHandlers(
           window.webContents.send(ipcChannels.agentEvent, agentEvent)
         }
       } finally {
+        eventBuffer.close()
+        activeEventBuffers.delete(request.requestId)
         for (const [questionId, pending] of pendingAgentQuestions) {
           if (pending.requestId === request.requestId) {
             pendingAgentQuestions.delete(questionId)
@@ -3569,6 +3673,26 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       assistantDatabase.replaceConversations(
         conversationSnapshotsSchema.parse(input)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationsSaveLocal,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      assistantDatabase.saveLocalConversations(
+        localConversationSaveBatchSchema.parse(input)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationsDeleteLocal,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      return assistantDatabase.deleteLocalConversation(
+        assistantIdSchema.parse(input)
       )
     }
   )
@@ -5000,9 +5124,6 @@ export function registerIpcHandlers(
     clearInterval(scheduleInterval)
     window.removeListener('maximize', notifyMaximizedChanged)
     window.removeListener('unmaximize', notifyMaximizedChanged)
-    for (const channel of channels) {
-      ipcMain.removeHandler(channel)
-    }
     abortActiveRequests('应用正在退出')
     for (const controller of heartbeatControllers) {
       controller.abort(new Error('应用正在退出'))
@@ -5019,6 +5140,16 @@ export function registerIpcHandlers(
     approvalBroker.clear()
     goodbuddyConfigService?.clear()
     pendingGoodBuddyConfigReload = false
+    await waitForRendererQuiescence()
+    await requestRendererPersistence()
+    for (const channel of channels) {
+      ipcMain.removeHandler(channel)
+    }
+    rendererPersistenceReady = false
+    for (const complete of pendingRendererPersistence.values()) {
+      complete()
+    }
+    pendingRendererPersistence.clear()
     await goodBuddyConfigReloadQueue
     const channelCleanup = Promise.allSettled([
       ...channelServices.map((service) => service.stop()),

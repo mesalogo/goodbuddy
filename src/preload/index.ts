@@ -43,6 +43,7 @@ import type {
   AssistantTask,
   TokenUsageSummary,
   ConversationSnapshot,
+  LocalConversationSaveBatch,
   WorkspaceChanges,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview,
@@ -143,6 +144,30 @@ const desktopApi: DesktopApi = {
       return () =>
         ipcRenderer.removeListener(
           ipcChannels.windowMaximizedChanged,
+          handler
+        )
+    },
+    onBeforeQuit: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        requestId: string
+      ): void => {
+        const acknowledge = (): void => {
+          void ipcRenderer.invoke(
+            ipcChannels.appRendererPersistenceComplete,
+            requestId
+          )
+        }
+        void listener().then(acknowledge, acknowledge)
+      }
+      ipcRenderer.on(
+        ipcChannels.appRendererPersistenceRequest,
+        handler
+      )
+      void ipcRenderer.invoke(ipcChannels.appRendererPersistenceReady)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.appRendererPersistenceRequest,
           handler
         )
     },
@@ -555,6 +580,17 @@ const desktopApi: DesktopApi = {
         conversations
       )
     },
+    saveLocal: async (batch: LocalConversationSaveBatch) => {
+      await ipcRenderer.invoke(
+        ipcChannels.conversationsSaveLocal,
+        batch
+      )
+    },
+    deleteLocal: (conversationId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.conversationsDeleteLocal,
+        conversationId
+      ) as Promise<boolean>,
     onChanged: (listener) => {
       const handler = (): void => listener()
       ipcRenderer.on(ipcChannels.conversationsChanged, handler)

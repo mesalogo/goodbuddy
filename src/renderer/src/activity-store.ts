@@ -278,8 +278,9 @@ export function loadActivityRecords(
 }
 
 /**
- * Persists at most 500 schema-valid records. Returns false if storage is
- * unavailable or rejects the write.
+ * Persists as many of the newest schema-valid records as fit within the
+ * bounded storage payload. Returns false if storage is unavailable or rejects
+ * the write.
  */
 export function saveActivityRecords(
   records: readonly ActivityRecord[],
@@ -289,19 +290,32 @@ export function saveActivityRecords(
     return false
   }
 
-  const safeRecords: ActivityRecord[] = []
+  const serializedRecords: string[] = []
+  let serializedLength = 2
   for (const record of records) {
     const safeRecord = parseActivityRecord(record)
     if (safeRecord) {
-      safeRecords.push(safeRecord)
+      const serializedRecord = JSON.stringify(safeRecord)
+      const nextLength =
+        serializedLength +
+        serializedRecord.length +
+        (serializedRecords.length > 0 ? 1 : 0)
+      if (nextLength > MAX_STORED_JSON_LENGTH) {
+        break
+      }
+      serializedRecords.push(serializedRecord)
+      serializedLength = nextLength
     }
-    if (safeRecords.length === MAX_ACTIVITY_RECORDS) {
+    if (serializedRecords.length === MAX_ACTIVITY_RECORDS) {
       break
     }
   }
 
   try {
-    storage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(safeRecords))
+    storage.setItem(
+      ACTIVITY_STORAGE_KEY,
+      `[${serializedRecords.join(',')}]`
+    )
     return true
   } catch {
     return false

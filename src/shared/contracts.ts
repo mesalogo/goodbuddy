@@ -26,6 +26,7 @@ import {
   type TokenUsageSummary,
   type ConversationSnapshot,
   type ConversationAttachment,
+  type LocalConversationSaveBatch,
   type WorkspaceChanges,
   type WorkspaceDirectoryListing,
   type WorkspaceFilePreview,
@@ -1112,6 +1113,7 @@ export type DesktopApi = {
     close: () => Promise<void>
     isMaximized: () => Promise<boolean>
     onMaximizedChanged: (listener: (maximized: boolean) => void) => () => void
+    onBeforeQuit: (listener: () => Promise<void>) => () => void
     clearLocalData: () => Promise<void>
     onNewConversation: (listener: () => void) => () => void
     onOpenSettings: (listener: () => void) => () => void
@@ -1260,6 +1262,8 @@ export type DesktopApi = {
   conversations: {
     list: () => Promise<ConversationSnapshot[]>
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
+    saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
+    deleteLocal: (conversationId: string) => Promise<boolean>
     onChanged: (listener: () => void) => () => void
   }
   workspace: {

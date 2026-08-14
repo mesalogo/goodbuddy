@@ -49,6 +49,11 @@ export const app = {
     activity: 'Tasks & Activity',
     pendingSuggestions: '{{count}} pending suggestions'
   },
+  route: {
+    loading: 'Loading page…',
+    loadFailed: 'The page component failed to load. Reload the app.',
+    reload: 'Reload'
+  },
   sidebar: {
     label: 'Main sidebar',
     newConversation: 'New conversation',
@@ -226,6 +231,7 @@ export const app = {
       }
     },
     retry: 'Edit and send again',
+    loadEarlierMessages: 'Load earlier messages ({{count}} remaining)',
     scrollToBottom: 'Scroll to bottom',
     status: {
       responseTruncated: 'The response was too long and was truncated locally',
@@ -419,6 +425,8 @@ export const app = {
       'Channel conversations are created automatically when the client receives a new message',
     deleteConversationCancelFailed:
       'Could not stop the running task, so the conversation was not deleted',
+    deleteConversationPersistenceFailed:
+      'Could not delete the local conversation, so it was kept',
     deletedConversationBrowserCloseFailed:
       'Failed to close the browser for the deleted conversation',
     conversationCopied: 'Conversation copied to the clipboard',

@@ -45,6 +45,11 @@ export const app = {
     activity: '任务与活动',
     pendingSuggestions: '{{count}} 条待处理建议'
   },
+  route: {
+    loading: '正在加载页面…',
+    loadFailed: '页面组件加载失败，请重新加载应用',
+    reload: '重新加载'
+  },
   sidebar: {
     label: '主侧栏',
     newConversation: '新建对话',
@@ -219,6 +224,7 @@ export const app = {
       }
     },
     retry: '重新编辑并发送',
+    loadEarlierMessages: '加载更早的消息（还剩 {{count}} 条）',
     scrollToBottom: '到底部',
     status: {
       responseTruncated: '回答过长，已在本地截断显示',
@@ -395,6 +401,8 @@ export const app = {
       '通道项目的会话由客户端收到新消息后自动创建',
     deleteConversationCancelFailed:
       '停止会话中的运行任务失败，尚未删除对话',
+    deleteConversationPersistenceFailed:
+      '删除本地会话失败，已保留当前对话',
     deletedConversationBrowserCloseFailed: '关闭已删除对话的浏览器失败',
     conversationCopied: '对话已复制到剪贴板',
     clipboardUnavailable: '无法访问剪贴板，请检查系统权限',
