@@ -216,8 +216,6 @@ export const settings = {
       selectorLabel: 'DeepSeek Harness（预览）',
       title: 'DeepSeek Harness',
       previewDescription: '开发者预览 · OpenAI 兼容',
-      compatibilityNotice:
-        '支持使用 API Key 的 OpenAI 兼容 Chat Completions 连接；公网地址必须使用 HTTPS，本机回环地址可使用 HTTP。',
       description:
         '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Execute 工具调用自动单次授权，Ask 保持只读，并保留取消和工作区安全边界；不接入 DSH 插件或市场机制。',
       managedSource: '管理员预置的 OpenAI 兼容连接',

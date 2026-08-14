@@ -1411,9 +1411,6 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByText('开发者预览 · OpenAI 兼容')
     ).toBeInTheDocument()
-    expect(
-      screen.getByText(/公网地址必须使用 HTTPS/)
-    ).toBeInTheDocument()
     const harnessOverview = screen
       .getByText('GoodBuddy 内置 DeepSeek Harness')
       .closest<HTMLElement>('.runtime-overview')

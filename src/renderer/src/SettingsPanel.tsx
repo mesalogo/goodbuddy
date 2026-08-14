@@ -1972,9 +1972,6 @@ export function SettingsPanel({
                   </small>
                 </div>
               </div>
-              <p className="settings-notice">
-                {t('runtime.deepseekHarness.compatibilityNotice')}
-              </p>
               <RuntimeOverviewCard
                 detection={detection?.deepseekHarness}
                 detectionLabel="DeepSeek Harness"

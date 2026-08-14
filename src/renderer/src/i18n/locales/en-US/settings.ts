@@ -238,8 +238,6 @@ export const settings = {
       selectorLabel: 'DeepSeek Harness (Preview)',
       title: 'DeepSeek Harness',
       previewDescription: 'Developer preview · OpenAI-compatible',
-      compatibilityNotice:
-        'Supports OpenAI-compatible Chat Completions connections with an API key. Public endpoints must use HTTPS; loopback endpoints may use HTTP.',
       description:
         'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Execute tool calls receive automatic one-time authorization, Ask remains read-only, and cancellation and workspace safety boundaries remain in place. It does not integrate with the DSH plugin or marketplace mechanisms.',
       managedSource:
