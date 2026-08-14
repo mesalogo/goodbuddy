@@ -403,6 +403,7 @@ DeepSeek Harness 首版只使用 GoodBuddy 模型连接：
 - 服务地址必须是 `https://api.deepseek.com`，且不得包含用户信息。
 - 模型名称和服务地址由 Main 传入受控 Host。
 - API Key 继续保存在 GoodBuddy 加密设置中。
+- 启动环境提供的部署连接只由 Main 自动解析，不在 Renderer 中显示为可选来源。
 
 不允许选择 Harness 自有的用户配置文件或自定义 Host。Runtime 始终使用随当前 GoodBuddy 版本发布的内置 Host，并通过完整内部能力握手。
 

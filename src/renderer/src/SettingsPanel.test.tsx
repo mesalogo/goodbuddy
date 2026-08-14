@@ -1372,7 +1372,7 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
-  it('configures DeepSeek Harness only with Chat Completions or platform settings', async () => {
+  it('configures DeepSeek Harness with a compatible GoodBuddy connection', async () => {
     const harnessProfileId =
       '00000000-0000-4000-8000-000000000051'
     getRuntime.mockResolvedValueOnce({
@@ -1451,8 +1451,12 @@ describe('SettingsPanel runtime files', () => {
       })
     ).not.toBeInTheDocument()
     const source = screen.getByLabelText(
-      'DeepSeek Harness GoodBuddy 模型连接'
+      'DeepSeek Harness DeepSeek 模型连接'
     )
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('使用平台 DeepSeek 环境配置')
+    ).not.toBeInTheDocument()
     expect(
       within(source).getByRole('option', { name: '默认模型（不兼容）' })
     ).toBeDisabled()
@@ -1460,22 +1464,20 @@ describe('SettingsPanel runtime files', () => {
       within(source).getByRole('option', { name: 'DeepSeek Chat' })
     ).not.toBeDisabled()
 
-    fireEvent.click(
-      screen.getByRole('radio', {
-        name: /使用平台 DeepSeek 环境配置/
-      })
-    )
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
     await waitFor(() =>
       expect(updateRuntime).toHaveBeenCalledWith(
         expect.objectContaining({
-          deepseekHarnessModelSource: { kind: 'platform' }
+          deepseekHarnessModelSource: {
+            kind: 'profile',
+            profileId: harnessProfileId
+          }
         })
       )
     )
   })
 
-  it('normalizes an environment-managed DeepSeek profile to the platform source when saving', async () => {
+  it('keeps an environment-managed source compatible without exposing it as an option', async () => {
     getRuntime.mockResolvedValueOnce({
       ...runtimeSettings,
       modelBaseUrl: 'https://api.deepseek.com',
@@ -1527,11 +1529,17 @@ describe('SettingsPanel runtime files', () => {
         name: 'DeepSeek Harness（预览）'
       })
     )
-    fireEvent.click(
-      screen.getByRole('radio', {
-        name: /使用 GoodBuddy 模型连接/
-      })
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('管理员预置的 DeepSeek 连接')
+    ).toBeInTheDocument()
+    const source = screen.getByLabelText(
+      'DeepSeek Harness DeepSeek 模型连接'
     )
+    expect(source).toHaveValue('')
+    fireEvent.change(source, {
+      target: { value: runtimeSettings.modelProfiles[0]!.id }
+    })
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() =>

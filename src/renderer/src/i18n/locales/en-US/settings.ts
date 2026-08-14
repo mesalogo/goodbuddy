@@ -242,14 +242,11 @@ export const settings = {
         'DeepSeek Harness currently supports DeepSeek models only and is not intended for other model providers.',
       description:
         'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Execute tool calls receive automatic one-time authorization, Ask remains read-only, and cancellation and workspace safety boundaries remain in place. It does not integrate with the DSH plugin or marketplace mechanisms.',
-      goodBuddySource: 'Use a GoodBuddy model connection',
-      goodBuddySourceDescription:
-        'Only OpenAI-compatible Chat Completions connections are available. The connection must point to a DeepSeek model.',
-      platformSource: 'Use platform DeepSeek environment settings',
-      platformSourceDescription:
-        'Reads platform-managed DeepSeek settings from the launch environment without exposing credentials to the renderer.',
+      managedSource: 'Administrator-provided DeepSeek connection',
+      connection: 'DeepSeek model connection',
+      connectionPlaceholder: 'Select a DeepSeek model connection',
       connectionDescription:
-        'The internal GoodBuddy Harness Runtime currently accepts only the OpenAI-compatible Chat Completions protocol.',
+        'Choose a GoodBuddy model connection. Only OpenAI-compatible Chat Completions connections that point to DeepSeek are supported.',
       advancedDescription:
         'This Runtime always uses GoodBuddy’s bundled, version-pinned Host. It does not load external DSH plugins, marketplace packages, user profiles, or custom Hosts.'
     }

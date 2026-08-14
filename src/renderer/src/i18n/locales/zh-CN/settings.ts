@@ -220,14 +220,11 @@ export const settings = {
         'DeepSeek Harness 当前仅支持 DeepSeek 模型，不适用于其他模型提供商。',
       description:
         '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Execute 工具调用自动单次授权，Ask 保持只读，并保留取消和工作区安全边界；不接入 DSH 插件或市场机制。',
-      goodBuddySource: '使用 GoodBuddy 模型连接',
-      goodBuddySourceDescription:
-        '只能选择 OpenAI 兼容 Chat Completions 连接；该连接必须指向 DeepSeek 模型。',
-      platformSource: '使用平台 DeepSeek 环境配置',
-      platformSourceDescription:
-        '从启动环境读取平台管理的 DeepSeek 配置，不会在渲染进程中显示凭据。',
+      managedSource: '管理员预置的 DeepSeek 连接',
+      connection: 'DeepSeek 模型连接',
+      connectionPlaceholder: '选择 DeepSeek 模型连接',
       connectionDescription:
-        'GoodBuddy 内部 Harness Runtime 目前仅接受 OpenAI 兼容 Chat Completions 协议。',
+        '从 GoodBuddy 模型连接中选择；仅支持指向 DeepSeek 的 OpenAI 兼容 Chat Completions 连接。',
       advancedDescription:
         '该 Runtime 始终使用 GoodBuddy 内置并固定版本的 Host，不加载外部 DSH 插件、市场包、用户 profile 或自定义 Host。'
     }

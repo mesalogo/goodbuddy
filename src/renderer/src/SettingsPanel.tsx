@@ -1981,7 +1981,7 @@ export function SettingsPanel({
                 detecting={detecting}
                 modelConfiguration={
                   activeRuntimeModelSource.kind === 'platform'
-                    ? t('runtime.deepseekHarness.platformSource')
+                    ? t('runtime.deepseekHarness.managedSource')
                     : activeRuntimeModelProfile
                       ? t('runtime.followGoodBuddy', {
                           name: modelProfileDisplayName(
@@ -1998,100 +1998,48 @@ export function SettingsPanel({
                   runtime: 'DeepSeek Harness'
                 })}
               />
-              <fieldset className="runtime-source-options">
-                <legend>{t('runtime.sourceLegend')}</legend>
-                <label>
-                  <input
-                    checked={
-                      deepseekHarnessModelSource.kind === 'profile'
-                    }
-                    disabled={!defaultDeepseekHarnessModelProfile}
-                    name="deepseek-harness-model-source"
-                    onChange={() => {
-                      if (defaultDeepseekHarnessModelProfile) {
-                        setDeepseekHarnessModelSource({
-                          kind: 'profile',
-                          profileId:
-                            defaultDeepseekHarnessModelProfile.id
-                        })
-                      }
-                    }}
-                    type="radio"
-                  />
-                  <span>
-                    <strong>
-                      {t(
-                        'runtime.deepseekHarness.goodBuddySource'
-                      )}
-                    </strong>
-                    <small>
-                      {t(
-                        'runtime.deepseekHarness.goodBuddySourceDescription'
-                      )}
-                    </small>
-                  </span>
-                </label>
-                <label>
-                  <input
-                    checked={
-                      deepseekHarnessModelSource.kind === 'platform'
-                    }
-                    name="deepseek-harness-model-source"
-                    onChange={() =>
-                      setDeepseekHarnessModelSource({
-                        kind: 'platform'
-                      })
-                    }
-                    type="radio"
-                  />
-                  <span>
-                    <strong>
-                      {t('runtime.deepseekHarness.platformSource')}
-                    </strong>
-                    <small>
-                      {t(
-                        'runtime.deepseekHarness.platformSourceDescription'
-                      )}
-                    </small>
-                  </span>
-                </label>
-              </fieldset>
-              {deepseekHarnessModelSource.kind === 'profile' && (
-                <label className="field">
-                  <span>{t('runtime.goodBuddyConnection')}</span>
-                  <select
-                    aria-label={`DeepSeek Harness ${t(
-                      'runtime.goodBuddyConnection'
-                    )}`}
-                    onChange={(event) =>
-                      setDeepseekHarnessModelSource(
-                        parseModelSource(event.target.value)
-                      )
-                    }
-                    value={deepseekHarnessModelSource.profileId}
-                  >
-                    {modelProfiles.map((profile) => (
-                      <option
-                        disabled={
-                          !isDeepseekHarnessCompatible(profile)
-                        }
-                        key={profile.id}
-                        value={profile.id}
-                      >
-                        {modelProfileDisplayName(profile)}
-                        {isDeepseekHarnessCompatible(profile)
-                          ? ''
-                          : t('runtime.incompatibleSuffix')}
-                      </option>
-                    ))}
-                  </select>
-                  <small>
+              <label className="field">
+                <span>{t('runtime.deepseekHarness.connection')}</span>
+                <select
+                  aria-label={`DeepSeek Harness ${t(
+                    'runtime.deepseekHarness.connection'
+                  )}`}
+                  disabled={!defaultDeepseekHarnessModelProfile}
+                  onChange={(event) =>
+                    setDeepseekHarnessModelSource(
+                      parseModelSource(event.target.value)
+                    )
+                  }
+                  value={
+                    deepseekHarnessModelSource.kind === 'profile'
+                      ? deepseekHarnessModelSource.profileId
+                      : ''
+                  }
+                >
+                  <option disabled value="">
                     {t(
-                      'runtime.deepseekHarness.connectionDescription'
+                      'runtime.deepseekHarness.connectionPlaceholder'
                     )}
-                  </small>
-                </label>
-              )}
+                  </option>
+                  {modelProfiles.map((profile) => (
+                    <option
+                      disabled={!isDeepseekHarnessCompatible(profile)}
+                      key={profile.id}
+                      value={profile.id}
+                    >
+                      {modelProfileDisplayName(profile)}
+                      {isDeepseekHarnessCompatible(profile)
+                        ? ''
+                        : t('runtime.incompatibleSuffix')}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  {t(
+                    'runtime.deepseekHarness.connectionDescription'
+                  )}
+                </small>
+              </label>
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
                 <p className="settings-panel__description">
