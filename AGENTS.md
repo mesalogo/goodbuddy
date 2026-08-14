@@ -141,6 +141,23 @@ not require release notes.
    displays the release notes matching the current interface language and
    contains no button linking to a full release page.
 
+When recovering from a version tag whose workflow never published a GitHub
+Release and its assets:
+
+- If the approved source and release metadata do not need to change, rerun the
+  failed jobs for the same immutable tag instead of creating another tag.
+- If a code or metadata change requires a higher version and a new tag, carry
+  the failed candidate's approved user-facing notes forward into the recovery
+  version, then remove the superseded failed version's entry from
+  `resources/release-notes.json`.
+- The packaged first-open modal must show that carried-forward content only
+  once under the recovery version. Never retain both the failed version and
+  its cumulative recovery copy, because users upgrading across them would see
+  duplicate content.
+- Never remove the packaged history for a version that successfully published
+  a GitHub Release. Verify the failed release state before treating an entry as
+  superseded.
+
 Never create or push a release tag, and never push a previously created
 release tag, before the release-note draft has received explicit approval.
 
