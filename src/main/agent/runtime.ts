@@ -32,7 +32,7 @@ export type RuntimeModelUsageEvent = {
   requestId: string
   type: 'model-usage'
   callId: string
-  runtime: 'model' | 'continue' | 'opencode'
+  runtime: 'model' | 'continue' | 'opencode' | 'deepseek-harness'
   provider: string
   model: string
   inputTokens: number

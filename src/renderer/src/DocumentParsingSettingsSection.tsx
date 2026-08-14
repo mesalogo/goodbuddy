@@ -423,6 +423,16 @@ export function DocumentParsingSettingsSection({
   const installedModel = snapshot.ocrModels.installed.find(
     (entry) => entry.id === draft.localOcrModelId
   )
+  const modelDisplayName = model
+    ? t(`documentParsing.ocr.catalog.${model.id}.displayName`, {
+        defaultValue: model.displayName
+      })
+    : ''
+  const modelDescription = model
+    ? t(`documentParsing.ocr.catalog.${model.id}.description`, {
+        defaultValue: model.description
+      })
+    : ''
   const modelOperation = snapshot.ocrModels.operations.find(
     (operation) => operation.modelId === draft.localOcrModelId
   )
@@ -682,9 +692,13 @@ export function DocumentParsingSettingsSection({
               const installed = snapshot.ocrModels.installed.some(
                 (candidate) => candidate.id === entry.id
               )
+              const entryDisplayName = t(
+                `documentParsing.ocr.catalog.${entry.id}.displayName`,
+                { defaultValue: entry.displayName }
+              )
               return (
                 <option key={entry.id} value={entry.id}>
-                  {entry.displayName} ·{' '}
+                  {entryDisplayName} ·{' '}
                   {installed
                     ? t('documentParsing.ocr.installedOption')
                     : t('documentParsing.ocr.downloadableOption')}
@@ -712,18 +726,25 @@ export function DocumentParsingSettingsSection({
             <div className="document-ocr-model__header">
               <div className="document-ocr-model__summary">
                 <div className="document-ocr-model__name">
-                  <strong>{model.displayName}</strong>
+                  <strong>{modelDisplayName}</strong>
                   {model.recommended && (
                     <span className="speech-model-tag speech-model-tag--recommended">
                       {t('documentParsing.ocr.recommended')}
                     </span>
                   )}
                 </div>
-                <p>{model.description}</p>
+                <p>{modelDescription}</p>
                 <div className="document-ocr-model__tags">
                   <span className="speech-model-tag">ModelScope</span>
                   <span className="speech-model-tag">
-                    {model.languages.join(' / ')}
+                    {model.languages
+                      .map((language) =>
+                        t(
+                          `documentParsing.ocr.languages.${language}`,
+                          { defaultValue: language }
+                        )
+                      )
+                      .join(' / ')}
                   </span>
                   <span className="speech-model-tag">
                     {model.runtime}
@@ -753,7 +774,7 @@ export function DocumentParsingSettingsSection({
               <button
                 aria-label={t(
                   'documentParsing.ocr.accessibility.openRepository',
-                  { name: model.displayName }
+                  { name: modelDisplayName }
                 )}
                 className="secondary-button document-ocr-model__repository"
                 onClick={() =>
@@ -797,7 +818,7 @@ export function DocumentParsingSettingsSection({
                 <button
                   aria-label={t(
                     'documentParsing.ocr.accessibility.cancelOperation',
-                    { name: model.displayName }
+                    { name: modelDisplayName }
                   )}
                   className="secondary-button"
                   onClick={() =>
@@ -815,7 +836,7 @@ export function DocumentParsingSettingsSection({
                   <button
                     aria-label={t(
                       'documentParsing.ocr.accessibility.exportModelZip',
-                      { name: model.displayName }
+                      { name: modelDisplayName }
                     )}
                     className="secondary-button"
                     disabled={busyModelId === model.id}
@@ -827,7 +848,7 @@ export function DocumentParsingSettingsSection({
                             .exportOcrModelArchive(model.id),
                         t(
                           'documentParsing.ocr.notifications.exportedZip',
-                          { name: model.displayName }
+                          { name: modelDisplayName }
                         )
                       )
                     }
@@ -839,7 +860,7 @@ export function DocumentParsingSettingsSection({
                   <button
                     aria-label={t(
                       'documentParsing.ocr.accessibility.deleteModel',
-                      { name: model.displayName }
+                      { name: modelDisplayName }
                     )}
                     className={
                       confirmingRemove === model.id
@@ -861,7 +882,7 @@ export function DocumentParsingSettingsSection({
                   <button
                     aria-label={t(
                       'documentParsing.ocr.accessibility.downloadModel',
-                      { name: model.displayName }
+                      { name: modelDisplayName }
                     )}
                     className="primary-button"
                     disabled={busyModelId === model.id}
@@ -882,7 +903,7 @@ export function DocumentParsingSettingsSection({
                           pendingModelSelection
                             ? 'documentParsing.ocr.notifications.installedAndSelected'
                             : 'documentParsing.ocr.notifications.installed',
-                          { name: model.displayName }
+                          { name: modelDisplayName }
                         )
                       )
                     }
@@ -896,7 +917,7 @@ export function DocumentParsingSettingsSection({
                   <button
                     aria-label={t(
                       'documentParsing.ocr.accessibility.importModelZip',
-                      { name: model.displayName }
+                      { name: modelDisplayName }
                     )}
                     className="secondary-button"
                     disabled={busyModelId === model.id}
@@ -917,7 +938,7 @@ export function DocumentParsingSettingsSection({
                           pendingModelSelection
                             ? 'documentParsing.ocr.notifications.importedAndSelected'
                             : 'documentParsing.ocr.notifications.importedZip',
-                          { name: model.displayName }
+                          { name: modelDisplayName }
                         )
                       )
                     }
@@ -938,7 +959,7 @@ export function DocumentParsingSettingsSection({
                 <progress
                   aria-label={t(
                     'documentParsing.ocr.accessibility.downloadProgress',
-                    { name: model.displayName }
+                    { name: modelDisplayName }
                   )}
                   max={100}
                   {...(modelProgress === undefined

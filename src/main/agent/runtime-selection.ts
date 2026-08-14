@@ -1,11 +1,18 @@
-import { isAgentRuntimeModelProtocol } from '../../shared/contracts'
+import {
+  isAgentRuntimeModelProtocol,
+  isDeepSeekHarnessModelProfile
+} from '../../shared/contracts'
 import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import type {
   ResolvedModelProfile,
   ResolvedRuntimeSettings
 } from '../runtime-settings-store'
 
-export type SelectedRuntimeTarget = 'model' | 'opencode' | 'continue'
+export type SelectedRuntimeTarget =
+  | 'model'
+  | 'opencode'
+  | 'continue'
+  | 'deepseek-harness'
 
 function requireProfile(
   settings: ResolvedRuntimeSettings,
@@ -26,6 +33,9 @@ export function getConfiguredRuntimeTarget(
   if (settings.provider === 'continue') {
     return 'continue'
   }
+  if (settings.provider === 'deepseek-harness') {
+    return 'deepseek-harness'
+  }
   if (
     settings.provider === 'opencode' ||
     settings.provider === 'auto'
@@ -41,17 +51,24 @@ export function resolveConfiguredAgentRuntimeSelection(
 ): AgentRuntimeSelection {
   if (
     selection.provider !== 'opencode' &&
-    selection.provider !== 'continue'
+    selection.provider !== 'continue' &&
+    selection.provider !== 'deepseek-harness'
   ) {
     return selection
   }
   const profile =
     selection.provider === 'opencode'
       ? settings.opencodeModelProfile
-      : settings.continueModelProfile
+      : selection.provider === 'continue'
+        ? settings.continueModelProfile
+        : settings.deepseekHarnessModelProfile
   return {
     provider: selection.provider,
-    ...(profile ? { profileId: profile.id } : {})
+    ...(profile && settings.modelProfiles.some(
+      (candidate) => candidate.id === profile.id
+    )
+      ? { profileId: profile.id }
+      : {})
   }
 }
 
@@ -110,6 +127,27 @@ export function applyRuntimeSelection(
         provider: 'opencode',
         opencodeEmbedded: !settings.opencodeBaseUrl,
         opencodeModelProfile: profile
+      }
+    }
+  }
+
+  if (selection.provider === 'deepseek-harness') {
+    const selectedProfile =
+      profile ?? settings.deepseekHarnessModelProfile
+    if (
+      selectedProfile &&
+      !isDeepSeekHarnessModelProfile(selectedProfile)
+    ) {
+      throw new Error(
+        'DeepSeek Harness 独立模型连接仅支持 api.deepseek.com 的 OpenAI Chat Completions 协议'
+      )
+    }
+    return {
+      target: 'deepseek-harness',
+      settings: {
+        ...settings,
+        provider: 'deepseek-harness',
+        deepseekHarnessModelProfile: selectedProfile
       }
     }
   }

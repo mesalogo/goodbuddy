@@ -501,6 +501,11 @@ describe('ChannelSettingsSection', () => {
     expect(
       within(backend).getByRole('option', { name: 'Continue' })
     ).toBeInTheDocument()
+    expect(
+      within(backend).getByRole('option', {
+        name: 'DeepSeek Harness（预览 · 仅 DeepSeek）'
+      })
+    ).toBeInTheDocument()
 
     fireEvent.change(backend, {
       target: {

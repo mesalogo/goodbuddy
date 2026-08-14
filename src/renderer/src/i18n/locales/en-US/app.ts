@@ -117,6 +117,8 @@ export const app = {
     switching: 'Switching…',
     picker: 'Runtime and model',
     directModels: 'Direct models',
+    deepseekHarnessGroup:
+      'DeepSeek Harness (Developer preview · DeepSeek only)',
     manage: 'Manage Runtime and model connections',
     errors: {
       readStatus: 'Failed to read Agent Runtime status',

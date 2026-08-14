@@ -25,11 +25,11 @@ import type {
   RuntimeSettingsInput,
   RuntimeModelSource
 } from '../../shared/contracts'
-import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import {
   defaultModelProfileId as builtInDefaultModelProfileId,
   defaultRuntimeSettings,
-  isAgentRuntimeModelProtocol
+  isAgentRuntimeModelProtocol,
+  isDeepSeekHarnessModelProfile
 } from '../../shared/contracts'
 import { McpSettingsSection } from './McpSettingsSection'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
@@ -59,7 +59,9 @@ import type {
 import { useUiLocale } from './i18n/UiLocaleProvider'
 
 type ModelType = 'llm' | 'embedding' | 'rerank' | 'speech'
-type AgentRuntimeType = RuntimeConfigActionInput['runtime']
+type AgentRuntimeType =
+  | RuntimeConfigActionInput['runtime']
+  | 'deepseek-harness'
 type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   supportsImageInput: boolean
   apiKey: string
@@ -140,7 +142,9 @@ function configuredRuntimeSettings(
     continueConfigPath: settings.continueConfigPath,
     workspacePath: settings.workspacePath,
     opencodeModelSource: settings.opencodeModelSource,
-    continueModelSource: settings.continueModelSource
+    continueModelSource: settings.continueModelSource,
+    deepseekHarnessModelSource:
+      settings.deepseekHarnessModelSource
   }
 }
 
@@ -158,6 +162,7 @@ function hydrateRuntimeSettings(
     defaultModelProfileId: (value: string) => void
     opencodeModelSource: (value: RuntimeModelSource) => void
     continueModelSource: (value: RuntimeModelSource) => void
+    deepseekHarnessModelSource: (value: RuntimeModelSource) => void
     opencodeBaseUrl: (value: string) => void
     opencodeBinaryPath: (value: string) => void
     opencodeConfigPath: (value: string) => void
@@ -205,6 +210,9 @@ function hydrateRuntimeSettings(
   setters.defaultModelProfileId(value.defaultModelProfileId)
   setters.opencodeModelSource(configured.opencodeModelSource)
   setters.continueModelSource(configured.continueModelSource)
+  setters.deepseekHarnessModelSource(
+    configured.deepseekHarnessModelSource ?? { kind: 'platform' }
+  )
   setters.opencodeBaseUrl(configured.opencodeBaseUrl)
   setters.opencodeBinaryPath(configured.opencodeBinaryPath)
   setters.opencodeConfigPath(configured.opencodeConfigPath)
@@ -241,7 +249,7 @@ function hydrateRuntimeSettings(
 }
 
 type RuntimeConfigCardProps = {
-  runtime: AgentRuntimeType
+  runtime: RuntimeConfigActionInput['runtime']
   runtimeLabel: string
   description: string
   fileKind: Extract<
@@ -351,6 +359,74 @@ function RuntimeConfigCard({
   )
 }
 
+function RuntimeOverviewCard({
+  detection,
+  detectionLabel,
+  detecting,
+  modelConfiguration,
+  recommendation,
+  runtime
+}: {
+  detection: AgentRuntimeDetection['opencode'] | undefined
+  detectionLabel: string
+  detecting: boolean
+  modelConfiguration: string
+  recommendation: string
+  runtime: string
+}): React.JSX.Element {
+  const { t } = useTranslation('settings')
+  const localizedDetail =
+    detection?.available && detection.source
+      ? t(`runtime.detection.details.${detection.source}`, {
+          runtime: detectionLabel,
+          versionSuffix: detection.version ? ` ${detection.version}` : ''
+        })
+      : detection?.detail
+  const status = detecting
+    ? t('runtime.detection.detecting')
+    : detection?.available
+      ? t('runtime.detection.ready')
+      : detection
+        ? t('runtime.detection.unavailable')
+        : t('runtime.detection.notDetected')
+
+  return (
+    <div className="runtime-note runtime-overview">
+      <dl className="runtime-overview__details">
+        <dt>{t('runtime.runtimeLabel')}</dt>
+        <dd>{runtime}</dd>
+        <dt>{t('runtime.modelConfigurationLabel')}</dt>
+        <dd>{modelConfiguration}</dd>
+        <dt>{t('runtime.detection.statusLabel')}</dt>
+        <dd aria-atomic="true" aria-live="polite">
+          {status}
+        </dd>
+        {!detecting && detection?.available && (
+          <>
+            <dt>{t('runtime.detection.pathLabel')}</dt>
+            <dd className="runtime-overview__path">
+              {detection.path}
+            </dd>
+            {detection.version && (
+              <>
+                <dt>{t('runtime.detection.versionLabel')}</dt>
+                <dd>{detection.version}</dd>
+              </>
+            )}
+          </>
+        )}
+        {!detecting && localizedDetail && (
+          <>
+            <dt>{t('runtime.detection.detailLabel')}</dt>
+            <dd>{localizedDetail}</dd>
+          </>
+        )}
+      </dl>
+      <p>{recommendation}</p>
+    </div>
+  )
+}
+
 export function SettingsPanel({
   open,
   presentation = 'modal',
@@ -388,6 +464,8 @@ export function SettingsPanel({
   const [opencodeModelSource, setOpencodeModelSource] =
     useState<RuntimeModelSource>({ kind: 'platform' })
   const [continueModelSource, setContinueModelSource] =
+    useState<RuntimeModelSource>({ kind: 'platform' })
+  const [deepseekHarnessModelSource, setDeepseekHarnessModelSource] =
     useState<RuntimeModelSource>({ kind: 'platform' })
   const [opencodeBaseUrl, setOpencodeBaseUrl] = useState<string>(
     defaultRuntimeSettings.opencodeBaseUrl
@@ -495,6 +573,7 @@ export function SettingsPanel({
         defaultModelProfileId: setDefaultModelProfileId,
         opencodeModelSource: setOpencodeModelSource,
         continueModelSource: setContinueModelSource,
+        deepseekHarnessModelSource: setDeepseekHarnessModelSource,
         opencodeBaseUrl: setOpencodeBaseUrl,
         opencodeBinaryPath: setOpencodeBinaryPath,
         opencodeConfigPath: setOpencodeConfigPath,
@@ -714,6 +793,12 @@ export function SettingsPanel({
         profileInputs.find(
           (profile) => profile.id === defaultProfile.id
         ) ?? profileInputs[0]!
+      const normalizedDeepseekHarnessModelSource =
+        deepseekHarnessModelSource.kind === 'profile' &&
+        deepseekHarnessModelSource.profileId === defaultProfile.id &&
+        defaultProfile.credentialSource === 'environment'
+          ? { kind: 'platform' as const }
+          : deepseekHarnessModelSource
       const value = await window.goodbuddy.settings.updateRuntime({
         provider,
         modelBaseUrl: defaultProfileInput.baseUrl,
@@ -758,6 +843,8 @@ export function SettingsPanel({
         defaultModelProfileId: defaultProfile.id,
         opencodeModelSource,
         continueModelSource,
+        deepseekHarnessModelSource:
+          normalizedDeepseekHarnessModelSource,
         toolApproval,
         subagentSmartRoutingEnabled
       })
@@ -823,8 +910,12 @@ export function SettingsPanel({
       const runtimeSource =
         agentRuntimeType === 'opencode'
           ? savedSettings.opencodeModelSource
-          : savedSettings.continueModelSource
-      const runtimeSelection: AgentRuntimeSelection =
+          : agentRuntimeType === 'continue'
+            ? savedSettings.continueModelSource
+            : savedSettings.deepseekHarnessModelSource ?? {
+                kind: 'platform'
+              }
+      const runtimeSelection =
         runtimeSource.kind === 'profile'
           ? {
               provider: agentRuntimeType,
@@ -1017,6 +1108,24 @@ export function SettingsPanel({
     ) {
       setContinueModelSource(runtimeFallback)
     }
+    if (
+      deepseekHarnessModelSource.kind === 'profile' &&
+      deepseekHarnessModelSource.profileId === id
+    ) {
+      const harnessFallback = remaining.find(
+        (profile) =>
+          profile.id === defaultModelProfileId &&
+          profile.protocol === 'openai-chat-completions'
+      ) ?? remaining.find(
+        (profile) =>
+          profile.protocol === 'openai-chat-completions'
+      )
+      setDeepseekHarnessModelSource(
+        harnessFallback
+          ? { kind: 'profile', profileId: harnessFallback.id }
+          : { kind: 'platform' }
+      )
+    }
   }
 
   const selectDefaultModelProfile = (
@@ -1046,6 +1155,16 @@ export function SettingsPanel({
     ) {
       setContinueModelSource(nextRuntimeSource)
     }
+    if (
+      deepseekHarnessModelSource.kind === 'profile' &&
+      deepseekHarnessModelSource.profileId === previousDefaultProfileId &&
+      profile.protocol === 'openai-chat-completions'
+    ) {
+      setDeepseekHarnessModelSource({
+        kind: 'profile',
+        profileId: profile.id
+      })
+    }
   }
 
   const parseModelSource = (value: string): RuntimeModelSource =>
@@ -1061,6 +1180,10 @@ export function SettingsPanel({
     profile: ModelProfileDraft
   ): boolean => isAgentRuntimeModelProtocol(profile.protocol)
 
+  const isDeepseekHarnessCompatible = (
+    profile: ModelProfileDraft
+  ): boolean => isDeepSeekHarnessModelProfile(profile)
+
   const selectedModelProfile =
     modelProfiles.find(
       (profile) => profile.id === selectedModelProfileId
@@ -1074,16 +1197,27 @@ export function SettingsPanel({
     modelProfiles.find((profile) =>
       isAgentRuntimeModelProtocol(profile.protocol)
     )
+  const defaultDeepseekHarnessModelProfile =
+    modelProfiles.find(
+      (profile) =>
+        profile.id === defaultModelProfileId &&
+        isDeepseekHarnessCompatible(profile)
+    ) ??
+    modelProfiles.find(isDeepseekHarnessCompatible)
   const activeRuntimeModelSource =
     agentRuntimeType === 'opencode'
       ? opencodeModelSource
-      : continueModelSource
+      : agentRuntimeType === 'continue'
+        ? continueModelSource
+        : deepseekHarnessModelSource
   const activeRuntimeModelProfile =
     activeRuntimeModelSource.kind === 'profile'
       ? modelProfiles.find(
           (profile) =>
             profile.id === activeRuntimeModelSource.profileId &&
-            isAgentRuntimeModelProtocol(profile.protocol)
+            (agentRuntimeType === 'deepseek-harness'
+              ? isDeepseekHarnessCompatible(profile)
+              : isAgentRuntimeModelProtocol(profile.protocol))
         )
       : undefined
   const savedRoleModelProfiles = (settings?.modelProfiles ?? [])
@@ -1100,32 +1234,6 @@ export function SettingsPanel({
     )
       ? settings?.defaultModelProfileId
       : undefined
-
-  const detectionSummary = (
-    value: AgentRuntimeDetection['opencode'] | undefined
-  ): React.JSX.Element => (
-    <div className="credential-state" aria-live="polite">
-      <TerminalSquare size={15} />
-      <span>
-        {value
-          ? value.available
-            ? [
-                t('runtime.detection.ready'),
-                value.path,
-                value.version,
-                value.detail
-              ]
-                .filter(Boolean)
-                .join(' · ')
-            : t('runtime.detection.notReady', {
-                detail: value.detail
-              })
-          : detecting
-            ? t('runtime.detection.detecting')
-            : t('runtime.detection.notDetected')}
-      </span>
-    </div>
-  )
 
   return (
     <div
@@ -1230,7 +1338,9 @@ export function SettingsPanel({
                                 runtime:
                                   agentRuntimeType === 'opencode'
                                     ? 'OpenCode'
-                                    : 'Continue'
+                                    : agentRuntimeType === 'continue'
+                                      ? 'Continue'
+                                      : 'DeepSeek Harness'
                               })}
                       </button>
                     )}
@@ -1402,13 +1512,14 @@ export function SettingsPanel({
               onChange={setAgentRuntimeType}
               options={[
                 { label: 'OpenCode', value: 'opencode' },
-                { label: 'Continue', value: 'continue' }
+                { label: 'Continue', value: 'continue' },
+                {
+                  label: t('runtime.deepseekHarness.selectorLabel'),
+                  value: 'deepseek-harness'
+                }
               ]}
               value={agentRuntimeType}
             />
-            <small>
-              {t('runtime.selectorDescription')}
-            </small>
           </div>
 
           {agentRuntimeType === 'opencode' && (
@@ -1420,37 +1531,39 @@ export function SettingsPanel({
                   <small>{t('runtime.bundledDescription')}</small>
                 </div>
               </div>
-              <div className="runtime-note">
-                <strong>{t('runtime.runtimeLabel')}</strong>
-                {t('runtime.bundledRuntime', { runtime: 'OpenCode' })}
-                <br />
-                <strong>{t('runtime.modelConfigurationLabel')}</strong>
-                {activeRuntimeModelSource.kind === 'platform'
-                  ? t('runtime.ownConfiguration', {
-                      runtime: 'OpenCode'
-                    })
-                  : activeRuntimeModelProfile
-                    ? t('runtime.followGoodBuddy', {
-                        name: modelProfileDisplayName(
-                          activeRuntimeModelProfile
-                        ),
-                        model: activeRuntimeModelProfile.modelName
+              <RuntimeOverviewCard
+                detection={detection?.opencode}
+                detectionLabel="OpenCode"
+                detecting={detecting}
+                modelConfiguration={
+                  activeRuntimeModelSource.kind === 'platform'
+                    ? t('runtime.ownConfiguration', {
+                        runtime: 'OpenCode'
                       })
-                    : defaultTextModelProfile
+                    : activeRuntimeModelProfile
                       ? t('runtime.followGoodBuddy', {
                           name: modelProfileDisplayName(
-                            defaultTextModelProfile
+                            activeRuntimeModelProfile
                           ),
-                          model: defaultTextModelProfile.modelName
+                          model: activeRuntimeModelProfile.modelName
                         })
-                      : t('runtime.noCompatibleModel')}
-                <br />
-                {t('runtime.opencode.recommendation')}
-              </div>
+                      : defaultTextModelProfile
+                        ? t('runtime.followGoodBuddy', {
+                            name: modelProfileDisplayName(
+                              defaultTextModelProfile
+                            ),
+                            model: defaultTextModelProfile.modelName
+                          })
+                        : t('runtime.noCompatibleModel')
+                }
+                recommendation={t('runtime.opencode.recommendation')}
+                runtime={t('runtime.bundledRuntime', {
+                  runtime: 'OpenCode'
+                })}
+              />
               <div className="runtime-note">
                 {t('runtime.permissions')}
               </div>
-              {detectionSummary(detection?.opencode)}
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
                 <p className="settings-panel__description">
@@ -1650,37 +1763,39 @@ export function SettingsPanel({
                   <small>{t('runtime.bundledDescription')}</small>
                 </div>
               </div>
-              <div className="runtime-note">
-                <strong>{t('runtime.runtimeLabel')}</strong>
-                {t('runtime.bundledRuntime', { runtime: 'Continue' })}
-                <br />
-                <strong>{t('runtime.modelConfigurationLabel')}</strong>
-                {activeRuntimeModelSource.kind === 'platform'
-                  ? t('runtime.ownConfiguration', {
-                      runtime: 'Continue'
-                    })
-                  : activeRuntimeModelProfile
-                    ? t('runtime.followGoodBuddy', {
-                        name: modelProfileDisplayName(
-                          activeRuntimeModelProfile
-                        ),
-                        model: activeRuntimeModelProfile.modelName
+              <RuntimeOverviewCard
+                detection={detection?.continue}
+                detectionLabel="Continue"
+                detecting={detecting}
+                modelConfiguration={
+                  activeRuntimeModelSource.kind === 'platform'
+                    ? t('runtime.ownConfiguration', {
+                        runtime: 'Continue'
                       })
-                    : defaultTextModelProfile
+                    : activeRuntimeModelProfile
                       ? t('runtime.followGoodBuddy', {
                           name: modelProfileDisplayName(
-                            defaultTextModelProfile
+                            activeRuntimeModelProfile
                           ),
-                          model: defaultTextModelProfile.modelName
+                          model: activeRuntimeModelProfile.modelName
                         })
-                      : t('runtime.noCompatibleModel')}
-                <br />
-                {t('runtime.continue.recommendation')}
-              </div>
+                      : defaultTextModelProfile
+                        ? t('runtime.followGoodBuddy', {
+                            name: modelProfileDisplayName(
+                              defaultTextModelProfile
+                            ),
+                            model: defaultTextModelProfile.modelName
+                          })
+                        : t('runtime.noCompatibleModel')
+                }
+                recommendation={t('runtime.continue.recommendation')}
+                runtime={t('runtime.bundledRuntime', {
+                  runtime: 'Continue'
+                })}
+              />
               <div className="runtime-note">
                 {t('runtime.permissions')}
               </div>
-              {detectionSummary(detection?.continue)}
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
                 <p className="settings-panel__description">
@@ -1841,6 +1956,159 @@ export function SettingsPanel({
                     ? t('actions.detecting')
                     : t('actions.redetectRuntime', {
                         runtime: 'Continue'
+                      })}
+                </button>
+              </details>
+            </div>
+          )}
+          {agentRuntimeType === 'deepseek-harness' && (
+            <div className="settings-section">
+              <div className="settings-section__title">
+                <TerminalSquare size={17} />
+                <div>
+                  <strong>{t('runtime.deepseekHarness.title')}</strong>
+                  <small>
+                    {t('runtime.deepseekHarness.previewDescription')}
+                  </small>
+                </div>
+              </div>
+              <p className="settings-notice">
+                {t('runtime.deepseekHarness.deepseekOnlyNotice')}
+              </p>
+              <RuntimeOverviewCard
+                detection={detection?.deepseekHarness}
+                detectionLabel="DeepSeek Harness"
+                detecting={detecting}
+                modelConfiguration={
+                  activeRuntimeModelSource.kind === 'platform'
+                    ? t('runtime.deepseekHarness.platformSource')
+                    : activeRuntimeModelProfile
+                      ? t('runtime.followGoodBuddy', {
+                          name: modelProfileDisplayName(
+                            activeRuntimeModelProfile
+                          ),
+                          model: activeRuntimeModelProfile.modelName
+                        })
+                      : t('runtime.noCompatibleModel')
+                }
+                recommendation={t(
+                  'runtime.deepseekHarness.description'
+                )}
+                runtime={t('runtime.bundledRuntime', {
+                  runtime: 'DeepSeek Harness'
+                })}
+              />
+              <fieldset className="runtime-source-options">
+                <legend>{t('runtime.sourceLegend')}</legend>
+                <label>
+                  <input
+                    checked={
+                      deepseekHarnessModelSource.kind === 'profile'
+                    }
+                    disabled={!defaultDeepseekHarnessModelProfile}
+                    name="deepseek-harness-model-source"
+                    onChange={() => {
+                      if (defaultDeepseekHarnessModelProfile) {
+                        setDeepseekHarnessModelSource({
+                          kind: 'profile',
+                          profileId:
+                            defaultDeepseekHarnessModelProfile.id
+                        })
+                      }
+                    }}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>
+                      {t(
+                        'runtime.deepseekHarness.goodBuddySource'
+                      )}
+                    </strong>
+                    <small>
+                      {t(
+                        'runtime.deepseekHarness.goodBuddySourceDescription'
+                      )}
+                    </small>
+                  </span>
+                </label>
+                <label>
+                  <input
+                    checked={
+                      deepseekHarnessModelSource.kind === 'platform'
+                    }
+                    name="deepseek-harness-model-source"
+                    onChange={() =>
+                      setDeepseekHarnessModelSource({
+                        kind: 'platform'
+                      })
+                    }
+                    type="radio"
+                  />
+                  <span>
+                    <strong>
+                      {t('runtime.deepseekHarness.platformSource')}
+                    </strong>
+                    <small>
+                      {t(
+                        'runtime.deepseekHarness.platformSourceDescription'
+                      )}
+                    </small>
+                  </span>
+                </label>
+              </fieldset>
+              {deepseekHarnessModelSource.kind === 'profile' && (
+                <label className="field">
+                  <span>{t('runtime.goodBuddyConnection')}</span>
+                  <select
+                    aria-label={`DeepSeek Harness ${t(
+                      'runtime.goodBuddyConnection'
+                    )}`}
+                    onChange={(event) =>
+                      setDeepseekHarnessModelSource(
+                        parseModelSource(event.target.value)
+                      )
+                    }
+                    value={deepseekHarnessModelSource.profileId}
+                  >
+                    {modelProfiles.map((profile) => (
+                      <option
+                        disabled={
+                          !isDeepseekHarnessCompatible(profile)
+                        }
+                        key={profile.id}
+                        value={profile.id}
+                      >
+                        {modelProfileDisplayName(profile)}
+                        {isDeepseekHarnessCompatible(profile)
+                          ? ''
+                          : t('runtime.incompatibleSuffix')}
+                      </option>
+                    ))}
+                  </select>
+                  <small>
+                    {t(
+                      'runtime.deepseekHarness.connectionDescription'
+                    )}
+                  </small>
+                </label>
+              )}
+              <details className="settings-section">
+                <summary>{t('runtime.advanced')}</summary>
+                <p className="settings-panel__description">
+                  {t(
+                    'runtime.deepseekHarness.advancedDescription'
+                  )}
+                </p>
+                <button
+                  className="secondary-button"
+                  disabled={detecting}
+                  onClick={() => void detectRuntimes()}
+                  type="button"
+                >
+                  {detecting
+                    ? t('actions.detecting')
+                    : t('actions.redetectRuntime', {
+                        runtime: 'DeepSeek Harness'
                       })}
                 </button>
               </details>
@@ -2078,6 +2346,29 @@ export function SettingsPanel({
                           ) {
                             setContinueModelSource(runtimeFallback)
                           }
+                          if (
+                            protocol !== 'openai-chat-completions' &&
+                            deepseekHarnessModelSource.kind ===
+                              'profile' &&
+                            deepseekHarnessModelSource.profileId ===
+                              profile.id
+                          ) {
+                            const harnessFallback =
+                              modelProfiles.find(
+                                (candidate) =>
+                                  candidate.id !== profile.id &&
+                                  candidate.protocol ===
+                                    'openai-chat-completions'
+                              )
+                            setDeepseekHarnessModelSource(
+                              harnessFallback
+                                ? {
+                                    kind: 'profile',
+                                    profileId: harnessFallback.id
+                                  }
+                                : { kind: 'platform' }
+                            )
+                          }
                         }
                       }
                       value={profile.protocol}
@@ -2246,7 +2537,13 @@ export function SettingsPanel({
                         : t('model.profile.incompatible'),
                       openCodeCompatibility: isOpenCodeCompatible(profile)
                         ? t('model.profile.compatible')
-                        : t('model.profile.incompatibleImageProtocol')
+                        : t('model.profile.incompatibleImageProtocol'),
+                      deepseekHarnessCompatibility:
+                        isDeepseekHarnessCompatible(profile)
+                          ? t('model.profile.compatible')
+                          : t(
+                              'model.profile.incompatibleHarnessProtocol'
+                            )
                     })}
                   </small>
                 </div>

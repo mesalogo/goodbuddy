@@ -3,7 +3,11 @@ import { join } from 'node:path'
 export type BundledRuntimePaths = {
   opencode: string
   continue: string
+  deepseekHarness: string
 }
+
+export const bundledContinueVersion = '1.5.47'
+export const bundledDeepSeekHarnessVersion = '0.1.0-rc.6'
 
 export function resolveBundledRuntimePaths(input: {
   appPath: string
@@ -29,6 +33,13 @@ export function resolveBundledRuntimePaths(input: {
         'continue',
         'dist',
         'cn.js'
+      ),
+      deepseekHarness: join(
+        input.resourcesPath,
+        'app.asar.unpacked',
+        'out',
+        'main',
+        'deepseek-harness-host-bootstrap.js'
       )
     }
   }
@@ -48,6 +59,12 @@ export function resolveBundledRuntimePaths(input: {
       'cli',
       'dist',
       'cn.js'
+    ),
+    deepseekHarness: join(
+      input.appPath,
+      'out',
+      'main',
+      'deepseek-harness-host-bootstrap.js'
     )
   }
 }

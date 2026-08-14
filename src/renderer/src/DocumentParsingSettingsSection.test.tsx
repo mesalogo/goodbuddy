@@ -213,6 +213,21 @@ describe('DocumentParsingSettingsSection', () => {
     expect(screen.getByText(label)).toBeInTheDocument()
   })
 
+  it('localizes built-in OCR model metadata in English', async () => {
+    await changeUiLocale('en-US')
+
+    render(<DocumentParsingSettingsSection />)
+
+    expect(await screen.findByText('PP-OCRv6 Tiny')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'The official lightweight PaddleOCR Chinese model for local CPU recognition of scanned PDFs and images.'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByText('Chinese / English')).toBeInTheDocument()
+    expect(screen.queryByText('轻量中文 OCR 模型')).not.toBeInTheDocument()
+  })
+
   it('localizes recovered document parsing settings warnings', async () => {
     await changeUiLocale('en-US')
     getSnapshot.mockResolvedValueOnce({

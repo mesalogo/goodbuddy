@@ -2935,6 +2935,78 @@ describe('registerIpcHandlers agent terminal state', () => {
     }
   )
 
+  it('keeps Ask fail-closed and auto-allows DeepSeek Harness Execute tools', async () => {
+    const receivedAuthorizers: unknown[] = []
+    const executeDecisions: string[] = []
+    const runtime = {
+      runtimeId: 'deepseek-harness',
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(
+        request: { requestId: string; workMode?: string },
+        _signal: AbortSignal,
+        authorize?: (request: {
+          scopeKey: string
+          title: string
+          description: string
+        }) => Promise<string>
+      ) {
+        receivedAuthorizers.push(authorize)
+        if (request.workMode === 'execute') {
+          executeDecisions.push(
+            (await authorize?.({
+              scopeKey: 'deepseek-harness:write_file',
+              title: '写入文件',
+              description: '一次性沙箱升级'
+            })) ?? 'missing'
+          )
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    harness.approvalBroker.request.mockResolvedValue('once')
+
+    for (const [index, workMode] of (
+      ['ask', 'execute'] as const
+    ).entries()) {
+      const requestId = `3f496642-f47d-4e0a-8944-a32c77b0d6e${index}`
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId,
+        conversationId: `conversation-${index}`,
+        prompt: 'run the task',
+        workMode
+      })
+      await vi.waitFor(() =>
+        expect(
+          harness.assistantDatabase.updateTaskStatus
+        ).toHaveBeenCalledWith(requestId, 'completed')
+      )
+    }
+
+    expect(receivedAuthorizers).toEqual([
+      expect.any(Function),
+      expect.any(Function)
+    ])
+    expect(executeDecisions).toEqual(['once'])
+    await expect(
+      (
+        receivedAuthorizers[0] as (
+          request: Record<string, string>
+        ) => Promise<string>
+      )({
+        scopeKey: 'deepseek-harness:write_file',
+        title: '写入文件',
+        description: 'must be denied'
+      })
+    ).resolves.toBe('deny')
+    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
   it.each(['model', 'opencode'] as const)(
     'normalizes legacy interactive Plan requests to Ask for %s',
     async (runtimeId) => {
@@ -3936,7 +4008,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.getResolvedSettings.mockResolvedValue({
       toolApproval: 'always',
       subagentSmartRoutingEnabled: false,
-      continueModelProfile: { id: configuredProfileId }
+      continueModelProfile: { id: configuredProfileId },
+      modelProfiles: [{ id: configuredProfileId }]
     })
     vi.mocked(
       harness.assistantDatabase.listProjects

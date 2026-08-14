@@ -163,7 +163,11 @@ import {
 import { resolveConfiguredAgentRuntimeSelection } from './agent/runtime-selection'
 import { safeToolErrorDetail } from './agent/approval-summary'
 import { ReasoningTagStreamParser } from './agent/reasoning-stream'
-import type { BundledRuntimePaths } from './agent/bundled-runtimes'
+import {
+  bundledContinueVersion,
+  bundledDeepSeekHarnessVersion,
+  type BundledRuntimePaths
+} from './agent/bundled-runtimes'
 import type { SelectedRuntimeResolver } from './agent/selected-runtime-manager'
 import {
   type MagicNotesCapabilityAccess,
@@ -1258,6 +1262,8 @@ export function registerIpcHandlers(
         !agentRuntimeSelected
           ? (await settingsStore.getPolicySettings()).toolApproval
           : undefined
+      const automaticHarnessRuntime =
+        requestRuntime.runtimeId === 'deepseek-harness'
       const authorize: RuntimeAuthorizer = async (approvalRequest) => {
         controller.signal.throwIfAborted()
         if (schedule.workMode !== 'execute') {
@@ -1265,6 +1271,9 @@ export function registerIpcHandlers(
         }
         if (origin === 'delegation') {
           return 'deny'
+        }
+        if (automaticHarnessRuntime) {
+          return 'once'
         }
         if (origin === 'channel') {
           return channelToolPolicy === 'policy' ? 'deny' : 'once'
@@ -2456,16 +2465,26 @@ export function registerIpcHandlers(
             throw error
           }
         }
+        const automaticHarnessRuntime =
+          selectedRuntime.runtimeId === 'deepseek-harness'
         const executeToolPolicy =
           request.workMode === 'execute' && !agentRuntimeSelected
             ? (await settingsStore.getPolicySettings()).toolApproval
             : 'policy'
         const authorize: RuntimeAuthorizer = async () => {
           controller.signal.throwIfAborted()
-          return request.workMode === 'execute' &&
+          if (
+            request.workMode !== 'execute'
+          ) {
+            return 'deny'
+          }
+          if (
+            automaticHarnessRuntime ||
             executeToolPolicy !== 'policy'
-            ? 'once'
-            : 'deny'
+          ) {
+            return 'once'
+          }
+          return 'deny'
         }
         let smartRoute:
           | ReturnType<typeof routeSubagent>
@@ -2771,7 +2790,11 @@ export function registerIpcHandlers(
       return detectAgentRuntimes({
         opencodeBinaryPath: settings.opencodeBinaryPath,
         continueBinaryPath: settings.continueBinaryPath,
-        bundledPaths: bundledRuntimePaths
+        bundledPaths: bundledRuntimePaths,
+        bundledVersions: {
+          continue: bundledContinueVersion,
+          deepseekHarness: bundledDeepSeekHarnessVersion
+        }
       })
     }
   )
@@ -2781,7 +2804,9 @@ export function registerIpcHandlers(
     async (event, input: unknown): Promise<string | undefined> => {
       assertTrustedSender(event, window)
       const kind = runtimeFileSelectionKindSchema.parse(input)
-      const binary = kind.endsWith('Binary')
+      const binary =
+        kind === 'opencodeBinary' ||
+        kind === 'continueBinary'
       const configRuntime =
         kind === 'opencodeConfig'
           ? 'opencode'

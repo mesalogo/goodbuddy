@@ -37,7 +37,10 @@ import {
 } from './SettingsPrimitives'
 import { PageTabs } from './WorkspacePrimitives'
 
-const configurableMcpTargets: RuntimeTarget[] = ['model']
+const configurableMcpTargets: RuntimeTarget[] = [
+  'model',
+  'deepseek-harness'
+]
 type McpSettingsTab = 'builtin' | 'computer' | 'custom'
 
 type McpEditor = {
@@ -76,9 +79,9 @@ function editorFromServer(server: McpServerSummary): McpEditor {
     description: server.description,
     enabled: server.enabled,
     allowDynamicTools: server.allowDynamicTools,
-    assignments: server.assignments.includes('model')
-      ? ['model']
-      : [],
+    assignments: server.assignments.filter((target) =>
+      configurableMcpTargets.includes(target)
+    ),
     transport: server.transport,
     command: server.transport === 'stdio' ? server.command : '',
     args: server.transport === 'stdio' ? server.args.join('\n') : '',
@@ -101,7 +104,8 @@ export function McpSettingsSection({
   const runtimeLabels: Record<RuntimeTarget, string> = {
     model: t('mcp.runtimeLabels.model'),
     opencode: t('mcp.runtimeLabels.opencode'),
-    continue: t('mcp.runtimeLabels.continue')
+    continue: t('mcp.runtimeLabels.continue'),
+    'deepseek-harness': 'DeepSeek Harness'
   }
   const diagnosticStatusLabels: Record<
     CapabilityDiagnosticReport['status'],

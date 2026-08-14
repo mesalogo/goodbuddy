@@ -81,6 +81,7 @@ const runtimeSettings: RuntimeSettings = {
     kind: 'profile',
     profileId: modelProfileId
   },
+  deepseekHarnessModelSource: { kind: 'platform' },
   secureStorageAvailable: true,
   toolApproval: 'always'
 }
@@ -118,11 +119,22 @@ const detectAgentRuntimes = vi.fn<
     available: true,
     path: 'C:\\Tools\\opencode.exe',
     version: '1.2.3',
+    source: 'automatic',
     detail: '通过 PATH 检测'
   },
   continue: {
-    available: false,
-    detail: '未检测到 Continue'
+    available: true,
+    path: 'bundled://continue',
+    version: '1.5.47',
+    source: 'bundled',
+    detail: '内置 Continue CLI 1.5.47 已就绪'
+  },
+  deepseekHarness: {
+    available: true,
+    path: 'bundled://deepseek-harness',
+    version: '0.1.0-rc.6',
+    source: 'bundled',
+    detail: '内置 Harness Adapter 已就绪'
   }
 }))
 const selectRuntimeFile = vi.fn<
@@ -162,10 +174,16 @@ const capabilitySnapshot = {
       source: 'builtin' as const,
       digest: 'a'.repeat(64),
       enabled: true,
-      assignments: ['model', 'opencode', 'continue'] as (
+      assignments: [
+        'model',
+        'opencode',
+        'continue',
+        'deepseek-harness'
+      ] as (
         | 'model'
         | 'opencode'
         | 'continue'
+        | 'deepseek-harness'
       )[]
     }
   ],
@@ -612,8 +630,21 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('button', { name: 'Save settings' })
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/OpenCode and Continue are bundled with GoodBuddy/u)
+      screen.queryByText(/OpenCode and Continue are bundled with GoodBuddy/u)
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Automatically detected OpenCode 1.2.3'
+      )
     ).toBeInTheDocument()
+    expect(screen.queryByText('通过 PATH 检测')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(
+      screen.getByText('Bundled Continue 1.5.47 is ready')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('内置 Continue CLI 1.5.47 已就绪')
+    ).not.toBeInTheDocument()
   })
 
   it('does not translate user-defined model connection names', async () => {
@@ -933,7 +964,9 @@ describe('SettingsPanel runtime files', () => {
         continueConfigPath: '',
         workspacePath: 'C:\\Workspace',
         opencodeModelSource: runtimeSettings.opencodeModelSource,
-        continueModelSource: runtimeSettings.continueModelSource
+        continueModelSource: runtimeSettings.continueModelSource,
+        deepseekHarnessModelSource:
+          runtimeSettings.deepseekHarnessModelSource
       }
     })
     render(
@@ -1267,7 +1300,7 @@ describe('SettingsPanel runtime files', () => {
   })
 
 
-  it('automatically detects runtimes and displays path, version, and detail', async () => {
+  it('places Runtime detection details in the semantic overview card', async () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -1279,16 +1312,53 @@ describe('SettingsPanel runtime files', () => {
     )
 
     expect(detectAgentRuntimes).toHaveBeenCalledOnce()
+    const runtimeLabel = await screen.findByText('Runtime：', {
+      selector: 'dt'
+    })
+    const overview = runtimeLabel.closest<HTMLElement>(
+      '.runtime-overview'
+    )
+    if (!overview) {
+      throw new Error('Missing OpenCode Runtime overview')
+    }
     expect(
-      await screen.findByText(
+      within(overview).getByText('GoodBuddy 内置 OpenCode')
+    ).toBeInTheDocument()
+    expect(
+      within(overview).getByText('模型配置：', { selector: 'dt' })
+    ).toBeInTheDocument()
+    const status = within(overview).getByText('已就绪')
+    expect(status.tagName).toBe('DD')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(
+      within(overview).getByText('C:\\Tools\\opencode.exe')
+    ).toHaveClass('runtime-overview__path')
+    expect(within(overview).getByText('1.2.3')).toBeInTheDocument()
+    expect(
+      within(overview).getByText('已自动检测到 OpenCode 1.2.3')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(
         '已就绪 · C:\\Tools\\opencode.exe · 1.2.3 · 通过 PATH 检测'
       )
-    ).toBeInTheDocument()
-    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    ).not.toBeInTheDocument()
+    await screen.findByText('GoodBuddy 内置 OpenCode')
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    const continueOverview = screen
+      .getByText('GoodBuddy 内置 Continue')
+      .closest<HTMLElement>('.runtime-overview')
+    if (!continueOverview) {
+      throw new Error('Missing Continue Runtime overview')
+    }
     expect(
-      screen.getByText('尚未就绪 · 未检测到 Continue')
+      within(continueOverview).getByText('已就绪')
     ).toBeInTheDocument()
+    expect(
+      within(continueOverview).getByText('1.5.47')
+    ).toBeInTheDocument()
+    expect(
+      within(continueOverview).getByText('bundled://continue')
+    ).toHaveClass('runtime-overview__path')
 
     expect(
       screen.queryByRole('button', { name: '重新检测 Continue' })
@@ -1299,6 +1369,177 @@ describe('SettingsPanel runtime files', () => {
     )
     await waitFor(() =>
       expect(detectAgentRuntimes).toHaveBeenCalledTimes(2)
+    )
+  })
+
+  it('configures DeepSeek Harness only with Chat Completions or platform settings', async () => {
+    const harnessProfileId =
+      '00000000-0000-4000-8000-000000000051'
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelProfiles: [
+        runtimeSettings.modelProfiles[0]!,
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          id: harnessProfileId,
+          name: 'DeepSeek Chat',
+          baseUrl: 'https://api.deepseek.com/v1',
+          modelName: 'deepseek-chat',
+          protocol: 'openai-chat-completions'
+        }
+      ],
+      deepseekHarnessModelSource: {
+        kind: 'profile',
+        profileId: harnessProfileId
+      }
+    } as unknown as RuntimeSettings)
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'DeepSeek Harness（预览）'
+      })
+    )
+    expect(
+      screen.getByText('开发者预览 · 仅支持 DeepSeek')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/当前仅支持 DeepSeek 模型/)
+    ).toBeInTheDocument()
+    const harnessOverview = screen
+      .getByText('GoodBuddy 内置 DeepSeek Harness')
+      .closest<HTMLElement>('.runtime-overview')
+    if (!harnessOverview) {
+      throw new Error('Missing DeepSeek Harness overview')
+    }
+    expect(
+      within(harnessOverview).getByText('已就绪')
+    ).toHaveAttribute('aria-live', 'polite')
+    expect(
+      within(harnessOverview).getByText(
+        'bundled://deepseek-harness'
+      )
+    ).toHaveClass('runtime-overview__path')
+    expect(
+      within(harnessOverview).getByText('0.1.0-rc.6')
+    ).toBeInTheDocument()
+    expect(
+      within(harnessOverview).getByText(
+        '内置 DeepSeek Harness 0.1.0-rc.6 已就绪'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/自定义 Harness Host/)
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('高级设置'))
+    expect(
+      screen.getByText(
+        /始终使用 GoodBuddy 内置并固定版本的 Host/
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', {
+        name: /选择.*Harness/
+      })
+    ).not.toBeInTheDocument()
+    const source = screen.getByLabelText(
+      'DeepSeek Harness GoodBuddy 模型连接'
+    )
+    expect(
+      within(source).getByRole('option', { name: '默认模型（不兼容）' })
+    ).toBeDisabled()
+    expect(
+      within(source).getByRole('option', { name: 'DeepSeek Chat' })
+    ).not.toBeDisabled()
+
+    fireEvent.click(
+      screen.getByRole('radio', {
+        name: /使用平台 DeepSeek 环境配置/
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deepseekHarnessModelSource: { kind: 'platform' }
+        })
+      )
+    )
+  })
+
+  it('normalizes an environment-managed DeepSeek profile to the platform source when saving', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelBaseUrl: 'https://api.deepseek.com',
+      modelName: 'deepseek-chat',
+      modelProtocol: 'openai-chat-completions',
+      modelProfiles: [
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          baseUrl: 'https://api.deepseek.com',
+          modelName: 'deepseek-chat',
+          protocol: 'openai-chat-completions',
+          credentialSource: 'environment'
+        }
+      ],
+      deepseekHarnessModelSource: { kind: 'platform' },
+      configured: {
+        modelProfiles: [
+          {
+            ...runtimeSettings.modelProfiles[0]!,
+            baseUrl: 'https://bigtoken.ai',
+            modelName: 'sonnet-5',
+            protocol: 'openai-chat-completions',
+            credentialSource: 'environment'
+          }
+        ],
+        opencodeBaseUrl: '',
+        opencodeBinaryPath: '',
+        opencodeConfigPath: '',
+        continueBinaryPath: '',
+        continueConfigPath: '',
+        workspacePath: 'C:\\Workspace',
+        opencodeModelSource: runtimeSettings.opencodeModelSource,
+        continueModelSource: runtimeSettings.continueModelSource,
+        deepseekHarnessModelSource: { kind: 'platform' }
+      }
+    } as unknown as RuntimeSettings)
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'DeepSeek Harness（预览）'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('radio', {
+        name: /使用 GoodBuddy 模型连接/
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deepseekHarnessModelSource: { kind: 'platform' }
+        })
+      )
     )
   })
 
@@ -1313,7 +1554,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    await screen.findByText('GoodBuddy 内置 OpenCode')
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByText('高级设置'))
     const input = await screen.findByLabelText('Continue 可执行文件路径')
@@ -1362,28 +1603,22 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
+    await screen.findByText('GoodBuddy 内置 OpenCode')
     expect(
-      await screen.findByText(
-        /OpenCode 和 Continue 已随 GoodBuddy 内置/
-      )
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/配置可兼容的直连文本模型后即可使用/)
-    ).toBeInTheDocument()
+      screen.queryByText(/配置可兼容的直连文本模型后即可使用/)
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OpenCode' }))
       .toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByText('默认 Runtime')).not.toBeInTheDocument()
     expect(
-      screen.getByText(/GoodBuddy 内置 OpenCode/)
-    ).toBeInTheDocument()
+      screen.getAllByText(/GoodBuddy 内置 OpenCode/).length
+    ).toBeGreaterThan(0)
     expect(
       screen.getByText(/模型配置：/).closest('.runtime-note')
     ).toHaveTextContent(
       '跟随 GoodBuddy · 默认模型（sonnet-5）'
     )
-    expect(
-      screen.getByText(/^已就绪 ·/u)
-    ).toBeInTheDocument()
+    expect(screen.getByText('已就绪')).toBeInTheDocument()
     expect(screen.getByText('高级设置').closest('details'))
       .not.toHaveAttribute('open')
     expect(
@@ -1408,15 +1643,15 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(
-      screen.getByText(/GoodBuddy 内置 Continue/)
-    ).toBeInTheDocument()
+      screen.getAllByText(/GoodBuddy 内置 Continue/).length
+    ).toBeGreaterThan(0)
     expect(
       screen.getByText(/模型配置：/).closest('.runtime-note')
     ).toHaveTextContent(
       '跟随 GoodBuddy · 默认模型（sonnet-5）'
     )
-    expect(screen.getByText('尚未就绪 · 未检测到 Continue'))
-      .toBeInTheDocument()
+    expect(screen.getByText('已就绪')).toBeInTheDocument()
+    expect(screen.getByText('1.5.47')).toBeInTheDocument()
     expect(screen.getByText('高级设置').closest('details'))
       .not.toHaveAttribute('open')
   })
@@ -1437,7 +1672,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    await screen.findByText('GoodBuddy 内置 OpenCode')
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(screen.getByText('高级设置'))
     expect(
@@ -1497,7 +1732,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    await screen.findByText(/OpenCode 和 Continue 已随 GoodBuddy 内置/)
+    await screen.findByText('GoodBuddy 内置 OpenCode')
     fireEvent.click(screen.getByText('高级设置'))
     expect(screen.getByLabelText('OpenCode Server 地址')).toHaveValue('')
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
@@ -2433,8 +2668,11 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByText(/新导入的 Skill 默认启用/)
     ).toHaveTextContent(
-      '分配给直连模型、OpenCode 和 Continue'
+      '分配给直连模型、OpenCode、Continue 和 DeepSeek Harness'
     )
+    expect(
+      screen.getByLabelText('DeepSeek Harness')
+    ).toBeChecked()
     fireEvent.click(
       screen.getByRole('button', { name: '导入 Skill 目录' })
     )
@@ -2633,10 +2871,10 @@ describe('SettingsPanel runtime files', () => {
       within(mcpTabs).getByRole('tab', { name: '自定义 MCP' })
     )
     expect(
-      screen.getByText(/自定义 MCP 当前仅用于直连模型/)
+      screen.getByText(/自定义 MCP 可分配给直连模型或 DeepSeek Harness/)
     ).toHaveTextContent('新建时默认分配给直连模型')
     expect(
-      screen.getByText(/Runtime 自有 MCP 配置不在此处管理/)
+      screen.getByText(/服务凭据不会进入 Harness Utility/)
     ).toBeInTheDocument()
     expect(
       await screen.findByText('尚未配置 MCP Server')
@@ -2663,6 +2901,9 @@ describe('SettingsPanel runtime files', () => {
       })
     ).not.toBeChecked()
     expect(within(dialog).getByLabelText('模型')).toBeChecked()
+    expect(
+      within(dialog).getByLabelText('DeepSeek Harness')
+    ).not.toBeChecked()
     expect(
       within(dialog).queryByLabelText('OpenCode')
     ).not.toBeInTheDocument()

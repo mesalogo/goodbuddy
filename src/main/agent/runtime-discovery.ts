@@ -21,6 +21,8 @@ export type RuntimeBinaryDiscoveryInput = {
   binaryPath: string
   bundledPath?: string
   bundledValidation?: 'execute' | 'canonical-file'
+  bundledVersion?: string
+  allowAutomaticDiscovery?: boolean
   binaryNames: readonly string[]
   label: string
 }
@@ -246,13 +248,14 @@ function availableDetection(
   label: string,
   path: string,
   version?: string,
-  bundled = false
+  source: 'bundled' | 'configured' | 'automatic' = 'automatic'
 ): RuntimeBinaryDetection {
   return {
     available: true,
     path,
     version,
-    detail: `${bundled ? '内置 ' : ''}${label}${
+    source,
+    detail: `${source === 'bundled' ? '内置 ' : ''}${label}${
       version ? ` ${version}` : ''
     } 已就绪`
   }
@@ -263,6 +266,36 @@ export async function detectRuntimeBinary(
 ): Promise<RuntimeBinaryDetection> {
   const configuredPath = input.binaryPath.trim()
   let configuredPathProblem: 'relative' | 'invalid' | 'validation' | undefined
+
+  const detectBundled = async (): Promise<
+    RuntimeBinaryDetection | undefined
+  > => {
+    const bundledPath = input.bundledPath?.trim()
+    if (!bundledPath) {
+      return undefined
+    }
+    const canonicalPath = await canonicalFile(bundledPath)
+    if (!canonicalPath) {
+      return undefined
+    }
+    if (input.bundledValidation === 'canonical-file') {
+      return availableDetection(
+        input.label,
+        canonicalPath,
+        input.bundledVersion,
+        'bundled'
+      )
+    }
+    const validation = await validateVersion(canonicalPath)
+    return validation.valid
+      ? availableDetection(
+          input.label,
+          canonicalPath,
+          validation.version,
+          'bundled'
+        )
+      : undefined
+  }
 
   if (configuredPath) {
     if (!isAbsolute(configuredPath)) {
@@ -277,7 +310,8 @@ export async function detectRuntimeBinary(
           return availableDetection(
             input.label,
             canonicalPath,
-            validation.version
+            validation.version,
+            'configured'
           )
         }
         configuredPathProblem = 'validation'
@@ -285,44 +319,28 @@ export async function detectRuntimeBinary(
     }
   }
 
-  const bundledPath = input.bundledPath?.trim()
-  if (bundledPath) {
-    const canonicalPath = await canonicalFile(bundledPath)
-    if (canonicalPath) {
-      if (input.bundledValidation === 'canonical-file') {
-        return availableDetection(
-          input.label,
-          canonicalPath,
-          undefined,
-          true
-        )
+  const bundled = await detectBundled()
+  if (bundled) {
+    return bundled
+  }
+
+  let foundAutomaticCandidate = false
+  if (input.allowAutomaticDiscovery !== false) {
+    for (const candidate of automaticCandidates(input.binaryNames)) {
+      const canonicalPath = await canonicalFile(candidate)
+      if (!canonicalPath) {
+        continue
       }
+      foundAutomaticCandidate = true
       const validation = await validateVersion(canonicalPath)
       if (validation.valid) {
         return availableDetection(
           input.label,
           canonicalPath,
           validation.version,
-          true
+          'automatic'
         )
       }
-    }
-  }
-
-  let foundAutomaticCandidate = false
-  for (const candidate of automaticCandidates(input.binaryNames)) {
-    const canonicalPath = await canonicalFile(candidate)
-    if (!canonicalPath) {
-      continue
-    }
-    foundAutomaticCandidate = true
-    const validation = await validateVersion(canonicalPath)
-    if (validation.valid) {
-      return availableDetection(
-        input.label,
-        canonicalPath,
-        validation.version
-      )
     }
   }
 
@@ -349,9 +367,14 @@ export async function detectAgentRuntimes(input: {
   bundledPaths?: {
     opencode: string
     continue: string
+    deepseekHarness: string
+  }
+  bundledVersions?: {
+    continue: string
+    deepseekHarness: string
   }
 }): Promise<AgentRuntimeDetection> {
-  const [opencode, continueRuntime] = await Promise.all([
+  const [opencode, continueRuntime, deepseekHarness] = await Promise.all([
     detectRuntimeBinary({
       binaryPath: input.opencodeBinaryPath,
       bundledPath: input.bundledPaths?.opencode,
@@ -362,13 +385,24 @@ export async function detectAgentRuntimes(input: {
       binaryPath: input.continueBinaryPath,
       bundledPath: input.bundledPaths?.continue,
       bundledValidation: 'canonical-file',
+      bundledVersion: input.bundledVersions?.continue,
       binaryNames: ['cn'],
       label: 'Continue CLI'
+    }),
+    detectRuntimeBinary({
+      binaryPath: '',
+      bundledPath: input.bundledPaths?.deepseekHarness,
+      bundledValidation: 'canonical-file',
+      bundledVersion: input.bundledVersions?.deepseekHarness,
+      allowAutomaticDiscovery: false,
+      binaryNames: [],
+      label: 'GoodBuddy DeepSeek Harness Host'
     })
   ])
 
   return {
     opencode,
-    continue: continueRuntime
+    continue: continueRuntime,
+    deepseekHarness
   }
 }

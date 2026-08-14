@@ -251,7 +251,8 @@ export const settingsSections = {
     runtimeLabels: {
       model: 'Model',
       opencode: 'OpenCode',
-      continue: 'Continue'
+      continue: 'Continue',
+      'deepseek-harness': 'DeepSeek Harness'
     },
     errors: {
       readFailed: 'Could not load Skills',
@@ -264,7 +265,7 @@ export const settingsSections = {
     },
     listLabel: 'Skills list',
     notice:
-      'Skills inject local capability instructions into selected targets without changing the Runtime’s own configuration. Newly imported Skills are enabled by default and assigned to the direct model, OpenCode, and Continue.',
+      'Skills inject local capability instructions into selected targets without changing the Runtime’s own configuration. Newly imported Skills are enabled by default and assigned to the direct model, OpenCode, Continue, and DeepSeek Harness.',
     loading: 'Loading Skills…',
     source: {
       builtin: 'Built in',

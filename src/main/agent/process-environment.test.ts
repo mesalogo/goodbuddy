@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildExplicitProfileRuntimeEnvironment,
+  buildControlledHarnessEnvironment,
   buildRuntimeEnvironment
 } from './process-environment'
 
@@ -88,5 +89,31 @@ describe('buildRuntimeEnvironment', () => {
       PATH: '/tools',
       NODE_TLS_REJECT_UNAUTHORIZED: '0'
     })
+  })
+
+  it('builds a credential-free, telemetry-disabled Harness environment', () => {
+    expect(
+      buildControlledHarnessEnvironment('C:\\isolated-dsh', {
+        PATH: 'C:\\Tools',
+        TEMP: 'C:\\Temp',
+        OPENAI_API_KEY: 'must-not-leak',
+        DEEPSEEK_API_KEY: 'must-not-leak',
+        DSH_HOME: 'C:\\user-dsh',
+        NODE_OPTIONS: '--require malicious.js'
+      })
+    ).toMatchObject({
+      PATH: 'C:\\Tools',
+      TEMP: 'C:\\Temp',
+      DSH_HOME: 'C:\\isolated-dsh',
+      DSH_TELEMETRY_DISABLED: '1',
+      DO_NOT_TRACK: '1',
+      OTEL_SDK_DISABLED: 'true'
+    })
+    expect(
+      buildControlledHarnessEnvironment('C:\\isolated-dsh', {
+        OPENAI_API_KEY: 'must-not-leak',
+        DEEPSEEK_API_KEY: 'must-not-leak'
+      })
+    ).not.toHaveProperty('OPENAI_API_KEY')
   })
 })

@@ -19,13 +19,14 @@ const controlCharacterFreeString = (maximumLength: number) =>
 export const runtimeTargetSchema = z.enum([
   'model',
   'opencode',
-  'continue'
+  'continue',
+  'deepseek-harness'
 ])
 export type RuntimeTarget = z.infer<typeof runtimeTargetSchema>
 
 export const capabilityAssignmentsSchema = z
   .array(runtimeTargetSchema)
-  .max(3)
+  .max(4)
   .refine(
     (assignments) => new Set(assignments).size === assignments.length,
     'Runtime 分配不能重复'

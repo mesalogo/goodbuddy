@@ -10,8 +10,10 @@ import {
   utilityProcess
 } from 'electron'
 import { homedir } from 'node:os'
+import { mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import spawn from 'cross-spawn'
 import { ipcChannels } from '../shared/ipc-channels'
 import {
   createAgentRuntime,
@@ -75,6 +77,11 @@ import { DocumentOcrBroker } from './document-ocr-broker'
 import { DocumentParsingService } from './document-parsing-service'
 import { ReleaseNotesService } from './release-notes-service'
 import { GoodBuddyConfigService } from './goodbuddy-config-service'
+import {
+  createDeepSeekHarnessUtilityLauncher,
+  type DeepSeekHarnessFork
+} from './agent/deepseek-harness-utility-launcher'
+import { buildControlledHarnessEnvironment } from './agent/process-environment'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -207,6 +214,36 @@ const launchContinueHost: ContinueHostLauncher = (
     }
   }
   return child
+}
+
+const forkDeepSeekHarness: DeepSeekHarnessFork = (
+  modulePath,
+  args,
+  options
+) =>
+  utilityProcess.fork(modulePath, args, {
+    ...options,
+    allowLoadingUnsignedLibraries: false,
+    disclaim: false
+  })
+
+function terminateHarnessUtilityProcess(
+  child: ReturnType<DeepSeekHarnessFork>
+): void {
+  if (process.platform === 'win32' && child.pid) {
+    const killer = spawn(
+      'taskkill.exe',
+      ['/PID', String(child.pid), '/T', '/F'],
+      {
+        shell: false,
+        stdio: 'ignore',
+        windowsHide: true
+      }
+    )
+    killer.unref()
+    return
+  }
+  child.kill()
 }
 
 const launchWechatSidecar: WechatSidecarLauncher = () => {
@@ -403,6 +440,24 @@ if (hasSingleInstanceLock) {
       resourcesPath: process.resourcesPath,
       packaged: app.isPackaged
     })
+    const deepSeekHarnessHome = join(
+      app.getPath('userData'),
+      'deepseek-harness'
+    )
+    await mkdir(deepSeekHarnessHome, {
+      recursive: true,
+      mode: 0o700
+    })
+    const launchDeepSeekHarness =
+      createDeepSeekHarnessUtilityLauncher({
+        bundledHostPath: bundledRuntimePaths.deepseekHarness,
+        dshHome: deepSeekHarnessHome,
+        environment: buildControlledHarnessEnvironment(
+          deepSeekHarnessHome
+        ),
+        fork: forkDeepSeekHarness,
+        terminateProcess: terminateHarnessUtilityProcess
+      })
     knowledgeService = new KnowledgeService({
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
@@ -465,8 +520,8 @@ if (hasSingleInstanceLock) {
       ] =
         await Promise.all([
           capabilityService.getRuntimeSkillContext(target),
-          target === 'model'
-            ? capabilityService.getResolvedMcpServers('model')
+          target === 'model' || target === 'deepseek-harness'
+            ? capabilityService.getResolvedMcpServers(target)
             : Promise.resolve([]),
           target === 'model'
             ? capabilityService.getComputerCapabilityStatus(
@@ -487,6 +542,7 @@ if (hasSingleInstanceLock) {
         ),
         bundledRuntimePaths,
         continueHostLauncher: launchContinueHost,
+        deepseekHarnessLauncher: launchDeepSeekHarness,
         browserService:
           browserCapability?.enabled && browserCapability.supported
             ? browserService

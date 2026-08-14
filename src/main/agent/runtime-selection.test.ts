@@ -10,6 +10,7 @@ const defaultProfileId = '00000000-0000-4000-8000-000000000001'
 const secondProfileId = '00000000-0000-4000-8000-000000000002'
 const responsesProfileId = '00000000-0000-4000-8000-000000000003'
 const imageProfileId = '00000000-0000-4000-8000-000000000004'
+const deepseekProfileId = '00000000-0000-4000-8000-000000000005'
 
 function settings(
   overrides: Partial<ResolvedRuntimeSettings> = {}
@@ -62,6 +63,16 @@ function settings(
         authentication: 'api-key',
         imageGenerationQuality: 'auto',
         apiKey: 'image-key'
+      },
+      {
+        id: deepseekProfileId,
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        modelName: 'deepseek-chat',
+        protocol: 'openai-chat-completions',
+        authentication: 'api-key',
+        imageGenerationQuality: 'auto',
+        apiKey: 'deepseek-key'
       }
     ],
     defaultModelProfileId: defaultProfileId,
@@ -154,13 +165,62 @@ describe('runtime selection', () => {
     ).toThrow('自动启动')
   })
 
+  it('selects DeepSeek Harness only with an official compatible profile', () => {
+    const selected = applyRuntimeSelection(settings(), {
+      provider: 'deepseek-harness',
+      profileId: deepseekProfileId
+    })
+    expect(selected.target).toBe('deepseek-harness')
+    expect(selected.settings).toMatchObject({
+      provider: 'deepseek-harness',
+      deepseekHarnessModelProfile: { id: deepseekProfileId }
+    })
+    expect(() =>
+      applyRuntimeSelection(settings(), {
+        provider: 'deepseek-harness',
+        profileId: secondProfileId
+      })
+    ).toThrow('api.deepseek.com')
+  })
+
+  it('keeps the controlled platform DeepSeek profile when selected without a profile ID', () => {
+    const base = settings()
+    const platformProfile = {
+      ...base.modelProfiles[4]!,
+      id: 'goodbuddy-platform-deepseek',
+      name: '平台 DeepSeek',
+      modelName: 'deepseek-v4-flash'
+    }
+    const selected = applyRuntimeSelection(
+      settings({ deepseekHarnessModelProfile: platformProfile }),
+      { provider: 'deepseek-harness' }
+    )
+
+    expect(selected.settings).toMatchObject({
+      provider: 'deepseek-harness',
+      deepseekHarnessModelProfile: {
+        id: 'goodbuddy-platform-deepseek',
+        modelName: 'deepseek-v4-flash'
+      }
+    })
+  })
+
   it('resolves Agent Runtime backends from the global Runtime configuration', () => {
     const base = settings()
     const configured = settings({
       opencodeModelProfile: base.modelProfiles[1],
-      continueModelProfile: base.modelProfiles[2]
+      continueModelProfile: base.modelProfiles[2],
+      deepseekHarnessModelProfile: base.modelProfiles[4]
     })
 
+    expect(
+      resolveConfiguredAgentRuntimeSelection(configured, {
+        provider: 'deepseek-harness'
+      })
+    ).toEqual({
+      provider: 'deepseek-harness',
+      profileId: deepseekProfileId
+    })
     expect(
       resolveConfiguredAgentRuntimeSelection(configured, {
         provider: 'opencode',
@@ -187,6 +247,23 @@ describe('runtime selection', () => {
       provider: 'model',
       profileId: defaultProfileId
     })
+  })
+
+  it('keeps the controlled platform DeepSeek source profile-free across configured selection repair', () => {
+    const base = settings()
+    const configured = settings({
+      deepseekHarnessModelProfile: {
+        ...base.modelProfiles[4]!,
+        id: 'goodbuddy-platform-deepseek',
+        name: '平台 DeepSeek'
+      }
+    })
+
+    expect(
+      resolveConfiguredAgentRuntimeSelection(configured, {
+        provider: 'deepseek-harness'
+      })
+    ).toEqual({ provider: 'deepseek-harness' })
   })
 
   it('routes legacy automatic settings through local OpenCode when the Server is blank', () => {

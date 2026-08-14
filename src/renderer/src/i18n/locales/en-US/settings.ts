@@ -35,8 +35,10 @@ export const settings = {
     },
     runtime: {
       label: 'Agent Runtime',
-      navigationDescription: 'OpenCode, Continue, and workspace settings',
-      description: 'OpenCode, Continue, and workspace settings'
+      navigationDescription:
+        'OpenCode, Continue, DeepSeek Harness, and workspace settings',
+      description:
+        'OpenCode, Continue, DeepSeek Harness, and workspace settings'
     },
     security: {
       label: 'Security and data',
@@ -155,8 +157,19 @@ export const settings = {
     detection: {
       ready: 'Ready',
       notReady: 'Not ready · {{detail}}',
+      unavailable: 'Not ready',
       detecting: 'Detecting…',
-      notDetected: 'Not detected'
+      notDetected: 'Not detected',
+      statusLabel: 'Status:',
+      pathLabel: 'Path:',
+      versionLabel: 'Version:',
+      detailLabel: 'Detection details:',
+      details: {
+        bundled: 'Bundled {{runtime}}{{versionSuffix}} is ready',
+        configured: 'Custom {{runtime}}{{versionSuffix}} is ready',
+        automatic:
+          'Automatically detected {{runtime}}{{versionSuffix}}'
+      }
     },
     workspace: {
       title: 'Default workspace',
@@ -164,8 +177,6 @@ export const settings = {
         'Agents use this location only when the current project has no root folder',
       directoryLabel: 'Default workspace folder'
     },
-    selectorDescription:
-      'OpenCode and Continue are bundled with GoodBuddy. Configure a compatible direct text model to use them.',
     bundledDescription:
       'Bundled GoodBuddy Runtime that follows the text model connection by default',
     runtimeLabel: 'Runtime:',
@@ -222,6 +233,25 @@ export const settings = {
       binaryPath: 'Continue executable path',
       missingConfigWarning:
         'Continue remains unavailable without a configuration file and will not load a remote default model anonymously.'
+    },
+    deepseekHarness: {
+      selectorLabel: 'DeepSeek Harness (Preview)',
+      title: 'DeepSeek Harness',
+      previewDescription: 'Developer preview · DeepSeek only',
+      deepseekOnlyNotice:
+        'DeepSeek Harness currently supports DeepSeek models only and is not intended for other model providers.',
+      description:
+        'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Execute tool calls receive automatic one-time authorization, Ask remains read-only, and cancellation and workspace safety boundaries remain in place. It does not integrate with the DSH plugin or marketplace mechanisms.',
+      goodBuddySource: 'Use a GoodBuddy model connection',
+      goodBuddySourceDescription:
+        'Only OpenAI-compatible Chat Completions connections are available. The connection must point to a DeepSeek model.',
+      platformSource: 'Use platform DeepSeek environment settings',
+      platformSourceDescription:
+        'Reads platform-managed DeepSeek settings from the launch environment without exposing credentials to the renderer.',
+      connectionDescription:
+        'The internal GoodBuddy Harness Runtime currently accepts only the OpenAI-compatible Chat Completions protocol.',
+      advancedDescription:
+        'This Runtime always uses GoodBuddy’s bundled, version-pinned Host. It does not load external DSH plugins, marketplace packages, user profiles, or custom Hosts.'
     }
   },
   documentParsing: {
@@ -315,6 +345,28 @@ export const settings = {
           fast: 'Fast',
           balanced: 'Balanced',
           slow: 'Slow'
+        }
+      },
+      languages: {
+        中文: 'Chinese',
+        英语: 'English',
+        '50 种语言': '50 languages'
+      },
+      catalog: {
+        'pp-ocrv6-tiny': {
+          displayName: 'PP-OCRv6 Tiny',
+          description:
+            'The official lightweight PaddleOCR Chinese model for local CPU recognition of scanned PDFs and images.'
+        },
+        'pp-ocrv6-small': {
+          displayName: 'PP-OCRv6 Small',
+          description:
+            'The official PaddleOCR 50-language model balancing recognition quality, speed, and local resource use.'
+        },
+        'pp-ocrv6-medium': {
+          displayName: 'PP-OCRv6 Medium',
+          description:
+            'The official high-quality PaddleOCR 50-language model with slower recognition, higher memory use, and greater latency.'
         }
       },
       installed: 'Installed and verified',
@@ -448,12 +500,14 @@ export const settings = {
       imageQualityDescription:
         'Used only for OpenAI-compatible image generation requests.',
       compatibilitySummary:
-        'Direct model: {{directCapability}} · Continue: {{continueCompatibility}} · OpenCode: {{openCodeCompatibility}}',
+        'Direct model: {{directCapability}} · Continue: {{continueCompatibility}} · OpenCode: {{openCodeCompatibility}} · DeepSeek Harness: {{deepseekHarnessCompatibility}}',
       textChat: 'Text chat',
       compatible: 'Compatible',
       incompatible: 'Incompatible',
       incompatibleImageProtocol:
         'Incompatible (image generation protocol is unsupported)',
+      incompatibleHarnessProtocol:
+        'Incompatible (Chat Completions only)',
       secureStorageWarning:
         'Secure system key storage is unavailable. Use an environment variable to avoid storing an API Key in plaintext.'
     },

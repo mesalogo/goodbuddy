@@ -23,6 +23,12 @@ export const agentRuntimeSelectionSchema = z.discriminatedUnion(
         provider: z.literal('continue'),
         profileId: runtimeSelectionProfileIdSchema.optional()
       })
+      .strict(),
+    z
+      .object({
+        provider: z.literal('deepseek-harness'),
+        profileId: runtimeSelectionProfileIdSchema.optional()
+      })
       .strict()
   ]
 )
@@ -34,6 +40,7 @@ export type AgentRuntimeSelection = z.infer<
 export type RuntimeSelectionRepairSettings = {
   modelProfiles: ReadonlyArray<{
     id: string
+    baseUrl?: string
     protocol?: string
     authentication?: 'api-key' | 'none'
     apiKeyConfigured?: boolean
@@ -43,6 +50,9 @@ export type RuntimeSelectionRepairSettings = {
     | { kind: 'platform' }
     | { kind: 'profile'; profileId: string }
   continueModelSource:
+    | { kind: 'platform' }
+    | { kind: 'profile'; profileId: string }
+  deepseekHarnessModelSource?:
     | { kind: 'platform' }
     | { kind: 'profile'; profileId: string }
 }
@@ -59,6 +69,25 @@ export function isChannelModelProfileUsable(
       profile.apiKeyConfigured === false
     )
   )
+}
+
+function isDeepSeekHarnessRepairProfileUsable(
+  profile: ChannelModelProfile
+): boolean {
+  if (
+    profile.protocol !== 'openai-chat-completions' ||
+    profile.authentication !== 'api-key' ||
+    profile.apiKeyConfigured === false ||
+    !profile.baseUrl
+  ) {
+    return false
+  }
+  try {
+    return new URL(profile.baseUrl).hostname.toLowerCase() ===
+      'api.deepseek.com'
+  } catch {
+    return false
+  }
 }
 
 export function repairChannelRuntimeSelection(
@@ -85,6 +114,21 @@ export function repairChannelRuntimeSelection(
     selection.provider === 'continue'
   ) {
     return { provider: selection.provider }
+  }
+  if (selection.provider === 'deepseek-harness') {
+    const repaired = repairAgentRuntimeSelection(selection, settings)
+    if (
+      repaired.provider === 'deepseek-harness' &&
+      repaired.profileId
+    ) {
+      const profile = settings.modelProfiles.find(
+        (candidate) => candidate.id === repaired.profileId
+      )
+      if (profile && isDeepSeekHarnessRepairProfileUsable(profile)) {
+        return repaired
+      }
+    }
+    return { provider: 'deepseek-harness' }
   }
   const repaired = repairAgentRuntimeSelection(selection, settings)
   if (repaired.provider !== 'model') {
@@ -120,7 +164,9 @@ export function repairAgentRuntimeSelection(
   const source =
     selection.provider === 'opencode'
       ? settings.opencodeModelSource
-      : settings.continueModelSource
+      : selection.provider === 'continue'
+        ? settings.continueModelSource
+        : settings.deepseekHarnessModelSource ?? { kind: 'platform' }
   return {
     provider: selection.provider,
     ...(source.kind === 'profile'

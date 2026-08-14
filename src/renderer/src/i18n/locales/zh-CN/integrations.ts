@@ -26,6 +26,7 @@ export const integrations = {
       unavailableProfile: '{{name}} · {{modelName}}（不可用）',
       missingProfile: '原直连模型已不存在',
       noTextModels: '暂无可用文本模型',
+      deepseekHarnessOption: 'DeepSeek Harness（预览 · 仅 DeepSeek）',
       missingSelection: '所选直连模型已不存在，请重新选择。',
       imageOnlySelection:
         '所选连接仅支持图片生成，请选择文本模型或 Agent Runtime。',
@@ -132,7 +133,8 @@ export const integrations = {
     runtimeLabels: {
       model: '模型',
       opencode: 'OpenCode',
-      continue: 'Continue'
+      continue: 'Continue',
+      'deepseek-harness': 'DeepSeek Harness'
     },
     diagnosticStatuses: {
       available: '可用',
@@ -158,7 +160,7 @@ export const integrations = {
       custom: '自定义 MCP'
     },
     customNotice:
-      '自定义 MCP 当前仅用于直连模型，新建时默认分配给直连模型，并仅在 Execute 模式加载。Runtime 自有 MCP 配置不在此处管理。',
+      '自定义 MCP 可分配给直连模型或 DeepSeek Harness，新建时默认分配给直连模型，并仅在 Execute 模式加载。Harness 工具由 GoodBuddy 主进程代理，服务凭据不会进入 Harness Utility。',
     securityNotice:
       '内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server 及其工具具有当前用户权限，请仅添加可信服务；远程访问令牌将由系统安全存储加密，工具调用前仍需 GoodBuddy 审批。',
     computer: {

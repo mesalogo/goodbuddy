@@ -24,6 +24,11 @@ const {
   sep
 } = require('node:path')
 const { finished } = require('node:stream/promises')
+const {
+  extractFile,
+  listPackage,
+  statFile
+} = require('@electron/asar')
 const { Zip, ZipDeflate } = require('fflate')
 const { sha256File } = require('./file-hash.cjs')
 
@@ -35,6 +40,23 @@ const productName = packageJson.build?.productName ?? packageJson.name
 const releaseRoot = join(root, 'dist', 'release')
 const manifestName = 'release-manifest.json'
 const portableMarkerName = '.goodbuddy-portable.json'
+const harnessHostEntry =
+  'out/main/deepseek-harness-host-bootstrap.js'
+const harnessBundleManifest = 'out/main/package.json'
+const harnessPackageVersions = {
+  '@deepseek-ai/dsh-agent': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-sandbox-windows-acl': '0.1.0-rc.6',
+  '@deepseek-ai/node-addon-landlock-run': '0.1.1',
+  'node-pty': '1.1.0'
+}
+const koffiVersion = '3.1.4'
+const harnessLicenseFiles = [
+  'agent-client-protocol-Apache-2.0.txt',
+  'deepseek-cordis-MIT.txt',
+  'deepseek-harness-MIT.txt',
+  'koffi-MIT.txt',
+  'node-pty-MIT.txt'
+]
 const portableRequiredFiles = [
   `${productName}.exe`,
   'resources/app.asar',
@@ -359,6 +381,326 @@ function assertFile(filePath, description) {
   }
 }
 
+function normalizeAsarEntry(filePath) {
+  return filePath.split('/').join(sep)
+}
+
+function asarEntryMetadata(
+  asarPath,
+  entryNames,
+  filePath,
+  description,
+  statAsarFile = statFile
+) {
+  const entry = normalizeAsarEntry(filePath)
+  if (!entryNames.has(`${sep}${entry}`)) {
+    throw new Error(`${description}缺失：${filePath}`)
+  }
+  return statAsarFile(asarPath, entry)
+}
+
+function assertAsarEntry(entryNames, filePath, description) {
+  const entry = normalizeAsarEntry(filePath)
+  if (!entryNames.has(`${sep}${entry}`)) {
+    throw new Error(`${description}缺失：${filePath}`)
+  }
+}
+
+function assertBinaryArchitecture(filePath, expected, description) {
+  assertFile(filePath, description)
+  const actual = binaryArchitecture(filePath)
+  if (actual !== expected) {
+    throw new Error(
+      `${description}架构错误：期望 ${expected}，实际 ${actual ?? '未知'}`
+    )
+  }
+}
+
+function targetHarnessPaths(options) {
+  const platformName = {
+    windows: 'win32',
+    macos: 'darwin',
+    linux: 'linux'
+  }[options.platform]
+  const koffiPackage = `@koromix/koffi-${platformName}-${options.arch}`
+  const koffiBinary = {
+    windows: `win32_${options.arch}/koffi.node`,
+    macos: `darwin_${options.arch}/koffi.node`,
+    linux: `linux_${options.arch}/koffi.node`
+  }[options.platform]
+  return {
+    koffiPackage,
+    koffiBinary,
+    nodePtyBinary:
+      options.platform === 'linux'
+        ? 'build/Release/pty.node'
+        : `prebuilds/${platformName}-${options.arch}/pty.node`,
+    nodePtyDirectory: `${platformName}-${options.arch}`,
+    landlockPackage:
+      options.platform === 'linux'
+        ? `@deepseek-ai/node-addon-landlock-run-linux-${options.arch}`
+        : undefined
+  }
+}
+
+function verifyHarnessPackage(
+  resources,
+  options,
+  dependencies = {}
+) {
+  const asarPath = join(resources, 'app.asar')
+  const unpackedRoot = join(resources, 'app.asar.unpacked')
+  const listAsarEntries = dependencies.listPackage ?? listPackage
+  const statAsarFile = dependencies.statFile ?? statFile
+  const extractAsarFile = dependencies.extractFile ?? extractFile
+  const entries = new Set(listAsarEntries(asarPath))
+  const target = targetHarnessPaths(options)
+
+  assertAsarEntry(entries, harnessHostEntry, 'DeepSeek Harness Host')
+  const readJson = (filePath, description) => {
+    const metadata = asarEntryMetadata(
+      asarPath,
+      entries,
+      filePath,
+      description,
+      statAsarFile
+    )
+    if ('files' in metadata || 'link' in metadata) {
+      throw new Error(`${description}类型错误：${filePath}`)
+    }
+    return JSON.parse(
+      extractAsarFile(asarPath, normalizeAsarEntry(filePath))
+    )
+  }
+  const bundleManifest = readJson(
+    harnessBundleManifest,
+    'DeepSeek Harness bundle 元数据'
+  )
+  if (
+    bundleManifest.name !== '@deepseek-ai/dsh-llm' ||
+    bundleManifest.version !==
+      harnessPackageVersions['@deepseek-ai/dsh-agent']
+  ) {
+    throw new Error('DeepSeek Harness bundle 元数据错误')
+  }
+  assertFile(
+    join(unpackedRoot, ...harnessBundleManifest.split('/')),
+    'DeepSeek Harness 可执行 bundle 元数据'
+  )
+  assertFile(
+    join(unpackedRoot, ...harnessHostEntry.split('/')),
+    'DeepSeek Harness 可执行 Host'
+  )
+  const harnessLlmChunk = [...entries]
+    .map((entry) => entry.slice(1).split(sep).join('/'))
+    .find((entry) =>
+      /^out\/main\/chunks\/deepseek-harness-llm-[^/]+\.js$/u.test(
+        entry
+      )
+    )
+  if (!harnessLlmChunk) {
+    throw new Error('DeepSeek Harness LLM chunk缺失')
+  }
+  const harnessLlmSource = extractAsarFile(
+    asarPath,
+    normalizeAsarEntry(harnessLlmChunk)
+  ).toString('utf8')
+  const requiredChunkNames = new Set([
+    ...[
+      ...harnessLlmSource.matchAll(
+        /import\(["']\.\/([^/"']+\.js)["']\)/gu
+      )
+    ].map((match) => match[1]),
+    ...[...entries]
+      .map((entry) => entry.slice(1).split(sep).join('/'))
+      .filter((entry) =>
+        /^out\/main\/chunks\/[^/]+\.js$/u.test(entry)
+      )
+      .map((entry) => entry.slice('out/main/chunks/'.length))
+  ])
+  if (requiredChunkNames.size === 0) {
+    throw new Error('DeepSeek Harness LLM lazy chunk closure缺失')
+  }
+  for (const chunkName of requiredChunkNames) {
+    const chunkPath = `out/main/chunks/${chunkName}`
+    const metadata = asarEntryMetadata(
+      asarPath,
+      entries,
+      chunkPath,
+      'DeepSeek Harness module chunk',
+      statAsarFile
+    )
+    if (!('unpacked' in metadata) || !metadata.unpacked) {
+      throw new Error(
+        `DeepSeek Harness module chunk未从 ASAR 解包：${chunkPath}`
+      )
+    }
+    assertFile(
+      join(unpackedRoot, ...chunkPath.split('/')),
+      'DeepSeek Harness 可执行 module chunk'
+    )
+  }
+  for (const [packageName, expectedVersion] of Object.entries(
+    harnessPackageVersions
+  )) {
+    const manifest = readJson(
+      `node_modules/${packageName}/package.json`,
+      `${packageName} 元数据`
+    )
+    if (manifest.version !== expectedVersion) {
+      throw new Error(
+        `${packageName} 版本错误：期望 ${expectedVersion}，实际 ${String(manifest.version)}`
+      )
+    }
+  }
+  const targetKoffiManifest = readJson(
+    `node_modules/${target.koffiPackage}/package.json`,
+    `${target.koffiPackage} 元数据`
+  )
+  if (targetKoffiManifest.version !== koffiVersion) {
+    throw new Error(
+      `${target.koffiPackage} 版本错误：期望 ${koffiVersion}，实际 ${String(targetKoffiManifest.version)}`
+    )
+  }
+
+  const ptyBinary = join(
+    unpackedRoot,
+    'node_modules',
+    'node-pty',
+    ...target.nodePtyBinary.split('/')
+  )
+  const koffiBinary = join(
+    unpackedRoot,
+    'node_modules',
+    ...target.koffiPackage.split('/'),
+    ...target.koffiBinary.split('/')
+  )
+  assertBinaryArchitecture(
+    ptyBinary,
+    options.arch,
+    'DeepSeek Harness node-pty'
+  )
+  const nodePtyMetadata = asarEntryMetadata(
+    asarPath,
+    entries,
+    `node_modules/node-pty/${target.nodePtyBinary}`,
+    'DeepSeek Harness node-pty 元数据',
+    statAsarFile
+  )
+  const koffiMetadata = asarEntryMetadata(
+    asarPath,
+    entries,
+    `node_modules/${target.koffiPackage}/${target.koffiBinary}`,
+    'DeepSeek Harness Koffi 元数据',
+    statAsarFile
+  )
+  for (const [metadata, description] of [
+    [nodePtyMetadata, 'DeepSeek Harness node-pty'],
+    [koffiMetadata, 'DeepSeek Harness Koffi']
+  ]) {
+    if (!('unpacked' in metadata) || !metadata.unpacked) {
+      throw new Error(`${description}未从 ASAR 解包`)
+    }
+  }
+  assertBinaryArchitecture(
+    koffiBinary,
+    options.arch,
+    'DeepSeek Harness Koffi'
+  )
+
+  if (options.platform === 'darwin') {
+    const helper = join(
+      unpackedRoot,
+      'node_modules',
+      'node-pty',
+      'prebuilds',
+      target.nodePtyDirectory,
+      'spawn-helper'
+    )
+    assertFile(helper, 'DeepSeek Harness node-pty spawn-helper')
+    if ((statSync(helper).mode & 0o111) === 0) {
+      throw new Error(
+        `DeepSeek Harness node-pty spawn-helper 不可执行：${helper}`
+      )
+    }
+  }
+
+  if (target.landlockPackage) {
+    const targetLandlockManifest = readJson(
+      `node_modules/${target.landlockPackage}/package.json`,
+      `${target.landlockPackage} 元数据`
+    )
+    if (
+      targetLandlockManifest.version !==
+      harnessPackageVersions[
+        '@deepseek-ai/node-addon-landlock-run'
+      ]
+    ) {
+      throw new Error(
+        `${target.landlockPackage} 版本错误：期望 ${harnessPackageVersions['@deepseek-ai/node-addon-landlock-run']}，实际 ${String(targetLandlockManifest.version)}`
+      )
+    }
+    const launcher = join(
+      unpackedRoot,
+      'node_modules',
+      ...target.landlockPackage.split('/'),
+      'bin',
+      'landlock-run'
+    )
+    assertBinaryArchitecture(
+      launcher,
+      options.arch,
+      'DeepSeek Harness Landlock launcher'
+    )
+    const launcherMetadata = asarEntryMetadata(
+      asarPath,
+      entries,
+      `node_modules/${target.landlockPackage}/bin/landlock-run`,
+      'DeepSeek Harness Landlock launcher 元数据',
+      statAsarFile
+    )
+    if (
+      !('unpacked' in launcherMetadata) ||
+      !launcherMetadata.unpacked
+    ) {
+      throw new Error(
+        'DeepSeek Harness Landlock launcher 未从 ASAR 解包'
+      )
+    }
+    if ((statSync(launcher).mode & 0o111) === 0) {
+      throw new Error(
+        `DeepSeek Harness Landlock launcher 不可执行：${launcher}`
+      )
+    }
+  }
+
+  if (options.platform === 'windows') {
+    assertAsarEntry(
+      entries,
+      'node_modules/@deepseek-ai/dsh-sandbox-windows-acl/lib/runner.js',
+      'DeepSeek Harness Windows ACL runner'
+    )
+    assertFile(
+      join(
+        unpackedRoot,
+        'node_modules',
+        '@deepseek-ai',
+        'dsh-sandbox-windows-acl',
+        'lib',
+        'runner.js'
+      ),
+      'DeepSeek Harness 可执行 Windows ACL runner'
+    )
+  }
+
+  for (const license of harnessLicenseFiles) {
+    assertFile(
+      join(resources, 'licenses', license),
+      'DeepSeek Harness 许可证'
+    )
+  }
+}
+
 function verifyUnpackedOutput(directory, options) {
   const definition = platformDefinitions[options.platform]
   const unpackedDirectory = findUnpackedDirectory(
@@ -387,6 +729,7 @@ function verifyUnpackedOutput(directory, options) {
     join(resources, 'runtimes', 'continue', 'dist', 'index.js'),
     'Continue Runtime'
   )
+  verifyHarnessPackage(resources, options)
   for (const [filePath, label] of [
     [applicationExecutable, '应用主程序'],
     [runtimeExecutable, 'OpenCode Runtime']
@@ -992,6 +1335,8 @@ module.exports = {
   parseArguments,
   platformDefinitions,
   replaceOutput,
+  verifyHarnessPackage,
+  verifyUnpackedOutput,
   verifyArtifacts,
   verifyArtifactSignature,
   verifyPortableZip,

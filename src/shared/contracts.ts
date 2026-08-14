@@ -234,7 +234,8 @@ export const runtimeProviderSchema = z.enum([
   'auto',
   'model',
   'opencode',
-  'continue'
+  'continue',
+  'deepseek-harness'
 ])
 
 export const toolApprovalPolicySchema = z.enum([
@@ -391,6 +392,26 @@ export const runtimeModelSourceSchema = z.discriminatedUnion('kind', [
     .strict()
 ])
 
+export function isDeepSeekHarnessModelProfile(
+  profile: Pick<
+    ModelConnectionSettings,
+    'baseUrl' | 'protocol' | 'authentication'
+  >
+): boolean {
+  if (
+    profile.protocol !== 'openai-chat-completions' ||
+    profile.authentication !== 'api-key'
+  ) {
+    return false
+  }
+  try {
+    return new URL(profile.baseUrl).hostname.toLowerCase() ===
+      'api.deepseek.com'
+  } catch {
+    return false
+  }
+}
+
 export const runtimeSettingsInputSchema = z
   .object({
     provider: runtimeProviderSchema,
@@ -440,6 +461,8 @@ export const runtimeSettingsInputSchema = z
     defaultModelProfileId: modelProfileIdSchema.optional(),
     opencodeModelSource: runtimeModelSourceSchema.optional(),
     continueModelSource: runtimeModelSourceSchema.optional(),
+    deepseekHarnessModelSource: runtimeModelSourceSchema
+      .default({ kind: 'platform' }),
     toolApproval: toolApprovalPolicySchema
   }).strict()
   .superRefine((settings, context) => {
@@ -505,7 +528,8 @@ export const runtimeSettingsInputSchema = z
       }
       for (const [key, source] of [
         ['opencodeModelSource', settings.opencodeModelSource],
-        ['continueModelSource', settings.continueModelSource]
+        ['continueModelSource', settings.continueModelSource],
+        ['deepseekHarnessModelSource', settings.deepseekHarnessModelSource]
       ] as const) {
         if (source?.kind === 'profile' && !ids.has(source.profileId)) {
           context.addIssue({
@@ -549,6 +573,24 @@ export const runtimeSettingsInputSchema = z
           path: ['continueModelSource'],
           message:
             'Continue 独立模型连接仅支持文本对话协议，不支持图像生成协议'
+        })
+      }
+      const deepseekHarnessSource = settings.deepseekHarnessModelSource
+      const deepseekHarnessProfile =
+        deepseekHarnessSource?.kind === 'profile'
+          ? settings.modelProfiles.find(
+              (profile) => profile.id === deepseekHarnessSource.profileId
+            )
+          : undefined
+      if (
+        deepseekHarnessProfile &&
+        !isDeepSeekHarnessModelProfile(deepseekHarnessProfile)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['deepseekHarnessModelSource'],
+          message:
+            'DeepSeek Harness 独立模型连接仅支持 api.deepseek.com 的 OpenAI Chat Completions 协议'
         })
       }
     }
@@ -615,6 +657,7 @@ export type ConfiguredRuntimeSettings = {
   workspacePath: string
   opencodeModelSource: RuntimeModelSource
   continueModelSource: RuntimeModelSource
+  deepseekHarnessModelSource?: RuntimeModelSource
 }
 
 export type RuntimeSettings = {
@@ -659,6 +702,7 @@ export type RuntimeSettings = {
   defaultModelProfileId: string
   opencodeModelSource: RuntimeModelSource
   continueModelSource: RuntimeModelSource
+  deepseekHarnessModelSource?: RuntimeModelSource
   secureStorageAvailable: boolean
   toolApproval: RuntimeSettingsInput['toolApproval']
   configured?: ConfiguredRuntimeSettings
@@ -716,7 +760,12 @@ export type WindowCaptureOption = {
 }
 
 export type AgentRuntimeStatus = {
-  id: 'setup' | 'model' | 'opencode' | 'continue'
+  id:
+    | 'setup'
+    | 'model'
+    | 'opencode'
+    | 'continue'
+    | 'deepseek-harness'
   label: string
   available: boolean
   detail: string
@@ -729,6 +778,7 @@ export type RuntimeBinaryDetection =
       available: true
       path: string
       version?: string
+      source?: 'bundled' | 'configured' | 'automatic'
       detail: string
     }
   | {
@@ -741,6 +791,7 @@ export type RuntimeBinaryDetection =
 export type AgentRuntimeDetection = {
   opencode: RuntimeBinaryDetection
   continue: RuntimeBinaryDetection
+  deepseekHarness: RuntimeBinaryDetection
 }
 
 export const approvalDecisionSchema = z.enum([

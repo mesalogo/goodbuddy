@@ -295,6 +295,7 @@ function isAgentRuntime(
   runtime: AgentRuntimeStatus | undefined
 ): boolean {
   return runtime?.id === 'opencode' || runtime?.id === 'continue'
+    || runtime?.id === 'deepseek-harness'
 }
 
 function supportsSubagentSmartRouting(
@@ -899,6 +900,13 @@ function getRuntimeSelectionLabel(
         ? `Continue · ${labels.modelUnavailable}`
         : 'Continue'
   }
+  if (selection.provider === 'deepseek-harness') {
+    return profile
+      ? `DeepSeek Harness · ${profile.name}`
+      : requestedProfileMissing
+        ? `DeepSeek Harness · ${labels.modelUnavailable}`
+        : 'DeepSeek Harness'
+  }
   return status
     ? `${labels.automatic} · ${status.label}`
     : labels.automaticSelection
@@ -906,7 +914,7 @@ function getRuntimeSelectionLabel(
 
 function getConfiguredAgentRuntimeSource(
   settings: RuntimeSettings,
-  provider: 'opencode' | 'continue',
+  provider: 'opencode' | 'continue' | 'deepseek-harness',
   labels: {
     modelUnavailable: string
     selectModel: string
@@ -921,7 +929,12 @@ function getConfiguredAgentRuntimeSource(
           (candidate) => candidate.id === selection.profileId
         )
       : undefined
-  const runtimeLabel = provider === 'opencode' ? 'OpenCode' : 'Continue'
+  const runtimeLabel =
+    provider === 'opencode'
+      ? 'OpenCode'
+      : provider === 'continue'
+        ? 'Continue'
+        : 'DeepSeek Harness'
   if ('profileId' in selection) {
     return {
       label: `${runtimeLabel} · ${profile?.name ?? labels.modelUnavailable}`,
@@ -1801,6 +1814,12 @@ function App(): React.JSX.Element {
   const continueMenuSelection = runtimeSettings
     ? getRuntimeSelectionForProvider('continue', runtimeSettings)
     : undefined
+  const deepseekHarnessMenuSelection = runtimeSettings
+    ? getRuntimeSelectionForProvider(
+        'deepseek-harness',
+        runtimeSettings
+      )
+    : undefined
   const openCodeMenuSource = runtimeSettings
     ? getConfiguredAgentRuntimeSource(
         runtimeSettings,
@@ -1812,6 +1831,13 @@ function App(): React.JSX.Element {
     ? getConfiguredAgentRuntimeSource(
         runtimeSettings,
         'continue',
+        configuredRuntimeLabels
+      )
+    : undefined
+  const deepseekHarnessMenuSource = runtimeSettings
+    ? getConfiguredAgentRuntimeSource(
+        runtimeSettings,
+        'deepseek-harness',
         configuredRuntimeLabels
       )
     : undefined
@@ -6392,6 +6418,46 @@ function App(): React.JSX.Element {
                           <span>{continueMenuSource.label}</span>
                           <small>{continueMenuSource.detail}</small>
                         </button>
+                        )}
+                        <div
+                          className="runtime-picker__divider"
+                          role="separator"
+                        />
+                        <strong role="presentation">
+                          {t('runtime.deepseekHarnessGroup')}
+                        </strong>
+                        {deepseekHarnessMenuSelection &&
+                          deepseekHarnessMenuSource && (
+                          <button
+                            aria-checked={
+                              activeRuntimeSelectionKey ===
+                              agentRuntimeSelectionKey(
+                                deepseekHarnessMenuSelection
+                              )
+                            }
+                            onClick={() =>
+                              void switchRuntime(
+                                deepseekHarnessMenuSelection
+                              )
+                            }
+                            role="menuitemradio"
+                            tabIndex={
+                              activeRuntimeSelectionKey ===
+                              agentRuntimeSelectionKey(
+                                deepseekHarnessMenuSelection
+                              )
+                                ? 0
+                                : -1
+                            }
+                            type="button"
+                          >
+                            <span>
+                              {deepseekHarnessMenuSource.label}
+                            </span>
+                            <small>
+                              {deepseekHarnessMenuSource.detail}
+                            </small>
+                          </button>
                         )}
                         <div
                           className="runtime-picker__divider"

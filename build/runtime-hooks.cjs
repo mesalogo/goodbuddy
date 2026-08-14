@@ -139,6 +139,24 @@ module.exports = async function prepareBundledRuntimes(context) {
     architecture === 'x64' ? `${architecture}-baseline` : architecture
   const packageName = `opencode-${packagePlatform}-${suffix}`
   const projectDir = context.packager.projectDir
+  const projectPackage = JSON.parse(
+    await readFile(join(projectDir, 'package.json'), 'utf8')
+  )
+  await writeFile(
+    join(projectDir, 'out', 'main', 'package.json'),
+    `${JSON.stringify(
+      {
+        name: '@deepseek-ai/dsh-llm',
+        version:
+          projectPackage.dependencies['@deepseek-ai/dsh-llm'],
+        private: true,
+        type: 'module'
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
   const integrity = await lockedIntegrity(projectDir, packageName)
   const targetDirectory = join(
     projectDir,

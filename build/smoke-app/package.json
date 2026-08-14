@@ -1,0 +1,5 @@
+{
+  "name": "goodbuddy-harness-utility-smoke",
+  "private": true,
+  "main": "deepseek-harness-utility-smoke.cjs"
+}

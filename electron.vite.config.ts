@@ -4,14 +4,84 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: [
+          '@agentclientprotocol/sdk',
+          '@deepseek-ai/cordis',
+          '@deepseek-ai/dsh-agent',
+          '@deepseek-ai/dsh-agent-loop',
+          '@deepseek-ai/dsh-bash-sandbox',
+          '@deepseek-ai/dsh-credentials',
+          '@deepseek-ai/dsh-fs-sandbox',
+          '@deepseek-ai/dsh-llm',
+          '@deepseek-ai/dsh-llm-pi-ai',
+          '@deepseek-ai/dsh-pwsh-sandbox',
+          '@deepseek-ai/dsh-sandbox',
+          '@deepseek-ai/dsh-sandbox-local',
+          '@deepseek-ai/dsh-sandbox-policy',
+          '@deepseek-ai/dsh-session',
+          '@deepseek-ai/dsh-shell-env',
+          '@deepseek-ai/dsh-skill',
+          '@deepseek-ai/dsh-subprocess-local',
+          '@deepseek-ai/dsh-system-prompt',
+          '@deepseek-ai/dsh-token-meter',
+          '@deepseek-ai/dsh-tool-bash',
+          '@deepseek-ai/dsh-tool-fs',
+          '@deepseek-ai/dsh-tool-pwsh',
+          '@deepseek-ai/dsh-tool-skill',
+          '@deepseek-ai/dsh-tools',
+          '@deepseek-ai/dsh-user-approval',
+          'yaml',
+          'zod'
+        ]
+      })
+    ],
     build: {
       rollupOptions: {
         input: {
           index: resolve('src/main/index.ts'),
           'wechat-sidecar': resolve(
             'src/main/channels/wechat-sidecar.ts'
+          ),
+          'deepseek-harness-host-bootstrap': resolve(
+            'src/main/deepseek-harness-host-bootstrap.ts'
           )
+        },
+        external: [
+          'node-pty',
+          'koffi',
+          /^@koromix\/koffi-/u,
+          '@deepseek-ai/dsh-sandbox-windows-acl/runner',
+          /^@deepseek-ai\/node-addon-landlock-run-/u
+        ],
+        output: {
+          entryFileNames(chunk) {
+            return chunk.name === 'deepseek-harness-host-bootstrap'
+              ? 'deepseek-harness-host-bootstrap.js'
+              : '[name].js'
+          },
+          chunkFileNames(chunk) {
+            const moduleIds = chunk.moduleIds.join('\n')
+            return moduleIds.includes('deepseek-harness') ||
+              moduleIds.includes('deepseek-harness-utility')
+              ? 'chunks/deepseek-harness-[name]-[hash].js'
+              : 'chunks/[name]-[hash].js'
+          },
+          manualChunks(id) {
+            if (
+              id.includes('@deepseek-ai/dsh-llm') ||
+              id.includes('@deepseek-ai/dsh-credentials') ||
+              id.includes('@deepseek-ai/dsh-settings') ||
+              id.includes('@deepseek-ai/dsh-timeout') ||
+              id.includes('@deepseek-ai/dsh-token-meter') ||
+              id.includes('@deepseek-ai/dsh-llm-pi-ai') ||
+              id.includes('@mariozechner/pi-ai')
+            ) {
+              return 'deepseek-harness-llm'
+            }
+            return undefined
+          }
         }
       }
     }

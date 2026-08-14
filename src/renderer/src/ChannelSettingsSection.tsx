@@ -196,7 +196,7 @@ function usableChannelModelProfiles(
 }
 
 function configuredRuntimeSelection(
-  provider: 'opencode' | 'continue'
+  provider: 'opencode' | 'continue' | 'deepseek-harness'
 ): AgentRuntimeSelection {
   return { provider }
 }
@@ -231,7 +231,11 @@ function runtimeSelectionDescription(
     return t('channels.project.automaticDescription')
   }
   const runtimeLabel =
-    selection.provider === 'opencode' ? 'OpenCode' : 'Continue'
+    selection.provider === 'opencode'
+      ? 'OpenCode'
+      : selection.provider === 'continue'
+        ? 'Continue'
+        : 'DeepSeek Harness'
   return t('channels.project.runtimeDescription', {
     runtime: runtimeLabel
   })
@@ -255,6 +259,9 @@ function ChannelProjectControls({
   const continueSelection = configuredRuntimeSelection(
     'continue'
   )
+  const deepseekHarnessSelection = configuredRuntimeSelection(
+    'deepseek-harness'
+  )
   const directProfiles = usableChannelModelProfiles(runtimeSettings)
   const selectedDirectProfileId =
     draft.runtimeSelection.provider === 'model'
@@ -274,7 +281,8 @@ function ChannelProjectControls({
         profileId: profile.id
       })),
     openCodeSelection,
-    continueSelection
+    continueSelection,
+    deepseekHarnessSelection
   ]
   const selectionByKey = new Map(
     selections.map((selection) => [
@@ -376,6 +384,11 @@ function ChannelProjectControls({
             </option>
             <option value={agentRuntimeSelectionKey(continueSelection)}>
               Continue
+            </option>
+            <option
+              value={agentRuntimeSelectionKey(deepseekHarnessSelection)}
+            >
+              {t('channels.project.deepseekHarnessOption')}
             </option>
           </optgroup>
         </select>

@@ -1,6 +1,10 @@
 import { ModelAgentRuntime } from './model-runtime'
 import { ContinueAgentRuntime } from './continue-runtime'
 import { OpenCodeRuntime } from './opencode-runtime'
+import {
+  DeepSeekHarnessRuntime,
+  type DeepSeekHarnessRuntimeOptions
+} from './deepseek-harness-runtime'
 import type { AgentRuntime } from './runtime'
 import { UnconfiguredAgentRuntime } from './unconfigured-runtime'
 import type {
@@ -9,6 +13,7 @@ import type {
 } from '../runtime-settings-store'
 import {
   defaultRuntimeSettings,
+  isDeepSeekHarnessModelProfile,
   isAgentRuntimeModelProtocol
 } from '../../shared/contracts'
 import type {
@@ -21,6 +26,7 @@ import { resolveRuntimeSandbox } from './runtime-sandbox'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { ModelToolProviderLike } from './model-tool-provider'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import { ModelToolProvider } from './model-tool-provider'
 
 const noSubagentTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -41,6 +47,7 @@ export type AgentCapabilityContext = {
   continueHostCacheRoot?: string
   bundledRuntimePaths?: BundledRuntimePaths
   continueHostLauncher?: ContinueHostLauncher
+  deepseekHarnessLauncher?: DeepSeekHarnessRuntimeOptions['launch']
   browserService?: BrowserToolService
   knowledgeGateway?: KnowledgeMcpGateway
   webSearchEnabled?: boolean
@@ -101,6 +108,43 @@ export function createAgentRuntime(
   const sandboxMode =
     settings?.runtimeSandboxMode ??
     defaultRuntimeSettings.runtimeSandboxMode
+
+  if (provider === 'deepseek-harness') {
+    const profile = settings?.deepseekHarnessModelProfile
+    if (!profile || !isDeepSeekHarnessModelProfile(profile)) {
+      throw new Error(
+        'DeepSeek Harness 需要 api.deepseek.com 的 OpenAI Chat Completions 模型连接'
+      )
+    }
+    if (!profile.apiKey) {
+      throw new Error('DeepSeek Harness 模型连接未配置 API Key')
+    }
+    if (!capabilities.deepseekHarnessLauncher) {
+      throw new Error('DeepSeek Harness 受控 Host 启动器不可用')
+    }
+    if (sandboxMode === 'off') {
+      throw new Error('DeepSeek Harness Execute 需要启用 Runtime 沙箱')
+    }
+    return new DeepSeekHarnessRuntime({
+      defaultWorkspace: workspace,
+      baseUrl: profile.baseUrl,
+      model: profile.modelName,
+      launch: capabilities.deepseekHarnessLauncher,
+      credentialRefs: {
+        GOODBUDDY_DEEPSEEK_API_KEY: profile.apiKey
+      },
+      requiredSandboxEnforcement:
+        sandboxMode === 'strict' ? 'full' : 'partial',
+      skillPackages: capabilities.skillPackages,
+      toolProvider: new ModelToolProvider(
+        workspace,
+        capabilities.mcpServers,
+        undefined,
+        capabilities.knowledgeGateway,
+        false
+      )
+    })
+  }
 
   if (provider === 'continue') {
     if (

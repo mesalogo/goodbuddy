@@ -4903,6 +4903,37 @@ button > svg {
   font-weight: 650;
 }
 
+.runtime-overview {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.runtime-overview__details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.runtime-overview__details dt {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.runtime-overview__details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.runtime-overview__path {
+  word-break: break-word;
+}
+
+.runtime-overview > p {
+  margin: 0;
+}
+
 .model-service-form {
   display: grid;
   gap: var(--space-3);

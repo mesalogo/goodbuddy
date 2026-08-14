@@ -179,3 +179,13 @@ git push github "$tag"
 6. OpenCode 与 Continue 的权限边界、取消和超时。
 7. 智能心跳的创建、暂停、恢复和历史记录。
 8. 应用退出后无残留 Runtime 子进程。
+
+DeepSeek Harness 的 Electron Utility Host 可单独执行无模型、无凭据冒烟测试：
+
+```bash
+npm run smoke:deepseek-harness
+```
+
+该命令先生成 production bundle，再从 CommonJS Electron 主入口启动实际
+`utilityProcess`，等待固定 Host 完成沙箱探测与内部 ready 握手。它不会发起
+模型请求，也不会读取或传递 API Key。

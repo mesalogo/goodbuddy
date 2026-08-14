@@ -36,7 +36,8 @@ describe('runtime discovery', () => {
 
     expect(detection).toMatchObject({
       available: true,
-      path: await realpath(process.execPath)
+      path: await realpath(process.execPath),
+      source: 'configured'
     })
     expect(detection.version).toMatch(/^\d+\.\d+\.\d+/u)
   })
@@ -69,7 +70,8 @@ describe('runtime discovery', () => {
 
     expect(detection).toMatchObject({
       available: true,
-      path: await realpath(process.execPath)
+      path: await realpath(process.execPath),
+      source: 'automatic'
     })
   })
 
@@ -83,7 +85,8 @@ describe('runtime discovery', () => {
 
     expect(detection).toMatchObject({
       available: true,
-      path: await realpath(process.execPath)
+      path: await realpath(process.execPath),
+      source: 'configured'
     })
     expect(detection.detail).not.toContain('内置')
   })
@@ -101,7 +104,8 @@ describe('runtime discovery', () => {
 
     expect(detection).toMatchObject({
       available: true,
-      path: await realpath(process.execPath)
+      path: await realpath(process.execPath),
+      source: 'bundled'
     })
     expect(detection.detail).toContain('内置')
   })
@@ -115,15 +119,57 @@ describe('runtime discovery', () => {
       binaryPath: '',
       bundledPath: bundledScript,
       bundledValidation: 'canonical-file',
+      bundledVersion: '1.5.47',
       binaryNames: ['goodbuddy-runtime-that-does-not-exist'],
       label: 'Script Runtime'
     })
 
     expect(detection).toMatchObject({
       available: true,
-      path: await realpath(bundledScript)
+      path: await realpath(bundledScript),
+      version: '1.5.47',
+      source: 'bundled'
     })
-    expect(detection.detail).toBe('内置 Script Runtime 已就绪')
+    expect(detection.detail).toBe(
+      '内置 Script Runtime 1.5.47 已就绪'
+    )
+  })
+
+  it('accepts a controlled bundled harness when no custom host is configured', async () => {
+    const bundledScript = fileURLToPath(import.meta.url)
+    const detection = await detectRuntimeBinary({
+      binaryPath: '',
+      bundledPath: bundledScript,
+      bundledValidation: 'canonical-file',
+      bundledVersion: '0.1.0-rc.6',
+      binaryNames: [],
+      label: 'GoodBuddy DeepSeek Harness Host'
+    })
+
+    expect(detection).toMatchObject({
+      available: true,
+      path: await realpath(bundledScript),
+      version: '0.1.0-rc.6',
+      source: 'bundled'
+    })
+    expect(detection.detail).toContain('内置')
+  })
+
+  it('does not discover arbitrary DeepSeek Harness hosts from PATH', async () => {
+    process.env.PATH = dirname(process.execPath)
+    process.env.Path = dirname(process.execPath)
+
+    await expect(
+      detectRuntimeBinary({
+        binaryPath: '',
+        allowAutomaticDiscovery: false,
+        binaryNames: [basename(process.execPath)],
+        label: 'GoodBuddy DeepSeek Harness Host'
+      })
+    ).resolves.toEqual({
+      available: false,
+      detail: expect.stringContaining('未自动检测到')
+    })
   })
 
   it('returns both runtime detections without exposing PATH contents', async () => {
@@ -144,6 +190,7 @@ describe('runtime discovery', () => {
       available: true,
       path: await realpath(process.execPath)
     })
+    expect(result.deepseekHarness.available).toBe(false)
     expect(JSON.stringify(result)).not.toContain(privatePathValue)
   })
 })

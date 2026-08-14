@@ -63,6 +63,13 @@ describe('bundled skills', () => {
     expect(snapshot.skills.map((skill) => skill.id)).toContain(
       'product-marketing'
     )
+    expect(snapshot.skills).toContainEqual(
+      expect.objectContaining({
+        id: 'web-3d-game',
+        name: 'Web 3D Game',
+        assignments: expect.arrayContaining(['deepseek-harness'])
+      })
+    )
   })
 
   it('injects every enabled bundled skill with its resolved directory', async () => {
@@ -75,5 +82,20 @@ describe('bundled skills', () => {
     for (const skill of snapshot.skills) {
       expect(instructions).toContain(join(builtinSkillsRoot, skill.id))
     }
+  })
+
+  it('exposes the 3D game Skill as a native Harness package', async () => {
+    const service = await createService()
+
+    await expect(
+      service.getRuntimeSkillContext('deepseek-harness')
+    ).resolves.toMatchObject({
+      packages: expect.arrayContaining([
+        {
+          id: 'web-3d-game',
+          directory: join(builtinSkillsRoot, 'web-3d-game')
+        }
+      ])
+    })
   })
 })

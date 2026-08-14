@@ -154,7 +154,14 @@ export function SkillsSettingsSection(): React.JSX.Element {
             </div>
             <div className="runtime-assignments">
               <small>{t('skills.assignedTo')}</small>
-              {(['model', 'opencode', 'continue'] as RuntimeTarget[]).map(
+              {(
+                [
+                  'model',
+                  'opencode',
+                  'continue',
+                  'deepseek-harness'
+                ] as RuntimeTarget[]
+              ).map(
                 (target) => (
                   <label key={target}>
                     <input

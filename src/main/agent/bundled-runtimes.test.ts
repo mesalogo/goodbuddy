@@ -28,6 +28,13 @@ describe('bundled runtime paths', () => {
         'cli',
         'dist',
         'cn.js'
+      ),
+      deepseekHarness: join(
+        'workspace',
+        'app',
+        'out',
+        'main',
+        'deepseek-harness-host-bootstrap.js'
       )
     })
   })
@@ -55,6 +62,14 @@ describe('bundled runtime paths', () => {
         'continue',
         'dist',
         'cn.js'
+      ),
+      deepseekHarness: join(
+        'installed',
+        'resources',
+        'app.asar.unpacked',
+        'out',
+        'main',
+        'deepseek-harness-host-bootstrap.js'
       )
     })
   })

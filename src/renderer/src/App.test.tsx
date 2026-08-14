@@ -243,6 +243,11 @@ const api: DesktopApi = {
       continue: {
         available: false,
         detail: '未检测到 Continue'
+      },
+      deepseekHarness: {
+        available: true,
+        path: 'bundled://deepseek-harness',
+        detail: 'Bundled Harness Adapter ready'
       }
     })),
     selectRuntimeFile: vi.fn(async () => undefined),
@@ -3076,6 +3081,11 @@ describe('App', () => {
         name: /^Continue · 默认模型.*sonnet-5$/u
       })
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitemradio', {
+        name: /^DeepSeek Harness · 自身配置/u
+      })
+    ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('menuitemradio', {
         name: /^默认模型.*sonnet-5$/u
@@ -3190,12 +3200,16 @@ describe('App', () => {
     const continueModel = screen.getByRole('menuitemradio', {
       name: /^Continue · 默认模型.*sonnet-5$/u
     })
+    const deepseekHarness = screen.getByRole('menuitemradio', {
+      name: /^DeepSeek Harness · 自身配置/u
+    })
     expect(directModel).toBeEnabled()
     expect(secondDirectModel).toBeEnabled()
     expect(openCodeModel).toBeEnabled()
     expect(continueModel).toBeEnabled()
-    expect(screen.getAllByRole('menuitemradio')).toHaveLength(4)
-    expect(within(runtimeMenu).getAllByRole('separator')).toHaveLength(3)
+    expect(deepseekHarness).toBeEnabled()
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(5)
+    expect(within(runtimeMenu).getAllByRole('separator')).toHaveLength(4)
     expect(within(runtimeMenu).queryByRole('menu')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('menuitemradio', {

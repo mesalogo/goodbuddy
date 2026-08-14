@@ -246,7 +246,12 @@ describe('CapabilityService', () => {
           id: 'document-writing',
           source: 'builtin',
           enabled: true,
-          assignments: ['model', 'opencode', 'continue']
+          assignments: [
+            'model',
+            'opencode',
+            'continue',
+            'deepseek-harness'
+          ]
         }
       ]
     })
@@ -625,9 +630,31 @@ describe('CapabilityService', () => {
     })
   })
 
-  it('rejects MCP assignments to Agent Runtimes', async () => {
+  it('allows Harness MCP assignment and rejects unsupported Agent Runtimes', async () => {
     const { service } = await createService()
 
+    await expect(
+      service.saveMcpServer(undefined, {
+        name: 'Harness MCP',
+        description: '',
+        enabled: true,
+        allowDynamicTools: false,
+        assignments: ['deepseek-harness'],
+        secret: { action: 'keep' },
+        transport: 'stdio',
+        command: 'node',
+        args: ['server.js']
+      })
+    ).resolves.toMatchObject({
+      mcpServers: [
+        expect.objectContaining({
+          assignments: ['deepseek-harness']
+        })
+      ]
+    })
+    await expect(
+      service.getResolvedMcpServers('deepseek-harness')
+    ).resolves.toHaveLength(1)
     await expect(
       service.saveMcpServer(undefined, {
         name: 'Agent MCP',
@@ -640,7 +667,7 @@ describe('CapabilityService', () => {
         command: 'node',
         args: ['server.js']
       })
-    ).rejects.toThrow('只能分配给直连模型')
+    ).rejects.toThrow('只能分配给直连模型或 DeepSeek Harness')
   })
 
   it('migrates legacy OpenCode MCP assignments to the direct model', async () => {

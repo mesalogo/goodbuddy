@@ -11,6 +11,7 @@ import {
   defaultRuntimeSettings,
   imageGenerationQualitySchema,
   isAgentRuntimeModelProtocol,
+  isDeepSeekHarnessModelProfile,
   modelAuthenticationSchema,
   modelProtocolSchema,
   runtimeModelSourceSchema,
@@ -164,7 +165,7 @@ const version13StoredSettingsSchema = version12StoredSettingsSchema
       .max(20)
   })
 
-const storedSettingsSchema = version13StoredSettingsSchema
+const version14StoredSettingsSchema = version13StoredSettingsSchema
   .omit({ version: true })
   .extend({
     version: z.literal(14),
@@ -185,7 +186,24 @@ const storedSettingsSchema = version13StoredSettingsSchema
     knowledgeRerankCredential: credentialSchema
   })
 
+const version15StoredSettingsSchema = version14StoredSettingsSchema
+  .omit({ version: true })
+  .extend({
+    version: z.literal(15),
+    deepseekHarnessModelSource: runtimeModelSourceSchema,
+    deepseekHarnessBinaryPath: runtimePathSchema.default('')
+  })
+
+const storedSettingsSchema = version15StoredSettingsSchema
+  .omit({ version: true, deepseekHarnessBinaryPath: true })
+  .extend({
+    version: z.literal(16)
+  })
+
 type StoredSettings = z.infer<typeof storedSettingsSchema>
+type Version15StoredSettings = z.infer<
+  typeof version15StoredSettingsSchema
+>
 type Version10StoredSettings = z.infer<
   typeof version10StoredSettingsSchema
 >
@@ -197,6 +215,9 @@ type Version12StoredSettings = z.infer<
 >
 type Version13StoredSettings = z.infer<
   typeof version13StoredSettingsSchema
+>
+type Version14StoredSettings = z.infer<
+  typeof version14StoredSettingsSchema
 >
 
 const version3StoredSettingsSchema = version4StoredSettingsSchema
@@ -242,6 +263,7 @@ const embeddingCredentialPayloadSchema = z.object({
 })
 
 const rerankCredentialPayloadSchema = embeddingCredentialPayloadSchema
+const platformDeepSeekProfileId = 'goodbuddy-platform-deepseek'
 
 export type CredentialCipher = SettingsCredentialCipher
 
@@ -258,6 +280,7 @@ export type ResolvedRuntimeSettings = {
   defaultModelProfileId: string
   opencodeModelProfile?: ResolvedModelProfile
   continueModelProfile?: ResolvedModelProfile
+  deepseekHarnessModelProfile?: ResolvedModelProfile
   opencodeBaseUrl: string
   opencodeEmbedded: boolean
   opencodeBinaryPath: string
@@ -297,7 +320,7 @@ export type ResolvedModelProfile = {
 }
 
 const defaultSettings: StoredSettings = {
-  version: 14,
+  version: 16,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -328,6 +351,7 @@ const defaultSettings: StoredSettings = {
   continueBinaryPath: defaultRuntimeSettings.continueBinaryPath,
   continueConfigPath: defaultRuntimeSettings.continueConfigPath,
   continueMode: defaultRuntimeSettings.continueMode,
+  deepseekHarnessModelSource: { kind: 'platform' },
   runtimeSandboxMode: defaultRuntimeSettings.runtimeSandboxMode,
   subagentSmartRoutingEnabled:
     defaultRuntimeSettings.subagentSmartRoutingEnabled,
@@ -411,7 +435,7 @@ function migrateVersion12(
 function migrateVersion13(
   settings: Version13StoredSettings
 ): StoredSettings {
-  return {
+  return migrateVersion14({
     ...settings,
     version: 14,
     knowledgeRerankEnabled:
@@ -421,6 +445,30 @@ function migrateVersion13(
     knowledgeRerankModel:
       defaultRuntimeSettings.knowledgeRerankModel,
     knowledgeRerankCredential: undefined
+  })
+}
+
+function migrateVersion14(
+  settings: Version14StoredSettings
+): StoredSettings {
+  return {
+    ...settings,
+    version: 16,
+    deepseekHarnessModelSource: { kind: 'platform' }
+  }
+}
+
+function migrateVersion15(
+  settings: Version15StoredSettings
+): StoredSettings {
+  const {
+    deepseekHarnessBinaryPath: _obsolete,
+    ...current
+  } = settings
+  void _obsolete
+  return {
+    ...current,
+    version: 16
   }
 }
 
@@ -483,6 +531,19 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
       ? { kind: 'profile', profileId: fallbackProfileId }
       : { kind: 'platform' }
   }
+  const normalizeDeepSeekHarnessSource = (
+    source: RuntimeSettings['deepseekHarnessModelSource']
+  ): NonNullable<RuntimeSettings['deepseekHarnessModelSource']> => {
+    if (!source || source.kind === 'platform') {
+      return { kind: 'platform' }
+    }
+    const profile = modelProfiles.find(
+      (candidate) => candidate.id === source.profileId
+    )
+    return profile && isDeepSeekHarnessModelProfile(profile)
+      ? source
+      : { kind: 'platform' }
+  }
   const opencodeBaseUrl = settings.opencodeBaseUrl.trim()
   if (opencodeBaseUrl) {
     const url = new URL(opencodeBaseUrl)
@@ -507,6 +568,9 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
       : normalizeSource(settings.opencodeModelSource),
     continueModelSource: normalizeSource(
       settings.continueModelSource
+    ),
+    deepseekHarnessModelSource: normalizeDeepSeekHarnessSource(
+      settings.deepseekHarnessModelSource
     ),
     opencodeBaseUrl,
     opencodeEmbedded: !opencodeBaseUrl
@@ -683,7 +747,7 @@ export class RuntimeSettingsStore {
       const parsed: unknown = JSON.parse(contents)
       assertSupportedSettingsVersion(
         parsed,
-        14,
+        16,
         (version) =>
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${version}，请升级应用后重试`
       )
@@ -691,110 +755,122 @@ export class RuntimeSettingsStore {
       if (current.success) {
         this.settings = current.data
       } else {
-        const version13 =
-          version13StoredSettingsSchema.safeParse(parsed)
-        if (version13.success) {
-          this.settings = migrateVersion13(version13.data)
+        const version15 =
+          version15StoredSettingsSchema.safeParse(parsed)
+        if (version15.success) {
+          this.settings = migrateVersion15(version15.data)
         } else {
-          const version12 =
-            version12StoredSettingsSchema.safeParse(parsed)
-          if (version12.success) {
-            this.settings = migrateVersion12(version12.data)
+          const version14 =
+            version14StoredSettingsSchema.safeParse(parsed)
+          if (version14.success) {
+            this.settings = migrateVersion14(version14.data)
           } else {
-            const version11 =
-              version11StoredSettingsSchema.safeParse(parsed)
-            if (version11.success) {
-              this.settings = migrateVersion11(version11.data)
+            const version13 =
+              version13StoredSettingsSchema.safeParse(parsed)
+            if (version13.success) {
+              this.settings = migrateVersion13(version13.data)
             } else {
-              const version10 =
-                version10StoredSettingsSchema.safeParse(parsed)
-              if (version10.success) {
-                this.settings = migrateVersion10(version10.data)
+              const version12 =
+                version12StoredSettingsSchema.safeParse(parsed)
+              if (version12.success) {
+                this.settings = migrateVersion12(version12.data)
               } else {
-                const version9 =
-                  version9StoredSettingsSchema.safeParse(parsed)
-                if (version9.success) {
-                  this.settings = migrateVersion9(version9.data)
+                const version11 =
+                  version11StoredSettingsSchema.safeParse(parsed)
+                if (version11.success) {
+                  this.settings = migrateVersion11(version11.data)
                 } else {
-                  const version8 =
-                    version8StoredSettingsSchema.safeParse(parsed)
-                  if (version8.success) {
-                    this.settings = migrateVersion8(version8.data)
+                  const version10 =
+                    version10StoredSettingsSchema.safeParse(parsed)
+                  if (version10.success) {
+                    this.settings = migrateVersion10(version10.data)
                   } else {
-                    const version7 =
-                      version7StoredSettingsSchema.safeParse(parsed)
-                    if (version7.success) {
-                      this.settings = migrateVersion7(version7.data)
+                    const version9 =
+                      version9StoredSettingsSchema.safeParse(parsed)
+                    if (version9.success) {
+                      this.settings = migrateVersion9(version9.data)
                     } else {
-                      const version6 =
-                        version6StoredSettingsSchema.safeParse(parsed)
-                      if (version6.success) {
-                        this.settings = migrateVersion6(version6.data)
+                      const version8 =
+                        version8StoredSettingsSchema.safeParse(parsed)
+                      if (version8.success) {
+                        this.settings = migrateVersion8(version8.data)
                       } else {
-                        const version5 =
-                          version5StoredSettingsSchema.safeParse(parsed)
-                        if (version5.success) {
-                          this.settings = migrateVersion5(version5.data)
+                        const version7 =
+                          version7StoredSettingsSchema.safeParse(parsed)
+                        if (version7.success) {
+                          this.settings = migrateVersion7(version7.data)
                         } else {
-                          const version4 =
-                            version4StoredSettingsSchema.safeParse(parsed)
-                          if (version4.success) {
-                            this.settings = migrateVersion4(version4.data)
+                          const version6 =
+                            version6StoredSettingsSchema.safeParse(parsed)
+                          if (version6.success) {
+                            this.settings = migrateVersion6(version6.data)
                           } else {
-                            const version3 =
-                              version3StoredSettingsSchema.safeParse(parsed)
-                            if (version3.success) {
-                              this.settings = migrateVersion4({
-                                ...version3.data,
-                                version: 4,
-                                continueMode: 'chat'
-                              })
+                            const version5 =
+                              version5StoredSettingsSchema.safeParse(parsed)
+                            if (version5.success) {
+                              this.settings = migrateVersion5(version5.data)
                             } else {
-                              const version2 =
-                                version2StoredSettingsSchema.safeParse(parsed)
-                              if (version2.success) {
-                                this.settings = migrateVersion4({
-                                  version: 4,
-                                  provider: version2.data.provider,
-                                  modelBaseUrl: version2.data.modelBaseUrl,
-                                  modelName: version2.data.modelName,
-                                  opencodeBaseUrl: version2.data.opencodeBaseUrl,
-                                  opencodeEmbedded: version2.data.opencodeEmbedded,
-                                  opencodeBinaryPath: '',
-                                  opencodeConfigPath: '',
-                                  continueBinaryPath: migrateContinueCommand(
-                                    version2.data.continueCommand
-                                  ),
-                                  continueConfigPath: '',
-                                  continueMode: 'chat',
-                                  workspacePath: version2.data.workspacePath,
-                                  credential: version2.data.credential,
-                                  toolApproval: version2.data.toolApproval
-                                })
+                              const version4 =
+                                version4StoredSettingsSchema.safeParse(parsed)
+                              if (version4.success) {
+                                this.settings = migrateVersion4(version4.data)
                               } else {
-                                const legacy =
-                                  legacyStoredSettingsSchema.parse(parsed)
-                                this.settings = migrateVersion4({
-                                  version: 4,
-                                  provider:
-                                    legacy.provider === 'bigtoken'
-                                      ? 'model'
-                                      : legacy.provider,
-                                  modelBaseUrl: legacy.bigtokenBaseUrl,
-                                  modelName: legacy.bigtokenModel,
-                                  opencodeBaseUrl: legacy.opencodeBaseUrl,
-                                  opencodeEmbedded: legacy.opencodeEmbedded,
-                                  opencodeBinaryPath: '',
-                                  opencodeConfigPath: '',
-                                  continueBinaryPath: migrateContinueCommand(
-                                    legacy.continueCommand
-                                  ),
-                                  continueConfigPath: '',
-                                  continueMode: 'chat',
-                                  workspacePath: legacy.workspacePath,
-                                  credential: legacy.credential,
-                                  toolApproval: legacy.toolApproval
-                                })
+                                const version3 =
+                                  version3StoredSettingsSchema.safeParse(parsed)
+                                if (version3.success) {
+                                  this.settings = migrateVersion4({
+                                    ...version3.data,
+                                    version: 4,
+                                    continueMode: 'chat'
+                                  })
+                                } else {
+                                  const version2 =
+                                    version2StoredSettingsSchema.safeParse(parsed)
+                                  if (version2.success) {
+                                    this.settings = migrateVersion4({
+                                      version: 4,
+                                      provider: version2.data.provider,
+                                      modelBaseUrl: version2.data.modelBaseUrl,
+                                      modelName: version2.data.modelName,
+                                      opencodeBaseUrl: version2.data.opencodeBaseUrl,
+                                      opencodeEmbedded: version2.data.opencodeEmbedded,
+                                      opencodeBinaryPath: '',
+                                      opencodeConfigPath: '',
+                                      continueBinaryPath: migrateContinueCommand(
+                                        version2.data.continueCommand
+                                      ),
+                                      continueConfigPath: '',
+                                      continueMode: 'chat',
+                                      workspacePath: version2.data.workspacePath,
+                                      credential: version2.data.credential,
+                                      toolApproval: version2.data.toolApproval
+                                    })
+                                  } else {
+                                    const legacy =
+                                      legacyStoredSettingsSchema.parse(parsed)
+                                    this.settings = migrateVersion4({
+                                      version: 4,
+                                      provider:
+                                        legacy.provider === 'bigtoken'
+                                          ? 'model'
+                                          : legacy.provider,
+                                      modelBaseUrl: legacy.bigtokenBaseUrl,
+                                      modelName: legacy.bigtokenModel,
+                                      opencodeBaseUrl: legacy.opencodeBaseUrl,
+                                      opencodeEmbedded: legacy.opencodeEmbedded,
+                                      opencodeBinaryPath: '',
+                                      opencodeConfigPath: '',
+                                      continueBinaryPath: migrateContinueCommand(
+                                        legacy.continueCommand
+                                      ),
+                                      continueConfigPath: '',
+                                      continueMode: 'chat',
+                                      workspacePath: legacy.workspacePath,
+                                      credential: legacy.credential,
+                                      toolApproval: legacy.toolApproval
+                                    })
+                                  }
+                                }
                               }
                             }
                           }
@@ -963,6 +1039,43 @@ export class RuntimeSettingsStore {
       this.environment.GOODBUDDY_BIGTOKEN_API_KEY?.trim() ||
       undefined
     )
+  }
+
+  private resolvePlatformDeepSeekProfile(): ResolvedModelProfile | undefined {
+    const apiKey = this.environment.GOODBUDDY_MODEL_API_KEY?.trim()
+    const baseUrl = this.environment.GOODBUDDY_MODEL_BASE_URL?.trim()
+    const modelName = this.environment.GOODBUDDY_MODEL_NAME?.trim()
+    if (!apiKey || !baseUrl || !modelName) {
+      return undefined
+    }
+    try {
+      const endpoint = new URL(baseUrl)
+      if (
+        endpoint.protocol !== 'https:' ||
+        endpoint.hostname.toLowerCase() !== 'api.deepseek.com' ||
+        endpoint.port ||
+        endpoint.pathname !== '/' ||
+        endpoint.search ||
+        endpoint.hash ||
+        endpoint.username ||
+        endpoint.password
+      ) {
+        return undefined
+      }
+    } catch {
+      return undefined
+    }
+    return {
+      id: platformDeepSeekProfileId,
+      name: '平台 DeepSeek',
+      baseUrl,
+      modelName,
+      protocol: 'openai-chat-completions',
+      authentication: 'api-key',
+      supportsImageInput: false,
+      imageGenerationQuality: 'auto',
+      apiKey
+    }
   }
 
   private resolveEffectiveModelSettings(settings: StoredSettings): {
@@ -1235,6 +1348,8 @@ export class RuntimeSettingsStore {
         ? { kind: 'platform' }
         : settings.opencodeModelSource,
       continueModelSource: settings.continueModelSource,
+      deepseekHarnessModelSource:
+        settings.deepseekHarnessModelSource,
       secureStorageAvailable: this.cipher.isAvailable(),
       toolApproval: settings.toolApproval,
       configured: {
@@ -1246,7 +1361,9 @@ export class RuntimeSettingsStore {
         continueConfigPath: settings.continueConfigPath,
         workspacePath: settings.workspacePath || homedir(),
         opencodeModelSource: settings.opencodeModelSource,
-        continueModelSource: settings.continueModelSource
+        continueModelSource: settings.continueModelSource,
+        deepseekHarnessModelSource:
+          settings.deepseekHarnessModelSource
       },
       ...(this.loadWarnings.length > 0
         ? { warnings: [...this.loadWarnings] }
@@ -1284,6 +1401,12 @@ export class RuntimeSettingsStore {
       settings.continueModelSource.kind === 'profile'
         ? profilesById.get(settings.continueModelSource.profileId)
         : undefined
+    const deepseekHarnessModelProfile =
+      settings.deepseekHarnessModelSource.kind === 'profile'
+        ? profilesById.get(
+            settings.deepseekHarnessModelSource.profileId
+          )
+        : this.resolvePlatformDeepSeekProfile()
     return {
       provider: settings.provider,
       modelBaseUrl: effective.baseUrl,
@@ -1297,6 +1420,7 @@ export class RuntimeSettingsStore {
       defaultModelProfileId: settings.defaultModelProfileId,
       opencodeModelProfile,
       continueModelProfile,
+      deepseekHarnessModelProfile,
       ...agent,
       subagentSmartRoutingEnabled:
         settings.subagentSmartRoutingEnabled,
@@ -1589,15 +1713,34 @@ export class RuntimeSettingsStore {
       : repairRuntimeSource(current.continueModelSource)
     validateRuntimeSource(opencodeModelSource, 'OpenCode')
     validateRuntimeSource(continueModelSource, 'Continue')
+    const requestedDeepSeekHarnessSource =
+      input.deepseekHarnessModelSource ??
+      current.deepseekHarnessModelSource
+    if (requestedDeepSeekHarnessSource.kind === 'profile') {
+      const profile = modelProfiles.find(
+        (candidate) =>
+          candidate.id === requestedDeepSeekHarnessSource.profileId
+      )
+      if (!profile) {
+        throw new Error('DeepSeek Harness 引用的模型连接不存在')
+      }
+      if (!isDeepSeekHarnessModelProfile(profile)) {
+        throw new Error(
+          'DeepSeek Harness 模型连接仅支持 api.deepseek.com 的 OpenAI Chat Completions 协议'
+        )
+      }
+    }
 
     const next: StoredSettings = {
       ...current,
-      version: 14,
+      version: 16,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId,
       opencodeModelSource,
       continueModelSource,
+      deepseekHarnessModelSource:
+        requestedDeepSeekHarnessSource,
       opencodeBaseUrl,
       opencodeEmbedded: !opencodeBaseUrl,
       opencodeBinaryPath,

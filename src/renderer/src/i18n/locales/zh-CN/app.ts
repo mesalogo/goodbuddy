@@ -113,6 +113,7 @@ export const app = {
     switching: '切换中…',
     picker: 'Runtime 和模型',
     directModels: '直连模型',
+    deepseekHarnessGroup: 'DeepSeek Harness（开发者预览 · 仅 DeepSeek）',
     manage: '管理 Runtime 和模型连接',
     errors: {
       readStatus: 'Agent Runtime 状态读取失败',

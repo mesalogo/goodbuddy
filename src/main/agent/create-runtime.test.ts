@@ -71,6 +71,38 @@ function settings(
 }
 
 describe('createAgentRuntime model compatibility', () => {
+  it('does not treat the default model profile as the platform DeepSeek source', () => {
+    const defaultProfile = {
+      id: '00000000-0000-4000-8000-000000000001',
+      name: 'Default DeepSeek',
+      baseUrl: 'https://api.deepseek.com',
+      modelName: 'deepseek-chat',
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const,
+      imageGenerationQuality: 'auto' as const,
+      apiKey: 'default-deepseek-key'
+    }
+
+    expect(() =>
+      createAgentRuntime(
+        process.cwd(),
+        settings({
+          provider: 'deepseek-harness',
+          modelBaseUrl: defaultProfile.baseUrl,
+          modelName: defaultProfile.modelName,
+          modelProtocol: defaultProfile.protocol,
+          modelAuthentication: defaultProfile.authentication,
+          apiKey: defaultProfile.apiKey,
+          modelProfiles: [defaultProfile],
+          runtimeSandboxMode: 'auto'
+        }),
+        { deepseekHarnessLauncher: vi.fn() }
+      )
+    ).toThrow(
+      'DeepSeek Harness 需要 api.deepseek.com 的 OpenAI Chat Completions 模型连接'
+    )
+  })
+
   it('creates an available direct runtime for a no-auth model', async () => {
     const runtime = createAgentRuntime(process.cwd(), settings())
 

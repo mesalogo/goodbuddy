@@ -42,6 +42,7 @@ function settings(
     continueBinaryPath: '',
     continueConfigPath: '',
     continueMode: 'chat',
+    deepseekHarnessModelSource: { kind: 'platform' },
     runtimeSandboxMode: 'auto',
     knowledgeEmbeddingEnabled: false,
     knowledgeEmbeddingBaseUrl:
@@ -101,6 +102,199 @@ describe('RuntimeSettingsStore', () => {
         id: '00000000-0000-4000-8000-000000000001'
       }
     })
+  })
+
+  it('migrates DeepSeek Harness to controlled platform mode and stores an official profile', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const versionFourteen = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    versionFourteen.version = 14
+    delete versionFourteen.deepseekHarnessModelSource
+    delete versionFourteen.deepseekHarnessBinaryPath
+    await writeFile(filePath, JSON.stringify(versionFourteen), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      deepseekHarnessModelProfile: undefined
+    })
+
+    const profileId = '00000000-0000-4000-8000-000000000044'
+    await migrated.update(
+      settings({
+        provider: 'deepseek-harness',
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com',
+            modelName: 'deepseek-chat',
+            protocol: 'openai-chat-completions',
+            authentication: 'api-key',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'replace', value: 'deepseek-secret' }
+          }
+        ],
+        defaultModelProfileId: profileId,
+        deepseekHarnessModelSource: { kind: 'profile', profileId }
+      })
+    )
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      provider: 'deepseek-harness',
+      deepseekHarnessModelProfile: {
+        id: profileId,
+        apiKey: 'deepseek-secret'
+      }
+    })
+  })
+
+  it('resolves a controlled platform DeepSeek profile without exposing its credential', async () => {
+    const apiKey = 'platform-deepseek-secret'
+    const { store } = await createStore({
+      GOODBUDDY_MODEL_API_KEY: apiKey,
+      GOODBUDDY_MODEL_BASE_URL: 'https://api.deepseek.com/',
+      GOODBUDDY_MODEL_NAME: 'deepseek-v4-flash'
+    })
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelProtocol: 'anthropic-messages',
+      deepseekHarnessModelProfile: {
+        id: 'goodbuddy-platform-deepseek',
+        name: '平台 DeepSeek',
+        baseUrl: 'https://api.deepseek.com/',
+        modelName: 'deepseek-v4-flash',
+        protocol: 'openai-chat-completions',
+        authentication: 'api-key',
+        supportsImageInput: false,
+        imageGenerationQuality: 'auto',
+        apiKey
+      }
+    })
+
+    const publicSettings = await store.getPublicSettings()
+    expect(JSON.stringify(publicSettings)).not.toContain(apiKey)
+    expect(publicSettings.modelProtocol).toBe('anthropic-messages')
+  })
+
+  it.each([
+    [
+      'a non-DeepSeek endpoint',
+      {
+        GOODBUDDY_MODEL_API_KEY: 'platform-key',
+        GOODBUDDY_MODEL_BASE_URL: 'https://deepseek.example',
+        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+      }
+    ],
+    [
+      'an insecure DeepSeek endpoint',
+      {
+        GOODBUDDY_MODEL_API_KEY: 'platform-key',
+        GOODBUDDY_MODEL_BASE_URL: 'http://api.deepseek.com',
+        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+      }
+    ],
+    [
+      'a DeepSeek endpoint path',
+      {
+        GOODBUDDY_MODEL_API_KEY: 'platform-key',
+        GOODBUDDY_MODEL_BASE_URL: 'https://api.deepseek.com/v1',
+        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+      }
+    ],
+    [
+      'a missing API key',
+      {
+        GOODBUDDY_MODEL_BASE_URL: 'https://api.deepseek.com',
+        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+      }
+    ]
+  ])('does not resolve platform DeepSeek from %s', async (_, environment) => {
+    const { store } = await createStore(environment)
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      deepseekHarnessModelProfile: undefined
+    })
+  })
+
+  it('drops the legacy custom Harness Host path and ignores its environment override', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const versionFifteen = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    versionFifteen.version = 15
+    versionFifteen.deepseekHarnessBinaryPath =
+      'C:\\untrusted\\custom-harness.js'
+    await writeFile(filePath, JSON.stringify(versionFifteen), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {
+      GOODBUDDY_DEEPSEEK_HARNESS_BINARY:
+        'C:\\environment\\custom-harness.js'
+    })
+    const publicSettings = await migrated.getPublicSettings()
+    const resolvedSettings = await migrated.getResolvedSettings()
+    expect(publicSettings).not.toHaveProperty(
+      'deepseekHarnessBinaryPath'
+    )
+    expect(publicSettings.configured).not.toHaveProperty(
+      'deepseekHarnessBinaryPath'
+    )
+    expect(resolvedSettings).not.toHaveProperty(
+      'deepseekHarnessBinaryPath'
+    )
+    await migrated.update(settings())
+    const persisted = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    expect(persisted.version).toBe(16)
+    expect(persisted).not.toHaveProperty(
+      'deepseekHarnessBinaryPath'
+    )
+  })
+
+  it('rejects incompatible DeepSeek Harness model profiles', () => {
+    const profileId = '00000000-0000-4000-8000-000000000045'
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          modelProfiles: [
+            {
+              id: profileId,
+              name: 'Other compatible API',
+              baseUrl: 'https://other.example/v1',
+              modelName: 'deepseek-chat',
+              protocol: 'openai-chat-completions',
+              authentication: 'api-key',
+              imageGenerationQuality: 'auto',
+              apiKey: { action: 'keep' }
+            }
+          ],
+          defaultModelProfileId: profileId,
+          deepseekHarnessModelSource: { kind: 'profile', profileId }
+        })
+      ).success
+    ).toBe(false)
+    expect(
+      runtimeSettingsInputSchema.safeParse(
+        settings({
+          modelProfiles: [
+            {
+              id: profileId,
+              name: 'DeepSeek without API key',
+              baseUrl: 'https://api.deepseek.com',
+              modelName: 'deepseek-chat',
+              protocol: 'openai-chat-completions',
+              authentication: 'none',
+              imageGenerationQuality: 'auto',
+              apiKey: { action: 'clear' }
+            }
+          ],
+          defaultModelProfileId: profileId,
+          deepseekHarnessModelSource: { kind: 'profile', profileId }
+        })
+      ).success
+    ).toBe(false)
   })
 
   it('always enables bundled OpenCode when the Server address is blank', async () => {
@@ -331,7 +525,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(14)
+    expect(persisted.version).toBe(16)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -351,7 +545,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(14)
+    expect(persisted.version).toBe(16)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -940,7 +1134,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(14)
+    expect(persisted.version).toBe(16)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -1186,7 +1380,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 14,
+      version: 16,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -1465,7 +1659,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(14)
+    expect(persisted.version).toBe(16)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

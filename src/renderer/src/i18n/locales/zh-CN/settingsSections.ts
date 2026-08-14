@@ -233,7 +233,8 @@ export const settingsSections = {
     runtimeLabels: {
       model: '模型',
       opencode: 'OpenCode',
-      continue: 'Continue'
+      continue: 'Continue',
+      'deepseek-harness': 'DeepSeek Harness'
     },
     errors: {
       readFailed: '读取 Skills 失败',
@@ -246,7 +247,7 @@ export const settingsSections = {
     },
     listLabel: 'Skills 列表',
     notice:
-      'Skill 以本地能力说明注入所选目标，不会写入 Runtime 自有配置。新导入的 Skill 默认启用，并分配给直连模型、OpenCode 和 Continue。',
+      'Skill 以本地能力说明注入所选目标，不会写入 Runtime 自有配置。新导入的 Skill 默认启用，并分配给直连模型、OpenCode、Continue 和 DeepSeek Harness。',
     loading: '正在读取 Skills…',
     source: {
       builtin: '内置',

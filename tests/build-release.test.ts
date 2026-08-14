@@ -49,6 +49,25 @@ interface ReleaseBuilderModule {
     destination: string,
     options: ReleaseOptions
   ) => void
+  verifyHarnessPackage: (
+    resources: string,
+    options: ReleaseOptions,
+    dependencies?: {
+      listPackage: (asarPath: string) => string[]
+      statFile: (
+        asarPath: string,
+        filePath: string
+      ) => {
+        files?: Record<string, unknown>
+        link?: string
+        size?: number
+      }
+      extractFile: (
+        asarPath: string,
+        filePath: string
+      ) => Buffer
+    }
+  ) => void
   verifyArtifacts: (
     directory: string,
     options: ReleaseOptions
@@ -237,6 +256,45 @@ describe('release build arguments', () => {
       )
     ).toBe(false)
   })
+
+  it('pins and unpacks every target-specific Harness native package', () => {
+    const packageJson = require('../package.json') as {
+      build: {
+        asarUnpack: string[]
+        npmRebuild: boolean
+      }
+      optionalDependencies: Record<string, string>
+    }
+    expect(packageJson.build.npmRebuild).toBe(false)
+    expect(packageJson.build.asarUnpack).toEqual(
+      expect.arrayContaining([
+        'out/main/package.json',
+        'out/main/deepseek-harness-*',
+        'out/main/chunks/**/*',
+        'node_modules/node-pty/lib/**/*',
+        'node_modules/node-pty/package.json',
+        'node_modules/node-pty/prebuilds/**/*',
+        'node_modules/node-pty/build/Release/**/*',
+        'node_modules/koffi/**/*',
+        'node_modules/@koromix/koffi-*/**/*',
+        'node_modules/@deepseek-ai/dsh-sandbox-windows-acl/**/*',
+        'node_modules/@deepseek-ai/node-addon-landlock-run/**/*',
+        'node_modules/@deepseek-ai/node-addon-landlock-run-*/**/*'
+      ])
+    )
+    expect(packageJson.optionalDependencies).toEqual({
+      '@deepseek-ai/node-addon-landlock-run-linux-arm64':
+        '0.1.1',
+      '@deepseek-ai/node-addon-landlock-run-linux-x64':
+        '0.1.1',
+      '@koromix/koffi-darwin-arm64': '3.1.4',
+      '@koromix/koffi-darwin-x64': '3.1.4',
+      '@koromix/koffi-linux-arm64': '3.1.4',
+      '@koromix/koffi-linux-x64': '3.1.4',
+      '@koromix/koffi-win32-arm64': '3.1.4',
+      '@koromix/koffi-win32-x64': '3.1.4'
+    })
+  })
 })
 
 describe('release binary architecture detection', () => {
@@ -252,6 +310,32 @@ describe('release binary architecture detection', () => {
     expect(
       releaseBuilder.detectBinaryArchitecture(buffer)
     ).toBe(expected)
+  })
+})
+
+describe('release Harness package verification', () => {
+  it('fails closed when the packaged Harness Host is missing', () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-harness-closure-')
+    )
+    const resources = join(directory, 'resources')
+    try {
+      mkdirSync(resources, { recursive: true })
+      writeFileSync(join(resources, 'app.asar'), 'asar')
+      expect(() =>
+        releaseBuilder.verifyHarnessPackage(
+          resources,
+          windowsOptions,
+          {
+            listPackage: () => [],
+            statFile: () => ({ size: 1 }),
+            extractFile: () => Buffer.from('{}')
+          }
+        )
+      ).toThrow('DeepSeek Harness Host缺失')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })
 

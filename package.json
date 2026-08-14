@@ -28,6 +28,8 @@
     "eval:retrieval": "vitest run --config tests/support/knowledge-retrieval-evaluation.ts tests/knowledge-retrieval-metrics.test.ts tests/knowledge-retrieval-evaluation.test.ts",
     "build": "npm run typecheck && npm run build:bundle",
     "build:bundle": "electron-vite build",
+    "smoke:deepseek-harness": "npm run build:bundle && node build/run-deepseek-harness-utility-smoke.cjs",
+    "smoke:deepseek-harness:packaged": "node build/run-packaged-deepseek-harness-smoke.cjs",
     "release:notes:verify": "node build/release-notes.cjs",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
@@ -49,6 +51,21 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "beforePack": "build/runtime-hooks.cjs",
     "asar": true,
+    "asarUnpack": [
+      "out/main/package.json",
+      "out/main/deepseek-harness-*",
+      "out/main/chunks/**/*",
+      "node_modules/node-pty/lib/**/*",
+      "node_modules/node-pty/package.json",
+      "node_modules/node-pty/prebuilds/**/*",
+      "node_modules/node-pty/build/Release/**/*",
+      "node_modules/koffi/**/*",
+      "node_modules/@koromix/koffi-*/**/*",
+      "node_modules/@deepseek-ai/dsh-sandbox-windows-acl/**/*",
+      "node_modules/@deepseek-ai/node-addon-landlock-run/**/*",
+      "node_modules/@deepseek-ai/node-addon-landlock-run-*/**/*"
+    ],
+    "npmRebuild": false,
     "compression": "maximum",
     "files": [
       "out/**/*",
@@ -89,6 +106,26 @@
       {
         "from": "node_modules/opencode-ai/LICENSE",
         "to": "licenses/opencode-ai-LICENSE"
+      },
+      {
+        "from": "node_modules/@deepseek-ai/dsh-agent/LICENSE",
+        "to": "licenses/deepseek-harness-MIT.txt"
+      },
+      {
+        "from": "node_modules/@deepseek-ai/cordis/LICENSE",
+        "to": "licenses/deepseek-cordis-MIT.txt"
+      },
+      {
+        "from": "node_modules/@agentclientprotocol/sdk/LICENSE",
+        "to": "licenses/agent-client-protocol-Apache-2.0.txt"
+      },
+      {
+        "from": "node_modules/node-pty/LICENSE",
+        "to": "licenses/node-pty-MIT.txt"
+      },
+      {
+        "from": "node_modules/koffi/LICENSE.txt",
+        "to": "licenses/koffi-MIT.txt"
       },
       {
         "from": "node_modules/@continuedev/cli",
@@ -178,7 +215,32 @@
     }
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "0.25.1",
     "@antv/g6": "^5.1.1",
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-loop": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-bash-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-fs-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-pwsh-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandbox-local": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandbox-policy": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-shell-env": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-skill": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subprocess-local": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-token-meter": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-bash": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-fs": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-pwsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-skill": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-user-approval": "0.1.0-rc.6",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@opencode-ai/sdk": "^1.18.9",
     "@wecom/aibot-node-sdk": "^1.0.6",
@@ -238,5 +300,15 @@
     "typescript-eslint": "^8.65.0",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
+  },
+  "optionalDependencies": {
+    "@deepseek-ai/node-addon-landlock-run-linux-arm64": "0.1.1",
+    "@deepseek-ai/node-addon-landlock-run-linux-x64": "0.1.1",
+    "@koromix/koffi-darwin-arm64": "3.1.4",
+    "@koromix/koffi-darwin-x64": "3.1.4",
+    "@koromix/koffi-linux-arm64": "3.1.4",
+    "@koromix/koffi-linux-x64": "3.1.4",
+    "@koromix/koffi-win32-arm64": "3.1.4",
+    "@koromix/koffi-win32-x64": "3.1.4"
   }
 }

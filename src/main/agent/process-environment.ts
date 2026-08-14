@@ -92,3 +92,20 @@ export function buildExplicitProfileRuntimeEnvironment(
   }
   return environment
 }
+
+export function buildControlledHarnessEnvironment(
+  dshHome: string,
+  source: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const environment = buildExplicitProfileRuntimeEnvironment(
+    {
+      DSH_HOME: dshHome,
+      DSH_TELEMETRY_DISABLED: '1',
+      ...runtimePrivacyEnvironment
+    },
+    undefined,
+    source
+  )
+  delete environment.NODE_TLS_REJECT_UNAUTHORIZED
+  return environment
+}

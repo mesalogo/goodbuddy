@@ -29,8 +29,8 @@ export const settings = {
     },
     runtime: {
       label: 'Agent Runtime',
-      navigationDescription: 'OpenCode、Continue 与工作区',
-      description: 'OpenCode、Continue 与工作区'
+      navigationDescription: 'OpenCode、Continue、DeepSeek Harness 与工作区',
+      description: 'OpenCode、Continue、DeepSeek Harness 与工作区'
     },
     security: {
       label: '安全与数据',
@@ -141,16 +141,24 @@ export const settings = {
     detection: {
       ready: '已就绪',
       notReady: '尚未就绪 · {{detail}}',
+      unavailable: '尚未就绪',
       detecting: '正在检测…',
-      notDetected: '尚未检测'
+      notDetected: '尚未检测',
+      statusLabel: '状态：',
+      pathLabel: '路径：',
+      versionLabel: '版本：',
+      detailLabel: '检测详情：',
+      details: {
+        bundled: '内置 {{runtime}}{{versionSuffix}} 已就绪',
+        configured: '自定义 {{runtime}}{{versionSuffix}} 已就绪',
+        automatic: '已自动检测到 {{runtime}}{{versionSuffix}}'
+      }
     },
     workspace: {
       title: '默认工作区',
       description: '当前项目未设置根目录时，Agent 才使用此默认位置',
       directoryLabel: '默认工作区目录'
     },
-    selectorDescription:
-      'OpenCode 和 Continue 已随 GoodBuddy 内置；配置可兼容的直连文本模型后即可使用。',
     bundledDescription: 'GoodBuddy 内置 Runtime，默认跟随文本模型连接',
     runtimeLabel: 'Runtime：',
     modelConfigurationLabel: '模型配置：',
@@ -203,6 +211,25 @@ export const settings = {
       binaryPath: 'Continue 可执行文件路径',
       missingConfigWarning:
         '未指定配置文件时 Continue 将保持不可用，不会匿名加载远程默认模型。'
+    },
+    deepseekHarness: {
+      selectorLabel: 'DeepSeek Harness（预览）',
+      title: 'DeepSeek Harness',
+      previewDescription: '开发者预览 · 仅支持 DeepSeek',
+      deepseekOnlyNotice:
+        'DeepSeek Harness 当前仅支持 DeepSeek 模型，不适用于其他模型提供商。',
+      description:
+        '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Execute 工具调用自动单次授权，Ask 保持只读，并保留取消和工作区安全边界；不接入 DSH 插件或市场机制。',
+      goodBuddySource: '使用 GoodBuddy 模型连接',
+      goodBuddySourceDescription:
+        '只能选择 OpenAI 兼容 Chat Completions 连接；该连接必须指向 DeepSeek 模型。',
+      platformSource: '使用平台 DeepSeek 环境配置',
+      platformSourceDescription:
+        '从启动环境读取平台管理的 DeepSeek 配置，不会在渲染进程中显示凭据。',
+      connectionDescription:
+        'GoodBuddy 内部 Harness Runtime 目前仅接受 OpenAI 兼容 Chat Completions 协议。',
+      advancedDescription:
+        '该 Runtime 始终使用 GoodBuddy 内置并固定版本的 Host，不加载外部 DSH 插件、市场包、用户 profile 或自定义 Host。'
     }
   },
   documentParsing: {
@@ -285,6 +312,28 @@ export const settings = {
           fast: '快',
           balanced: '均衡',
           slow: '慢'
+        }
+      },
+      languages: {
+        中文: '中文',
+        英语: '英语',
+        '50 种语言': '50 种语言'
+      },
+      catalog: {
+        'pp-ocrv6-tiny': {
+          displayName: 'PP-OCRv6 Tiny',
+          description:
+            'PaddleOCR 官方轻量中文 OCR 模型，适合扫描 PDF 和图片的本地 CPU 识别。'
+        },
+        'pp-ocrv6-small': {
+          displayName: 'PP-OCRv6 Small',
+          description:
+            'PaddleOCR 官方 50 语言 OCR 模型，在识别质量、速度和本地资源占用之间取得平衡。'
+        },
+        'pp-ocrv6-medium': {
+          displayName: 'PP-OCRv6 Medium',
+          description:
+            'PaddleOCR 官方 50 语言高质量 OCR 模型，识别较慢，并需要更多内存且具有更高延迟。'
         }
       },
       installed: '已安装并校验',
@@ -410,11 +459,13 @@ export const settings = {
       },
       imageQualityDescription: '仅用于 OpenAI 兼容图像生成请求。',
       compatibilitySummary:
-        '直连模型：{{directCapability}} · Continue：{{continueCompatibility}} · OpenCode：{{openCodeCompatibility}}',
+        '直连模型：{{directCapability}} · Continue：{{continueCompatibility}} · OpenCode：{{openCodeCompatibility}} · DeepSeek Harness：{{deepseekHarnessCompatibility}}',
       textChat: '文本对话',
       compatible: '兼容',
       incompatible: '不兼容',
       incompatibleImageProtocol: '不兼容（不支持图像生成协议）',
+      incompatibleHarnessProtocol:
+        '不兼容（仅支持 Chat Completions）',
       secureStorageWarning:
         '当前系统密钥服务不可用。为了避免明文落盘，请使用环境变量提供 API Key。'
     },

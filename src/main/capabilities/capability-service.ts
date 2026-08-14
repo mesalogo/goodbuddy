@@ -269,7 +269,12 @@ function emptyStoredCapabilities(
 function defaultSkillState(): z.infer<typeof skillStateSchema> {
   return {
     enabled: true,
-    assignments: ['model', 'opencode', 'continue']
+    assignments: [
+      'model',
+      'opencode',
+      'continue',
+      'deepseek-harness'
+    ]
   }
 }
 
@@ -1606,10 +1611,14 @@ export class CapabilityService {
       const value = mcpServerInputSchema.parse(input)
       if (
         value.assignments.some(
-          (assignment) => assignment !== 'model'
+          (assignment) =>
+            assignment !== 'model' &&
+            assignment !== 'deepseek-harness'
         )
       ) {
-        throw new Error('当前版本的 MCP Server 只能分配给直连模型')
+        throw new Error(
+          '当前版本的 MCP Server 只能分配给直连模型或 DeepSeek Harness'
+        )
       }
       const state = await this.load()
       const id = serverId ? mcpServerIdSchema.parse(serverId) : randomUUID()
@@ -1809,7 +1818,7 @@ export class CapabilityService {
   async getResolvedMcpServers(
     target: RuntimeTarget
   ): Promise<ResolvedMcpServer[]> {
-    if (target !== 'model') {
+    if (target !== 'model' && target !== 'deepseek-harness') {
       return []
     }
     const state = await this.load()
