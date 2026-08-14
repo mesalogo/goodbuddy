@@ -2,6 +2,36 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.9.0",
+      "releasedAt": "2026-08-14",
+      "notes": {
+        "zh-CN": {
+          "features": [
+            "新增 DeepSeek Harness 开发者预览 Runtime，支持安全的 OpenAI 兼容 Chat Completions 连接、任意模型名称、Skills 与自定义 MCP，并保留 Ask 只读、Execute 授权、取消和工作区沙箱边界。",
+            "新增自然语言配置工具，助手可查看脱敏设置并规划应用偏好、Skill 与 MCP 变更；配置只在原生审批通过后应用，凭据不会暴露给模型。",
+            "GoodBuddy 原创源代码现以 0BSD 许可证开放，并补充英文项目总览以及自动化、会话监督、分区记忆、并行实验和持续学习等产品规划文档。"
+          ],
+          "fixes": [
+            "修复模型工具调用期间流式推理内容可能折叠或不可见的问题，并让推理区域在生成时自动跟随最新内容。",
+            "修复从通道入口打开设置时未定位到所选企业微信、钉钉或微信页面的问题，并更正微信二维码扫码提示。",
+            "优化简体中文界面的系统字体、字号和行高，改善 Windows 与 macOS 上的小字号可读性和排版一致性。"
+          ]
+        },
+        "en-US": {
+          "features": [
+            "Added the DeepSeek Harness preview Runtime with secure OpenAI-compatible Chat Completions, arbitrary model names, Skills, and custom MCP, while preserving read-only Ask, authorized Execute, cancellation, and workspace sandbox boundaries.",
+            "Added natural-language configuration tools that let the assistant inspect sanitized settings and plan changes to app preferences, Skills, and MCP; changes apply only after native approval without exposing credentials to models.",
+            "Released GoodBuddy's original source under the 0BSD License and expanded the English overview and product plans for automation, conversation supervision, partitioned memory, parallel experiments, and continuous learning."
+          ],
+          "fixes": [
+            "Fixed streamed reasoning becoming hidden during model tool calls, and kept the reasoning panel following the latest content while generation is in progress.",
+            "Fixed channel shortcuts opening the wrong settings page for WeCom, DingTalk, or WeChat, and corrected the WeChat QR-code scan guidance.",
+            "Improved Simplified Chinese typography with platform-native UI fonts, refined sizes, and line heights for clearer, more consistent text on Windows and macOS."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.8.20",
       "releasedAt": "2026-08-13",
       "notes": {
