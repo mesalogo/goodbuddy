@@ -2968,7 +2968,15 @@ button > svg {
   background: var(--success);
 }
 
+.chat-scroll-region {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
 .chat {
+  height: 100%;
   min-height: 0;
   padding:
     var(--page-gutter)
@@ -2978,6 +2986,40 @@ button > svg {
   background: var(--surface-raised);
   scrollbar-color: var(--border-default) transparent;
   scrollbar-width: thin;
+}
+
+.chat-scroll-to-bottom {
+  position: absolute;
+  z-index: 2;
+  bottom: var(--space-3);
+  left: 50%;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border-control);
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  color: var(--accent);
+  cursor: pointer;
+  place-items: center;
+  transform: translateX(-50%);
+  transition:
+    border-color var(--motion-fast) ease-out,
+    background var(--motion-fast) ease-out,
+    color var(--motion-fast) ease-out,
+    opacity var(--motion-fast) ease-out;
+}
+
+.chat-scroll-to-bottom:hover {
+  border-color: var(--accent-selected);
+  background: var(--accent-subtle);
+}
+
+.chat-scroll-to-bottom:active {
+  background: var(--accent-selected);
+  opacity: 0.82;
 }
 
 .welcome {

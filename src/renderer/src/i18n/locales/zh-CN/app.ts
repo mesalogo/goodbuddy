@@ -219,6 +219,7 @@ export const app = {
       }
     },
     retry: '重新编辑并发送',
+    scrollToBottom: '到底部',
     status: {
       responseTruncated: '回答过长，已在本地截断显示',
       savingImage: '图片已生成，正在保存结果',

@@ -1,4 +1,5 @@
 import {
+  ArrowDown,
   Bot,
   Check,
   CheckCircle2,
@@ -524,6 +525,8 @@ function groupMessageBlocks(
   }
   return items
 }
+
+const chatBottomProximity = 96
 
 function MessageReasoning({
   content,
@@ -1593,12 +1596,42 @@ function App(): React.JSX.Element {
   const hydratingArtifactIds = useRef(new Set<string>())
   const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLElement>(null)
+  const chatPinnedToBottomRef = useRef(true)
+  const chatScrollContextRef = useRef(`${view}:${activeId}`)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
   )
+  const updateChatScrollPosition = useCallback((): void => {
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    const distanceFromBottom =
+      scrollContainer.scrollHeight -
+      scrollContainer.scrollTop -
+      scrollContainer.clientHeight
+    const atBottom = distanceFromBottom <= chatBottomProximity
+    chatPinnedToBottomRef.current = atBottom
+    setShowScrollToBottom(!atBottom)
+  }, [])
+  const scrollChatToBottom = useCallback((): void => {
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    chatPinnedToBottomRef.current = true
+    const reduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    scrollContainer.scrollTo({
+      top: scrollContainer.scrollHeight,
+      behavior: reduceMotion ? 'auto' : 'smooth'
+    })
+  }, [])
   const closeNarrowSidebar = useCallback((): void => {
     setSidebarOpen(false)
     requestAnimationFrame(() => sidebarToggleRef.current?.focus())
@@ -3572,13 +3605,32 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: 'auto'
-      })
+      const scrollContext = `${view}:${activeId}`
+      if (chatScrollContextRef.current !== scrollContext) {
+        chatScrollContextRef.current = scrollContext
+        chatPinnedToBottomRef.current = true
+      }
+      const scrollContainer = scrollRef.current
+      if (!scrollContainer) {
+        return
+      }
+      if (chatPinnedToBottomRef.current) {
+        scrollContainer.scrollTo({
+          top: scrollContainer.scrollHeight,
+          behavior: 'auto'
+        })
+        setShowScrollToBottom(false)
+        return
+      }
+      updateChatScrollPosition()
     })
     return () => cancelAnimationFrame(frame)
-  }, [activeConversation?.messages])
+  }, [
+    activeConversation?.messages,
+    activeId,
+    updateChatScrollPosition,
+    view
+  ])
 
   const selectProject = (projectId: string): void => {
     const project = projects.find((candidate) => candidate.id === projectId)
@@ -4096,6 +4148,7 @@ function App(): React.JSX.Element {
       runtime.capability === 'image-generation' ? '' : selectedExpertId
     const workModeSnapshot = effectiveWorkMode
     preparingConversations.current.add(conversationId)
+    chatPinnedToBottomRef.current = true
     setInput('')
     updateAttachments([])
     const userMessage: Message = {
@@ -5266,7 +5319,13 @@ function App(): React.JSX.Element {
 
         {view === 'chat' ? (
           <PageShell variant="reading">
-            <section className="chat" ref={scrollRef}>
+            <div className="chat-scroll-region">
+            <section
+              className="chat"
+              id="chat-message-list"
+              onScroll={updateChatScrollPosition}
+              ref={scrollRef}
+            >
           {activeProject?.kind === 'channel' &&
             !activeConversation && (
               <EmptyState
@@ -5876,6 +5935,19 @@ function App(): React.JSX.Element {
             ))}
           </div>
             </section>
+            {showScrollToBottom && (
+              <button
+                aria-controls="chat-message-list"
+                aria-label={t('chat.scrollToBottom')}
+                className="chat-scroll-to-bottom"
+                onClick={scrollChatToBottom}
+                title={t('chat.scrollToBottom')}
+                type="button"
+              >
+                <ArrowDown aria-hidden="true" size={18} />
+              </button>
+            )}
+            </div>
 
             <footer className="composer-wrap">
           {activeProject?.kind === 'channel' ? (

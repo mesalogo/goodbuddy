@@ -226,6 +226,7 @@ export const app = {
       }
     },
     retry: 'Edit and send again',
+    scrollToBottom: 'Scroll to bottom',
     status: {
       responseTruncated: 'The response was too long and was truncated locally',
       savingImage: 'Image generated; saving the result',

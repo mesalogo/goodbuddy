@@ -1168,6 +1168,115 @@ describe('App', () => {
     expect(await screen.findByRole('status')).toBeVisible()
   })
 
+  it('offers a floating control when more messages remain below', async () => {
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000401',
+        projectId,
+        title: '长会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000402',
+            role: 'assistant',
+            content: '较早的会话内容',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    const { container } = render(<App />)
+
+    expect(await screen.findByText('较早的会话内容')).toBeInTheDocument()
+    const chat = container.querySelector<HTMLElement>('.chat')
+    if (!chat) {
+      throw new Error('Missing chat scroll container')
+    }
+    Object.defineProperties(chat, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_200 },
+      scrollTop: { configurable: true, writable: true, value: 100 }
+    })
+    const scrollTo = vi.fn()
+    chat.scrollTo = scrollTo
+
+    fireEvent.scroll(chat)
+    const scrollButton = screen.getByRole('button', {
+      name: '到底部'
+    })
+    expect(scrollButton).toHaveAttribute(
+      'aria-controls',
+      'chat-message-list'
+    )
+    expect(scrollButton).toHaveAttribute('title', '到底部')
+    expect(scrollButton).toHaveTextContent('')
+
+    fireEvent.click(scrollButton)
+    expect(scrollTo).toHaveBeenLastCalledWith({
+      top: 1_200,
+      behavior: 'smooth'
+    })
+
+    chat.scrollTop = 750
+    fireEvent.scroll(chat)
+    expect(
+      screen.queryByRole('button', { name: '到底部' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the reader position while a response continues below', async () => {
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '继续生成较长回复' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    await act(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve())
+        )
+    )
+
+    const chat = document.querySelector<HTMLElement>('.chat')
+    if (!chat) {
+      throw new Error('Missing chat scroll container')
+    }
+    Object.defineProperties(chat, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_200 },
+      scrollTop: { configurable: true, writable: true, value: 100 }
+    })
+    const scrollTo = vi.fn()
+    chat.scrollTo = scrollTo
+    fireEvent.scroll(chat)
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: '新增的回复内容'
+      })
+    })
+    expect(await screen.findByText('新增的回复内容')).toBeInTheDocument()
+    await act(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve())
+        )
+    )
+
+    expect(scrollTo).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('button', { name: '到底部' })
+    ).toBeInTheDocument()
+  })
+
   it('requires an accessible confirmation before permanently deleting a conversation', async () => {
     render(<App />)
     const menuTrigger = screen.getByLabelText(
