@@ -32,7 +32,7 @@ export const integrations = {
       missingProfile: 'The previous direct model no longer exists',
       noTextModels: 'No text models are available',
       deepseekHarnessOption:
-        'DeepSeek Harness (Preview · DeepSeek only)',
+        'DeepSeek Harness (Preview · OpenAI-compatible)',
       missingSelection:
         'The selected direct model no longer exists. Choose another model.',
       imageOnlySelection:

@@ -503,7 +503,7 @@ describe('ChannelSettingsSection', () => {
     ).toBeInTheDocument()
     expect(
       within(backend).getByRole('option', {
-        name: 'DeepSeek Harness（预览 · 仅 DeepSeek）'
+        name: 'DeepSeek Harness（预览 · OpenAI 兼容）'
       })
     ).toBeInTheDocument()
 

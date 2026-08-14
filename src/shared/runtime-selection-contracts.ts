@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isDeepSeekHarnessModelProfile } from './deepseek-harness-compatibility'
 
 const runtimeSelectionProfileIdSchema = z.string().uuid()
 
@@ -82,12 +83,11 @@ function isDeepSeekHarnessRepairProfileUsable(
   ) {
     return false
   }
-  try {
-    return new URL(profile.baseUrl).hostname.toLowerCase() ===
-      'api.deepseek.com'
-  } catch {
-    return false
-  }
+  return isDeepSeekHarnessModelProfile({
+    baseUrl: profile.baseUrl,
+    protocol: profile.protocol,
+    authentication: profile.authentication
+  })
 }
 
 export function repairChannelRuntimeSelection(

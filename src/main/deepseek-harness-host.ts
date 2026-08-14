@@ -30,6 +30,7 @@ import {
 } from './agent/goodbuddy-harness-control-plane'
 import type { Stream } from '@agentclientprotocol/sdk'
 import type { SandboxEnforcement } from '@deepseek-ai/dsh-sandbox'
+import { isDeepSeekHarnessCompatibleBaseUrl } from '../shared/deepseek-harness-compatibility'
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024
@@ -133,19 +134,12 @@ type PluginSpec = {
 function validateHostConfig(
   config: ControlledHarnessHostConfig
 ): void {
-  const endpoint = URL.canParse(config.baseUrl)
-    ? new URL(config.baseUrl)
-    : undefined
   if (
     config.api !== 'openai-completions' ||
-    !endpoint ||
-    endpoint.protocol !== 'https:' ||
-    endpoint.hostname.toLowerCase() !== 'api.deepseek.com' ||
-    endpoint.username ||
-    endpoint.password
+    !isDeepSeekHarnessCompatibleBaseUrl(config.baseUrl)
   ) {
     throw new Error(
-      'Controlled Harness requires the trusted HTTPS DeepSeek endpoint'
+      'Controlled Harness requires a secure OpenAI-compatible Chat Completions endpoint'
     )
   }
   if (!config.credentialRefs.length) {

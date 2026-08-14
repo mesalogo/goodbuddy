@@ -1372,7 +1372,7 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
-  it('configures DeepSeek Harness with a compatible GoodBuddy connection', async () => {
+  it('configures DeepSeek Harness with an OpenAI-compatible gateway', async () => {
     const harnessProfileId =
       '00000000-0000-4000-8000-000000000051'
     getRuntime.mockResolvedValueOnce({
@@ -1382,9 +1382,9 @@ describe('SettingsPanel runtime files', () => {
         {
           ...runtimeSettings.modelProfiles[0]!,
           id: harnessProfileId,
-          name: 'DeepSeek Chat',
-          baseUrl: 'https://api.deepseek.com/v1',
-          modelName: 'deepseek-chat',
+          name: 'Compatible Gateway',
+          baseUrl: 'https://gateway.example/openai/v1',
+          modelName: 'qwen-plus',
           protocol: 'openai-chat-completions'
         }
       ],
@@ -1409,10 +1409,10 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(
-      screen.getByText('开发者预览 · 仅支持 DeepSeek')
+      screen.getByText('开发者预览 · OpenAI 兼容')
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/当前仅支持 DeepSeek 模型/)
+      screen.getByText(/公网地址必须使用 HTTPS/)
     ).toBeInTheDocument()
     const harnessOverview = screen
       .getByText('GoodBuddy 内置 DeepSeek Harness')
@@ -1451,17 +1451,19 @@ describe('SettingsPanel runtime files', () => {
       })
     ).not.toBeInTheDocument()
     const source = screen.getByLabelText(
-      'DeepSeek Harness DeepSeek 模型连接'
+      'DeepSeek Harness OpenAI 兼容模型连接'
     )
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
     expect(
-      screen.queryByText('使用平台 DeepSeek 环境配置')
+      screen.queryByText('使用管理员预置模型连接')
     ).not.toBeInTheDocument()
     expect(
       within(source).getByRole('option', { name: '默认模型（不兼容）' })
     ).toBeDisabled()
     expect(
-      within(source).getByRole('option', { name: 'DeepSeek Chat' })
+      within(source).getByRole('option', {
+        name: 'Compatible Gateway'
+      })
     ).not.toBeDisabled()
 
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
@@ -1480,14 +1482,14 @@ describe('SettingsPanel runtime files', () => {
   it('keeps an environment-managed source compatible without exposing it as an option', async () => {
     getRuntime.mockResolvedValueOnce({
       ...runtimeSettings,
-      modelBaseUrl: 'https://api.deepseek.com',
-      modelName: 'deepseek-chat',
+      modelBaseUrl: 'https://gateway.example/openai/v1',
+      modelName: 'qwen-plus',
       modelProtocol: 'openai-chat-completions',
       modelProfiles: [
         {
           ...runtimeSettings.modelProfiles[0]!,
-          baseUrl: 'https://api.deepseek.com',
-          modelName: 'deepseek-chat',
+          baseUrl: 'https://gateway.example/openai/v1',
+          modelName: 'qwen-plus',
           protocol: 'openai-chat-completions',
           credentialSource: 'environment'
         }
@@ -1531,10 +1533,10 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
     expect(
-      screen.getByText('管理员预置的 DeepSeek 连接')
+      screen.getByText('管理员预置的 OpenAI 兼容连接')
     ).toBeInTheDocument()
     const source = screen.getByLabelText(
-      'DeepSeek Harness DeepSeek 模型连接'
+      'DeepSeek Harness OpenAI 兼容模型连接'
     )
     expect(source).toHaveValue('')
     fireEvent.change(source, {

@@ -3,6 +3,7 @@ import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import type { UtilityProcess } from 'electron'
 import { z } from 'zod'
+import { isDeepSeekHarnessCompatibleBaseUrl } from '../../shared/deepseek-harness-compatibility'
 import type {
   DeepSeekHarnessChild,
   DeepSeekHarnessLaunchOptions
@@ -14,7 +15,7 @@ export const DEEPSEEK_HARNESS_CONTROL_PROTOCOL =
 export const DEEPSEEK_HARNESS_CONTROL_VERSION = 1
 export const DEEPSEEK_HARNESS_HOST_VERSION = '0.1.0-rc.6'
 export const DEEPSEEK_HARNESS_CREDENTIAL_REF =
-  'GOODBUDDY_DEEPSEEK_API_KEY'
+  'GOODBUDDY_HARNESS_MODEL_API_KEY'
 
 const sandboxSchema = z
   .object({
@@ -41,15 +42,7 @@ export const controlledHarnessHostConfigSchema = z
     baseUrl: z
       .url()
       .max(2_048)
-      .refine((value) => {
-        const url = new URL(value)
-        return (
-          url.protocol === 'https:' &&
-          url.hostname.toLowerCase() === 'api.deepseek.com' &&
-          !url.username &&
-          !url.password
-        )
-      }),
+      .refine(isDeepSeekHarnessCompatibleBaseUrl),
     api: z.literal('openai-completions'),
     provider: z.literal('goodbuddy'),
     model: z.string().min(1).max(128),
@@ -240,12 +233,9 @@ export function createDeepSeekHarnessUtilityLauncher(
         'DeepSeek Harness 当前平台只能提供部分沙箱强制'
       )
     }
-    if (
-      options.baseUrl !== 'https://api.deepseek.com' &&
-      options.baseUrl !== 'https://api.deepseek.com/'
-    ) {
+    if (!isDeepSeekHarnessCompatibleBaseUrl(options.baseUrl)) {
       throw new Error(
-        'DeepSeek Harness 仅允许 api.deepseek.com'
+        'DeepSeek Harness 模型地址必须使用 HTTPS 或本机回环 HTTP，且不得包含凭据、查询参数或片段'
       )
     }
     if (

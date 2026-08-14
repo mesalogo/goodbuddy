@@ -104,7 +104,7 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
-  it('migrates DeepSeek Harness to controlled platform mode and stores an official profile', async () => {
+  it('migrates DeepSeek Harness to controlled platform mode and stores a compatible profile', async () => {
     const { filePath, store } = await createStore()
     await store.update(settings())
     const versionFourteen = JSON.parse(
@@ -127,9 +127,9 @@ describe('RuntimeSettingsStore', () => {
         modelProfiles: [
           {
             id: profileId,
-            name: 'DeepSeek',
-            baseUrl: 'https://api.deepseek.com',
-            modelName: 'deepseek-chat',
+            name: 'OpenAI-compatible gateway',
+            baseUrl: 'https://gateway.example/openai/v1',
+            modelName: 'qwen-plus',
             protocol: 'openai-chat-completions',
             authentication: 'api-key',
             imageGenerationQuality: 'auto',
@@ -149,21 +149,22 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
-  it('resolves a controlled platform DeepSeek profile without exposing its credential', async () => {
-    const apiKey = 'platform-deepseek-secret'
+  it('resolves a controlled platform Harness profile without exposing its credential', async () => {
+    const apiKey = 'platform-harness-secret'
     const { store } = await createStore({
       GOODBUDDY_MODEL_API_KEY: apiKey,
-      GOODBUDDY_MODEL_BASE_URL: 'https://api.deepseek.com/',
-      GOODBUDDY_MODEL_NAME: 'deepseek-v4-flash'
+      GOODBUDDY_MODEL_BASE_URL:
+        'https://gateway.example/openai/v1',
+      GOODBUDDY_MODEL_NAME: 'qwen-plus'
     })
 
     await expect(store.getResolvedSettings()).resolves.toMatchObject({
       modelProtocol: 'anthropic-messages',
       deepseekHarnessModelProfile: {
-        id: 'goodbuddy-platform-deepseek',
-        name: '平台 DeepSeek',
-        baseUrl: 'https://api.deepseek.com/',
-        modelName: 'deepseek-v4-flash',
+        id: 'goodbuddy-platform-harness',
+        name: '管理员预置模型',
+        baseUrl: 'https://gateway.example/openai/v1',
+        modelName: 'qwen-plus',
         protocol: 'openai-chat-completions',
         authentication: 'api-key',
         supportsImageInput: false,
@@ -179,37 +180,39 @@ describe('RuntimeSettingsStore', () => {
 
   it.each([
     [
-      'a non-DeepSeek endpoint',
+      'an insecure public endpoint',
       {
         GOODBUDDY_MODEL_API_KEY: 'platform-key',
-        GOODBUDDY_MODEL_BASE_URL: 'https://deepseek.example',
-        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+        GOODBUDDY_MODEL_BASE_URL: 'http://gateway.example/v1',
+        GOODBUDDY_MODEL_NAME: 'qwen-plus'
       }
     ],
     [
-      'an insecure DeepSeek endpoint',
+      'an endpoint with embedded credentials',
       {
         GOODBUDDY_MODEL_API_KEY: 'platform-key',
-        GOODBUDDY_MODEL_BASE_URL: 'http://api.deepseek.com',
-        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+        GOODBUDDY_MODEL_BASE_URL:
+          'https://user:secret@gateway.example/v1',
+        GOODBUDDY_MODEL_NAME: 'qwen-plus'
       }
     ],
     [
-      'a DeepSeek endpoint path',
+      'an endpoint with a query string',
       {
         GOODBUDDY_MODEL_API_KEY: 'platform-key',
-        GOODBUDDY_MODEL_BASE_URL: 'https://api.deepseek.com/v1',
-        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+        GOODBUDDY_MODEL_BASE_URL:
+          'https://gateway.example/v1?api-version=1',
+        GOODBUDDY_MODEL_NAME: 'qwen-plus'
       }
     ],
     [
       'a missing API key',
       {
-        GOODBUDDY_MODEL_BASE_URL: 'https://api.deepseek.com',
-        GOODBUDDY_MODEL_NAME: 'deepseek-chat'
+        GOODBUDDY_MODEL_BASE_URL: 'https://gateway.example/v1',
+        GOODBUDDY_MODEL_NAME: 'qwen-plus'
       }
     ]
-  ])('does not resolve platform DeepSeek from %s', async (_, environment) => {
+  ])('does not resolve platform Harness from %s', async (_, environment) => {
     const { store } = await createStore(environment)
 
     await expect(store.getResolvedSettings()).resolves.toMatchObject({
@@ -253,7 +256,7 @@ describe('RuntimeSettingsStore', () => {
     )
   })
 
-  it('rejects incompatible DeepSeek Harness model profiles', () => {
+  it('accepts compatible gateways and rejects incompatible Harness profiles', () => {
     const profileId = '00000000-0000-4000-8000-000000000045'
     expect(
       runtimeSettingsInputSchema.safeParse(
@@ -261,9 +264,9 @@ describe('RuntimeSettingsStore', () => {
           modelProfiles: [
             {
               id: profileId,
-              name: 'Other compatible API',
+              name: 'Compatible API',
               baseUrl: 'https://other.example/v1',
-              modelName: 'deepseek-chat',
+              modelName: 'qwen-plus',
               protocol: 'openai-chat-completions',
               authentication: 'api-key',
               imageGenerationQuality: 'auto',
@@ -274,16 +277,16 @@ describe('RuntimeSettingsStore', () => {
           deepseekHarnessModelSource: { kind: 'profile', profileId }
         })
       ).success
-    ).toBe(false)
+    ).toBe(true)
     expect(
       runtimeSettingsInputSchema.safeParse(
         settings({
           modelProfiles: [
             {
               id: profileId,
-              name: 'DeepSeek without API key',
-              baseUrl: 'https://api.deepseek.com',
-              modelName: 'deepseek-chat',
+              name: 'Gateway without API key',
+              baseUrl: 'https://other.example/v1',
+              modelName: 'qwen-plus',
               protocol: 'openai-chat-completions',
               authentication: 'none',
               imageGenerationQuality: 'auto',

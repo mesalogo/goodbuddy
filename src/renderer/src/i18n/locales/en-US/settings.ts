@@ -237,16 +237,18 @@ export const settings = {
     deepseekHarness: {
       selectorLabel: 'DeepSeek Harness (Preview)',
       title: 'DeepSeek Harness',
-      previewDescription: 'Developer preview · DeepSeek only',
-      deepseekOnlyNotice:
-        'DeepSeek Harness currently supports DeepSeek models only and is not intended for other model providers.',
+      previewDescription: 'Developer preview · OpenAI-compatible',
+      compatibilityNotice:
+        'Supports OpenAI-compatible Chat Completions connections with an API key. Public endpoints must use HTTPS; loopback endpoints may use HTTP.',
       description:
         'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Execute tool calls receive automatic one-time authorization, Ask remains read-only, and cancellation and workspace safety boundaries remain in place. It does not integrate with the DSH plugin or marketplace mechanisms.',
-      managedSource: 'Administrator-provided DeepSeek connection',
-      connection: 'DeepSeek model connection',
-      connectionPlaceholder: 'Select a DeepSeek model connection',
+      managedSource:
+        'Administrator-provided OpenAI-compatible connection',
+      connection: 'OpenAI-compatible model connection',
+      connectionPlaceholder:
+        'Select an OpenAI-compatible model connection',
       connectionDescription:
-        'Choose a GoodBuddy model connection. Only OpenAI-compatible Chat Completions connections that point to DeepSeek are supported.',
+        'Choose a GoodBuddy model connection. It must use OpenAI Chat Completions with API-key authentication.',
       advancedDescription:
         'This Runtime always uses GoodBuddy’s bundled, version-pinned Host. It does not load external DSH plugins, marketplace packages, user profiles, or custom Hosts.'
     }
@@ -504,7 +506,7 @@ export const settings = {
       incompatibleImageProtocol:
         'Incompatible (image generation protocol is unsupported)',
       incompatibleHarnessProtocol:
-        'Incompatible (Chat Completions only)',
+        'Incompatible (requires Chat Completions, an API key, and a secure endpoint)',
       secureStorageWarning:
         'Secure system key storage is unavailable. Use an environment variable to avoid storing an API Key in plaintext.'
     },

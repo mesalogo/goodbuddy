@@ -99,8 +99,35 @@ describe('createAgentRuntime model compatibility', () => {
         { deepseekHarnessLauncher: vi.fn() }
       )
     ).toThrow(
-      'DeepSeek Harness 需要 api.deepseek.com 的 OpenAI Chat Completions 模型连接'
+      'DeepSeek Harness 需要使用 API Key 的安全 OpenAI 兼容 Chat Completions 模型连接'
     )
+  })
+
+  it('creates DeepSeek Harness with a compatible HTTPS gateway profile', async () => {
+    const profile = {
+      id: '00000000-0000-4000-8000-000000000006',
+      name: 'OpenAI-compatible gateway',
+      baseUrl: 'https://gateway.example/openai/v1',
+      modelName: 'qwen-plus',
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const,
+      imageGenerationQuality: 'auto' as const,
+      apiKey: 'gateway-key'
+    }
+    const runtime = createAgentRuntime(
+      process.cwd(),
+      settings({
+        provider: 'deepseek-harness',
+        modelProfiles: [profile],
+        defaultModelProfileId: profile.id,
+        deepseekHarnessModelProfile: profile,
+        runtimeSandboxMode: 'auto'
+      }),
+      { deepseekHarnessLauncher: vi.fn() }
+    )
+
+    expect(runtime.runtimeId).toBe('deepseek-harness')
+    await runtime.dispose()
   })
 
   it('creates an available direct runtime for a no-auth model', async () => {

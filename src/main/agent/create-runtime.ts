@@ -113,7 +113,7 @@ export function createAgentRuntime(
     const profile = settings?.deepseekHarnessModelProfile
     if (!profile || !isDeepSeekHarnessModelProfile(profile)) {
       throw new Error(
-        'DeepSeek Harness 需要 api.deepseek.com 的 OpenAI Chat Completions 模型连接'
+        'DeepSeek Harness 需要使用 API Key 的安全 OpenAI 兼容 Chat Completions 模型连接'
       )
     }
     if (!profile.apiKey) {
@@ -131,7 +131,7 @@ export function createAgentRuntime(
       model: profile.modelName,
       launch: capabilities.deepseekHarnessLauncher,
       credentialRefs: {
-        GOODBUDDY_DEEPSEEK_API_KEY: profile.apiKey
+        GOODBUDDY_HARNESS_MODEL_API_KEY: profile.apiKey
       },
       requiredSandboxEnforcement:
         sandboxMode === 'strict' ? 'full' : 'partial',

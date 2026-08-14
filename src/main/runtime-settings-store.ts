@@ -263,7 +263,7 @@ const embeddingCredentialPayloadSchema = z.object({
 })
 
 const rerankCredentialPayloadSchema = embeddingCredentialPayloadSchema
-const platformDeepSeekProfileId = 'goodbuddy-platform-deepseek'
+const platformHarnessProfileId = 'goodbuddy-platform-harness'
 
 export type CredentialCipher = SettingsCredentialCipher
 
@@ -1041,33 +1041,25 @@ export class RuntimeSettingsStore {
     )
   }
 
-  private resolvePlatformDeepSeekProfile(): ResolvedModelProfile | undefined {
+  private resolvePlatformHarnessProfile(): ResolvedModelProfile | undefined {
     const apiKey = this.environment.GOODBUDDY_MODEL_API_KEY?.trim()
     const baseUrl = this.environment.GOODBUDDY_MODEL_BASE_URL?.trim()
     const modelName = this.environment.GOODBUDDY_MODEL_NAME?.trim()
     if (!apiKey || !baseUrl || !modelName) {
       return undefined
     }
-    try {
-      const endpoint = new URL(baseUrl)
-      if (
-        endpoint.protocol !== 'https:' ||
-        endpoint.hostname.toLowerCase() !== 'api.deepseek.com' ||
-        endpoint.port ||
-        endpoint.pathname !== '/' ||
-        endpoint.search ||
-        endpoint.hash ||
-        endpoint.username ||
-        endpoint.password
-      ) {
-        return undefined
-      }
-    } catch {
+    if (
+      !isDeepSeekHarnessModelProfile({
+        baseUrl,
+        protocol: 'openai-chat-completions',
+        authentication: 'api-key'
+      })
+    ) {
       return undefined
     }
     return {
-      id: platformDeepSeekProfileId,
-      name: '平台 DeepSeek',
+      id: platformHarnessProfileId,
+      name: '管理员预置模型',
       baseUrl,
       modelName,
       protocol: 'openai-chat-completions',
@@ -1406,7 +1398,7 @@ export class RuntimeSettingsStore {
         ? profilesById.get(
             settings.deepseekHarnessModelSource.profileId
           )
-        : this.resolvePlatformDeepSeekProfile()
+        : this.resolvePlatformHarnessProfile()
     return {
       provider: settings.provider,
       modelBaseUrl: effective.baseUrl,
@@ -1726,7 +1718,7 @@ export class RuntimeSettingsStore {
       }
       if (!isDeepSeekHarnessModelProfile(profile)) {
         throw new Error(
-          'DeepSeek Harness 模型连接仅支持 api.deepseek.com 的 OpenAI Chat Completions 协议'
+          'DeepSeek Harness 仅支持使用 API Key 的安全 OpenAI 兼容 Chat Completions 连接'
         )
       }
     }

@@ -26,7 +26,7 @@ import {
 import { GOODBUDDY_HARNESS_MAX_STEP_TOKENS } from './goodbuddy-harness-control-plane'
 
 const MAX_FRAME_BYTES = 1024 * 1024
-const CREDENTIAL_REF = 'GOODBUDDY_DEEPSEEK_API_KEY'
+const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
 const SKILL_CALL_ID = 'e2e-skill-call'
 const MCP_CALL_ID = 'e2e-mcp-call'
 const ASK_MCP_CALL_ID = 'e2e-ask-mcp-call'
@@ -536,9 +536,9 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
           {
             id: 'web-3d-game',
             directory: resolve(
-              'resources',
-              'skills',
-              'web-3d-game'
+              'tests',
+              'fixtures',
+              'web-3d-game-skill'
             )
           }
         ],

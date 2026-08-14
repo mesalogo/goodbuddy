@@ -295,6 +295,43 @@ describe('release build arguments', () => {
       '@koromix/koffi-win32-x64': '3.1.4'
     })
   })
+
+  it('keeps Web3D test fixtures out of release resources', () => {
+    const packageJson = require('../package.json') as {
+      build: {
+        files: string[]
+        extraResources: Array<{ from: string }>
+      }
+    }
+    const resourceSources = packageJson.build.extraResources.map(
+      (entry) => entry.from
+    )
+
+    expect(packageJson.build.files).toEqual([
+      'out/**/*',
+      'package.json'
+    ])
+    expect(resourceSources).toContain('resources/skills')
+    expect(
+      resourceSources.some((source) => source.startsWith('tests/'))
+    ).toBe(false)
+    expect(
+      existsSync(join('resources', 'skills', 'web-3d-game'))
+    ).toBe(false)
+    expect(
+      existsSync(join('resources', 'web-3d-game-mcp.mjs'))
+    ).toBe(false)
+    expect(
+      existsSync(
+        join(
+          'tests',
+          'fixtures',
+          'web-3d-game-skill',
+          'SKILL.md'
+        )
+      )
+    ).toBe(true)
+  })
 })
 
 describe('release binary architecture detection', () => {

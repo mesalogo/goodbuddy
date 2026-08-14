@@ -215,16 +215,16 @@ export const settings = {
     deepseekHarness: {
       selectorLabel: 'DeepSeek Harness（预览）',
       title: 'DeepSeek Harness',
-      previewDescription: '开发者预览 · 仅支持 DeepSeek',
-      deepseekOnlyNotice:
-        'DeepSeek Harness 当前仅支持 DeepSeek 模型，不适用于其他模型提供商。',
+      previewDescription: '开发者预览 · OpenAI 兼容',
+      compatibilityNotice:
+        '支持使用 API Key 的 OpenAI 兼容 Chat Completions 连接；公网地址必须使用 HTTPS，本机回环地址可使用 HTTP。',
       description:
         '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Execute 工具调用自动单次授权，Ask 保持只读，并保留取消和工作区安全边界；不接入 DSH 插件或市场机制。',
-      managedSource: '管理员预置的 DeepSeek 连接',
-      connection: 'DeepSeek 模型连接',
-      connectionPlaceholder: '选择 DeepSeek 模型连接',
+      managedSource: '管理员预置的 OpenAI 兼容连接',
+      connection: 'OpenAI 兼容模型连接',
+      connectionPlaceholder: '选择 OpenAI 兼容模型连接',
       connectionDescription:
-        '从 GoodBuddy 模型连接中选择；仅支持指向 DeepSeek 的 OpenAI 兼容 Chat Completions 连接。',
+        '从 GoodBuddy 模型连接中选择；协议必须为 OpenAI Chat Completions，并使用 API Key。',
       advancedDescription:
         '该 Runtime 始终使用 GoodBuddy 内置并固定版本的 Host，不加载外部 DSH 插件、市场包、用户 profile 或自定义 Host。'
     }
@@ -462,7 +462,7 @@ export const settings = {
       incompatible: '不兼容',
       incompatibleImageProtocol: '不兼容（不支持图像生成协议）',
       incompatibleHarnessProtocol:
-        '不兼容（仅支持 Chat Completions）',
+        '不兼容（需 Chat Completions、API Key 和安全地址）',
       secureStorageWarning:
         '当前系统密钥服务不可用。为了避免明文落盘，请使用环境变量提供 API Key。'
     },

@@ -46,7 +46,7 @@ describe('controlled DeepSeek Harness host', () => {
         dshHome: 'C:\\controlled-dsh-home',
         skillPackages: []
       })
-    ).rejects.toThrow('trusted HTTPS DeepSeek endpoint')
+    ).rejects.toThrow('secure OpenAI-compatible')
   })
 
   it('suppresses console payloads instead of contaminating stdout', () => {
@@ -84,10 +84,10 @@ describe('controlled DeepSeek Harness host', () => {
     const host = await startControlledDeepSeekHarnessHost({
       workspace: root,
       dshHome: root,
-      baseUrl: 'https://api.deepseek.com',
+      baseUrl: 'https://gateway.example/openai/v1',
       api: 'openai-completions',
       provider: 'goodbuddy',
-      model: 'deepseek-test',
+      model: 'qwen-plus',
       harnessVersion: '0.1.0-rc.6',
       sandbox: expectedSandbox,
       credentialRefs: ['GOODBUDDY_API_KEY'],

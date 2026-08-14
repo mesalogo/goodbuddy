@@ -26,7 +26,8 @@ export const integrations = {
       unavailableProfile: '{{name}} · {{modelName}}（不可用）',
       missingProfile: '原直连模型已不存在',
       noTextModels: '暂无可用文本模型',
-      deepseekHarnessOption: 'DeepSeek Harness（预览 · 仅 DeepSeek）',
+      deepseekHarnessOption:
+        'DeepSeek Harness（预览 · OpenAI 兼容）',
       missingSelection: '所选直连模型已不存在，请重新选择。',
       imageOnlySelection:
         '所选连接仅支持图片生成，请选择文本模型或 Agent Runtime。',

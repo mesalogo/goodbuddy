@@ -49,8 +49,8 @@ async function fixture() {
     launchOptions: {
       cwd: workspace,
       signal: new AbortController().signal,
-      baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
+      baseUrl: 'https://gateway.example/openai/v1',
+      model: 'qwen-plus',
       credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
       skillPackages: []
     }
@@ -97,7 +97,8 @@ describe('DeepSeek Harness utility launcher', () => {
     expect(utility.messages[0]).toMatchObject({
       type: 'start',
       config: {
-        baseUrl: 'https://api.deepseek.com',
+        baseUrl: 'https://gateway.example/openai/v1',
+        model: 'qwen-plus',
         credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF]
       }
     })
@@ -143,5 +144,25 @@ describe('DeepSeek Harness utility launcher', () => {
 
     await expect(launching).rejects.toThrow('启动协议无效')
     expect(terminateProcess).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    'http://gateway.example/v1',
+    'https://user:secret@gateway.example/v1',
+    'https://gateway.example/v1?api-version=2025-01-01'
+  ])('rejects unsafe endpoint %s before forking', async (baseUrl) => {
+    const { dshHome, hostPath, launchOptions } = await fixture()
+    const fork = vi.fn()
+    const launcher = createDeepSeekHarnessUtilityLauncher({
+      bundledHostPath: hostPath,
+      dshHome,
+      environment: {},
+      fork
+    })
+
+    await expect(
+      launcher({ ...launchOptions, baseUrl })
+    ).rejects.toThrow('HTTPS')
+    expect(fork).not.toHaveBeenCalled()
   })
 })

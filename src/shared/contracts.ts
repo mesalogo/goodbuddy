@@ -121,6 +121,11 @@ import {
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
 } from './runtime-selection-contracts'
+import { isDeepSeekHarnessModelProfile } from './deepseek-harness-compatibility'
+export {
+  isDeepSeekHarnessCompatibleBaseUrl,
+  isDeepSeekHarnessModelProfile
+} from './deepseek-harness-compatibility'
 
 export const workspaceRelativePathSchema = z
   .string()
@@ -392,26 +397,6 @@ export const runtimeModelSourceSchema = z.discriminatedUnion('kind', [
     .strict()
 ])
 
-export function isDeepSeekHarnessModelProfile(
-  profile: Pick<
-    ModelConnectionSettings,
-    'baseUrl' | 'protocol' | 'authentication'
-  >
-): boolean {
-  if (
-    profile.protocol !== 'openai-chat-completions' ||
-    profile.authentication !== 'api-key'
-  ) {
-    return false
-  }
-  try {
-    return new URL(profile.baseUrl).hostname.toLowerCase() ===
-      'api.deepseek.com'
-  } catch {
-    return false
-  }
-}
-
 export const runtimeSettingsInputSchema = z
   .object({
     provider: runtimeProviderSchema,
@@ -590,7 +575,7 @@ export const runtimeSettingsInputSchema = z
           code: 'custom',
           path: ['deepseekHarnessModelSource'],
           message:
-            'DeepSeek Harness 独立模型连接仅支持 api.deepseek.com 的 OpenAI Chat Completions 协议'
+            'DeepSeek Harness 仅支持使用 API Key 的安全 OpenAI 兼容 Chat Completions 连接'
         })
       }
     }

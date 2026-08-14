@@ -177,10 +177,10 @@ async function run() {
     config: {
       workspace,
       dshHome,
-      baseUrl: 'https://api.deepseek.com',
+      baseUrl: 'https://gateway.example/openai/v1',
       api: 'openai-completions',
       provider: 'goodbuddy',
-      model: 'deepseek-chat',
+      model: 'qwen-plus',
       harnessVersion: '0.1.0-rc.6',
       sandbox: {
         provider:
@@ -192,7 +192,7 @@ async function run() {
         enforcement:
           process.platform === 'win32' ? 'partial' : 'full'
       },
-      credentialRefs: ['GOODBUDDY_DEEPSEEK_API_KEY'],
+      credentialRefs: ['GOODBUDDY_HARNESS_MODEL_API_KEY'],
       skillPackages: [],
       maxFrameBytes: 1024 * 1024
     }

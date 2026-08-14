@@ -77,7 +77,7 @@ GoodBuddy 不急于把该 Runtime 包装成标准 DSH 插件，也不以进入�
 - 支持多会话、同会话串行、跨会话并行。
 - 支持按请求取消、超时、会话释放和应用退出时完整回收。
 - 输出文本、推理、工具参数、工具结果、stderr 和协议队列全部有界。
-- 使用真实 DeepSeek 模型验证调用，而不在日志、测试产物或提交中暴露凭据。
+- 使用真实 OpenAI 兼容 Chat Completions 模型验证调用，而不在日志、测试产物或提交中暴露凭据。
 - 保留 Windows、macOS、Linux 的 x64 和 arm64 发布能力。
 
 ### 4.2 首版非目标
@@ -153,7 +153,7 @@ Electron utilityProcess
        └─ 最小工具集
              │ HTTPS
              ▼
-        用户选择的 DeepSeek 兼容模型连接
+        用户选择的 OpenAI 兼容模型连接
 ```
 
 ### 6.1 信任边界
@@ -369,7 +369,7 @@ Windows ACL 和旧 Linux Landlock 可能只报告 `partial`。界面和诊断必
 
 - Agent、Session、LLM 和 Tool Registry 基础服务。
 - GoodBuddy Harness Control Plane。
-- DeepSeek 兼容 LLM 适配器。
+- OpenAI 兼容 Chat Completions LLM 适配器。
 - Sandbox Policy 与平台 Sandbox Provider。
 - 平台对应的受沙箱 Shell。
 - 受沙箱 Filesystem。
@@ -396,11 +396,13 @@ Windows ACL 和旧 Linux Landlock 可能只报告 `partial`。界面和诊断必
 
 ### 12.1 配置来源
 
-DeepSeek Harness 首版只使用 GoodBuddy 模型连接：
+DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 
 - 协议必须是 `openai-chat-completions`。
 - 认证必须是 API Key。
-- 服务地址必须是 `https://api.deepseek.com`，且不得包含用户信息。
+- 公网服务地址必须使用 HTTPS；`localhost`、`127.0.0.1` 和 `::1` 回环地址可以使用 HTTP。
+- 服务地址可以使用自定义主机、端口和部署路径，但不得包含用户名、密码、查询参数或片段。
+- 模型名称不限制为 DeepSeek 品牌，由所选 OpenAI 兼容服务决定。
 - 模型名称和服务地址由 Main 传入受控 Host。
 - API Key 继续保存在 GoodBuddy 加密设置中。
 - 启动环境提供的部署连接只由 Main 自动解析，不在 Renderer 中显示为可选来源。
@@ -458,7 +460,7 @@ Runtime 的概览、模型配置和检测信息放在同一张详情卡中。当
 
 ```text
 Runtime：       GoodBuddy 内置 DeepSeek Harness
-模型配置：      跟随 GoodBuddy · dsv4flash（deepseek-v4-flash）
+模型配置：      跟随 GoodBuddy · 企业网关（qwen-plus）
 状态：          已就绪
 路径：          <受控 Host 路径>
 版本：          0.1.0-rc.6
@@ -528,6 +530,7 @@ Renderer 只接收脱敏状态。任何凭据、完整环境、启动参数或�
 - 确认这些模块不会被加载。
 - 评估它们带来的 audit 和体积风险。
 - 在后续上游版本允许时改为最小包族。
+- 确认 `tests/fixtures` 以及 Web3D 测试 Skill/MCP 不进入正式发布资源。
 
 ### 16.4 漏洞门禁
 
@@ -549,6 +552,7 @@ Renderer 只接收脱敏状态。任何凭据、完整环境、启动参数或�
 - 平台原生 Sandbox/PTY 依赖架构正确。
 - Harness、ACP SDK 和其他新增第三方许可证已打包。
 - `app.asar` 外需要执行或动态加载的资源位于预期目录。
+- Web3D Skill/MCP 等测试 fixture 不在 `app.asar` 或 `extraResources` 中。
 
 ## 17. 测试策略
 
@@ -582,7 +586,7 @@ Renderer 只接收脱敏状态。任何凭据、完整环境、启动参数或�
 
 ### 17.3 真实模型测试
 
-真实测试已经获得用户授权，但必须由显式环境门禁启用。至少验证：
+真实测试已经获得用户授权，但必须由显式环境门禁启用。Web3D Skill 和 MCP 仅作为 `tests/fixtures` 下的测试资产使用，不属于内置发布能力。至少验证：
 
 1. 文本问答成功，并记录正确 Runtime 和模型用量。
 2. Ask 可以读取工作区，但写入被拒绝，且不会弹出权限对话框。
@@ -625,7 +629,7 @@ npm run build
 - 用户 DSH 配置、`.env`、遥测和 Web UI 未被加载。
 - API Key 不进入 Renderer、配置文件、日志、错误文本或测试产物。
 - 全量测试、类型检查、Lint 和生产构建通过。
-- 真实 DeepSeek 请求成功。
+- 真实 OpenAI 兼容 Chat Completions 请求成功。
 - 真实请求调用已分配 Skill 和 MCP，并生成、启动和实际游玩一个可用的 3D 游戏项目。
 - 新增第三方许可证和发布校验完整。
 
