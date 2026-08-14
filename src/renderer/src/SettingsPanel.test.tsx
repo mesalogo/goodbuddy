@@ -282,7 +282,11 @@ const heartbeatSettingsProps = {
   onCreateHeartbeat: vi.fn(async () => {}),
   onSetHeartbeatPaused: vi.fn(async () => {}),
   onRemoveHeartbeat: vi.fn(async () => {}),
-  onRunHeartbeat: vi.fn(async () => {})
+  onRunHeartbeat: vi.fn(async () => {}),
+  onUpdateProject: vi.fn(async () => {
+    throw new Error('Project update is not used in this test')
+  }),
+  projects: []
 }
 const assistantExpert: AssistantExpert = {
   id: '00000000-0000-4000-8000-000000000101',

@@ -18,6 +18,11 @@ export const integrations = {
     project: {
       sectionAriaLabel: '{{name}} channel project settings',
       identity: 'Channel project',
+      cardTitle: 'Project settings',
+      cardDescription:
+        'Stays synchronized with the selected channel project in the top-left project switcher.',
+      descriptionLabel: 'Project description',
+      descriptionAriaLabel: '{{name}} project description',
       rootLabel: 'Default working directory',
       rootAriaLabel: '{{name}} default working directory',
       selectRootAriaLabel:

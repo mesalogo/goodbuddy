@@ -14,7 +14,9 @@ import { useTranslation } from 'react-i18next'
 import type {
   AssistantExpert,
   AssistantHeartbeatConfig,
+  AssistantProject,
   HeartbeatCreateInput,
+  ProjectCreateInput,
   ProjectChannel
 } from '../../shared/assistant-contracts'
 import type {
@@ -78,6 +80,11 @@ type SettingsPanelProps = {
   onClose: () => void
   onSaved: (settings: RuntimeSettings) => void
   onNotify?: (notification: AppNotificationInput) => void
+  onUpdateProject: (
+    projectId: string,
+    input: ProjectCreateInput
+  ) => Promise<AssistantProject>
+  projects: AssistantProject[]
   onExpertsChanged?: (experts: AssistantExpert[]) => void
   onClearLocalData: () => Promise<void>
   heartbeats: AssistantHeartbeatConfig[]
@@ -431,6 +438,8 @@ export function SettingsPanel({
   onClose,
   onSaved,
   onNotify = () => {},
+  onUpdateProject,
+  projects,
   onClearLocalData,
   heartbeats,
   onCreateHeartbeat,
@@ -2824,6 +2833,8 @@ export function SettingsPanel({
             <ChannelSettingsSection
               initialChannel={initialChannel}
               onNotify={onNotify}
+              onUpdateProject={onUpdateProject}
+              projectList={projects}
             />
           )}
           {activeTab === 'roles' && (

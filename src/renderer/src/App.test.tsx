@@ -15,6 +15,8 @@ import type {
   DesktopApi
 } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
+import type { AssistantProject } from '../../shared/assistant-contracts'
+import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 
 const speechRecognitionMocks = vi.hoisted(() => ({
   startPcmRecording: vi.fn()
@@ -696,6 +698,7 @@ describe('App', () => {
     delete document.documentElement.dataset.theme
     document.documentElement.style.colorScheme = ''
     vi.clearAllMocks()
+    api.channels = undefined
     vi.mocked(api.conversations.list).mockReset().mockResolvedValue([])
     vi.mocked(api.conversations.replace)
       .mockReset()
@@ -3296,6 +3299,235 @@ describe('App', () => {
       name: '消息通道'
     })
     expect(channelSettingsTab).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps channel project settings synchronized between both entry points', async () => {
+    let channelProjects: AssistantProject[] = [
+      ['weixin', '微信 ClawBot'],
+      ['wecom', '企业微信'],
+      ['dingtalk', '钉钉']
+    ].map(([channel, name], index) => ({
+      ...project,
+      id: `00000000-0000-4000-8000-00000000020${index + 1}`,
+      name: name!,
+      description: `${name}通道项目`,
+      kind: 'channel' as const,
+      channel: channel as 'weixin' | 'wecom' | 'dingtalk',
+      runtimeSelection: {
+        provider: 'model' as const,
+        profileId: modelProfileId
+      }
+    }))
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      ...channelProjects
+    ])
+    vi.mocked(api.projects.update).mockImplementation(
+      async (projectToUpdate, input) => {
+        const existing = channelProjects.find(
+          (candidate) => candidate.id === projectToUpdate
+        )
+        if (!existing) {
+          return {
+            ...project,
+            ...input,
+            id: projectToUpdate
+          }
+        }
+        const updated = {
+          ...existing,
+          ...input,
+          updatedAt: '2026-08-14T00:00:00.000Z'
+        }
+        channelProjects = channelProjects.map((candidate) =>
+          candidate.id === updated.id ? updated : candidate
+        )
+        return updated
+      }
+    )
+    api.channels = {
+      getSnapshot: vi.fn(async () => ({
+        weixin: {
+          enabled: false,
+          bindingConfigured: false,
+          source: 'none' as const,
+          status: { state: 'disabled' as const }
+        },
+        wecom: {
+          enabled: false,
+          botId: '',
+          secretConfigured: false,
+          source: 'none' as const,
+          readOnly: false,
+          allowedSenderIds: [],
+          allowGroupMessages: false,
+          status: { state: 'disabled' as const }
+        },
+        dingtalk: {
+          enabled: false,
+          clientId: '',
+          secretConfigured: false,
+          source: 'none' as const,
+          readOnly: false,
+          allowedSenderIds: [],
+          allowGroupMessages: false,
+          status: { state: 'disabled' as const }
+        }
+      })),
+      apply: vi.fn(async () => {
+        throw new Error('No channel connection settings changed')
+      }),
+      testConnection: vi.fn(async (channel) => ({
+        channel,
+        ok: true
+      })),
+      getWeixinBinding: vi.fn(async () => ({
+        status: 'stopped' as const
+      })),
+      startWeixinBinding: vi.fn(async () => ({
+        status: 'starting' as const
+      })),
+      submitWeixinVerification: vi.fn(async () => ({
+        status: 'scanned' as const
+      })),
+      disconnectWeixin: vi.fn(async () => ({
+        status: 'stopped' as const
+      })),
+      onWeixinBindingChanged: vi.fn(() => () => undefined),
+      onRemoteActivity: vi.fn(() => () => undefined)
+    }
+
+    render(<App />)
+    const weixinProject = channelProjects[0]!
+    fireEvent.change(await screen.findByLabelText('当前项目'), {
+      target: { value: weixinProject.id }
+    })
+    fireEvent.click(
+      await screen.findByRole('button', { name: '打开设置' })
+    )
+
+    expect(
+      await screen.findByLabelText('微信 ClawBot 项目说明')
+    ).toHaveValue('微信 ClawBot通道项目')
+
+    fireEvent.click(screen.getByLabelText('项目设置'))
+    let dialog = screen.getByRole('dialog', { name: '项目设置' })
+    const dialogDescription = within(dialog).getByLabelText(
+      '微信 ClawBot 项目说明'
+    )
+    expect(dialogDescription).toHaveFocus()
+    const dialogBackend = within(dialog).getByLabelText(
+      '微信 ClawBot 消息处理后端'
+    )
+    expect(
+      within(dialogBackend).getByRole('option', {
+        name: 'DeepSeek Harness（预览 · OpenAI 兼容）'
+      })
+    ).toBeInTheDocument()
+    fireEvent.change(
+      dialogDescription,
+      { target: { value: '从左上角更新' } }
+    )
+    fireEvent.change(
+      within(dialog).getByLabelText('微信 ClawBot 默认工作目录'),
+      { target: { value: 'C:\\FromSwitcher' } }
+    )
+    fireEvent.change(
+      dialogBackend,
+      {
+        target: {
+          value: agentRuntimeSelectionKey({
+            provider: 'opencode'
+          })
+        }
+      }
+    )
+    fireEvent.click(
+      within(
+        within(dialog).getByRole('group', {
+          name: '微信 ClawBot 默认模式'
+        })
+      ).getByRole('button', { name: '执行' })
+    )
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '保存项目' })
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText('微信 ClawBot 项目说明')
+      ).toHaveValue('从左上角更新')
+      expect(
+        screen.getByLabelText('微信 ClawBot 默认工作目录')
+      ).toHaveValue('C:\\FromSwitcher')
+      expect(
+        screen.getByLabelText('微信 ClawBot 消息处理后端')
+      ).toHaveValue(
+        agentRuntimeSelectionKey({ provider: 'opencode' })
+      )
+    })
+
+    fireEvent.change(
+      screen.getByLabelText('微信 ClawBot 项目说明'),
+      { target: { value: '从消息通道更新' } }
+    )
+    fireEvent.change(
+      screen.getByLabelText('微信 ClawBot 默认工作目录'),
+      { target: { value: 'C:\\FromChannels' } }
+    )
+    fireEvent.change(
+      screen.getByLabelText('微信 ClawBot 消息处理后端'),
+      {
+        target: {
+          value: agentRuntimeSelectionKey({
+            provider: 'continue'
+          })
+        }
+      }
+    )
+    fireEvent.click(
+      within(
+        screen.getByRole('group', {
+          name: '微信 ClawBot 默认模式'
+        })
+      ).getByRole('button', { name: '对话' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存通道设置' })
+    )
+
+    await waitFor(() =>
+      expect(api.projects.update).toHaveBeenCalledWith(
+        weixinProject.id,
+        expect.objectContaining({
+          description: '从消息通道更新',
+          rootPath: 'C:\\FromChannels',
+          defaultWorkMode: 'ask',
+          runtimeSelection: { provider: 'continue' }
+        })
+      )
+    )
+
+    fireEvent.click(screen.getByLabelText('项目设置'))
+    dialog = screen.getByRole('dialog', { name: '项目设置' })
+    expect(
+      within(dialog).getByLabelText('微信 ClawBot 项目说明')
+    ).toHaveValue('从消息通道更新')
+    expect(
+      within(dialog).getByLabelText('微信 ClawBot 默认工作目录')
+    ).toHaveValue('C:\\FromChannels')
+    expect(
+      within(dialog).getByLabelText('微信 ClawBot 消息处理后端')
+    ).toHaveValue(
+      agentRuntimeSelectionKey({ provider: 'continue' })
+    )
+    expect(
+      within(
+        within(dialog).getByRole('group', {
+          name: '微信 ClawBot 默认模式'
+        })
+      ).getByRole('button', { name: '对话' })
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('shows client-created remote conversations without obsolete approval copy', async () => {

@@ -23,6 +23,10 @@ import {
   getDefaultRuntimeSelection,
   getRuntimeSelectionForProvider
 } from './runtime-selection'
+import {
+  channelProjectDraft,
+  ChannelProjectSettingsFields
+} from './ChannelProjectSettingsFields'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
@@ -264,7 +268,7 @@ export function ProjectSwitcher({
             setError(undefined)
             setConfirmingDelete(false)
             setDeleteConfirmation('')
-            setDraft({
+            const nextDraft: ProjectCreateInput = {
               name: activeProject.name,
               description: activeProject.description,
               rootPath: activeProject.rootPath,
@@ -276,7 +280,12 @@ export function ProjectSwitcher({
                 (runtimeSettings
                   ? getDefaultRuntimeSelection(runtimeSettings)
                   : undefined)
-            })
+            }
+            setDraft(
+              activeProject.kind === 'channel' && runtimeSettings
+                ? channelProjectDraft(nextDraft, runtimeSettings)
+                : nextDraft
+            )
             restoreFocusTarget.current = 'settings'
             setDialogMode('settings')
           }}
@@ -322,11 +331,25 @@ export function ProjectSwitcher({
                 <X size={14} />
               </button>
             </header>
-            <label>
+            {dialogMode === 'settings' &&
+            activeProject?.kind === 'channel' &&
+            runtimeSettings ? (
+              <ChannelProjectSettingsFields
+                autoFocus
+                disabled={busy}
+                onChange={setDraft}
+                onSelectRoot={() => void selectRoot()}
+                runtimeSettings={runtimeSettings}
+                value={draft}
+                variant="dialog"
+              />
+            ) : (
+              <>
+              <label>
               <span>{t('projectSwitcher.dialog.fields.name')}</span>
               <input
                 autoFocus={!confirmingDelete}
-                disabled={busy || activeProject?.kind === 'channel'}
+                disabled={busy}
                 maxLength={120}
                 onChange={(event) =>
                   setDraft((current) => ({
@@ -336,11 +359,6 @@ export function ProjectSwitcher({
                 }
                 value={draft.name}
               />
-              {activeProject?.kind === 'channel' && (
-                <small>
-                  {t('projectSwitcher.dialog.channelManaged')}
-                </small>
-              )}
             </label>
             <label>
               <span>
@@ -436,6 +454,8 @@ export function ProjectSwitcher({
                   {t('projectSwitcher.dialog.defaultRuntimeHelp')}
                 </small>
               </label>
+            )}
+              </>
             )}
             {error && (
               <p className="project-create-card__error" role="alert">

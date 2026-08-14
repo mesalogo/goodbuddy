@@ -6,6 +6,7 @@ import {
   within,
   waitFor
 } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChannelSettingsSnapshot } from '../../shared/channel-settings-contracts'
 import {
@@ -140,6 +141,23 @@ function settingsApi() {
   }
 }
 
+function renderChannelSettings(
+  props: Pick<
+    ComponentProps<typeof ChannelSettingsSection>,
+    'initialChannel' | 'onNotify'
+  > = {}
+) {
+  return render(
+    <ChannelSettingsSection
+      {...props}
+      onUpdateProject={(projectId, input) =>
+        window.goodbuddy.projects.update(projectId, input)
+      }
+      projectList={projects}
+    />
+  )
+}
+
 afterEach(async () => {
   cleanup()
   vi.restoreAllMocks()
@@ -188,7 +206,7 @@ describe('ChannelSettingsSection', () => {
     })
 
     const onNotify = vi.fn()
-    render(<ChannelSettingsSection onNotify={onNotify} />)
+    renderChannelSettings({ onNotify })
     fireEvent.click(
       await screen.findByRole('tab', { name: '企业微信' })
     )
@@ -199,6 +217,9 @@ describe('ChannelSettingsSection', () => {
     )
     fireEvent.change(screen.getByLabelText('企业微信机器人 ID'), {
       target: { value: 'bot-1' }
+    })
+    fireEvent.change(screen.getByLabelText('企业微信 项目说明'), {
+      target: { value: '企业微信同步项目' }
     })
     fireEvent.change(screen.getByLabelText('企业微信Secret'), {
       target: { value: 'channel-secret' }
@@ -235,6 +256,7 @@ describe('ChannelSettingsSection', () => {
     expect(updateProject).toHaveBeenCalledWith(
       projects[1]!.id,
       expect.objectContaining({
+        description: '企业微信同步项目',
         rootPath: 'C:\\RemoteWorkspace',
         defaultWorkMode: 'execute',
         runtimeSelection: {
@@ -289,7 +311,7 @@ describe('ChannelSettingsSection', () => {
     })
 
     const onNotify = vi.fn()
-    render(<ChannelSettingsSection onNotify={onNotify} />)
+    renderChannelSettings({ onNotify })
     fireEvent.click(
       await screen.findByRole('tab', { name: '钉钉' })
     )
@@ -329,7 +351,7 @@ describe('ChannelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    renderChannelSettings()
     const trigger = await screen.findByRole('button', {
       name: '扫码绑定'
     })
@@ -380,7 +402,7 @@ describe('ChannelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    renderChannelSettings()
     const disconnect = await screen.findByRole('button', {
       name: '断开本机绑定'
     })
@@ -420,7 +442,7 @@ describe('ChannelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    renderChannelSettings()
     fireEvent.click(
       await screen.findByRole('button', { name: '扫码绑定' })
     )
@@ -465,7 +487,7 @@ describe('ChannelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    renderChannelSettings()
     const backend = await screen.findByLabelText(
       '微信 ClawBot 消息处理后端'
     )
@@ -552,7 +574,7 @@ describe('ChannelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    renderChannelSettings()
     fireEvent.change(
       await screen.findByLabelText('微信 ClawBot 默认工作目录'),
       { target: { value: '' } }
@@ -586,7 +608,7 @@ describe('ChannelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection />)
+    renderChannelSettings()
     const tablist = await screen.findByRole('tablist', {
       name: '消息通道配置'
     })
@@ -604,6 +626,10 @@ describe('ChannelSettingsSection', () => {
     expect(weixinTab).toHaveAttribute('aria-selected', 'true')
     expect(wecomTab).toHaveAttribute('tabindex', '-1')
     expect(dingtalkTab).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByText('项目设置')).toBeInTheDocument()
+    expect(
+      screen.getByText('与左上角当前通道项目的设置保持同步。')
+    ).toBeInTheDocument()
     expect(
       screen.queryByRole('switch', { name: '启用企业微信通道' })
     ).not.toBeInTheDocument()
@@ -639,7 +665,7 @@ describe('ChannelSettingsSection', () => {
       } as unknown as DesktopApi
     })
 
-    render(<ChannelSettingsSection initialChannel="wecom" />)
+    renderChannelSettings({ initialChannel: 'wecom' })
 
     expect(
       await screen.findByRole('tab', { name: '企业微信' })
@@ -669,7 +695,7 @@ describe('ChannelSettingsSection', () => {
     })
 
     await i18n.changeLanguage('en-US')
-    render(<ChannelSettingsSection />)
+    renderChannelSettings()
 
     expect(
       await screen.findByRole('tablist', {

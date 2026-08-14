@@ -15,6 +15,11 @@ export const integrations = {
     project: {
       sectionAriaLabel: '{{name}} 通道项目设置',
       identity: '通道项目',
+      cardTitle: '项目设置',
+      cardDescription:
+        '与左上角当前通道项目的设置保持同步。',
+      descriptionLabel: '项目说明',
+      descriptionAriaLabel: '{{name}} 项目说明',
       rootLabel: '默认工作目录',
       rootAriaLabel: '{{name}} 默认工作目录',
       selectRootAriaLabel: '选择 {{name}} 默认工作目录',

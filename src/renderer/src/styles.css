@@ -5354,7 +5354,9 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .channel-settings__panel {
+  display: grid;
   min-width: 0;
+  gap: var(--space-4);
 }
 
 .channel-settings__panel > .channel-settings-card {
@@ -5366,6 +5368,11 @@ details.settings-section > :not(summary) + :not(summary) {
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);
   gap: var(--space-3);
+}
+
+.channel-project-settings--dialog {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .channel-project-settings__identity {

@@ -7493,8 +7493,10 @@ function App(): React.JSX.Element {
               setRuntimeSettings(settings)
             }}
             onSetHeartbeatPaused={setHeartbeatPaused}
+            onUpdateProject={updateProject}
             open
             presentation="page"
+            projects={projects}
               />
             </Suspense>
           </RouteErrorBoundary>

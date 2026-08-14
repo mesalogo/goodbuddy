@@ -1,11 +1,9 @@
 import {
   FlaskConical,
-  FolderOpen,
   Save,
   Smartphone,
   Unplug
 } from 'lucide-react'
-import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
@@ -22,23 +20,21 @@ import {
   normalizeInteractiveWorkMode,
   projectChannels,
   type AssistantProject,
-  type InteractiveWorkMode,
+  type ProjectCreateInput,
   type ProjectChannel
 } from '../../shared/assistant-contracts'
-import {
-  agentRuntimeSelectionKey,
-  isChannelModelProfileUsable,
-  repairChannelRuntimeSelection,
-  type AgentRuntimeSelection
-} from '../../shared/runtime-selection-contracts'
 import type { WeixinBindingSnapshot } from '../../shared/weixin-channel-contracts'
 import type { AppNotificationInput } from './notifications'
 import { trapTabFocus } from './dialog-focus'
-import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
+import { PageTabs } from './WorkspacePrimitives'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
+import {
+  channelProjectDraft,
+  ChannelProjectSettingsFields
+} from './ChannelProjectSettingsFields'
 
 type ChannelDraft = {
   enabled: boolean
@@ -49,13 +45,13 @@ type ChannelDraft = {
   allowGroupMessages: boolean
 }
 
-type ChannelProjectDraft = {
+type ChannelProjectDraft = ProjectCreateInput & {
   id: string
-  name: string
-  description: string
-  rootPath: string
-  defaultWorkMode: InteractiveWorkMode
-  runtimeSelection: AgentRuntimeSelection
+}
+
+type ChannelProjectOverride = {
+  sourceKey: string
+  value: ChannelProjectDraft
 }
 
 const channelOrder: readonly ProjectChannel[] = projectChannels
@@ -172,14 +168,16 @@ function projectDraftsFrom(
         project.channel,
         {
           id: project.id,
-          name: project.name,
-          description: project.description,
-          rootPath: project.rootPath,
-          defaultWorkMode: normalizeInteractiveWorkMode(
-            project.defaultWorkMode
-          ),
-          runtimeSelection: repairChannelRuntimeSelection(
-            project.runtimeSelection ?? { provider: 'auto' },
+          ...channelProjectDraft(
+            {
+              name: project.name,
+              description: project.description,
+              rootPath: project.rootPath,
+              defaultWorkMode: normalizeInteractiveWorkMode(
+                project.defaultWorkMode
+              ),
+              runtimeSelection: project.runtimeSelection
+            },
             runtimeSettings
           )
         }
@@ -187,248 +185,42 @@ function projectDraftsFrom(
   )
 }
 
-function usableChannelModelProfiles(
-  settings: RuntimeSettings
-): RuntimeSettings['modelProfiles'] {
-  return settings.modelProfiles.filter(
-    isChannelModelProfileUsable
-  )
-}
-
-function configuredRuntimeSelection(
-  provider: 'opencode' | 'continue' | 'deepseek-harness'
-): AgentRuntimeSelection {
-  return { provider }
-}
-
-function runtimeSelectionDescription(
-  selection: AgentRuntimeSelection,
-  settings: RuntimeSettings,
-  t: TFunction<'integrations'>
-): string {
-  if (selection.provider === 'model') {
-    const profile = settings.modelProfiles.find(
-      (candidate) => candidate.id === selection.profileId
-    )
-    if (!profile) {
-      return t('channels.project.missingSelection')
-    }
-    if (profile.protocol === 'openai-images-generations') {
-      return t('channels.project.imageOnlySelection')
-    }
-    if (
-      profile.authentication === 'api-key' &&
-      !profile.apiKeyConfigured
-    ) {
-      return t('channels.project.missingCredential')
-    }
-    return t('channels.project.directDescription', {
-      name: profile.name,
-      modelName: profile.modelName
-    })
-  }
-  if (selection.provider === 'auto') {
-    return t('channels.project.automaticDescription')
-  }
-  const runtimeLabel =
-    selection.provider === 'opencode'
-      ? 'OpenCode'
-      : selection.provider === 'continue'
-        ? 'Continue'
-        : 'DeepSeek Harness'
-  return t('channels.project.runtimeDescription', {
-    runtime: runtimeLabel
+function projectDraftKey(project: ChannelProjectDraft): string {
+  return JSON.stringify({
+    description: project.description,
+    rootPath: project.rootPath,
+    defaultWorkMode: project.defaultWorkMode,
+    runtimeSelection: project.runtimeSelection
   })
 }
 
-function ChannelProjectControls({
-  draft,
+function ChannelProjectCard({
   onChange,
   onSelectRoot,
+  project,
   runtimeSettings
 }: {
-  draft: ChannelProjectDraft
-  onChange: (draft: ChannelProjectDraft) => void
+  onChange: (next: ChannelProjectDraft) => void
   onSelectRoot: () => void
+  project: ChannelProjectDraft
   runtimeSettings: RuntimeSettings
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
-  const openCodeSelection = configuredRuntimeSelection(
-    'opencode'
-  )
-  const continueSelection = configuredRuntimeSelection(
-    'continue'
-  )
-  const deepseekHarnessSelection = configuredRuntimeSelection(
-    'deepseek-harness'
-  )
-  const directProfiles = usableChannelModelProfiles(runtimeSettings)
-  const selectedDirectProfileId =
-    draft.runtimeSelection.provider === 'model'
-      ? draft.runtimeSelection.profileId
-      : undefined
-  const selectedDirectProfile = runtimeSettings.modelProfiles.find(
-    (profile) => profile.id === selectedDirectProfileId
-  )
-  const selectedDirectUnavailable =
-    selectedDirectProfileId !== undefined &&
-    !directProfiles.some(
-      (profile) => profile.id === selectedDirectProfileId
-    )
-  const selections = [
-    ...directProfiles.map((profile) => ({
-        provider: 'model' as const,
-        profileId: profile.id
-      })),
-    openCodeSelection,
-    continueSelection,
-    deepseekHarnessSelection
-  ]
-  const selectionByKey = new Map(
-    selections.map((selection) => [
-      agentRuntimeSelectionKey(selection),
-      selection
-    ])
-  )
   return (
-    <section
-      aria-label={t('channels.project.sectionAriaLabel', {
-        name: draft.name
-      })}
-      className="channel-project-settings"
-    >
-      <div className="channel-project-settings__identity">
-        <span>{t('channels.project.identity')}</span>
-        <strong>{draft.name}</strong>
-      </div>
-      <label className="field">
-        <span>{t('channels.project.rootLabel')}</span>
-        <div className="channel-project-settings__root">
-          <input
-            aria-label={t('channels.project.rootAriaLabel', {
-              name: draft.name
-            })}
-            maxLength={4_096}
-            onChange={(event) =>
-              onChange({ ...draft, rootPath: event.target.value })
-            }
-            value={draft.rootPath}
-          />
-          <button
-            aria-label={t('channels.project.selectRootAriaLabel', {
-              name: draft.name
-            })}
-            className="secondary-button"
-            onClick={onSelectRoot}
-            type="button"
-          >
-            <FolderOpen aria-hidden="true" size={14} />
-            {t('channels.project.select')}
-          </button>
+    <article className="capability-card channel-settings-card">
+      <div className="capability-card__header">
+        <div>
+          <strong>{t('channels.project.cardTitle')}</strong>
+          <small>{t('channels.project.cardDescription')}</small>
         </div>
-        <small>{t('channels.project.rootHelp')}</small>
-      </label>
-      <label className="field">
-        <span>{t('channels.project.backendLabel')}</span>
-        <select
-          aria-label={t('channels.project.backendAriaLabel', {
-            name: draft.name
-          })}
-          onChange={(event) => {
-            const runtimeSelection = selectionByKey.get(
-              event.target.value
-            )
-            if (runtimeSelection) {
-              onChange({ ...draft, runtimeSelection })
-            }
-          }}
-          value={agentRuntimeSelectionKey(draft.runtimeSelection)}
-        >
-          <optgroup label={t('channels.project.directModels')}>
-            {selectedDirectUnavailable && (
-              <option
-                disabled
-                value={agentRuntimeSelectionKey(draft.runtimeSelection)}
-              >
-                {selectedDirectProfile
-                  ? t('channels.project.unavailableProfile', {
-                      name: selectedDirectProfile.name,
-                      modelName: selectedDirectProfile.modelName
-                    })
-                  : t('channels.project.missingProfile')}
-              </option>
-            )}
-            {directProfiles.length === 0 && (
-              <option disabled value="model:unavailable">
-                {t('channels.project.noTextModels')}
-              </option>
-            )}
-            {directProfiles.map((profile) => {
-                const selection = {
-                  provider: 'model' as const,
-                  profileId: profile.id
-                }
-                return (
-                  <option
-                    key={profile.id}
-                    value={agentRuntimeSelectionKey(selection)}
-                  >
-                    {profile.name} · {profile.modelName}
-                  </option>
-                )
-              })}
-          </optgroup>
-          <optgroup label="Agent Runtime">
-            <option value={agentRuntimeSelectionKey(openCodeSelection)}>
-              OpenCode
-            </option>
-            <option value={agentRuntimeSelectionKey(continueSelection)}>
-              Continue
-            </option>
-            <option
-              value={agentRuntimeSelectionKey(deepseekHarnessSelection)}
-            >
-              {t('channels.project.deepseekHarnessOption')}
-            </option>
-          </optgroup>
-        </select>
-        <small>
-          {runtimeSelectionDescription(
-            draft.runtimeSelection,
-            runtimeSettings,
-            t
-          )}
-        </small>
-      </label>
-      <fieldset className="channel-work-mode">
-        <legend>{t('channels.project.defaultMode')}</legend>
-        <SegmentedControl
-          ariaLabel={t('channels.project.defaultModeAriaLabel', {
-            name: draft.name
-          })}
-          onChange={(defaultWorkMode) =>
-            onChange({ ...draft, defaultWorkMode })
-          }
-          options={[
-            { value: 'ask', label: t('channels.project.modes.ask') },
-            {
-              value: 'execute',
-              label: t('channels.project.modes.execute')
-            }
-          ]}
-          value={draft.defaultWorkMode}
-        />
-        <small>
-          {t('channels.project.overrideHelp')}
-        </small>
-      </fieldset>
-      <p className="channel-project-settings__risk">
-        {draft.defaultWorkMode === 'execute'
-          ? t('channels.project.executeRisk')
-          : t('channels.project.askRisk')}{' '}
-        {t('channels.project.riskSuffix')}
-      </p>
-    </section>
+      </div>
+      <ChannelProjectSettingsFields
+        onChange={(next) => onChange({ ...next, id: project.id })}
+        onSelectRoot={onSelectRoot}
+        runtimeSettings={runtimeSettings}
+        value={project}
+      />
+    </article>
   )
 }
 
@@ -464,6 +256,7 @@ function ChannelEditor({
   const prefix = `channel-${channel}`
 
   return (
+    <>
     <article className="capability-card channel-settings-card">
       <div className="capability-card__header">
         <div>
@@ -603,13 +396,6 @@ function ChannelEditor({
         <span>{t('channels.credential.groupMessages')}</span>
       </label>
 
-      <ChannelProjectControls
-        draft={project}
-        onChange={onProjectChange}
-        onSelectRoot={onSelectRoot}
-        runtimeSettings={runtimeSettings}
-      />
-
       <button
         className="secondary-button"
         disabled={testing}
@@ -624,6 +410,13 @@ function ChannelEditor({
             })}
       </button>
     </article>
+    <ChannelProjectCard
+      onChange={onProjectChange}
+      onSelectRoot={onSelectRoot}
+      project={project}
+      runtimeSettings={runtimeSettings}
+    />
+    </>
   )
 }
 
@@ -963,13 +756,13 @@ function WeixinChannelEditor({
           {t('channels.weixin.behaviorHelp')}
         </small>
 
-        <ChannelProjectControls
-          draft={project}
-          onChange={onProjectChange}
-          onSelectRoot={onSelectRoot}
-          runtimeSettings={runtimeSettings}
-        />
       </article>
+      <ChannelProjectCard
+        onChange={onProjectChange}
+        onSelectRoot={onSelectRoot}
+        project={project}
+        runtimeSettings={runtimeSettings}
+      />
       {bindingOpen && (
         <WeixinQrDialog
           binding={binding}
@@ -986,10 +779,17 @@ function WeixinChannelEditor({
 
 export function ChannelSettingsSection({
   initialChannel = 'weixin',
-  onNotify = () => undefined
+  onNotify = () => undefined,
+  onUpdateProject,
+  projectList
 }: {
   initialChannel?: ProjectChannel
   onNotify?: (notification: AppNotificationInput) => void
+  onUpdateProject: (
+    projectId: string,
+    input: ProjectCreateInput
+  ) => Promise<AssistantProject>
+  projectList: AssistantProject[]
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const tRef = useRef(t)
@@ -1004,8 +804,8 @@ export function ChannelSettingsSection({
   const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot>()
   const [runtimeSettings, setRuntimeSettings] =
     useState<RuntimeSettings>()
-  const [projects, setProjects] = useState<
-    Partial<Record<ProjectChannel, ChannelProjectDraft>>
+  const [projectOverrides, setProjectOverrides] = useState<
+    Partial<Record<ProjectChannel, ChannelProjectOverride>>
   >({})
   const [weixinEnabled, setWeixinEnabled] = useState(false)
   const [binding, setBinding] = useState<WeixinBindingSnapshot>({
@@ -1049,18 +849,14 @@ export function ChannelSettingsSection({
       }
       return Promise.all([
         api.getSnapshot(),
-        window.goodbuddy.projects.list(false),
         api.getWeixinBinding(),
         window.goodbuddy.settings.getRuntime()
       ])
     })()
-      .then(([next, projectList, bindingSnapshot, nextRuntimeSettings]) => {
+      .then(([next, bindingSnapshot, nextRuntimeSettings]) => {
         if (active) {
           applySnapshot(next)
           setRuntimeSettings(nextRuntimeSettings)
-          setProjects(
-            projectDraftsFrom(projectList, nextRuntimeSettings)
-          )
           setBinding(bindingSnapshot)
         }
       })
@@ -1089,6 +885,27 @@ export function ChannelSettingsSection({
       removeBindingListener?.()
     }
   }, [closeBinding])
+
+  const persistedProjects = runtimeSettings
+    ? projectDraftsFrom(projectList, runtimeSettings)
+    : {}
+  const projects = Object.fromEntries(
+    channelOrder.flatMap((channel) => {
+      const persisted = persistedProjects[channel]
+      if (!persisted) {
+        return []
+      }
+      const override = projectOverrides[channel]
+      return [
+        [
+          channel,
+          override?.sourceKey === projectDraftKey(persisted)
+            ? override.value
+            : persisted
+        ]
+      ]
+    })
+  ) as Partial<Record<ProjectChannel, ChannelProjectDraft>>
 
   const save = async (): Promise<void> => {
     const api = window.goodbuddy.channels
@@ -1132,9 +949,9 @@ export function ChannelSettingsSection({
     setError(undefined)
     setBindingError(undefined)
     try {
-      const updatedProjects = await Promise.all(
+      await Promise.all(
         channelProjects.map((project) =>
-          window.goodbuddy.projects.update(project!.id, {
+          onUpdateProject(project!.id, {
             name: project!.name,
             description: project!.description,
             rootPath: project!.rootPath,
@@ -1143,7 +960,6 @@ export function ChannelSettingsSection({
           })
         )
       )
-      setProjects(projectDraftsFrom(updatedProjects, runtimeSettings))
       if (Object.keys(input).length > 0) {
         applySnapshot(await api.apply(input))
       }
@@ -1165,7 +981,17 @@ export function ChannelSettingsSection({
     channel: ProjectChannel,
     next: ChannelProjectDraft
   ): void => {
-    setProjects((current) => ({ ...current, [channel]: next }))
+    const persisted = persistedProjects[channel]
+    if (!persisted) {
+      return
+    }
+    setProjectOverrides((current) => ({
+      ...current,
+      [channel]: {
+        sourceKey: projectDraftKey(persisted),
+        value: next
+      }
+    }))
   }
 
   const selectRoot = async (
