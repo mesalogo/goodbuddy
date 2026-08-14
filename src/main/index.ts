@@ -82,6 +82,7 @@ import {
   type DeepSeekHarnessFork
 } from './agent/deepseek-harness-utility-launcher'
 import { buildControlledHarnessEnvironment } from './agent/process-environment'
+import { runStartupPrerequisites } from './startup-prerequisites'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -380,9 +381,11 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'runtime-settings.json'),
       secureCipher
     )
-    const initialRuntimeSettings =
-      await settingsStore.getPublicSettings()
-    const initialSettings = await settingsStore.getResolvedSettings()
+    const [initialRuntimeSettings, initialResolvedSettings] =
+      await Promise.all([
+        settingsStore.getPublicSettings(),
+        settingsStore.getResolvedSettings()
+      ])
     globalTlsPolicy = new GlobalTlsPolicy(app)
     globalTlsPolicy.install()
     const capabilityService = new CapabilityService(
@@ -444,10 +447,6 @@ if (hasSingleInstanceLock) {
       app.getPath('userData'),
       'deepseek-harness'
     )
-    await mkdir(deepSeekHarnessHome, {
-      recursive: true,
-      mode: 0o700
-    })
     const launchDeepSeekHarness =
       createDeepSeekHarnessUtilityLauncher({
         bundledHostPath: bundledRuntimePaths.deepseekHarness,
@@ -458,56 +457,29 @@ if (hasSingleInstanceLock) {
         fork: forkDeepSeekHarness,
         terminateProcess: terminateHarnessUtilityProcess
       })
-    knowledgeService = new KnowledgeService({
+    const startupKnowledgeService = new KnowledgeService({
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
       extractStructured: createModelGraphExtractor(settingsStore),
       parseDocument: documentParsingService.parse
     })
-    await knowledgeService.initialize()
-    const knowledgeRuntimeSettings =
-      await settingsStore.getResolvedSettings()
-    void knowledgeService
-      .setEmbeddingProvider(
-        createEmbeddingProvider(knowledgeRuntimeSettings)
-      )
-      .catch(() => undefined)
-    void knowledgeService
-      .setRerankProvider(
-        createRerankProvider(knowledgeRuntimeSettings)
-      )
-      .catch(() => undefined)
-    assistantDatabase = new AssistantDatabase(
+    knowledgeService = startupKnowledgeService
+    const startupAssistantDatabase = new AssistantDatabase(
       join(app.getPath('userData'), 'assistant.sqlite')
     )
-    assistantDatabase.initialize(defaultWorkspace)
-    assistantDatabase.ensureChannelProjects(
-      defaultWorkspace,
-      initialRuntimeSettings.defaultModelProfileId
-    )
-    channelSettingsStore.reportRuntimeSelectionRepairs(
-      assistantDatabase.repairConversationRuntimeSelections(
-        initialRuntimeSettings
-      )
-    )
+    assistantDatabase = startupAssistantDatabase
     const goodbuddyConfigService = new GoodBuddyConfigService(
       applicationSettingsStore,
       capabilityService
     )
-    knowledgeGateway = new KnowledgeMcpGateway(knowledgeService, {
-      magicNotesDatabase: assistantDatabase,
-      configService: goodbuddyConfigService
-    })
-    await knowledgeGateway.start()
-    const subagentService = new SubagentService(
-      createDefaultModelRuntime(defaultWorkspace, initialSettings),
-      assistantDatabase,
-      undefined,
-      createSubagentProfileRuntimes(
-        defaultWorkspace,
-        initialSettings
-      )
+    const startupKnowledgeGateway = new KnowledgeMcpGateway(
+      startupKnowledgeService,
+      {
+        magicNotesDatabase: startupAssistantDatabase,
+        configService: goodbuddyConfigService
+      }
     )
+    knowledgeGateway = startupKnowledgeGateway
     const createRuntimeWithCapabilities = async (
       settings: ResolvedRuntimeSettings,
       target: SelectedRuntimeTarget
@@ -547,7 +519,7 @@ if (hasSingleInstanceLock) {
           browserCapability?.enabled && browserCapability.supported
             ? browserService
             : undefined,
-        knowledgeGateway,
+        knowledgeGateway: startupKnowledgeGateway,
         webSearchEnabled: webSearchCapability?.enabled
       })
     }
@@ -576,9 +548,53 @@ if (hasSingleInstanceLock) {
         resolved.target
       )
     }
-    runtime = new AgentRuntimeController(
-      await createConfiguredRuntime()
+    const configuredRuntime = await runStartupPrerequisites({
+      prepareDeepSeekHome: async () => {
+        await mkdir(deepSeekHarnessHome, {
+          recursive: true,
+          mode: 0o700
+        })
+      },
+      initializeKnowledgeAndGateway: async () => {
+        await startupKnowledgeService.initialize()
+        await Promise.all([
+          startupKnowledgeService.setEmbeddingProvider(
+            createEmbeddingProvider(initialResolvedSettings)
+          ).catch(() => undefined),
+          startupKnowledgeService.setRerankProvider(
+            createRerankProvider(initialResolvedSettings)
+          ).catch(() => undefined)
+        ])
+        await startupKnowledgeGateway.start()
+      },
+      hydrateConfiguredRuntime: () =>
+        createConfiguredRuntime(initialResolvedSettings),
+      initializeAssistant: () => {
+        startupAssistantDatabase.initialize(defaultWorkspace)
+        startupAssistantDatabase.ensureChannelProjects(
+          defaultWorkspace,
+          initialRuntimeSettings.defaultModelProfileId
+        )
+        channelSettingsStore.reportRuntimeSelectionRepairs(
+          startupAssistantDatabase.repairConversationRuntimeSelections(
+            initialRuntimeSettings
+          )
+        )
+      }
+    })
+    const subagentService = new SubagentService(
+      createDefaultModelRuntime(
+        defaultWorkspace,
+        initialResolvedSettings
+      ),
+      startupAssistantDatabase,
+      undefined,
+      createSubagentProfileRuntimes(
+        defaultWorkspace,
+        initialResolvedSettings
+      )
     )
+    runtime = new AgentRuntimeController(configuredRuntime)
     selectedRuntimeManager = new SelectedRuntimeManager(
       createSelectedRuntime
     )

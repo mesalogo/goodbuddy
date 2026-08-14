@@ -692,13 +692,23 @@ function selectComposerOption(
   fireEvent.click(option)
 }
 
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('App', () => {
   beforeEach(() => {
     localStorage.clear()
     delete document.documentElement.dataset.theme
     document.documentElement.style.colorScheme = ''
     vi.clearAllMocks()
-    api.channels = undefined
     vi.mocked(api.conversations.list).mockReset().mockResolvedValue([])
     vi.mocked(api.conversations.replace)
       .mockReset()
@@ -712,6 +722,7 @@ describe('App', () => {
     vi.mocked(api.conversations.onChanged)
       .mockReset()
       .mockReturnValue(() => undefined)
+    api.channels = undefined
     newConversationListener = undefined
     beforeQuitListener = undefined
     browserListener = undefined
@@ -744,6 +755,11 @@ describe('App', () => {
       supportsToolExecution: true,
       detail: 'Ready'
     })
+    vi.stubGlobal(
+      'requestIdleCallback',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelIdleCallback', vi.fn())
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: api
@@ -752,6 +768,7 @@ describe('App', () => {
 
   afterEach(() => {
     cleanup()
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -821,6 +838,39 @@ describe('App', () => {
 
     expect(await screen.findByText('桌面工作区')).toBeInTheDocument()
     expect(screen.getByText('GOODBUDDY 工作台')).toBeInTheDocument()
+  })
+
+  it('schedules lazy workspace routes for idle preloading', () => {
+    render(<App />)
+
+    expect(window.requestIdleCallback).toHaveBeenCalledWith(
+      expect.any(Function),
+      { timeout: 2000 }
+    )
+  })
+
+  it('waits for project bootstrap before project-scoped startup loads', async () => {
+    const projects = deferred<(typeof project)[]>()
+    vi.mocked(api.projects.list).mockImplementationOnce(
+      () => projects.promise
+    )
+
+    render(<App />)
+
+    expect(api.projects.list).toHaveBeenCalledOnce()
+    expect(api.memory.list).not.toHaveBeenCalled()
+    expect(api.schedules.list).not.toHaveBeenCalled()
+    expect(api.heartbeats.list).not.toHaveBeenCalled()
+
+    await act(async () => projects.resolve([project]))
+
+    await waitFor(() => {
+      expect(api.memory.list).toHaveBeenCalledOnce()
+      expect(api.memory.list).toHaveBeenCalledWith(projectId)
+      expect(api.schedules.list).toHaveBeenCalledOnce()
+      expect(api.schedules.list).toHaveBeenCalledWith(projectId)
+      expect(api.heartbeats.list).toHaveBeenCalledOnce()
+    })
   })
 
   it('shows an accessible fallback while a lazy route loads', async () => {

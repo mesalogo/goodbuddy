@@ -4426,6 +4426,31 @@ export class KnowledgeDatabase {
   }
 
   private migrate(database: DatabaseSync): void {
+    const migrationTable = database
+      .prepare(
+        `SELECT 1 AS found FROM sqlite_schema
+         WHERE type = 'table' AND name = 'schema_migrations'`
+      )
+      .get()
+    if (migrationTable) {
+      const versions = database
+        .prepare(
+          `SELECT
+             (SELECT COALESCE(MAX(version), 0) FROM schema_migrations)
+               AS migration_version,
+             user_version
+           FROM pragma_user_version`
+        )
+        .get()
+      if (
+        versions &&
+        asNumber(versions, 'migration_version') === DATABASE_VERSION &&
+        asNumber(versions, 'user_version') === DATABASE_VERSION
+      ) {
+        return
+      }
+    }
+
     database.exec('BEGIN IMMEDIATE')
     try {
       database.exec(`
@@ -4441,6 +4466,17 @@ export class KnowledgeDatabase {
       if (currentVersion > DATABASE_VERSION) {
         throw new Error(
           `Knowledge database version ${currentVersion} is newer than supported version ${DATABASE_VERSION}`
+        )
+      }
+      const userVersionRow = database
+        .prepare('PRAGMA user_version')
+        .get()
+      const userVersion = userVersionRow
+        ? asNumber(userVersionRow, 'user_version')
+        : 0
+      if (userVersion > DATABASE_VERSION) {
+        throw new Error(
+          `Knowledge database user version ${userVersion} is newer than supported version ${DATABASE_VERSION}`
         )
       }
       if (currentVersion < 1) {

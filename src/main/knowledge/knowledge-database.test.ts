@@ -120,6 +120,69 @@ describe('KnowledgeDatabase', () => {
       .toHaveLength(1)
   })
 
+  it('repairs a mismatched user version without losing current-schema data', async () => {
+    const { database, path } = await createDatabase()
+    const knowledgeBase = database.createKnowledgeBase({
+      name: 'Mismatch repair',
+      storageMode: 'reference'
+    })
+    seedDocument(database, knowledgeBase.id, 'mismatch-repair')
+    database.close()
+
+    const mismatch = new DatabaseSync(path)
+    mismatch.exec('PRAGMA user_version = 10')
+    mismatch.close()
+
+    const repaired = new KnowledgeDatabase(path)
+    openDatabases.push(repaired)
+    repaired.initialize()
+
+    expect(repaired.getKnowledgeBase(knowledgeBase.id)).toMatchObject({
+      name: 'Mismatch repair'
+    })
+    expect(repaired.listDocuments(knowledgeBase.id)).toHaveLength(1)
+    const inspection = new DatabaseSync(path)
+    expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
+      user_version: 11
+    })
+    inspection.close()
+  })
+
+  it.each([
+    ['migration version', 'INSERT INTO schema_migrations VALUES (12, ?)', true],
+    ['user version', 'PRAGMA user_version = 12', false]
+  ])('rejects a future %s without downgrading it', async (
+    _label,
+    statement,
+    hasParameter
+  ) => {
+    const { database, path } = await createDatabase()
+    database.close()
+    const future = new DatabaseSync(path)
+    if (hasParameter) {
+      future.prepare(statement).run(new Date().toISOString())
+    } else {
+      future.exec(statement)
+    }
+    future.close()
+
+    const unsupported = new KnowledgeDatabase(path)
+    expect(() => unsupported.initialize()).toThrow(
+      'newer than supported version 11'
+    )
+
+    const inspection = new DatabaseSync(path)
+    expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
+      user_version: hasParameter ? 11 : 12
+    })
+    expect(
+      inspection
+        .prepare('SELECT MAX(version) AS version FROM schema_migrations')
+        .get()
+    ).toEqual({ version: hasParameter ? 12 : 11 })
+    inspection.close()
+  })
+
   it('keeps graph generation off unless explicitly enabled', async () => {
     const { database } = await createDatabase()
     const defaultLibrary = database.createKnowledgeBase({

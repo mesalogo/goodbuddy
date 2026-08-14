@@ -34,7 +34,6 @@ import {
   Sun,
   TerminalSquare,
   Trash2,
-  UserRound,
   X
 } from 'lucide-react'
 import {
@@ -93,7 +92,6 @@ import type {
   ConversationSnapshot,
   ConversationAttachment,
   ConversationMessageBlock,
-  ConversationToolActivity,
   LocalConversationHeader,
   LocalConversationSaveBatch,
   ProjectCreateInput,
@@ -109,7 +107,13 @@ import {
   projectChannelLabels
 } from '../../shared/assistant-contracts'
 import { ActivityPanel } from './ActivityPanel'
-import { AgentQuestionCard } from './AgentQuestionCard'
+import {
+  ChatTimeline,
+  type ImageViewerItem,
+  type Message,
+  type SubagentActivity,
+  type ToolActivity
+} from './ChatTimeline'
 import {
   loadActivityRecords,
   reconcileActivityRecords,
@@ -121,7 +125,6 @@ import {
   KnowledgeCitationDialog,
   type KnowledgeCitationContextView
 } from './KnowledgeCitationDialog'
-import { MarkdownRenderer } from './MarkdownRenderer'
 import {
   DestructiveConfirmActions,
   EmptyState,
@@ -161,24 +164,37 @@ import type {
 } from './notifications'
 import type { ReleaseNotesSnapshot } from '../../shared/release-notes-contracts'
 import { ReleaseNotesDialog } from './ReleaseNotesDialog'
+import { scheduleIdleRoutePreload } from './idle-route-preload'
+import { formatTime } from './time-format'
+
+const loadKnowledgeWorkspace = () => import('./KnowledgeWorkspace')
+const loadHeartbeatCenter = () => import('./HeartbeatCenter')
+const loadMagicNotesWorkspace = () => import('./MagicNotesWorkspace')
+const loadSettingsPanel = () => import('./SettingsPanel')
+const idleRouteModuleLoaders = [
+  loadKnowledgeWorkspace,
+  loadHeartbeatCenter,
+  loadMagicNotesWorkspace,
+  loadSettingsPanel
+] as const
 
 const KnowledgeWorkspace = lazy(async () => {
-  const module = await import('./KnowledgeWorkspace')
+  const module = await loadKnowledgeWorkspace()
   return { default: module.KnowledgeWorkspace }
 })
 
 const HeartbeatCenter = lazy(async () => {
-  const module = await import('./HeartbeatCenter')
+  const module = await loadHeartbeatCenter()
   return { default: module.HeartbeatCenter }
 })
 
 const MagicNotesWorkspace = lazy(async () => {
-  const module = await import('./MagicNotesWorkspace')
+  const module = await loadMagicNotesWorkspace()
   return { default: module.MagicNotesWorkspace }
 })
 
 const SettingsPanel = lazy(async () => {
-  const module = await import('./SettingsPanel')
+  const module = await loadSettingsPanel()
   return { default: module.SettingsPanel }
 })
 
@@ -385,50 +401,6 @@ function supportsSubagentSmartRouting(
   return workMode === 'ask'
 }
 
-type ToolActivity = ConversationToolActivity
-
-type SubagentActivity = {
-  childTaskId: string
-  expertId: string
-  expertName: string
-  routingMode: 'manual' | 'smart'
-  state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-  reason?: string
-  error?: string
-}
-
-type KnowledgeRetrievalStatus = Omit<
-  Extract<AgentEvent, { type: 'knowledge-retrieval' }>,
-  'requestId' | 'type'
->
-
-type Message = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  reasoning?: string
-  blocks?: ConversationMessageBlock[]
-  createdAt: number
-  state: 'streaming' | 'complete' | 'error'
-  status?: string
-  tools?: ToolActivity[]
-  subagents?: SubagentActivity[]
-  approval?: {
-    id: string
-    title: string
-    description: string
-    toolName?: string
-    argumentSummary?: string
-    allowPermanent?: boolean
-  }
-  question?: Extract<AgentEvent, { type: 'question' }>
-  sources?: string[]
-  sourceReferences?: KnowledgeSearchReference[]
-  knowledgeRetrieval?: KnowledgeRetrievalStatus
-  artifactIds?: string[]
-  attachments?: ConversationAttachment[]
-}
-
 type Conversation = {
   id: string
   projectId?: string
@@ -438,11 +410,6 @@ type Conversation = {
   title: string
   updatedAt: number
   messages: Message[]
-}
-
-type ImageViewerItem = {
-  src: string
-  title: string
 }
 
 type ActiveRun = {
@@ -572,147 +539,7 @@ function isErrorRepresentedByFailedTool(
   )
 }
 
-type MessageBlockRenderItem =
-  | {
-      kind: 'block'
-      block: Exclude<ConversationMessageBlock, { type: 'tool' }>
-    }
-  | {
-      kind: 'tools'
-      id: string
-      tools: ToolActivity[]
-    }
-
-function groupMessageBlocks(
-  blocks: ConversationMessageBlock[]
-): MessageBlockRenderItem[] {
-  const items: MessageBlockRenderItem[] = []
-  for (const block of blocks) {
-    if (block.type !== 'tool') {
-      items.push({ kind: 'block', block })
-      continue
-    }
-    const previous = items.at(-1)
-    if (previous?.kind === 'tools') {
-      previous.tools.push(block.tool)
-    } else {
-      items.push({
-        kind: 'tools',
-        id: block.id,
-        tools: [block.tool]
-      })
-    }
-  }
-  return items
-}
-
 const chatBottomProximity = 96
-
-function MessageReasoning({
-  content,
-  streaming
-}: {
-  content: string
-  streaming: boolean
-}): React.JSX.Element {
-  const { t } = useTranslation('app')
-  const contentRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!streaming || !contentRef.current) {
-      return
-    }
-    contentRef.current.scrollTo({
-      top: contentRef.current.scrollHeight,
-      behavior: 'auto'
-    })
-  }, [content, streaming])
-
-  return (
-    <details className="message-reasoning" open={streaming}>
-      <summary>
-        {streaming
-          ? t('chat.reasoning.streaming')
-          : t('chat.reasoning.complete')}
-      </summary>
-      <div
-        className="markdown-content message-reasoning__content"
-        ref={contentRef}
-      >
-        <MarkdownRenderer>{content}</MarkdownRenderer>
-      </div>
-    </details>
-  )
-}
-
-function ToolExecutionList({
-  tools
-}: {
-  tools: ToolActivity[]
-}): React.JSX.Element {
-  const { t } = useTranslation('app')
-
-  return (
-    <section
-      aria-label={t('chat.tools.region', { count: tools.length })}
-      className="tool-execution-list"
-    >
-      <header className="tool-execution-list__header">
-        <TerminalSquare aria-hidden="true" size={15} />
-        <strong>{t('chat.tools.title')}</strong>
-        <small>{t('chat.tools.count', { count: tools.length })}</small>
-      </header>
-      <ol>
-        {tools.map((tool) => {
-          const hasDetails = Boolean(
-            tool.input || tool.output || tool.error
-          )
-          return (
-            <li key={tool.callId ?? tool.name}>
-              <details
-                className={`tool-execution tool-execution--${tool.state}`}
-                open={
-                  tool.state === 'pending' || tool.state === 'running'
-                    ? true
-                    : undefined
-                }
-              >
-                <summary>
-                  <span className="tool-execution__identity">
-                    <strong>{tool.name}</strong>
-                    <span>{tool.summary}</span>
-                  </span>
-                  <small>{t(`chat.tools.states.${tool.state}`)}</small>
-                </summary>
-                <div className="tool-execution__details">
-                  {tool.input && (
-                    <section>
-                      <strong>{t('chat.tools.input')}</strong>
-                      <pre>{tool.input}</pre>
-                    </section>
-                  )}
-                  {tool.output && (
-                    <section>
-                      <strong>{t('chat.tools.output')}</strong>
-                      <pre>{tool.output}</pre>
-                    </section>
-                  )}
-                  {tool.error && (
-                    <section className="tool-execution__error">
-                      <strong>{t('chat.tools.error')}</strong>
-                      <pre>{tool.error}</pre>
-                    </section>
-                  )}
-                  {!hasDetails && <p>{t('chat.tools.noDetails')}</p>}
-                </div>
-              </details>
-            </li>
-          )
-        })}
-      </ol>
-    </section>
-  )
-}
 
 function createConversation(
   projectId?: string,
@@ -1096,13 +923,6 @@ function getConfiguredAgentRuntimeSource(
     label: `${runtimeLabel} · ${labels.ownConfiguration}`,
     detail: labels.useOwnConfiguration(runtimeLabel)
   }
-}
-
-function formatTime(timestamp: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(timestamp)
 }
 
 function formatAttachmentSize(size: number): string {
@@ -1769,6 +1589,30 @@ function App(): React.JSX.Element {
   } | undefined>(undefined)
   const finalRevealedMessageIdRef = useRef<string | undefined>(undefined)
   const messageArticleRefs = useRef(new Map<string, HTMLElement>())
+  const handleMessageArticleRef = useCallback(
+    (messageId: string, element: HTMLElement | null): void => {
+      if (element) {
+        messageArticleRefs.current.set(messageId, element)
+      } else {
+        messageArticleRefs.current.delete(messageId)
+      }
+    },
+    []
+  )
+  const retryMessage = useCallback((content: string): void => {
+    setInput(content)
+    inputRef.current?.focus()
+  }, [])
+  useEffect(
+    () =>
+      scheduleIdleRoutePreload(
+        idleRouteModuleLoaders,
+        () =>
+          activeRuns.current.size === 0 &&
+          preparingConversations.current.size === 0
+      ),
+    []
+  )
   const [visibleMessageWindow, setVisibleMessageWindow] = useState(() => ({
     conversationId: activeId,
     count: messageRenderBatchSize
@@ -2683,29 +2527,43 @@ function App(): React.JSX.Element {
         return
       }
 
-      setAssistantTasks((current) =>
-        current.map((task) =>
-          task.id === event.requestId
-            ? {
-                ...task,
-                status:
-                  event.type === 'approval' || event.type === 'question'
-                    ? 'waiting_approval'
-                    : event.type === 'done'
-                      ? 'completed'
-                      : event.type === 'error'
-                        ? event.status
-                        : 'running',
-                completedAt:
-                  event.type === 'done' || event.type === 'error'
-                    ? new Date().toISOString()
-                    : task.completedAt,
-                error:
-                  event.type === 'error' ? event.message : task.error
-              }
-            : task
-        )
-      )
+      setAssistantTasks((current) => {
+        let changed = false
+        const updated = current.map((task) => {
+          if (task.id !== event.requestId) {
+            return task
+          }
+          const status: AssistantTask['status'] =
+            event.type === 'approval' || event.type === 'question'
+              ? 'waiting_approval'
+              : event.type === 'done'
+                ? 'completed'
+                : event.type === 'error'
+                  ? event.status
+                  : 'running'
+          const completedAt =
+            event.type === 'done' || event.type === 'error'
+              ? new Date().toISOString()
+              : task.completedAt
+          const error =
+            event.type === 'error' ? event.message : task.error
+          if (
+            task.status === status &&
+            task.completedAt === completedAt &&
+            task.error === error
+          ) {
+            return task
+          }
+          changed = true
+          return {
+            ...task,
+            status,
+            completedAt,
+            error
+          }
+        })
+        return changed ? updated : current
+      })
       if (event.type === 'done') {
         if (
           run.projectId &&
@@ -3476,8 +3334,11 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (!activeProjectId) {
+      return
+    }
     void window.goodbuddy.memory
-      .list(activeProjectId || undefined)
+      .list(activeProjectId)
       .then(setAssistantMemories)
       .catch(() =>
         notify({
@@ -3560,8 +3421,11 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (!activeProjectId) {
+      return
+    }
     void window.goodbuddy.schedules
-      .list(activeProjectId || undefined)
+      .list(activeProjectId)
       .then(setAssistantSchedules)
       .catch(() =>
         notify({
@@ -3611,6 +3475,9 @@ function App(): React.JSX.Element {
   }, [loadHeartbeats])
 
   useEffect(() => {
+    if (!activeProjectId) {
+      return
+    }
     const requestId = ++heartbeatLoadRequestRef.current
     const timeout = setTimeout(() => {
       if (requestId !== heartbeatLoadRequestRef.current) {
@@ -3654,7 +3521,7 @@ function App(): React.JSX.Element {
         heartbeatLoadRequestRef.current += 1
       }
     }
-  }, [loadHeartbeats])
+  }, [activeProjectId, loadHeartbeats])
 
   const refreshHeartbeatCenter = useCallback(async (): Promise<void> => {
     const projectId = activeProjectId
@@ -4424,17 +4291,20 @@ function App(): React.JSX.Element {
     notify({ tone: 'success', message: t('notices.conversationExported') })
   }
 
-  const openImageViewer = (
+  const openImageViewer = useCallback((
     item: ImageViewerItem,
     trigger: HTMLElement
   ): void => {
     if (!imageDataUrlPattern.test(item.src)) {
-      notify({ tone: 'error', message: t('notices.imageUnavailable') })
+      notify({
+        tone: 'error',
+        message: tRef.current('notices.imageUnavailable')
+      })
       return
     }
     imageViewerTriggerRef.current = trigger
     setImageViewerItem(item)
-  }
+  }, [])
 
   const closeImageViewer = (): void => {
     setImageViewerItem(undefined)
@@ -4444,7 +4314,7 @@ function App(): React.JSX.Element {
     })
   }
 
-  const openCitationContext = async (
+  const openCitationContext = useCallback(async (
     reference: KnowledgeSearchReference
   ): Promise<void> => {
     setCitationDialog({
@@ -4455,7 +4325,7 @@ function App(): React.JSX.Element {
       setCitationDialog({
         reference,
         loading: false,
-        error: t('chat.citations.contextUnavailable')
+        error: tRef.current('chat.citations.contextUnavailable')
       })
       return
     }
@@ -4486,14 +4356,40 @@ function App(): React.JSX.Element {
         error:
           reason instanceof Error
             ? reason.message
-            : t('chat.citations.contextUnavailable')
+            : tRef.current('chat.citations.contextUnavailable')
       })
     }
-  }
+  }, [])
 
-  const downloadImage = (item: ImageViewerItem): void => {
+  const openCitationSource = useCallback(async (
+    reference: KnowledgeSearchReference
+  ): Promise<void> => {
+    if (!reference.chunkId) {
+      return
+    }
+    try {
+      await window.goodbuddy.knowledge.openReferenceSource({
+        knowledgeBaseId: reference.libraryId,
+        documentId: reference.documentId,
+        chunkId: reference.chunkId
+      })
+    } catch (reason) {
+      notify({
+        tone: 'error',
+        message:
+          reason instanceof Error
+            ? reason.message
+            : tRef.current('chat.citations.openFailed')
+      })
+    }
+  }, [])
+
+  const downloadImage = useCallback((item: ImageViewerItem): void => {
     if (!imageDataUrlPattern.test(item.src)) {
-      notify({ tone: 'error', message: t('notices.imageUnavailable') })
+      notify({
+        tone: 'error',
+        message: tRef.current('notices.imageUnavailable')
+      })
       return
     }
     const anchor = document.createElement('a')
@@ -4501,12 +4397,15 @@ function App(): React.JSX.Element {
     anchor.download = getImageDownloadName(
       item.title,
       item.src,
-      t('chat.images.fallbackTitle')
+      tRef.current('chat.images.fallbackTitle')
     )
     anchor.rel = 'noopener'
     anchor.click()
-    notify({ tone: 'info', message: t('notices.imageDownloadStarted') })
-  }
+    notify({
+      tone: 'info',
+      message: tRef.current('notices.imageDownloadStarted')
+    })
+  }, [])
 
   const submit = async (): Promise<void> => {
     const prompt = input.trim()
@@ -4735,7 +4634,7 @@ function App(): React.JSX.Element {
     }
   }
 
-  const respondToApproval = async (
+  const respondToApproval = useCallback(async (
     conversationId: string,
     messageId: string,
     approvalId: string,
@@ -4745,10 +4644,10 @@ function App(): React.JSX.Element {
       await window.goodbuddy.agent.respondApproval(approvalId, decision)
       const approved = decision !== 'deny'
       const decisionLabel = {
-        deny: t('chat.approval.decisionDeny'),
-        once: t('chat.approval.decisionOnce'),
-        session: t('chat.approval.decisionSession'),
-        permanent: t('chat.approval.decisionPermanent')
+        deny: tRef.current('chat.approval.decisionDeny'),
+        once: tRef.current('chat.approval.decisionOnce'),
+        session: tRef.current('chat.approval.decisionSession'),
+        permanent: tRef.current('chat.approval.decisionPermanent')
       }[decision]
       setActivityRecords((current) => {
         let updated = false
@@ -4763,9 +4662,10 @@ function App(): React.JSX.Element {
             return {
               ...record,
               status: approved ? ('completed' as const) : ('denied' as const),
-              detail: `${record.detail}\n${t('notices.userDecision', {
-                decision: decisionLabel
-              })}`
+              detail: `${record.detail}\n${tRef.current(
+                'notices.userDecision',
+                { decision: decisionLabel }
+              )}`
             }
           }
           return record
@@ -4775,18 +4675,20 @@ function App(): React.JSX.Element {
         ...message,
         approval: undefined,
         status: approved
-          ? t('chat.approval.executing', { decision: decisionLabel })
-          : t('chat.approval.denied')
+          ? tRef.current('chat.approval.executing', {
+              decision: decisionLabel
+            })
+          : tRef.current('chat.approval.denied')
       }))
     } catch {
       updateMessage(conversationId, messageId, (message) => ({
         ...message,
-        status: t('chat.approval.responseFailed')
+        status: tRef.current('chat.approval.responseFailed')
       }))
     }
-  }
+  }, [updateMessage])
 
-  const respondToQuestion = async (
+  const respondToQuestion = useCallback(async (
     conversationId: string,
     messageId: string,
     questionId: string,
@@ -4797,10 +4699,10 @@ function App(): React.JSX.Element {
       ...message,
       question: undefined,
       status: answers
-        ? t('chat.status.answerSubmitted')
-        : t('chat.status.questionSkipped')
+        ? tRef.current('chat.status.answerSubmitted')
+        : tRef.current('chat.status.questionSkipped')
     }))
-  }
+  }, [updateMessage])
 
   const addContext = async (
     action: () => Promise<ContextAttachment | ContextAttachment[]>
@@ -5818,584 +5720,35 @@ function App(): React.JSX.Element {
             </div>
           )}
 
-          <div className="message-list">
-            {hiddenMessageCount > 0 && (
-              <button
-                className="load-earlier-messages"
-                onClick={revealEarlierMessages}
-                type="button"
-              >
-                {t('chat.loadEarlierMessages', {
-                  count: hiddenMessageCount
-                })}
-              </button>
-            )}
-            {activeConversation &&
-              visibleMessages.map((message, visibleMessageIndex) => {
-                const messageIndex =
-                  visibleMessageStartIndex + visibleMessageIndex
-                return (
-                  <article
-                className={`message message--${message.role}`}
-                key={message.id}
-                ref={(element) => {
-                  if (element) {
-                    messageArticleRefs.current.set(message.id, element)
-                  } else {
-                    messageArticleRefs.current.delete(message.id)
-                  }
-                }}
-                tabIndex={-1}
-              >
-                <div className="message__avatar">
-                  {message.role === 'assistant' ? (
-                    <Bot size={18} />
-                  ) : (
-                    <UserRound size={18} />
-                  )}
-                </div>
-                <div className="message__body">
-                  <div className="message__meta">
-                    <strong>
-                      {message.role === 'assistant'
-                        ? 'GoodBuddy'
-                        : t('chat.user')}
-                    </strong>
-                    <span>{formatTime(message.createdAt, locale)}</span>
-                  </div>
-                  {message.attachments &&
-                    message.attachments.length > 0 && (
-                      <div
-                        aria-label={t('chat.attachments.region')}
-                        className="message-attachments"
-                      >
-                        {message.attachments.map((attachment) => {
-                          const imageSource =
-                            attachment.kind === 'image'
-                              ? attachment.contentUrl ??
-                                attachment.thumbnailUrl
-                              : undefined
-                          const imageItem = imageSource
-                            ? {
-                                src: imageSource,
-                                title: attachment.name
-                              }
-                            : undefined
-                          return (
-                            <div
-                              className={`message-attachment message-attachment--${attachment.kind}`}
-                              key={attachment.id}
-                              title={attachment.preview}
-                            >
-                              {imageItem ? (
-                                <button
-                                  aria-label={t('chat.images.viewNamed', {
-                                    title: attachment.name
-                                  })}
-                                  className="message-image-button"
-                                  onClick={(event) =>
-                                    openImageViewer(
-                                      imageItem,
-                                      event.currentTarget
-                                    )
-                                  }
-                                  type="button"
-                                >
-                                  <img
-                                    alt={attachment.name}
-                                    loading="lazy"
-                                    src={imageSource}
-                                  />
-                                </button>
-                              ) : (
-                                <span
-                                  aria-hidden="true"
-                                  className="message-attachment__icon"
-                                >
-                                  <FileText size={16} />
-                                </span>
-                              )}
-                              <span className="message-attachment__details">
-                                <strong>{attachment.name}</strong>
-                                <small>
-                                  {formatAttachmentSize(attachment.size)}
-                                </small>
-                                {imageItem && (
-                                  <span className="message-image-actions">
-                                    <button
-                                      onClick={(event) =>
-                                        openImageViewer(
-                                          imageItem,
-                                          event.currentTarget
-                                        )
-                                      }
-                                      type="button"
-                                    >
-                                      {t('chat.images.view')}
-                                    </button>
-                                    <button
-                                      aria-label={t('chat.images.downloadNamed', {
-                                        title: attachment.name
-                                      })}
-                                      onClick={() =>
-                                        downloadImage(imageItem)
-                                      }
-                                      type="button"
-                                    >
-                                      <Download size={12} />
-                                      {t('chat.images.download')}
-                                    </button>
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  {message.blocks && message.blocks.length > 0 ? (
-                    <div className="message-blocks">
-                      {groupMessageBlocks(message.blocks).map((item) =>
-                        item.kind === 'tools' ? (
-                          <ToolExecutionList
-                            key={item.id}
-                            tools={item.tools}
-                          />
-                        ) : item.block.type === 'reasoning' ? (
-                          <MessageReasoning
-                            content={item.block.content}
-                            key={item.block.id}
-                            streaming={message.state === 'streaming'}
-                          />
-                        ) : (
-                          <div
-                            className="markdown-content message__content"
-                            key={item.block.id}
-                          >
-                            <MarkdownRenderer>
-                              {item.block.content}
-                            </MarkdownRenderer>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      {message.reasoning && (
-                        <MessageReasoning
-                          content={message.reasoning}
-                          key={`${message.id}-${message.state}`}
-                          streaming={message.state === 'streaming'}
-                        />
-                      )}
-                      {message.content && (
-                        <div className="markdown-content message__content">
-                          <MarkdownRenderer>
-                            {messageIndex === 0 &&
-                            activeConversation &&
-                            isUnusedConversation(activeConversation)
-                              ? t('conversation.greeting')
-                              : message.content}
-                          </MarkdownRenderer>
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {message.artifactIds?.map((artifactId) => {
-                    const candidate =
-                      assistantArtifactById.get(artifactId)
-                    const artifact =
-                      candidate?.kind === 'image' &&
-                      candidate.content &&
-                      /^data:image\/(?:png|jpeg|webp);base64,/u.test(
-                        candidate.content
-                      )
-                        ? candidate
-                        : undefined
-                    return artifact?.content ? (
-                      <figure
-                        className="message-generated-image"
-                        key={artifact.id}
-                      >
-                        <button
-                          aria-label={t('chat.images.viewNamed', {
-                            title: artifact.title
-                          })}
-                          className="message-image-button"
-                          onClick={(event) =>
-                            openImageViewer(
-                              {
-                                src: artifact.content!,
-                                title: artifact.title
-                              },
-                              event.currentTarget
-                            )
-                          }
-                          type="button"
-                        >
-                          <img
-                            alt={artifact.title}
-                            loading="lazy"
-                            src={artifact.content}
-                          />
-                        </button>
-                        <figcaption>{artifact.title}</figcaption>
-                        <div className="message-image-actions">
-                          <button
-                            onClick={(event) =>
-                              openImageViewer(
-                                {
-                                  src: artifact.content!,
-                                  title: artifact.title
-                                },
-                                event.currentTarget
-                              )
-                            }
-                            type="button"
-                          >
-                            {t('chat.images.view')}
-                          </button>
-                          <button
-                            aria-label={t('chat.images.downloadNamed', {
-                              title: artifact.title
-                            })}
-                            onClick={() =>
-                              downloadImage({
-                                src: artifact.content!,
-                                title: artifact.title
-                              })
-                            }
-                            type="button"
-                          >
-                            <Download size={12} />
-                            {t('chat.images.download')}
-                          </button>
-                        </div>
-                      </figure>
-                    ) : null
-                  })}
-                  {message.knowledgeRetrieval && (
-                    <section
-                      aria-live="polite"
-                      className={`message-retrieval-status message-retrieval-status--${message.knowledgeRetrieval.state}`}
-                    >
-                      <Library aria-hidden="true" size={14} />
-                      <div>
-                        <strong>
-                          {t(
-                            `chat.knowledgeRetrieval.states.${message.knowledgeRetrieval.state}`
-                          )}
-                        </strong>
-                        <small>
-                          {t('chat.knowledgeRetrieval.summary', {
-                            libraries:
-                              message.knowledgeRetrieval.libraryCount,
-                            results:
-                              message.knowledgeRetrieval.resultCount,
-                            duration:
-                              message.knowledgeRetrieval.durationMs ?? 0
-                          })}
-                        </small>
-                        {message.knowledgeRetrieval.usedChannels.length >
-                          0 && (
-                          <small>
-                            {t('chat.knowledgeRetrieval.channels', {
-                              channels:
-                                message.knowledgeRetrieval.usedChannels
-                                  .map((channel) =>
-                                    t(
-                                      `chat.knowledgeRetrieval.channelNames.${channel}`
-                                    )
-                                  )
-                                  .join(' + ')
-                            })}
-                          </small>
-                        )}
-                        {message.knowledgeRetrieval.warnings.map(
-                          (warning) => (
-                            <p key={warning}>{warning}</p>
-                          )
-                        )}
-                      </div>
-                    </section>
-                  )}
-                  {message.sources && message.sources.length > 0 && (
-                    <div className="message-sources">
-                      <Library size={14} />
-                      <span>
-                        {t('chat.sources', {
-                          sources: [...new Set(message.sources)].join(
-                            locale === 'zh-CN' ? '、' : ', '
-                          )
-                        })}
-                      </span>
-                    </div>
-                  )}
-                  {message.sourceReferences &&
-                    message.sourceReferences.length > 0 && (
-                      <details className="message-citations">
-                        <summary>
-                          {t('chat.citations.view', {
-                            count: message.sourceReferences.length
-                          })}
-                        </summary>
-                        <ol>
-                          {message.sourceReferences.map(
-                            (reference, referenceIndex) => (
-                              <li
-                                key={`${reference.documentId}:${reference.chunkId ?? reference.locator ?? referenceIndex}`}
-                              >
-                                <strong>
-                                  [{referenceIndex + 1}]{' '}
-                                  {reference.documentName}
-                                </strong>
-                                {reference.locator && (
-                                  <small>{reference.locator}</small>
-                                )}
-                                <p>{reference.snippet}</p>
-                                {reference.retrievalChannels && (
-                                  <small>
-                                    {t('chat.citations.retrieval')}
-                                    {reference.retrievalChannels
-                                      .map((channel) =>
-                                        channel === 'fts'
-                                          ? t('chat.citations.fullText')
-                                          : channel === 'cjk'
-                                            ? t('chat.citations.cjk')
-                                          : channel === 'vector'
-                                            ? t('chat.citations.vector')
-                                            : t('chat.citations.graph')
-                                      )
-                                      .join(' + ')}
-                                  </small>
-                                )}
-                                {reference.score !== undefined && (
-                                  <small>
-                                    {t('chat.citations.score', {
-                                      score: reference.score.toFixed(4)
-                                    })}
-                                  </small>
-                                )}
-                                <div className="message-citations__actions">
-                                  <button
-                                    className="secondary-button"
-                                    onClick={() =>
-                                      void openCitationContext(reference)
-                                    }
-                                    type="button"
-                                  >
-                                    {t('chat.citations.viewContext')}
-                                  </button>
-                                  <button
-                                    className="secondary-button"
-                                    disabled={!reference.chunkId}
-                                    onClick={() => {
-                                      if (!reference.chunkId) {
-                                        return
-                                      }
-                                      void window.goodbuddy.knowledge
-                                        .openReferenceSource({
-                                          knowledgeBaseId:
-                                            reference.libraryId,
-                                          documentId:
-                                            reference.documentId,
-                                          chunkId: reference.chunkId
-                                        })
-                                        .catch((reason) =>
-                                          notify({
-                                            tone: 'error',
-                                            message:
-                                              reason instanceof Error
-                                                ? reason.message
-                                                : t(
-                                                    'chat.citations.openFailed'
-                                                  )
-                                          })
-                                        )
-                                    }}
-                                    type="button"
-                                  >
-                                    {t('chat.citations.openSource')}
-                                  </button>
-                                </div>
-                              </li>
-                            )
-                          )}
-                        </ol>
-                      </details>
-                    )}
-                  {(!message.blocks || message.blocks.length === 0) &&
-                    message.tools &&
-                    message.tools.length > 0 && (
-                      <ToolExecutionList tools={message.tools} />
-                    )}
-                  {message.subagents && message.subagents.length > 0 && (
-                    <section
-                      aria-label={t('chat.subagents.region')}
-                      className="subagent-status-list"
-                    >
-                      {message.subagents.slice(0, 3).map((subagent) => (
-                        <article
-                          className={`subagent-status-card subagent-status-card--${subagent.state}`}
-                          key={subagent.childTaskId}
-                        >
-                          <Bot aria-hidden="true" size={15} />
-                          <div>
-                            <strong>{subagent.expertName}</strong>
-                            <small>
-                              {subagent.routingMode === 'smart'
-                                ? t('chat.subagents.smart')
-                                : t('chat.subagents.manual')}
-                            </small>
-                            {(subagent.error || subagent.reason) &&
-                              (subagent.state === 'failed' ||
-                                subagent.state === 'cancelled') && (
-                                <p>
-                                  {subagent.error ?? subagent.reason}
-                                </p>
-                              )}
-                          </div>
-                          <span>
-                            {t(`chat.subagents.states.${subagent.state}`)}
-                          </span>
-                        </article>
-                      ))}
-                    </section>
-                  )}
-                  {message.approval && (
-                    <div className="approval-card">
-                      <ShieldCheck size={18} />
-                      <div>
-                        <strong>{message.approval.title}</strong>
-                        <p>{message.approval.description}</p>
-                        {message.approval.argumentSummary && (
-                          <code>{message.approval.argumentSummary}</code>
-                        )}
-                      </div>
-                      <button
-                        className="approval-card__deny"
-                        onClick={() =>
-                          void respondToApproval(
-                            activeConversation.id,
-                            message.id,
-                            message.approval!.id,
-                            'deny'
-                          )
-                        }
-                        type="button"
-                      >
-                        {t('chat.approval.deny')}
-                      </button>
-                      <button
-                        className="approval-card__allow"
-                        onClick={() =>
-                          void respondToApproval(
-                            activeConversation.id,
-                            message.id,
-                            message.approval!.id,
-                            'once'
-                          )
-                        }
-                        type="button"
-                      >
-                        {t('chat.approval.once')}
-                      </button>
-                      <button
-                        className="approval-card__allow"
-                        onClick={() =>
-                          void respondToApproval(
-                            activeConversation.id,
-                            message.id,
-                            message.approval!.id,
-                            'session'
-                          )
-                        }
-                        type="button"
-                      >
-                        {t('chat.approval.session')}
-                      </button>
-                      {message.approval.allowPermanent && (
-                        <button
-                          className="approval-card__allow"
-                          onClick={() =>
-                            void respondToApproval(
-                              activeConversation.id,
-                              message.id,
-                              message.approval!.id,
-                              'permanent'
-                            )
-                          }
-                          type="button"
-                        >
-                          {t('chat.approval.permanent')}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {message.question && (
-                    <AgentQuestionCard
-                      key={message.question.questionId}
-                      onReject={() =>
-                        respondToQuestion(
-                          activeConversation.id,
-                          message.id,
-                          message.question!.questionId
-                        )
-                      }
-                      onSubmit={(answers) =>
-                        respondToQuestion(
-                          activeConversation.id,
-                          message.id,
-                          message.question!.questionId,
-                          answers
-                        )
-                      }
-                      value={message.question}
-                    />
-                  )}
-                  {message.status && (
-                    <div
-                      className={
-                        message.state === 'error'
-                          ? 'message__status message__status--error'
-                          : 'message__status'
-                      }
-                    >
-                      <span
-                        aria-hidden="true"
-                        className={
-                          message.state === 'streaming'
-                            ? 'message__status-dot message__status-dot--active'
-                            : 'message__status-dot'
-                        }
-                      />
-                      {message.status}
-                    </div>
-                  )}
-                  {message.state === 'error' &&
-                    messageIndex ===
-                      activeConversation.messages.length - 1 && (
-                    <button
-                      className="message-retry"
-                      onClick={() => {
-                        const previous =
-                          activeConversation.messages[messageIndex - 1]
-                        if (previous?.role === 'user') {
-                          setInput(previous.content)
-                          inputRef.current?.focus()
-                        }
-                      }}
-                      type="button"
-                    >
-                      {t('chat.retry')}
-                    </button>
-                    )}
-                </div>
-                  </article>
-                )
-              })}
-          </div>
-            </section>
+          <ChatTimeline
+            artifactById={assistantArtifactById}
+            conversationId={activeConversation?.id ?? ''}
+            hiddenMessageCount={hiddenMessageCount}
+            isUnusedConversation={
+              activeConversation
+                ? isUnusedConversation(activeConversation)
+                : false
+            }
+            locale={locale}
+            messages={visibleMessages}
+            messageStartIndex={visibleMessageStartIndex}
+            onArticleRef={handleMessageArticleRef}
+            onDownloadImage={downloadImage}
+            onOpenCitationContext={openCitationContext}
+            onOpenCitationSource={openCitationSource}
+            onOpenImage={openImageViewer}
+            onRespondApproval={respondToApproval}
+            onRespondQuestion={respondToQuestion}
+            onRetry={retryMessage}
+            onRevealEarlier={revealEarlierMessages}
+            retryContent={
+              activeConversation?.messages.at(-2)?.role === 'user'
+                ? activeConversation.messages.at(-2)?.content
+                : undefined
+            }
+            totalMessageCount={activeConversation?.messages.length ?? 0}
+          />
+          </section>
             {showScrollToBottom && (
               <button
                 aria-controls="chat-message-list"
