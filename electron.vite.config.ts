@@ -1,6 +1,62 @@
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import type { Plugin } from 'vite'
+
+type ProjectPackage = {
+  dependencies?: Record<string, string>
+}
+
+const projectPackage = JSON.parse(
+  readFileSync(resolve('package.json'), 'utf8')
+) as ProjectPackage
+
+function requireDependencyVersion(
+  dependencies: Record<string, string> | undefined,
+  name: string
+): string {
+  const version = dependencies?.[name]
+  if (!version) {
+    throw new Error(`Missing ${name} dependency version`)
+  }
+  return version
+}
+
+const deepSeekHarnessLlmVersion = requireDependencyVersion(
+  projectPackage.dependencies,
+  '@deepseek-ai/dsh-llm'
+)
+
+export function serializeDeepSeekHarnessBundleManifest(
+  version: string
+): string {
+  return `${JSON.stringify(
+    {
+      name: '@deepseek-ai/dsh-llm',
+      version,
+      private: true,
+      type: 'module'
+    },
+    null,
+    2
+  )}\n`
+}
+
+function deepSeekHarnessBundleManifestPlugin(): Plugin {
+  return {
+    name: 'deepseek-harness-bundle-manifest',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'package.json',
+        source: serializeDeepSeekHarnessBundleManifest(
+          deepSeekHarnessLlmVersion
+        )
+      })
+    }
+  }
+}
 
 export default defineConfig({
   main: {
@@ -34,7 +90,8 @@ export default defineConfig({
           'yaml',
           'zod'
         ]
-      })
+      }),
+      deepSeekHarnessBundleManifestPlugin()
     ],
     build: {
       rollupOptions: {
