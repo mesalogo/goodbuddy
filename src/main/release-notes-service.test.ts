@@ -79,12 +79,12 @@ describe('ReleaseNotesService', () => {
     })
   })
 
-  it('shows every unseen release through the current version', async () => {
+  it('shows every unseen release newest first', async () => {
     const { service, settingsStore } = await createService('0.8.18')
     await settingsStore.setLastSeenReleaseNotesVersion('0.8.11')
 
     await expect(service.getPending()).resolves.toMatchObject({
-      releases: [{ version: '0.8.12' }, { version: '0.8.18' }]
+      releases: [{ version: '0.8.18' }, { version: '0.8.12' }]
     })
   })
 

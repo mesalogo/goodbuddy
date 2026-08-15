@@ -46,7 +46,7 @@ export class ReleaseNotesService {
         JSON.parse(buffer.toString('utf8', 0, bytesRead)) as unknown
       )
       this.releases = [...parsed.releases].sort((left, right) =>
-        compareStrictSemVer(left.version, right.version)
+        compareStrictSemVer(right.version, left.version)
       )
       return this.releases
     } finally {
