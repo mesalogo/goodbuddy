@@ -73,6 +73,86 @@ type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
 }
 
 const settingsTabs = settingsCategoryList.map(({ id }) => id)
+const contextCompressionTokenScale = 1_000
+const minimumContextCompressionTriggerThousands = 8
+const maximumContextCompressionTriggerThousands = 1_000
+const minimumContextCompressionRecentRawThousands = 4
+const maximumContextCompressionRecentRawThousands = 256
+
+type ContextCompressionTokenDrafts = {
+  trigger: string
+  recentRaw: string
+}
+
+function contextCompressionTokenDrafts(
+  settings: ContextCompressionSettings
+): ContextCompressionTokenDrafts {
+  return {
+    trigger: String(
+      settings.triggerTokens / contextCompressionTokenScale
+    ),
+    recentRaw: String(
+      settings.recentRawTokens / contextCompressionTokenScale
+    )
+  }
+}
+
+function parseContextCompressionTokenDraft(
+  value: string
+): number | undefined {
+  if (!value.trim()) {
+    return undefined
+  }
+  const parsed = Number(value)
+  return Number.isFinite(parsed)
+    ? Math.round(parsed * contextCompressionTokenScale)
+    : undefined
+}
+
+function maximumContextCompressionRecentRawThousandsFor(
+  triggerTokens: number
+): number {
+  return Math.max(
+    minimumContextCompressionRecentRawThousands,
+    Math.min(
+      maximumContextCompressionRecentRawThousands,
+      triggerTokens / contextCompressionTokenScale - 1
+    )
+  )
+}
+
+function normalizeContextCompressionTokenDrafts(
+  settings: ContextCompressionSettings,
+  drafts: ContextCompressionTokenDrafts
+): ContextCompressionSettings {
+  const triggerTokens = Math.min(
+    maximumContextCompressionTriggerThousands *
+      contextCompressionTokenScale,
+    Math.max(
+      minimumContextCompressionTriggerThousands *
+        contextCompressionTokenScale,
+      parseContextCompressionTokenDraft(drafts.trigger) ??
+        settings.triggerTokens
+    )
+  )
+  const maximumRecentRawTokens =
+    maximumContextCompressionRecentRawThousandsFor(triggerTokens) *
+    contextCompressionTokenScale
+  const recentRawTokens = Math.min(
+    maximumRecentRawTokens,
+    Math.max(
+      minimumContextCompressionRecentRawThousands *
+        contextCompressionTokenScale,
+      parseContextCompressionTokenDraft(drafts.recentRaw) ??
+        settings.recentRawTokens
+    )
+  )
+  return {
+    ...settings,
+    triggerTokens,
+    recentRawTokens
+  }
+}
 
 type SettingsPanelProps = {
   open: boolean
@@ -534,6 +614,14 @@ export function SettingsPanel({
     useState<ContextCompressionSettings>(
       defaultContextCompressionSettings
     )
+  const [
+    contextCompressionTokenInput,
+    setContextCompressionTokenInput
+  ] = useState<ContextCompressionTokenDrafts>(() =>
+    contextCompressionTokenDrafts(
+      defaultContextCompressionSettings
+    )
+  )
   const modelProfileDisplayName = (
     profile: Pick<ModelProfileDraft, 'id' | 'name'>
   ): string =>
@@ -607,6 +695,12 @@ export function SettingsPanel({
         contextCompression: setContextCompression
         },
         preserveSelectedProfile
+      )
+      setContextCompressionTokenInput(
+        contextCompressionTokenDrafts(
+          value.contextCompression ??
+            defaultContextCompressionSettings
+        )
       )
     },
     []
@@ -735,6 +829,22 @@ export function SettingsPanel({
     return null
   }
 
+  const normalizedContextCompression =
+    normalizeContextCompressionTokenDrafts(
+      contextCompression,
+      contextCompressionTokenInput
+    )
+  const commitContextCompressionTokenInput =
+    (): ContextCompressionSettings => {
+      setContextCompression(normalizedContextCompression)
+      setContextCompressionTokenInput(
+        contextCompressionTokenDrafts(
+          normalizedContextCompression
+        )
+      )
+      return normalizedContextCompression
+    }
+
   const close = (): void => {
     setModelProfiles((profiles) =>
       profiles.map((profile) => ({
@@ -760,6 +870,8 @@ export function SettingsPanel({
     setSaving(true)
     setError(undefined)
     try {
+      const contextCompressionInput =
+        commitContextCompressionTokenInput()
       const defaultProfile =
         modelProfiles.find(
           (profile) => profile.id === defaultModelProfileId
@@ -857,7 +969,7 @@ export function SettingsPanel({
         continueModelSource,
         deepseekHarnessModelSource:
           normalizedDeepseekHarnessModelSource,
-        contextCompression,
+        contextCompression: contextCompressionInput,
         toolApproval,
         subagentSmartRoutingEnabled
       })
@@ -2824,34 +2936,25 @@ export function SettingsPanel({
                     aria-label={t('contextControl.triggerTokens')}
                     disabled={!contextCompression.enabled}
                     inputMode="numeric"
-                    max={1_000}
-                    min={8}
-                    onChange={(event) => {
-                      const value = event.target.valueAsNumber
-                      if (Number.isFinite(value)) {
-                        setContextCompression((current) => ({
-                          ...current,
-                          triggerTokens: Math.round(value * 1_000),
-                          recentRawTokens: Math.min(
-                            current.recentRawTokens,
-                            Math.max(
-                              4_000,
-                              Math.round(value * 1_000) - 1_000
-                            )
-                          )
-                        }))
-                      }
-                    }}
+                    max={maximumContextCompressionTriggerThousands}
+                    min={minimumContextCompressionTriggerThousands}
+                    onBlur={commitContextCompressionTokenInput}
+                    onChange={(event) =>
+                      setContextCompressionTokenInput((current) => ({
+                        ...current,
+                        trigger: event.target.value
+                      }))
+                    }
                     required
+                    step={1}
                     type="number"
-                    value={contextCompression.triggerTokens / 1_000}
+                    value={contextCompressionTokenInput.trigger}
                   />
                   <small>
                     {t('contextControl.triggerTokensDescription', {
                       tokens:
-                        contextCompression.triggerTokens.toLocaleString(
-                          i18n.language
-                        )
+                        normalizedContextCompression.triggerTokens
+                          .toLocaleString(i18n.language)
                     })}
                   </small>
                 </label>
@@ -2861,33 +2964,27 @@ export function SettingsPanel({
                     aria-label={t('contextControl.recentRawTokens')}
                     disabled={!contextCompression.enabled}
                     inputMode="numeric"
-                    max={Math.min(
-                      256,
-                      contextCompression.triggerTokens / 1_000 - 1
+                    max={maximumContextCompressionRecentRawThousandsFor(
+                      normalizedContextCompression.triggerTokens
                     )}
-                    min={4}
-                    onChange={(event) => {
-                      const value = event.target.valueAsNumber
-                      if (Number.isFinite(value)) {
-                        setContextCompression((current) => ({
-                          ...current,
-                          recentRawTokens: Math.min(
-                            Math.round(value * 1_000),
-                            current.triggerTokens - 1_000
-                          )
-                        }))
-                      }
-                    }}
+                    min={minimumContextCompressionRecentRawThousands}
+                    onBlur={commitContextCompressionTokenInput}
+                    onChange={(event) =>
+                      setContextCompressionTokenInput((current) => ({
+                        ...current,
+                        recentRaw: event.target.value
+                      }))
+                    }
                     required
+                    step={1}
                     type="number"
-                    value={contextCompression.recentRawTokens / 1_000}
+                    value={contextCompressionTokenInput.recentRaw}
                   />
                   <small>
                     {t('contextControl.recentRawTokensDescription', {
                       tokens:
-                        contextCompression.recentRawTokens.toLocaleString(
-                          i18n.language
-                        )
+                        normalizedContextCompression.recentRawTokens
+                          .toLocaleString(i18n.language)
                     })}
                   </small>
                 </label>

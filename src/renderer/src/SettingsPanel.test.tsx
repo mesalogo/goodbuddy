@@ -588,6 +588,87 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
+  it('allows editing context compression budgets through empty and single-digit states', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        initialCategory="context-control"
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      await screen.findByRole('switch', {
+        name: '自动压缩较早的对话'
+      })
+    )
+    const trigger = screen.getByLabelText('压缩触发阈值')
+    const recent = screen.getByLabelText('最近原文预算')
+
+    fireEvent.change(trigger, { target: { value: '' } })
+    expect(trigger).toHaveValue(null)
+    fireEvent.blur(trigger)
+    expect(trigger).toHaveValue(200)
+    fireEvent.change(trigger, { target: { value: '8' } })
+    expect(trigger).toHaveValue(8)
+    expect(recent).toHaveValue(32)
+    expect(recent).toHaveAttribute('max', '7')
+
+    fireEvent.change(recent, { target: { value: '4' } })
+    expect(recent).toHaveValue(4)
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          contextCompression: expect.objectContaining({
+            triggerTokens: 8_000,
+            recentRawTokens: 4_000
+          })
+        })
+      )
+    )
+  })
+
+  it('normalizes context compression limits only after editing finishes', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        initialCategory="context-control"
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      await screen.findByRole('switch', {
+        name: '自动压缩较早的对话'
+      })
+    )
+    const trigger = screen.getByLabelText('压缩触发阈值')
+    const recent = screen.getByLabelText('最近原文预算')
+
+    fireEvent.change(trigger, { target: { value: '2' } })
+    expect(trigger).toHaveValue(2)
+    expect(recent).toHaveAttribute('max', '7')
+    fireEvent.blur(trigger)
+    expect(trigger).toHaveValue(8)
+    expect(recent).toHaveValue(7)
+
+    fireEvent.change(trigger, { target: { value: '1200' } })
+    fireEvent.blur(trigger)
+    expect(trigger).toHaveValue(1000)
+
+    fireEvent.change(recent, { target: { value: '999' } })
+    fireEvent.blur(recent)
+    expect(recent).toHaveValue(256)
+  })
+
   it('stores an optional context window on direct text models', async () => {
     render(
       <SettingsPanel
