@@ -17,6 +17,7 @@ import type {
 } from './capability-contracts'
 import {
   assistantIdSchema,
+  conversationContextCompressionStateSchema,
   legacyWorkModeSchema,
   type AssistantProject,
   type AssistantArtifact,
@@ -30,6 +31,7 @@ import {
   type TokenUsageSummary,
   type ConversationSnapshot,
   type ConversationAttachment,
+  type ConversationContextCompressionState,
   type LocalConversationSaveBatch,
   type WorkspaceChanges,
   type WorkspaceDirectoryListing,
@@ -220,7 +222,12 @@ export const agentRequestSchema = z
           .strict()
       )
       .max(500)
-      .optional()
+      .optional(),
+    historyMessageIds: z.array(z.string().uuid()).max(500).optional(),
+    currentUserMessageId: z.string().uuid().optional(),
+    currentAssistantMessageId: z.string().uuid().optional(),
+    contextCompressionState:
+      conversationContextCompressionStateSchema.optional()
   })
   .strict()
   .superRefine((request, context) => {
@@ -234,6 +241,17 @@ export const agentRequestSchema = z
         code: 'custom',
         path: ['history'],
         message: '会话历史总长度不能超过 2,000,000 个字符'
+      })
+    }
+    if (
+      request.historyMessageIds &&
+      request.historyMessageIds.length !==
+        (request.history?.length ?? 0)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['historyMessageIds'],
+        message: '会话历史消息 ID 必须与历史消息一一对应'
       })
     }
   })
@@ -919,25 +937,26 @@ export type AgentEvent =
   | {
       requestId: string
       type: 'context-metrics'
-      estimatedInputTokens: number
+      contextTokens: number
       effectiveTriggerTokens: number
       contextWindowTokens?: number
       compressionEnabled: boolean
-      recentRawTokens: number
-      coveredMessageCount: number
-      summaryTokens: number
+      source: 'provider' | 'estimated'
     }
   | {
       requestId: string
       type: 'context-compression'
-      state: 'started' | 'completed'
+      scope?: 'conversation' | 'agent-run'
+      state: 'started' | 'completed' | 'failed'
       estimatedBeforeTokens: number
       estimatedAfterTokens?: number
       effectiveTriggerTokens: number
       contextWindowTokens?: number
       recentRawTokens: number
-      coveredMessageCount: number
+      coveredMessageCount?: number
+      compressionCount?: number
       summaryTokens?: number
+      conversationState?: ConversationContextCompressionState
     }
   | {
       requestId: string

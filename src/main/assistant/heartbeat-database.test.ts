@@ -100,7 +100,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
     ).count
     check.close()
     migrated.close()
-    expect(version).toBe(19)
+    expect(version).toBe(20)
     expect(heartbeatTableCount).toBe(3)
   })
 

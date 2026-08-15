@@ -22,6 +22,15 @@ export type ContextCompressionPlan = {
   effectiveTriggerTokens: number
 }
 
+export type PrefixCompressionPlan<T> = {
+  earlierUnits: T[]
+  recentUnits: T[]
+  estimatedInputTokens: number
+  effectiveTriggerTokens: number
+}
+
+export const contextSummaryTokenBudget = 8_192
+
 function groupConversationTurns(
   messages: readonly CompressibleConversationMessage[]
 ): CompressibleConversationMessage[][] {
@@ -40,54 +49,122 @@ function groupConversationTurns(
   return turns
 }
 
+export function planPrefixCompression<T>(input: {
+  units: readonly T[]
+  estimatedInputTokens: number
+  effectiveTriggerTokens: number
+  recentRawTokens: number
+  estimateUnitTokens: (unit: T) => number
+  allowCompressLatestUnit?: boolean
+  maximumRecentRawTokens?: number
+}): PrefixCompressionPlan<T> | undefined {
+  if (
+    input.estimatedInputTokens < input.effectiveTriggerTokens ||
+    input.units.length === 0 ||
+    (input.units.length < 2 && !input.allowCompressLatestUnit)
+  ) {
+    return undefined
+  }
+  const recentRawTokenBudget = Math.min(
+    input.recentRawTokens,
+    Math.max(0, input.maximumRecentRawTokens ?? Number.MAX_SAFE_INTEGER)
+  )
+  if (input.units.length === 1 && input.allowCompressLatestUnit) {
+    if (
+      input.estimateUnitTokens(input.units[0]!) <=
+      recentRawTokenBudget
+    ) {
+      return undefined
+    }
+    return {
+      earlierUnits: [...input.units],
+      recentUnits: [],
+      estimatedInputTokens: input.estimatedInputTokens,
+      effectiveTriggerTokens: input.effectiveTriggerTokens
+    }
+  }
+
+  const earlierUnits = [...input.units]
+  const recentUnits: T[] = []
+  let recentTokens = 0
+  while (earlierUnits.length > 0) {
+    const unit = earlierUnits.at(-1)!
+    const unitTokens = input.estimateUnitTokens(unit)
+    if (
+      (recentUnits.length > 0 || input.allowCompressLatestUnit) &&
+      recentTokens + unitTokens > recentRawTokenBudget
+    ) {
+      break
+    }
+    recentUnits.unshift(earlierUnits.pop()!)
+    recentTokens += unitTokens
+  }
+  if (earlierUnits.length === 0) {
+    return undefined
+  }
+  return {
+    earlierUnits,
+    recentUnits,
+    estimatedInputTokens: input.estimatedInputTokens,
+    effectiveTriggerTokens: input.effectiveTriggerTokens
+  }
+}
+
 export function planContextCompression(input: {
   history: readonly CompressibleConversationMessage[]
   prompt: string
   summaryTokens?: number
   settings: ContextCompressionSettings
   contextWindowTokens?: number
+  allowCompressLatestTurn?: boolean
+  effectiveTriggerTokens?: number
+  triggerContextTokens?: number
 }): ContextCompressionPlan | undefined {
   const estimatedInputTokens = estimateContextInputTokens({
     history: input.history,
     prompt: input.prompt,
     summaryTokens: input.summaryTokens
   })
-  const effectiveTriggerTokens = getEffectiveContextTriggerTokens({
-    triggerTokens: input.settings.triggerTokens,
-    contextWindowTokens: input.contextWindowTokens
-  })
-  if (estimatedInputTokens < effectiveTriggerTokens) {
+  const effectiveTriggerTokens =
+    input.effectiveTriggerTokens ??
+    getEffectiveContextTriggerTokens({
+      triggerTokens: input.settings.triggerTokens,
+      contextWindowTokens: input.contextWindowTokens
+    })
+  const planningInputTokens = Math.max(
+    estimatedInputTokens,
+    input.triggerContextTokens ?? 0
+  )
+  if (planningInputTokens < effectiveTriggerTokens) {
     return undefined
   }
 
+  const fixedContextTokens = estimateContextInputTokens({
+    history: [],
+    prompt: input.prompt,
+    summaryTokens: contextSummaryTokenBudget
+  })
   const turns = groupConversationTurns(input.history)
-  const recentTurns: CompressibleConversationMessage[][] = []
-  const recentRawTokenBudget = Math.min(
-    input.settings.recentRawTokens,
-    Math.max(4_000, effectiveTriggerTokens - 8_000)
-  )
-  let recentTokens = 0
-  while (turns.length > 0) {
-    const turn = turns.at(-1)!
-    const turnTokens = estimateMessagesTokens(turn)
-    if (
-      recentTurns.length > 0 &&
-      recentTokens + turnTokens > recentRawTokenBudget
-    ) {
-      break
-    }
-    recentTurns.unshift(turns.pop()!)
-    recentTokens += turnTokens
-  }
-  const earlierMessages = turns.flat()
-  if (earlierMessages.length === 0) {
+  const plan = planPrefixCompression({
+    units: turns,
+    estimatedInputTokens: planningInputTokens,
+    effectiveTriggerTokens,
+    recentRawTokens: input.settings.recentRawTokens,
+    estimateUnitTokens: estimateMessagesTokens,
+    allowCompressLatestUnit: input.allowCompressLatestTurn,
+    maximumRecentRawTokens: Math.max(
+      0,
+      effectiveTriggerTokens - fixedContextTokens
+    )
+  })
+  if (!plan) {
     return undefined
   }
   return {
-    earlierMessages,
-    recentMessages: recentTurns.flat(),
+    earlierMessages: plan.earlierUnits.flat(),
+    recentMessages: plan.recentUnits.flat(),
     estimatedInputTokens,
-    effectiveTriggerTokens
+    effectiveTriggerTokens: plan.effectiveTriggerTokens
   }
 }
 

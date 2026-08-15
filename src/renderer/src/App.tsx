@@ -61,19 +61,13 @@ import type {
   BrowserLiveState,
   ContextAttachment,
   ContextFileSelectionProgress,
-  KnowledgeRetrievalMode,
   KnowledgeSearchReference,
   KnowledgeSnapshot,
   RuntimeSettings
 } from '../../shared/contracts'
 import {
-  defaultContextCompressionSettings,
   maximumPastedImageBytes
 } from '../../shared/contracts'
-import {
-  estimateContextInputTokens,
-  getEffectiveContextTriggerTokens
-} from '../../shared/context-window'
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
@@ -98,6 +92,7 @@ import type {
   ConversationMessage,
   ConversationSnapshot,
   ConversationAttachment,
+  ConversationContextCompressionMarker,
   ConversationMessageBlock,
   LocalConversationHeader,
   LocalConversationSaveBatch,
@@ -108,6 +103,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import {
   conversationAttachmentSchema,
+  conversationContextCompressionMarkerSchema,
   conversationMessageBlocksSchema,
   interactiveWorkModes,
   normalizeInteractiveWorkMode,
@@ -174,6 +170,7 @@ import { ReleaseNotesDialog } from './ReleaseNotesDialog'
 import { scheduleIdleRoutePreload } from './idle-route-preload'
 import { createPreloadableComponent } from './preloadable-component'
 import { formatTime, type TimeFormatLocale } from './time-format'
+import { formatCompactTokens } from './token-format'
 import {
   pruneKeepAliveEntries,
   touchKeepAliveEntry,
@@ -432,14 +429,7 @@ function supportsSubagentSmartRouting(
   return workMode === 'ask'
 }
 
-type Conversation = {
-  id: string
-  projectId?: string
-  runtimeSelection?: AgentRuntimeSelection
-  knowledgeRetrievalMode?: KnowledgeRetrievalMode
-  remote?: ConversationSnapshot['remote']
-  title: string
-  updatedAt: number
+type Conversation = Omit<ConversationSnapshot, 'messages'> & {
   messages: Message[]
 }
 
@@ -447,13 +437,6 @@ type ActiveRun = {
   conversationId: string
   messageId: string
   projectId?: string
-  runtimeSelectionKey: string
-}
-
-type ConversationContextMetrics = Omit<
-  Extract<AgentEvent, { type: 'context-metrics' }>,
-  'requestId' | 'type'
-> & {
   runtimeSelectionKey: string
 }
 
@@ -1068,14 +1051,17 @@ function isConversation(value: unknown): value is Conversation {
           entry.state === 'complete' ||
           entry.state === 'error') &&
         (entry.contextCompression === undefined ||
-          (typeof entry.contextCompression === 'object' &&
-            entry.contextCompression !== null &&
-            ['compressing', 'completed', 'failed'].includes(
-              String(
-                (
-                  entry.contextCompression as Record<string, unknown>
-                ).state
-              )
+          conversationContextCompressionMarkerSchema.safeParse(
+            entry.contextCompression
+          ).success) &&
+        (entry.contextCompressions === undefined ||
+          (Array.isArray(entry.contextCompressions) &&
+            entry.contextCompressions.length <= 2 &&
+            entry.contextCompressions.every(
+              (compression) =>
+                conversationContextCompressionMarkerSchema.safeParse(
+                  compression
+                ).success
             ))) &&
         (entry.artifactIds === undefined ||
           (Array.isArray(entry.artifactIds) &&
@@ -1103,6 +1089,8 @@ function toConversationSnapshots(
       projectId: conversation.projectId,
       runtimeSelection: conversation.runtimeSelection,
       knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+      contextMetrics: conversation.contextMetrics,
+      contextCompressionState: conversation.contextCompressionState,
       title: conversation.title,
       updatedAt: conversation.updatedAt,
       messages: conversation.messages
@@ -1122,6 +1110,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     state: message.state,
     status: message.status,
     contextCompression: message.contextCompression,
+    contextCompressions: message.contextCompressions,
     tools: message.tools,
     sources: message.sources,
     sourceReferences: message.sourceReferences,
@@ -1139,6 +1128,8 @@ function toLocalConversationHeader(
     projectId: conversation.projectId,
     runtimeSelection: conversation.runtimeSelection,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+    contextMetrics: conversation.contextMetrics,
+    contextCompressionState: conversation.contextCompressionState,
     title: conversation.title,
     updatedAt: conversation.updatedAt
   }
@@ -1305,14 +1296,6 @@ function getConfiguredAgentRuntimeSource(
 
 function formatAttachmentSize(size: number): string {
   return `${Math.max(1, Math.ceil(size / 1024))} KB`
-}
-
-function formatCompactContextTokens(tokens: number): string {
-  if (tokens < 1_000) {
-    return tokens.toLocaleString()
-  }
-  const value = tokens / 1_000
-  return `${value >= 100 ? Math.round(value) : value.toFixed(1)}K`
 }
 
 const composerTextareaMinHeight = 72
@@ -1778,8 +1761,6 @@ function App(): React.JSX.Element {
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
   const [runtimeStatusKey, setRuntimeStatusKey] = useState('')
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
-  const [contextMetricsByConversation, setContextMetricsByConversation] =
-    useState<Record<string, ConversationContextMetrics>>({})
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false)
   const [composerMenuOpen, setComposerMenuOpen] = useState<
     'expert' | 'mode' | undefined
@@ -3138,25 +3119,103 @@ function App(): React.JSX.Element {
         const { requestId: _requestId, type: _type, ...metrics } = event
         void _requestId
         void _type
-        setContextMetricsByConversation((current) => ({
-          ...current,
-          [run.conversationId]: {
-            ...metrics,
-            runtimeSelectionKey: run.runtimeSelectionKey
-          }
-        }))
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id === run.conversationId
+              ? {
+                  ...conversation,
+                  contextMetrics: {
+                    ...metrics,
+                    basis: 'model-call',
+                    runtimeSelectionKey: run.runtimeSelectionKey
+                  }
+                }
+              : conversation
+          )
+        )
       } else if (event.type === 'context-compression') {
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          contextCompression: {
+        const estimatedAfterTokens = event.estimatedAfterTokens
+        const conversationScoped = event.scope !== 'agent-run'
+        const scope = event.scope ?? 'conversation'
+        const marker: ConversationContextCompressionMarker = {
             state:
               event.state === 'started'
                 ? 'compressing'
-                : 'completed',
+                : event.state,
+            scope,
             estimatedBeforeTokens: event.estimatedBeforeTokens,
-            estimatedAfterTokens: event.estimatedAfterTokens
+            estimatedAfterTokens: event.estimatedAfterTokens,
+            compressionCount: event.compressionCount
           }
-        }))
+        updateMessage(run.conversationId, run.messageId, (message) => {
+          const current =
+            message.contextCompressions ??
+            (message.contextCompression
+              ? [message.contextCompression]
+              : [])
+          const existingIndex = current.findIndex(
+            (compression) =>
+              (compression.scope ?? 'conversation') === scope
+          )
+          const contextCompressions =
+            existingIndex >= 0
+              ? [
+                  ...current.filter(
+                    (_compression, index) =>
+                      index !== existingIndex
+                  ),
+                  marker
+                ]
+              : [...current, marker]
+          return {
+            ...message,
+            contextCompression: undefined,
+            contextCompressions
+          }
+        })
+        if (
+          conversationScoped &&
+          event.state === 'completed' &&
+          estimatedAfterTokens !== undefined
+        ) {
+          setConversations((current) =>
+            current.map((conversation) =>
+              conversation.id === run.conversationId
+                ? {
+                    ...conversation,
+                    contextMetrics: {
+                      runtimeSelectionKey: run.runtimeSelectionKey,
+                      contextTokens: estimatedAfterTokens,
+                      effectiveTriggerTokens:
+                        event.effectiveTriggerTokens,
+                      contextWindowTokens:
+                        event.contextWindowTokens,
+                      compressionEnabled: true,
+                      source: 'estimated',
+                      basis: 'conversation'
+                    },
+                    contextCompressionState:
+                      event.conversationState ??
+                      conversation.contextCompressionState
+                  }
+                : conversation
+            )
+          )
+        } else if (
+          conversationScoped &&
+          event.conversationState
+        ) {
+          setConversations((current) =>
+            current.map((conversation) =>
+              conversation.id === run.conversationId
+                ? {
+                    ...conversation,
+                    contextCompressionState: event.conversationState
+                  }
+                : conversation
+            )
+          )
+        }
       } else if (event.type === 'status') {
         updateMessage(run.conversationId, run.messageId, (message) => ({
           ...message,
@@ -3457,6 +3516,17 @@ function App(): React.JSX.Element {
                     state: 'failed' as const
                   }
                 : message.contextCompression,
+            contextCompressions:
+              event.type === 'error'
+                ? message.contextCompressions?.map((compression) =>
+                    compression.state === 'compressing'
+                      ? {
+                          ...compression,
+                          state: 'failed' as const
+                        }
+                      : compression
+                  )
+                : message.contextCompressions,
             approval: undefined,
             question: undefined,
             tools: toolTerminalState
@@ -4965,6 +5035,12 @@ function App(): React.JSX.Element {
     const conversationId = activeConversation.id
     const attachmentSnapshot = attachments.slice(0, 8)
     const historySnapshot = activeConversation.messages
+    const retainedHistorySnapshot = historySnapshot
+      .filter(
+        (message) =>
+          message.state === 'complete' && message.content.trim()
+      )
+      .slice(-500)
     const projectIdSnapshot = activeProjectId || undefined
     const knowledgeRetrievalModeSnapshot =
       activeConversation.knowledgeRetrievalMode ?? 'auto'
@@ -4976,6 +5052,8 @@ function App(): React.JSX.Element {
     const selectedExpertSnapshot =
       runtime.capability === 'image-generation' ? '' : selectedExpertId
     const workModeSnapshot = effectiveWorkMode
+    setComposerMenuOpen(undefined)
+    setRuntimeMenuOpen(false)
     preparingConversations.current.add(conversationId)
     setConversationActivity(conversationId, true)
     setInput('')
@@ -5097,16 +5175,17 @@ function App(): React.JSX.Element {
         contextIds: attachmentSnapshot.map(
           (attachment) => attachment.id
         ),
-        history: historySnapshot
-          .filter(
-            (message) =>
-              message.state === 'complete' && message.content.trim()
-          )
-          .slice(-500)
-          .map((message) => ({
-            role: message.role,
-            content: message.content
-          }))
+        contextCompressionState:
+          activeConversation.contextCompressionState,
+        history: retainedHistorySnapshot.map((message) => ({
+          role: message.role,
+          content: message.content
+        })),
+        historyMessageIds: retainedHistorySnapshot.map(
+          (message) => message.id
+        ),
+        currentUserMessageId: userMessage.id,
+        currentAssistantMessageId: assistantMessage.id
       })
       for (const attachment of attachmentSnapshot) {
         void window.goodbuddy.context.remove(attachment.id)
@@ -5651,55 +5730,38 @@ function App(): React.JSX.Element {
     ) {
       return undefined
     }
-    const compression =
-      runtimeSettings.contextCompression ??
-      defaultContextCompressionSettings
-    const latest = contextMetricsByConversation[activeConversation.id]
+    const latest = activeConversation.contextMetrics
     const applicableLatest =
       latest?.runtimeSelectionKey === activeRuntimeSelectionKey
         ? latest
         : undefined
-    const history = activeConversation.messages
-      .filter(
-        (message) =>
-          message.state === 'complete' && message.content.trim()
-      )
-      .map((message) => ({
-        role: message.role,
-        content: message.content
-      }))
-    const coveredMessageCount = Math.min(
-      applicableLatest?.coveredMessageCount ?? 0,
-      history.length
-    )
-    const estimatedInputTokens =
-      isRunning && applicableLatest
-        ? applicableLatest.estimatedInputTokens
-        : estimateContextInputTokens({
-            history: history.slice(coveredMessageCount),
-            prompt: input,
-            summaryTokens: applicableLatest?.summaryTokens ?? 0
-          })
+    if (!applicableLatest) {
+      return undefined
+    }
+    const contextTokens = applicableLatest.contextTokens
     const effectiveTriggerTokens =
-      getEffectiveContextTriggerTokens({
-        triggerTokens: compression.triggerTokens,
-        contextWindowTokens: profile.contextWindowTokens
-      })
+      applicableLatest.effectiveTriggerTokens
     const denominatorTokens =
-      profile.contextWindowTokens ??
-      (compression.enabled ? effectiveTriggerTokens : undefined)
+      applicableLatest.contextWindowTokens
     const percentage =
       denominatorTokens === undefined
         ? undefined
         : Math.round(
-            (estimatedInputTokens / denominatorTokens) * 100
+            (contextTokens / denominatorTokens) * 100
           )
 
     return {
-      estimatedInputTokens,
+      contextTokens,
       effectiveTriggerTokens,
-      contextWindowTokens: profile.contextWindowTokens,
-      compressionEnabled: compression.enabled,
+      contextWindowTokens: applicableLatest.contextWindowTokens,
+      compressionEnabled: applicableLatest.compressionEnabled,
+      source: applicableLatest.source,
+      basis:
+        applicableLatest.basis ??
+        (applicableLatest.source === 'estimated' &&
+        activeConversation.contextCompressionState
+          ? 'conversation'
+          : 'model-call'),
       denominatorTokens,
       percentage
     }
@@ -5707,9 +5769,6 @@ function App(): React.JSX.Element {
     activeConversation,
     activeRuntimeSelection,
     activeRuntimeSelectionKey,
-    contextMetricsByConversation,
-    input,
-    isRunning,
     runtimeSettings
   ])
 
@@ -6658,6 +6717,7 @@ function App(): React.JSX.Element {
                     ariaLabel={t('composer.expertLabel')}
                     className="composer-picker--expert"
                     disabled={
+                      isRunning ||
                       runtime?.capability === 'image-generation'
                     }
                     icon={<Bot aria-hidden="true" size={15} />}
@@ -6670,6 +6730,7 @@ function App(): React.JSX.Element {
                   <ComposerMenuSelect
                     ariaLabel={t('composer.modeLabel')}
                     className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
+                    disabled={isRunning}
                     icon={
                       effectiveWorkMode === 'execute' ? (
                         <ShieldCheck aria-hidden="true" size={15} />
@@ -6979,7 +7040,7 @@ function App(): React.JSX.Element {
                 title={
                   composerContextMetrics.compressionEnabled
                     ? t('composer.context.compressionTrigger', {
-                        tokens: formatCompactContextTokens(
+                        tokens: formatCompactTokens(
                           composerContextMetrics.effectiveTriggerTokens
                         )
                       })
@@ -6988,33 +7049,44 @@ function App(): React.JSX.Element {
               >
                 <span className="composer-context-meter__summary">
                   {composerContextMetrics.denominatorTokens === undefined
-                    ? t('composer.context.tokenCount', {
-                        used: formatCompactContextTokens(
-                          composerContextMetrics.estimatedInputTokens
+                      ? t(
+                          composerContextMetrics.basis === 'conversation'
+                            ? composerContextMetrics.compressionEnabled
+                              ? 'composer.context.conversationThresholdUsage'
+                              : 'composer.context.conversationTokenCount'
+                            : composerContextMetrics.compressionEnabled
+                              ? composerContextMetrics.source === 'provider'
+                                ? 'composer.context.confirmedThresholdUsage'
+                                : 'composer.context.thresholdUsage'
+                              : composerContextMetrics.source === 'provider'
+                                ? 'composer.context.confirmedTokenCount'
+                                : 'composer.context.tokenCount',
+                          {
+                            used: formatCompactTokens(
+                              composerContextMetrics.contextTokens
+                            ),
+                            total: formatCompactTokens(
+                              composerContextMetrics.effectiveTriggerTokens
+                            )
+                          }
                         )
-                      })
-                    : composerContextMetrics.contextWindowTokens ===
-                        undefined
-                      ? t('composer.context.thresholdUsage', {
-                          used: formatCompactContextTokens(
-                            composerContextMetrics.estimatedInputTokens
-                          ),
-                          total: formatCompactContextTokens(
-                            composerContextMetrics.denominatorTokens
-                          ),
-                          percentage:
-                            composerContextMetrics.percentage ?? 0
-                        })
-                      : t('composer.context.windowUsage', {
-                          used: formatCompactContextTokens(
-                            composerContextMetrics.estimatedInputTokens
-                          ),
-                          total: formatCompactContextTokens(
-                            composerContextMetrics.denominatorTokens
-                          ),
-                          percentage:
-                            composerContextMetrics.percentage ?? 0
-                        })}
+                      : t(
+                          composerContextMetrics.basis === 'conversation'
+                            ? 'composer.context.conversationWindowUsage'
+                            : composerContextMetrics.source === 'provider'
+                              ? 'composer.context.confirmedWindowUsage'
+                              : 'composer.context.windowUsage',
+                          {
+                            used: formatCompactTokens(
+                              composerContextMetrics.contextTokens
+                            ),
+                            total: formatCompactTokens(
+                              composerContextMetrics.denominatorTokens
+                            ),
+                            percentage:
+                              composerContextMetrics.percentage ?? 0
+                          }
+                        )}
                 </span>
                 {composerContextMetrics.denominatorTokens !== undefined && (
                   <div
@@ -7024,7 +7096,7 @@ function App(): React.JSX.Element {
                     }
                     aria-valuemin={0}
                     aria-valuenow={Math.min(
-                      composerContextMetrics.estimatedInputTokens,
+                      composerContextMetrics.contextTokens,
                       composerContextMetrics.denominatorTokens
                     )}
                     className="composer-context-meter__track"

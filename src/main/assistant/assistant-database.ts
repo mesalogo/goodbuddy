@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import {
+  conversationSnapshotSchema,
   expertCreateSchema,
   normalizeInteractiveWorkMode
 } from '../../shared/assistant-contracts'
@@ -107,6 +108,7 @@ type ConversationRow = {
   project_id: string | null
   runtime_selection_json: string | null
   knowledge_retrieval_mode: 'auto' | 'always' | null
+  context_state_json: string | null
   title: string
   channel: ProjectChannel | null
   external_account_id: string | null
@@ -173,6 +175,8 @@ type MessageMetadata = {
   status?: string
   reasoning?: ConversationSnapshot['messages'][number]['reasoning']
   blocks?: ConversationSnapshot['messages'][number]['blocks']
+  contextCompression?: ConversationSnapshot['messages'][number]['contextCompression']
+  contextCompressions?: ConversationSnapshot['messages'][number]['contextCompressions']
   tools?: ConversationSnapshot['messages'][number]['tools']
   sources?: string[]
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
@@ -752,6 +756,45 @@ function interruptActiveToolBlocks(
   )
 }
 
+const conversationContextStateSchema = conversationSnapshotSchema.pick({
+  contextMetrics: true,
+  contextCompressionState: true
+})
+
+function parseConversationContextState(
+  value: string | null
+): Pick<
+  ConversationSnapshot,
+  'contextMetrics' | 'contextCompressionState'
+> {
+  if (!value) {
+    return {}
+  }
+  try {
+    const parsed = conversationContextStateSchema.safeParse(
+      JSON.parse(value)
+    )
+    return parsed.success ? parsed.data : {}
+  } catch {
+    return {}
+  }
+}
+
+function serializeConversationContextState(
+  conversation: Pick<
+    ConversationSnapshot,
+    'contextMetrics' | 'contextCompressionState'
+  >
+): string | null {
+  return conversation.contextMetrics ||
+    conversation.contextCompressionState
+    ? JSON.stringify({
+        contextMetrics: conversation.contextMetrics,
+        contextCompressionState: conversation.contextCompressionState
+      })
+    : null
+}
+
 function toConversationSnapshot(
   conversation: ConversationRow,
   messages: MessageRow[]
@@ -764,6 +807,7 @@ function toConversationSnapshot(
     ),
     knowledgeRetrievalMode:
       conversation.knowledge_retrieval_mode ?? undefined,
+    ...parseConversationContextState(conversation.context_state_json),
     ...(conversation.channel &&
     conversation.conversation_type &&
     conversation.account_display
@@ -796,6 +840,8 @@ function toConversationSnapshot(
         status: interrupted
           ? interruptedMessageStatus
           : metadata.status,
+        contextCompression: metadata.contextCompression,
+        contextCompressions: metadata.contextCompressions,
         tools: interrupted
           ? interruptActiveTools(metadata.tools)
           : metadata.tools,
@@ -817,6 +863,8 @@ function serializeConversationMessageMetadata(
     status: message.status,
     reasoning: message.reasoning,
     blocks: message.blocks,
+    contextCompression: message.contextCompression,
+    contextCompressions: message.contextCompressions,
     tools: message.tools,
     sources: message.sources,
     sourceReferences: message.sourceReferences,
@@ -1334,7 +1382,7 @@ export class AssistantDatabase {
     const conversations = database
       .prepare(
         `SELECT id, project_id, runtime_selection_json,
-                knowledge_retrieval_mode, title, channel,
+                knowledge_retrieval_mode, context_state_json, title, channel,
                 external_account_id, external_conversation_id,
                 conversation_type, account_display, updated_at
          FROM conversations
@@ -1369,7 +1417,7 @@ export class AssistantDatabase {
     const conversation = database
       .prepare(
         `SELECT id, project_id, runtime_selection_json,
-                knowledge_retrieval_mode, title, channel,
+                knowledge_retrieval_mode, context_state_json, title, channel,
                 external_account_id, external_conversation_id,
                 conversation_type, account_display, updated_at
          FROM conversations
@@ -1497,8 +1545,9 @@ export class AssistantDatabase {
       const insertConversation = database.prepare(
         `INSERT INTO conversations
           (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
-           work_mode, title, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
+           context_state_json, work_mode, title, status, created_at,
+           updated_at)
+         VALUES (?, ?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
       )
       const insertMessage = database.prepare(
         `INSERT INTO messages
@@ -1518,6 +1567,7 @@ export class AssistantDatabase {
             ? JSON.stringify(conversation.runtimeSelection)
             : null,
           conversation.knowledgeRetrievalMode ?? null,
+          serializeConversationContextState(conversation),
           conversation.title,
           updatedAt,
           updatedAt
@@ -1532,18 +1582,7 @@ export class AssistantDatabase {
             message.content,
             message.state,
             sequence,
-            JSON.stringify({
-              createdAt: message.createdAt,
-              status: message.status,
-              reasoning: message.reasoning,
-              blocks: message.blocks,
-              tools: message.tools,
-              sources: message.sources,
-              sourceReferences: message.sourceReferences,
-              knowledgeRetrieval: message.knowledgeRetrieval,
-              artifactIds: message.artifactIds,
-              attachments: message.attachments
-            }),
+            serializeConversationMessageMetadata(message),
             new Date(message.createdAt).toISOString()
           )
         }
@@ -1563,14 +1602,15 @@ export class AssistantDatabase {
     const insertConversation = database.prepare(
       `INSERT INTO conversations
         (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
-         work_mode, title, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
+         context_state_json, work_mode, title, status, created_at,
+         updated_at)
+       VALUES (?, ?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
     )
     const updateConversation = database.prepare(
       `UPDATE conversations
        SET project_id = ?, runtime_selection_json = ?,
-           knowledge_retrieval_mode = ?, title = ?, status = 'active',
-           updated_at = ?
+           knowledge_retrieval_mode = ?, context_state_json = ?,
+           title = ?, status = 'active', updated_at = ?
        WHERE id = ? AND channel IS NULL`
     )
     const findMessage = database.prepare(
@@ -1623,6 +1663,7 @@ export class AssistantDatabase {
               ? JSON.stringify(header.runtimeSelection)
               : null,
             header.knowledgeRetrievalMode ?? null,
+            serializeConversationContextState(header),
             header.title,
             updatedAt,
             header.id
@@ -1638,6 +1679,7 @@ export class AssistantDatabase {
               ? JSON.stringify(header.runtimeSelection)
               : null,
             header.knowledgeRetrievalMode ?? null,
+            serializeConversationContextState(header),
             header.title,
             updatedAt,
             updatedAt
@@ -4718,12 +4760,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 19) {
+    if (version.user_version > 20) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 19) {
+    if (version.user_version === 20) {
       return
     }
     if (version.user_version < 1) {
@@ -4750,6 +4792,7 @@ export class AssistantDatabase {
             knowledge_retrieval_mode IS NULL OR
             knowledge_retrieval_mode IN ('auto', 'always')
           ),
+        context_state_json TEXT,
         work_mode TEXT NOT NULL DEFAULT 'ask'
           CHECK(work_mode IN ('ask', 'execute')),
         title TEXT NOT NULL,
@@ -5628,6 +5671,28 @@ export class AssistantDatabase {
           `)
         }
         database.exec('PRAGMA user_version = 19; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 20) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const conversationColumns = new Set(
+          (
+            database
+              .prepare('PRAGMA table_info(conversations)')
+              .all() as Array<{ name: string }>
+          ).map((column) => column.name)
+        )
+        if (!conversationColumns.has('context_state_json')) {
+          database.exec(`
+            ALTER TABLE conversations
+              ADD COLUMN context_state_json TEXT;
+          `)
+        }
+        database.exec('PRAGMA user_version = 20; COMMIT;')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

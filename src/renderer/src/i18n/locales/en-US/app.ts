@@ -191,8 +191,12 @@ export const app = {
     contextCompression: {
       compressing: 'Compressing earlier conversation…',
       completed:
-        'Earlier conversation compressed · ≈{{before}} → ≈{{after}}',
-      failed: 'Earlier conversation compression failed'
+        'Earlier conversation compressed (estimated) · ≈{{before}} → ≈{{after}}',
+      failed: 'Earlier conversation compression failed',
+      agentCompressing: 'Compacting Agent execution context…',
+      agentCompleted:
+        'Agent context compacted {{count}} time(s) (estimated) · ≈{{before}} → ≈{{after}}',
+      agentFailed: 'Agent execution context compression failed'
     },
     sources: 'Sources: {{sources}}',
     citations: {
@@ -322,10 +326,22 @@ export const app = {
     sendTitle: 'Send message',
     shortcut: 'Quick access: ',
     context: {
-      tokenCount: 'Context ≈{{used}}',
-      windowUsage: 'Context ≈{{used}} / {{total}} · {{percentage}}%',
+      confirmedTokenCount: 'Latest call {{used}}',
+      tokenCount: 'Estimated latest call ≈{{used}}',
+      confirmedWindowUsage:
+        'Latest call {{used}} / {{total}} · {{percentage}}%',
+      windowUsage:
+        'Estimated latest call ≈{{used}} / {{total}} · {{percentage}}%',
+      confirmedThresholdUsage:
+        'Latest call {{used}} · Compression at {{total}}',
       thresholdUsage:
-        'Compression threshold ≈{{used}} / {{total}} · {{percentage}}%',
+        'Estimated latest call ≈{{used}} · Compression at {{total}}',
+      conversationTokenCount:
+        'Estimated compressed conversation ≈{{used}}',
+      conversationWindowUsage:
+        'Estimated compressed conversation ≈{{used}} / {{total}} · {{percentage}}%',
+      conversationThresholdUsage:
+        'Estimated compressed conversation ≈{{used}} · Compression at {{total}}',
       progressLabel: 'Current context usage',
       compressionTrigger: 'Automatic compression at ≈{{tokens}}'
     },

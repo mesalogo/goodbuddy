@@ -165,6 +165,75 @@ class RealModelConfigToolProvider implements ModelToolProviderLike {
   }
 }
 
+class RealLongAgentToolProvider implements ModelToolProviderLike {
+  readonly completedSteps: number[] = []
+
+  async listTools(): Promise<ModelToolDefinition[]> {
+    const expectedStep = this.completedSteps.length + 1
+    return [
+      {
+        name: 'record_progress',
+        displayName: 'Record progress',
+        description:
+          expectedStep <= 3
+            ? `Record required progress step ${expectedStep}. Call exactly once with step ${expectedStep} before continuing.`
+            : 'All required progress is recorded. Do not call this tool again.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            step: {
+              type: 'integer',
+              const: expectedStep
+            }
+          },
+          required: ['step'],
+          additionalProperties: false
+        },
+        source: 'builtin'
+      }
+    ]
+  }
+
+  getApproval() {
+    return {
+      scopeKey: 'real-long-agent-test',
+      title: 'Record test progress',
+      description: 'Record deterministic E2E progress',
+      allowPermanent: false
+    }
+  }
+
+  async callTool(
+    name: string,
+    argumentsValue: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<ModelToolResult> {
+    signal.throwIfAborted()
+    const expectedStep = this.completedSteps.length + 1
+    if (
+      name !== 'record_progress' ||
+      argumentsValue.step !== expectedStep ||
+      expectedStep > 3
+    ) {
+      throw new Error(
+        `Unexpected progress call: ${name} ${JSON.stringify(argumentsValue)}`
+      )
+    }
+    this.completedSteps.push(expectedStep)
+    const text = [
+      `STEP_${expectedStep}_RECORDED`,
+      `evidence-${expectedStep} `.repeat(4_000)
+    ].join('\n')
+    return {
+      parts: [{ type: 'text', text }],
+      contextBytes: Buffer.byteLength(text)
+    }
+  }
+
+  async releaseConversation(): Promise<void> {}
+  async dispose(): Promise<void> {}
+}
+
 describe.runIf(enabled)('runtime end-to-end', () => {
   let workspace = ''
 
@@ -215,6 +284,104 @@ describe.runIf(enabled)('runtime end-to-end', () => {
   )
 
   it(
+    'counts a real image in provider-reported input usage',
+    async () => {
+      const runtime = new ModelAgentRuntime({
+        apiKey,
+        baseUrl,
+        model: modelName,
+        protocol,
+        authentication: 'api-key',
+        supportsImageInput: true,
+        maxOutputTokens: 128,
+        contextCompression: {
+          settings: {
+            ...defaultContextCompressionSettings,
+            enabled: true
+          },
+          contextWindowTokens: 32_000
+        }
+      })
+      const baselineEvents: RuntimeEvent[] = []
+      const imageEvents: RuntimeEvent[] = []
+      const prompt =
+        'Return exactly this text and nothing else: IMAGE_USAGE_E2E_OK'
+
+      try {
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            workMode: 'ask',
+            prompt
+          },
+          new AbortController().signal
+        )) {
+          baselineEvents.push(event)
+        }
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            workMode: 'ask',
+            prompt,
+            images: [
+              {
+                name: 'goodbuddy-icon.png',
+                mediaType: 'image/png',
+                data: await readFile(
+                  join(process.cwd(), 'build', 'icon.png'),
+                  'base64'
+                )
+              }
+            ]
+          },
+          new AbortController().signal
+        )) {
+          imageEvents.push(event)
+        }
+      } finally {
+        await runtime.dispose()
+      }
+
+      const baselineUsage = baselineEvents.find(
+        (
+          event
+        ): event is Extract<RuntimeEvent, { type: 'model-usage' }> =>
+          event.type === 'model-usage'
+      )
+      const imageUsage = imageEvents.find(
+        (
+          event
+        ): event is Extract<RuntimeEvent, { type: 'model-usage' }> =>
+          event.type === 'model-usage'
+      )
+      expect(baselineUsage).toBeDefined()
+      expect(imageUsage).toBeDefined()
+      expect(imageUsage!.inputTokens).toBeGreaterThan(
+        baselineUsage!.inputTokens
+      )
+      expect(
+        imageEvents.filter(
+          (event) => event.type === 'context-metrics'
+        )
+      ).toEqual([
+        expect.objectContaining({
+          source: 'provider',
+          contextTokens:
+            imageUsage!.inputTokens +
+            imageUsage!.outputTokens +
+            (protocol === 'anthropic-messages'
+              ? imageUsage!.cacheReadTokens +
+                imageUsage!.cacheWriteTokens
+              : 0)
+        })
+      ])
+    },
+    180_000
+  )
+
+  it(
     'compresses real direct-model history and preserves earlier and recent facts',
     async () => {
       const runtime = new ModelAgentRuntime({
@@ -247,7 +414,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
                 content: [
                   'The project codename is ORBIT-739.',
                   'Background notes:',
-                  'alpha '.repeat(5_000)
+                  'alpha '.repeat(8_000)
                 ].join('\n')
               },
               {
@@ -255,7 +422,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
                 content: [
                   'I will remember the project codename.',
                   'Acknowledgement notes:',
-                  'gamma '.repeat(4_000)
+                  'gamma '.repeat(6_500)
                 ].join('\n')
               },
               {
@@ -263,7 +430,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
                 content: [
                   'The deploy region is AP-SOUTH-7.',
                   'Recent notes:',
-                  'beta '.repeat(3_000)
+                  'beta '.repeat(5_000)
                 ].join('\n')
               },
               {
@@ -310,6 +477,172 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       expect(output).toContain('AP-SOUTH-7')
     },
     120_000
+  )
+
+  it(
+    'compresses context after a real completed response reaches the threshold',
+    async () => {
+      const expectedOutput = [
+        'POST_RESPONSE_COMPRESSION_E2E_OK_',
+        'SAFE'.repeat(16)
+      ].join('')
+      const prompt = `Return exactly this text and nothing else: ${expectedOutput}`
+      const history = [
+        {
+          role: 'user' as const,
+          content: `baseline\n${'alpha '.repeat(8_500)}`
+        },
+        {
+          role: 'assistant' as const,
+          content: 'ack'
+        }
+      ]
+
+      const runtime = new ModelAgentRuntime({
+        apiKey,
+        baseUrl,
+        model: modelName,
+        protocol,
+        authentication: 'api-key',
+        maxOutputTokens: 128,
+        contextCompression: {
+          settings: {
+            ...defaultContextCompressionSettings,
+            enabled: true,
+            triggerTokens: 8_000,
+            recentRawTokens: 4_000
+          },
+          contextWindowTokens: 32_000
+        }
+      })
+      const events: RuntimeEvent[] = []
+
+      try {
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            workMode: 'ask',
+            prompt,
+            history
+          },
+          new AbortController().signal
+        )) {
+          events.push(event)
+        }
+      } finally {
+        await runtime.dispose()
+      }
+
+      const output = events
+        .flatMap((event) =>
+          event.type === 'text' ? [event.delta] : []
+        )
+        .join('')
+      const lastTextIndex = events.reduce(
+        (lastIndex, event, index) =>
+          event.type === 'text' ? index : lastIndex,
+        -1
+      )
+      const postResponseCompressionIndex = events.findIndex(
+        (event) =>
+          event.type === 'context-compression' &&
+          event.scope === 'conversation' &&
+          event.state === 'started'
+      )
+      expect(output).toContain(expectedOutput)
+      expect(lastTextIndex).toBeGreaterThanOrEqual(0)
+      expect(postResponseCompressionIndex).toBeGreaterThan(
+        lastTextIndex
+      )
+      expect(
+        events
+          .filter((event) => event.type === 'context-metrics')
+          .at(-1)
+      ).toMatchObject({
+        type: 'context-metrics',
+        source: 'provider'
+      })
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: 'context-metrics',
+          source: 'estimated'
+        })
+      )
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+    },
+    180_000
+  )
+
+  it(
+    'compacts a real multi-round Agent run and continues to completion',
+    async () => {
+      const toolProvider = new RealLongAgentToolProvider()
+      const runtime = new ModelAgentRuntime({
+        apiKey,
+        baseUrl,
+        model: modelName,
+        protocol,
+        authentication: 'api-key',
+        toolProvider,
+        contextCompression: {
+          settings: {
+            ...defaultContextCompressionSettings,
+            enabled: true,
+            triggerTokens: 8_000,
+            recentRawTokens: 4_000
+          },
+          contextWindowTokens: 32_000
+        }
+      })
+      const events: RuntimeEvent[] = []
+
+      try {
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            workMode: 'execute',
+            prompt:
+              'Call record_progress sequentially for steps 1, 2, and 3. Wait for each result before calling the next step. After all three results, do not call tools again and reply with LONG_AGENT_COMPRESSION_E2E_OK.'
+          },
+          new AbortController().signal,
+          async () => 'once'
+        )) {
+          events.push(event)
+        }
+      } finally {
+        await runtime.dispose()
+      }
+
+      const output = events
+        .flatMap((event) =>
+          event.type === 'text' ? [event.delta] : []
+        )
+        .join('')
+      expect(toolProvider.completedSteps).toEqual([1, 2, 3])
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'context-compression',
+          scope: 'agent-run',
+          state: 'completed'
+        })
+      )
+      expect(output).toContain('LONG_AGENT_COMPRESSION_E2E_OK')
+      expect(
+        events
+          .filter((event) => event.type === 'context-metrics')
+          .at(-1)
+      ).toMatchObject({ source: 'provider' })
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: 'context-metrics',
+          source: 'estimated'
+        })
+      )
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+    },
+    240_000
   )
 
   it(
@@ -399,13 +732,21 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         baseUrl,
         model: modelName,
         protocol,
-        authentication: 'api-key'
+        authentication: 'api-key',
+        contextCompression: {
+          settings: {
+            ...defaultContextCompressionSettings,
+            enabled: true
+          },
+          contextWindowTokens: 32_000
+        }
       })
       const abortController = new AbortController()
+      const events: RuntimeEvent[] = []
 
       try {
-        const result = collectText(
-          runtime.run(
+        const result = (async () => {
+          for await (const event of runtime.run(
             {
               requestId: crypto.randomUUID(),
               conversationId: crypto.randomUUID(),
@@ -414,12 +755,19 @@ describe.runIf(enabled)('runtime end-to-end', () => {
                 'Write a detailed technical essay of at least 3000 words.'
             },
             abortController.signal
-          )
-        )
+          )) {
+            events.push(event)
+          }
+        })()
         setTimeout(() => abortController.abort(), 50)
         await expect(result).rejects.toMatchObject({
           name: 'AbortError'
         })
+        expect(events).not.toContainEqual(
+          expect.objectContaining({
+            type: 'context-metrics'
+          })
+        )
       } finally {
         await runtime.dispose()
       }

@@ -137,6 +137,20 @@ export type ConversationMessageBlock = z.infer<
   typeof conversationMessageBlockSchema
 >
 
+export const conversationContextCompressionMarkerSchema = z
+  .object({
+    state: z.enum(['compressing', 'completed', 'failed']),
+    scope: z.enum(['conversation', 'agent-run']).optional(),
+    estimatedBeforeTokens: z.number().int().nonnegative(),
+    estimatedAfterTokens: z.number().int().nonnegative().optional(),
+    compressionCount: z.number().int().positive().optional()
+  })
+  .strict()
+
+export type ConversationContextCompressionMarker = z.infer<
+  typeof conversationContextCompressionMarkerSchema
+>
+
 export const conversationMessageSchema = z
   .object({
     id: assistantIdSchema,
@@ -147,13 +161,11 @@ export const conversationMessageSchema = z
     createdAt: z.number().int().nonnegative(),
     state: z.enum(['streaming', 'complete', 'error']),
     status: z.string().max(4_000).optional(),
-    contextCompression: z
-      .object({
-        state: z.enum(['compressing', 'completed', 'failed']),
-        estimatedBeforeTokens: z.number().int().nonnegative(),
-        estimatedAfterTokens: z.number().int().nonnegative().optional()
-      })
-      .strict()
+    contextCompression:
+      conversationContextCompressionMarkerSchema.optional(),
+    contextCompressions: z
+      .array(conversationContextCompressionMarkerSchema)
+      .max(2)
       .optional(),
     tools: z.array(conversationToolActivitySchema).max(100).optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
@@ -222,12 +234,54 @@ export type ConversationMessage = z.infer<
   typeof conversationMessageSchema
 >
 
+export const conversationContextMetricsSchema = z
+  .object({
+    runtimeSelectionKey: z.string().trim().min(1).max(1_000),
+    contextTokens: z.number().int().nonnegative().max(50_000_000),
+    effectiveTriggerTokens: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(10_000_000),
+    contextWindowTokens: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(10_000_000)
+      .optional(),
+    compressionEnabled: z.boolean(),
+    source: z.enum(['provider', 'estimated']),
+    basis: z.enum(['model-call', 'conversation']).optional()
+  })
+  .strict()
+
+export type ConversationContextMetrics = z.infer<
+  typeof conversationContextMetricsSchema
+>
+
+export const conversationContextCompressionStateSchema = z
+  .object({
+    coveredHistoryDigest: z.string().regex(/^[0-9a-f]{64}$/u),
+    coveredMessageCount: z.number().int().nonnegative().max(500),
+    coveredFromMessageId: assistantIdSchema.optional(),
+    coveredThroughMessageId: assistantIdSchema.optional(),
+    summary: z.string().trim().min(1).max(100_000)
+  })
+  .strict()
+
+export type ConversationContextCompressionState = z.infer<
+  typeof conversationContextCompressionStateSchema
+>
+
 export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
     projectId: assistantIdSchema.optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
+    contextMetrics: conversationContextMetricsSchema.optional(),
+    contextCompressionState:
+      conversationContextCompressionStateSchema.optional(),
     remote: z
       .object({
         channel: projectChannelSchema,

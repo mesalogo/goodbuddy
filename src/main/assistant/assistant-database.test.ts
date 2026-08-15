@@ -98,7 +98,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 19', async () => {
+  it('migrates existing databases to schema version 20', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -127,7 +127,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(19)
+    ).toBe(20)
     expect(
       current
         .prepare(
@@ -231,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(19)
+    ).toBe(20)
     expect(
       current
         .prepare(
@@ -1281,6 +1281,12 @@ describe('AssistantDatabase', () => {
             ],
             createdAt: 1_775_000_001_000,
             state: 'streaming',
+            contextCompression: {
+              state: 'completed',
+              scope: 'conversation',
+              estimatedBeforeTokens: 22_000,
+              estimatedAfterTokens: 9_000
+            },
             artifactIds: [
               '00000000-0000-4000-8000-000000000216'
             ],
@@ -1342,6 +1348,12 @@ describe('AssistantDatabase', () => {
             state: 'error',
             status: expect.stringContaining('意外中断'),
             reasoning: '先分析发布范围',
+            contextCompression: {
+              state: 'completed',
+              scope: 'conversation',
+              estimatedBeforeTokens: 22_000,
+              estimatedAfterTokens: 9_000
+            },
             blocks: [
               expect.objectContaining({
                 type: 'reasoning',
@@ -1451,6 +1463,24 @@ describe('AssistantDatabase', () => {
         header: {
           id: conversationId,
           projectId: project.id,
+          contextMetrics: {
+            runtimeSelectionKey: `model:${channelDefaultProfileId}`,
+            contextTokens: 9_000,
+            effectiveTriggerTokens: 20_000,
+            contextWindowTokens: 32_000,
+            compressionEnabled: true,
+            source: 'estimated' as const,
+            basis: 'conversation' as const
+          },
+          contextCompressionState: {
+            coveredHistoryDigest: 'a'.repeat(64),
+            coveredMessageCount: 2,
+            coveredFromMessageId:
+              '00000000-0000-4000-8000-000000000503',
+            coveredThroughMessageId:
+              '00000000-0000-4000-8000-000000000504',
+            summary: '持久化摘要'
+          },
           title: '增量对话（已完成）',
           updatedAt: 1_775_000_001_000
         },
@@ -1461,7 +1491,22 @@ describe('AssistantDatabase', () => {
             content: '生成完成',
             createdAt: 1_775_000_000_001,
             state: 'complete' as const,
-            status: '已完成'
+            status: '已完成',
+            contextCompressions: [
+              {
+                state: 'completed' as const,
+                scope: 'agent-run' as const,
+                estimatedBeforeTokens: 24_000,
+                estimatedAfterTokens: 11_000,
+                compressionCount: 2
+              },
+              {
+                state: 'completed' as const,
+                scope: 'conversation' as const,
+                estimatedBeforeTokens: 22_000,
+                estimatedAfterTokens: 9_000
+              }
+            ]
           },
           {
             id: newMessageId,
@@ -1478,12 +1523,41 @@ describe('AssistantDatabase', () => {
 
     expect(database.getConversation(conversationId)).toMatchObject({
       title: '增量对话（已完成）',
+      contextMetrics: {
+        contextTokens: 9_000,
+        source: 'estimated',
+        basis: 'conversation'
+      },
+      contextCompressionState: {
+        coveredHistoryDigest: 'a'.repeat(64),
+        coveredMessageCount: 2,
+        coveredFromMessageId:
+          '00000000-0000-4000-8000-000000000503',
+        coveredThroughMessageId:
+          '00000000-0000-4000-8000-000000000504',
+        summary: '持久化摘要'
+      },
       messages: [
         {
           id: streamingMessageId,
           content: '生成完成',
           state: 'complete',
-          status: '已完成'
+          status: '已完成',
+          contextCompressions: [
+            {
+              state: 'completed',
+              scope: 'agent-run',
+              estimatedBeforeTokens: 24_000,
+              estimatedAfterTokens: 11_000,
+              compressionCount: 2
+            },
+            {
+              state: 'completed',
+              scope: 'conversation',
+              estimatedBeforeTokens: 22_000,
+              estimatedAfterTokens: 9_000
+            }
+          ]
         },
         {
           id: newMessageId,

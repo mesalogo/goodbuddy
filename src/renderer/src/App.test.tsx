@@ -2331,7 +2331,7 @@ describe('App', () => {
     expect(screen.getByText('正在分析真实推理内容')).toBeVisible()
   })
 
-  it('shows live context usage and keeps explicit compression status', async () => {
+  it('updates context usage after model responses and keeps compression status', async () => {
     const settings = await api.settings.getRuntime()
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
@@ -2350,14 +2350,12 @@ describe('App', () => {
     })
     render(<App />)
 
+    await screen.findByLabelText('向 GoodBuddy 提问')
     expect(
-      await screen.findByText(/上下文 ≈.+ \/ 32\.0K · \d+%/u)
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('progressbar', {
+      screen.queryByRole('progressbar', {
         name: '当前上下文使用量'
       })
-    ).toBeInTheDocument()
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByText('只读问答，不修改文件')
     ).not.toBeInTheDocument()
@@ -2369,8 +2367,10 @@ describe('App', () => {
       target: { value: '中'.repeat(1_000) }
     })
     expect(
-      screen.getByText(/上下文 ≈5\.\dK \/ 32\.0K/u)
-    ).toBeInTheDocument()
+      screen.queryByRole('progressbar', {
+        name: '当前上下文使用量'
+      })
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('发送'))
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
     const request = run.mock.calls[0]?.[0]
@@ -2381,7 +2381,23 @@ describe('App', () => {
     act(() => {
       agentListener?.({
         requestId: request.requestId,
+        type: 'context-metrics',
+        contextTokens: 22_000,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        compressionEnabled: true,
+        source: 'provider'
+      })
+    })
+    expect(
+      screen.getByText('本次调用 22.0K / 32.0K · 69%')
+    ).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
         type: 'context-compression',
+        scope: 'conversation',
         state: 'started',
         estimatedBeforeTokens: 22_000,
         effectiveTriggerTokens: 20_000,
@@ -2410,6 +2426,7 @@ describe('App', () => {
       agentListener?.({
         requestId: request.requestId,
         type: 'context-compression',
+        scope: 'conversation',
         state: 'completed',
         estimatedBeforeTokens: 22_000,
         estimatedAfterTokens: 9_000,
@@ -2419,25 +2436,105 @@ describe('App', () => {
         coveredMessageCount: 2,
         summaryTokens: 1_000
       })
-      agentListener?.({
-        requestId: request.requestId,
-        type: 'context-metrics',
-        estimatedInputTokens: 9_000,
-        effectiveTriggerTokens: 20_000,
-        contextWindowTokens: 32_000,
-        compressionEnabled: true,
-        recentRawTokens: 32_000,
-        coveredMessageCount: 2,
-        summaryTokens: 1_000
-      })
     })
 
     expect(
-      screen.getByText('已压缩较早对话 · ≈22.0K → ≈9.0K')
+      screen.getByText(
+        '已压缩较早对话（估算） · ≈22.0K → ≈9.0K'
+      )
     ).toBeInTheDocument()
     expect(
-      screen.getByText('上下文 ≈9.0K / 32.0K · 28%')
+      screen.getByText(
+        '压缩后对话估算 ≈9.0K / 32.0K · 28%'
+      )
     ).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-compression',
+        scope: 'agent-run',
+        state: 'started',
+        estimatedBeforeTokens: 24_000,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        recentRawTokens: 4_000,
+        compressionCount: 1
+      })
+    })
+    expect(
+      screen.getByText('正在整理 Agent 执行上下文…')
+    ).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-compression',
+        scope: 'agent-run',
+        state: 'completed',
+        estimatedBeforeTokens: 24_000,
+        estimatedAfterTokens: 11_000,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        recentRawTokens: 4_000,
+        compressionCount: 2
+      })
+    })
+    expect(
+      screen.getByText(
+        'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '已压缩较早对话（估算） · ≈22.0K → ≈9.0K'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '压缩后对话估算 ≈9.0K / 32.0K · 28%'
+      )
+    ).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-compression',
+        scope: 'conversation',
+        state: 'completed',
+        estimatedBeforeTokens: 24_000,
+        estimatedAfterTokens: 8_500,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        recentRawTokens: 4_000,
+        coveredMessageCount: 4
+      })
+    })
+    expect(
+      screen.getByText(
+        'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '已压缩较早对话（估算） · ≈24.0K → ≈8.5K'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '压缩后对话估算 ≈8.5K / 32.0K · 27%'
+      )
+    ).toBeInTheDocument()
+    expect(
+      Array.from(
+        document.querySelectorAll(
+          '.context-compression-event__label'
+        )
+      ).map((element) => element.textContent)
+    ).toEqual([
+      'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K',
+      '已压缩较早对话（估算） · ≈24.0K → ≈8.5K'
+    ])
     act(() => {
       agentListener?.({
         requestId: request.requestId,
@@ -2445,8 +2542,181 @@ describe('App', () => {
       })
     })
     expect(
-      screen.getByText('已压缩较早对话 · ≈22.0K → ≈9.0K')
+      screen.getByText(
+        'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K'
+      )
     ).toBeInTheDocument()
+  })
+
+  it('does not present the compression threshold as a context-window percentage', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'model',
+      modelProfiles: settings.modelProfiles.map((profile) => ({
+        ...profile,
+        contextWindowTokens: undefined
+      })),
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 20_000,
+        recentRawTokens: 4_000,
+        modelSource: { kind: 'current' },
+        summaryPrompt: 'Preserve important facts.'
+      }
+    })
+    render(<App />)
+
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '检查上下文显示' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-metrics',
+        contextTokens: 22_000,
+        effectiveTriggerTokens: 20_000,
+        compressionEnabled: true,
+        source: 'provider'
+      })
+    })
+
+    expect(
+      screen.getByText('本次调用 22.0K · 压缩线 20.0K')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('progressbar', {
+        name: '当前上下文使用量'
+      })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('110%')).not.toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-compression',
+        scope: 'conversation',
+        state: 'completed',
+        estimatedBeforeTokens: 22_000,
+        estimatedAfterTokens: 9_400,
+        effectiveTriggerTokens: 20_000,
+        recentRawTokens: 4_000,
+        coveredMessageCount: 2
+      })
+    })
+
+    expect(
+      screen.getByText(
+        '压缩后对话估算 ≈9.4K · 压缩线 20.0K'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('本次调用 22.0K · 压缩线 20.0K')
+    ).not.toBeInTheDocument()
+  })
+
+  it('restores persisted context usage and compression state after restart', async () => {
+    const settings = await api.settings.getRuntime()
+    const profile = settings.modelProfiles[0]!
+    const conversationId =
+      '00000000-0000-4000-8000-000000000451'
+    const compressionState = {
+      coveredHistoryDigest: 'a'.repeat(64),
+      coveredMessageCount: 2,
+      coveredFromMessageId:
+        '00000000-0000-4000-8000-000000000452',
+      coveredThroughMessageId:
+        '00000000-0000-4000-8000-000000000453',
+      summary: 'Persisted conversation summary'
+    }
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'model',
+      defaultModelProfileId: profile.id,
+      modelProfiles: settings.modelProfiles.map((candidate) => ({
+        ...candidate,
+        contextWindowTokens: 32_000
+      }))
+    })
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: conversationId,
+        projectId,
+        runtimeSelection: {
+          provider: 'model',
+          profileId: profile.id
+        },
+        contextMetrics: {
+          runtimeSelectionKey: `model:${profile.id}`,
+          contextTokens: 9_000,
+          effectiveTriggerTokens: 20_000,
+          contextWindowTokens: 32_000,
+          compressionEnabled: true,
+          source: 'estimated',
+          basis: 'conversation'
+        },
+        contextCompressionState: compressionState,
+        title: '已压缩会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000452',
+            role: 'user',
+            content: '此前问题',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          },
+          {
+            id: '00000000-0000-4000-8000-000000000453',
+            role: 'assistant',
+            content: '此前回答',
+            createdAt: 1_775_000_000_001,
+            state: 'complete',
+            contextCompression: {
+              state: 'completed',
+              scope: 'conversation',
+              estimatedBeforeTokens: 22_000,
+              estimatedAfterTokens: 9_000
+            }
+          }
+        ]
+      }
+    ])
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        '压缩后对话估算 ≈9.0K / 32.0K · 28%'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '已压缩较早对话（估算） · ≈22.0K → ≈9.0K'
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '继续工作' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    expect(run.mock.calls[0]?.[0].contextCompressionState).toEqual(
+      compressionState
+    )
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      historyMessageIds: [
+        '00000000-0000-4000-8000-000000000452',
+        '00000000-0000-4000-8000-000000000453'
+      ],
+      currentUserMessageId: expect.any(String),
+      currentAssistantMessageId: expect.any(String)
+    })
   })
 
   it('keeps a tool failure in details and hides retry after continuing', async () => {
@@ -2745,6 +3015,48 @@ describe('App', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('locks agent context controls while a response is running', async () => {
+    render(<App />)
+
+    const expertButton = composerMenuTrigger('专家角色')
+    const modeButton = composerMenuTrigger('工作模式')
+    const runtimeButton = await screen.findByRole('button', {
+      name: /sonnet-5/u
+    })
+    expect(expertButton).toBeEnabled()
+    expect(modeButton).toBeEnabled()
+    expect(runtimeButton).toBeEnabled()
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '检查运行上下文锁定' }
+    })
+    openComposerMenu('专家角色')
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+    expect(
+      screen.queryByRole('menu', { name: '专家角色' })
+    ).not.toBeInTheDocument()
+    expect(expertButton).toBeDisabled()
+    expect(modeButton).toBeDisabled()
+    expect(runtimeButton).toBeDisabled()
+
+    const request = run.mock.calls[0]?.[0]
+    act(() => {
+      if (!request) {
+        throw new Error('Missing request')
+      }
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+
+    await waitFor(() => expect(expertButton).toBeEnabled())
+    expect(modeButton).toBeEnabled()
+    expect(runtimeButton).toBeEnabled()
   })
 
   it('keeps sent documents and images in conversation history', async () => {
@@ -4134,7 +4446,7 @@ describe('App', () => {
         })
       )
     )
-    expect(mode).toBeEnabled()
+    expect(mode).toBeDisabled()
   })
 
   it('terminalizes tools and activity when a request is cancelled', async () => {

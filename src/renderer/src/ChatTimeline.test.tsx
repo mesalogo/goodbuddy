@@ -86,7 +86,7 @@ describe('ChatTimeline', () => {
     expect(unchangedDetails).toHaveAttribute('open')
   })
 
-  it('places compression progress between the user and assistant messages', () => {
+  it('keeps Agent and conversation compression markers below the assistant message', () => {
     const messages: Message[] = [
       {
         id: 'user-message',
@@ -99,11 +99,21 @@ describe('ChatTimeline', () => {
         id: 'assistant-message',
         role: 'assistant',
         content: 'Answer',
-        contextCompression: {
-          state: 'completed',
-          estimatedBeforeTokens: 22_000,
-          estimatedAfterTokens: 9_000
-        },
+        contextCompressions: [
+          {
+            state: 'completed',
+            scope: 'agent-run',
+            estimatedBeforeTokens: 24_000,
+            estimatedAfterTokens: 11_000,
+            compressionCount: 2
+          },
+          {
+            state: 'completed',
+            scope: 'conversation',
+            estimatedBeforeTokens: 22_000,
+            estimatedAfterTokens: 9_000
+          }
+        ],
         createdAt: 1_775_000_001_000,
         state: 'complete'
       }
@@ -128,11 +138,19 @@ describe('ChatTimeline', () => {
     )
     expect(children.map((element) => element.className)).toEqual([
       'message message--user',
+      'message message--assistant',
       'context-compression-event context-compression-event--completed',
-      'message message--assistant'
+      'context-compression-event context-compression-event--completed'
     ])
     expect(
-      screen.getByRole('status')
-    ).toHaveTextContent('已压缩较早对话 · ≈22.0K → ≈9.0K')
+      screen.getByText(
+        'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '已压缩较早对话（估算） · ≈22.0K → ≈9.0K'
+      )
+    ).toBeInTheDocument()
   })
 })

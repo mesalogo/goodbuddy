@@ -18,12 +18,15 @@ import type {
 import type {
   AssistantArtifact,
   ConversationAttachment,
+  ConversationContextCompressionMarker,
+  ConversationMessage,
   ConversationMessageBlock,
   ConversationToolActivity
 } from '../../shared/assistant-contracts'
 import { AgentQuestionCard } from './AgentQuestionCard'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { formatTime, type TimeFormatLocale } from './time-format'
+import { formatCompactTokens } from './token-format'
 
 export type ToolActivity = ConversationToolActivity
 
@@ -51,11 +54,8 @@ export type Message = {
   createdAt: number
   state: 'streaming' | 'complete' | 'error'
   status?: string
-  contextCompression?: {
-    state: 'compressing' | 'completed' | 'failed'
-    estimatedBeforeTokens: number
-    estimatedAfterTokens?: number
-  }
+  contextCompression?: ConversationMessage['contextCompression']
+  contextCompressions?: ConversationMessage['contextCompressions']
   tools?: ToolActivity[]
   subagents?: SubagentActivity[]
   approval?: {
@@ -77,14 +77,6 @@ export type Message = {
 export type ImageViewerItem = {
   src: string
   title: string
-}
-
-function formatCompactTokens(tokens: number): string {
-  if (tokens < 1_000) {
-    return tokens.toLocaleString()
-  }
-  const value = tokens / 1_000
-  return `${value >= 100 ? Math.round(value) : value.toFixed(1)}K`
 }
 
 type MessageBlockRenderItem =
@@ -281,43 +273,42 @@ function ChatMessageRowView({
   retryContent
 }: ChatMessageRowProps): React.JSX.Element {
   const { t } = useTranslation('app')
+  const compressionMarkers =
+    message.contextCompressions ??
+    (message.contextCompression ? [message.contextCompression] : [])
+  const compressionLabel = (
+    compression: ConversationContextCompressionMarker
+  ): string =>
+    compression.state === 'compressing'
+      ? compression.scope === 'agent-run'
+        ? t('chat.contextCompression.agentCompressing')
+        : t('chat.contextCompression.compressing')
+      : compression.state === 'completed' &&
+          compression.estimatedAfterTokens !== undefined
+        ? compression.scope === 'agent-run'
+          ? t('chat.contextCompression.agentCompleted', {
+              before: formatCompactTokens(
+                compression.estimatedBeforeTokens
+              ),
+              after: formatCompactTokens(
+                compression.estimatedAfterTokens
+              ),
+              count: compression.compressionCount ?? 1
+            })
+          : t('chat.contextCompression.completed', {
+              before: formatCompactTokens(
+                compression.estimatedBeforeTokens
+              ),
+              after: formatCompactTokens(
+                compression.estimatedAfterTokens
+              )
+            })
+        : compression.scope === 'agent-run'
+          ? t('chat.contextCompression.agentFailed')
+          : t('chat.contextCompression.failed')
 
   return (
     <>
-      {message.role === 'assistant' && message.contextCompression && (
-        <div
-          aria-live="polite"
-          className={`context-compression-event context-compression-event--${message.contextCompression.state}`}
-          role="status"
-        >
-          <span className="context-compression-event__line" />
-          <span className="context-compression-event__label">
-            <span
-              aria-hidden="true"
-              className={
-                message.contextCompression.state === 'compressing'
-                  ? 'message__status-dot message__status-dot--active'
-                  : 'message__status-dot'
-              }
-            />
-            {message.contextCompression.state === 'compressing'
-              ? t('chat.contextCompression.compressing')
-              : message.contextCompression.state === 'completed' &&
-                  message.contextCompression.estimatedAfterTokens !==
-                    undefined
-                ? t('chat.contextCompression.completed', {
-                    before: formatCompactTokens(
-                      message.contextCompression.estimatedBeforeTokens
-                    ),
-                    after: formatCompactTokens(
-                      message.contextCompression.estimatedAfterTokens
-                    )
-                  })
-                : t('chat.contextCompression.failed')}
-          </span>
-          <span className="context-compression-event__line" />
-        </div>
-      )}
     <article
       className={`message message--${message.role}`}
       ref={(element) => onArticleRef(message.id, element)}
@@ -803,6 +794,29 @@ function ChatMessageRowView({
         )}
       </div>
     </article>
+      {message.role === 'assistant' &&
+        compressionMarkers.map((compression, index) => (
+          <div
+            aria-live="polite"
+            className={`context-compression-event context-compression-event--${compression.state}`}
+            key={`${compression.scope ?? 'conversation'}:${index}`}
+            role="status"
+          >
+            <span className="context-compression-event__line" />
+            <span className="context-compression-event__label">
+              <span
+                aria-hidden="true"
+                className={
+                  compression.state === 'compressing'
+                    ? 'message__status-dot message__status-dot--active'
+                    : 'message__status-dot'
+                }
+              />
+              {compressionLabel(compression)}
+            </span>
+            <span className="context-compression-event__line" />
+          </div>
+        ))}
     </>
   )
 }

@@ -185,8 +185,13 @@ export const app = {
     },
     contextCompression: {
       compressing: '正在压缩较早对话…',
-      completed: '已压缩较早对话 · ≈{{before}} → ≈{{after}}',
-      failed: '较早对话压缩失败'
+      completed:
+        '已压缩较早对话（估算） · ≈{{before}} → ≈{{after}}',
+      failed: '较早对话压缩失败',
+      agentCompressing: '正在整理 Agent 执行上下文…',
+      agentCompleted:
+        'Agent 执行期间已压缩上下文 {{count}} 次（估算） · ≈{{before}} → ≈{{after}}',
+      agentFailed: 'Agent 执行上下文压缩失败'
     },
     sources: '来源：{{sources}}',
     citations: {
@@ -313,10 +318,21 @@ export const app = {
     sendTitle: '发送消息',
     shortcut: '快捷唤起：',
     context: {
-      tokenCount: '上下文 ≈{{used}}',
-      windowUsage: '上下文 ≈{{used}} / {{total}} · {{percentage}}%',
+      confirmedTokenCount: '本次调用 {{used}}',
+      tokenCount: '本次调用估算 ≈{{used}}',
+      confirmedWindowUsage:
+        '本次调用 {{used}} / {{total}} · {{percentage}}%',
+      windowUsage:
+        '本次调用估算 ≈{{used}} / {{total}} · {{percentage}}%',
+      confirmedThresholdUsage:
+        '本次调用 {{used}} · 压缩线 {{total}}',
       thresholdUsage:
-        '距压缩阈值 ≈{{used}} / {{total}} · {{percentage}}%',
+        '本次调用估算 ≈{{used}} · 压缩线 {{total}}',
+      conversationTokenCount: '压缩后对话估算 ≈{{used}}',
+      conversationWindowUsage:
+        '压缩后对话估算 ≈{{used}} / {{total}} · {{percentage}}%',
+      conversationThresholdUsage:
+        '压缩后对话估算 ≈{{used}} · 压缩线 {{total}}',
       progressLabel: '当前上下文使用量',
       compressionTrigger: '自动压缩线：≈{{tokens}}'
     },

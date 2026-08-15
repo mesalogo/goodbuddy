@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
   RecoverableModelToolError,
@@ -6,6 +7,7 @@ import {
   type ModelToolResult
 } from './model-tool-provider'
 import { ModelAgentRuntime } from './model-runtime'
+import type { RuntimeEvent } from './runtime'
 
 const toolPng = Buffer.from([
   0x89, 0x50, 0x4e, 0x47,
@@ -34,7 +36,22 @@ function createMultimodalToolResult(): ModelToolResult {
   }
 }
 
-function createEventStream(text: string, thinking?: string): string {
+function createEventStream(
+  text: string,
+  thinking?: string,
+  usage: {
+    inputTokens?: number
+    outputTokens?: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+  } = {}
+): string {
+  const {
+    inputTokens = 23,
+    outputTokens = 11,
+    cacheReadTokens = 7,
+    cacheWriteTokens = 5
+  } = usage
   return [
     'event: message_start',
     `data: ${JSON.stringify({
@@ -43,9 +60,9 @@ function createEventStream(text: string, thinking?: string): string {
         id: 'message-1',
         model: 'claude-sonnet-provider',
         usage: {
-          input_tokens: 23,
-          cache_creation_input_tokens: 5,
-          cache_read_input_tokens: 7
+          input_tokens: inputTokens,
+          cache_creation_input_tokens: cacheWriteTokens,
+          cache_read_input_tokens: cacheReadTokens
         }
       }
     })}`,
@@ -69,7 +86,7 @@ function createEventStream(text: string, thinking?: string): string {
     'event: message_delta',
     `data: ${JSON.stringify({
       type: 'message_delta',
-      usage: { output_tokens: 11 }
+      usage: { output_tokens: outputTokens }
     })}`,
     '',
     'event: message_stop',
@@ -195,6 +212,67 @@ describe('ModelAgentRuntime', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
+  it('keeps provider-reported image usage after the response completes', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(createResponsesEventStream('image described'), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      supportsImageInput: true,
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 20_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        },
+        contextWindowTokens: 32_000
+      }
+    })
+    const events: RuntimeEvent[] = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'describe',
+        images: [
+          {
+            name: 'screenshot.png',
+            mediaType: 'image/png',
+            data: toolPng
+          }
+        ]
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    const body = JSON.parse(
+      fetcher.mock.calls[0]?.[1]?.body as string
+    ) as { input: unknown[] }
+    expect(JSON.stringify(body.input)).toContain('input_image')
+    expect(
+      events.filter((event) => event.type === 'context-metrics')
+    ).toEqual([
+      expect.objectContaining({
+        contextTokens: 37,
+        source: 'provider'
+      })
+    ])
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
   it('performs a real minimal request when testing the connection', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json({
@@ -299,7 +377,7 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
-  it('summarizes earlier history and preserves recent raw turns', async () => {
+  it('uses a hard-limit preflight guard while preserving recent raw turns', async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -328,27 +406,28 @@ describe('ModelAgentRuntime', () => {
           recentRawTokens: 5_000,
           modelSource: { kind: 'current' },
           summaryPrompt: 'Summarize earlier history.'
-        }
+        },
+        contextWindowTokens: 32_000
       }
     })
     const history = [
-      { role: 'user' as const, content: `old-user-${'a'.repeat(8_000)}` },
+      { role: 'user' as const, content: `old-user-${'a'.repeat(16_000)}` },
       {
         role: 'assistant' as const,
-        content: `old-assistant-${'b'.repeat(8_000)}`
+        content: `old-assistant-${'b'.repeat(16_000)}`
       },
-      { role: 'user' as const, content: `mid-user-${'c'.repeat(8_000)}` },
+      { role: 'user' as const, content: `mid-user-${'c'.repeat(16_000)}` },
       {
         role: 'assistant' as const,
-        content: `mid-assistant-${'d'.repeat(8_000)}`
+        content: `mid-assistant-${'d'.repeat(16_000)}`
       },
-      { role: 'user' as const, content: `new-user-${'e'.repeat(8_000)}` },
+      { role: 'user' as const, content: `new-user-${'e'.repeat(16_000)}` },
       {
         role: 'assistant' as const,
-        content: `new-assistant-${'f'.repeat(8_000)}`
+        content: `new-assistant-${'f'.repeat(16_000)}`
       }
     ]
-    const events = []
+    const events: RuntimeEvent[] = []
 
     for await (const event of runtime.run(
       {
@@ -389,14 +468,19 @@ describe('ModelAgentRuntime', () => {
       expect.objectContaining({
         type: 'context-compression',
         state: 'completed',
-        estimatedAfterTokens: expect.any(Number)
+        estimatedAfterTokens: expect.any(Number),
+        conversationState: expect.objectContaining({
+          coveredMessageCount: 4,
+          coveredHistoryDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          summary: '压缩后的摘要'
+        })
       })
     )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'context-metrics',
-        coveredMessageCount: 4,
-        summaryTokens: expect.any(Number)
+        contextTokens: 46,
+        source: 'provider'
       })
     )
     expect(events).not.toContainEqual(
@@ -416,15 +500,398 @@ describe('ModelAgentRuntime', () => {
     )
   })
 
-  it('rejects a stream that ends without message_stop', async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => {
-      return new Response(
-        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}',
-        {
+  it('waits for completed provider usage before normal threshold compression', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          createEventStream('正常回答', undefined, {
+            inputTokens: 15_500,
+            outputTokens: 500,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(createEventStream('回复后摘要'), {
           status: 200,
           headers: { 'content-type': 'text/event-stream' }
-        }
+        })
       )
+    const history = [
+      { role: 'user' as const, content: 'a'.repeat(12_000) },
+      { role: 'assistant' as const, content: 'b'.repeat(12_000) },
+      { role: 'user' as const, content: 'c'.repeat(12_000) },
+      { role: 'assistant' as const, content: 'd'.repeat(12_000) }
+    ]
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 15_000,
+          recentRawTokens: 5_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        },
+        contextWindowTokens: 32_000
+      }
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: '继续',
+        history
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(
+      fetcher.mock.calls[0]?.[1]?.body as string
+    ) as { system: string; messages: unknown[] }
+    expect(firstBody.system).not.toContain(
+      'Conversation history and any existing summary'
+    )
+    expect(JSON.stringify(firstBody.messages)).toContain(
+      'a'.repeat(1_000)
+    )
+    expect(
+      events.findIndex(
+        (event) =>
+          event.type === 'context-compression' &&
+          event.state === 'started'
+      )
+    ).toBeGreaterThan(
+      events.findIndex(
+        (event) =>
+          event.type === 'text' && event.delta === '正常回答'
+      )
+    )
+    expect(
+      events.filter((event) => event.type === 'context-metrics')
+    ).toEqual([
+      expect.objectContaining({
+        contextTokens: 16_000,
+        source: 'provider'
+      })
+    ])
+  })
+
+  it('reuses persisted conversation summary state after Runtime restart', async () => {
+    const history = [
+      { role: 'user' as const, content: 'old question' },
+      { role: 'assistant' as const, content: 'old answer' },
+      { role: 'user' as const, content: 'recent question' },
+      { role: 'assistant' as const, content: 'recent answer' }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(createEventStream('continued answer'), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 200_000,
+          recentRawTokens: 32_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        }
+      }
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'continue',
+        history,
+        contextCompressionState: {
+          coveredHistoryDigest: createHash('sha256')
+            .update(JSON.stringify(history.slice(0, 2)))
+            .digest('hex'),
+          coveredMessageCount: 2,
+          summary: 'persisted summary'
+        }
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    expect(fetcher).toHaveBeenCalledOnce()
+    const body = JSON.parse(
+      fetcher.mock.calls[0]?.[1]?.body as string
+    ) as { messages: unknown[] }
+    const messages = JSON.stringify(body.messages)
+    expect(messages).toContain('persisted summary')
+    expect(messages).toContain('recent question')
+    expect(messages).not.toContain('old question')
+  })
+
+  it('keeps a persisted summary after its covered prefix rolls out of bounded history', async () => {
+    const history = [
+      { role: 'user' as const, content: 'recent question' },
+      { role: 'assistant' as const, content: 'recent answer' }
+    ]
+    const historyMessageIds = [
+      '00000000-0000-4000-8000-000000000603',
+      '00000000-0000-4000-8000-000000000604'
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(createEventStream('continued answer'), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 200_000,
+          recentRawTokens: 32_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        }
+      }
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'continue',
+        history,
+        historyMessageIds,
+        contextCompressionState: {
+          coveredHistoryDigest: createHash('sha256')
+            .update(
+              JSON.stringify([
+                { role: 'user', content: 'evicted question' },
+                { role: 'assistant', content: 'evicted answer' }
+              ])
+            )
+            .digest('hex'),
+          coveredMessageCount: 2,
+          coveredFromMessageId:
+            '00000000-0000-4000-8000-000000000601',
+          coveredThroughMessageId:
+            '00000000-0000-4000-8000-000000000602',
+          summary: 'persisted evicted summary'
+        }
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    const body = JSON.parse(
+      fetcher.mock.calls[0]?.[1]?.body as string
+    ) as { messages: unknown[] }
+    const messages = JSON.stringify(body.messages)
+    expect(messages).toContain('persisted evicted summary')
+    expect(messages).toContain('recent question')
+    expect(messages).not.toContain('evicted question')
+  })
+
+  it('compresses a completed oversized response before reporting done', async () => {
+    const longAnswer = `最终长回复-${'终'.repeat(12_000)}`
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          createEventStream(longAnswer, undefined, {
+            inputTokens: 11_500,
+            outputTokens: 1_000,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(createEventStream('最终回合摘要'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 12_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        }
+      }
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: '生成长回复'
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    const compressionEvents = events.filter(
+      (event) =>
+        event.type === 'context-compression' &&
+        event.scope === 'conversation'
+    )
+    expect(compressionEvents).toEqual([
+      expect.objectContaining({
+        state: 'started',
+        estimatedBeforeTokens: expect.any(Number)
+      }),
+      expect.objectContaining({
+        state: 'completed',
+        estimatedAfterTokens: expect.any(Number)
+      })
+    ])
+    expect(
+      events.findIndex(
+        (event) =>
+          event.type === 'context-compression' &&
+          event.state === 'started'
+      )
+    ).toBeGreaterThan(
+      events.findIndex(
+        (event) =>
+          event.type === 'text' && event.delta === longAnswer
+      )
+    )
+    expect(
+      events.filter((event) => event.type === 'context-metrics')
+    ).toEqual([
+      expect.objectContaining({
+        contextTokens: 12_500,
+        source: 'provider'
+      })
+    ])
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('keeps a completed answer when post-response compression fails', async () => {
+    const longAnswer = `最终长回复-${'终'.repeat(12_000)}`
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          createEventStream(longAnswer, undefined, {
+            inputTokens: 11_500,
+            outputTokens: 1_000,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: { message: 'summary unavailable' } },
+          { status: 503 }
+        )
+      )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 12_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        }
+      }
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: '生成长回复'
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-compression',
+        scope: 'conversation',
+        state: 'failed'
+      })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('does not publish partial usage when a stream ends without message_stop', async () => {
+    const completeStream = createEventStream('partial')
+    const stream = completeStream.slice(
+      0,
+      completeStream.indexOf('event: message_stop')
+    )
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
     })
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',
@@ -432,11 +899,22 @@ describe('ModelAgentRuntime', () => {
       model: 'sonnet-5',
       protocol: 'anthropic-messages',
       authentication: 'api-key',
-      fetcher
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 20_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        },
+        contextWindowTokens: 32_000
+      }
     })
+    const events: RuntimeEvent[] = []
 
     const consume = async (): Promise<void> => {
-      for await (const _event of runtime.run(
+      for await (const event of runtime.run(
         {
           requestId: 'a431666e-5ec8-45e6-beb4-654132eed126',
           conversationId: 'conversation-2',
@@ -444,11 +922,71 @@ describe('ModelAgentRuntime', () => {
         },
         new AbortController().signal
       )) {
-        void _event
+        events.push(event)
       }
     }
 
     await expect(consume()).rejects.toThrow('意外中断')
+    expect(
+      events.filter((event) => event.type === 'context-metrics')
+    ).toEqual([])
+  })
+
+  it('estimates completed usage only when the provider omits usage', async () => {
+    const stream = [
+      'event: content_block_delta',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"fallback answer"}}',
+      '',
+      'event: message_stop',
+      'data: {"type":"message_stop"}',
+      '',
+      ''
+    ].join('\n')
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      ),
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 20_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        },
+        contextWindowTokens: 32_000
+      }
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'provider omits usage'
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(
+      events.filter((event) => event.type === 'context-metrics')
+    ).toEqual([
+      expect.objectContaining({
+        contextTokens: expect.any(Number),
+        source: 'estimated'
+      })
+    ])
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
   it('rejects malformed SSE JSON instead of silently skipping it', async () => {
@@ -479,6 +1017,95 @@ describe('ModelAgentRuntime', () => {
     }
 
     await expect(consume()).rejects.toThrow('无效的流式 JSON')
+  })
+
+  it('keeps the latest confirmed context usage when a model request is cancelled', async () => {
+    const controller = new AbortController()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async (_input, init) => {
+        const requestSignal = init?.signal
+        if (!requestSignal) {
+          throw new Error('Missing request signal')
+        }
+        return await new Promise<Response>((_resolve, reject) => {
+          requestSignal.addEventListener(
+            'abort',
+            () => reject(requestSignal.reason),
+            { once: true }
+          )
+        })
+      }),
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 20_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        },
+        contextWindowTokens: 32_000
+      }
+    })
+    const stream = runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: '等待取消'
+      },
+      controller.signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    const pending = stream.next()
+    controller.abort(new Error('用户取消'))
+
+    await expect(pending).rejects.toThrow('用户取消')
+  })
+
+  it('keeps the latest confirmed context usage when the model API fails', async () => {
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn<typeof fetch>(async () =>
+        Response.json(
+          { error: { message: 'upstream unavailable' } },
+          { status: 503 }
+        )
+      ),
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 20_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve important facts.'
+        },
+        contextWindowTokens: 32_000
+      }
+    })
+    const stream = runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: '触发失败'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).rejects.toThrow('upstream unavailable')
   })
 
   it('parses CRLF event separators split across response chunks', async () => {
@@ -1193,6 +1820,393 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
     expect(toolProvider.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('compresses complete earlier tool rounds before a later Agent model call', async () => {
+    const firstToolResult = `first-result-${'旧'.repeat(5_000)}`
+    const secondToolResult = `second-result-${'新'.repeat(5_000)}`
+    const thirdToolResult = `third-result-${'终'.repeat(5_000)}`
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-round-1',
+          model: 'claude',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-agent-1',
+              name: 'workspace_read_text',
+              input: { path: 'first.txt' }
+            }
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 4_000, output_tokens: 20 }
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-round-2',
+          model: 'claude',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-agent-2',
+              name: 'workspace_read_text',
+              input: { path: 'second.txt' }
+            }
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 12_500, output_tokens: 20 }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(createEventStream('已完成前两轮读取'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-round-3',
+          model: 'claude',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-agent-3',
+              name: 'workspace_read_text',
+              input: { path: 'third.txt' }
+            }
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 12_500, output_tokens: 20 }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(createEventStream('已完成全部三轮读取'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-final',
+          model: 'claude',
+          content: [{ type: 'text', text: '长任务已经完成。' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 8_000, output_tokens: 30 }
+        })
+      )
+    const callTool = vi
+      .fn()
+      .mockResolvedValueOnce(createTextToolResult(firstToolResult))
+      .mockResolvedValueOnce(createTextToolResult(secondToolResult))
+      .mockResolvedValueOnce(createTextToolResult(thirdToolResult))
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider: createToolProvider({ callTool }),
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 12_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve execution progress.'
+        }
+      }
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed131',
+        conversationId: 'conversation-long-agent',
+        prompt: '连续读取三个文件',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(6)
+    const summaryBody = JSON.parse(
+      fetcher.mock.calls[2]?.[1]?.body as string
+    ) as { system: string; messages: unknown[] }
+    expect(summaryBody.system).toContain(
+      'Summarize the earlier execution rounds'
+    )
+    expect(JSON.stringify(summaryBody.messages)).toContain('first.txt')
+    expect(JSON.stringify(summaryBody.messages)).toContain('second.txt')
+    expect(JSON.stringify(summaryBody.messages)).not.toContain(
+      'third-result-'
+    )
+
+    const secondSummaryBody = JSON.parse(
+      fetcher.mock.calls[4]?.[1]?.body as string
+    ) as { messages: unknown[] }
+    const secondSummaryMessages = JSON.stringify(
+      secondSummaryBody.messages
+    )
+    expect(secondSummaryMessages).toContain('已完成前两轮读取')
+    expect(secondSummaryMessages).toContain('third.txt')
+
+    const finalBody = JSON.parse(
+      fetcher.mock.calls[5]?.[1]?.body as string
+    ) as { messages: unknown[] }
+    const finalMessages = JSON.stringify(finalBody.messages)
+    expect(finalMessages).toContain('已完成全部三轮读取')
+    expect(finalMessages).not.toContain('first-result-')
+    expect(finalMessages).not.toContain('second-result-')
+    expect(finalMessages).not.toContain('third-result-')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-compression',
+        scope: 'agent-run',
+        state: 'started',
+        compressionCount: 1
+      })
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-compression',
+        scope: 'agent-run',
+        state: 'completed',
+        compressionCount: 1,
+        estimatedAfterTokens: expect.any(Number)
+      })
+    )
+    expect(
+      events
+        .flatMap((event) =>
+          event.type === 'context-compression' &&
+          event.scope === 'agent-run' &&
+          event.state === 'completed'
+            ? [event.compressionCount]
+            : []
+        )
+    ).toEqual([1, 2])
+    expect(
+      events
+        .flatMap((event) =>
+          event.type === 'context-compression' &&
+          event.scope === 'agent-run' &&
+          event.state === 'completed'
+            ? [event]
+            : []
+        )
+        .every(
+          (event) =>
+            event.estimatedAfterTokens !== undefined &&
+            event.estimatedAfterTokens < event.effectiveTriggerTokens
+        )
+    ).toBe(true)
+    const contextMetrics = events.filter(
+      (event) => event.type === 'context-metrics'
+    )
+    expect(contextMetrics).toHaveLength(4)
+    expect(
+      contextMetrics.map((event) => event.contextTokens)
+    ).toEqual([4_020, 12_520, 12_520, 8_030])
+    expect(
+      contextMetrics.every((event) => event.source === 'provider')
+    ).toBe(true)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('compresses one oversized completed Agent round before the next call', async () => {
+    const toolResult = `single-result-${'巨'.repeat(10_000)}`
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-single-round',
+          model: 'claude',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-agent-single',
+              name: 'workspace_read_text',
+              input: { path: 'single.txt' }
+            }
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 12_500, output_tokens: 20 }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(createEventStream('已摘要单轮工具结果'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-single-final',
+          model: 'claude',
+          content: [{ type: 'text', text: '单轮长任务已完成。' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 8_000, output_tokens: 30 }
+        })
+      )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider: createToolProvider({
+        callTool: vi.fn(async () => createTextToolResult(toolResult))
+      }),
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 12_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve execution progress.'
+        }
+      }
+    })
+    const events: RuntimeEvent[] = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed133',
+        conversationId: 'conversation-single-agent-round',
+        prompt: '读取单个大文件',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    const finalBody = JSON.parse(
+      fetcher.mock.calls[2]?.[1]?.body as string
+    ) as { messages: unknown[] }
+    const finalMessages = JSON.stringify(finalBody.messages)
+    expect(finalMessages).toContain('已摘要单轮工具结果')
+    expect(finalMessages).not.toContain('single-result-')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-compression',
+        scope: 'agent-run',
+        state: 'completed',
+        compressionCount: 1
+      })
+    )
+  })
+
+  it('marks Agent context compression as failed when summarization fails', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-failure-1',
+          model: 'claude',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-agent-failure-1',
+              name: 'workspace_read_text',
+              input: { path: 'first.txt' }
+            }
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 4_000, output_tokens: 20 }
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 'message-agent-failure-2',
+          model: 'claude',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-agent-failure-2',
+              name: 'workspace_read_text',
+              input: { path: 'second.txt' }
+            }
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 12_500, output_tokens: 20 }
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: { message: 'summary unavailable' } },
+          { status: 503 }
+        )
+      )
+    const callTool = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createTextToolResult(`first-result-${'旧'.repeat(5_000)}`)
+      )
+      .mockResolvedValueOnce(
+        createTextToolResult(`second-result-${'新'.repeat(5_000)}`)
+      )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider: createToolProvider({ callTool }),
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 12_000,
+          recentRawTokens: 4_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Preserve execution progress.'
+        }
+      }
+    })
+    const events: RuntimeEvent[] = []
+    const consume = async (): Promise<void> => {
+      for await (const event of runtime.run(
+        {
+          requestId: 'a431666e-5ec8-45e6-beb4-654132eed132',
+          conversationId: 'conversation-agent-summary-failure',
+          prompt: '连续读取两个文件',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )) {
+        events.push(event)
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('summary unavailable')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-compression',
+        scope: 'agent-run',
+        state: 'started',
+        compressionCount: 1
+      })
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-compression',
+        scope: 'agent-run',
+        state: 'failed',
+        compressionCount: 1
+      })
+    )
   })
 
   it('streams reasoning while using OpenAI-compatible tools', async () => {
