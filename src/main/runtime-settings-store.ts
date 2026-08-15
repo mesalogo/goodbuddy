@@ -14,6 +14,7 @@ import {
   imageGenerationQualitySchema,
   isAgentRuntimeModelProtocol,
   isDeepSeekHarnessModelProfile,
+  minimumModelContextWindowTokens,
   modelAuthenticationSchema,
   modelProtocolSchema,
   runtimeModelSourceSchema,
@@ -555,7 +556,12 @@ function migrateVersion10(
 function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
   const modelProfiles = settings.modelProfiles.map((profile) => ({
     ...profile,
-    baseUrl: normalizeModelBaseUrl(profile.baseUrl)
+    baseUrl: normalizeModelBaseUrl(profile.baseUrl),
+    contextWindowTokens:
+      profile.contextWindowTokens === undefined ||
+      profile.contextWindowTokens >= minimumModelContextWindowTokens
+        ? profile.contextWindowTokens
+        : undefined
   }))
   const fallbackProfileId = compatibleTextProfileId({
     modelProfiles,

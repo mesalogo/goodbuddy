@@ -452,7 +452,7 @@ export const settings = {
         '启用后，GoodBuddy 可将图片上下文发送给此模型连接。',
       contextWindow: '上下文上限（可选）',
       contextWindowDescription:
-        '以 K tokens 填写。留空表示未知；此值仅用于 GoodBuddy 本地预算计算。',
+        '以 K tokens 填写，范围为 32K–10000K。留空表示未知；此值仅用于 GoodBuddy 本地预算计算。',
       imageQuality: '图片质量',
       imageQualityAriaLabel: '图片质量 {{name}}',
       quality: {

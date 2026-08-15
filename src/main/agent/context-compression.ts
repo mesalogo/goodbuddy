@@ -1,4 +1,14 @@
 import type { ContextCompressionSettings } from '../../shared/contracts'
+import {
+  estimateContextInputTokens,
+  estimateMessagesTokens,
+  getEffectiveContextTriggerTokens
+} from '../../shared/context-window'
+
+export {
+  estimateMessagesTokens,
+  estimateTextTokens
+} from '../../shared/context-window'
 
 export type CompressibleConversationMessage = {
   role: 'user' | 'assistant'
@@ -10,34 +20,6 @@ export type ContextCompressionPlan = {
   recentMessages: CompressibleConversationMessage[]
   estimatedInputTokens: number
   effectiveTriggerTokens: number
-}
-
-const reservedOutputAndSafetyTokens = 12_000
-const estimatedRequestOverheadTokens = 4_000
-
-export function estimateTextTokens(value: string): number {
-  let asciiCharacters = 0
-  let nonAsciiCharacters = 0
-  for (const character of value) {
-    if (character.codePointAt(0)! <= 0x7f) {
-      asciiCharacters += 1
-    } else {
-      nonAsciiCharacters += 1
-    }
-  }
-  return Math.max(
-    1,
-    Math.ceil(asciiCharacters / 4 + nonAsciiCharacters)
-  )
-}
-
-export function estimateMessagesTokens(
-  messages: readonly CompressibleConversationMessage[]
-): number {
-  return messages.reduce(
-    (total, message) => total + estimateTextTokens(message.content) + 4,
-    0
-  )
 }
 
 function groupConversationTurns(
@@ -61,24 +43,19 @@ function groupConversationTurns(
 export function planContextCompression(input: {
   history: readonly CompressibleConversationMessage[]
   prompt: string
+  summaryTokens?: number
   settings: ContextCompressionSettings
   contextWindowTokens?: number
 }): ContextCompressionPlan | undefined {
-  const estimatedInputTokens =
-    estimateMessagesTokens(input.history) +
-    estimateTextTokens(input.prompt) +
-    estimatedRequestOverheadTokens
-  const contextLimitedTrigger =
-    input.contextWindowTokens === undefined
-      ? input.settings.triggerTokens
-      : Math.max(
-          8_000,
-          input.contextWindowTokens - reservedOutputAndSafetyTokens
-        )
-  const effectiveTriggerTokens = Math.min(
-    input.settings.triggerTokens,
-    contextLimitedTrigger
-  )
+  const estimatedInputTokens = estimateContextInputTokens({
+    history: input.history,
+    prompt: input.prompt,
+    summaryTokens: input.summaryTokens
+  })
+  const effectiveTriggerTokens = getEffectiveContextTriggerTokens({
+    triggerTokens: input.settings.triggerTokens,
+    contextWindowTokens: input.contextWindowTokens
+  })
   if (estimatedInputTokens < effectiveTriggerTokens) {
     return undefined
   }

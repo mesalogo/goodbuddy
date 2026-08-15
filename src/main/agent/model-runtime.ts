@@ -42,8 +42,13 @@ import {
 import { readBoundedResponseText } from './bounded-response'
 import {
   formatConversationForSummary,
-  planContextCompression
+  planContextCompression,
+  estimateMessagesTokens
 } from './context-compression'
+import {
+  estimateContextInputTokens,
+  getEffectiveContextTriggerTokens
+} from '../../shared/context-window'
 
 type ConversationMessage = {
   role: 'user' | 'assistant'
@@ -1784,23 +1789,19 @@ export class ModelAgentRuntime implements AgentRuntime {
     return { summary: summary.trim(), usageEvents }
   }
 
-  private async prepareCompressedRequest(
+  private async *prepareCompressedRequest(
     request: AgentExecutionRequest,
     signal: AbortSignal
-  ): Promise<{
+  ): AsyncGenerator<RuntimeEvent, {
     request: AgentExecutionRequest
     compressed: boolean
-    usageEvents: RuntimeModelUsageEvent[]
-  }> {
+  }, void> {
     const compression = this.options.contextCompression
-    if (
-      !compression?.settings.enabled ||
-      !request.history?.length
-    ) {
-      return { request, compressed: false, usageEvents: [] }
+    if (!compression) {
+      return { request, compressed: false }
     }
 
-    const history = request.history
+    const history = request.history ?? []
     let state = this.conversationSummaries.get(request.conversationId)
     if (
       state &&
@@ -1815,13 +1816,42 @@ export class ModelAgentRuntime implements AgentRuntime {
     const remainingHistory = history.slice(
       state?.coveredMessageCount ?? 0
     )
+    const requestPrompt = [
+      request.trustedInstructions ?? '',
+      request.prompt
+    ].join('\n')
+    const currentSummaryTokens = state
+      ? estimateMessagesTokens(this.summaryHistory(state.summary))
+      : 0
+    const effectiveTriggerTokens =
+      getEffectiveContextTriggerTokens({
+        triggerTokens: compression.settings.triggerTokens,
+        contextWindowTokens: compression.contextWindowTokens
+      })
+    const estimatedInputTokens = estimateContextInputTokens({
+      history: remainingHistory,
+      prompt: requestPrompt,
+      summaryTokens: currentSummaryTokens
+    })
+    yield {
+      requestId: request.requestId,
+      type: 'context-metrics',
+      estimatedInputTokens,
+      effectiveTriggerTokens,
+      contextWindowTokens: compression.contextWindowTokens,
+      compressionEnabled: compression.settings.enabled,
+      recentRawTokens: compression.settings.recentRawTokens,
+      coveredMessageCount: state?.coveredMessageCount ?? 0,
+      summaryTokens: currentSummaryTokens
+    }
+    if (!compression.settings.enabled || history.length === 0) {
+      return { request, compressed: false }
+    }
+
     const plan = planContextCompression({
       history: remainingHistory,
-      prompt: [
-        state?.summary ?? '',
-        request.trustedInstructions ?? '',
-        request.prompt
-      ].join('\n'),
+      prompt: requestPrompt,
+      summaryTokens: currentSummaryTokens,
       settings: compression.settings,
       contextWindowTokens: compression.contextWindowTokens
     })
@@ -1836,20 +1866,29 @@ export class ModelAgentRuntime implements AgentRuntime {
               ]
             },
             compressed: false,
-            usageEvents: []
           }
-        : { request, compressed: false, usageEvents: [] }
+        : { request, compressed: false }
     }
 
+    const coveredMessageCount =
+      (state?.coveredMessageCount ?? 0) +
+      plan.earlierMessages.length
+    yield {
+      requestId: request.requestId,
+      type: 'context-compression',
+      state: 'started',
+      estimatedBeforeTokens: plan.estimatedInputTokens,
+      effectiveTriggerTokens: plan.effectiveTriggerTokens,
+      contextWindowTokens: compression.contextWindowTokens,
+      recentRawTokens: compression.settings.recentRawTokens,
+      coveredMessageCount
+    }
     const summarized = await this.summarizeEarlierHistory(
       request,
       plan.earlierMessages,
       state?.summary,
       signal
     )
-    const coveredMessageCount =
-      (state?.coveredMessageCount ?? 0) +
-      plan.earlierMessages.length
     state = {
       coveredMessageCount,
       coveredHistoryDigest: this.historyDigest(
@@ -1858,6 +1897,40 @@ export class ModelAgentRuntime implements AgentRuntime {
       summary: summarized.summary
     }
     this.conversationSummaries.set(request.conversationId, state)
+    for (const usageEvent of summarized.usageEvents) {
+      yield usageEvent
+    }
+    const summaryTokens = estimateMessagesTokens(
+      this.summaryHistory(state.summary)
+    )
+    const estimatedAfterTokens = estimateContextInputTokens({
+      history: plan.recentMessages,
+      prompt: requestPrompt,
+      summaryTokens
+    })
+    yield {
+      requestId: request.requestId,
+      type: 'context-compression',
+      state: 'completed',
+      estimatedBeforeTokens: plan.estimatedInputTokens,
+      estimatedAfterTokens,
+      effectiveTriggerTokens: plan.effectiveTriggerTokens,
+      contextWindowTokens: compression.contextWindowTokens,
+      recentRawTokens: compression.settings.recentRawTokens,
+      coveredMessageCount,
+      summaryTokens
+    }
+    yield {
+      requestId: request.requestId,
+      type: 'context-metrics',
+      estimatedInputTokens: estimatedAfterTokens,
+      effectiveTriggerTokens: plan.effectiveTriggerTokens,
+      contextWindowTokens: compression.contextWindowTokens,
+      compressionEnabled: true,
+      recentRawTokens: compression.settings.recentRawTokens,
+      coveredMessageCount,
+      summaryTokens
+    }
     return {
       request: {
         ...request,
@@ -1866,8 +1939,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           ...plan.recentMessages
         ]
       },
-      compressed: true,
-      usageEvents: summarized.usageEvents
+      compressed: true
     }
   }
 
@@ -2791,29 +2863,21 @@ export class ModelAgentRuntime implements AgentRuntime {
       throw new Error('当前模型连接未启用图像输入')
     }
 
-    if (
-      this.options.contextCompression?.settings.enabled &&
-      request.history?.length
-    ) {
-      yield {
-        requestId: request.requestId,
-        type: 'status',
-        message: '正在准备直连模型上下文'
-      }
-    }
-    const prepared = await this.prepareCompressedRequest(
+    const preparation = this.prepareCompressedRequest(
       request,
       signal
     )
-    for (const usageEvent of prepared.usageEvents) {
-      yield usageEvent
+    let prepared: {
+      request: AgentExecutionRequest
+      compressed: boolean
     }
-    if (prepared.compressed) {
-      yield {
-        requestId: request.requestId,
-        type: 'status',
-        message: '较早的对话已压缩，正在生成回答'
+    while (true) {
+      const result = await preparation.next()
+      if (result.done) {
+        prepared = result.value
+        break
       }
+      yield result.value
     }
     const executionRequest = prepared.request
 

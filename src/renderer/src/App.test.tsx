@@ -902,6 +902,32 @@ describe('App', () => {
     }
   })
 
+  it('keeps a recently visited workspace page mounted', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: '知识库' })
+    )
+    const heading = await screen.findByRole('heading', {
+      level: 1,
+      name: '知识库'
+    })
+    const route = heading.closest<HTMLElement>('[data-route="knowledge"]')
+    expect(route).not.toHaveAttribute('hidden')
+
+    fireEvent.click(screen.getByRole('button', { name: '对话' }))
+    expect(heading).toBeInTheDocument()
+    expect(route).toHaveAttribute('hidden')
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: '知识库'
+      })
+    ).toBe(heading)
+    expect(route).not.toHaveAttribute('hidden')
+  })
+
   it('preserves title, message, and project filtering with deferred search', async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
@@ -1585,7 +1611,8 @@ describe('App', () => {
     fireEvent.scroll(chat)
 
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
-    expect(container.querySelector('.chat')).not.toBeInTheDocument()
+    expect(chat).toBeInTheDocument()
+    expect(chat.closest('[data-route="chat"]')).toHaveAttribute('hidden')
     act(() => {
       agentListener?.({
         requestId: request.requestId,
@@ -1597,7 +1624,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '对话' }))
     expect(await screen.findByText('后台新增的回复内容')).toBeInTheDocument()
     const restoredChat = container.querySelector<HTMLElement>('.chat')
-    expect(restoredChat).not.toBe(chat)
+    expect(restoredChat).toBe(chat)
     expect(restoredChat?.scrollTop).toBe(175)
     expect(
       screen.getByRole('button', { name: '到底部' })
@@ -1609,6 +1636,16 @@ describe('App', () => {
       '00000000-0000-4000-8000-000000000461'
     const secondConversationId =
       '00000000-0000-4000-8000-000000000462'
+    const draftAttachment = {
+      id: '00000000-0000-4000-8000-000000000463',
+      name: '第一段草稿附件.md',
+      size: 1_024,
+      preview: '会话级草稿附件',
+      kind: 'text' as const
+    }
+    vi.mocked(api.context.selectFiles).mockResolvedValueOnce([
+      draftAttachment
+    ])
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: firstConversationId,
@@ -1619,6 +1656,7 @@ describe('App', () => {
           id: `00000000-0000-4000-8100-${String(index).padStart(12, '0')}`,
           role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
           content: `第一段历史 ${String(index).padStart(3, '0')}`,
+          reasoning: index === 159 ? '需要保留展开状态' : undefined,
           createdAt: 1_775_000_000_000 + index,
           state: 'complete' as const
         }))
@@ -1647,31 +1685,65 @@ describe('App', () => {
         name: '加载更早的消息（还剩 81 条）'
       })
     )
-    expect(container.querySelectorAll('.message')).toHaveLength(160)
-    const firstChat = container.querySelector<HTMLElement>('.chat')
+    const firstPane = container.querySelector<HTMLElement>(
+      `[data-conversation-id="${firstConversationId}"]`
+    )
+    expect(firstPane?.querySelectorAll('.message')).toHaveLength(160)
+    const firstChat = firstPane?.querySelector<HTMLElement>('.chat')
     if (!firstChat) {
       throw new Error('Missing first chat scroll container')
     }
+    const reasoningDetails = firstPane?.querySelector<HTMLDetailsElement>(
+      '.message-reasoning'
+    )
+    if (!reasoningDetails) {
+      throw new Error('Missing reasoning details')
+    }
+    reasoningDetails.open = true
     Object.defineProperties(firstChat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: { configurable: true, value: 1_600 },
       scrollTop: { configurable: true, writable: true, value: 225 }
     })
     fireEvent.scroll(firstChat)
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '第一段会话草稿' }
+    })
+    fireEvent.click(screen.getByLabelText('添加附件'))
+    expect(
+      await screen.findByText(draftAttachment.name)
+    ).toBeInTheDocument()
 
     fireEvent.click(
       screen.getByText('第二段会话').closest('button')!
     )
     expect(await screen.findByText('第二段会话内容')).toBeInTheDocument()
+    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('')
+    expect(
+      screen.queryByText(draftAttachment.name)
+    ).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '第二段会话草稿' }
+    })
     fireEvent.click(
       screen.getByText('第一段长会话').closest('button')!
     )
 
     expect(await screen.findByText('第一段历史 001')).toBeInTheDocument()
-    expect(container.querySelectorAll('.message')).toHaveLength(160)
-    expect(container.querySelector<HTMLElement>('.chat')?.scrollTop).toBe(
-      225
+    const restoredFirstPane = container.querySelector<HTMLElement>(
+      `[data-conversation-id="${firstConversationId}"]`
     )
+    expect(restoredFirstPane).toBe(firstPane)
+    expect(restoredFirstPane?.querySelectorAll('.message')).toHaveLength(
+      160
+    )
+    expect(restoredFirstPane?.querySelector('.chat')).toBe(firstChat)
+    expect(firstChat.scrollTop).toBe(225)
+    expect(reasoningDetails).toHaveAttribute('open')
+    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue(
+      '第一段会话草稿'
+    )
+    expect(screen.getByText(draftAttachment.name)).toBeInTheDocument()
   })
 
   it('requires an accessible confirmation before permanently deleting a conversation', async () => {
@@ -2225,6 +2297,124 @@ describe('App', () => {
       'open'
     )
     expect(screen.getByText('正在分析真实推理内容')).toBeVisible()
+  })
+
+  it('shows live context usage and keeps explicit compression status', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'model',
+      modelProfiles: settings.modelProfiles.map((profile) => ({
+        ...profile,
+        contextWindowTokens: 32_000
+      })),
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 200_000,
+        recentRawTokens: 32_000,
+        modelSource: { kind: 'current' },
+        summaryPrompt: 'Preserve important facts.'
+      }
+    })
+    render(<App />)
+
+    expect(
+      await screen.findByText(/上下文 ≈.+ \/ 32\.0K · \d+%/u)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', {
+        name: '当前上下文使用量'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('只读问答，不修改文件')
+    ).not.toBeInTheDocument()
+    expect(
+      await screen.findByText('快捷唤起：', { exact: false })
+    ).toHaveTextContent('快捷唤起：Ctrl+Shift+Space')
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '中'.repeat(1_000) }
+    })
+    expect(
+      screen.getByText(/上下文 ≈5\.\dK \/ 32\.0K/u)
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-compression',
+        state: 'started',
+        estimatedBeforeTokens: 22_000,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        recentRawTokens: 32_000,
+        coveredMessageCount: 2
+      })
+    })
+    expect(
+      screen.getByText('正在压缩较早对话…')
+    ).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'status',
+        message: 'sonnet-5 正在思考'
+      })
+    })
+    expect(
+      screen.getByText('正在压缩较早对话…')
+    ).toBeInTheDocument()
+    expect(screen.getByText('sonnet-5 正在思考')).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-compression',
+        state: 'completed',
+        estimatedBeforeTokens: 22_000,
+        estimatedAfterTokens: 9_000,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        recentRawTokens: 32_000,
+        coveredMessageCount: 2,
+        summaryTokens: 1_000
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-metrics',
+        estimatedInputTokens: 9_000,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        compressionEnabled: true,
+        recentRawTokens: 32_000,
+        coveredMessageCount: 2,
+        summaryTokens: 1_000
+      })
+    })
+
+    expect(
+      screen.getByText('已压缩较早对话 · ≈22.0K → ≈9.0K')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('上下文 ≈9.0K / 32.0K · 28%')
+    ).toBeInTheDocument()
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+    expect(
+      screen.getByText('已压缩较早对话 · ≈22.0K → ≈9.0K')
+    ).toBeInTheDocument()
   })
 
   it('keeps a tool failure in details and hides retry after continuing', async () => {
@@ -2871,9 +3061,7 @@ describe('App', () => {
     expect(
       screen.queryByRole('heading', { name: '设置中心' })
     ).not.toBeInTheDocument()
-    expect(
-      await screen.findByText(/请先配置可用的模型或 Agent Runtime/u)
-    ).toBeInTheDocument()
+    expect(screen.getByLabelText('发送')).toBeDisabled()
     expect(run).not.toHaveBeenCalled()
   })
 
@@ -3794,9 +3982,7 @@ describe('App', () => {
     expect(mode).toBeEnabled()
     expect(mode.closest('.composer')).not.toBeNull()
     expect(
-      await screen.findByText(
-        new RegExp(`${label} Ask 模式.*只允许搜索当前启用的知识库`)
-      )
+      await screen.findByText('快捷唤起：', { exact: false })
     ).toBeInTheDocument()
     selectComposerOption('工作模式', 'Execute · 受控执行')
     expect(mode).toHaveAccessibleName(
@@ -4076,7 +4262,11 @@ describe('App', () => {
       expect(notification).toHaveTextContent(
         '当前对话已切换到 OpenCode · 默认模型'
       )
-      expect(screen.getByText(/Ask 模式：只读问答/)).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', {
+          name: '工作模式：Ask · 只读问答'
+        })
+      ).toBeInTheDocument()
 
       fireEvent.click(
         screen.getByRole('button', {
@@ -4102,7 +4292,11 @@ describe('App', () => {
           '当前对话已切换到 Continue · 默认模型'
         )
       ).not.toBeInTheDocument()
-      expect(screen.getByText(/Ask 模式：只读问答/)).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', {
+          name: '工作模式：Ask · 只读问答'
+        })
+      ).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }

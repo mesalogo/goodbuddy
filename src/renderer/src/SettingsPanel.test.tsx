@@ -604,6 +604,7 @@ describe('SettingsPanel runtime files', () => {
       '上下文上限（可选）'
     )
     expect(contextWindow).toHaveValue(null)
+    expect(contextWindow).toHaveAttribute('min', '32')
     fireEvent.change(contextWindow, { target: { value: '256' } })
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 

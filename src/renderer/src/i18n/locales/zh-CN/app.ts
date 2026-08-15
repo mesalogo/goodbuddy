@@ -182,6 +182,11 @@ export const app = {
       streaming: '正在推理',
       complete: '推理过程'
     },
+    contextCompression: {
+      compressing: '正在压缩较早对话…',
+      completed: '已压缩较早对话 · ≈{{before}} → ≈{{after}}',
+      failed: '较早对话压缩失败'
+    },
     sources: '来源：{{sources}}',
     citations: {
       view: '查看 {{count}} 条证据引用',
@@ -306,6 +311,14 @@ export const app = {
     send: '发送',
     sendTitle: '发送消息',
     shortcut: '快捷唤起：',
+    context: {
+      tokenCount: '上下文 ≈{{used}}',
+      windowUsage: '上下文 ≈{{used}} / {{total}} · {{percentage}}%',
+      thresholdUsage:
+        '距压缩阈值 ≈{{used}} / {{total}} · {{percentage}}%',
+      progressLabel: '当前上下文使用量',
+      compressionTrigger: '自动压缩线：≈{{tokens}}'
+    },
     experts: {
       general: '通用助手',
       generalDescription: '默认单助手',

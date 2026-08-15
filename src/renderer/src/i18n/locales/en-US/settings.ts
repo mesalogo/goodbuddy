@@ -495,7 +495,7 @@ export const settings = {
         'When enabled, GoodBuddy can send image context to this model connection.',
       contextWindow: 'Context window (optional)',
       contextWindowDescription:
-        'Enter K tokens. Leave blank when unknown. This value is used only for GoodBuddy local budget calculations.',
+        'Enter 32K–10000K tokens. Leave blank when unknown. This value is used only for GoodBuddy local budget calculations.',
       imageQuality: 'Image quality',
       imageQualityAriaLabel: 'Image quality for {{name}}',
       quality: {

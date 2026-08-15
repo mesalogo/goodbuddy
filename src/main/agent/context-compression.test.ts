@@ -72,19 +72,37 @@ describe('context compression planning', () => {
 
   it('uses an optional model context limit as an earlier trigger', () => {
     const history = [
-      { role: 'user' as const, content: 'a'.repeat(14_000) },
-      { role: 'assistant' as const, content: 'b'.repeat(14_000) },
-      { role: 'user' as const, content: 'c'.repeat(14_000) },
-      { role: 'assistant' as const, content: 'd'.repeat(14_000) }
+      { role: 'user' as const, content: 'a'.repeat(16_000) },
+      { role: 'assistant' as const, content: 'b'.repeat(16_000) },
+      { role: 'user' as const, content: 'c'.repeat(16_000) },
+      { role: 'assistant' as const, content: 'd'.repeat(16_000) }
     ]
     const plan = planContextCompression({
       history,
       prompt: 'Continue',
       settings: compressionSettings(),
-      contextWindowTokens: 30_000
+      contextWindowTokens: 32_000
     })
 
-    expect(plan?.effectiveTriggerTokens).toBe(18_000)
+    expect(plan?.effectiveTriggerTokens).toBe(20_000)
+    expect(plan?.earlierMessages.length).toBeGreaterThan(0)
+  })
+
+  it('defensively clamps legacy undersized context limits', () => {
+    const history = [
+      { role: 'user' as const, content: 'a'.repeat(40_000) },
+      { role: 'assistant' as const, content: 'b'.repeat(40_000) },
+      { role: 'user' as const, content: 'c'.repeat(40_000) },
+      { role: 'assistant' as const, content: 'd'.repeat(40_000) }
+    ]
+    const plan = planContextCompression({
+      history,
+      prompt: 'Continue',
+      settings: compressionSettings(),
+      contextWindowTokens: 10_000
+    })
+
+    expect(plan?.effectiveTriggerTokens).toBe(20_000)
     expect(plan?.earlierMessages.length).toBeGreaterThan(0)
   })
 })

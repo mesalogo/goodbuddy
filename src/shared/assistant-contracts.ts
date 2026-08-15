@@ -147,6 +147,14 @@ export const conversationMessageSchema = z
     createdAt: z.number().int().nonnegative(),
     state: z.enum(['streaming', 'complete', 'error']),
     status: z.string().max(4_000).optional(),
+    contextCompression: z
+      .object({
+        state: z.enum(['compressing', 'completed', 'failed']),
+        estimatedBeforeTokens: z.number().int().nonnegative(),
+        estimatedAfterTokens: z.number().int().nonnegative().optional()
+      })
+      .strict()
+      .optional(),
     tools: z.array(conversationToolActivitySchema).max(100).optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
     sourceReferences: z

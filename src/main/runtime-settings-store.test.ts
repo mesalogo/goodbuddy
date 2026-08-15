@@ -156,6 +156,61 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
+  it('rejects undersized model context windows and repairs legacy values', async () => {
+    const { filePath, store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000062'
+    const profile = {
+      id: profileId,
+      name: 'Small context',
+      baseUrl: 'https://model.example/v1',
+      modelName: 'small-model',
+      protocol: 'openai-responses' as const,
+      authentication: 'api-key' as const,
+      supportsImageInput: false,
+      contextWindowTokens: 10_000,
+      imageGenerationQuality: 'auto' as const,
+      apiKey: { action: 'keep' as const }
+    }
+
+    expect(() =>
+      runtimeSettingsInputSchema.parse(
+        settings({
+          modelProfiles: [profile],
+          defaultModelProfileId: profileId
+        })
+      )
+    ).toThrow()
+
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            ...profile,
+            contextWindowTokens: 32_000
+          }
+        ],
+        defaultModelProfileId: profileId
+      })
+    )
+    const persisted = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as {
+      modelProfiles: Array<{ contextWindowTokens?: number }>
+    }
+    persisted.modelProfiles[0]!.contextWindowTokens = 10_000
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      modelProfiles: [
+        expect.objectContaining({
+          id: profileId,
+          contextWindowTokens: undefined
+        })
+      ]
+    })
+  })
+
   it('configures bundled runtimes from the default model profile', async () => {
     const { store } = await createStore()
 

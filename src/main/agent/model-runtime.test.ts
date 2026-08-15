@@ -380,8 +380,29 @@ describe('ModelAgentRuntime', () => {
     expect(answerMessages).not.toContain('old-user-')
     expect(events).toContainEqual(
       expect.objectContaining({
+        type: 'context-compression',
+        state: 'started',
+        estimatedBeforeTokens: expect.any(Number)
+      })
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-compression',
+        state: 'completed',
+        estimatedAfterTokens: expect.any(Number)
+      })
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-metrics',
+        coveredMessageCount: 4,
+        summaryTokens: expect.any(Number)
+      })
+    )
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
         type: 'status',
-        message: '较早的对话已压缩，正在生成回答'
+        message: '正在准备直连模型上下文'
       })
     )
     expect(events).toContainEqual(

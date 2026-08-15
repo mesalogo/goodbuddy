@@ -2418,7 +2418,7 @@ export function SettingsPanel({
                           aria-label={t('model.profile.contextWindow')}
                           inputMode="numeric"
                           max={10_000}
-                          min={8}
+                          min={32}
                           onChange={(event) => {
                             const value = event.target.valueAsNumber
                             updateModelProfile(profile.id, {

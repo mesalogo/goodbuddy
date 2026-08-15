@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  maximumModelContextWindowTokens,
+  minimumModelContextWindowTokens
+} from './context-window'
 import type {
   BrowserProfileCreateInput,
   BrowserProfileRenameInput,
@@ -416,6 +420,11 @@ const modelApiKeyUpdateSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('clear') }).strict()
 ])
 
+export {
+  maximumModelContextWindowTokens,
+  minimumModelContextWindowTokens
+} from './context-window'
+
 const modelProfileInputSchema = z
   .object({
     id: modelProfileIdSchema,
@@ -433,8 +442,8 @@ const modelProfileInputSchema = z
     contextWindowTokens: z
       .number()
       .int()
-      .min(8_000)
-      .max(10_000_000)
+      .min(minimumModelContextWindowTokens)
+      .max(maximumModelContextWindowTokens)
       .optional(),
     imageGenerationQuality: imageGenerationQualitySchema,
     apiKey: modelApiKeyUpdateSchema
@@ -906,6 +915,29 @@ export type AgentEvent =
       requestId: string
       type: 'reasoning'
       delta: string
+    }
+  | {
+      requestId: string
+      type: 'context-metrics'
+      estimatedInputTokens: number
+      effectiveTriggerTokens: number
+      contextWindowTokens?: number
+      compressionEnabled: boolean
+      recentRawTokens: number
+      coveredMessageCount: number
+      summaryTokens: number
+    }
+  | {
+      requestId: string
+      type: 'context-compression'
+      state: 'started' | 'completed'
+      estimatedBeforeTokens: number
+      estimatedAfterTokens?: number
+      effectiveTriggerTokens: number
+      contextWindowTokens?: number
+      recentRawTokens: number
+      coveredMessageCount: number
+      summaryTokens?: number
     }
   | {
       requestId: string

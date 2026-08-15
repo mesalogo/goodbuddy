@@ -226,10 +226,9 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         contextCompression: {
           settings: {
             ...defaultContextCompressionSettings,
-            enabled: true,
-            triggerTokens: 8_000,
-            recentRawTokens: 4_000
-          }
+            enabled: true
+          },
+          contextWindowTokens: 32_000
         }
       })
       const events: RuntimeEvent[] = []
@@ -248,7 +247,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
                 content: [
                   'The project codename is ORBIT-739.',
                   'Background notes:',
-                  'alpha '.repeat(1_200)
+                  'alpha '.repeat(5_000)
                 ].join('\n')
               },
               {
@@ -256,7 +255,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
                 content: [
                   'I will remember the project codename.',
                   'Acknowledgement notes:',
-                  'gamma '.repeat(1_000)
+                  'gamma '.repeat(4_000)
                 ].join('\n')
               },
               {
@@ -264,7 +263,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
                 content: [
                   'The deploy region is AP-SOUTH-7.',
                   'Recent notes:',
-                  'beta '.repeat(900)
+                  'beta '.repeat(3_000)
                 ].join('\n')
               },
               {
@@ -289,8 +288,15 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         .join('')
       expect(events).toContainEqual(
         expect.objectContaining({
-          type: 'status',
-          message: '较早的对话已压缩，正在生成回答'
+          type: 'context-compression',
+          state: 'started'
+        })
+      )
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'context-compression',
+          state: 'completed',
+          estimatedAfterTokens: expect.any(Number)
         })
       )
       expect(events).toContainEqual(

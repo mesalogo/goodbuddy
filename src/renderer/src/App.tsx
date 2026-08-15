@@ -47,7 +47,8 @@ import {
   useReducer,
   useRef,
   useState,
-  type ReactNode
+  type ReactNode,
+  type SetStateAction
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -65,7 +66,14 @@ import type {
   KnowledgeSnapshot,
   RuntimeSettings
 } from '../../shared/contracts'
-import { maximumPastedImageBytes } from '../../shared/contracts'
+import {
+  defaultContextCompressionSettings,
+  maximumPastedImageBytes
+} from '../../shared/contracts'
+import {
+  estimateContextInputTokens,
+  getEffectiveContextTriggerTokens
+} from '../../shared/context-window'
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
@@ -165,7 +173,12 @@ import type { ReleaseNotesSnapshot } from '../../shared/release-notes-contracts'
 import { ReleaseNotesDialog } from './ReleaseNotesDialog'
 import { scheduleIdleRoutePreload } from './idle-route-preload'
 import { createPreloadableComponent } from './preloadable-component'
-import { formatTime } from './time-format'
+import { formatTime, type TimeFormatLocale } from './time-format'
+import {
+  pruneKeepAliveEntries,
+  touchKeepAliveEntry,
+  type KeepAliveCacheEntry
+} from './keep-alive-cache'
 
 const knowledgeWorkspaceRoute = createPreloadableComponent(
   () => import('./KnowledgeWorkspace'),
@@ -198,6 +211,12 @@ const SettingsPanel = settingsPanelRoute.Component
 const messageRenderBatchSize = 80
 const conversationPersistenceIntervalMs = 500
 const conversationSearchSnapshotDelayMs = 250
+const keepAliveExpirationMs = 60 * 60 * 1_000
+const keepAliveSweepIntervalMs = 5 * 60 * 1_000
+const maximumCachedConversations = 12
+const recentCachedConversations = 5
+const maximumCachedWorkspaceViews = 4
+const recentCachedWorkspaceViews = 3
 
 type AppNotification = {
   id: string
@@ -262,6 +281,28 @@ function RouteLoadingStatus({
     >
       <LoaderCircle aria-hidden="true" size={20} />
       <span>{label}</span>
+    </div>
+  )
+}
+
+function KeepAliveRoute({
+  active,
+  children,
+  route
+}: {
+  active: boolean
+  children: ReactNode
+  route: string
+}): React.JSX.Element {
+  return (
+    <div
+      aria-hidden={active ? undefined : 'true'}
+      className="workspace-route-cache"
+      data-route={route}
+      hidden={!active}
+      inert={!active}
+    >
+      {children}
     </div>
   )
 }
@@ -385,13 +426,6 @@ function AppNotificationViewport({
   )
 }
 
-function isAgentRuntime(
-  runtime: AgentRuntimeStatus | undefined
-): boolean {
-  return runtime?.id === 'opencode' || runtime?.id === 'continue'
-    || runtime?.id === 'deepseek-harness'
-}
-
 function supportsSubagentSmartRouting(
   workMode: string
 ): boolean {
@@ -413,6 +447,14 @@ type ActiveRun = {
   conversationId: string
   messageId: string
   projectId?: string
+  runtimeSelectionKey: string
+}
+
+type ConversationContextMetrics = Omit<
+  Extract<AgentEvent, { type: 'context-metrics' }>,
+  'requestId' | 'type'
+> & {
+  runtimeSelectionKey: string
 }
 
 type WorkspaceView =
@@ -594,6 +636,334 @@ function getConversationDisplayTitle(
     : conversation.title
 }
 
+type ChatQuickAction = {
+  title: string
+  description: string
+  prompt: string
+}
+
+type ChatScrollSnapshot = {
+  pinnedToBottom: boolean
+  scrollTop: number
+}
+
+function ChatHistoryPane({
+  active,
+  artifactById,
+  conversation,
+  locale,
+  onDownloadImage,
+  onOpenCitationContext,
+  onOpenCitationSource,
+  onOpenImage,
+  onRespondApproval,
+  onRespondQuestion,
+  onRetry,
+  onScrollSnapshotChange,
+  onSetInput,
+  onVisibleMessageCountChange,
+  quickActions,
+  scrollSnapshot,
+  visibleMessageCount
+}: {
+  active: boolean
+  artifactById: ReadonlyMap<string, AssistantArtifact>
+  conversation: Conversation
+  locale: TimeFormatLocale
+  onDownloadImage: (item: ImageViewerItem) => void
+  onOpenCitationContext: (
+    reference: KnowledgeSearchReference
+  ) => Promise<void>
+  onOpenCitationSource: (
+    reference: KnowledgeSearchReference
+  ) => Promise<void>
+  onOpenImage: (item: ImageViewerItem, trigger: HTMLElement) => void
+  onRespondApproval: (
+    conversationId: string,
+    messageId: string,
+    approvalId: string,
+    decision: ApprovalDecision
+  ) => Promise<void>
+  onRespondQuestion: (
+    conversationId: string,
+    messageId: string,
+    questionId: string,
+    answers?: AgentQuestionAnswer[]
+  ) => Promise<void>
+  onRetry: (content: string) => void
+  onScrollSnapshotChange: (
+    conversationId: string,
+    snapshot: ChatScrollSnapshot
+  ) => void
+  onSetInput: (value: string) => void
+  onVisibleMessageCountChange: (
+    conversationId: string,
+    count: number
+  ) => void
+  quickActions: ChatQuickAction[]
+  scrollSnapshot?: ChatScrollSnapshot
+  visibleMessageCount: number
+}): React.JSX.Element {
+  const { t } = useTranslation('app')
+  const scrollRef = useRef<HTMLElement>(null)
+  const pinnedToBottomRef = useRef(
+    scrollSnapshot?.pinnedToBottom ?? true
+  )
+  const latestScrollSnapshotRef = useRef(scrollSnapshot)
+  const restorePendingRef = useRef(true)
+  const prependScrollPositionRef = useRef<{
+    scrollHeight: number
+    scrollTop: number
+  } | undefined>(undefined)
+  const finalRevealedMessageIdRef = useRef<string | undefined>(
+    undefined
+  )
+  const messageArticleRefs = useRef(new Map<string, HTMLElement>())
+  const previousMessageCountRef = useRef(conversation.messages.length)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(
+    scrollSnapshot ? !scrollSnapshot.pinnedToBottom : false
+  )
+  const visibleMessageStartIndex = Math.max(
+    0,
+    conversation.messages.length - visibleMessageCount
+  )
+  const visibleMessages = conversation.messages.slice(
+    visibleMessageStartIndex
+  )
+  const hiddenMessageCount = visibleMessageStartIndex
+
+  const saveScrollPosition = useCallback(
+    (scrollContainer: HTMLElement): boolean => {
+      const distanceFromBottom =
+        scrollContainer.scrollHeight -
+        scrollContainer.scrollTop -
+        scrollContainer.clientHeight
+      const pinnedToBottom = distanceFromBottom <= chatBottomProximity
+      latestScrollSnapshotRef.current = {
+        pinnedToBottom,
+        scrollTop: scrollContainer.scrollTop
+      }
+      return pinnedToBottom
+    },
+    []
+  )
+
+  const handleScrollRef = useCallback(
+    (element: HTMLElement | null): void => {
+      const previous = scrollRef.current
+      if (previous && previous !== element) {
+        saveScrollPosition(previous)
+        if (!element && latestScrollSnapshotRef.current) {
+          onScrollSnapshotChange(
+            conversation.id,
+            latestScrollSnapshotRef.current
+          )
+        }
+      }
+      scrollRef.current = element
+    },
+    [conversation.id, onScrollSnapshotChange, saveScrollPosition]
+  )
+
+  const updateScrollPosition = useCallback((): void => {
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    const atBottom = saveScrollPosition(scrollContainer)
+    pinnedToBottomRef.current = atBottom
+    setShowScrollToBottom(!atBottom)
+  }, [saveScrollPosition])
+
+  useLayoutEffect(() => {
+    const previousMessageCount = previousMessageCountRef.current
+    if (
+      conversation.messages
+        .slice(previousMessageCount)
+        .some((message) => message.role === 'user')
+    ) {
+      pinnedToBottomRef.current = true
+    }
+    previousMessageCountRef.current = conversation.messages.length
+  }, [conversation.messages])
+
+  useLayoutEffect(() => {
+    if (!active) {
+      return
+    }
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    if (restorePendingRef.current) {
+      restorePendingRef.current = false
+      if (scrollSnapshot && !scrollSnapshot.pinnedToBottom) {
+        pinnedToBottomRef.current = false
+        scrollContainer.scrollTop = scrollSnapshot.scrollTop
+        return
+      }
+    }
+    if (pinnedToBottomRef.current) {
+      scrollContainer.scrollTo({
+        top: scrollContainer.scrollHeight,
+        behavior: 'auto'
+      })
+    }
+  }, [
+    active,
+    conversation.messages,
+    scrollSnapshot,
+    visibleMessageCount
+  ])
+
+  useLayoutEffect(() => {
+    const previous = prependScrollPositionRef.current
+    if (!previous) {
+      return
+    }
+    prependScrollPositionRef.current = undefined
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    scrollContainer.scrollTop =
+      previous.scrollTop +
+      (scrollContainer.scrollHeight - previous.scrollHeight)
+    const finalRevealedMessageId = finalRevealedMessageIdRef.current
+    finalRevealedMessageIdRef.current = undefined
+    if (finalRevealedMessageId) {
+      messageArticleRefs.current
+        .get(finalRevealedMessageId)
+        ?.focus({ preventScroll: true })
+    }
+  }, [visibleMessageCount])
+
+  const revealEarlierMessages = (): void => {
+    const scrollContainer = scrollRef.current
+    if (scrollContainer) {
+      prependScrollPositionRef.current = {
+        scrollHeight: scrollContainer.scrollHeight,
+        scrollTop: scrollContainer.scrollTop
+      }
+    }
+    if (
+      visibleMessageCount + messageRenderBatchSize >=
+      conversation.messages.length
+    ) {
+      finalRevealedMessageIdRef.current =
+        conversation.messages[0]?.id
+    }
+    onVisibleMessageCountChange(
+      conversation.id,
+      visibleMessageCount + messageRenderBatchSize
+    )
+  }
+
+  const scrollToBottom = (): void => {
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    pinnedToBottomRef.current = true
+    setShowScrollToBottom(false)
+    const reduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    scrollContainer.scrollTo({
+      top: scrollContainer.scrollHeight,
+      behavior: reduceMotion ? 'auto' : 'smooth'
+    })
+  }
+
+  return (
+    <div
+      aria-hidden={active ? undefined : 'true'}
+      className="chat-history-pane"
+      data-active={active ? 'true' : 'false'}
+      data-conversation-id={conversation.id}
+      hidden={!active}
+      inert={!active}
+    >
+      <section
+        className="chat"
+        id={active ? 'chat-message-list' : undefined}
+        onScroll={updateScrollPosition}
+        ref={handleScrollRef}
+      >
+        {isUnusedConversation(conversation) && (
+          <div className="welcome">
+            <div className="welcome__badge">
+              <Sparkles size={18} />
+            </div>
+            <p className="eyebrow">{t('chat.welcome.eyebrow')}</p>
+            <h1>{t('chat.welcome.title')}</h1>
+            <p className="welcome__description">
+              {t('chat.welcome.description')}
+            </p>
+            <div className="quick-actions">
+              {quickActions.map((action) => (
+                <button
+                  key={action.title}
+                  onClick={() => onSetInput(action.prompt)}
+                  type="button"
+                >
+                  <span className="quick-actions__icon">
+                    <FileText size={17} />
+                  </span>
+                  <strong>{action.title}</strong>
+                  <small>{action.description}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <ChatTimeline
+          artifactById={artifactById}
+          conversationId={conversation.id}
+          hiddenMessageCount={hiddenMessageCount}
+          isUnusedConversation={isUnusedConversation(conversation)}
+          locale={locale}
+          messages={visibleMessages}
+          messageStartIndex={visibleMessageStartIndex}
+          onArticleRef={(messageId, element) => {
+            if (element) {
+              messageArticleRefs.current.set(messageId, element)
+            } else {
+              messageArticleRefs.current.delete(messageId)
+            }
+          }}
+          onDownloadImage={onDownloadImage}
+          onOpenCitationContext={onOpenCitationContext}
+          onOpenCitationSource={onOpenCitationSource}
+          onOpenImage={onOpenImage}
+          onRespondApproval={onRespondApproval}
+          onRespondQuestion={onRespondQuestion}
+          onRetry={onRetry}
+          onRevealEarlier={revealEarlierMessages}
+          retryContent={
+            conversation.messages.at(-2)?.role === 'user'
+              ? conversation.messages.at(-2)?.content
+              : undefined
+          }
+          totalMessageCount={conversation.messages.length}
+        />
+      </section>
+      {active && showScrollToBottom && (
+        <button
+          aria-controls="chat-message-list"
+          aria-label={t('chat.scrollToBottom')}
+          className="chat-scroll-to-bottom"
+          onClick={scrollToBottom}
+          title={t('chat.scrollToBottom')}
+          type="button"
+        >
+          <ArrowDown aria-hidden="true" size={18} />
+        </button>
+      )}
+    </div>
+  )
+}
+
 function isConversationAttachment(
   value: unknown
 ): value is ConversationAttachment {
@@ -697,6 +1067,16 @@ function isConversation(value: unknown): value is Conversation {
         (entry.state === 'streaming' ||
           entry.state === 'complete' ||
           entry.state === 'error') &&
+        (entry.contextCompression === undefined ||
+          (typeof entry.contextCompression === 'object' &&
+            entry.contextCompression !== null &&
+            ['compressing', 'completed', 'failed'].includes(
+              String(
+                (
+                  entry.contextCompression as Record<string, unknown>
+                ).state
+              )
+            ))) &&
         (entry.artifactIds === undefined ||
           (Array.isArray(entry.artifactIds) &&
             entry.artifactIds.length <= 8 &&
@@ -741,6 +1121,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     createdAt: message.createdAt,
     state: message.state,
     status: message.status,
+    contextCompression: message.contextCompression,
     tools: message.tools,
     sources: message.sources,
     sourceReferences: message.sourceReferences,
@@ -924,6 +1305,14 @@ function getConfiguredAgentRuntimeSource(
 
 function formatAttachmentSize(size: number): string {
   return `${Math.max(1, Math.ceil(size / 1024))} KB`
+}
+
+function formatCompactContextTokens(tokens: number): string {
+  if (tokens < 1_000) {
+    return tokens.toLocaleString()
+  }
+  const value = tokens / 1_000
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)}K`
 }
 
 const composerTextareaMinHeight = 72
@@ -1281,7 +1670,9 @@ function App(): React.JSX.Element {
       t('conversation.interrupted')
     )
   )
-  const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? '')
+  const [activeId, setActiveIdState] = useState(
+    () => conversations[0]?.id ?? ''
+  )
   const activeConversationIdRef = useRef(activeId)
   const conversationsRef = useRef(conversations)
   const persistedLocalConversationsRef = useRef(
@@ -1349,7 +1740,31 @@ function App(): React.JSX.Element {
   const heartbeatLoadRequestRef = useRef(0)
   const [workMode, setWorkMode] =
     useState<InteractiveWorkMode>('ask')
-  const [input, setInput] = useState('')
+  const [conversationDrafts, setConversationDrafts] = useState<
+    Record<string, string>
+  >({})
+  const input = conversationDrafts[activeId] ?? ''
+  const setInput = useCallback(
+    (update: SetStateAction<string>): void => {
+      setConversationDrafts((current) => {
+        const currentValue = current[activeId] ?? ''
+        const nextValue =
+          typeof update === 'function'
+            ? update(currentValue)
+            : update
+        if (nextValue === currentValue) {
+          return current
+        }
+        if (!nextValue) {
+          const next = { ...current }
+          delete next[activeId]
+          return next
+        }
+        return { ...current, [activeId]: nextValue }
+      })
+    },
+    [activeId]
+  )
   const [voiceListening, setVoiceListening] = useState(false)
   const [voiceRecording, setVoiceRecording] = useState(false)
   const voiceRecordingRef = useRef<PcmRecording | undefined>(undefined)
@@ -1363,6 +1778,8 @@ function App(): React.JSX.Element {
   const [runtime, setRuntime] = useState<AgentRuntimeStatus>()
   const [runtimeStatusKey, setRuntimeStatusKey] = useState('')
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
+  const [contextMetricsByConversation, setContextMetricsByConversation] =
+    useState<Record<string, ConversationContextMetrics>>({})
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false)
   const [composerMenuOpen, setComposerMenuOpen] = useState<
     'expert' | 'mode' | undefined
@@ -1386,7 +1803,6 @@ function App(): React.JSX.Element {
       resolvedAppearanceTheme === 'dark' ? 'light' : 'dark'
     )
   }, [resolvedAppearanceTheme])
-  const agentRuntimeSelected = isAgentRuntime(runtime)
   const effectiveWorkMode =
     workMode === 'execute' &&
     runtime?.supportsToolExecution === false
@@ -1478,7 +1894,47 @@ function App(): React.JSX.Element {
   const [browserStates, setBrowserStates] = useState<
     Record<string, BrowserLiveState>
   >({})
-  const [view, setView] = useState<WorkspaceView>('chat')
+  const [view, setViewState] = useState<WorkspaceView>('chat')
+  const [cachedWorkspaceViews, setCachedWorkspaceViews] = useState<
+    KeepAliveCacheEntry<WorkspaceView>[]
+  >(() => [{ key: 'chat', lastVisitedAt: Date.now() }])
+  const [cachedConversationViews, setCachedConversationViews] = useState<
+    KeepAliveCacheEntry<string>[]
+  >(() =>
+    activeId
+      ? [{ key: activeId, lastVisitedAt: Date.now() }]
+      : []
+  )
+  const setView = useCallback(
+    (update: SetStateAction<WorkspaceView>): void => {
+      const next =
+        typeof update === 'function'
+          ? update(viewRef.current)
+          : update
+      viewRef.current = next
+      setCachedWorkspaceViews((current) =>
+        touchKeepAliveEntry(current, next, Date.now())
+      )
+      setViewState(next)
+    },
+    []
+  )
+  const setActiveId = useCallback(
+    (update: SetStateAction<string>): void => {
+      const next =
+        typeof update === 'function'
+          ? update(activeConversationIdRef.current)
+          : update
+      activeConversationIdRef.current = next
+      if (next) {
+        setCachedConversationViews((current) =>
+          touchKeepAliveEntry(current, next, Date.now())
+        )
+      }
+      setActiveIdState(next)
+    },
+    []
+  )
   const [settingsInitialCategory, setSettingsInitialCategory] =
     useState<SettingsCategoryId>()
   const [settingsInitialChannel, setSettingsInitialChannel] =
@@ -1504,22 +1960,39 @@ function App(): React.JSX.Element {
     },
     [notify]
   )
-  const [attachments, setAttachments] = useState<ContextAttachment[]>([])
-  const attachmentsRef = useRef<ContextAttachment[]>([])
+  const [attachmentsByConversation, setAttachmentsByConversation] =
+    useState<Record<string, ContextAttachment[]>>({})
+  const attachments =
+    attachmentsByConversation[activeId] ?? []
+  const attachmentsRef = useRef(
+    new Map<string, ContextAttachment[]>()
+  )
   const updateAttachments = useCallback(
     (
       update:
         | ContextAttachment[]
         | ((current: ContextAttachment[]) => ContextAttachment[])
     ): void => {
+      const current = attachmentsRef.current.get(activeId) ?? []
       const next =
         typeof update === 'function'
-          ? update(attachmentsRef.current)
+          ? update(current)
           : update
-      attachmentsRef.current = next
-      setAttachments(next)
+      if (next.length > 0) {
+        attachmentsRef.current.set(activeId, next)
+      } else {
+        attachmentsRef.current.delete(activeId)
+      }
+      setAttachmentsByConversation((values) => {
+        if (next.length > 0) {
+          return { ...values, [activeId]: next }
+        }
+        const remaining = { ...values }
+        delete remaining[activeId]
+        return remaining
+      })
     },
-    []
+    [activeId]
   )
   const [contextError, setContextError] = useState<string>()
   const [fileSelectionProgress, setFileSelectionProgress] =
@@ -1576,42 +2049,13 @@ function App(): React.JSX.Element {
   const hydratingArtifactIds = useRef(new Set<string>())
   const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const scrollRef = useRef<HTMLElement>(null)
-  const chatPinnedToBottomRef = useRef(true)
-  const chatScrollContextRef = useRef(activeId)
-  const chatScrollRestorePendingRef = useRef<string | undefined>(
-    undefined
-  )
-  const chatScrollSnapshotsRef = useRef(
-    new Map<
-      string,
-      {
-        pinnedToBottom: boolean
-        scrollTop: number
-      }
-    >()
-  )
-  const prependScrollPositionRef = useRef<{
-    conversationId: string
-    scrollHeight: number
-    scrollTop: number
-  } | undefined>(undefined)
-  const finalRevealedMessageIdRef = useRef<string | undefined>(undefined)
-  const messageArticleRefs = useRef(new Map<string, HTMLElement>())
-  const handleMessageArticleRef = useCallback(
-    (messageId: string, element: HTMLElement | null): void => {
-      if (element) {
-        messageArticleRefs.current.set(messageId, element)
-      } else {
-        messageArticleRefs.current.delete(messageId)
-      }
-    },
-    []
-  )
+  const [chatScrollSnapshots, setChatScrollSnapshots] = useState<
+    Record<string, ChatScrollSnapshot>
+  >({})
   const retryMessage = useCallback((content: string): void => {
     setInput(content)
     inputRef.current?.focus()
-  }, [])
+  }, [setInput])
   useEffect(
     () =>
       scheduleIdleRoutePreload(
@@ -1625,71 +2069,92 @@ function App(): React.JSX.Element {
   const [visibleMessageCounts, setVisibleMessageCounts] = useState<
     Record<string, number>
   >({})
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
   )
-  const saveChatScrollPosition = useCallback(
-    (conversationId: string, scrollContainer: HTMLElement): boolean => {
-      const distanceFromBottom =
-        scrollContainer.scrollHeight -
-        scrollContainer.scrollTop -
-        scrollContainer.clientHeight
-      const pinnedToBottom = distanceFromBottom <= chatBottomProximity
-      chatScrollSnapshotsRef.current.set(conversationId, {
-        pinnedToBottom,
-        scrollTop: scrollContainer.scrollTop
-      })
-      return pinnedToBottom
+  const handleChatScrollSnapshotChange = useCallback(
+    (conversationId: string, snapshot: ChatScrollSnapshot): void => {
+      setChatScrollSnapshots((current) => ({
+        ...current,
+        [conversationId]: snapshot
+      }))
     },
     []
   )
-  const handleChatScrollRef = useCallback(
-    (element: HTMLElement | null): void => {
-      const previous = scrollRef.current
-      if (previous && previous !== element) {
-        saveChatScrollPosition(activeId, previous)
-      }
-      scrollRef.current = element
-      if (element) {
-        chatScrollRestorePendingRef.current = activeId
-      }
+  const handleVisibleMessageCountChange = useCallback(
+    (conversationId: string, count: number): void => {
+      setVisibleMessageCounts((current) => ({
+        ...current,
+        [conversationId]: count
+      }))
     },
-    [activeId, saveChatScrollPosition]
+    []
   )
-  const updateChatScrollPosition = useCallback((): void => {
-    const scrollContainer = scrollRef.current
-    if (!scrollContainer || !activeId) {
-      return
-    }
-    const atBottom = saveChatScrollPosition(activeId, scrollContainer)
-    chatPinnedToBottomRef.current = atBottom
-    setShowScrollToBottom(!atBottom)
-  }, [activeId, saveChatScrollPosition])
-  const scrollChatToBottom = useCallback((): void => {
-    const scrollContainer = scrollRef.current
-    if (!scrollContainer) {
-      return
-    }
-    chatPinnedToBottomRef.current = true
-    const reduceMotion =
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    scrollContainer.scrollTo({
-      top: scrollContainer.scrollHeight,
-      behavior: reduceMotion ? 'auto' : 'smooth'
-    })
-  }, [])
   const closeNarrowSidebar = useCallback((): void => {
     setSidebarOpen(false)
     requestAnimationFrame(() => sidebarToggleRef.current?.focus())
   }, [])
 
   useEffect(() => {
-    activeConversationIdRef.current = activeId
-  }, [activeId])
+    const sweep = (): void => {
+      const now = Date.now()
+      const conversationIds = new Set(
+        conversationsRef.current.map((conversation) => conversation.id)
+      )
+      const runningConversationIds = new Set(
+        [...activeRuns.current.values()].map((run) => run.conversationId)
+      )
+      preparingConversations.current.forEach((conversationId) =>
+        runningConversationIds.add(conversationId)
+      )
+      const protectedWorkspaceViews = new Set<WorkspaceView>()
+      if (runningConversationIds.size > 0) {
+        protectedWorkspaceViews.add('chat')
+        protectedWorkspaceViews.add('activity')
+      }
+      if (knowledgeOperationCount > 0) {
+        protectedWorkspaceViews.add('knowledge')
+        protectedWorkspaceViews.add('activity')
+      }
+      if (
+        assistantTasks.some(
+          (task) =>
+            task.status === 'queued' ||
+            task.status === 'running' ||
+            task.status === 'waiting_approval'
+        )
+      ) {
+        protectedWorkspaceViews.add('activity')
+      }
+      setCachedConversationViews((current) =>
+        pruneKeepAliveEntries(
+          current.filter((entry) => conversationIds.has(entry.key)),
+          {
+            currentKey: activeId,
+            expiresAfterMs: keepAliveExpirationMs,
+            maximumEntries: maximumCachedConversations,
+            now,
+            protectedKeys: runningConversationIds,
+            recentEntries: recentCachedConversations
+          }
+        )
+      )
+      setCachedWorkspaceViews((current) =>
+        pruneKeepAliveEntries(current, {
+          currentKey: view,
+          expiresAfterMs: keepAliveExpirationMs,
+          maximumEntries: maximumCachedWorkspaceViews,
+          now,
+          protectedKeys: protectedWorkspaceViews,
+          recentEntries: recentCachedWorkspaceViews
+        })
+      )
+    }
+    const interval = window.setInterval(sweep, keepAliveSweepIntervalMs)
+    return () => window.clearInterval(interval)
+  }, [activeId, assistantTasks, knowledgeOperationCount, view])
 
   useEffect(() => {
     const collapseSidebarAtNarrowWidth = (): void => {
@@ -1786,7 +2251,7 @@ function App(): React.JSX.Element {
         }
       })
       .catch(() => undefined)
-  }, [i18n])
+  }, [i18n, setView])
 
   useEffect(() => {
     const releaseNotesApi = window.goodbuddy.releaseNotes
@@ -1862,64 +2327,29 @@ function App(): React.JSX.Element {
     () => conversations.find((conversation) => conversation.id === activeId),
     [activeId, conversations]
   )
-  const visibleMessageCount =
-    visibleMessageCounts[activeId] ?? messageRenderBatchSize
-  const visibleMessageStartIndex = Math.max(
-    0,
-    (activeConversation?.messages.length ?? 0) - visibleMessageCount
+  const cachedWorkspaceViewKeys = useMemo(
+    () => new Set(cachedWorkspaceViews.map((entry) => entry.key)),
+    [cachedWorkspaceViews]
   )
-  const visibleMessages =
-    activeConversation?.messages.slice(visibleMessageStartIndex) ?? []
-  const hiddenMessageCount = visibleMessageStartIndex
-
-  const revealEarlierMessages = useCallback((): void => {
-    const scrollContainer = scrollRef.current
-    if (scrollContainer) {
-      prependScrollPositionRef.current = {
-        conversationId: activeId,
-        scrollHeight: scrollContainer.scrollHeight,
-        scrollTop: scrollContainer.scrollTop
-      }
-    }
-    const currentCount = visibleMessageCount
-    if (
-      activeConversation &&
-      currentCount + messageRenderBatchSize >=
-        activeConversation.messages.length
-    ) {
-      finalRevealedMessageIdRef.current =
-        activeConversation.messages[0]?.id
-    }
-    setVisibleMessageCounts((current) => ({
-      ...current,
-      [activeId]: currentCount + messageRenderBatchSize
-    }))
-  }, [activeConversation, activeId, visibleMessageCount])
-
-  useLayoutEffect(() => {
-    const previous = prependScrollPositionRef.current
-    if (!previous) {
-      return
-    }
-    prependScrollPositionRef.current = undefined
-    if (previous.conversationId !== activeId) {
-      return
-    }
-    const scrollContainer = scrollRef.current
-    if (!scrollContainer) {
-      return
-    }
-    scrollContainer.scrollTop =
-      previous.scrollTop +
-      (scrollContainer.scrollHeight - previous.scrollHeight)
-    const finalRevealedMessageId = finalRevealedMessageIdRef.current
-    finalRevealedMessageIdRef.current = undefined
-    if (finalRevealedMessageId) {
-      messageArticleRefs.current
-        .get(finalRevealedMessageId)
-        ?.focus({ preventScroll: true })
-    }
-  }, [activeId, visibleMessageCount])
+  const cachedConversations = useMemo(() => {
+    const conversationById = new Map(
+      conversations.map((conversation) => [
+        conversation.id,
+        conversation
+      ])
+    )
+    const cachedIds = [
+      activeId,
+      ...cachedConversationViews.map((entry) => entry.key)
+    ].filter(
+      (conversationId, index, values) =>
+        conversationId && values.indexOf(conversationId) === index
+    )
+    return cachedIds.flatMap((conversationId) => {
+      const conversation = conversationById.get(conversationId)
+      return conversation ? [conversation] : []
+    })
+  }, [activeId, cachedConversationViews, conversations])
 
   const activeRuntimeSelection = useMemo(
     () =>
@@ -2105,7 +2535,8 @@ function App(): React.JSX.Element {
       })
   }, [
     activeRuntimeSelectionKey,
-    runtimeSettings
+    runtimeSettings,
+    setView
   ])
 
   const startNewConversation = useCallback(
@@ -2153,17 +2584,10 @@ function App(): React.JSX.Element {
       setConversations(nextConversations)
       setActiveId(conversation.id)
       setView('chat')
-      setInput('')
-      updateAttachments((current) => {
-        for (const attachment of current) {
-          void window.goodbuddy.context.remove(attachment.id)
-        }
-        return []
-      })
       requestAnimationFrame(() => inputRef.current?.focus())
       return true
     },
-    [notify, projects, runtimeSettings, updateAttachments]
+    [notify, projects, runtimeSettings, setActiveId, setView]
   )
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -2690,6 +3114,29 @@ function App(): React.JSX.Element {
             )
           }
         })
+      } else if (event.type === 'context-metrics') {
+        const { requestId: _requestId, type: _type, ...metrics } = event
+        void _requestId
+        void _type
+        setContextMetricsByConversation((current) => ({
+          ...current,
+          [run.conversationId]: {
+            ...metrics,
+            runtimeSelectionKey: run.runtimeSelectionKey
+          }
+        }))
+      } else if (event.type === 'context-compression') {
+        updateMessage(run.conversationId, run.messageId, (message) => ({
+          ...message,
+          contextCompression: {
+            state:
+              event.state === 'started'
+                ? 'compressing'
+                : 'completed',
+            estimatedBeforeTokens: event.estimatedBeforeTokens,
+            estimatedAfterTokens: event.estimatedAfterTokens
+          }
+        }))
       } else if (event.type === 'status') {
         updateMessage(run.conversationId, run.messageId, (message) => ({
           ...message,
@@ -2982,6 +3429,14 @@ function App(): React.JSX.Element {
               event.type === 'error' && !representedToolError
                 ? event.message
                 : undefined,
+            contextCompression:
+              event.type === 'error' &&
+              message.contextCompression?.state === 'compressing'
+                ? {
+                    ...message.contextCompression,
+                    state: 'failed' as const
+                  }
+                : message.contextCompression,
             approval: undefined,
             question: undefined,
             tools: toolTerminalState
@@ -3358,7 +3813,7 @@ function App(): React.JSX.Element {
     return () => {
       active = false
     }
-  }, [])
+  }, [setActiveId])
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -3831,7 +4286,7 @@ function App(): React.JSX.Element {
       removeAgentListener()
       removeOpenSettingsListener()
     }
-  }, [handleAgentEvent])
+  }, [handleAgentEvent, setView])
 
   useEffect(
     () => {
@@ -3901,50 +4356,6 @@ function App(): React.JSX.Element {
         handleNewConversationShortcut
       )
   }, [startNewConversation])
-
-  useLayoutEffect(() => {
-    if (view !== 'chat') {
-      return
-    }
-    const scrollContainer = scrollRef.current
-    if (!scrollContainer) {
-      return
-    }
-    const conversationChanged =
-      chatScrollContextRef.current !== activeId
-    if (conversationChanged) {
-      chatScrollContextRef.current = activeId
-    }
-    const shouldRestore =
-      conversationChanged ||
-      chatScrollRestorePendingRef.current === activeId
-    if (shouldRestore) {
-      chatScrollRestorePendingRef.current = undefined
-      const snapshot = chatScrollSnapshotsRef.current.get(activeId)
-      chatPinnedToBottomRef.current =
-        snapshot?.pinnedToBottom ?? true
-      if (snapshot && !snapshot.pinnedToBottom) {
-        scrollContainer.scrollTop = snapshot.scrollTop
-        setShowScrollToBottom(true)
-        return
-      }
-    }
-    if (chatPinnedToBottomRef.current) {
-      scrollContainer.scrollTo({
-        top: scrollContainer.scrollHeight,
-        behavior: 'auto'
-      })
-      setShowScrollToBottom(false)
-      return
-    }
-    updateChatScrollPosition()
-  }, [
-    activeConversation?.messages,
-    activeId,
-    updateChatScrollPosition,
-    visibleMessageCount,
-    view
-  ])
 
   const selectProject = (projectId: string): void => {
     const project = projects.find((candidate) => candidate.id === projectId)
@@ -4210,6 +4621,32 @@ function App(): React.JSX.Element {
       })
     }
     setBrowserStates((current) => {
+      const next = { ...current }
+      delete next[conversationId]
+      return next
+    })
+    const draftAttachments =
+      attachmentsRef.current.get(conversationId) ?? []
+    attachmentsRef.current.delete(conversationId)
+    for (const attachment of draftAttachments) {
+      void window.goodbuddy.context.remove(attachment.id)
+    }
+    setAttachmentsByConversation((current) => {
+      const next = { ...current }
+      delete next[conversationId]
+      return next
+    })
+    setConversationDrafts((current) => {
+      const next = { ...current }
+      delete next[conversationId]
+      return next
+    })
+    setChatScrollSnapshots((current) => {
+      const next = { ...current }
+      delete next[conversationId]
+      return next
+    })
+    setVisibleMessageCounts((current) => {
       const next = { ...current }
       delete next[conversationId]
       return next
@@ -4517,7 +4954,6 @@ function App(): React.JSX.Element {
       runtime.capability === 'image-generation' ? '' : selectedExpertId
     const workModeSnapshot = effectiveWorkMode
     preparingConversations.current.add(conversationId)
-    chatPinnedToBottomRef.current = true
     setInput('')
     updateAttachments([])
     const userMessage: Message = {
@@ -4567,7 +5003,10 @@ function App(): React.JSX.Element {
     activeRuns.current.set(requestId, {
       conversationId,
       messageId: assistantMessage.id,
-      projectId: projectIdSnapshot
+      projectId: projectIdSnapshot,
+      runtimeSelectionKey: agentRuntimeSelectionKey(
+        runtimeSelectionSnapshot
+      )
     })
     preparingConversations.current.delete(conversationId)
     const startedAt = new Date().toISOString()
@@ -4749,11 +5188,13 @@ function App(): React.JSX.Element {
   const addContext = async (
     action: () => Promise<ContextAttachment | ContextAttachment[]>
   ): Promise<void> => {
+    const conversationId = activeId
     setContextError(undefined)
     try {
       const result = await action()
       const selected = Array.isArray(result) ? result : [result]
-      const current = attachmentsRef.current
+      const current =
+        attachmentsRef.current.get(conversationId) ?? []
       const unique = selected.filter(
         (item) =>
           !current.some((existing) => existing.id === item.id)
@@ -5105,9 +5546,13 @@ function App(): React.JSX.Element {
         await window.goodbuddy.agent.cancel(requestId)
       }
       activeRuns.current.clear()
-      for (const attachment of attachments) {
-        await window.goodbuddy.context.remove(attachment.id)
+      for (const attachments of attachmentsRef.current.values()) {
+        for (const attachment of attachments) {
+          await window.goodbuddy.context.remove(attachment.id)
+        }
       }
+      attachmentsRef.current.clear()
+      setAttachmentsByConversation({})
       for (const library of knowledgeSnapshot.libraries) {
         await window.goodbuddy.knowledge.deleteLibrary(library.id)
       }
@@ -5161,6 +5606,87 @@ function App(): React.JSX.Element {
     activeConversation?.messages.some(
       (message) => message.state === 'streaming'
     ) ?? false
+
+  const composerContextMetrics = useMemo(() => {
+    if (
+      !activeConversation ||
+      !runtimeSettings ||
+      activeRuntimeSelection?.provider !== 'model' ||
+      activeConversation.remote
+    ) {
+      return undefined
+    }
+    const profile = runtimeSettings.modelProfiles.find(
+      (candidate) =>
+        candidate.id === activeRuntimeSelection.profileId
+    )
+    if (
+      !profile ||
+      profile.protocol === 'openai-images-generations'
+    ) {
+      return undefined
+    }
+    const compression =
+      runtimeSettings.contextCompression ??
+      defaultContextCompressionSettings
+    const latest = contextMetricsByConversation[activeConversation.id]
+    const applicableLatest =
+      latest?.runtimeSelectionKey === activeRuntimeSelectionKey
+        ? latest
+        : undefined
+    const history = activeConversation.messages
+      .filter(
+        (message) =>
+          message.state === 'complete' && message.content.trim()
+      )
+      .map((message) => ({
+        role: message.role,
+        content: message.content
+      }))
+    const coveredMessageCount = Math.min(
+      applicableLatest?.coveredMessageCount ?? 0,
+      history.length
+    )
+    const estimatedInputTokens =
+      isRunning && applicableLatest
+        ? applicableLatest.estimatedInputTokens
+        : estimateContextInputTokens({
+            history: history.slice(coveredMessageCount),
+            prompt: input,
+            summaryTokens: applicableLatest?.summaryTokens ?? 0
+          })
+    const effectiveTriggerTokens =
+      getEffectiveContextTriggerTokens({
+        triggerTokens: compression.triggerTokens,
+        contextWindowTokens: profile.contextWindowTokens
+      })
+    const denominatorTokens =
+      profile.contextWindowTokens ??
+      (compression.enabled ? effectiveTriggerTokens : undefined)
+    const percentage =
+      denominatorTokens === undefined
+        ? undefined
+        : Math.round(
+            (estimatedInputTokens / denominatorTokens) * 100
+          )
+
+    return {
+      estimatedInputTokens,
+      effectiveTriggerTokens,
+      contextWindowTokens: profile.contextWindowTokens,
+      compressionEnabled: compression.enabled,
+      denominatorTokens,
+      percentage
+    }
+  }, [
+    activeConversation,
+    activeRuntimeSelection,
+    activeRuntimeSelectionKey,
+    contextMetricsByConversation,
+    input,
+    isRunning,
+    runtimeSettings
+  ])
 
   return (
     <div className="app-shell">
@@ -5698,114 +6224,82 @@ function App(): React.JSX.Element {
           />
         </header>
 
-        {view === 'chat' ? (
-          <PageShell variant="reading">
-            <div className="chat-scroll-region">
-            <section
-              className="chat"
-              id="chat-message-list"
-              onScroll={updateChatScrollPosition}
-              ref={handleChatScrollRef}
-            >
-          {activeProject?.kind === 'channel' &&
-            !activeConversation && (
-              <EmptyState
-                action={
-                  <button
-                    className="secondary-button"
-                    onClick={() => {
-                      setSettingsInitialCategory('channels')
-                      setSettingsInitialChannel(activeProject.channel)
-                      setView('settings')
+        {(view === 'chat' || cachedWorkspaceViewKeys.has('chat')) && (
+          <KeepAliveRoute
+            active={view === 'chat'}
+            route="chat"
+          >
+            <PageShell variant="reading">
+              <div className="chat-scroll-region">
+                {cachedConversations.map((conversation) => (
+                  <ChatHistoryPane
+                    active={
+                      view === 'chat' && conversation.id === activeId
+                    }
+                    artifactById={assistantArtifactById}
+                    conversation={conversation}
+                    key={conversation.id}
+                    locale={locale}
+                    onDownloadImage={downloadImage}
+                    onOpenCitationContext={openCitationContext}
+                    onOpenCitationSource={openCitationSource}
+                    onOpenImage={openImageViewer}
+                    onRespondApproval={respondToApproval}
+                    onRespondQuestion={respondToQuestion}
+                    onRetry={retryMessage}
+                    onScrollSnapshotChange={
+                      handleChatScrollSnapshotChange
+                    }
+                    onSetInput={(value) => {
+                      setInput(value)
+                      requestAnimationFrame(() =>
+                        inputRef.current?.focus()
+                      )
                     }}
-                    type="button"
-                  >
-                    {t('chat.remote.openSettings')}
-                  </button>
-                }
-                description={t('chat.remote.emptyDescription', {
-                  project: activeProject.name
-                })}
-                icon={<MessageSquare size={28} />}
-                level="page"
-                title={t('conversation.noRemote')}
-              />
-            )}
-          {activeConversation && isUnusedConversation(activeConversation) && (
-            <div className="welcome">
-              <div className="welcome__badge">
-                <Sparkles size={18} />
-              </div>
-              <p className="eyebrow">{t('chat.welcome.eyebrow')}</p>
-              <h1>{t('chat.welcome.title')}</h1>
-              <p className="welcome__description">
-                {t('chat.welcome.description')}
-              </p>
-              <div className="quick-actions">
-                {quickActions.map((action) => (
-                  <button
-                    key={action.title}
-                    type="button"
-                    onClick={() => {
-                      setInput(action.prompt)
-                      inputRef.current?.focus()
-                    }}
-                  >
-                    <span className="quick-actions__icon">
-                      <FileText size={17} />
-                    </span>
-                    <strong>{action.title}</strong>
-                    <small>{action.description}</small>
-                  </button>
+                    onVisibleMessageCountChange={
+                      handleVisibleMessageCountChange
+                    }
+                    quickActions={quickActions}
+                    scrollSnapshot={
+                      chatScrollSnapshots[conversation.id]
+                    }
+                    visibleMessageCount={
+                      visibleMessageCounts[conversation.id] ??
+                      messageRenderBatchSize
+                    }
+                  />
                 ))}
+                {activeProject?.kind === 'channel' &&
+                  !activeConversation && (
+                  <section className="chat">
+                    <EmptyState
+                      action={
+                        <button
+                          className="secondary-button"
+                          onClick={() => {
+                            setSettingsInitialCategory('channels')
+                            setSettingsInitialChannel(
+                              activeProject.channel
+                            )
+                            setView('settings')
+                          }}
+                          type="button"
+                        >
+                          {t('chat.remote.openSettings')}
+                        </button>
+                      }
+                      description={t('chat.remote.emptyDescription', {
+                        project: activeProject.name
+                      })}
+                      icon={<MessageSquare size={28} />}
+                      level="page"
+                      title={t('conversation.noRemote')}
+                    />
+                  </section>
+                )}
               </div>
-            </div>
-          )}
 
-          <ChatTimeline
-            artifactById={assistantArtifactById}
-            conversationId={activeConversation?.id ?? ''}
-            hiddenMessageCount={hiddenMessageCount}
-            isUnusedConversation={
-              activeConversation
-                ? isUnusedConversation(activeConversation)
-                : false
-            }
-            locale={locale}
-            messages={visibleMessages}
-            messageStartIndex={visibleMessageStartIndex}
-            onArticleRef={handleMessageArticleRef}
-            onDownloadImage={downloadImage}
-            onOpenCitationContext={openCitationContext}
-            onOpenCitationSource={openCitationSource}
-            onOpenImage={openImageViewer}
-            onRespondApproval={respondToApproval}
-            onRespondQuestion={respondToQuestion}
-            onRetry={retryMessage}
-            onRevealEarlier={revealEarlierMessages}
-            retryContent={
-              activeConversation?.messages.at(-2)?.role === 'user'
-                ? activeConversation.messages.at(-2)?.content
-                : undefined
-            }
-            totalMessageCount={activeConversation?.messages.length ?? 0}
-          />
-          </section>
-            {showScrollToBottom && (
-              <button
-                aria-controls="chat-message-list"
-                aria-label={t('chat.scrollToBottom')}
-                className="chat-scroll-to-bottom"
-                onClick={scrollChatToBottom}
-                title={t('chat.scrollToBottom')}
-                type="button"
-              >
-                <ArrowDown aria-hidden="true" size={18} />
-              </button>
-            )}
-            </div>
-
-            <footer className="composer-wrap">
+              <footer className="composer-wrap">
           {activeProject?.kind === 'channel' ? (
             <div className="remote-conversation-notice">
               <MessageSquare aria-hidden="true" size={18} />
@@ -6143,7 +6637,6 @@ function App(): React.JSX.Element {
                   <ComposerMenuSelect
                     ariaLabel={t('composer.modeLabel')}
                     className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
-                    describedBy="work-mode-hint"
                     icon={
                       effectiveWorkMode === 'execute' ? (
                         <ShieldCheck aria-hidden="true" size={15} />
@@ -6441,45 +6934,126 @@ function App(): React.JSX.Element {
               )}
             </div>
           </div>
-          <p
-            className={
-              contextError
-                ? 'composer-hint composer-hint--error'
-                : 'composer-hint'
-            }
-            id="work-mode-hint"
-          >
-            <span>
-              {contextError ??
-                (!runtime?.available
-                  ? t('composer.hints.configureRuntime')
-                  : runtime.capability === 'image-generation'
-                    ? t('composer.hints.imageGeneration')
-                    : agentRuntimeSelected
-                      ? effectiveWorkMode === 'ask'
-                        ? t('composer.hints.agentAsk', {
-                            runtime: runtime.label
-                          })
-                        : t('composer.hints.agentExecute', {
-                            runtime: runtime.label
-                          })
-                    : effectiveWorkMode === 'ask'
-                      ? t('composer.hints.ask')
-                      : t('composer.hints.execute'))}
-            </span>
+          <div className="composer-meta">
+            {composerContextMetrics && (
+              <div
+                className={`composer-context-meter${
+                  composerContextMetrics.percentage !== undefined &&
+                  composerContextMetrics.percentage >= 90
+                    ? ' composer-context-meter--warning'
+                    : ''
+                }`}
+                title={
+                  composerContextMetrics.compressionEnabled
+                    ? t('composer.context.compressionTrigger', {
+                        tokens: formatCompactContextTokens(
+                          composerContextMetrics.effectiveTriggerTokens
+                        )
+                      })
+                    : undefined
+                }
+              >
+                <span className="composer-context-meter__summary">
+                  {composerContextMetrics.denominatorTokens === undefined
+                    ? t('composer.context.tokenCount', {
+                        used: formatCompactContextTokens(
+                          composerContextMetrics.estimatedInputTokens
+                        )
+                      })
+                    : composerContextMetrics.contextWindowTokens ===
+                        undefined
+                      ? t('composer.context.thresholdUsage', {
+                          used: formatCompactContextTokens(
+                            composerContextMetrics.estimatedInputTokens
+                          ),
+                          total: formatCompactContextTokens(
+                            composerContextMetrics.denominatorTokens
+                          ),
+                          percentage:
+                            composerContextMetrics.percentage ?? 0
+                        })
+                      : t('composer.context.windowUsage', {
+                          used: formatCompactContextTokens(
+                            composerContextMetrics.estimatedInputTokens
+                          ),
+                          total: formatCompactContextTokens(
+                            composerContextMetrics.denominatorTokens
+                          ),
+                          percentage:
+                            composerContextMetrics.percentage ?? 0
+                        })}
+                </span>
+                {composerContextMetrics.denominatorTokens !== undefined && (
+                  <div
+                    aria-label={t('composer.context.progressLabel')}
+                    aria-valuemax={
+                      composerContextMetrics.denominatorTokens
+                    }
+                    aria-valuemin={0}
+                    aria-valuenow={Math.min(
+                      composerContextMetrics.estimatedInputTokens,
+                      composerContextMetrics.denominatorTokens
+                    )}
+                    className="composer-context-meter__track"
+                    role="progressbar"
+                  >
+                    <span
+                      className="composer-context-meter__fill"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          composerContextMetrics.percentage ?? 0
+                        )}%`
+                      }}
+                    />
+                    {composerContextMetrics.contextWindowTokens !==
+                      undefined &&
+                      composerContextMetrics.compressionEnabled && (
+                        <span
+                          aria-hidden="true"
+                          className="composer-context-meter__trigger"
+                          style={{
+                            left: `${Math.min(
+                              100,
+                              Math.round(
+                                (composerContextMetrics.effectiveTriggerTokens /
+                                  composerContextMetrics.contextWindowTokens) *
+                                  100
+                              )
+                            )}%`
+                          }}
+                        />
+                      )}
+                  </div>
+                )}
+              </div>
+            )}
+            {contextError && (
+              <span className="composer-meta__error">
+                {contextError}
+              </span>
+            )}
             {appInfo?.shortcut && (
-              <span className="composer-hint__shortcut">
+              <span className="composer-meta__shortcut">
                 {t('composer.shortcut')}
                 <kbd>{appInfo.shortcut}</kbd>
               </span>
             )}
-          </p>
+          </div>
           </>
           )}
             </footer>
-          </PageShell>
-        ) : view === 'magic-notes' && magicNotesEnabled ? (
-          <PageShell variant="master-detail">
+            </PageShell>
+          </KeepAliveRoute>
+        )}
+        {magicNotesEnabled &&
+          (view === 'magic-notes' ||
+            cachedWorkspaceViewKeys.has('magic-notes')) && (
+          <KeepAliveRoute
+            active={view === 'magic-notes'}
+            route="magic-notes"
+          >
+            <PageShell variant="master-detail">
             <RouteErrorBoundary
               key="magic-notes"
               fallback={
@@ -6497,9 +7071,16 @@ function App(): React.JSX.Element {
                 <MagicNotesWorkspace onNotify={notify} />
               </Suspense>
             </RouteErrorBoundary>
-          </PageShell>
-        ) : view === 'knowledge' ? (
-          <PageShell variant="master-detail">
+            </PageShell>
+          </KeepAliveRoute>
+        )}
+        {(view === 'knowledge' ||
+          cachedWorkspaceViewKeys.has('knowledge')) && (
+          <KeepAliveRoute
+            active={view === 'knowledge'}
+            route="knowledge"
+          >
+            <PageShell variant="master-detail">
             <RouteErrorBoundary
               key="knowledge"
               fallback={
@@ -6797,9 +7378,16 @@ function App(): React.JSX.Element {
                 />
               </Suspense>
             </RouteErrorBoundary>
-          </PageShell>
-        ) : view === 'heartbeat' ? (
-          <PageShell variant="dashboard">
+            </PageShell>
+          </KeepAliveRoute>
+        )}
+        {(view === 'heartbeat' ||
+          cachedWorkspaceViewKeys.has('heartbeat')) && (
+          <KeepAliveRoute
+            active={view === 'heartbeat'}
+            route="heartbeat"
+          >
+            <PageShell variant="dashboard">
             <RouteErrorBoundary
               key="heartbeat"
               fallback={
@@ -6835,9 +7423,16 @@ function App(): React.JSX.Element {
                 />
               </Suspense>
             </RouteErrorBoundary>
-          </PageShell>
-        ) : view === 'settings' ? (
-          <RouteErrorBoundary
+            </PageShell>
+          </KeepAliveRoute>
+        )}
+        {(view === 'settings' ||
+          cachedWorkspaceViewKeys.has('settings')) && (
+          <KeepAliveRoute
+            active={view === 'settings'}
+            route="settings"
+          >
+            <RouteErrorBoundary
             key="settings"
             fallback={
               <RouteLoadError
@@ -6889,21 +7484,29 @@ function App(): React.JSX.Element {
             }}
             onSetHeartbeatPaused={setHeartbeatPaused}
             onUpdateProject={updateProject}
-            open
+            open={view === 'settings'}
             presentation="page"
             projects={projects}
               />
             </Suspense>
-          </RouteErrorBoundary>
-        ) : (
-          <PageShell variant="dashboard">
-            <ActivityPanel
-              onClear={() => setActivityRecords([])}
-              onOpenConversation={openActivityConversation}
-              records={activityRecords}
-              tokenUsage={tokenUsage}
-            />
-          </PageShell>
+            </RouteErrorBoundary>
+          </KeepAliveRoute>
+        )}
+        {(view === 'activity' ||
+          cachedWorkspaceViewKeys.has('activity')) && (
+          <KeepAliveRoute
+            active={view === 'activity'}
+            route="activity"
+          >
+            <PageShell variant="dashboard">
+              <ActivityPanel
+                onClear={() => setActivityRecords([])}
+                onOpenConversation={openActivityConversation}
+                records={activityRecords}
+                tokenUsage={tokenUsage}
+              />
+            </PageShell>
+          </KeepAliveRoute>
         )}
       </main>
       <AppNotificationViewport

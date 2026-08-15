@@ -187,6 +187,12 @@ export const app = {
       streaming: 'Reasoning',
       complete: 'Reasoning process'
     },
+    contextCompression: {
+      compressing: 'Compressing earlier conversation…',
+      completed:
+        'Earlier conversation compressed · ≈{{before}} → ≈{{after}}',
+      failed: 'Earlier conversation compression failed'
+    },
     sources: 'Sources: {{sources}}',
     citations: {
       view: 'View {{count}} evidence references',
@@ -314,6 +320,14 @@ export const app = {
     send: 'Send',
     sendTitle: 'Send message',
     shortcut: 'Quick access: ',
+    context: {
+      tokenCount: 'Context ≈{{used}}',
+      windowUsage: 'Context ≈{{used}} / {{total}} · {{percentage}}%',
+      thresholdUsage:
+        'Compression threshold ≈{{used}} / {{total}} · {{percentage}}%',
+      progressLabel: 'Current context usage',
+      compressionTrigger: 'Automatic compression at ≈{{tokens}}'
+    },
     experts: {
       general: 'General assistant',
       generalDescription: 'Default single assistant',

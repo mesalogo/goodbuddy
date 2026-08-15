@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ChatTimeline,
@@ -84,5 +84,55 @@ describe('ChatTimeline', () => {
       unchangedArticle
     )
     expect(unchangedDetails).toHaveAttribute('open')
+  })
+
+  it('places compression progress between the user and assistant messages', () => {
+    const messages: Message[] = [
+      {
+        id: 'user-message',
+        role: 'user',
+        content: 'Continue',
+        createdAt: 1_775_000_000_000,
+        state: 'complete'
+      },
+      {
+        id: 'assistant-message',
+        role: 'assistant',
+        content: 'Answer',
+        contextCompression: {
+          state: 'completed',
+          estimatedBeforeTokens: 22_000,
+          estimatedAfterTokens: 9_000
+        },
+        createdAt: 1_775_000_001_000,
+        state: 'complete'
+      }
+    ]
+    const { container } = render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="zh-CN"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    const children = Array.from(
+      container.querySelector('.message-list')?.children ?? []
+    )
+    expect(children.map((element) => element.className)).toEqual([
+      'message message--user',
+      'context-compression-event context-compression-event--completed',
+      'message message--assistant'
+    ])
+    expect(
+      screen.getByRole('status')
+    ).toHaveTextContent('已压缩较早对话 · ≈22.0K → ≈9.0K')
   })
 })

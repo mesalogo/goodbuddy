@@ -51,6 +51,11 @@ export type Message = {
   createdAt: number
   state: 'streaming' | 'complete' | 'error'
   status?: string
+  contextCompression?: {
+    state: 'compressing' | 'completed' | 'failed'
+    estimatedBeforeTokens: number
+    estimatedAfterTokens?: number
+  }
   tools?: ToolActivity[]
   subagents?: SubagentActivity[]
   approval?: {
@@ -72,6 +77,14 @@ export type Message = {
 export type ImageViewerItem = {
   src: string
   title: string
+}
+
+function formatCompactTokens(tokens: number): string {
+  if (tokens < 1_000) {
+    return tokens.toLocaleString()
+  }
+  const value = tokens / 1_000
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)}K`
 }
 
 type MessageBlockRenderItem =
@@ -270,6 +283,41 @@ function ChatMessageRowView({
   const { t } = useTranslation('app')
 
   return (
+    <>
+      {message.role === 'assistant' && message.contextCompression && (
+        <div
+          aria-live="polite"
+          className={`context-compression-event context-compression-event--${message.contextCompression.state}`}
+          role="status"
+        >
+          <span className="context-compression-event__line" />
+          <span className="context-compression-event__label">
+            <span
+              aria-hidden="true"
+              className={
+                message.contextCompression.state === 'compressing'
+                  ? 'message__status-dot message__status-dot--active'
+                  : 'message__status-dot'
+              }
+            />
+            {message.contextCompression.state === 'compressing'
+              ? t('chat.contextCompression.compressing')
+              : message.contextCompression.state === 'completed' &&
+                  message.contextCompression.estimatedAfterTokens !==
+                    undefined
+                ? t('chat.contextCompression.completed', {
+                    before: formatCompactTokens(
+                      message.contextCompression.estimatedBeforeTokens
+                    ),
+                    after: formatCompactTokens(
+                      message.contextCompression.estimatedAfterTokens
+                    )
+                  })
+                : t('chat.contextCompression.failed')}
+          </span>
+          <span className="context-compression-event__line" />
+        </div>
+      )}
     <article
       className={`message message--${message.role}`}
       ref={(element) => onArticleRef(message.id, element)}
@@ -755,6 +803,7 @@ function ChatMessageRowView({
         )}
       </div>
     </article>
+    </>
   )
 }
 
