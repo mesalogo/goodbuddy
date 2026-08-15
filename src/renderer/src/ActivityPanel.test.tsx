@@ -521,9 +521,10 @@ describe('ActivityPanel', () => {
 
     const stats = screen.getByLabelText('Token 用量统计')
     expect(within(stats).getByText('150')).toBeInTheDocument()
+    expect(within(stats).getByText('32%')).toBeInTheDocument()
 
     const projectRow = screen.getByRole('row', {
-      name: '项目甲gpt-5 · openai 100 20 10 40 120'
+      name: '项目甲gpt-5 · openai 100 20 10 40 40% 120'
     })
     expect(projectRow).toBeInTheDocument()
     expect(

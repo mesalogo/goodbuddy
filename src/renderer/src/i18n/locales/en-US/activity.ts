@@ -61,6 +61,7 @@ export const activity = {
       output: 'Output',
       cacheWrite: 'Cache writes',
       cacheRead: 'Cache reads',
+      cacheHitRate: 'Cache hit rate',
       total: 'Total'
     },
     detailAriaLabel: 'Token usage details by {{group}}',

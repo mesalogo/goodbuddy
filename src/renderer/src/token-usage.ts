@@ -7,6 +7,8 @@ export type TokenUsageTotals = {
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheInputTokens: number
+  cacheHitRate?: number
   totalTokens: number
 }
 
@@ -18,7 +20,17 @@ export type TokenUsageGroupRow = TokenUsageTotals & {
 
 type TokenUsageRecord = TokenUsageSummary['records'][number]
 
-function usageNumbers(source: unknown): TokenUsageTotals {
+function usesSeparatedAnthropicInput(provider: unknown): boolean {
+  return (
+    typeof provider === 'string' &&
+    provider.toLocaleLowerCase().includes('anthropic')
+  )
+}
+
+function usageNumbers(
+  source: unknown,
+  provider?: unknown
+): TokenUsageTotals {
   const values = source as Record<string, unknown>
   const read = (preferred: string, legacy: string): number => {
     const value = values[preferred] ?? values[legacy]
@@ -28,12 +40,28 @@ function usageNumbers(source: unknown): TokenUsageTotals {
   }
   const inputTokens = read('inputTokens', 'input')
   const outputTokens = read('outputTokens', 'output')
+  const cacheReadTokens = read('cacheReadTokens', 'cacheRead')
+  const cacheWriteTokens = read('cacheWriteTokens', 'cacheWrite')
+  const reportedCacheInput = values.cacheInputTokens ?? values.cacheInput
+  const cacheInputTokens =
+    typeof reportedCacheInput === 'number' &&
+    Number.isFinite(reportedCacheInput)
+      ? reportedCacheInput
+      : inputTokens +
+        (usesSeparatedAnthropicInput(provider)
+          ? cacheReadTokens + cacheWriteTokens
+          : 0)
 
   return {
     inputTokens,
     outputTokens,
-    cacheReadTokens: read('cacheReadTokens', 'cacheRead'),
-    cacheWriteTokens: read('cacheWriteTokens', 'cacheWrite'),
+    cacheReadTokens,
+    cacheWriteTokens,
+    cacheInputTokens,
+    cacheHitRate:
+      cacheInputTokens > 0
+        ? Math.min(cacheReadTokens / cacheInputTokens, 1)
+        : undefined,
     totalTokens: inputTokens + outputTokens
   }
 }
@@ -95,7 +123,7 @@ export function groupTokenUsage(
 
   for (const record of tokenUsage.records) {
     const identity = groupIdentity(record, group)
-    const usage = usageNumbers(record)
+    const usage = usageNumbers(record, record.provider)
     const existing = rows.get(identity.key)
 
     if (existing) {
@@ -103,6 +131,14 @@ export function groupTokenUsage(
       existing.outputTokens += usage.outputTokens
       existing.cacheReadTokens += usage.cacheReadTokens
       existing.cacheWriteTokens += usage.cacheWriteTokens
+      existing.cacheInputTokens += usage.cacheInputTokens
+      existing.cacheHitRate =
+        existing.cacheInputTokens > 0
+          ? Math.min(
+              existing.cacheReadTokens / existing.cacheInputTokens,
+              1
+            )
+          : undefined
       existing.totalTokens = existing.inputTokens + existing.outputTokens
 
       if (!existing.label && identity.label) {

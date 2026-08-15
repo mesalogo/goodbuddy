@@ -263,6 +263,16 @@ export function ActivityPanel({
     () => new Intl.NumberFormat(i18n.resolvedLanguage || 'zh-CN'),
     [i18n.resolvedLanguage]
   )
+  const tokenPercentFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat(i18n.resolvedLanguage || 'zh-CN', {
+        style: 'percent',
+        maximumFractionDigits: 1
+      }),
+    [i18n.resolvedLanguage]
+  )
+  const formatCacheHitRate = (value: number | undefined): string =>
+    value === undefined ? '—' : tokenPercentFormatter.format(value)
   const formatCount = (value: number): string =>
     tokenCountFormatter.format(value)
   const statusLabels: Record<ActivityRecord['status'], string> = {
@@ -950,6 +960,12 @@ export function ActivityPanel({
                 </dd>
               </div>
               <div>
+                <dt>{t('tokenUsage.columns.cacheHitRate')}</dt>
+                <dd>
+                  {formatCacheHitRate(tokenTotals.cacheHitRate)}
+                </dd>
+              </div>
+              <div>
                 <dt>{t('tokenUsage.columns.total')}</dt>
                 <dd>
                   {tokenCountFormatter.format(tokenTotals.totalTokens)}
@@ -975,6 +991,9 @@ export function ActivityPanel({
                       {t('tokenUsage.columns.cacheRead')}
                     </th>
                     <th scope="col">
+                      {t('tokenUsage.columns.cacheHitRate')}
+                    </th>
+                    <th scope="col">
                       {t('tokenUsage.columns.total')}
                     </th>
                   </tr>
@@ -982,7 +1001,7 @@ export function ActivityPanel({
                 <tbody>
                   {tokenRows.length === 0 ? (
                     <tr>
-                      <td className="token-usage__empty" colSpan={6}>
+                      <td className="token-usage__empty" colSpan={7}>
                         {t('tokenUsage.empty')}
                       </td>
                     </tr>
@@ -1016,6 +1035,9 @@ export function ActivityPanel({
                             {tokenCountFormatter.format(
                               row.cacheReadTokens
                             )}
+                          </td>
+                          <td>
+                            {formatCacheHitRate(row.cacheHitRate)}
                           </td>
                           <td>
                             {tokenCountFormatter.format(

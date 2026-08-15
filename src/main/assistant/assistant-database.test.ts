@@ -2175,6 +2175,7 @@ describe('AssistantDatabase', () => {
         output: 25,
         cacheRead: 40,
         cacheWrite: 12,
+        cacheInput: 177,
         totalTokens: 150
       },
       records: [
@@ -2185,6 +2186,7 @@ describe('AssistantDatabase', () => {
           output: 25,
           cacheRead: 40,
           cacheWrite: 12,
+          cacheInput: 177,
           totalTokens: 150
         })
       ]
@@ -2334,6 +2336,7 @@ describe('AssistantDatabase', () => {
       output: 105,
       cacheRead: 42,
       cacheWrite: 15,
+      cacheInput: 312,
       totalTokens: 360
     })
     expect(summary.records).toHaveLength(3)
@@ -2353,6 +2356,7 @@ describe('AssistantDatabase', () => {
           output: 60,
           cacheRead: 35,
           cacheWrite: 12,
+          cacheInput: 197,
           totalTokens: 210
         }),
         expect.objectContaining({
@@ -2684,6 +2688,7 @@ describe('AssistantDatabase', () => {
         output: 0,
         cacheRead: 0,
         cacheWrite: 0,
+        cacheInput: 0,
         totalTokens: 0
       },
       records: []

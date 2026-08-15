@@ -379,6 +379,7 @@ export type TokenUsageRecord = {
   output: number
   cacheRead: number
   cacheWrite: number
+  cacheInput?: number
   totalTokens: number
 }
 
@@ -389,6 +390,7 @@ export type TokenUsageSummary = {
     output: number
     cacheRead: number
     cacheWrite: number
+    cacheInput?: number
     totalTokens: number
   }
   records: TokenUsageRecord[]

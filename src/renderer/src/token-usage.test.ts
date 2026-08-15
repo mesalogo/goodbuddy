@@ -61,6 +61,8 @@ describe('token usage aggregation', () => {
       outputTokens: 23,
       cacheReadTokens: 40,
       cacheWriteTokens: 10,
+      cacheInputTokens: 112,
+      cacheHitRate: 40 / 112,
       totalTokens: 135
     })
     expect(groupTokenUsage(usage, 'project')).toEqual([
@@ -72,6 +74,8 @@ describe('token usage aggregation', () => {
         outputTokens: 23,
         cacheReadTokens: 40,
         cacheWriteTokens: 10,
+        cacheInputTokens: 112,
+        cacheHitRate: 40 / 112,
         totalTokens: 135
       }
     ])
@@ -83,6 +87,40 @@ describe('token usage aggregation', () => {
         totalTokens: 135
       })
     ])
+  })
+
+  it('normalizes cache hit rate for OpenAI and Anthropic input usage', () => {
+    const usage = makeTokenUsage()
+    usage.records = [
+      {
+        ...usage.records[0]!,
+        provider: 'openai',
+        input: 100,
+        cacheRead: 40,
+        cacheWrite: 10
+      },
+      {
+        ...usage.records[1]!,
+        provider: 'goodbuddy-anthropic',
+        model: 'claude-sonnet',
+        input: 50,
+        cacheRead: 30,
+        cacheWrite: 20
+      }
+    ]
+
+    const rows = groupTokenUsage(usage, 'model')
+
+    expect(rows.find((row) => row.label === 'gpt-5')).toMatchObject({
+      cacheInputTokens: 100,
+      cacheHitRate: 0.4
+    })
+    expect(
+      rows.find((row) => row.label === 'claude-sonnet')
+    ).toMatchObject({
+      cacheInputTokens: 100,
+      cacheHitRate: 0.3
+    })
   })
 
   it('uses fallback labels when grouping metadata is unavailable', () => {

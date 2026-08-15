@@ -317,6 +317,7 @@ type TokenUsageRecordRow = {
   output_tokens: number
   cache_read_tokens: number
   cache_write_tokens: number
+  cache_input_tokens: number
 }
 
 type ComputerControlActionRow = {
@@ -2799,7 +2800,15 @@ export class AssistantDatabase {
            SUM(usage.input_tokens) AS input_tokens,
            SUM(usage.output_tokens) AS output_tokens,
            SUM(usage.cache_read_tokens) AS cache_read_tokens,
-           SUM(usage.cache_write_tokens) AS cache_write_tokens
+           SUM(usage.cache_write_tokens) AS cache_write_tokens,
+           SUM(
+             usage.input_tokens +
+             CASE
+               WHEN LOWER(usage.provider) LIKE '%anthropic%'
+               THEN usage.cache_read_tokens + usage.cache_write_tokens
+               ELSE 0
+             END
+           ) AS cache_input_tokens
          FROM model_usage_calls usage
          JOIN tasks ON tasks.id = usage.request_id
          LEFT JOIN projects ON projects.id = tasks.project_id
@@ -2832,6 +2841,7 @@ export class AssistantDatabase {
       output: row.output_tokens,
       cacheRead: row.cache_read_tokens,
       cacheWrite: row.cache_write_tokens,
+      cacheInput: row.cache_input_tokens,
       totalTokens: row.input_tokens + row.output_tokens
     }))
     const totalRow = this.requireDatabase()
@@ -2841,7 +2851,18 @@ export class AssistantDatabase {
            COALESCE(SUM(input_tokens), 0) AS input_tokens,
            COALESCE(SUM(output_tokens), 0) AS output_tokens,
            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
-           COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
+           COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+           COALESCE(
+             SUM(
+               input_tokens +
+               CASE
+                 WHEN LOWER(provider) LIKE '%anthropic%'
+                 THEN cache_read_tokens + cache_write_tokens
+                 ELSE 0
+               END
+             ),
+             0
+           ) AS cache_input_tokens
          FROM model_usage_calls`
       )
       .get() as {
@@ -2850,6 +2871,7 @@ export class AssistantDatabase {
       output_tokens: number
       cache_read_tokens: number
       cache_write_tokens: number
+      cache_input_tokens: number
     }
     const totals = {
       callCount: totalRow.call_count,
@@ -2857,6 +2879,7 @@ export class AssistantDatabase {
       output: totalRow.output_tokens,
       cacheRead: totalRow.cache_read_tokens,
       cacheWrite: totalRow.cache_write_tokens,
+      cacheInput: totalRow.cache_input_tokens,
       totalTokens: totalRow.input_tokens + totalRow.output_tokens
     }
     return { totals, records }

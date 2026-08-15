@@ -58,6 +58,7 @@ export const activity = {
       output: '输出',
       cacheWrite: '缓存写入',
       cacheRead: '缓存读取',
+      cacheHitRate: '缓存命中率',
       total: '总计'
     },
     detailAriaLabel: 'Token 用量{{group}}明细',
