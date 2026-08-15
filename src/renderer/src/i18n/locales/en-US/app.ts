@@ -76,6 +76,7 @@ export const app = {
     greeting:
       'Hi, I’m GoodBuddy. Ask me a question, add local files, or use your knowledge base. With an Agent Runtime enabled, I can also use tools with your authorization.',
     interrupted: 'The previous run stopped unexpectedly. You can resend your question.',
+    active: 'Conversation is active',
     unread: 'Unread',
     unreadRemote: 'Unread remote message',
     noRemote: 'No remote conversations yet',

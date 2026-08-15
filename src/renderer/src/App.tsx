@@ -2046,6 +2046,26 @@ function App(): React.JSX.Element {
   const activityRecordsRef = useRef(activityRecords)
   const activeRuns = useRef(new Map<string, ActiveRun>())
   const preparingConversations = useRef(new Set<string>())
+  const [activeConversationIds, setActiveConversationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+  const setConversationActivity = useCallback(
+    (conversationId: string, active: boolean): void => {
+      setActiveConversationIds((current) => {
+        if (current.has(conversationId) === active) {
+          return current
+        }
+        const next = new Set(current)
+        if (active) {
+          next.add(conversationId)
+        } else {
+          next.delete(conversationId)
+        }
+        return next
+      })
+    },
+    []
+  )
   const hydratingArtifactIds = useRef(new Set<string>())
   const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -3464,6 +3484,7 @@ function App(): React.JSX.Element {
           }
         })
         activeRuns.current.delete(event.requestId)
+        setConversationActivity(run.conversationId, false)
         flushConversationPersistenceAfterRenderRef.current = true
       }
     },
@@ -3471,6 +3492,7 @@ function App(): React.JSX.Element {
       recordActivity,
       loadWorkspaceChanges,
       refreshTokenUsage,
+      setConversationActivity,
       updateMessage,
       updateRequestActivity
     ]
@@ -4651,6 +4673,7 @@ function App(): React.JSX.Element {
       delete next[conversationId]
       return next
     })
+    setConversationActivity(conversationId, false)
     const remaining = conversations.filter(
       (conversation) => conversation.id !== conversationId
     )
@@ -4954,6 +4977,7 @@ function App(): React.JSX.Element {
       runtime.capability === 'image-generation' ? '' : selectedExpertId
     const workModeSnapshot = effectiveWorkMode
     preparingConversations.current.add(conversationId)
+    setConversationActivity(conversationId, true)
     setInput('')
     updateAttachments([])
     const userMessage: Message = {
@@ -5546,6 +5570,7 @@ function App(): React.JSX.Element {
         await window.goodbuddy.agent.cancel(requestId)
       }
       activeRuns.current.clear()
+      setActiveConversationIds(new Set())
       for (const attachments of attachmentsRef.current.values()) {
         for (const attachment of attachments) {
           await window.goodbuddy.context.remove(attachment.id)
@@ -5889,6 +5914,14 @@ function App(): React.JSX.Element {
                   </span>
                   <small>{formatTime(conversation.updatedAt, locale)}</small>
                 </button>
+                {activeConversationIds.has(conversation.id) && (
+                  <span
+                    aria-label={t('conversation.active')}
+                    className="conversation-activity-indicator"
+                    role="status"
+                    title={t('conversation.active')}
+                  />
+                )}
                 <button
                   aria-controls={`conversation-actions-${conversation.id}`}
                   aria-expanded={

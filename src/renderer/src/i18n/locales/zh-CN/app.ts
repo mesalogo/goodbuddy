@@ -72,6 +72,7 @@ export const app = {
     greeting:
       '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件或使用知识库。启用 Agent Runtime 后，我也可以在你的授权下调用工具。',
     interrupted: '上次运行意外中断，可以重新发送问题',
+    active: '会话正在活动',
     unread: '未读',
     unreadRemote: '未读远程消息',
     noRemote: '尚无远程会话',

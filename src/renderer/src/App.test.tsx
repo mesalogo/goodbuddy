@@ -1592,6 +1592,20 @@ describe('App', () => {
     if (!request) {
       throw new Error('Missing request')
     }
+    const conversationList =
+      container.querySelector<HTMLElement>('.conversation-list')
+    if (!conversationList) {
+      throw new Error('Missing conversation list')
+    }
+    const activeIndicator = within(conversationList).getByRole('status', {
+      name: '会话正在活动'
+    })
+    expect(activeIndicator).toHaveClass(
+      'conversation-activity-indicator'
+    )
+    expect(activeIndicator.closest('.conversation-row')).toHaveTextContent(
+      '离开页面后继续生成'
+    )
     await act(
       () =>
         new Promise<void>((resolve) =>
@@ -1613,6 +1627,11 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
     expect(chat).toBeInTheDocument()
     expect(chat.closest('[data-route="chat"]')).toHaveAttribute('hidden')
+    expect(
+      within(conversationList).getByRole('status', {
+        name: '会话正在活动'
+      })
+    ).toBeInTheDocument()
     act(() => {
       agentListener?.({
         requestId: request.requestId,
@@ -1620,6 +1639,19 @@ describe('App', () => {
         delta: '后台新增的回复内容'
       })
     })
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+    await waitFor(() =>
+      expect(
+        within(conversationList).queryByRole('status', {
+          name: '会话正在活动'
+        })
+      ).not.toBeInTheDocument()
+    )
 
     fireEvent.click(screen.getByRole('button', { name: '对话' }))
     expect(await screen.findByText('后台新增的回复内容')).toBeInTheDocument()
