@@ -799,6 +799,20 @@ function parseModelToolResponse(
     throw new Error('模型接口返回格式无效')
   }
   if (protocol === 'anthropic') {
+    const stopReason = payload.stop_reason
+    if (
+      stopReason !== undefined &&
+      stopReason !== null &&
+      typeof stopReason !== 'string'
+    ) {
+      throw new Error('Anthropic 模型接口返回了无效停止原因')
+    }
+    if (
+      stopReason === 'max_tokens' ||
+      stopReason === 'model_context_window_exceeded'
+    ) {
+      throw new Error(`Anthropic 返回未完成结果：${stopReason}`)
+    }
     if (!Array.isArray(payload.content)) {
       throw new Error('Anthropic 模型接口未返回 content')
     }
@@ -1122,6 +1136,349 @@ async function* readBoundedSseBlocks(
     }
     reader.releaseLock()
   }
+}
+
+async function* readOpenAIResponsesToolStream(
+  response: Response,
+  requestId: string
+): AsyncGenerator<RuntimeEvent, ModelToolResponse, void> {
+  let answer = ''
+  let reasoning = ''
+  const usage: ModelUsageAccumulator = {
+    reported: false
+  }
+
+  for await (const block of readBoundedSseBlocks(response)) {
+    const parsed = parseSseData(block)
+    if (parsed.stopped) {
+      break
+    }
+    if (parsed.event === undefined) {
+      continue
+    }
+    const providerError = getErrorMessage(parsed.event)
+    if (providerError) {
+      throw new Error(providerError)
+    }
+    const event = getRecord(parsed.event)
+    if (!event) {
+      throw new Error('OpenAI Responses 返回了无效流式事件')
+    }
+    if (event.type === 'response.failed') {
+      const failedResponse = getRecord(event.response)
+      throw new Error(
+        getErrorMessage(failedResponse) ?? 'OpenAI Responses 请求失败'
+      )
+    }
+    if (event.type === 'response.incomplete') {
+      const incompleteResponse = getRecord(event.response)
+      const details = getRecord(incompleteResponse?.incomplete_details)
+      const reason =
+        typeof details?.reason === 'string'
+          ? `：${details.reason.slice(0, 200)}`
+          : ''
+      throw new Error(`OpenAI Responses 返回未完成结果${reason}`)
+    }
+    applyUsageUpdate(usage, getUsageUpdate(event, 'openai'))
+
+    const reasoningDelta = getOpenAIResponsesReasoningDelta(event)
+    if (reasoningDelta) {
+      reasoning += reasoningDelta
+      yield {
+        requestId,
+        type: 'reasoning',
+        delta: reasoningDelta
+      }
+    }
+    const textDelta = getOpenAIResponsesTextDelta(event)
+    if (textDelta) {
+      answer += textDelta
+      yield {
+        requestId,
+        type: 'text',
+        delta: textDelta
+      }
+    }
+    if (event.type !== 'response.completed') {
+      continue
+    }
+
+    const completedResponse = getRecord(event.response)
+    const result = parseModelToolResponse(
+      completedResponse,
+      'openai-responses'
+    )
+    applyUsageUpdate(usage, result.usage)
+    if (result.reasoning !== reasoning) {
+      if (!result.reasoning.startsWith(reasoning)) {
+        throw new Error(
+          'OpenAI Responses 流式推理与完成结果不一致'
+        )
+      }
+      const remainingReasoning = result.reasoning.slice(reasoning.length)
+      if (remainingReasoning) {
+        reasoning += remainingReasoning
+        yield {
+          requestId,
+          type: 'reasoning',
+          delta: remainingReasoning
+        }
+      }
+    }
+    if (result.text !== answer) {
+      if (!result.text.startsWith(answer)) {
+        throw new Error('OpenAI Responses 流式文本与完成结果不一致')
+      }
+      const remainingText = result.text.slice(answer.length)
+      if (remainingText) {
+        answer += remainingText
+        yield {
+          requestId,
+          type: 'text',
+          delta: remainingText
+        }
+      }
+    }
+    return {
+      ...result,
+      text: answer,
+      reasoning,
+      usage,
+      streamed: true
+    }
+  }
+
+  throw new Error('模型接口流式响应意外中断')
+}
+
+type AnthropicStreamBlock = {
+  content: Record<string, unknown>
+  initialInput?: unknown
+  kind: 'other' | 'text' | 'thinking' | 'tool_use'
+  open: boolean
+  partialJson: string
+}
+
+function getAnthropicStreamIndex(
+  event: Record<string, unknown>
+): number {
+  if (
+    !Number.isSafeInteger(event.index) ||
+    (event.index as number) < 0
+  ) {
+    throw new Error('Anthropic 返回了无效流式内容块序号')
+  }
+  return event.index as number
+}
+
+async function* readAnthropicToolStream(
+  response: Response,
+  requestId: string
+): AsyncGenerator<RuntimeEvent, ModelToolResponse, void> {
+  const blocks = new Map<number, AnthropicStreamBlock>()
+  const usage: ModelUsageAccumulator = {
+    reported: false
+  }
+  let answer = ''
+  let reasoning = ''
+  let stopReason: unknown
+  let toolCallCount = 0
+
+  for await (const block of readBoundedSseBlocks(response)) {
+    const parsed = parseSseData(block)
+    if (parsed.stopped) {
+      break
+    }
+    if (parsed.event === undefined) {
+      continue
+    }
+    const providerError = getErrorMessage(parsed.event)
+    if (providerError) {
+      throw new Error(providerError)
+    }
+    const event = getRecord(parsed.event)
+    if (!event || typeof event.type !== 'string') {
+      throw new Error('Anthropic 返回了无效流式事件')
+    }
+    applyUsageUpdate(usage, getUsageUpdate(event, 'anthropic'))
+
+    if (event.type === 'message_delta') {
+      const delta = getRecord(event.delta)
+      if (delta?.stop_reason !== undefined) {
+        stopReason = delta.stop_reason
+      }
+    }
+
+    if (event.type === 'content_block_start') {
+      const index = getAnthropicStreamIndex(event)
+      const content = getRecord(event.content_block)
+      if (!content || blocks.has(index)) {
+        throw new Error('Anthropic 返回了无效流式内容块')
+      }
+      const next: AnthropicStreamBlock = {
+        content: { ...content },
+        kind: 'other',
+        open: true,
+        partialJson: ''
+      }
+      if (content.type === 'text') {
+        if (
+          content.text !== undefined &&
+          typeof content.text !== 'string'
+        ) {
+          throw new Error('Anthropic 返回了无效流式文本块')
+        }
+        const text = typeof content.text === 'string' ? content.text : ''
+        next.kind = 'text'
+        next.content.text = text
+        if (text) {
+          answer += text
+          yield {
+            requestId,
+            type: 'text',
+            delta: text
+          }
+        }
+      } else if (content.type === 'thinking') {
+        if (
+          content.thinking !== undefined &&
+          typeof content.thinking !== 'string'
+        ) {
+          throw new Error('Anthropic 返回了无效流式推理块')
+        }
+        const thinking =
+          typeof content.thinking === 'string' ? content.thinking : ''
+        next.kind = 'thinking'
+        next.content.thinking = thinking
+        if (thinking) {
+          reasoning += thinking
+          yield {
+            requestId,
+            type: 'reasoning',
+            delta: thinking
+          }
+        }
+      } else if (content.type === 'tool_use') {
+        toolCallCount += 1
+        if (toolCallCount > maxToolCallsPerRun) {
+          throw new Error('模型单轮工具调用超过安全限制')
+        }
+        const identity = parseToolCallIdentity(content.id, content.name)
+        next.kind = 'tool_use'
+        next.initialInput = content.input
+        next.content.id = identity.id
+        next.content.name = identity.name
+        next.content.input = {}
+      }
+      blocks.set(index, next)
+      continue
+    }
+
+    if (event.type === 'content_block_delta') {
+      const index = getAnthropicStreamIndex(event)
+      const current = blocks.get(index)
+      const delta = getRecord(event.delta)
+      if (!current?.open || !delta || typeof delta.type !== 'string') {
+        throw new Error('Anthropic 返回了无效流式内容增量')
+      }
+      if (delta.type === 'text_delta') {
+        if (current.kind !== 'text' || typeof delta.text !== 'string') {
+          throw new Error('Anthropic 返回了无效流式文本增量')
+        }
+        current.content.text =
+          `${current.content.text as string}${delta.text}`
+        if (delta.text) {
+          answer += delta.text
+          yield {
+            requestId,
+            type: 'text',
+            delta: delta.text
+          }
+        }
+      } else if (delta.type === 'thinking_delta') {
+        if (
+          current.kind !== 'thinking' ||
+          typeof delta.thinking !== 'string'
+        ) {
+          throw new Error('Anthropic 返回了无效流式推理增量')
+        }
+        current.content.thinking =
+          `${current.content.thinking as string}${delta.thinking}`
+        if (delta.thinking) {
+          reasoning += delta.thinking
+          yield {
+            requestId,
+            type: 'reasoning',
+            delta: delta.thinking
+          }
+        }
+      } else if (delta.type === 'signature_delta') {
+        if (
+          current.kind !== 'thinking' ||
+          typeof delta.signature !== 'string'
+        ) {
+          throw new Error('Anthropic 返回了无效流式签名增量')
+        }
+        current.content.signature =
+          `${typeof current.content.signature === 'string'
+            ? current.content.signature
+            : ''}${delta.signature}`
+      } else if (delta.type === 'input_json_delta') {
+        if (
+          current.kind !== 'tool_use' ||
+          typeof delta.partial_json !== 'string'
+        ) {
+          throw new Error('Anthropic 返回了无效流式工具参数增量')
+        }
+        current.partialJson += delta.partial_json
+        if (
+          Buffer.byteLength(current.partialJson) >
+          maxToolArgumentBytes
+        ) {
+          throw new Error('模型工具参数超过 128KB 安全限制')
+        }
+      }
+      continue
+    }
+
+    if (event.type === 'content_block_stop') {
+      const index = getAnthropicStreamIndex(event)
+      const current = blocks.get(index)
+      if (!current?.open) {
+        throw new Error('Anthropic 返回了无效流式内容结束事件')
+      }
+      current.open = false
+      if (current.kind === 'tool_use') {
+        current.content.input = parseToolArguments(
+          current.partialJson || current.initialInput || {}
+        )
+      }
+      continue
+    }
+
+    if (event.type !== 'message_stop') {
+      continue
+    }
+    if ([...blocks.values()].some((item) => item.open)) {
+      throw new Error('Anthropic 流式响应包含未结束的内容块')
+    }
+    const content = [...blocks.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, item]) => item.content)
+    const result = parseModelToolResponse(
+      { content, stop_reason: stopReason },
+      'anthropic'
+    )
+    return {
+      ...result,
+      text: answer,
+      reasoning,
+      usage,
+      streamed: true
+    }
+  }
+
+  throw new Error('模型接口流式响应意外中断')
 }
 
 export class ModelAgentRuntime implements AgentRuntime {
@@ -1784,7 +2141,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         ? {
             model: this.options.model,
             max_output_tokens: this.maxOutputTokens,
-            stream: false,
+            stream: true,
             instructions: system,
             input: messages,
             tools: providerTools
@@ -1793,7 +2150,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           ? {
               model: this.options.model,
               max_tokens: this.maxOutputTokens,
-              stream: false,
+              stream: true,
               system,
               messages,
               tools: providerTools
@@ -1843,12 +2200,22 @@ export class ModelAgentRuntime implements AgentRuntime {
           detail ?? `模型接口请求失败（HTTP ${response.status}）`
         )
       }
+      const isEventStream = response.headers
+        .get('content-type')
+        ?.toLocaleLowerCase()
+        .includes('text/event-stream') === true
+      if (responses && isEventStream) {
+        return yield* readOpenAIResponsesToolStream(
+          response,
+          requestId
+        )
+      }
+      if (anthropic && isEventStream) {
+        return yield* readAnthropicToolStream(response, requestId)
+      }
       if (
         streamOpenAIChat &&
-        response.headers
-          .get('content-type')
-          ?.toLocaleLowerCase()
-          .includes('text/event-stream')
+        isEventStream
       ) {
         const streamedToolCalls = new Map<
           number,

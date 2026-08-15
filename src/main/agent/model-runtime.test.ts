@@ -119,6 +119,19 @@ function createResponsesEventStream(
   ].join('\n')
 }
 
+function createSseEventStream(
+  events: ReadonlyArray<Record<string, unknown>>
+): string {
+  return [
+    ...events.flatMap((event) => [
+      `event: ${event.type as string}`,
+      `data: ${JSON.stringify(event)}`,
+      ''
+    ]),
+    ''
+  ].join('\n')
+}
+
 function createToolProvider(
   overrides: Partial<ModelToolProviderLike> = {}
 ): ModelToolProviderLike {
@@ -1808,6 +1821,227 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it('streams OpenAI Responses text and reasoning through tool rounds', async () => {
+    const streams = [
+      createSseEventStream([
+        {
+          type: 'response.reasoning_summary_text.delta',
+          delta: '先分析。'
+        },
+        {
+          type: 'response.output_text.delta',
+          delta: '准备读取。'
+        },
+        {
+          type: 'response.completed',
+          response: {
+            id: 'resp-stream-tool-1',
+            model: 'gpt-5',
+            status: 'completed',
+            output: [
+              {
+                id: 'reasoning-stream-1',
+                type: 'reasoning',
+                summary: [
+                  { type: 'summary_text', text: '先分析。' }
+                ]
+              },
+              {
+                id: 'message-stream-1',
+                type: 'message',
+                role: 'assistant',
+                status: 'completed',
+                content: [
+                  { type: 'output_text', text: '准备读取。' }
+                ]
+              },
+              {
+                id: 'function-stream-1',
+                type: 'function_call',
+                call_id: 'call-stream-1',
+                name: 'workspace_read_text',
+                arguments: '{"path":"README.md"}'
+              }
+            ],
+            usage: { input_tokens: 12, output_tokens: 4 }
+          }
+        }
+      ]),
+      createSseEventStream([
+        {
+          type: 'response.output_text.delta',
+          delta: '读取完成。'
+        },
+        {
+          type: 'response.completed',
+          response: {
+            id: 'resp-stream-tool-2',
+            model: 'gpt-5',
+            status: 'completed',
+            output: [
+              {
+                id: 'message-stream-2',
+                type: 'message',
+                role: 'assistant',
+                status: 'completed',
+                content: [
+                  { type: 'output_text', text: '读取完成。' }
+                ]
+              }
+            ],
+            usage: { input_tokens: 20, output_tokens: 5 }
+          }
+        }
+      ])
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(streams.shift(), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed151',
+        conversationId: 'conversation-responses-streaming-tools',
+        prompt: '读取 README',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    for (const [, init] of fetcher.mock.calls) {
+      expect(JSON.parse(init?.body as string)).toMatchObject({
+        stream: true
+      })
+    }
+    expect(
+      events
+        .filter((event) => event.type === 'reasoning')
+        .map((event) => event.delta)
+    ).toEqual(['先分析。'])
+    expect(
+      events
+        .filter((event) => event.type === 'text')
+        .map((event) => event.delta)
+    ).toEqual(['准备读取。', '读取完成。'])
+    expect(
+      events.findIndex((event) => event.type === 'text')
+    ).toBeLessThan(
+      events.findIndex(
+        (event) =>
+          event.type === 'tool' && event.state === 'running'
+      )
+    )
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { input: Array<Record<string, unknown>> }
+    expect(secondBody.input).toEqual([
+      {
+        role: 'user',
+        content: '读取 README'
+      },
+      {
+        id: 'reasoning-stream-1',
+        type: 'reasoning',
+        summary: [{ type: 'summary_text', text: '先分析。' }]
+      },
+      {
+        id: 'message-stream-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [
+          { type: 'output_text', text: '准备读取。' }
+        ]
+      },
+      {
+        id: 'function-stream-1',
+        type: 'function_call',
+        call_id: 'call-stream-1',
+        name: 'workspace_read_text',
+        arguments: '{"path":"README.md"}'
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call-stream-1',
+        output: [
+          {
+            type: 'input_text',
+            text: 'tool result'
+          }
+        ]
+      }
+    ])
+    expect(toolProvider.callTool).toHaveBeenCalledOnce()
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('rejects an incomplete OpenAI Responses tool stream', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(
+        [
+          'event: response.output_text.delta',
+          `data: ${JSON.stringify({
+            type: 'response.output_text.delta',
+            delta: 'partial'
+          })}`,
+          '',
+          'data: [DONE]',
+          '',
+          ''
+        ].join('\n'),
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        }
+      )
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      protocol: 'openai-responses',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: 'a431666e-5ec8-45e6-beb4-654132eed153',
+          conversationId: 'conversation-responses-incomplete-tools',
+          prompt: '读取 README',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('流式响应意外中断')
+    expect(toolProvider.callTool).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
   it('continues OpenAI Responses with function_call_output', async () => {
     const responses = [
       {
@@ -1902,7 +2136,7 @@ describe('ModelAgentRuntime', () => {
     ) as Record<string, unknown>
     expect(firstBody).toMatchObject({
       model: 'gpt-5',
-      stream: false,
+      stream: true,
       tools: [
         {
           type: 'function',
@@ -2197,7 +2431,7 @@ describe('ModelAgentRuntime', () => {
       fetcher.mock.calls[0]?.[1]?.body as string
     ) as Record<string, unknown>
     expect(firstBody).toMatchObject({
-      stream: false,
+      stream: true,
       tools: [
         {
           name: 'workspace_read_text',
@@ -2231,6 +2465,372 @@ describe('ModelAgentRuntime', () => {
         }
       ]
     })
+  })
+
+  it('streams Anthropic text and thinking through tool rounds', async () => {
+    const streams = [
+      createSseEventStream([
+        {
+          type: 'message_start',
+          message: {
+            id: 'message-stream-tool-1',
+            model: 'claude',
+            usage: { input_tokens: 10 }
+          }
+        },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: '' }
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: '先分析。' }
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'signature_delta', signature: 'signed' }
+        },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'text', text: '' }
+        },
+        {
+          type: 'content_block_delta',
+          index: 1,
+          delta: { type: 'text_delta', text: '准备读取。' }
+        },
+        { type: 'content_block_stop', index: 1 },
+        {
+          type: 'content_block_start',
+          index: 2,
+          content_block: {
+            type: 'tool_use',
+            id: 'toolu-stream-1',
+            name: 'workspace_read_text',
+            input: {}
+          }
+        },
+        {
+          type: 'content_block_delta',
+          index: 2,
+          delta: {
+            type: 'input_json_delta',
+            partial_json: '{"path":'
+          }
+        },
+        {
+          type: 'content_block_delta',
+          index: 2,
+          delta: {
+            type: 'input_json_delta',
+            partial_json: '"notes.md"}'
+          }
+        },
+        { type: 'content_block_stop', index: 2 },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'tool_use' },
+          usage: { output_tokens: 4 }
+        },
+        { type: 'message_stop' }
+      ]),
+      createSseEventStream([
+        {
+          type: 'message_start',
+          message: {
+            id: 'message-stream-tool-2',
+            model: 'claude',
+            usage: { input_tokens: 18 }
+          }
+        },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: '' }
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: '读取完成。' }
+        },
+        { type: 'content_block_stop', index: 0 },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn' },
+          usage: { output_tokens: 5 }
+        },
+        { type: 'message_stop' }
+      ])
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(streams.shift(), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed152',
+        conversationId: 'conversation-anthropic-streaming-tools',
+        prompt: '读取 notes',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    for (const [, init] of fetcher.mock.calls) {
+      expect(JSON.parse(init?.body as string)).toMatchObject({
+        stream: true
+      })
+    }
+    expect(
+      events
+        .filter((event) => event.type === 'reasoning')
+        .map((event) => event.delta)
+    ).toEqual(['先分析。'])
+    expect(
+      events
+        .filter((event) => event.type === 'text')
+        .map((event) => event.delta)
+    ).toEqual(['准备读取。', '读取完成。'])
+    expect(
+      events.findIndex((event) => event.type === 'text')
+    ).toBeLessThan(
+      events.findIndex(
+        (event) =>
+          event.type === 'tool' && event.state === 'running'
+      )
+    )
+    const secondBody = JSON.parse(
+      fetcher.mock.calls[1]?.[1]?.body as string
+    ) as { messages: Array<Record<string, unknown>> }
+    expect(secondBody.messages.at(-2)).toEqual({
+      role: 'assistant',
+      content: [
+        {
+          type: 'thinking',
+          thinking: '先分析。',
+          signature: 'signed'
+        },
+        {
+          type: 'text',
+          text: '准备读取。'
+        },
+        {
+          type: 'tool_use',
+          id: 'toolu-stream-1',
+          name: 'workspace_read_text',
+          input: { path: 'notes.md' }
+        }
+      ]
+    })
+    expect(secondBody.messages.at(-1)).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu-stream-1',
+          content: [{ type: 'text', text: 'tool result' }]
+        }
+      ]
+    })
+    expect(toolProvider.callTool).toHaveBeenCalledOnce()
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('rejects malformed streamed Anthropic tool arguments', async () => {
+    const stream = createSseEventStream([
+      {
+        type: 'message_start',
+        message: {
+          id: 'message-invalid-tool-1',
+          model: 'claude',
+          usage: { input_tokens: 8 }
+        }
+      },
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: {
+          type: 'tool_use',
+          id: 'toolu-invalid-1',
+          name: 'workspace_read_text',
+          input: {}
+        }
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: {
+          type: 'input_json_delta',
+          partial_json: '{"path":'
+        }
+      },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_stop' }
+    ])
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: 'a431666e-5ec8-45e6-beb4-654132eed154',
+          conversationId: 'conversation-anthropic-invalid-tools',
+          prompt: '读取 notes',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow(
+      '模型返回了无效的工具参数 JSON'
+    )
+    expect(toolProvider.callTool).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a truncated streamed Anthropic tool round', async () => {
+    const stream = createSseEventStream([
+      {
+        type: 'message_start',
+        message: {
+          id: 'message-truncated-stream-1',
+          model: 'claude',
+          usage: { input_tokens: 8 }
+        }
+      },
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' }
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'partial' }
+      },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'max_tokens' },
+        usage: { output_tokens: 4 }
+      },
+      { type: 'message_stop' }
+    ])
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: 'a431666e-5ec8-45e6-beb4-654132eed155',
+          conversationId: 'conversation-anthropic-truncated-stream',
+          prompt: '读取 notes',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow(
+      'Anthropic 返回未完成结果：max_tokens'
+    )
+    expect(toolProvider.callTool).not.toHaveBeenCalled()
+  })
+
+  it('rejects a truncated Anthropic JSON fallback', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        id: 'message-truncated-json-1',
+        model: 'claude',
+        content: [{ type: 'text', text: 'partial' }],
+        stop_reason: 'model_context_window_exceeded',
+        usage: { input_tokens: 8, output_tokens: 4 }
+      })
+    )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      toolProvider
+    })
+    const consume = async (): Promise<void> => {
+      for await (const _event of runtime.run(
+        {
+          requestId: 'a431666e-5ec8-45e6-beb4-654132eed156',
+          conversationId: 'conversation-anthropic-truncated-json',
+          prompt: '读取 notes',
+          workMode: 'execute'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )) {
+        void _event
+      }
+    }
+
+    await expect(consume()).rejects.toThrow(
+      'Anthropic 返回未完成结果：model_context_window_exceeded'
+    )
+    expect(toolProvider.callTool).not.toHaveBeenCalled()
   })
 
   it('synthesizes and pairs a missing Anthropic tool_use id', async () => {
