@@ -2071,7 +2071,9 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '分析这个问题' }
     })
-    fireEvent.click(await screen.findByLabelText('发送'))
+    const send = await screen.findByLabelText('发送')
+    await waitFor(() => expect(send).toBeEnabled())
+    fireEvent.click(send)
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
     const request = run.mock.calls[0]?.[0]
     if (!request) {

@@ -38,7 +38,6 @@ import {
 } from 'lucide-react'
 import {
   Component,
-  lazy,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -165,38 +164,36 @@ import type {
 import type { ReleaseNotesSnapshot } from '../../shared/release-notes-contracts'
 import { ReleaseNotesDialog } from './ReleaseNotesDialog'
 import { scheduleIdleRoutePreload } from './idle-route-preload'
+import { createPreloadableComponent } from './preloadable-component'
 import { formatTime } from './time-format'
 
-const loadKnowledgeWorkspace = () => import('./KnowledgeWorkspace')
-const loadHeartbeatCenter = () => import('./HeartbeatCenter')
-const loadMagicNotesWorkspace = () => import('./MagicNotesWorkspace')
-const loadSettingsPanel = () => import('./SettingsPanel')
+const knowledgeWorkspaceRoute = createPreloadableComponent(
+  () => import('./KnowledgeWorkspace'),
+  (module) => module.KnowledgeWorkspace
+)
+const heartbeatCenterRoute = createPreloadableComponent(
+  () => import('./HeartbeatCenter'),
+  (module) => module.HeartbeatCenter
+)
+const magicNotesWorkspaceRoute = createPreloadableComponent(
+  () => import('./MagicNotesWorkspace'),
+  (module) => module.MagicNotesWorkspace
+)
+const settingsPanelRoute = createPreloadableComponent(
+  () => import('./SettingsPanel'),
+  (module) => module.SettingsPanel
+)
 const idleRouteModuleLoaders = [
-  loadKnowledgeWorkspace,
-  loadHeartbeatCenter,
-  loadMagicNotesWorkspace,
-  loadSettingsPanel
+  knowledgeWorkspaceRoute.preload,
+  heartbeatCenterRoute.preload,
+  magicNotesWorkspaceRoute.preload,
+  settingsPanelRoute.preload
 ] as const
 
-const KnowledgeWorkspace = lazy(async () => {
-  const module = await loadKnowledgeWorkspace()
-  return { default: module.KnowledgeWorkspace }
-})
-
-const HeartbeatCenter = lazy(async () => {
-  const module = await loadHeartbeatCenter()
-  return { default: module.HeartbeatCenter }
-})
-
-const MagicNotesWorkspace = lazy(async () => {
-  const module = await loadMagicNotesWorkspace()
-  return { default: module.MagicNotesWorkspace }
-})
-
-const SettingsPanel = lazy(async () => {
-  const module = await loadSettingsPanel()
-  return { default: module.SettingsPanel }
-})
+const KnowledgeWorkspace = knowledgeWorkspaceRoute.Component
+const HeartbeatCenter = heartbeatCenterRoute.Component
+const MagicNotesWorkspace = magicNotesWorkspaceRoute.Component
+const SettingsPanel = settingsPanelRoute.Component
 
 const messageRenderBatchSize = 80
 const conversationPersistenceIntervalMs = 500
