@@ -92,11 +92,11 @@ export const activity = {
       approval: '审批'
     },
     nodes: {
-      user: '用',
+      user: 'U',
       assistant: 'G',
-      tool: '工',
-      approval: '审',
-      subagent: '专'
+      tool: 'T',
+      approval: 'A',
+      subagent: 'S'
     }
   },
   empty: {

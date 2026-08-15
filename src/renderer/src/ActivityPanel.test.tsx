@@ -398,6 +398,26 @@ describe('ActivityPanel', () => {
     expect(
       within(timeline).getAllByText('GoodBuddy').length
     ).toBeGreaterThan(0)
+    expect(
+      within(
+        screen.getByRole('button', { name: /用户，任务/u })
+      ).getByText('U')
+    ).toBeInTheDocument()
+    expect(
+      within(
+        screen.getByRole('button', { name: /活动 2，工具/u })
+      ).getByText('T')
+    ).toBeInTheDocument()
+    expect(
+      within(
+        screen.getByRole('button', { name: /研究专家，子专家/u })
+      ).getByText('S')
+    ).toBeInTheDocument()
+    expect(
+      within(
+        screen.getByRole('button', { name: /GoodBuddy，结果/u })
+      ).getByText('G')
+    ).toBeInTheDocument()
     expect(within(timeline).getByText('项目：项目甲')).toBeInTheDocument()
     expect(
       within(timeline).getByText(

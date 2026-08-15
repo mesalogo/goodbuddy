@@ -381,9 +381,7 @@ export function ActivityPanel({
       return {
         kind: 'subagent',
         name: record.title,
-        abbreviation:
-          Array.from(record.title.trim())[0] ??
-          t('timeline.nodes.subagent')
+        abbreviation: t('timeline.nodes.subagent')
       }
     }
     if (record.kind === 'tool') {
