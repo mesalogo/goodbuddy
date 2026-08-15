@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.9.3",
+      "releasedAt": "2026-08-15",
+      "notes": {
+        "zh-CN": {
+          "features": [
+            "新增直连模型上下文控制：可在达到阈值时自动摘要较早对话，保留最近完整问答，并可为每个模型配置上下文上限及选择摘要模型；原始聊天记录不会删除。",
+            "重新设计“运行记录”，按项目、任务和会话组织执行详情，新增共享时间轴、活动筛选、节点详情，以及按项目、会话和模型汇总的 Token 用量视图。",
+            "统一通道项目设置入口；微信 ClawBot、企业微信和钉钉项目的名称、说明、Runtime 与工作模式现在会在项目设置和通道设置之间保持同步。",
+            "调整 Agent Runtime 执行方式：DeepSeek Harness、OpenCode 和 Continue 在 Execute 模式下通过现有授权控制，以当前用户权限运行工具。"
+          ],
+          "fixes": [
+            "提升大型会话与流式回复的响应速度：增量保存会话、限制首屏渲染量、按帧合并更新、并行启动前置任务，并在空闲时预载页面。",
+            "修复 OpenAI Responses 与 Anthropic 的工具轮次等待完整响应的问题；文本和推理现在会在工具执行及后续轮次中持续流式显示。",
+            "修复打包应用启动时缺少 DeepSeek Harness bundle manifest、导致主进程无法加载的问题。",
+            "强化流式事件与会话保存顺序：首段内容更快显示，结束状态会可靠持久化，并降低退出应用或长会话期间状态丢失的风险。"
+          ]
+        },
+        "en-US": {
+          "features": [
+            "Added direct-model context controls that summarize earlier conversation at a configurable threshold, preserve recent full turns, support per-model context limits, and allow a dedicated summary model without deleting chat history.",
+            "Redesigned Run History around projects, tasks, and conversations, with a shared activity timeline, filters, node details, and token-usage views grouped by project, conversation, or model.",
+            "Unified channel project settings so WeChat ClawBot, WeCom, and DingTalk project names, descriptions, Runtime selections, and work modes stay synchronized across both settings entry points.",
+            "Updated Agent Runtime execution so DeepSeek Harness, OpenCode, and Continue run tools with current-user permissions in Execute mode under the existing authorization controls."
+          ],
+          "fixes": [
+            "Improved responsiveness for large conversations and streamed replies with incremental persistence, bounded initial rendering, frame-paced updates, parallel startup prerequisites, and idle route preloading.",
+            "Fixed OpenAI Responses and Anthropic tool rounds waiting for a complete response; text and reasoning now stream continuously through tool execution and continuation rounds.",
+            "Fixed packaged-app startup failures caused by a missing DeepSeek Harness bundle manifest.",
+            "Strengthened streaming-event and conversation-save ordering so initial content appears sooner, terminal state is persisted reliably, and state is less likely to be lost during quit or long conversations."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.9.2",
       "releasedAt": "2026-08-14",
       "notes": {
