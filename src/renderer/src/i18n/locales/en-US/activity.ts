@@ -3,10 +3,16 @@ import type { activity as chineseActivity } from '../zh-CN/activity'
 
 export const activity = {
   header: {
-    eyebrow: 'ACTIVITY AUDIT',
-    title: 'Tasks and activity',
+    eyebrow: 'RUN HISTORY',
+    title: 'Run history',
     description:
-      'View task requests, child experts, tool calls, approval results, and token usage across all projects.'
+      'Review execution details by project, task, and conversation, or browse the activity timeline and model usage.'
+  },
+  tabs: {
+    ariaLabel: 'Run history views',
+    tasks: 'Tasks and conversations',
+    timeline: 'Activity timeline',
+    usage: 'Usage analytics'
   },
   clear: {
     confirmAriaLabel: 'Confirm clearing activity history',
@@ -34,7 +40,7 @@ export const activity = {
   filters: {
     all: 'All',
     active: 'In progress',
-    failed: 'Failed',
+    failed: 'Exceptions',
     ariaLabel: 'Filter activity',
     clear: 'Clear filter'
   },
@@ -69,7 +75,32 @@ export const activity = {
     ariaLabel: 'Activity totals',
     all: 'All',
     active: 'In progress',
-    failed: 'Failed'
+    failed: 'Exceptions'
+  },
+  timeline: {
+    ariaLabel: 'Parallel activity tracks grouped by project and conversation',
+    description:
+      'Every track shares the same execution order. Nodes are spread by event time. Select a node to inspect its identity and details.',
+    lanes: 'Project / conversation',
+    laneAriaLabel: 'Activity track for conversation {{title}}',
+    nodeAriaLabel: '{{actor}}, {{kind}}, {{status}}, {{title}}, {{time}}',
+    legendAriaLabel: 'Activity node identity legend',
+    detailAriaLabel: 'Selected activity node details',
+    closeDetail: 'Close details',
+    actors: {
+      user: 'User',
+      assistant: 'GoodBuddy',
+      subagent: 'Child expert',
+      tool: 'Tool',
+      approval: 'Approval'
+    },
+    nodes: {
+      user: 'U',
+      assistant: 'G',
+      tool: 'T',
+      approval: 'A',
+      subagent: 'S'
+    }
   },
   empty: {
     active: 'There is no pending or running activity.',
@@ -87,6 +118,8 @@ export const activity = {
       'The scope could not be determined when this activity was recorded.',
     conversation: 'Conversation: {{title}}',
     activityCount: 'Activity items: {{formattedCount}}',
+    projectSummary:
+      '{{conversationCount}} tasks or conversations · {{activityCount}} activity items',
     openConversation: 'Open conversation'
   }
 } satisfies TranslationShape<typeof chineseActivity>

@@ -42,7 +42,7 @@ export const app = {
     magicNotes: '魔法笔记',
     knowledge: '知识库',
     heartbeat: '智能心跳',
-    activity: '任务与活动',
+    activity: '运行记录',
     pendingSuggestions: '{{count}} 条待处理建议'
   },
   route: {

@@ -81,7 +81,7 @@ describe('ActivityPanel', () => {
     await i18n.changeLanguage('zh-CN')
   })
 
-  it('renders English interface copy while preserving activity content', async () => {
+  it('renders localized tabs and keeps usage separate from activity', async () => {
     await i18n.changeLanguage('en-US')
     const record = makeRecord(1, 'running')
     render(
@@ -102,19 +102,67 @@ describe('ActivityPanel', () => {
     }).format(new Date(record.createdAt))
     expect(screen.getAllByText(englishDate).length).toBeGreaterThan(0)
     expect(
-      screen.getByRole('heading', {
-        level: 1,
-        name: 'Tasks and activity'
-      })
+      screen.getByRole('heading', { level: 1, name: 'Run history' })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'In progress' })
-    ).toBeInTheDocument()
+      screen.getByRole('tab', { name: 'Tasks and conversations' })
+    ).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText(record.title)).toBeInTheDocument()
+    expect(screen.queryByText('Token usage')).not.toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Usage analytics' })
+    )
     expect(screen.getByText('Token usage')).toBeInTheDocument()
+    expect(screen.queryByText(record.title)).not.toBeInTheDocument()
   })
 
-  it('filters active and unsuccessful activity and opens its conversation', () => {
+  it('organizes records by project, conversation, and detail', () => {
+    const request: ActivityRecord = {
+      ...makeRecord(1, 'running'),
+      kind: 'request',
+      title: '分析登录问题',
+      scope: {
+        kind: 'project',
+        projectId: 'project-1',
+        projectName: '项目甲'
+      }
+    }
+    const tool: ActivityRecord = {
+      ...makeRecord(2),
+      conversationId: request.conversationId,
+      requestId: request.requestId,
+      title: '搜索 IPC 代码',
+      scope: request.scope
+    }
+    const { container } = render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[request, tool, makeRecord(3)]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    expect(container.querySelectorAll('.activity-project')).toHaveLength(2)
+    expect(screen.getByText('项目：项目甲')).toBeInTheDocument()
+    expect(
+      screen.getByText('1 个任务或会话 · 2 条活动')
+    ).toBeInTheDocument()
+
+    const projectConversation = screen
+      .getByText('对话：分析登录问题')
+      .closest('details')
+    expect(projectConversation).not.toBeNull()
+    expect(projectConversation).not.toHaveAttribute('open')
+    fireEvent.click(screen.getByText('对话：分析登录问题'))
+    expect(projectConversation).toHaveAttribute('open')
+    expect(
+      projectConversation?.querySelectorAll('article')
+    ).toHaveLength(2)
+  })
+
+  it('filters active and exceptional activity and opens its conversation', () => {
     const onOpenConversation = vi.fn()
     render(
       <ActivityPanel
@@ -131,16 +179,15 @@ describe('ActivityPanel', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '进行中' }))
-    fireEvent.click(screen.getByText('对话：活动 1'))
-    expect(screen.getByText('活动 1')).toBeInTheDocument()
+    expect(screen.getByText('对话：活动 1')).toBeInTheDocument()
     expect(screen.queryByText('活动 2')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '失败' }))
-    fireEvent.click(screen.getByText('对话：活动 2'))
-    expect(screen.getByText('活动 2')).toBeInTheDocument()
-    expect(screen.getByText('活动 3')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '异常' }))
+    expect(screen.getByText('对话：活动 2')).toBeInTheDocument()
+    expect(screen.getByText('对话：活动 3')).toBeInTheDocument()
     expect(screen.queryByText('活动 1')).not.toBeInTheDocument()
 
+    fireEvent.click(screen.getByText('对话：活动 2'))
     fireEvent.click(
       screen.getAllByRole('button', { name: '打开所属对话' })[0]!
     )
@@ -236,35 +283,7 @@ describe('ActivityPanel', () => {
     expect(within(item).getByText('进行中')).toBeInTheDocument()
   })
 
-  it('groups activity by conversation in collapsible sections', () => {
-    const first = makeRecord(1, 'running')
-    const second = {
-      ...makeRecord(2, 'failed'),
-      conversationId: first.conversationId
-    }
-    const { container } = render(
-      <ActivityPanel
-        onClear={vi.fn()}
-        onOpenConversation={vi.fn()}
-        records={[first, second]}
-        tokenUsage={makeTokenUsage()}
-      />
-    )
-
-    const groups =
-      container.querySelectorAll<HTMLDetailsElement>(
-        'details.activity-group'
-      )
-    expect(groups).toHaveLength(1)
-    expect(groups[0]).not.toHaveAttribute('open')
-    expect(within(groups[0]!).getByText('2 条活动')).toBeInTheDocument()
-
-    fireEvent.click(within(groups[0]!).getByText('对话：活动 1'))
-    expect(groups[0]).toHaveAttribute('open')
-    expect(groups[0]!.querySelectorAll('article')).toHaveLength(2)
-  })
-
-  it('shows immutable scope snapshots on groups and records', () => {
+  it('shows immutable project and unavailable scope snapshots', () => {
     const projectRecord: ActivityRecord = {
       ...makeRecord(1),
       scope: {
@@ -286,11 +305,11 @@ describe('ActivityPanel', () => {
       />
     )
 
-    expect(screen.getAllByText('项目：项目甲')).toHaveLength(2)
-    expect(screen.getAllByText('范围不可用')).toHaveLength(2)
+    expect(screen.getByText('项目：项目甲')).toBeInTheDocument()
+    expect(screen.getByText('范围不可用')).toBeInTheDocument()
   })
 
-  it('uses the shared page hierarchy and explicit global scope', () => {
+  it('uses shared page tabs and explicit global scope', () => {
     render(
       <ActivityPanel
         onClear={vi.fn()}
@@ -301,15 +320,102 @@ describe('ActivityPanel', () => {
     )
 
     expect(
-      screen.getByRole('heading', { level: 1, name: '任务与活动' })
+      screen.getByRole('heading', { level: 1, name: '运行记录' })
     ).toBeInTheDocument()
     expect(screen.getByText('全部项目')).toHaveClass('scope-badge')
-    expect(screen.getByLabelText('Token 用量分组')).toHaveClass(
-      'segmented-control'
+    expect(screen.getByLabelText('运行记录视图')).toHaveClass(
+      'page-tabs'
     )
+    expect(
+      screen.getByRole('tabpanel', { name: '任务与会话' })
+    ).toBeInTheDocument()
     expect(screen.getByLabelText('筛选活动')).toHaveClass(
       'segmented-control'
     )
+    expect(
+      screen.queryByLabelText('Token 用量分组')
+    ).not.toBeInTheDocument()
+  })
+
+  it('renders shared-time project and conversation activity tracks', () => {
+    const first: ActivityRecord = {
+      ...makeRecord(1, 'running'),
+      kind: 'request',
+      title: '分析登录问题',
+      scope: {
+        kind: 'project',
+        projectId: 'project-1',
+        projectName: '项目甲'
+      }
+    }
+    const second: ActivityRecord = {
+      ...makeRecord(2, 'failed'),
+      conversationId: first.conversationId,
+      requestId: first.requestId,
+      scope: first.scope
+    }
+    const third: ActivityRecord = {
+      ...makeRecord(3),
+      conversationId: 'conversation-parallel',
+      requestId: 'request-parallel',
+      kind: 'subagent',
+      title: '研究专家',
+      scope: first.scope
+    }
+    const fourth: ActivityRecord = {
+      ...makeRecord(4),
+      conversationId: first.conversationId,
+      requestId: first.requestId,
+      kind: 'result',
+      title: '任务执行完成',
+      scope: first.scope
+    }
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[first, second, third, fourth]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '活动时间线' }))
+    const timeline = screen.getByLabelText(
+      '按项目和会话分组的并行活动轨道'
+    )
+    expect(timeline).toHaveClass('activity-tracks')
+    expect(
+      timeline.querySelectorAll('.activity-track')
+    ).toHaveLength(2)
+    expect(
+      timeline.querySelectorAll('.activity-track__node')
+    ).toHaveLength(4)
+    expect(within(timeline).getByText('分析登录问题')).toBeInTheDocument()
+    expect(
+      within(timeline).getAllByText('研究专家').length
+    ).toBeGreaterThan(0)
+    expect(within(timeline).getAllByText('用户').length).toBeGreaterThan(0)
+    expect(
+      within(timeline).getAllByText('GoodBuddy').length
+    ).toBeGreaterThan(0)
+    expect(within(timeline).getByText('项目：项目甲')).toBeInTheDocument()
+    expect(
+      within(timeline).getByText(
+        '所有轨道共享同一执行顺序，节点按发生时间依次展开，点击节点查看身份和活动详情。'
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /工具，失败，活动 2/u
+      })
+    )
+    const detail = screen.getByLabelText('选中的活动节点详情')
+    expect(within(detail).getByText('活动 2')).toBeInTheDocument()
+    expect(
+      within(detail).getByText('对话：分析登录问题')
+    ).toBeInTheDocument()
+    expect(within(detail).getByText('项目：项目甲')).toBeInTheDocument()
   })
 
   it('never renders more than 500 records', () => {
@@ -339,11 +445,10 @@ describe('ActivityPanel', () => {
         tokenUsage={makeTokenUsage()}
       />
     )
+    fireEvent.click(screen.getByRole('tab', { name: '用量统计' }))
 
     const stats = screen.getByLabelText('Token 用量统计')
-    expect(
-      within(stats).getByText('150')
-    ).toBeInTheDocument()
+    expect(within(stats).getByText('150')).toBeInTheDocument()
 
     const projectRow = screen.getByRole('row', {
       name: '项目甲gpt-5 · openai 100 20 10 40 120'
@@ -354,7 +459,7 @@ describe('ActivityPanel', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('groups token usage and displays fallback labels', () => {
+  it('groups token usage by project, conversation, and model', () => {
     render(
       <ActivityPanel
         onClear={vi.fn()}
@@ -363,6 +468,7 @@ describe('ActivityPanel', () => {
         tokenUsage={makeTokenUsage()}
       />
     )
+    fireEvent.click(screen.getByRole('tab', { name: '用量统计' }))
 
     expect(screen.getByText('项目甲')).toBeInTheDocument()
     expect(screen.getByText('未归属项目')).toBeInTheDocument()

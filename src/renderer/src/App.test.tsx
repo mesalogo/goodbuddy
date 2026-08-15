@@ -3067,10 +3067,13 @@ describe('App', () => {
       throw new Error('Missing request')
     }
 
-    fireEvent.click(screen.getByText('任务与活动'))
+    fireEvent.click(screen.getByText('运行记录'))
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '用量统计' })
+    )
     const stats = await screen.findByLabelText('Token 用量统计')
     expect(
-      screen.getByRole('heading', { level: 1, name: '任务与活动' })
+      screen.getByRole('heading', { level: 1, name: '运行记录' })
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /^专家角色：/u })
@@ -3841,7 +3844,7 @@ describe('App', () => {
     )
     expect(cancelledDot).toHaveClass('message__status-dot')
     expect(cancelledDot).not.toHaveClass('message__status-dot--active')
-    fireEvent.click(screen.getByText('任务与活动'))
+    fireEvent.click(screen.getByText('运行记录'))
     expect((await screen.findAllByText('已取消')).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByRole('button', { name: '进行中' }))
     expect(
@@ -5170,7 +5173,7 @@ describe('App', () => {
     expect(within(statusRegion).getByText('已取消')).toBeInTheDocument()
     expect(within(statusRegion).getByText('父任务已停止')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByText('任务与活动'))
+    fireEvent.click(screen.getByText('运行记录'))
     expect(await screen.findAllByText('子专家')).toHaveLength(4)
     expect(screen.getAllByText(/智能路由/u).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/手动指定/u).length).toBeGreaterThan(0)

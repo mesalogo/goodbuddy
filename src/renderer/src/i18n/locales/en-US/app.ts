@@ -46,7 +46,7 @@ export const app = {
     magicNotes: 'Magic Notes',
     knowledge: 'Knowledge',
     heartbeat: 'Smart Heartbeat',
-    activity: 'Tasks & Activity',
+    activity: 'Run history',
     pendingSuggestions: '{{count}} pending suggestions'
   },
   route: {

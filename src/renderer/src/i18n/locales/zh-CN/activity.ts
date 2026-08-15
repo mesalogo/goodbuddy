@@ -1,9 +1,15 @@
 export const activity = {
   header: {
-    eyebrow: 'ACTIVITY AUDIT',
-    title: '任务与活动',
+    eyebrow: 'RUN HISTORY',
+    title: '运行记录',
     description:
-      '查看全部项目中的任务请求、子专家、工具调用、审批结果和 Token 用量。'
+      '按项目、任务与会话查看执行详情，或浏览活动时间线和模型用量。'
+  },
+  tabs: {
+    ariaLabel: '运行记录视图',
+    tasks: '任务与会话',
+    timeline: '活动时间线',
+    usage: '用量统计'
   },
   clear: {
     confirmAriaLabel: '确认清空 {{formattedCount}} 条活动记录',
@@ -31,7 +37,7 @@ export const activity = {
   filters: {
     all: '全部',
     active: '进行中',
-    failed: '失败',
+    failed: '异常',
     ariaLabel: '筛选活动',
     clear: '清除筛选'
   },
@@ -66,7 +72,32 @@ export const activity = {
     ariaLabel: '活动统计',
     all: '全部',
     active: '进行中',
-    failed: '失败'
+    failed: '异常'
+  },
+  timeline: {
+    ariaLabel: '按项目和会话分组的并行活动轨道',
+    description:
+      '所有轨道共享同一执行顺序，节点按发生时间依次展开，点击节点查看身份和活动详情。',
+    lanes: '项目 / 会话',
+    laneAriaLabel: '会话 {{title}} 的活动轨道',
+    nodeAriaLabel: '{{actor}}，{{kind}}，{{status}}，{{title}}，{{time}}',
+    legendAriaLabel: '活动节点身份图例',
+    detailAriaLabel: '选中的活动节点详情',
+    closeDetail: '关闭详情',
+    actors: {
+      user: '用户',
+      assistant: 'GoodBuddy',
+      subagent: '子专家',
+      tool: '工具',
+      approval: '审批'
+    },
+    nodes: {
+      user: '用',
+      assistant: 'G',
+      tool: '工',
+      approval: '审',
+      subagent: '专'
+    }
   },
   empty: {
     active: '当前没有等待中或正在运行的活动。',
@@ -83,6 +114,8 @@ export const activity = {
       '创建此活动记录时未能确定其归属范围。',
     conversation: '对话：{{title}}',
     activityCount: '{{formattedCount}} 条活动',
+    projectSummary:
+      '{{conversationCount}} 个任务或会话 · {{activityCount}} 条活动',
     openConversation: '打开所属对话'
   }
 } as const
