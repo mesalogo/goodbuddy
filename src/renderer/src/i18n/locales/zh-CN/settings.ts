@@ -22,6 +22,12 @@ export const settings = {
       navigationDescription: 'LLM、向量、重排模型与凭据',
       description: 'LLM、向量、重排模型与凭据'
     },
+    contextControl: {
+      label: '上下文控制',
+      navigationDescription: '直连模型的历史压缩与原文保留',
+      description:
+        '管理直连模型的上下文压缩阈值、最近原文预算和摘要模型'
+    },
     documentParsing: {
       label: '文档解析',
       navigationDescription: '附件、知识库与本地 OCR',
@@ -444,6 +450,9 @@ export const settings = {
       supportsImageInput: '支持图像输入',
       supportsImageInputDescription:
         '启用后，GoodBuddy 可将图片上下文发送给此模型连接。',
+      contextWindow: '上下文上限（可选）',
+      contextWindowDescription:
+        '以 K tokens 填写。留空表示未知；此值仅用于 GoodBuddy 本地预算计算。',
       imageQuality: '图片质量',
       imageQualityAriaLabel: '图片质量 {{name}}',
       quality: {
@@ -488,6 +497,32 @@ export const settings = {
       privacyDescription:
         '仅向所填接口发送检索查询和候选知识片段。API Key 由系统安全存储加密；重排服务失败时保留原始检索排序。'
     }
+  },
+  contextControl: {
+    enabled: '自动压缩较早的对话',
+    enabledDescription:
+      '仅对直连文本模型生效。达到阈值后生成摘要，原始聊天记录不会被删除。',
+    usageNotice: '生成摘要会产生额外的模型用量。',
+    triggerTokens: '压缩触发阈值',
+    triggerTokensDescription:
+      '达到约 {{tokens}} tokens 时开始整理直连模型的对话上下文。',
+    recentRawTokens: '最近原文预算',
+    recentRawTokensDescription:
+      '压缩后尽量保留最近 {{tokens}} tokens 的完整问答原文。',
+    summaryModel: '摘要模型',
+    currentModel: '当前对话使用的直连模型（推荐）',
+    summaryModelDescription:
+      '图像生成连接不能用于摘要。指定连接不可用时，本次压缩会停止并保留原始输入。',
+    fixedTarget:
+      '较早的对话将压缩为约 8K tokens 的摘要；当前问题始终完整保留。',
+    modelLimits:
+      '各直连模型的可选上下文上限在“模型连接”中配置。已填写时，GoodBuddy 会在模型上限前提前触发压缩。',
+    manageModelLimits: '管理模型上下文上限',
+    advanced: '高级设置',
+    summaryPrompt: '摘要提示词',
+    summaryPromptDescription:
+      '提示词作为受信任的摘要指令发送；对话内容始终按不可信历史数据处理。',
+    restoreDefaultPrompt: '恢复默认提示词'
   },
   security: {
     toolPolicy: {

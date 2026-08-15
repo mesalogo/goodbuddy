@@ -14,6 +14,10 @@ export const settingsCategoryList = [
     translationKey: 'model'
   },
   {
+    id: 'context-control',
+    translationKey: 'contextControl'
+  },
+  {
     id: 'document-parsing',
     translationKey: 'documentParsing'
   },

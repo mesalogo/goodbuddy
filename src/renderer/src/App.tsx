@@ -4597,7 +4597,7 @@ function App(): React.JSX.Element {
             (message) =>
               message.state === 'complete' && message.content.trim()
           )
-          .slice(-30)
+          .slice(-500)
           .map((message) => ({
             role: message.role,
             content: message.content

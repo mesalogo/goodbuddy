@@ -7,6 +7,8 @@ import { homedir } from 'node:os'
 import { z } from 'zod'
 import {
   continueModeSchema,
+  contextCompressionSettingsSchema,
+  defaultContextCompressionSettings,
   defaultModelProfileId,
   defaultRuntimeSettings,
   imageGenerationQualitySchema,
@@ -156,7 +158,13 @@ const version12StoredSettingsSchema = version11StoredSettingsSchema
   })
 
 const currentStoredModelProfileSchema = storedModelProfileSchema.extend({
-  supportsImageInput: z.boolean()
+  supportsImageInput: z.boolean(),
+  contextWindowTokens: z
+    .number()
+    .int()
+    .min(8_000)
+    .max(10_000_000)
+    .optional()
 })
 
 const version13StoredSettingsSchema = version12StoredSettingsSchema
@@ -198,7 +206,7 @@ const version15StoredSettingsSchema = version14StoredSettingsSchema
     deepseekHarnessBinaryPath: runtimePathSchema.default('')
   })
 
-const storedSettingsSchema = version15StoredSettingsSchema
+const version16StoredSettingsSchema = version15StoredSettingsSchema
   .omit({
     version: true,
     deepseekHarnessBinaryPath: true,
@@ -208,7 +216,17 @@ const storedSettingsSchema = version15StoredSettingsSchema
     version: z.literal(16)
   })
 
+const storedSettingsSchema = version16StoredSettingsSchema
+  .omit({ version: true })
+  .extend({
+    version: z.literal(17),
+    contextCompression: contextCompressionSettingsSchema
+  })
+
 type StoredSettings = z.infer<typeof storedSettingsSchema>
+type Version16StoredSettings = z.infer<
+  typeof version16StoredSettingsSchema
+>
 type Version15StoredSettings = z.infer<
   typeof version15StoredSettingsSchema
 >
@@ -305,6 +323,7 @@ export type ResolvedRuntimeSettings = {
   knowledgeRerankEndpoint: string
   knowledgeRerankModel: string
   knowledgeRerankApiKey?: string
+  contextCompression?: RuntimeSettings['contextCompression']
   workspacePath: string
   toolApproval: RuntimeSettings['toolApproval']
 }
@@ -322,12 +341,13 @@ export type ResolvedModelProfile = {
   protocol: RuntimeSettings['modelProtocol']
   authentication: RuntimeSettings['modelAuthentication']
   supportsImageInput?: boolean
+  contextWindowTokens?: number
   imageGenerationQuality?: RuntimeSettings['imageGenerationQuality']
   apiKey?: string
 }
 
 const defaultSettings: StoredSettings = {
-  version: 16,
+  version: 17,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -373,6 +393,7 @@ const defaultSettings: StoredSettings = {
     defaultRuntimeSettings.knowledgeRerankEndpoint,
   knowledgeRerankModel:
     defaultRuntimeSettings.knowledgeRerankModel,
+  contextCompression: defaultContextCompressionSettings,
   workspacePath: defaultRuntimeSettings.workspacePath,
   toolApproval: defaultRuntimeSettings.toolApproval
 }
@@ -464,8 +485,9 @@ function migrateVersion14(
   void _obsolete
   return {
     ...current,
-    version: 16,
-    deepseekHarnessModelSource: { kind: 'platform' }
+    version: 17,
+    deepseekHarnessModelSource: { kind: 'platform' },
+    contextCompression: defaultContextCompressionSettings
   }
 }
 
@@ -481,7 +503,18 @@ function migrateVersion15(
   void _obsoleteSandbox
   return {
     ...current,
-    version: 16
+    version: 17,
+    contextCompression: defaultContextCompressionSettings
+  }
+}
+
+function migrateVersion16(
+  settings: Version16StoredSettings
+): StoredSettings {
+  return {
+    ...settings,
+    version: 17,
+    contextCompression: defaultContextCompressionSettings
   }
 }
 
@@ -569,6 +602,22 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
   )
     ? settings.defaultModelProfileId
     : modelProfiles[0]!.id
+  const compressionSource = settings.contextCompression.modelSource
+  const compressionProfile =
+    compressionSource.kind === 'profile'
+      ? modelProfiles.find(
+          (profile) => profile.id === compressionSource.profileId
+        )
+      : undefined
+  const contextCompression = {
+    ...settings.contextCompression,
+    modelSource:
+      compressionSource.kind === 'profile' &&
+      compressionProfile &&
+      isAgentRuntimeModelProtocol(compressionProfile.protocol)
+        ? compressionSource
+        : ({ kind: 'current' } as const)
+  }
 
   return {
     ...settings,
@@ -585,6 +634,7 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
     deepseekHarnessModelSource: normalizeDeepSeekHarnessSource(
       settings.deepseekHarnessModelSource
     ),
+    contextCompression,
     opencodeBaseUrl,
     opencodeEmbedded: !opencodeBaseUrl
   }
@@ -760,7 +810,7 @@ export class RuntimeSettingsStore {
       const parsed: unknown = JSON.parse(contents)
       assertSupportedSettingsVersion(
         parsed,
-        16,
+        17,
         (version) =>
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${version}，请升级应用后重试`
       )
@@ -768,120 +818,126 @@ export class RuntimeSettingsStore {
       if (current.success) {
         this.settings = current.data
       } else {
-        const version15 =
-          version15StoredSettingsSchema.safeParse(parsed)
-        if (version15.success) {
-          this.settings = migrateVersion15(version15.data)
+        const version16 =
+          version16StoredSettingsSchema.safeParse(parsed)
+        if (version16.success) {
+          this.settings = migrateVersion16(version16.data)
         } else {
-          const version14 =
-            version14StoredSettingsSchema.safeParse(parsed)
-          if (version14.success) {
-            this.settings = migrateVersion14(version14.data)
+          const version15 =
+            version15StoredSettingsSchema.safeParse(parsed)
+          if (version15.success) {
+            this.settings = migrateVersion15(version15.data)
           } else {
-            const version13 =
-              version13StoredSettingsSchema.safeParse(parsed)
-            if (version13.success) {
-              this.settings = migrateVersion13(version13.data)
+            const version14 =
+              version14StoredSettingsSchema.safeParse(parsed)
+            if (version14.success) {
+              this.settings = migrateVersion14(version14.data)
             } else {
-              const version12 =
-                version12StoredSettingsSchema.safeParse(parsed)
-              if (version12.success) {
-                this.settings = migrateVersion12(version12.data)
+              const version13 =
+                version13StoredSettingsSchema.safeParse(parsed)
+              if (version13.success) {
+                this.settings = migrateVersion13(version13.data)
               } else {
-                const version11 =
-                  version11StoredSettingsSchema.safeParse(parsed)
-                if (version11.success) {
-                  this.settings = migrateVersion11(version11.data)
+                const version12 =
+                  version12StoredSettingsSchema.safeParse(parsed)
+                if (version12.success) {
+                  this.settings = migrateVersion12(version12.data)
                 } else {
-                  const version10 =
-                    version10StoredSettingsSchema.safeParse(parsed)
-                  if (version10.success) {
-                    this.settings = migrateVersion10(version10.data)
+                  const version11 =
+                    version11StoredSettingsSchema.safeParse(parsed)
+                  if (version11.success) {
+                    this.settings = migrateVersion11(version11.data)
                   } else {
-                    const version9 =
-                      version9StoredSettingsSchema.safeParse(parsed)
-                    if (version9.success) {
-                      this.settings = migrateVersion9(version9.data)
+                    const version10 =
+                      version10StoredSettingsSchema.safeParse(parsed)
+                    if (version10.success) {
+                      this.settings = migrateVersion10(version10.data)
                     } else {
-                      const version8 =
-                        version8StoredSettingsSchema.safeParse(parsed)
-                      if (version8.success) {
-                        this.settings = migrateVersion8(version8.data)
+                      const version9 =
+                        version9StoredSettingsSchema.safeParse(parsed)
+                      if (version9.success) {
+                        this.settings = migrateVersion9(version9.data)
                       } else {
-                        const version7 =
-                          version7StoredSettingsSchema.safeParse(parsed)
-                        if (version7.success) {
-                          this.settings = migrateVersion7(version7.data)
+                        const version8 =
+                          version8StoredSettingsSchema.safeParse(parsed)
+                        if (version8.success) {
+                          this.settings = migrateVersion8(version8.data)
                         } else {
-                          const version6 =
-                            version6StoredSettingsSchema.safeParse(parsed)
-                          if (version6.success) {
-                            this.settings = migrateVersion6(version6.data)
+                          const version7 =
+                            version7StoredSettingsSchema.safeParse(parsed)
+                          if (version7.success) {
+                            this.settings = migrateVersion7(version7.data)
                           } else {
-                            const version5 =
-                              version5StoredSettingsSchema.safeParse(parsed)
-                            if (version5.success) {
-                              this.settings = migrateVersion5(version5.data)
+                            const version6 =
+                              version6StoredSettingsSchema.safeParse(parsed)
+                            if (version6.success) {
+                              this.settings = migrateVersion6(version6.data)
                             } else {
-                              const version4 =
-                                version4StoredSettingsSchema.safeParse(parsed)
-                              if (version4.success) {
-                                this.settings = migrateVersion4(version4.data)
+                              const version5 =
+                                version5StoredSettingsSchema.safeParse(parsed)
+                              if (version5.success) {
+                                this.settings = migrateVersion5(version5.data)
                               } else {
-                                const version3 =
-                                  version3StoredSettingsSchema.safeParse(parsed)
-                                if (version3.success) {
-                                  this.settings = migrateVersion4({
-                                    ...version3.data,
-                                    version: 4,
-                                    continueMode: 'chat'
-                                  })
+                                const version4 =
+                                  version4StoredSettingsSchema.safeParse(parsed)
+                                if (version4.success) {
+                                  this.settings = migrateVersion4(version4.data)
                                 } else {
-                                  const version2 =
-                                    version2StoredSettingsSchema.safeParse(parsed)
-                                  if (version2.success) {
+                                  const version3 =
+                                    version3StoredSettingsSchema.safeParse(parsed)
+                                  if (version3.success) {
                                     this.settings = migrateVersion4({
+                                      ...version3.data,
                                       version: 4,
-                                      provider: version2.data.provider,
-                                      modelBaseUrl: version2.data.modelBaseUrl,
-                                      modelName: version2.data.modelName,
-                                      opencodeBaseUrl: version2.data.opencodeBaseUrl,
-                                      opencodeEmbedded: version2.data.opencodeEmbedded,
-                                      opencodeBinaryPath: '',
-                                      opencodeConfigPath: '',
-                                      continueBinaryPath: migrateContinueCommand(
-                                        version2.data.continueCommand
-                                      ),
-                                      continueConfigPath: '',
-                                      continueMode: 'chat',
-                                      workspacePath: version2.data.workspacePath,
-                                      credential: version2.data.credential,
-                                      toolApproval: version2.data.toolApproval
+                                      continueMode: 'chat'
                                     })
                                   } else {
-                                    const legacy =
-                                      legacyStoredSettingsSchema.parse(parsed)
-                                    this.settings = migrateVersion4({
-                                      version: 4,
-                                      provider:
-                                        legacy.provider === 'bigtoken'
-                                          ? 'model'
-                                          : legacy.provider,
-                                      modelBaseUrl: legacy.bigtokenBaseUrl,
-                                      modelName: legacy.bigtokenModel,
-                                      opencodeBaseUrl: legacy.opencodeBaseUrl,
-                                      opencodeEmbedded: legacy.opencodeEmbedded,
-                                      opencodeBinaryPath: '',
-                                      opencodeConfigPath: '',
-                                      continueBinaryPath: migrateContinueCommand(
-                                        legacy.continueCommand
-                                      ),
-                                      continueConfigPath: '',
-                                      continueMode: 'chat',
-                                      workspacePath: legacy.workspacePath,
-                                      credential: legacy.credential,
-                                      toolApproval: legacy.toolApproval
-                                    })
+                                    const version2 =
+                                      version2StoredSettingsSchema.safeParse(parsed)
+                                    if (version2.success) {
+                                      this.settings = migrateVersion4({
+                                        version: 4,
+                                        provider: version2.data.provider,
+                                        modelBaseUrl: version2.data.modelBaseUrl,
+                                        modelName: version2.data.modelName,
+                                        opencodeBaseUrl: version2.data.opencodeBaseUrl,
+                                        opencodeEmbedded: version2.data.opencodeEmbedded,
+                                        opencodeBinaryPath: '',
+                                        opencodeConfigPath: '',
+                                        continueBinaryPath: migrateContinueCommand(
+                                          version2.data.continueCommand
+                                        ),
+                                        continueConfigPath: '',
+                                        continueMode: 'chat',
+                                        workspacePath: version2.data.workspacePath,
+                                        credential: version2.data.credential,
+                                        toolApproval: version2.data.toolApproval
+                                      })
+                                    } else {
+                                      const legacy =
+                                        legacyStoredSettingsSchema.parse(parsed)
+                                      this.settings = migrateVersion4({
+                                        version: 4,
+                                        provider:
+                                          legacy.provider === 'bigtoken'
+                                            ? 'model'
+                                            : legacy.provider,
+                                        modelBaseUrl: legacy.bigtokenBaseUrl,
+                                        modelName: legacy.bigtokenModel,
+                                        opencodeBaseUrl: legacy.opencodeBaseUrl,
+                                        opencodeEmbedded: legacy.opencodeEmbedded,
+                                        opencodeBinaryPath: '',
+                                        opencodeConfigPath: '',
+                                        continueBinaryPath: migrateContinueCommand(
+                                          legacy.continueCommand
+                                        ),
+                                        continueConfigPath: '',
+                                        continueMode: 'chat',
+                                        workspacePath: legacy.workspacePath,
+                                        credential: legacy.credential,
+                                        toolApproval: legacy.toolApproval
+                                      })
+                                    }
                                   }
                                 }
                               }
@@ -1090,6 +1146,7 @@ export class RuntimeSettingsStore {
     protocol: RuntimeSettings['modelProtocol']
     authentication: RuntimeSettings['modelAuthentication']
     supportsImageInput: boolean
+    contextWindowTokens?: number
     imageGenerationQuality: RuntimeSettings['imageGenerationQuality']
     credentialSource: RuntimeSettings['credentialSource']
   } {
@@ -1135,6 +1192,7 @@ export class RuntimeSettingsStore {
       protocol: profile.protocol,
       authentication: profile.authentication,
       supportsImageInput: profile.supportsImageInput,
+      contextWindowTokens: profile.contextWindowTokens,
       imageGenerationQuality: profile.imageGenerationQuality,
       credentialSource
     }
@@ -1156,6 +1214,7 @@ export class RuntimeSettingsStore {
             protocol: effective.protocol,
             authentication: effective.authentication,
             supportsImageInput: effective.supportsImageInput,
+            contextWindowTokens: effective.contextWindowTokens,
             imageGenerationQuality:
               effective.imageGenerationQuality,
             apiKey: effective.apiKey
@@ -1168,6 +1227,7 @@ export class RuntimeSettingsStore {
             protocol: profile.protocol,
             authentication: profile.authentication,
             supportsImageInput: profile.supportsImageInput,
+            contextWindowTokens: profile.contextWindowTokens,
             imageGenerationQuality: profile.imageGenerationQuality,
             apiKey:
               profile.authentication === 'api-key'
@@ -1248,6 +1308,7 @@ export class RuntimeSettingsStore {
         protocol: resolved.protocol,
         authentication: resolved.authentication,
         supportsImageInput: resolved.supportsImageInput,
+        contextWindowTokens: resolved.contextWindowTokens,
         imageGenerationQuality:
           resolved.imageGenerationQuality ??
           defaultRuntimeSettings.imageGenerationQuality,
@@ -1275,6 +1336,7 @@ export class RuntimeSettingsStore {
         protocol: profile.protocol,
         authentication: profile.authentication,
         supportsImageInput: profile.supportsImageInput,
+        contextWindowTokens: profile.contextWindowTokens,
         imageGenerationQuality:
           profile.imageGenerationQuality ??
           defaultRuntimeSettings.imageGenerationQuality,
@@ -1341,6 +1403,7 @@ export class RuntimeSettingsStore {
           : settings.knowledgeRerankCredential
             ? 'unreadable'
             : 'none',
+      contextCompression: settings.contextCompression,
       workspacePath: agent.workspacePath,
       apiKeyConfigured: Boolean(effective.apiKey),
       credentialSource: effective.credentialSource,
@@ -1438,6 +1501,7 @@ export class RuntimeSettingsStore {
       knowledgeRerankApiKey:
         this.environment.GOODBUDDY_RERANK_API_KEY?.trim() ||
         this.getStoredRerankApiKey(settings),
+      contextCompression: settings.contextCompression,
       toolApproval: settings.toolApproval
     }
   }
@@ -1474,6 +1538,7 @@ export class RuntimeSettingsStore {
               protocol: input.modelProtocol,
               authentication: input.modelAuthentication,
               supportsImageInput: profile.supportsImageInput,
+              contextWindowTokens: profile.contextWindowTokens,
               imageGenerationQuality: input.imageGenerationQuality,
               apiKey: input.apiKey
             }
@@ -1485,6 +1550,7 @@ export class RuntimeSettingsStore {
               protocol: profile.protocol,
               authentication: profile.authentication,
               supportsImageInput: profile.supportsImageInput,
+              contextWindowTokens: profile.contextWindowTokens,
               imageGenerationQuality: profile.imageGenerationQuality,
               apiKey: { action: 'keep' as const }
             }
@@ -1540,6 +1606,7 @@ export class RuntimeSettingsStore {
           protocol: profile.protocol,
           authentication: profile.authentication,
           supportsImageInput: profile.supportsImageInput ?? false,
+          contextWindowTokens: profile.contextWindowTokens,
           imageGenerationQuality: profile.imageGenerationQuality
         }
         if (
@@ -1732,10 +1799,26 @@ export class RuntimeSettingsStore {
         )
       }
     }
+    const requestedContextCompression =
+      input.contextCompression ?? current.contextCompression
+    const requestedContextModelSource =
+      requestedContextCompression.modelSource
+    const contextCompression =
+      requestedContextModelSource.kind === 'profile' &&
+      !modelProfiles.some(
+        (profile) =>
+          profile.id === requestedContextModelSource.profileId &&
+          isAgentRuntimeModelProtocol(profile.protocol)
+      )
+        ? {
+            ...requestedContextCompression,
+            modelSource: { kind: 'current' as const }
+          }
+        : requestedContextCompression
 
     const next: StoredSettings = {
       ...current,
-      version: 16,
+      version: 17,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId,
@@ -1761,6 +1844,7 @@ export class RuntimeSettingsStore {
       knowledgeRerankEndpoint: rerankEndpoint,
       knowledgeRerankModel: input.knowledgeRerankModel,
       knowledgeRerankCredential,
+      contextCompression,
       workspacePath: input.workspacePath,
       toolApproval: input.toolApproval
     }

@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { modelProtocolSchema } from '../../shared/contracts'
+import {
+  defaultContextCompressionSettings,
+  modelProtocolSchema
+} from '../../shared/contracts'
 import { ContinueAgentRuntime } from './continue-runtime'
 import { ModelAgentRuntime } from './model-runtime'
 import { OpenCodeRuntime } from './opencode-runtime'
@@ -207,6 +210,98 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       } finally {
         await runtime.dispose()
       }
+    },
+    120_000
+  )
+
+  it(
+    'compresses real direct-model history and preserves earlier and recent facts',
+    async () => {
+      const runtime = new ModelAgentRuntime({
+        apiKey,
+        baseUrl,
+        model: modelName,
+        protocol,
+        authentication: 'api-key',
+        contextCompression: {
+          settings: {
+            ...defaultContextCompressionSettings,
+            enabled: true,
+            triggerTokens: 8_000,
+            recentRawTokens: 4_000
+          }
+        }
+      })
+      const events: RuntimeEvent[] = []
+
+      try {
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            workMode: 'ask',
+            prompt:
+              'Reply with exactly one line beginning CONTEXT_COMPRESSION_E2E_OK, followed by the project codename and deploy region found in the prior conversation.',
+            history: [
+              {
+                role: 'user',
+                content: [
+                  'The project codename is ORBIT-739.',
+                  'Background notes:',
+                  'alpha '.repeat(1_200)
+                ].join('\n')
+              },
+              {
+                role: 'assistant',
+                content: [
+                  'I will remember the project codename.',
+                  'Acknowledgement notes:',
+                  'gamma '.repeat(1_000)
+                ].join('\n')
+              },
+              {
+                role: 'user',
+                content: [
+                  'The deploy region is AP-SOUTH-7.',
+                  'Recent notes:',
+                  'beta '.repeat(900)
+                ].join('\n')
+              },
+              {
+                role: 'assistant',
+                content:
+                  'I will also remember the deploy region.'
+              }
+            ]
+          },
+          new AbortController().signal
+        )) {
+          events.push(event)
+        }
+      } finally {
+        await runtime.dispose()
+      }
+
+      const output = events
+        .flatMap((event) =>
+          event.type === 'text' ? [event.delta] : []
+        )
+        .join('')
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'status',
+          message: '较早的对话已压缩，正在生成回答'
+        })
+      )
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'model-usage',
+          callId: expect.stringMatching(/^context-summary:/u)
+        })
+      )
+      expect(output).toContain('CONTEXT_COMPRESSION_E2E_OK')
+      expect(output).toContain('ORBIT-739')
+      expect(output).toContain('AP-SOUTH-7')
     },
     120_000
   )

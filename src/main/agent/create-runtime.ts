@@ -1,4 +1,7 @@
-import { ModelAgentRuntime } from './model-runtime'
+import {
+  ModelAgentRuntime,
+  type ModelRuntimeOptions
+} from './model-runtime'
 import { ContinueAgentRuntime } from './continue-runtime'
 import { OpenCodeRuntime } from './opencode-runtime'
 import {
@@ -52,6 +55,42 @@ export type AgentCapabilityContext = {
   webSearchEnabled?: boolean
 }
 
+function resolveContextCompression(
+  settings: ResolvedRuntimeSettings,
+  currentProfile: ResolvedModelProfile | undefined
+): ModelRuntimeOptions['contextCompression'] {
+  const compression =
+    settings.contextCompression ?? defaultRuntimeSettings.contextCompression
+  const source = compression.modelSource
+  const summaryProfile =
+    source.kind === 'profile'
+      ? settings.modelProfiles.find(
+          (profile) =>
+            profile.id === source.profileId &&
+            isAgentRuntimeModelProtocol(profile.protocol)
+        )
+      : undefined
+  return {
+    settings: compression,
+    contextWindowTokens: currentProfile?.contextWindowTokens,
+    ...(summaryProfile
+      ? {
+          summaryModel: {
+            apiKey: summaryProfile.apiKey,
+            baseUrl: summaryProfile.baseUrl,
+            model: summaryProfile.modelName,
+            protocol: summaryProfile.protocol as Exclude<
+              typeof summaryProfile.protocol,
+              'openai-images-generations'
+            >,
+            authentication: summaryProfile.authentication,
+            contextWindowTokens: summaryProfile.contextWindowTokens
+          }
+        }
+      : {})
+  }
+}
+
 export function createDefaultModelRuntime(
   defaultWorkspace: string,
   settings: ResolvedRuntimeSettings
@@ -59,6 +98,9 @@ export function createDefaultModelRuntime(
   if (settings.modelProtocol === 'openai-images-generations') {
     return new UnconfiguredAgentRuntime()
   }
+  const currentProfile = settings.modelProfiles.find(
+    (profile) => profile.id === settings.defaultModelProfileId
+  )
   return new ModelAgentRuntime({
     apiKey: settings.apiKey,
     baseUrl: settings.modelBaseUrl,
@@ -67,6 +109,10 @@ export function createDefaultModelRuntime(
     authentication: settings.modelAuthentication,
     supportsImageInput: settings.supportsImageInput,
     defaultWorkspace: settings.workspacePath || defaultWorkspace,
+    contextCompression: resolveContextCompression(
+      settings,
+      currentProfile
+    ),
     toolProvider: noSubagentTools
   })
 }
@@ -86,6 +132,7 @@ export function createModelProfileRuntime(
     imageGenerationQuality:
       profile.imageGenerationQuality ??
       defaultRuntimeSettings.imageGenerationQuality,
+    contextCompression: resolveContextCompression(settings, profile),
     defaultWorkspace: settings.workspacePath || defaultWorkspace,
     toolProvider: noSubagentTools
   })
@@ -253,7 +300,10 @@ export function createAgentRuntime(
       mcpServers: capabilities.mcpServers,
       browserService: capabilities.browserService,
       knowledgeGateway: capabilities.knowledgeGateway,
-      webSearchEnabled: capabilities.webSearchEnabled
+      webSearchEnabled: capabilities.webSearchEnabled,
+      contextCompression: settings
+        ? resolveContextCompression(settings, defaultModelProfile)
+        : undefined
     })
   }
 

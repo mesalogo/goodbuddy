@@ -21,6 +21,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import type {
   AgentRuntimeDetection,
+  ContextCompressionSettings,
   RuntimeConfigActionInput,
   RuntimeFileSelectionKind,
   RuntimeSettings,
@@ -28,6 +29,7 @@ import type {
   RuntimeModelSource
 } from '../../shared/contracts'
 import {
+  defaultContextCompressionSettings,
   defaultModelProfileId as builtInDefaultModelProfileId,
   defaultRuntimeSettings,
   isAgentRuntimeModelProtocol,
@@ -189,6 +191,7 @@ function hydrateRuntimeSettings(
     workspacePath: (value: string) => void
     toolApproval: (value: RuntimeSettingsInput['toolApproval']) => void
     subagentSmartRoutingEnabled: (value: boolean) => void
+    contextCompression: (value: ContextCompressionSettings) => void
   },
   preserveSelectedProfile = false
 ): void {
@@ -248,6 +251,9 @@ function hydrateRuntimeSettings(
   )
   setters.subagentSmartRoutingEnabled(
     value.subagentSmartRoutingEnabled
+  )
+  setters.contextCompression(
+    value.contextCompression ?? defaultContextCompressionSettings
   )
 }
 
@@ -524,6 +530,10 @@ export function SettingsPanel({
     subagentSmartRoutingEnabled,
     setSubagentSmartRoutingEnabled
   ] = useState(false)
+  const [contextCompression, setContextCompression] =
+    useState<ContextCompressionSettings>(
+      defaultContextCompressionSettings
+    )
   const modelProfileDisplayName = (
     profile: Pick<ModelProfileDraft, 'id' | 'name'>
   ): string =>
@@ -593,7 +603,8 @@ export function SettingsPanel({
         clearKnowledgeRerankApiKey: setClearKnowledgeRerankApiKey,
         workspacePath: setWorkspacePath,
         toolApproval: setToolApproval,
-        subagentSmartRoutingEnabled: setSubagentSmartRoutingEnabled
+        subagentSmartRoutingEnabled: setSubagentSmartRoutingEnabled,
+        contextCompression: setContextCompression
         },
         preserveSelectedProfile
       )
@@ -602,6 +613,7 @@ export function SettingsPanel({
   )
   const configurationTab =
     activeTab === 'model' ||
+    activeTab === 'context-control' ||
     activeTab === 'runtime' ||
     activeTab === 'security' ||
     activeTab === 'roles'
@@ -778,6 +790,7 @@ export function SettingsPanel({
           protocol: profile.protocol,
           authentication: profile.authentication,
           supportsImageInput: profile.supportsImageInput,
+          contextWindowTokens: profile.contextWindowTokens,
           imageGenerationQuality: profile.imageGenerationQuality,
           apiKey: profile.clearApiKey
             ? ({ action: 'clear' } as const)
@@ -844,6 +857,7 @@ export function SettingsPanel({
         continueModelSource,
         deepseekHarnessModelSource:
           normalizedDeepseekHarnessModelSource,
+        contextCompression,
         toolApproval,
         subagentSmartRoutingEnabled
       })
@@ -1124,6 +1138,15 @@ export function SettingsPanel({
           ? { kind: 'profile', profileId: harnessFallback.id }
           : { kind: 'platform' }
       )
+    }
+    if (
+      contextCompression.modelSource.kind === 'profile' &&
+      contextCompression.modelSource.profileId === id
+    ) {
+      setContextCompression((current) => ({
+        ...current,
+        modelSource: { kind: 'current' }
+      }))
     }
   }
 
@@ -2313,6 +2336,18 @@ export function SettingsPanel({
                                 : { kind: 'platform' }
                             )
                           }
+                          if (
+                            !isAgentRuntimeModelProtocol(protocol) &&
+                            contextCompression.modelSource.kind ===
+                              'profile' &&
+                            contextCompression.modelSource.profileId ===
+                              profile.id
+                          ) {
+                            setContextCompression((current) => ({
+                              ...current,
+                              modelSource: { kind: 'current' }
+                            }))
+                          }
                         }
                       }
                       value={profile.protocol}
@@ -2358,24 +2393,53 @@ export function SettingsPanel({
                     </select>
                   </label>
                   {isAgentRuntimeModelProtocol(profile.protocol) && (
-                    <div className="field">
-                      <label className="toggle-row">
+                    <>
+                      <div className="field">
+                        <label className="toggle-row">
+                          <input
+                            checked={profile.supportsImageInput}
+                            onChange={(event) =>
+                              updateModelProfile(profile.id, {
+                                supportsImageInput: event.target.checked
+                              })
+                            }
+                            role="switch"
+                            type="checkbox"
+                          />
+                          <span>{t('model.profile.supportsImageInput')}</span>
+                        </label>
+                        <small>
+                          {t('model.profile.supportsImageInputDescription')}
+                        </small>
+                      </div>
+                      <label className="field">
+                        <span>{t('model.profile.contextWindow')}</span>
                         <input
-                          checked={profile.supportsImageInput}
-                          onChange={(event) =>
+                          aria-label={t('model.profile.contextWindow')}
+                          inputMode="numeric"
+                          max={10_000}
+                          min={8}
+                          onChange={(event) => {
+                            const value = event.target.valueAsNumber
                             updateModelProfile(profile.id, {
-                              supportsImageInput: event.target.checked
+                              contextWindowTokens: Number.isFinite(value)
+                                ? Math.round(value * 1_000)
+                                : undefined
                             })
+                          }}
+                          placeholder="200"
+                          type="number"
+                          value={
+                            profile.contextWindowTokens === undefined
+                              ? ''
+                              : profile.contextWindowTokens / 1_000
                           }
-                          role="switch"
-                          type="checkbox"
                         />
-                        <span>{t('model.profile.supportsImageInput')}</span>
+                        <small>
+                          {t('model.profile.contextWindowDescription')}
+                        </small>
                       </label>
-                      <small>
-                        {t('model.profile.supportsImageInputDescription')}
-                      </small>
-                    </div>
+                    </>
                   )}
                   {profile.protocol ===
                     'openai-images-generations' && (
@@ -2728,6 +2792,199 @@ export function SettingsPanel({
               selectedModelId={speechModelDraftId}
             />
           )}
+            </>
+          )}
+
+          {activeTab === 'context-control' && (
+            <>
+              <div className="settings-section">
+                <div className="field">
+                  <label className="toggle-row">
+                    <input
+                      checked={contextCompression.enabled}
+                      onChange={(event) =>
+                        setContextCompression((current) => ({
+                          ...current,
+                          enabled: event.target.checked
+                        }))
+                      }
+                      role="switch"
+                      type="checkbox"
+                    />
+                    <span>{t('contextControl.enabled')}</span>
+                  </label>
+                  <small>{t('contextControl.enabledDescription')}</small>
+                  <small>{t('contextControl.usageNotice')}</small>
+                </div>
+              </div>
+              <div className="settings-section">
+                <label className="field">
+                  <span>{t('contextControl.triggerTokens')}</span>
+                  <input
+                    aria-label={t('contextControl.triggerTokens')}
+                    disabled={!contextCompression.enabled}
+                    inputMode="numeric"
+                    max={1_000}
+                    min={8}
+                    onChange={(event) => {
+                      const value = event.target.valueAsNumber
+                      if (Number.isFinite(value)) {
+                        setContextCompression((current) => ({
+                          ...current,
+                          triggerTokens: Math.round(value * 1_000),
+                          recentRawTokens: Math.min(
+                            current.recentRawTokens,
+                            Math.max(
+                              4_000,
+                              Math.round(value * 1_000) - 1_000
+                            )
+                          )
+                        }))
+                      }
+                    }}
+                    required
+                    type="number"
+                    value={contextCompression.triggerTokens / 1_000}
+                  />
+                  <small>
+                    {t('contextControl.triggerTokensDescription', {
+                      tokens:
+                        contextCompression.triggerTokens.toLocaleString(
+                          i18n.language
+                        )
+                    })}
+                  </small>
+                </label>
+                <label className="field">
+                  <span>{t('contextControl.recentRawTokens')}</span>
+                  <input
+                    aria-label={t('contextControl.recentRawTokens')}
+                    disabled={!contextCompression.enabled}
+                    inputMode="numeric"
+                    max={Math.min(
+                      256,
+                      contextCompression.triggerTokens / 1_000 - 1
+                    )}
+                    min={4}
+                    onChange={(event) => {
+                      const value = event.target.valueAsNumber
+                      if (Number.isFinite(value)) {
+                        setContextCompression((current) => ({
+                          ...current,
+                          recentRawTokens: Math.min(
+                            Math.round(value * 1_000),
+                            current.triggerTokens - 1_000
+                          )
+                        }))
+                      }
+                    }}
+                    required
+                    type="number"
+                    value={contextCompression.recentRawTokens / 1_000}
+                  />
+                  <small>
+                    {t('contextControl.recentRawTokensDescription', {
+                      tokens:
+                        contextCompression.recentRawTokens.toLocaleString(
+                          i18n.language
+                        )
+                    })}
+                  </small>
+                </label>
+                <label className="field">
+                  <span>{t('contextControl.summaryModel')}</span>
+                  <select
+                    aria-label={t('contextControl.summaryModel')}
+                    disabled={!contextCompression.enabled}
+                    onChange={(event) =>
+                      setContextCompression((current) => ({
+                        ...current,
+                        modelSource:
+                          event.target.value === 'current'
+                            ? { kind: 'current' }
+                            : {
+                                kind: 'profile',
+                                profileId: event.target.value
+                              }
+                      }))
+                    }
+                    value={
+                      contextCompression.modelSource.kind === 'current'
+                        ? 'current'
+                        : contextCompression.modelSource.profileId
+                    }
+                  >
+                    <option value="current">
+                      {t('contextControl.currentModel')}
+                    </option>
+                    {modelProfiles
+                      .filter((profile) =>
+                        isAgentRuntimeModelProtocol(profile.protocol)
+                      )
+                      .map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {modelProfileDisplayName(profile)} ·{' '}
+                          {profile.modelName}
+                        </option>
+                      ))}
+                  </select>
+                  <small>{t('contextControl.summaryModelDescription')}</small>
+                </label>
+                <p className="settings-panel__description">
+                  {t('contextControl.fixedTarget')}
+                </p>
+              </div>
+              <div className="runtime-note">
+                <p>{t('contextControl.modelLimits')}</p>
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setModelType('llm')
+                    setActiveTab('model')
+                  }}
+                  type="button"
+                >
+                  {t('contextControl.manageModelLimits')}
+                </button>
+              </div>
+              <details className="settings-section">
+                <summary>{t('contextControl.advanced')}</summary>
+                <label className="field">
+                  <span>{t('contextControl.summaryPrompt')}</span>
+                  <textarea
+                    disabled={!contextCompression.enabled}
+                    onChange={(event) =>
+                      setContextCompression((current) => ({
+                        ...current,
+                        summaryPrompt: event.target.value
+                      }))
+                    }
+                    rows={7}
+                    value={contextCompression.summaryPrompt}
+                  />
+                  <small>
+                    {t('contextControl.summaryPromptDescription')}
+                  </small>
+                </label>
+                <button
+                  className="secondary-button"
+                  disabled={
+                    !contextCompression.enabled ||
+                    contextCompression.summaryPrompt ===
+                      defaultContextCompressionSettings.summaryPrompt
+                  }
+                  onClick={() =>
+                    setContextCompression((current) => ({
+                      ...current,
+                      summaryPrompt:
+                        defaultContextCompressionSettings.summaryPrompt
+                    }))
+                  }
+                  type="button"
+                >
+                  {t('contextControl.restoreDefaultPrompt')}
+                </button>
+              </details>
             </>
           )}
 

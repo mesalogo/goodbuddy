@@ -538,6 +538,89 @@ describe('SettingsPanel runtime files', () => {
     expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
   })
 
+  it('configures direct model context compression with explicit token budgets', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        initialCategory="context-control"
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 2,
+        name: '上下文控制'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('直连模型的历史压缩与原文保留')
+    ).toBeInTheDocument()
+    const enabled = screen.getByRole('switch', {
+      name: '自动压缩较早的对话'
+    })
+    const trigger = screen.getByLabelText('压缩触发阈值')
+    const recent = screen.getByLabelText('最近原文预算')
+    expect(enabled).not.toBeChecked()
+    expect(trigger).toHaveValue(200)
+    expect(trigger).toBeDisabled()
+    expect(recent).toHaveValue(32)
+
+    fireEvent.click(enabled)
+    fireEvent.change(trigger, { target: { value: '240' } })
+    fireEvent.change(recent, { target: { value: '40' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          contextCompression: expect.objectContaining({
+            enabled: true,
+            triggerTokens: 240_000,
+            recentRawTokens: 40_000,
+            modelSource: { kind: 'current' }
+          })
+        })
+      )
+    )
+  })
+
+  it('stores an optional context window on direct text models', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        initialCategory="model"
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    const contextWindow = await screen.findByLabelText(
+      '上下文上限（可选）'
+    )
+    expect(contextWindow).toHaveValue(null)
+    fireEvent.change(contextWindow, { target: { value: '256' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          modelProfiles: expect.arrayContaining([
+            expect.objectContaining({
+              id: modelProfileId,
+              contextWindowTokens: 256_000
+            })
+          ])
+        })
+      )
+    )
+  })
+
   it('applies and persists an English interface language immediately', async () => {
     render(
       <UiLocaleProvider initialPreference="zh-CN">

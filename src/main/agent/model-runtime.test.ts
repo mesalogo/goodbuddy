@@ -286,6 +286,102 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it('summarizes earlier history and preserves recent raw turns', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(createEventStream('压缩后的摘要'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(createEventStream('继续回答'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: true,
+          triggerTokens: 15_000,
+          recentRawTokens: 5_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Summarize earlier history.'
+        }
+      }
+    })
+    const history = [
+      { role: 'user' as const, content: `old-user-${'a'.repeat(8_000)}` },
+      {
+        role: 'assistant' as const,
+        content: `old-assistant-${'b'.repeat(8_000)}`
+      },
+      { role: 'user' as const, content: `mid-user-${'c'.repeat(8_000)}` },
+      {
+        role: 'assistant' as const,
+        content: `mid-assistant-${'d'.repeat(8_000)}`
+      },
+      { role: 'user' as const, content: `new-user-${'e'.repeat(8_000)}` },
+      {
+        role: 'assistant' as const,
+        content: `new-assistant-${'f'.repeat(8_000)}`
+      }
+    ]
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed222',
+        conversationId: 'conversation-compressed',
+        prompt: '继续',
+        history
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    const summaryBody = JSON.parse(
+      fetcher.mock.calls[0]![1]!.body as string
+    ) as { max_tokens: number; system: string; messages: unknown[] }
+    expect(summaryBody.max_tokens).toBe(8_192)
+    expect(summaryBody.system).toContain('Summarize earlier history.')
+    expect(JSON.stringify(summaryBody.messages)).toContain('old-user-')
+    expect(JSON.stringify(summaryBody.messages)).not.toContain('new-user-')
+
+    const answerBody = JSON.parse(
+      fetcher.mock.calls[1]![1]!.body as string
+    ) as { messages: unknown[] }
+    const answerMessages = JSON.stringify(answerBody.messages)
+    expect(answerMessages).toContain('压缩后的摘要')
+    expect(answerMessages).toContain('new-user-')
+    expect(answerMessages).not.toContain('old-user-')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'status',
+        message: '较早的对话已压缩，正在生成回答'
+      })
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'model-usage',
+        callId: 'context-summary:message-1'
+      })
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'text', delta: '继续回答' })
+    )
+  })
+
   it('rejects a stream that ends without message_stop', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => {
       return new Response(

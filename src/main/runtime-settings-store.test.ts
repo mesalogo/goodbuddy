@@ -78,6 +78,84 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('migrates version 16 to disabled default context compression', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const previous = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    previous.version = 16
+    delete previous.contextCompression
+    await writeFile(filePath, JSON.stringify(previous), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      contextCompression: {
+        enabled: false,
+        triggerTokens: 200_000,
+        recentRawTokens: 32_000,
+        modelSource: { kind: 'current' }
+      }
+    })
+  })
+
+  it('persists context compression and optional model context windows', async () => {
+    const { store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000061'
+    const updated = await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'Long context',
+            baseUrl: 'https://model.example/v1',
+            modelName: 'long-model',
+            protocol: 'openai-chat-completions',
+            authentication: 'none',
+            supportsImageInput: false,
+            contextWindowTokens: 256_000,
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'keep' }
+          }
+        ],
+        defaultModelProfileId: profileId,
+        contextCompression: {
+          enabled: true,
+          triggerTokens: 200_000,
+          recentRawTokens: 32_000,
+          modelSource: { kind: 'profile', profileId },
+          summaryPrompt: 'Keep exact decisions and unresolved work.'
+        }
+      })
+    )
+
+    expect(updated).toMatchObject({
+      modelProfiles: [
+        {
+          id: profileId,
+          contextWindowTokens: 256_000
+        }
+      ],
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 200_000,
+        recentRawTokens: 32_000,
+        modelSource: { kind: 'profile', profileId }
+      }
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelProfiles: [
+        {
+          id: profileId,
+          contextWindowTokens: 256_000
+        }
+      ],
+      contextCompression: {
+        enabled: true
+      }
+    })
+  })
+
   it('configures bundled runtimes from the default model profile', async () => {
     const { store } = await createStore()
 
@@ -257,7 +335,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
-    expect(persisted.version).toBe(16)
+    expect(persisted.version).toBe(17)
     expect(persisted).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
@@ -536,7 +614,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(16)
+    expect(persisted.version).toBe(17)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -556,7 +634,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(16)
+    expect(persisted.version).toBe(17)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -1145,7 +1223,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(16)
+    expect(persisted.version).toBe(17)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -1391,7 +1469,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 16,
+      version: 17,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -1670,7 +1748,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(16)
+    expect(persisted.version).toBe(17)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

@@ -27,6 +27,13 @@ export const settings = {
         'LLMs, embedding and rerank models, and credentials',
       description: 'LLMs, embedding and rerank models, and credentials'
     },
+    contextControl: {
+      label: 'Context control',
+      navigationDescription:
+        'Direct model history compression and recent raw context',
+      description:
+        'Manage compression thresholds, recent raw context, and the summary model for direct models'
+    },
     documentParsing: {
       label: 'Document parsing',
       navigationDescription: 'Attachments, knowledge, and local OCR',
@@ -486,6 +493,9 @@ export const settings = {
       supportsImageInput: 'Supports image input',
       supportsImageInputDescription:
         'When enabled, GoodBuddy can send image context to this model connection.',
+      contextWindow: 'Context window (optional)',
+      contextWindowDescription:
+        'Enter K tokens. Leave blank when unknown. This value is used only for GoodBuddy local budget calculations.',
       imageQuality: 'Image quality',
       imageQualityAriaLabel: 'Image quality for {{name}}',
       quality: {
@@ -538,6 +548,32 @@ export const settings = {
       privacyDescription:
         'Only retrieval queries and candidate knowledge chunks are sent to this endpoint. The API Key is encrypted in secure system storage. If reranking fails, the original retrieval order is preserved.'
     }
+  },
+  contextControl: {
+    enabled: 'Automatically compress earlier conversation',
+    enabledDescription:
+      'Applies only to direct text models. GoodBuddy generates a summary at the threshold without deleting the original chat history.',
+    usageNotice: 'Generating a summary uses additional model tokens.',
+    triggerTokens: 'Compression threshold',
+    triggerTokensDescription:
+      'Prepare direct model context at approximately {{tokens}} tokens.',
+    recentRawTokens: 'Recent raw context budget',
+    recentRawTokensDescription:
+      'After compression, preserve complete recent turns within approximately {{tokens}} tokens.',
+    summaryModel: 'Summary model',
+    currentModel: 'Direct model used by the current conversation (recommended)',
+    summaryModelDescription:
+      'Image generation connections cannot summarize. If a selected connection is unavailable, compression stops and keeps the original input.',
+    fixedTarget:
+      'Earlier conversation is compressed to an approximately 8K-token summary. The current request is always preserved in full.',
+    modelLimits:
+      'Optional context windows are configured per direct model under Model connections. When set, GoodBuddy compresses before reaching that model limit.',
+    manageModelLimits: 'Manage model context windows',
+    advanced: 'Advanced settings',
+    summaryPrompt: 'Summary prompt',
+    summaryPromptDescription:
+      'This prompt is sent as a trusted summary instruction. Conversation content is always treated as untrusted historical data.',
+    restoreDefaultPrompt: 'Restore default prompt'
   },
   security: {
     toolPolicy: {
