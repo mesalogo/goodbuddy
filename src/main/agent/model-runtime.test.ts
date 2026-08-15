@@ -363,7 +363,9 @@ describe('ModelAgentRuntime', () => {
       {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed125',
         type: 'model-usage',
-        callId: 'message-1',
+        callId: expect.stringMatching(
+          /^model-call:[0-9a-f]{32}:message-1$/u
+        ),
         runtime: 'model',
         provider: 'anthropic',
         model: 'claude-sonnet-provider',
@@ -492,7 +494,9 @@ describe('ModelAgentRuntime', () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'model-usage',
-        callId: 'context-summary:message-1'
+        callId: expect.stringMatching(
+          /^context-summary:model-call:[0-9a-f]{32}:message-1$/u
+        )
       })
     )
     expect(events).toContainEqual(
@@ -1416,7 +1420,9 @@ describe('ModelAgentRuntime', () => {
       {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed127',
         type: 'model-usage',
-        callId: 'chatcmpl-provider-1',
+        callId: expect.stringMatching(
+          /^model-call:[0-9a-f]{32}:chatcmpl-provider-1$/u
+        ),
         runtime: 'model',
         provider: 'openai',
         model: 'qwen3-provider',
@@ -1613,7 +1619,9 @@ describe('ModelAgentRuntime', () => {
       {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed133',
         type: 'model-usage',
-        callId: 'resp-provider-1',
+        callId: expect.stringMatching(
+          /^model-call:[0-9a-f]{32}:resp-provider-1$/u
+        ),
         runtime: 'model',
         provider: 'openai',
         model: 'gpt-5-provider',
@@ -1660,7 +1668,6 @@ describe('ModelAgentRuntime', () => {
   it('runs approved direct-model tools and returns their results to OpenAI', async () => {
     const responses = [
       {
-        id: 'chatcmpl-tool-1',
         model: 'qwen3',
         choices: [
           {
@@ -1683,7 +1690,6 @@ describe('ModelAgentRuntime', () => {
         usage: { prompt_tokens: 10, completion_tokens: 4 }
       },
       {
-        id: 'chatcmpl-tool-2',
         model: 'qwen3',
         choices: [
           {
@@ -1816,6 +1822,27 @@ describe('ModelAgentRuntime', () => {
         type: 'text',
         delta: '文件内容已读取。'
       })
+    )
+    const usageEvents = events.filter(
+      (event) => event.type === 'model-usage'
+    )
+    expect(usageEvents).toHaveLength(2)
+    expect(
+      usageEvents.map((event) => ({
+        inputTokens: event.inputTokens,
+        outputTokens: event.outputTokens
+      }))
+    ).toEqual([
+      { inputTokens: 10, outputTokens: 4 },
+      { inputTokens: 18, outputTokens: 7 }
+    ])
+    expect(
+      usageEvents.every((event) =>
+        /^model-call:[0-9a-f]{32}$/u.test(event.callId)
+      )
+    ).toBe(true)
+    expect(new Set(usageEvents.map((event) => event.callId)).size).toBe(
+      2
     )
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
@@ -2017,6 +2044,25 @@ describe('ModelAgentRuntime', () => {
     expect(
       contextMetrics.every((event) => event.source === 'provider')
     ).toBe(true)
+    const agentSummaryUsageEvents = events.flatMap((event) =>
+      event.type === 'model-usage' &&
+      event.callId.startsWith('agent-context-summary:')
+        ? [event]
+        : []
+    )
+    expect(agentSummaryUsageEvents).toHaveLength(2)
+    expect(
+      agentSummaryUsageEvents.every((event) =>
+        /^agent-context-summary:model-call:[0-9a-f]{32}:message-1$/u.test(
+          event.callId
+        )
+      )
+    ).toBe(true)
+    expect(
+      new Set(
+        agentSummaryUsageEvents.map((event) => event.callId)
+      ).size
+    ).toBe(2)
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
@@ -4271,7 +4317,9 @@ describe('ModelAgentRuntime', () => {
       {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed128',
         type: 'model-usage',
-        callId: 'image-provider-1',
+        callId: expect.stringMatching(
+          /^model-call:[0-9a-f]{32}:image-provider-1$/u
+        ),
         runtime: 'model',
         provider: 'openai',
         model: 'gpt-image-provider',

@@ -483,10 +483,13 @@ function createUsageEvent(
   if (!usage.reported) {
     return undefined
   }
+  const localCallId = `model-call:${randomBytes(16).toString('hex')}`
   return {
     requestId,
     type: 'model-usage',
-    callId: (usage.callId ?? requestId).slice(0, 256),
+    callId: usage.callId
+      ? `${localCallId}:${usage.callId}`.slice(0, 256)
+      : localCallId,
     runtime: 'model',
     provider,
     model: (usage.model ?? fallbackModel).slice(0, 500),
