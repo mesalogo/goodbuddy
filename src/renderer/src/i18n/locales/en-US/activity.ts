@@ -53,6 +53,12 @@ export const activity = {
       conversation: 'By conversation',
       model: 'By model'
     },
+    runtimes: {
+      model: 'Direct model',
+      opencode: 'OpenCode',
+      continue: 'Continue',
+      deepseekHarness: 'DeepSeek Harness'
+    },
     columns: {
       project: 'Project',
       conversation: 'Conversation',
@@ -69,7 +75,8 @@ export const activity = {
     fallbacks: {
       unassignedProject: 'Unassigned project',
       deletedConversation: 'Deleted conversation',
-      unknownModel: 'Unknown model'
+      unknownModel: 'Unknown model',
+      unknownRuntime: 'Unknown Runtime'
     }
   },
   stats: {

@@ -50,6 +50,12 @@ export const activity = {
       conversation: '按会话',
       model: '按模型'
     },
+    runtimes: {
+      model: '直连模型',
+      opencode: 'OpenCode',
+      continue: 'Continue',
+      deepseekHarness: 'DeepSeek Harness'
+    },
     columns: {
       project: '项目',
       conversation: '会话',
@@ -66,7 +72,8 @@ export const activity = {
     fallbacks: {
       unassignedProject: '未归属项目',
       deletedConversation: '已删除会话',
-      unknownModel: '未知模型'
+      unknownModel: '未知模型',
+      unknownRuntime: '未知 Runtime'
     }
   },
   stats: {

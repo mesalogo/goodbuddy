@@ -524,7 +524,7 @@ describe('ActivityPanel', () => {
     expect(within(stats).getByText('32%')).toBeInTheDocument()
 
     const projectRow = screen.getByRole('row', {
-      name: '项目甲gpt-5 · openai 100 20 10 40 40% 120'
+      name: '项目甲直连模型 · gpt-5 100 20 10 40 40% 120'
     })
     expect(projectRow).toBeInTheDocument()
     expect(
@@ -551,7 +551,36 @@ describe('ActivityPanel', () => {
     expect(screen.getByText('已删除会话')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '按模型' }))
-    expect(screen.getByText('gpt-5')).toBeInTheDocument()
-    expect(screen.getByText('未知模型')).toBeInTheDocument()
+    expect(screen.getByText('直连模型 · gpt-5')).toBeInTheDocument()
+    expect(
+      screen.getByText('直连模型 · 未知模型')
+    ).toBeInTheDocument()
+  })
+
+  it('shows Runtime names instead of internal provider identifiers', () => {
+    const usage = makeTokenUsage()
+    usage.records.push({
+      ...usage.records[0]!,
+      requestId: 'request-harness',
+      runtime: 'deepseek-harness',
+      provider: 'goodbuddy',
+      model: 'deepseek-v4-flash'
+    })
+
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[]}
+        tokenUsage={usage}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: '用量统计' }))
+    fireEvent.click(screen.getByRole('button', { name: '按模型' }))
+
+    expect(
+      screen.getByText('DeepSeek Harness · deepseek-v4-flash')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('goodbuddy')).not.toBeInTheDocument()
   })
 })

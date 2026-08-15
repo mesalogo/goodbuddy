@@ -67,9 +67,10 @@ describe('token usage aggregation', () => {
     })
     expect(groupTokenUsage(usage, 'project')).toEqual([
       {
-        key: 'project:project-1:model:openai:gpt-5',
+        key: 'project:project-1:runtime:model:model:gpt-5',
         label: '项目一',
-        detail: 'gpt-5 · openai',
+        model: 'gpt-5',
+        runtime: 'model',
         inputTokens: 112,
         outputTokens: 23,
         cacheReadTokens: 40,
@@ -83,7 +84,7 @@ describe('token usage aggregation', () => {
     expect(groupTokenUsage(usage, 'model')).toEqual([
       expect.objectContaining({
         label: 'gpt-5',
-        detail: 'openai',
+        runtime: 'model',
         totalTokens: 135
       })
     ])
@@ -155,5 +156,36 @@ describe('token usage aggregation', () => {
 
     expect(groupTokenUsage(usage, 'project')).toHaveLength(2)
     expect(groupTokenUsage(usage, 'conversation')).toHaveLength(3)
+  })
+
+  it('groups identical model names by Runtime instead of provider', () => {
+    const usage = makeTokenUsage()
+    usage.records = [
+      {
+        ...usage.records[0]!,
+        provider: 'openai',
+        runtime: 'model',
+        model: 'deepseek-v4-flash'
+      },
+      {
+        ...usage.records[1]!,
+        provider: 'goodbuddy',
+        runtime: 'deepseek-harness',
+        model: 'deepseek-v4-flash'
+      }
+    ]
+
+    expect(groupTokenUsage(usage, 'model')).toEqual([
+      expect.objectContaining({
+        key: 'runtime:model:model:deepseek-v4-flash',
+        label: 'deepseek-v4-flash',
+        runtime: 'model'
+      }),
+      expect.objectContaining({
+        key: 'runtime:deepseek-harness:model:deepseek-v4-flash',
+        label: 'deepseek-v4-flash',
+        runtime: 'deepseek-harness'
+      })
+    ])
   })
 })

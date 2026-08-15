@@ -452,9 +452,18 @@ export function ActivityPanel({
   const localizeTokenRow = (
     row: (typeof tokenRows)[number]
   ): { label: string; detail?: string } => {
-    const missingModel = row.key.endsWith(':')
-    const modelProvider =
-      row.key.match(/model:([^:]*):$/u)?.[1] ?? ''
+    const modelLabel =
+      row.model || t('tokenUsage.fallbacks.unknownModel')
+    const runtimeLabel =
+      row.runtime === 'model'
+        ? t('tokenUsage.runtimes.model')
+        : row.runtime === 'opencode'
+          ? t('tokenUsage.runtimes.opencode')
+          : row.runtime === 'continue'
+            ? t('tokenUsage.runtimes.continue')
+            : row.runtime === 'deepseek-harness'
+              ? t('tokenUsage.runtimes.deepseekHarness')
+              : row.runtime || t('tokenUsage.fallbacks.unknownRuntime')
     const label =
       tokenGroup === 'project' &&
       row.key.startsWith('project:unassigned:')
@@ -462,18 +471,13 @@ export function ActivityPanel({
         : tokenGroup === 'conversation' &&
             row.key.startsWith('conversation:deleted:')
           ? t('tokenUsage.fallbacks.deletedConversation')
-          : tokenGroup === 'model' && missingModel
-            ? t('tokenUsage.fallbacks.unknownModel')
+          : tokenGroup === 'model'
+            ? `${runtimeLabel} · ${modelLabel}`
             : row.label
     const detail =
-      missingModel && tokenGroup !== 'model'
-        ? [
-            t('tokenUsage.fallbacks.unknownModel'),
-            modelProvider
-          ]
-            .filter(Boolean)
-            .join(' · ')
-        : row.detail
+      tokenGroup === 'model'
+        ? undefined
+        : `${runtimeLabel} · ${modelLabel}`
     return { label, detail }
   }
   const renderRecordCard = (

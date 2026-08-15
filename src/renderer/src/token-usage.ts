@@ -15,7 +15,8 @@ export type TokenUsageTotals = {
 export type TokenUsageGroupRow = TokenUsageTotals & {
   key: string
   label: string
-  detail?: string
+  model: string
+  runtime: string
 }
 
 type TokenUsageRecord = TokenUsageSummary['records'][number]
@@ -69,25 +70,20 @@ function usageNumbers(
 function groupIdentity(
   record: TokenUsageRecord,
   group: TokenUsageGroup
-): Pick<TokenUsageGroupRow, 'key' | 'label' | 'detail'> {
+): Pick<TokenUsageGroupRow, 'key' | 'label' | 'model' | 'runtime'> {
   const model = record.model.trim()
-  const provider = record.provider.trim()
-  const modelKey = `${provider}:${model}`
-  const modelLabel = model
-  const modelDetail = provider
-    ? modelLabel
-      ? `${modelLabel} · ${provider}`
-      : provider
-    : modelLabel
+  const runtime = record.runtime.trim()
+  const runtimeModelKey = `runtime:${runtime}:model:${model}`
 
   if (group === 'project') {
     const projectKey = record.projectId
       ? `project:${record.projectId}`
       : 'project:unassigned'
     return {
-      key: `${projectKey}:model:${modelKey}`,
+      key: `${projectKey}:${runtimeModelKey}`,
       label: record.projectName?.trim() || '',
-      detail: modelDetail
+      model,
+      runtime
     }
   }
 
@@ -96,16 +92,18 @@ function groupIdentity(
       ? `conversation:${record.conversationId}`
       : 'conversation:deleted'
     return {
-      key: `${conversationKey}:model:${modelKey}`,
+      key: `${conversationKey}:${runtimeModelKey}`,
       label: record.conversationTitle?.trim() || '',
-      detail: modelDetail
+      model,
+      runtime
     }
   }
 
   return {
-    key: `model:${modelKey}`,
-    label: modelLabel,
-    detail: provider || undefined
+    key: runtimeModelKey,
+    label: model,
+    model,
+    runtime
   }
 }
 
