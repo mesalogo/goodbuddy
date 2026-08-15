@@ -1555,6 +1555,125 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('restores the reader position after activity continues on another page', async () => {
+    const { container } = render(<App />)
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '离开页面后继续生成' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    await act(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve())
+        )
+    )
+
+    const chat = container.querySelector<HTMLElement>('.chat')
+    if (!chat) {
+      throw new Error('Missing chat scroll container')
+    }
+    Object.defineProperties(chat, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_200 },
+      scrollTop: { configurable: true, writable: true, value: 175 }
+    })
+    fireEvent.scroll(chat)
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    expect(container.querySelector('.chat')).not.toBeInTheDocument()
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: '后台新增的回复内容'
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '对话' }))
+    expect(await screen.findByText('后台新增的回复内容')).toBeInTheDocument()
+    const restoredChat = container.querySelector<HTMLElement>('.chat')
+    expect(restoredChat).not.toBe(chat)
+    expect(restoredChat?.scrollTop).toBe(175)
+    expect(
+      screen.getByRole('button', { name: '到底部' })
+    ).toBeInTheDocument()
+  })
+
+  it('keeps each conversation history window and reader position', async () => {
+    const firstConversationId =
+      '00000000-0000-4000-8000-000000000461'
+    const secondConversationId =
+      '00000000-0000-4000-8000-000000000462'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: firstConversationId,
+        projectId,
+        title: '第一段长会话',
+        updatedAt: 1_775_000_000_002,
+        messages: Array.from({ length: 161 }, (_, index) => ({
+          id: `00000000-0000-4000-8100-${String(index).padStart(12, '0')}`,
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `第一段历史 ${String(index).padStart(3, '0')}`,
+          createdAt: 1_775_000_000_000 + index,
+          state: 'complete' as const
+        }))
+      },
+      {
+        id: secondConversationId,
+        projectId,
+        title: '第二段会话',
+        updatedAt: 1_775_000_000_001,
+        messages: [
+          {
+            id: '00000000-0000-4000-8200-000000000001',
+            role: 'assistant',
+            content: '第二段会话内容',
+            createdAt: 1_775_000_000_001,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    const { container } = render(<App />)
+
+    expect(await screen.findByText('第一段历史 160')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '加载更早的消息（还剩 81 条）'
+      })
+    )
+    expect(container.querySelectorAll('.message')).toHaveLength(160)
+    const firstChat = container.querySelector<HTMLElement>('.chat')
+    if (!firstChat) {
+      throw new Error('Missing first chat scroll container')
+    }
+    Object.defineProperties(firstChat, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_600 },
+      scrollTop: { configurable: true, writable: true, value: 225 }
+    })
+    fireEvent.scroll(firstChat)
+
+    fireEvent.click(
+      screen.getByText('第二段会话').closest('button')!
+    )
+    expect(await screen.findByText('第二段会话内容')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByText('第一段长会话').closest('button')!
+    )
+
+    expect(await screen.findByText('第一段历史 001')).toBeInTheDocument()
+    expect(container.querySelectorAll('.message')).toHaveLength(160)
+    expect(container.querySelector<HTMLElement>('.chat')?.scrollTop).toBe(
+      225
+    )
+  })
+
   it('requires an accessible confirmation before permanently deleting a conversation', async () => {
     render(<App />)
     const menuTrigger = screen.getByLabelText(

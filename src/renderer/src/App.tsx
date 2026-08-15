@@ -1578,7 +1578,19 @@ function App(): React.JSX.Element {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLElement>(null)
   const chatPinnedToBottomRef = useRef(true)
-  const chatScrollContextRef = useRef(`${view}:${activeId}`)
+  const chatScrollContextRef = useRef(activeId)
+  const chatScrollRestorePendingRef = useRef<string | undefined>(
+    undefined
+  )
+  const chatScrollSnapshotsRef = useRef(
+    new Map<
+      string,
+      {
+        pinnedToBottom: boolean
+        scrollTop: number
+      }
+    >()
+  )
   const prependScrollPositionRef = useRef<{
     conversationId: string
     scrollHeight: number
@@ -1610,29 +1622,52 @@ function App(): React.JSX.Element {
       ),
     []
   )
-  const [visibleMessageWindow, setVisibleMessageWindow] = useState(() => ({
-    conversationId: activeId,
-    count: messageRenderBatchSize
-  }))
+  const [visibleMessageCounts, setVisibleMessageCounts] = useState<
+    Record<string, number>
+  >({})
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
   )
+  const saveChatScrollPosition = useCallback(
+    (conversationId: string, scrollContainer: HTMLElement): boolean => {
+      const distanceFromBottom =
+        scrollContainer.scrollHeight -
+        scrollContainer.scrollTop -
+        scrollContainer.clientHeight
+      const pinnedToBottom = distanceFromBottom <= chatBottomProximity
+      chatScrollSnapshotsRef.current.set(conversationId, {
+        pinnedToBottom,
+        scrollTop: scrollContainer.scrollTop
+      })
+      return pinnedToBottom
+    },
+    []
+  )
+  const handleChatScrollRef = useCallback(
+    (element: HTMLElement | null): void => {
+      const previous = scrollRef.current
+      if (previous && previous !== element) {
+        saveChatScrollPosition(activeId, previous)
+      }
+      scrollRef.current = element
+      if (element) {
+        chatScrollRestorePendingRef.current = activeId
+      }
+    },
+    [activeId, saveChatScrollPosition]
+  )
   const updateChatScrollPosition = useCallback((): void => {
     const scrollContainer = scrollRef.current
-    if (!scrollContainer) {
+    if (!scrollContainer || !activeId) {
       return
     }
-    const distanceFromBottom =
-      scrollContainer.scrollHeight -
-      scrollContainer.scrollTop -
-      scrollContainer.clientHeight
-    const atBottom = distanceFromBottom <= chatBottomProximity
+    const atBottom = saveChatScrollPosition(activeId, scrollContainer)
     chatPinnedToBottomRef.current = atBottom
     setShowScrollToBottom(!atBottom)
-  }, [])
+  }, [activeId, saveChatScrollPosition])
   const scrollChatToBottom = useCallback((): void => {
     const scrollContainer = scrollRef.current
     if (!scrollContainer) {
@@ -1828,9 +1863,7 @@ function App(): React.JSX.Element {
     [activeId, conversations]
   )
   const visibleMessageCount =
-    visibleMessageWindow.conversationId === activeId
-      ? visibleMessageWindow.count
-      : messageRenderBatchSize
+    visibleMessageCounts[activeId] ?? messageRenderBatchSize
   const visibleMessageStartIndex = Math.max(
     0,
     (activeConversation?.messages.length ?? 0) - visibleMessageCount
@@ -1848,10 +1881,7 @@ function App(): React.JSX.Element {
         scrollTop: scrollContainer.scrollTop
       }
     }
-    const currentCount =
-      visibleMessageWindow.conversationId === activeId
-        ? visibleMessageWindow.count
-        : messageRenderBatchSize
+    const currentCount = visibleMessageCount
     if (
       activeConversation &&
       currentCount + messageRenderBatchSize >=
@@ -1860,11 +1890,11 @@ function App(): React.JSX.Element {
       finalRevealedMessageIdRef.current =
         activeConversation.messages[0]?.id
     }
-    setVisibleMessageWindow({
-      conversationId: activeId,
-      count: currentCount + messageRenderBatchSize
-    })
-  }, [activeConversation, activeId, visibleMessageWindow])
+    setVisibleMessageCounts((current) => ({
+      ...current,
+      [activeId]: currentCount + messageRenderBatchSize
+    }))
+  }, [activeConversation, activeId, visibleMessageCount])
 
   useLayoutEffect(() => {
     const previous = prependScrollPositionRef.current
@@ -1889,7 +1919,7 @@ function App(): React.JSX.Element {
         .get(finalRevealedMessageId)
         ?.focus({ preventScroll: true })
     }
-  }, [activeId, visibleMessageWindow])
+  }, [activeId, visibleMessageCount])
 
   const activeRuntimeSelection = useMemo(
     () =>
@@ -3872,32 +3902,47 @@ function App(): React.JSX.Element {
       )
   }, [startNewConversation])
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const scrollContext = `${view}:${activeId}`
-      if (chatScrollContextRef.current !== scrollContext) {
-        chatScrollContextRef.current = scrollContext
-        chatPinnedToBottomRef.current = true
-      }
-      const scrollContainer = scrollRef.current
-      if (!scrollContainer) {
+  useLayoutEffect(() => {
+    if (view !== 'chat') {
+      return
+    }
+    const scrollContainer = scrollRef.current
+    if (!scrollContainer) {
+      return
+    }
+    const conversationChanged =
+      chatScrollContextRef.current !== activeId
+    if (conversationChanged) {
+      chatScrollContextRef.current = activeId
+    }
+    const shouldRestore =
+      conversationChanged ||
+      chatScrollRestorePendingRef.current === activeId
+    if (shouldRestore) {
+      chatScrollRestorePendingRef.current = undefined
+      const snapshot = chatScrollSnapshotsRef.current.get(activeId)
+      chatPinnedToBottomRef.current =
+        snapshot?.pinnedToBottom ?? true
+      if (snapshot && !snapshot.pinnedToBottom) {
+        scrollContainer.scrollTop = snapshot.scrollTop
+        setShowScrollToBottom(true)
         return
       }
-      if (chatPinnedToBottomRef.current) {
-        scrollContainer.scrollTo({
-          top: scrollContainer.scrollHeight,
-          behavior: 'auto'
-        })
-        setShowScrollToBottom(false)
-        return
-      }
-      updateChatScrollPosition()
-    })
-    return () => cancelAnimationFrame(frame)
+    }
+    if (chatPinnedToBottomRef.current) {
+      scrollContainer.scrollTo({
+        top: scrollContainer.scrollHeight,
+        behavior: 'auto'
+      })
+      setShowScrollToBottom(false)
+      return
+    }
+    updateChatScrollPosition()
   }, [
     activeConversation?.messages,
     activeId,
     updateChatScrollPosition,
+    visibleMessageCount,
     view
   ])
 
@@ -5660,7 +5705,7 @@ function App(): React.JSX.Element {
               className="chat"
               id="chat-message-list"
               onScroll={updateChatScrollPosition}
-              ref={scrollRef}
+              ref={handleChatScrollRef}
             >
           {activeProject?.kind === 'channel' &&
             !activeConversation && (
