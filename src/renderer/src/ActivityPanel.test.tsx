@@ -162,6 +162,58 @@ describe('ActivityPanel', () => {
     ).toHaveLength(2)
   })
 
+  it('uses the latest top-level Agent result for conversation status', () => {
+    const request: ActivityRecord = {
+      ...makeRecord(1, 'running'),
+      conversationId: 'conversation-status',
+      requestId: 'request-status',
+      kind: 'request',
+      title: '最终成功的任务'
+    }
+    const failedTool: ActivityRecord = {
+      ...makeRecord(2, 'failed'),
+      conversationId: request.conversationId,
+      requestId: request.requestId,
+      kind: 'tool',
+      title: '中间失败的工具'
+    }
+    const cancelledSubagent: ActivityRecord = {
+      ...makeRecord(3, 'cancelled'),
+      conversationId: request.conversationId,
+      requestId: request.requestId,
+      kind: 'subagent',
+      title: '已取消的子专家'
+    }
+    const result: ActivityRecord = {
+      ...makeRecord(4, 'completed'),
+      conversationId: request.conversationId,
+      requestId: request.requestId,
+      kind: 'result',
+      title: '任务执行完成'
+    }
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[result, cancelledSubagent, failedTool, request]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    const conversation = screen
+      .getByText('对话：最终成功的任务')
+      .closest('summary')
+    expect(conversation).not.toBeNull()
+    if (!conversation) {
+      return
+    }
+    expect(within(conversation).getByText('已完成')).toBeInTheDocument()
+    expect(within(conversation).queryByText('失败')).not.toBeInTheDocument()
+    expect(
+      within(conversation).queryByText('已取消')
+    ).not.toBeInTheDocument()
+  })
+
   it('filters active and exceptional activity and opens its conversation', () => {
     const onOpenConversation = vi.fn()
     render(

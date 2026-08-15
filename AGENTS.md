@@ -53,6 +53,12 @@ Keep Electron security boundaries intact:
 - Reuse installed libraries and shared contracts before adding dependencies.
 - Keep changes focused. Do not add unrelated refactors or documentation.
 - Add or update focused tests for behavioral changes and regressions.
+- After completing any functional change, inspect the affected product,
+  architecture, design, feature, setup, and operational documentation and
+  update every relevant document to match the implemented behavior. Treat the
+  final code and validated runtime behavior as the source of truth: correct
+  stale documentation rather than preserving outdated intent. Avoid
+  documentation churn only when the change has no documented impact.
 - Avoid broad catches that erase HTTP status, cancellation, or provider error
   context.
 - Keep UI accessible with labels, keyboard behavior, semantic roles, and visible

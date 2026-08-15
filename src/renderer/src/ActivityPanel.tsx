@@ -127,9 +127,32 @@ function activityScopeKey(scope: ActivityRecord['scope']): string {
 function conversationStatus(
   records: readonly ActivityRecord[]
 ): ActivityRecord['status'] {
+  const latestRecord = (
+    candidates: readonly ActivityRecord[]
+  ): ActivityRecord | undefined =>
+    candidates.reduce<ActivityRecord | undefined>(
+      (latest, record) =>
+        !latest || record.createdAt > latest.createdAt ? record : latest,
+      undefined
+    )
+  const latestRequest = latestRecord(
+    records.filter((record) => record.kind === 'request')
+  )
+  if (latestRequest) {
+    const latestResult = latestRecord(
+      records.filter(
+        (record) =>
+          record.kind === 'result' &&
+          record.requestId === latestRequest.requestId
+      )
+    )
+    return latestResult?.status ?? latestRequest.status
+  }
+
   return (
-    records.find(isActive)?.status ??
-    records.find(isFailed)?.status ??
+    latestRecord(records.filter((record) => record.kind === 'result'))
+      ?.status ??
+    latestRecord(records)?.status ??
     'completed'
   )
 }
@@ -154,6 +177,13 @@ function groupActivityRecordsByProject(
   allRecords: readonly ActivityRecord[]
 ): ProjectActivityGroup[] {
   const conversationTitles = getConversationTitles(allRecords)
+  const allConversationRecords = new Map<string, ActivityRecord[]>()
+  for (const record of allRecords) {
+    const conversationRecords =
+      allConversationRecords.get(record.conversationId) ?? []
+    conversationRecords.push(record)
+    allConversationRecords.set(record.conversationId, conversationRecords)
+  }
   const projectGroups = new Map<
     string,
     {
@@ -186,7 +216,9 @@ function groupActivityRecordsByProject(
           conversationTitles.get(conversationId) ?? items[0]!.title,
         records: items,
         latestAt: Math.max(...items.map((record) => record.createdAt)),
-        status: conversationStatus(items)
+        status: conversationStatus(
+          allConversationRecords.get(conversationId) ?? items
+        )
       })
     )
     return {
