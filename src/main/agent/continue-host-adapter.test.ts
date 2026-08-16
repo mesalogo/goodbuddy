@@ -313,6 +313,41 @@ describe('ContinueHostAdapter', () => {
     expect(launchHost).not.toHaveBeenCalled()
   })
 
+  it('rejects a custom MCP loopback capability outside Continue Agent Execute mode', async () => {
+    const launchHost = vi.fn()
+    const adapter = new ContinueHostAdapter({
+      binaryPath: 'C:\\unused\\cn.js',
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: 'C:\\unused\\cache',
+      launchHost: launchHost as unknown as ContinueHostLauncher,
+      modelProfile: {
+        id: '00000000-0000-4000-8000-000000000097',
+        name: 'Local model',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
+      }
+    })
+
+    await expect(
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        async () => 'deny',
+        {
+          workMode: 'ask',
+          customMcpCapability: {
+            endpoint: 'http://127.0.0.1:4567/mcp',
+            token: 'request-token'
+          }
+        }
+      )
+    ).rejects.toThrow('仅允许在 Agent Execute 模式')
+    expect(launchHost).not.toHaveBeenCalled()
+  })
+
   it('launches the prepared host through the injected launcher', async () => {
     const distribution = await createDistribution()
     const skillDirectory = join(
@@ -470,7 +505,18 @@ describe('ContinueHostAdapter', () => {
     })
 
     await expect(
-      adapter.run('hello', new AbortController().signal, async () => 'deny')
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        async () => 'deny',
+        {
+          workMode: 'execute',
+          customMcpCapability: {
+            endpoint: 'http://127.0.0.1:4567/mcp',
+            token: 'request-scoped-custom-token'
+          }
+        }
+      )
     ).resolves.toEqual({
       text: 'HOST_LAUNCH_OK',
       usage: {
@@ -486,7 +532,7 @@ describe('ContinueHostAdapter', () => {
     expect(launch?.args).toEqual([
       '--config',
       expect.stringContaining('model-config-'),
-      '--readonly',
+      '--auto',
       'serve',
       '--port',
       expect.any(String),
@@ -530,6 +576,19 @@ describe('ContinueHostAdapter', () => {
           apiBase: 'https://model.example/v1',
           apiKey: '${{ secrets.ANTHROPIC_API_KEY }}',
           model: 'private-model'
+        }
+      ],
+      mcpServers: [
+        {
+          name: 'goodbuddy-custom-mcp',
+          type: 'streamable-http',
+          url: 'http://127.0.0.1:4567/mcp',
+          requestOptions: {
+            headers: {
+              Authorization:
+                'Bearer request-scoped-custom-token'
+            }
+          }
         }
       ]
     })

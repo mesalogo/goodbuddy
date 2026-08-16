@@ -160,6 +160,27 @@ function portableDirectory(parent: string): string {
     join(directory, 'resources', 'runtimes', 'continue'),
     { recursive: true }
   )
+  mkdirSync(
+    join(
+      directory,
+      'resources',
+      'runtimes',
+      'npm',
+      'node_modules',
+      'graceful-fs'
+    ),
+    { recursive: true }
+  )
+  mkdirSync(
+    join(
+      directory,
+      'resources',
+      'runtimes',
+      'npm',
+      'bin'
+    ),
+    { recursive: true }
+  )
   for (const [path, content] of [
     ['GoodBuddy.exe', 'MZ'],
     ['resources/app.asar', 'asar'],
@@ -167,7 +188,19 @@ function portableDirectory(parent: string): string {
     ['resources/icon.ico', 'icon'],
     ['resources/tray-icon.png', 'tray'],
     ['resources/runtimes/opencode/opencode.exe', 'MZ'],
-    ['resources/runtimes/continue/package.json', '{}']
+    ['resources/runtimes/continue/package.json', '{}'],
+    [
+      'resources/runtimes/npm/bin/npm-cli.js',
+      'require("../lib/cli.js")'
+    ],
+    [
+      'resources/runtimes/npm/package.json',
+      '{"version":"11.19.0"}'
+    ],
+    [
+      'resources/runtimes/npm/node_modules/graceful-fs/package.json',
+      '{"name":"graceful-fs"}'
+    ]
   ] satisfies Array<[string, string]>) {
     writeFileSync(join(directory, ...path.split('/')), content)
   }
@@ -300,6 +333,9 @@ describe('release build arguments', () => {
         'node_modules/@koromix/koffi-*/**/*'
       ])
     )
+    expect(packageJson.build.asarUnpack).not.toContain(
+      'node_modules/npm/**/*'
+    )
     expect(packageJson.optionalDependencies).toEqual({
       '@koromix/koffi-darwin-arm64': '3.1.4',
       '@koromix/koffi-darwin-x64': '3.1.4',
@@ -385,7 +421,11 @@ describe('release build arguments', () => {
     const packageJson = require('../package.json') as {
       build: {
         files: string[]
-        extraResources: Array<{ from: string }>
+        extraResources: Array<{
+          from: string
+          to?: string
+          filter?: string[]
+        }>
       }
     }
     const resourceSources = packageJson.build.extraResources.map(
@@ -394,9 +434,15 @@ describe('release build arguments', () => {
 
     expect(packageJson.build.files).toEqual([
       'out/**/*',
-      'package.json'
+      'package.json',
+      '!node_modules/npm{,/**/*}'
     ])
     expect(resourceSources).toContain('resources/skills')
+    expect(packageJson.build.extraResources).toContainEqual({
+      from: 'node_modules',
+      to: 'runtimes',
+      filter: ['npm{,/**/*}']
+    })
     expect(
       resourceSources.some((source) => source.startsWith('tests/'))
     ).toBe(false)

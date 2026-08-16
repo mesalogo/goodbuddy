@@ -147,6 +147,51 @@ describe('controlled DeepSeek Harness host', () => {
     await host.dispose()
   })
 
+  it('reports extension startup failures without failing the Host', async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'goodbuddy-harness-extensions-'))
+    )
+    const brokenEntrypoint = join(root, 'broken.mjs')
+    await writeFile(
+      brokenEntrypoint,
+      'export const value = 1\n',
+      'utf8'
+    )
+    const inbound = new TransformStream<
+      Record<string, unknown>,
+      Record<string, unknown>
+    >()
+    const outbound = new TransformStream<
+      Record<string, unknown>,
+      Record<string, unknown>
+    >()
+    const host = await startControlledDeepSeekHarnessHost({
+      workspace: root,
+      dshHome: root,
+      baseUrl: 'https://api.deepseek.com',
+      api: 'openai-completions',
+      provider: 'goodbuddy',
+      model: 'deepseek-test',
+      harnessVersion: '0.1.0-rc.6',
+      credentialRefs: ['GOODBUDDY_API_KEY'],
+      skillPackages: [],
+      extensionPackages: [
+        {
+          id: 'broken',
+          entrypoint: brokenEntrypoint,
+          configuration: {}
+        }
+      ],
+      stream: {
+        readable: inbound.readable,
+        writable: outbound.writable
+      } as never
+    })
+
+    expect(host.failedExtensionIds).toEqual(['broken'])
+    await host.dispose()
+  })
+
   it('loads only explicitly supplied Skill packages into a session scope', async () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'goodbuddy-harness-skill-'))

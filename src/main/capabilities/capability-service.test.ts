@@ -630,7 +630,7 @@ describe('CapabilityService', () => {
     })
   })
 
-  it('allows Harness MCP assignment and rejects unsupported Agent Runtimes', async () => {
+  it('allows MCP assignment to every supported runtime', async () => {
     const { service } = await createService()
 
     await expect(
@@ -661,16 +661,28 @@ describe('CapabilityService', () => {
         description: '',
         enabled: true,
         allowDynamicTools: false,
-        assignments: ['opencode'],
+        assignments: ['opencode', 'continue'],
         secret: { action: 'keep' },
         transport: 'stdio',
         command: 'node',
         args: ['server.js']
       })
-    ).rejects.toThrow('只能分配给直连模型或 DeepSeek Harness')
+    ).resolves.toMatchObject({
+      mcpServers: expect.arrayContaining([
+        expect.objectContaining({
+          assignments: ['opencode', 'continue']
+        })
+      ])
+    })
+    await expect(
+      service.getResolvedMcpServers('opencode')
+    ).resolves.toHaveLength(1)
+    await expect(
+      service.getResolvedMcpServers('continue')
+    ).resolves.toHaveLength(1)
   })
 
-  it('migrates legacy OpenCode MCP assignments to the direct model', async () => {
+  it('preserves stored OpenCode MCP assignments', async () => {
     const { filePath, builtinRoot, importedRoot } = await createService()
     await writeFile(
       filePath,
@@ -701,14 +713,14 @@ describe('CapabilityService', () => {
 
     await expect(service.getSnapshot()).resolves.toMatchObject({
       mcpServers: [
-        expect.objectContaining({ assignments: ['model'] })
+        expect.objectContaining({ assignments: ['opencode'] })
       ]
     })
     expect(await readFile(filePath, 'utf8')).toContain(
-      '"assignments": [\n        "model"'
+      '"assignments": [\n        "opencode"'
     )
-    await expect(service.getResolvedMcpServers('opencode')).resolves.toEqual([])
-    await expect(service.getResolvedMcpServers('model')).resolves.toHaveLength(1)
+    await expect(service.getResolvedMcpServers('opencode')).resolves.toHaveLength(1)
+    await expect(service.getResolvedMcpServers('model')).resolves.toEqual([])
   })
 
   it('migrates v1 to v3 without losing skills, MCP configuration, or encrypted secrets', async () => {

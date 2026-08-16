@@ -61,7 +61,7 @@ export const settings = {
     skills: {
       label: 'Skills',
       navigationDescription: '内置与自定义能力',
-      description: '支持直连模型、OpenCode 和 Continue'
+      description: '支持直连模型、OpenCode、Continue 和 DeepSeek Harness'
     },
     mcp: {
       label: 'MCP',
@@ -223,14 +223,83 @@ export const settings = {
       title: 'DeepSeek Harness',
       previewDescription: '开发者预览 · OpenAI 兼容',
       description:
-        '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Execute 工具调用自动单次授权，Ask 保持只读，并保留取消和工作区安全边界；不接入 DSH 插件或市场机制。',
+        '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Ask 仅允许模型调用只读工具，Execute 可调用全部已启用工具及 DSH 插件能力，并保留取消和工作区边界。',
       managedSource: '管理员预置的 OpenAI 兼容连接',
       connection: 'OpenAI 兼容模型连接',
       connectionPlaceholder: '选择 OpenAI 兼容模型连接',
       connectionDescription:
         '从 GoodBuddy 模型连接中选择；协议必须为 OpenAI Chat Completions，并使用 API Key。',
       advancedDescription:
-        '该 Runtime 始终使用 GoodBuddy 内置并固定版本的 Host，不加载外部 DSH 插件、市场包、用户 profile 或自定义 Host。'
+        '该 Runtime 始终使用 GoodBuddy 内置并固定版本的 Host，不加载用户 profile 或自定义 Host；已启用的市场插件由 GoodBuddy 托管并随 Host 启动。',
+      marketplace: {
+        title: 'DSH 插件市场',
+        previewDescription: '预览 · npm 公共仓库',
+        switch: {
+          aria: '启用 DSH 插件市场',
+          enabled: '已开启',
+          disabled: '已关闭'
+        },
+        disabledDescription:
+          '插件市场默认关闭。开启后才会连接公共 npm 目录并显示管理界面；关闭市场不会停用或卸载已有插件。',
+        permissionNotice:
+          '第三方插件的安装脚本、初始化代码及工具均以当前用户权限运行。Ask 只限制模型调用非只读工具，无法限制插件初始化代码；Execute 可调用已启用插件提供的全部工具。请仅安装可信包。',
+        refresh: '刷新',
+        refreshAria: '刷新 DSH 插件市场',
+        searchLabel: '搜索插件',
+        searchPlaceholder: '按名称、包名、描述或许可证筛选',
+        retry: '重试',
+        loading: '正在加载插件目录…',
+        catalogUnavailable:
+          '无法刷新 npm 插件目录：{{detail}}。已安装插件仍可管理。',
+        results: '显示 {{shown}} / {{total}} 个插件',
+        noResults: '没有匹配的插件。',
+        empty: 'npm 公共仓库中暂未找到 DSH 插件。',
+        refineSearch: '当前最多显示 {{count}} 个插件，请缩小搜索范围。',
+        notInCatalog: '此已安装插件目前不在 npm 市场目录中。',
+        installed: '已安装',
+        enabled: '已启用',
+        disabled: '已停用',
+        enableAria: '启用 {{name}}',
+        install: '安装并启用',
+        update: '更新到 {{version}}',
+        installing: '正在安装…',
+        installConfirmationTitle: '安装 {{name}}',
+        installConfirmation:
+          'npm 会运行该包及其依赖声明的安装脚本。安装后，插件初始化代码会随 DeepSeek Harness 启动。',
+        trustConfirmation:
+          '我信任 {{package}}，并了解其代码将以当前用户权限运行。',
+        confirmInstall: '确认安装',
+        cancel: '取消',
+        remove: '移除',
+        removeAria: '移除 {{name}}',
+        confirmRemove: '确认移除',
+        removeMessage: '移除 {{name}} 及其由 GoodBuddy 托管的文件？',
+        startupFailure:
+          '插件上次启动失败，已自动停用。确认配置或版本后可重新启用。',
+        configuration: {
+          open: '配置',
+          close: '收起配置',
+          label: '{{name}} 配置 JSON',
+          help: '保存一个 JSON 对象并重启当前 Runtime，使配置传给插件。',
+          save: '保存配置',
+          invalid: '配置必须是有效的 JSON 对象。'
+        },
+        errors: {
+          unavailable: '当前版本未提供 DSH 插件市场服务',
+          readFailed: '读取 DSH 插件市场失败',
+          operationFailed: 'DSH 插件操作失败'
+        },
+        notifications: {
+          marketplaceEnabled: '已开启 DSH 插件市场',
+          marketplaceDisabled: '已关闭 DSH 插件市场',
+          installed: '已安装并启用 {{name}}',
+          updated: '已更新 {{name}}',
+          enabled: '已启用 {{name}}',
+          disabled: '已停用 {{name}}',
+          configured: '已保存 {{name}} 的配置',
+          removed: '已移除 {{name}}'
+        }
+      }
     }
   },
   documentParsing: {

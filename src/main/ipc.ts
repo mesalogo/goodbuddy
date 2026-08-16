@@ -177,6 +177,11 @@ import {
 import type { CapabilityService } from './capabilities/capability-service'
 import { testMcpServer } from './capabilities/mcp-tester'
 import { testWebSearch } from './capabilities/web-search-tester'
+import {
+  runtimeExtensionActionSchema,
+  type RuntimeExtensionMarketplaceSnapshot
+} from '../shared/runtime-extension-contracts'
+import type { RuntimeExtensionStore } from './agent/runtime-extension-store'
 import type { ContextManager } from './context-manager'
 import type { KnowledgeService } from './knowledge/knowledge-service'
 import {
@@ -831,7 +836,8 @@ export function registerIpcHandlers(
   documentOcrModelManager?: DocumentOcrModelManager,
   documentOcrBroker?: DocumentOcrBroker,
   releaseNotesService?: ReleaseNotesService,
-  goodbuddyConfigService?: GoodBuddyConfigService
+  goodbuddyConfigService?: GoodBuddyConfigService,
+  runtimeExtensionStore?: RuntimeExtensionStore
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
   const activeEventBuffers = new Map<string, { flush(): void }>()
@@ -4027,6 +4033,40 @@ export function registerIpcHandlers(
     (event): Promise<CapabilitySnapshot> => {
       assertTrustedSender(event, window)
       return capabilityService.getSnapshot()
+    }
+  )
+
+  registerHandler(
+    ipcChannels.runtimeExtensionsSnapshot,
+    (event): Promise<RuntimeExtensionMarketplaceSnapshot> => {
+      assertTrustedSender(event, window)
+      if (!runtimeExtensionStore) {
+        throw new Error('DSH 插件市场不可用')
+      }
+      return runtimeExtensionStore.getSnapshot()
+    }
+  )
+
+  registerHandler(
+    ipcChannels.runtimeExtensionsApply,
+    async (
+      event,
+      input: unknown
+    ): Promise<RuntimeExtensionMarketplaceSnapshot> => {
+      assertTrustedSender(event, window)
+      if (!runtimeExtensionStore) {
+        throw new Error('DSH 插件市场不可用')
+      }
+      const action = runtimeExtensionActionSchema.parse(input)
+      const result =
+        await runtimeExtensionStore.applyWithResult(action)
+      if (
+        result.changed &&
+        action.type !== 'set-marketplace-enabled'
+      ) {
+        await onRuntimeSettingsChanged()
+      }
+      return result.snapshot
     }
   )
 

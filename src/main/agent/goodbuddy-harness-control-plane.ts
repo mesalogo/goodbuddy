@@ -45,12 +45,7 @@ const DELTA_BATCH_CHARACTERS = 4 * 1024
 const DELTA_BATCH_INTERVAL_MS = 100
 const MAX_SUMMARY_CHARACTERS = 4_000
 const MAX_MCP_PROXY_RESULT_BYTES = 256 * 1024
-const ASK_BLOCKED_TOOL_NAMES = new Set([
-  'bash',
-  'pwsh',
-  'write',
-  'edit'
-])
+const ASK_READ_ONLY_TOOL_NAMES = new Set(['read', 'skill'])
 const GOODBUDDY_EXECUTION_GUIDANCE = [
   'GoodBuddy controlled execution rules:',
   '- In Execute mode, act through the available tools instead of writing a long implementation plan.',
@@ -656,10 +651,10 @@ export class GoodBuddyHarnessControlPlane {
         record &&
         record.handle.agent === exec.agent &&
         record.inflight?.mode === 'ask' &&
-        ASK_BLOCKED_TOOL_NAMES.has(exec.name)
+        !ASK_READ_ONLY_TOOL_NAMES.has(exec.name)
       ) {
         throw new Error(
-          `Ask 模式不允许执行修改或命令工具：${exec.name}`
+          `Ask 模式不允许执行非只读工具：${exec.name}`
         )
       }
       return next()
@@ -710,7 +705,10 @@ export class GoodBuddyHarnessControlPlane {
             type: 'tool',
             callId: toolResult?.toolCallId ?? 'unknown-tool-call',
             name: 'tool',
-            state: event.data.error ? 'failed' : 'completed',
+            state:
+              event.data.error || toolResult?.isError === true
+                ? 'failed'
+                : 'completed',
             output: boundedJson(event.data.message.content)
           })
         }

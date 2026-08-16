@@ -5,8 +5,17 @@ import {
   type Server,
   type ServerResponse
 } from 'node:http'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { Server as McpProtocolServer } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import {
+  CallToolRequestSchema,
+  CallToolResultSchema,
+  ListToolsRequestSchema,
+  type CallToolResult,
+  type Tool
+} from '@modelcontextprotocol/sdk/types.js'
+import { z } from 'zod'
 import type { KnowledgeSearchReference } from '../../shared/contracts'
 import { stripKnowledgeHighlightTags } from '../../shared/knowledge-text'
 import {
@@ -39,9 +48,26 @@ import type {
   GoodBuddyConfigApplyAuthorizer,
   GoodBuddyConfigService
 } from '../goodbuddy-config-service'
+import {
+  createMcpTransport
+} from '../capabilities/mcp-client-transport'
+import type {
+  ResolvedMcpServer
+} from '../capabilities/capability-service'
+import {
+  createMcpToolName,
+  isValidMcpToolName,
+  normalizeMcpToolSchema
+} from './mcp-tool-utils'
 
 const MAX_REQUEST_BODY_BYTES = 64 * 1024
 const MAX_RESULT_BYTES = 128 * 1024
+const MAX_CUSTOM_MCP_RESULT_BYTES = 256 * 1024
+const MAX_CUSTOM_MCP_SERVERS = 16
+const MAX_CUSTOM_MCP_TOOLS = 100
+const CUSTOM_MCP_TIMEOUT_MS = 30_000
+const CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
+const CUSTOM_MCP_TASK_CANCEL_TIMEOUT_MS = 5_000
 const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000
 const MAX_CAPABILITY_TTL_MS = 15 * 60_000
 
@@ -140,8 +166,27 @@ type Capability = {
   authorizeConfigApply?: GoodBuddyConfigApplyAuthorizer
   expiresAt: number
   signal: AbortSignal
+  brokerController: AbortController
+  customMcpServers: readonly ResolvedMcpServer[]
+  customMcpConnections?: Promise<CustomMcpConnection[]>
   references: Map<string, KnowledgeSearchReference>
   removeAbortListener: () => void
+}
+
+type CustomMcpBinding = {
+  client: Client
+  server: ResolvedMcpServer
+  originalName: string
+  exposedTool: Tool
+  taskSupport?: 'forbidden' | 'optional' | 'required'
+}
+
+type CustomMcpConnection = {
+  client: Client
+  server: ResolvedMcpServer
+  bindings: CustomMcpBinding[]
+  dynamicToolsSupported: boolean
+  dynamicToolsChanged: boolean
 }
 
 export type KnowledgeMcpGatewayOptions = {
@@ -182,6 +227,38 @@ function referenceKey(reference: KnowledgeSearchReference): string {
     reference.locator ?? '',
     reference.snippet
   ].join('\0')
+}
+
+function ensureBoundedCustomMcpResult(result: unknown): CallToolResult {
+  const normalized =
+    result &&
+    typeof result === 'object' &&
+    'toolResult' in result
+      ? {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                (result as { toolResult: unknown }).toolResult
+              )
+            }
+          ]
+        }
+      : result
+  const parsed = CallToolResultSchema.parse(normalized)
+  let serialized: string
+  try {
+    serialized = JSON.stringify(parsed)
+  } catch (error) {
+    throw new Error('MCP 工具结果无法序列化', { cause: error })
+  }
+  if (
+    !serialized ||
+    Buffer.byteLength(serialized) > MAX_CUSTOM_MCP_RESULT_BYTES
+  ) {
+    throw new Error('MCP 工具结果超过 256KB 安全限制')
+  }
+  return parsed
 }
 
 function sendJson(
@@ -231,6 +308,7 @@ async function readBoundedJson(
 
 export class KnowledgeMcpGateway {
   private readonly capabilities = new Map<string, Capability>()
+  private readonly customMcpCleanups = new Set<Promise<void>>()
   private readonly now: () => number
   private readonly capabilityTtlMs: number
   private readonly maximumBodyBytes: number
@@ -323,15 +401,9 @@ export class KnowledgeMcpGateway {
       return undefined
     }
     signal.throwIfAborted()
-    const libraryIds = Object.freeze([...new Set(authorizedLibraryIds)])
-    const token = randomBytes(32).toString('base64url')
-    const abort = (): void => {
-      this.revoke(token)
-    }
-    signal.addEventListener('abort', abort, { once: true })
-    this.capabilities.set(token, {
+    return this.storeCapability({
       requestId,
-      libraryIds,
+      libraryIds: Object.freeze([...new Set(authorizedLibraryIds)]),
       magicNotesAccess: effectiveMagicNotesAccess,
       configAccess: effectiveConfigAccess,
       ...(effectiveConfigAccess !== 'none'
@@ -340,11 +412,67 @@ export class KnowledgeMcpGateway {
             authorizeConfigApply: config?.authorizeApply
           }
         : {}),
-      expiresAt: this.now() + this.capabilityTtlMs,
       signal,
+      customMcpServers: []
+    })
+  }
+
+  grantCustomMcp(
+    requestId: string,
+    servers: readonly ResolvedMcpServer[],
+    signal: AbortSignal
+  ): string | undefined {
+    if (servers.length === 0) {
+      return undefined
+    }
+    if (servers.length > MAX_CUSTOM_MCP_SERVERS) {
+      throw new Error(
+        `Agent Runtime 最多可加载 ${MAX_CUSTOM_MCP_SERVERS} 个 MCP Server`
+      )
+    }
+    if (
+      servers.some(
+        (server) =>
+          !server.enabled ||
+          server.assignments.length === 0
+      )
+    ) {
+      throw new Error('Agent Runtime MCP 授权包含无效 Server')
+    }
+    return this.storeCapability({
+      requestId,
+      libraryIds: [],
+      magicNotesAccess: 'none',
+      configAccess: 'none',
+      signal,
+      customMcpServers: Object.freeze([...servers])
+    })
+  }
+
+  private storeCapability(
+    value: Omit<
+      Capability,
+      | 'expiresAt'
+      | 'references'
+      | 'removeAbortListener'
+      | 'brokerController'
+      | 'customMcpConnections'
+    >
+  ): string {
+    value.signal.throwIfAborted()
+    const token = randomBytes(32).toString('base64url')
+    const brokerController = new AbortController()
+    const abort = (): void => {
+      this.revoke(token)
+    }
+    value.signal.addEventListener('abort', abort, { once: true })
+    this.capabilities.set(token, {
+      ...value,
+      expiresAt: this.now() + this.capabilityTtlMs,
+      brokerController,
       references: new Map(),
       removeAbortListener: () =>
-        signal.removeEventListener('abort', abort)
+        value.signal.removeEventListener('abort', abort)
     })
     return token
   }
@@ -359,7 +487,17 @@ export class KnowledgeMcpGateway {
     }
     capability.removeAbortListener()
     this.capabilities.delete(token)
-    this.configService?.revokeRequest(capability.requestId)
+    capability.brokerController.abort(
+      new Error('MCP capability was revoked')
+    )
+    if (capability.configAccess !== 'none') {
+      this.configService?.revokeRequest(capability.requestId)
+    }
+    const cleanup = this.closeCustomMcpConnections(capability)
+    this.customMcpCleanups.add(cleanup)
+    void cleanup.finally(() => {
+      this.customMcpCleanups.delete(cleanup)
+    })
   }
 
   drainReferences(
@@ -512,6 +650,291 @@ export class KnowledgeMcpGateway {
         ? goodbuddyConfigWriteToolNames
         : [])
     ]
+  }
+
+  private createCustomMcpBindings(
+    client: Client,
+    server: ResolvedMcpServer,
+    tools: Awaited<ReturnType<Client['listTools']>>['tools']
+  ): CustomMcpBinding[] {
+    if (tools.length > MAX_CUSTOM_MCP_TOOLS) {
+      throw new Error(
+        `MCP Server「${server.name}」提供的工具数量超过安全限制`
+      )
+    }
+    return tools.map((tool) => {
+      if (!isValidMcpToolName(tool.name)) {
+        throw new Error(
+          `MCP Server「${server.name}」返回了无效工具名称`
+        )
+      }
+      return {
+        client,
+        server,
+        originalName: tool.name,
+        taskSupport: tool.execution?.taskSupport,
+        exposedTool: {
+          name: createMcpToolName(server.id, tool.name),
+          title: `${server.name} / ${tool.name}`.slice(0, 200),
+          description: [
+            `GoodBuddy 代理的自定义 MCP Server「${server.name}」工具。`,
+            tool.description
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .slice(0, 1_000),
+          inputSchema: normalizeMcpToolSchema(tool.inputSchema),
+          annotations: tool.annotations
+        }
+      }
+    })
+  }
+
+  private async connectCustomMcpServer(
+    capability: Capability,
+    server: ResolvedMcpServer
+  ): Promise<CustomMcpConnection> {
+    let connection: CustomMcpConnection | undefined
+    const client = new Client(
+      {
+        name: 'goodbuddy-main-mcp-broker',
+        version: '1.0.0'
+      },
+      server.allowDynamicTools
+        ? {
+            listChanged: {
+              tools: {
+                autoRefresh: false,
+                debounceMs: 0,
+                onChanged: (error) => {
+                  if (!error && connection) {
+                    connection.dynamicToolsChanged = true
+                  }
+                }
+              }
+            }
+          }
+        : undefined
+    )
+    const signal = AbortSignal.any([
+      capability.signal,
+      capability.brokerController.signal
+    ])
+    try {
+      await client.connect(createMcpTransport(server), {
+        timeout: CUSTOM_MCP_TIMEOUT_MS,
+        signal
+      })
+      const result = await client.listTools(undefined, {
+        timeout: CUSTOM_MCP_TIMEOUT_MS,
+        signal
+      })
+      connection = {
+        client,
+        server,
+        bindings: this.createCustomMcpBindings(
+          client,
+          server,
+          result.tools
+        ),
+        dynamicToolsSupported:
+          server.allowDynamicTools &&
+          client.getServerCapabilities()?.tools?.listChanged === true,
+        dynamicToolsChanged: false
+      }
+      return connection
+    } catch (error) {
+      await client.close().catch(() => undefined)
+      throw new Error(
+        `无法加载 MCP Server「${server.name}」的工具`,
+        { cause: error }
+      )
+    }
+  }
+
+  private async getCustomMcpBindings(
+    token: string,
+    signal?: AbortSignal,
+    refreshDynamic = true
+  ): Promise<Map<string, CustomMcpBinding>> {
+    const capability = this.getCapability(token)
+    if (capability.customMcpServers.length === 0) {
+      return new Map()
+    }
+    if (!capability.customMcpConnections) {
+      capability.customMcpConnections = (async () => {
+        const results = await Promise.allSettled(
+          capability.customMcpServers.map((server) =>
+            this.connectCustomMcpServer(capability, server)
+          )
+        )
+        const connections = results.flatMap((result) =>
+          result.status === 'fulfilled' ? [result.value] : []
+        )
+        const failure = results.find(
+          (result) => result.status === 'rejected'
+        )
+        if (failure?.status === 'rejected') {
+          await Promise.allSettled(
+            connections.map((connection) => connection.client.close())
+          )
+          throw failure.reason
+        }
+        return connections
+      })()
+    }
+    let connections: CustomMcpConnection[]
+    try {
+      connections = await capability.customMcpConnections
+    } catch (error) {
+      capability.customMcpConnections = undefined
+      throw error
+    }
+    if (refreshDynamic) {
+      const effectiveSignal = signal
+        ? AbortSignal.any([
+            signal,
+            capability.signal,
+            capability.brokerController.signal
+          ])
+        : AbortSignal.any([
+            capability.signal,
+            capability.brokerController.signal
+          ])
+      for (const connection of connections) {
+        if (
+          !connection.dynamicToolsSupported ||
+          !connection.dynamicToolsChanged
+        ) {
+          continue
+        }
+        connection.dynamicToolsChanged = false
+        try {
+          const result = await connection.client.listTools(undefined, {
+            timeout: CUSTOM_MCP_TIMEOUT_MS,
+            signal: effectiveSignal
+          })
+          connection.bindings = this.createCustomMcpBindings(
+            connection.client,
+            connection.server,
+            result.tools
+          )
+        } catch (error) {
+          connection.dynamicToolsChanged = true
+          throw new Error(
+            `无法刷新 MCP Server「${connection.server.name}」的工具`,
+            { cause: error }
+          )
+        }
+      }
+    }
+    const bindings = new Map<string, CustomMcpBinding>()
+    for (const connection of connections) {
+      for (const binding of connection.bindings) {
+        if (bindings.size >= MAX_CUSTOM_MCP_TOOLS) {
+          throw new Error('Agent Runtime MCP 工具总数超过 100 个安全限制')
+        }
+        if (bindings.has(binding.exposedTool.name)) {
+          throw new Error('Agent Runtime MCP 工具名称发生冲突')
+        }
+        bindings.set(binding.exposedTool.name, binding)
+      }
+    }
+    return bindings
+  }
+
+  async prepareCustomMcpTools(
+    token: string,
+    signal?: AbortSignal
+  ): Promise<Tool[]> {
+    return [
+      ...(await this.getCustomMcpBindings(token, signal)).values()
+    ].map((binding) => binding.exposedTool)
+  }
+
+  private async callCustomMcpTool(
+    token: string,
+    binding: CustomMcpBinding,
+    argumentsValue: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<CallToolResult> {
+    const capability = this.getCapability(token)
+    const effectiveSignal = AbortSignal.any([
+      signal,
+      capability.signal,
+      capability.brokerController.signal
+    ])
+    const params = {
+      name: binding.originalName,
+      arguments: argumentsValue
+    }
+    const options = {
+      timeout: CUSTOM_MCP_TIMEOUT_MS,
+      signal: effectiveSignal,
+      onprogress: () => undefined,
+      resetTimeoutOnProgress: true,
+      maxTotalTimeout: CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS
+    }
+    try {
+      if (binding.taskSupport !== 'required') {
+        return ensureBoundedCustomMcpResult(
+          await binding.client.callTool(params, undefined, options)
+        )
+      }
+      let taskId: string | undefined
+      try {
+        for await (const message of binding.client.experimental.tasks.callToolStream(
+          params,
+          undefined,
+          options
+        )) {
+          if (
+            (message.type === 'taskCreated' ||
+              message.type === 'taskStatus') &&
+            typeof message.task.taskId === 'string'
+          ) {
+            taskId = message.task.taskId
+          } else if (message.type === 'result') {
+            return ensureBoundedCustomMcpResult(message.result)
+          } else if (message.type === 'error') {
+            throw message.error
+          }
+        }
+        throw new Error('MCP 任务工具未返回最终结果')
+      } catch (error) {
+        if (taskId) {
+          await binding.client.experimental.tasks
+            .cancelTask(taskId, {
+              timeout: CUSTOM_MCP_TASK_CANCEL_TIMEOUT_MS,
+              maxTotalTimeout: CUSTOM_MCP_TASK_CANCEL_TIMEOUT_MS
+            })
+            .catch(() => undefined)
+        }
+        throw error
+      }
+    } catch (error) {
+      if (effectiveSignal.aborted) {
+        throw effectiveSignal.reason
+      }
+      throw new Error(
+        `MCP Server「${binding.server.name}」工具调用失败`,
+        { cause: error }
+      )
+    }
+  }
+
+  private async closeCustomMcpConnections(
+    capability: Capability
+  ): Promise<void> {
+    const pending = capability.customMcpConnections
+    capability.customMcpConnections = undefined
+    if (!pending) {
+      return
+    }
+    const connections = await pending.catch(() => [])
+    await Promise.allSettled(
+      connections.map((connection) => connection.client.close())
+    )
   }
 
   private requireConfig(
@@ -841,40 +1264,111 @@ export class KnowledgeMcpGateway {
       return
     }
 
-    const mcp = new McpServer({
-      name: 'goodbuddy-scoped-knowledge',
-      version: '1.0.0'
-    })
-    const availableTools = this.getAvailableToolNames(token)
-    for (const name of availableTools) {
-      const definition = scopedDataToolByName.get(name)
-      if (!definition) {
-        continue
+    const availableScopedTools = new Set(
+      this.getAvailableToolNames(token)
+    )
+    const mcp = new McpProtocolServer(
+      {
+        name: 'goodbuddy-request-scoped-capabilities',
+        version: '1.0.0'
+      },
+      {
+        capabilities: {
+          tools: {}
+        }
       }
-      mcp.registerTool(
-        name,
-        {
-          title: definition.title,
-          description: definition.description,
-          inputSchema: definition.inputSchema,
-          annotations: {
-            readOnlyHint: definition.access === 'read',
-            destructiveHint:
-              name === 'goodbuddy_config_apply' ||
-              name === 'note_delete' ||
-              name === 'note_entry_delete'
-          }
-        },
-        async (input: Record<string, unknown>) => ({
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(await this.callScopedTool(token, name, input))
+    )
+    mcp.setRequestHandler(
+      ListToolsRequestSchema,
+      async (_request, extra) => {
+        const customBindings = await this.getCustomMcpBindings(
+          token,
+          extra.signal
+        )
+        const scopedTools = [...availableScopedTools].flatMap(
+          (name): Tool[] => {
+            const definition = scopedDataToolByName.get(
+              name as ScopedDataToolName
+            )
+            if (!definition) {
+              return []
             }
+            const inputSchema = z.toJSONSchema(
+              definition.inputSchema,
+              { target: 'draft-7' }
+            ) as Tool['inputSchema'] & { $schema?: string }
+            Reflect.deleteProperty(inputSchema, '$schema')
+            return [
+              {
+                name,
+                title: definition.title,
+                description: definition.description,
+                inputSchema,
+                annotations: {
+                  readOnlyHint: definition.access === 'read',
+                  destructiveHint:
+                    name === 'goodbuddy_config_apply' ||
+                    name === 'note_delete' ||
+                    name === 'note_entry_delete'
+                }
+              }
+            ]
+          }
+        )
+        return {
+          tools: [
+            ...scopedTools,
+            ...[...customBindings.values()].map(
+              (binding) => binding.exposedTool
+            )
           ]
-        })
-      )
-    }
+        }
+      }
+    )
+    mcp.setRequestHandler(
+      CallToolRequestSchema,
+      async (call, extra) => {
+        const name = call.params.name
+        const input = call.params.arguments ?? {}
+        if (
+          availableScopedTools.has(name as ScopedDataToolName)
+        ) {
+          const definition = scopedDataToolByName.get(
+            name as ScopedDataToolName
+          )
+          if (!definition) {
+            throw new Error('GoodBuddy 工具不存在')
+          }
+          const parsedInput = definition.inputSchema.parse(input)
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify(
+                  await this.callScopedTool(
+                    token,
+                    name as ScopedDataToolName,
+                    parsedInput
+                  )
+                )
+              }
+            ]
+          }
+        }
+        const binding = (
+          await this.getCustomMcpBindings(token, extra.signal)
+        ).get(name)
+        if (!binding) {
+          throw new Error('GoodBuddy MCP 工具不存在或已失效')
+        }
+        return this.callCustomMcpTool(
+          token,
+          binding,
+          input,
+          extra.signal
+        )
+      }
+    )
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined
     })
@@ -897,6 +1391,7 @@ export class KnowledgeMcpGateway {
     for (const token of [...this.capabilities.keys()]) {
       this.revoke(token)
     }
+    await Promise.allSettled([...this.customMcpCleanups])
     const server = this.server
     this.server = undefined
     this.endpoint = undefined

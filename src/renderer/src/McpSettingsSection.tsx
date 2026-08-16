@@ -39,6 +39,8 @@ import { PageTabs } from './WorkspacePrimitives'
 
 const configurableMcpTargets: RuntimeTarget[] = [
   'model',
+  'opencode',
+  'continue',
   'deepseek-harness'
 ]
 type McpSettingsTab = 'builtin' | 'computer' | 'custom'
@@ -79,9 +81,7 @@ function editorFromServer(server: McpServerSummary): McpEditor {
     description: server.description,
     enabled: server.enabled,
     allowDynamicTools: server.allowDynamicTools,
-    assignments: server.assignments.filter((target) =>
-      configurableMcpTargets.includes(target)
-    ),
+    assignments: server.assignments,
     transport: server.transport,
     command: server.transport === 'stdio' ? server.command : '',
     args: server.transport === 'stdio' ? server.args.join('\n') : '',

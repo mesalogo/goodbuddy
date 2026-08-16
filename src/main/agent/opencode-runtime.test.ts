@@ -1307,6 +1307,147 @@ describe('OpenCodeRuntime embedded launcher', () => {
 })
 
 describe('OpenCodeRuntime embedded permission mediation', () => {
+  it('shares assigned custom MCP only with embedded Execute through a scoped loopback token', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const gateway = {
+      getEndpoint: vi.fn(() => 'http://127.0.0.1:4567/mcp'),
+      grantCustomMcp: vi.fn(() => 'custom-capability'),
+      prepareCustomMcpTools: vi.fn(async () => [
+        {
+          name: 'mcp_12345678_abcdef01_private_tool',
+          inputSchema: { type: 'object' }
+        }
+      ]),
+      revoke: vi.fn()
+    } as unknown as KnowledgeMcpGateway
+    const runtime = embeddedRuntime(setup.client, {
+      knowledgeGateway: gateway,
+      mcpServers: [
+        {
+          id: '00000000-0000-4000-8000-000000000092',
+          name: 'Private MCP',
+          description: '',
+          enabled: true,
+          allowDynamicTools: false,
+          assignments: ['opencode'],
+          secretConfigured: true,
+          secret: 'must-stay-in-main',
+          transport: 'http',
+          url: 'https://private.example/mcp'
+        }
+      ]
+    })
+
+    await collectRun(runtime, 'execute')
+
+    expect(gateway.grantCustomMcp).toHaveBeenCalledWith(
+      '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+      expect.any(Array),
+      expect.any(AbortSignal)
+    )
+    expect(setup.client.mcp.add).toHaveBeenCalledWith({
+      directory: process.cwd(),
+      name: expect.stringMatching(/^goodbuddy-custom-[a-f0-9]{20}$/u),
+      config: {
+        type: 'remote',
+        url: 'http://127.0.0.1:4567/mcp',
+        enabled: true,
+        headers: {
+          Authorization: 'Bearer custom-capability'
+        },
+        oauth: false
+      }
+    })
+    expect(JSON.stringify(
+      (setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls
+    )).not.toContain('must-stay-in-main')
+    expect(JSON.stringify(
+      (setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls
+    )).not.toContain('private.example')
+    expect(gateway.revoke).toHaveBeenCalledWith('custom-capability')
+    await runtime.dispose()
+  })
+
+  it.each([
+    ['ask', true] as const,
+    ['execute', false] as const
+  ])(
+    'does not share custom MCP with OpenCode in %s mode when embedded is %s',
+    async (workMode, embedded) => {
+      const setup = runClient([
+        {
+          id: 'idle',
+          type: 'session.idle',
+          properties: { sessionID: 'session-1' }
+        }
+      ])
+      const gateway = {
+        getEndpoint: vi.fn(() => 'http://127.0.0.1:4567/mcp'),
+        grantCustomMcp: vi.fn(() => 'custom-capability'),
+        prepareCustomMcpTools: vi.fn(async () => []),
+        revoke: vi.fn()
+      } as unknown as KnowledgeMcpGateway
+      const runtime = embedded
+        ? embeddedRuntime(setup.client, {
+            knowledgeGateway: gateway,
+            mcpServers: [
+              {
+                id: '00000000-0000-4000-8000-000000000093',
+                name: 'Private MCP',
+                description: '',
+                enabled: true,
+                allowDynamicTools: false,
+                assignments: ['opencode'],
+                secretConfigured: false,
+                transport: 'stdio',
+                command: 'private-command',
+                args: []
+              }
+            ]
+          })
+        : new OpenCodeRuntime(
+            options({
+              baseUrl: 'http://127.0.0.1:4096',
+              embedded: false,
+              knowledgeGateway: gateway,
+              mcpServers: [
+                {
+                  id: '00000000-0000-4000-8000-000000000093',
+                  name: 'Private MCP',
+                  description: '',
+                  enabled: true,
+                  allowDynamicTools: false,
+                  assignments: ['opencode'],
+                  secretConfigured: false,
+                  transport: 'stdio',
+                  command: 'private-command',
+                  args: []
+                }
+              ]
+            }),
+            dependencies(fakeChild(), {
+              createClient: vi.fn(
+                () => setup.client
+              ) as unknown as typeof createOpencodeClient
+            }).deps
+          )
+
+      await collectRun(runtime, workMode)
+
+      expect(gateway.grantCustomMcp).not.toHaveBeenCalled()
+      expect(setup.client.mcp.add).not.toHaveBeenCalled()
+      await runtime.dispose()
+    }
+  )
+
   it('parses OpenCode questions and sends the selected answers back', async () => {
     const setup = runClient([
       {

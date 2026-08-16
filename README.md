@@ -10,8 +10,8 @@
 
 - **安全执行**：`Ask` 保持只读；`Execute` 仅运行已启用且受边界约束的工具，并保留活动记录。
 - **本地优先**：会话、任务、成果、记忆、知识库和图谱保存在本地 SQLite；API Key 由系统安全存储加密。
-- **多 Runtime**：支持直连模型、OpenCode 和 Continue，统一处理取消、超时、输出限制和进程退出。
-- **开放连接**：支持 OpenAI Responses、OpenAI 兼容 Chat Completions、Anthropic Messages、OpenAI Images、Embeddings、Skills 和 MCP。
+- **多 Runtime**：支持直连模型、OpenCode、Continue 和预览版 DeepSeek Harness，统一处理取消、超时、输出限制和进程退出。
+- **开放连接**：支持 OpenAI Responses、OpenAI 兼容 Chat Completions、Anthropic Messages、OpenAI Images、Embeddings、跨 Runtime Skills 与自定义 MCP，以及默认关闭、由用户显式开启的 DeepSeek Harness npm 插件市场。
 - **知识工作区**：支持文件、目录和网页导入，以及全文、词组、向量和图谱混合检索。
 - **工作管理**：集中管理 Projects、对话、任务、活动、成果、记忆、魔法笔记和智能心跳。
 - **远程通道**：支持微信 ClawBot、企业微信和钉钉，每个发送者使用独立远程会话。
@@ -59,6 +59,7 @@ npm run dev
 - 模型请求只发送到用户选择的服务。
 - 本地数据默认保存在系统应用数据目录。
 - Renderer 不接触原始 Electron API 或模型凭据。
+- DeepSeek Harness 插件市场默认关闭；开启并安装第三方插件后，其安装脚本、初始化和 Execute 工具以当前用户权限运行。关闭市场只隐藏目录和管理界面，不会停用或卸载已有插件；安装前会明确确认，Ask 只限制模型工具调用。
 - 远程委派仅在用户配置端点和令牌后启用。
 - 内网兼容模式允许应用内 HTTP 和非标准 HTTPS 证书；微信凭据和媒体端点仍执行严格校验。
 

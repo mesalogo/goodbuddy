@@ -44,6 +44,7 @@ async function fixture() {
     writeFile(hostPath, '', 'utf8')
   ])
   return {
+    root,
     dshHome,
     hostPath,
     launchOptions: {
@@ -52,7 +53,8 @@ async function fixture() {
       baseUrl: 'https://gateway.example/openai/v1',
       model: 'qwen-plus',
       credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
-      skillPackages: []
+      skillPackages: [],
+      extensionPackages: []
     }
   }
 }
@@ -63,7 +65,8 @@ describe('DeepSeek Harness utility launcher', () => {
       parseHarnessControlMessage({
         protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
         version: DEEPSEEK_HARNESS_CONTROL_VERSION,
-        type: 'ready'
+        type: 'ready',
+        failedExtensionIds: []
       })
     ).toMatchObject({ type: 'ready' })
     expect(
@@ -71,6 +74,7 @@ describe('DeepSeek Harness utility launcher', () => {
         protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
         version: DEEPSEEK_HARNESS_CONTROL_VERSION,
         type: 'ready',
+        failedExtensionIds: [],
         apiKey: 'must-not-pass'
       })
     ).toBeUndefined()
@@ -105,7 +109,8 @@ describe('DeepSeek Harness utility launcher', () => {
     utility.emit('message', {
       protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
       version: DEEPSEEK_HARNESS_CONTROL_VERSION,
-      type: 'ready'
+      type: 'ready',
+      failedExtensionIds: []
     })
 
     await expect(launching).resolves.toMatchObject({
@@ -120,6 +125,87 @@ describe('DeepSeek Harness utility launcher', () => {
         stdio: ['ignore', 'ignore', 'pipe']
       })
     )
+  })
+
+  it('persists extension startup failures before exposing the child', async () => {
+    const { root, dshHome, hostPath, launchOptions } =
+      await fixture()
+    const entrypoint = join(root, 'greet.mjs')
+    await writeFile(entrypoint, 'export function apply() {}\n', 'utf8')
+    const utility = new FakeUtility()
+    const onExtensionStartupFailures = vi.fn(async () => undefined)
+    const launcher = createDeepSeekHarnessUtilityLauncher({
+      bundledHostPath: hostPath,
+      dshHome,
+      environment: {},
+      fork: () => utility as never,
+      onExtensionStartupFailures
+    })
+
+    const launching = launcher({
+      ...launchOptions,
+      extensionPackages: [
+        {
+          id: 'greet',
+          entrypoint,
+          configuration: {}
+        }
+      ]
+    })
+    await vi.waitFor(() =>
+      expect(utility.messages).toHaveLength(1)
+    )
+    utility.emit('message', {
+      protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+      version: DEEPSEEK_HARNESS_CONTROL_VERSION,
+      type: 'ready',
+      failedExtensionIds: ['greet']
+    })
+
+    await expect(launching).resolves.toBeDefined()
+    expect(onExtensionStartupFailures).toHaveBeenCalledWith([
+      'greet'
+    ])
+  })
+
+  it('fails when the Host exits while startup failures are being persisted', async () => {
+    const { dshHome, hostPath, launchOptions } = await fixture()
+    const utility = new FakeUtility()
+    let finishPersistence!: () => void
+    const persistence = new Promise<void>((resolve) => {
+      finishPersistence = resolve
+    })
+    const onExtensionStartupFailures = vi.fn(() => persistence)
+    const terminateProcess = vi.fn()
+    const launcher = createDeepSeekHarnessUtilityLauncher({
+      bundledHostPath: hostPath,
+      dshHome,
+      environment: {},
+      fork: () => utility as never,
+      terminateProcess,
+      onExtensionStartupFailures
+    })
+
+    const launching = launcher(launchOptions)
+    await vi.waitFor(() =>
+      expect(utility.messages).toHaveLength(1)
+    )
+    utility.emit('message', {
+      protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+      version: DEEPSEEK_HARNESS_CONTROL_VERSION,
+      type: 'ready',
+      failedExtensionIds: ['greet']
+    })
+    await vi.waitFor(() =>
+      expect(onExtensionStartupFailures).toHaveBeenCalledOnce()
+    )
+    utility.emit('exit', 9)
+
+    await expect(launching).rejects.toThrow(
+      'Host 启动前退出（code 9）'
+    )
+    expect(terminateProcess).toHaveBeenCalledOnce()
+    finishPersistence()
   })
 
   it('fails closed on an invalid Host startup message', async () => {

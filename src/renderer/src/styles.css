@@ -5262,6 +5262,242 @@ button > svg {
   color: var(--text-secondary) !important;
 }
 
+.runtime-extension-marketplace {
+  min-width: 0;
+}
+
+.runtime-extension-marketplace__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.runtime-extension-marketplace__master-toggle {
+  min-height: 30px;
+  padding: 0;
+  border-bottom: 0;
+  white-space: nowrap;
+}
+
+.runtime-extension-marketplace__search-input {
+  position: relative;
+  display: block;
+}
+
+.runtime-extension-marketplace__search-input > svg {
+  position: absolute;
+  z-index: 1;
+  color: var(--text-muted);
+  left: 11px;
+  pointer-events: none;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.runtime-extension-marketplace__search-input > input {
+  padding-left: 34px;
+}
+
+.runtime-extension-marketplace__load-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.runtime-extension-marketplace__load-error > p {
+  flex: 1;
+}
+
+.runtime-extension-marketplace__list {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.runtime-extension-card {
+  display: grid;
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  gap: var(--space-3);
+}
+
+.runtime-extension-card__header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.runtime-extension-card__header > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.runtime-extension-card__header strong {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  overflow-wrap: anywhere;
+}
+
+.runtime-extension-card__header code {
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-caption);
+  overflow-wrap: anywhere;
+}
+
+.runtime-extension-card__tags {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.runtime-extension-card__tags span {
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+}
+
+.runtime-extension-card > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.runtime-extension-card__actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.runtime-extension-card__actions > button,
+.runtime-extension-card__actions > .danger-confirm,
+.runtime-extension-configuration > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.runtime-extension-card__actions > .primary-button {
+  margin-left: auto;
+}
+
+.runtime-extension-card__toggle {
+  min-height: 30px;
+  padding: 0;
+  border-top: 0;
+  justify-content: flex-start;
+  font-size: var(--font-caption);
+}
+
+.runtime-extension-install-confirmation {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-control);
+  background: var(--warning-subtle);
+  gap: var(--space-2);
+}
+
+.runtime-extension-install-confirmation legend {
+  padding: 0 var(--space-1);
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  font-weight: 650;
+}
+
+.runtime-extension-install-confirmation p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.6;
+}
+
+.runtime-extension-install-confirmation > label {
+  display: grid;
+  align-items: start;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-caption);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  line-height: 1.55;
+}
+
+.runtime-extension-install-confirmation > label input {
+  margin: 2px 0 0;
+}
+
+.runtime-extension-install-confirmation > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.runtime-extension-configuration {
+  display: grid;
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  gap: var(--space-2);
+}
+
+.runtime-extension-configuration textarea {
+  min-height: 120px;
+  font-family: var(--font-family-mono);
+  line-height: 1.5;
+}
+
+.runtime-extension-configuration > button {
+  width: fit-content;
+  justify-self: end;
+}
+
+@media (max-width: 720px) {
+  .runtime-extension-marketplace
+    > .settings-section__title--actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .runtime-extension-marketplace__header-actions {
+    width: 100%;
+    padding-left: 26px;
+    flex-wrap: wrap;
+  }
+
+  .runtime-extension-card__header,
+  .runtime-extension-marketplace__load-error {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .runtime-extension-card__tags {
+    justify-content: flex-start;
+  }
+
+  .runtime-extension-card__actions > .primary-button {
+    margin-left: 0;
+  }
+}
+
 details.settings-section {
   padding: 0;
   gap: 0;

@@ -424,6 +424,17 @@ const selectSpeechModel = vi.fn<
   speechModelSnapshot = createSpeechModelSnapshot(modelId)
   return speechModelSnapshot
 })
+const runtimeExtensionSnapshot = {
+  marketplaceEnabled: true,
+  catalog: [],
+  installed: []
+}
+const getRuntimeExtensionSnapshot = vi.fn(
+  async () => runtimeExtensionSnapshot
+)
+const applyRuntimeExtension = vi.fn(
+  async () => runtimeExtensionSnapshot
+)
 
 describe('SettingsPanel runtime files', () => {
   beforeEach(async () => {
@@ -495,6 +506,10 @@ describe('SettingsPanel runtime files', () => {
           exportArchive: vi.fn(),
           openRepository: vi.fn(),
           openModelsDirectory: vi.fn()
+        },
+        runtimeExtensions: {
+          getSnapshot: getRuntimeExtensionSnapshot,
+          apply: applyRuntimeExtension
         },
         updates: {
           getSettings: getApplicationSettings,
@@ -1579,6 +1594,19 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByText('开发者预览 · OpenAI 兼容')
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'DSH 插件市场' })
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByText(
+        /第三方插件的安装脚本、初始化代码及工具均以当前用户权限运行/
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('switch', {
+        name: '启用 DSH 插件市场'
+      })
+    ).toBeChecked()
     const harnessOverview = screen
       .getByText('GoodBuddy 内置 DeepSeek Harness')
       .closest<HTMLElement>('.runtime-overview')
@@ -1607,7 +1635,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByText('高级设置'))
     expect(
       screen.getByText(
-        /始终使用 GoodBuddy 内置并固定版本的 Host/
+        /已启用的市场插件由 GoodBuddy 托管并随 Host 启动/
       )
     ).toBeInTheDocument()
     expect(
@@ -2838,7 +2866,9 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(await screen.findByText('文档写作')).toBeInTheDocument()
     expect(
-      screen.getByText('支持直连模型、OpenCode 和 Continue')
+      screen.getByText(
+        '支持直连模型、OpenCode、Continue 和 DeepSeek Harness'
+      )
     ).toBeInTheDocument()
     expect(
       screen.getByText(/新导入的 Skill 默认启用/)
@@ -3046,10 +3076,12 @@ describe('SettingsPanel runtime files', () => {
       within(mcpTabs).getByRole('tab', { name: '自定义 MCP' })
     )
     expect(
-      screen.getByText(/自定义 MCP 可分配给直连模型或 DeepSeek Harness/)
+      screen.getByText(
+        /自定义 MCP 可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness/
+      )
     ).toHaveTextContent('新建时默认分配给直连模型')
     expect(
-      screen.getByText(/服务凭据不会进入 Harness Utility/)
+      screen.getByText(/服务地址、命令和凭据始终由 GoodBuddy 主进程保管/)
     ).toBeInTheDocument()
     expect(
       await screen.findByText('尚未配置 MCP Server')
@@ -3079,9 +3111,8 @@ describe('SettingsPanel runtime files', () => {
     expect(
       within(dialog).getByLabelText('DeepSeek Harness')
     ).not.toBeChecked()
-    expect(
-      within(dialog).queryByLabelText('OpenCode')
-    ).not.toBeInTheDocument()
+    expect(within(dialog).getByLabelText('OpenCode')).not.toBeChecked()
+    expect(within(dialog).getByLabelText('Continue')).not.toBeChecked()
     await waitFor(() =>
       expect(within(dialog).getByLabelText('名称')).toHaveFocus()
     )

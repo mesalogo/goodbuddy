@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
@@ -26,12 +26,14 @@ import {
 } from '../capabilities/browser-profile-service'
 import {
   CapabilityService,
-  type CapabilityCipher
+  type CapabilityCipher,
+  type ResolvedMcpServer
 } from '../capabilities/capability-service'
 import {
   goodbuddyConfigToolByName,
   goodbuddyConfigTools
 } from '../../shared/goodbuddy-config-tools'
+import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 
 const enabled = process.env.GOODBUDDY_RUN_RUNTIME_E2E === '1'
 const apiKey =
@@ -53,11 +55,14 @@ const protocol = modelProtocolSchema
   .parse(
     process.env.GOODBUDDY_E2E_PROTOCOL ?? 'anthropic-messages'
   )
-const portableRoot = join(
-  process.cwd(),
-  'dist',
-  'GoodBuddy-0.1.0-win-x64-portable'
-)
+const portableRoot = process.env.GOODBUDDY_E2E_PACKAGED_ROOT
+  ? resolve(process.env.GOODBUDDY_E2E_PACKAGED_ROOT)
+  : join(
+      process.cwd(),
+      'dist',
+      'harness-package-probe',
+      'win-unpacked'
+    )
 
 async function collectText(
   events: AsyncGenerator<RuntimeEvent, void, void>
@@ -69,6 +74,38 @@ async function collectText(
     }
   }
   return output
+}
+
+async function collectEvents(
+  events: AsyncGenerator<RuntimeEvent, void, void>
+): Promise<RuntimeEvent[]> {
+  const collected: RuntimeEvent[] = []
+  for await (const event of events) {
+    collected.push(event)
+  }
+  return collected
+}
+
+function customMcpServer(
+  assignment: 'opencode' | 'continue'
+): ResolvedMcpServer {
+  return {
+    id:
+      assignment === 'opencode'
+        ? '00000000-0000-4000-8000-0000000000e1'
+        : '00000000-0000-4000-8000-0000000000e2',
+    name: 'Live Blueprint MCP',
+    description: 'Deterministic local Runtime E2E fixture',
+    enabled: true,
+    allowDynamicTools: false,
+    assignments: [assignment],
+    secretConfigured: false,
+    transport: 'stdio',
+    command: process.execPath,
+    args: [
+      resolve('tests', 'fixtures', 'web-3d-game-mcp.mjs')
+    ]
+  }
 }
 
 function textResult(value: unknown): ModelToolResult {
@@ -894,6 +931,178 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         ).resolves.toBe('CONTINUE_E2E_OK')
       } finally {
         await runtime.dispose()
+      }
+    },
+    180_000
+  )
+
+  it(
+    'calls a Main-brokered custom MCP through bundled OpenCode',
+    async () => {
+      const gateway = new KnowledgeMcpGateway({} as never)
+      await gateway.start()
+      const runtime = new AgentRuntimeController(
+        new OpenCodeRuntime({
+          embedded: true,
+          binaryPath: '',
+          bundledBinaryPath: join(
+            portableRoot,
+            'resources',
+            'runtimes',
+            'opencode',
+            'opencode.exe'
+          ),
+          configPath: '',
+          defaultWorkspace: workspace,
+          modelProfile: {
+            id: crypto.randomUUID(),
+            name: 'E2E model',
+            baseUrl,
+            modelName,
+            apiKey,
+            protocol,
+            authentication: 'api-key'
+          },
+          knowledgeGateway: gateway,
+          mcpServers: [customMcpServer('opencode')]
+        })
+      )
+
+      try {
+        const events = await collectEvents(
+          runtime.run(
+            {
+              requestId: crypto.randomUUID(),
+              conversationId: crypto.randomUUID(),
+              workMode: 'execute',
+              prompt:
+                'Use the assigned custom MCP tool to create a neon-ruins game blueprint with seed opencode-live and targetCount 5. Then reply with OPENCODE_MCP_E2E_OK and the blueprint title.'
+            },
+            new AbortController().signal,
+            async (request) =>
+              [
+                request.scopeKey,
+                request.title,
+                request.description,
+                request.toolName ?? ''
+              ].some((value) =>
+                value.includes('create_game_blueprint')
+              )
+                ? 'once'
+                : 'deny'
+          )
+        )
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'tool',
+              name: expect.stringContaining(
+                'create_game_blueprint'
+              ),
+              state: 'completed'
+            })
+          ])
+        )
+        expect(
+          events
+            .flatMap((event) =>
+              event.type === 'text' ? [event.delta] : []
+            )
+            .join('')
+        ).toContain('OPENCODE_MCP_E2E_OK')
+        expect(
+          events
+            .flatMap((event) =>
+              event.type === 'text' ? [event.delta] : []
+            )
+            .join('')
+        ).toContain('Prism Relay')
+      } finally {
+        await runtime.dispose()
+        await gateway.dispose()
+      }
+    },
+    180_000
+  )
+
+  it(
+    'calls a Main-brokered custom MCP through bundled Continue',
+    async () => {
+      const gateway = new KnowledgeMcpGateway({} as never)
+      await gateway.start()
+      const runtime = new AgentRuntimeController(
+        new ContinueAgentRuntime({
+          binaryPath: '',
+          bundledBinaryPath: join(
+            portableRoot,
+            'resources',
+            'runtimes',
+            'continue',
+            'dist',
+            'cn.js'
+          ),
+          configPath: '',
+          defaultWorkspace: workspace,
+          hostCacheRoot: join(workspace, '.continue-mcp-host'),
+          modelProfile: {
+            id: crypto.randomUUID(),
+            name: 'E2E model',
+            baseUrl,
+            modelName,
+            apiKey,
+            protocol,
+            authentication: 'api-key'
+          },
+          knowledgeGateway: gateway,
+          mcpServers: [customMcpServer('continue')]
+        })
+      )
+
+      try {
+        const events = await collectEvents(
+          runtime.run(
+            {
+              requestId: crypto.randomUUID(),
+              conversationId: crypto.randomUUID(),
+              workMode: 'execute',
+              prompt:
+                'Use the assigned custom MCP tool to create a neon-ruins game blueprint with seed continue-live and targetCount 5. Then reply with CONTINUE_MCP_E2E_OK and the blueprint title.'
+            },
+            new AbortController().signal,
+            async (request) =>
+              [
+                request.scopeKey,
+                request.title,
+                request.description,
+                request.toolName ?? ''
+              ].some((value) =>
+                value.includes('create_game_blueprint')
+              )
+                ? 'once'
+                : 'deny'
+          )
+        )
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'tool',
+              name: expect.stringContaining(
+                'create_game_blueprint'
+              ),
+              state: 'completed'
+            })
+          ])
+        )
+        const output = events
+          .flatMap((event) =>
+            event.type === 'text' ? [event.delta] : []
+          )
+          .join('')
+        expect(output).toContain('CONTINUE_MCP_E2E_OK')
+        expect(output).toContain('Prism Relay')
+      } finally {
+        await runtime.dispose()
+        await gateway.dispose()
       }
     },
     180_000

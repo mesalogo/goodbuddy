@@ -1,4 +1,5 @@
 import type { DeepSeekHarnessChild } from './deepseek-harness-runtime'
+import { parseHarnessControlMessage } from './deepseek-harness-control-protocol'
 
 export const DEEPSEEK_HARNESS_BYTE_PROTOCOL =
   'goodbuddy.deepseek-harness.byte-stream'
@@ -70,7 +71,6 @@ type EndpointOptions = {
   readonly onFailure?: () => void
 }
 
-const CONTROL_PROTOCOL = 'goodbuddy.deepseek-harness.control'
 const PROTOCOL_KEYS = ['protocol', 'version', 'type'] as const
 const STREAM_KEYS = [...PROTOCOL_KEYS, 'stream', 'seq'] as const
 const DATA_KEYS = [...STREAM_KEYS, 'bytes'] as const
@@ -167,29 +167,7 @@ function parseMessage(value: unknown): ProtocolMessage | undefined {
 }
 
 function isControlMessage(value: unknown): boolean {
-  if (
-    !isRecord(value) ||
-    value.protocol !== CONTROL_PROTOCOL ||
-    value.version !== 1 ||
-    typeof value.type !== 'string'
-  ) {
-    return false
-  }
-  if (value.type === 'ready') {
-    return hasExactKeys(value, PROTOCOL_KEYS)
-  }
-  if (value.type === 'fatal') {
-    return (
-      hasExactKeys(value, [...PROTOCOL_KEYS, 'code']) &&
-      typeof value.code === 'string' &&
-      /^[A-Z][A-Z0-9_]{0,63}$/u.test(value.code)
-    )
-  }
-  return (
-    value.type === 'start' &&
-    hasExactKeys(value, [...PROTOCOL_KEYS, 'config']) &&
-    isRecord(value.config)
-  )
+  return parseHarnessControlMessage(value) !== undefined
 }
 
 class ByteTransportEndpoint {

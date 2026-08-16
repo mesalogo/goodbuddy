@@ -357,6 +357,149 @@ vi.mock('./channels/channel-env', () => ({
   )
 }))
 
+describe('registerIpcHandlers DSH runtime extensions', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates extension actions, reloads the Runtime, and trusts only the renderer', async () => {
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const snapshot = {
+      marketplaceEnabled: true,
+      catalog: [],
+      installed: []
+    }
+    const runtimeExtensionStore = {
+      getSnapshot: vi.fn(async () => snapshot),
+      applyWithResult: vi.fn(async () => ({
+        snapshot,
+        changed: true
+      }))
+    }
+    const onRuntimeSettingsChanged = vi.fn(async () => undefined)
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      onRuntimeSettingsChanged,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      runtimeExtensionStore as never
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const action = {
+      type: 'set-enabled',
+      extensionId: 'dsh-plugin-greet',
+      enabled: true
+    }
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeExtensionsSnapshot
+      )?.(event)
+    ).resolves.toEqual(snapshot)
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeExtensionsApply
+      )?.(event, action)
+    ).resolves.toEqual(snapshot)
+    expect(
+      runtimeExtensionStore.applyWithResult
+    ).toHaveBeenCalledWith(action)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+    const marketplaceAction = {
+      type: 'set-marketplace-enabled',
+      enabled: false
+    }
+    runtimeExtensionStore.applyWithResult.mockResolvedValueOnce({
+      snapshot: {
+        ...snapshot,
+        marketplaceEnabled: false
+      },
+      changed: true
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeExtensionsApply
+      )?.(event, marketplaceAction)
+    ).resolves.toEqual({
+      ...snapshot,
+      marketplaceEnabled: false
+    })
+    expect(
+      runtimeExtensionStore.applyWithResult
+    ).toHaveBeenLastCalledWith(marketplaceAction)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+    runtimeExtensionStore.applyWithResult.mockResolvedValueOnce({
+      snapshot,
+      changed: false
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeExtensionsApply
+      )?.(event, action)
+    ).resolves.toEqual(snapshot)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeExtensionsApply
+      )?.(event, {
+        ...action,
+        extensionId: 'Invalid Extension'
+      })
+    ).rejects.toThrow()
+    expect(() =>
+      electronMocks.handlers.get(
+        ipcChannels.runtimeExtensionsSnapshot
+      )?.({
+        sender: {},
+        senderFrame: webContents.mainFrame
+      })
+    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+
+    await dispose()
+  })
+})
+
 describe('registerIpcHandlers lifecycle tracking', () => {
   afterEach(() => {
     electronMocks.handlers.clear()

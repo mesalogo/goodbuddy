@@ -184,6 +184,7 @@ async function run() {
       harnessVersion: '0.1.0-rc.6',
       credentialRefs: ['GOODBUDDY_HARNESS_MODEL_API_KEY'],
       skillPackages: [],
+      extensionPackages: [],
       maxFrameBytes: 1024 * 1024
     }
   })

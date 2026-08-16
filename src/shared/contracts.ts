@@ -95,6 +95,10 @@ import type {
 } from './document-parsing-contracts'
 import type { SettingsWarning } from './settings-warning-contracts'
 import type {
+  RuntimeExtensionAction,
+  RuntimeExtensionMarketplaceSnapshot
+} from './runtime-extension-contracts'
+import type {
   KnowledgeChunkDeleteInput,
   KnowledgeChunkPage,
   KnowledgeChunkUpdateInput,
@@ -1517,6 +1521,12 @@ export type DesktopApi = {
     removeBrowserProfile?: (
       profileId: string
     ) => Promise<CapabilitySnapshot>
+  }
+  runtimeExtensions: {
+    getSnapshot: () => Promise<RuntimeExtensionMarketplaceSnapshot>
+    apply: (
+      action: RuntimeExtensionAction
+    ) => Promise<RuntimeExtensionMarketplaceSnapshot>
   }
   context: {
     selectFiles: () => Promise<ContextAttachment[]>

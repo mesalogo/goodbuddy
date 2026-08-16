@@ -71,7 +71,8 @@ export const settings = {
     skills: {
       label: 'Skills',
       navigationDescription: 'Built-in and custom capabilities',
-      description: 'Works with direct models, OpenCode, and Continue'
+      description:
+        'Works with direct models, OpenCode, Continue, and DeepSeek Harness'
     },
     mcp: {
       label: 'MCP',
@@ -246,7 +247,7 @@ export const settings = {
       title: 'DeepSeek Harness',
       previewDescription: 'Developer preview · OpenAI-compatible',
       description:
-        'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Execute tool calls receive automatic one-time authorization, Ask remains read-only, and cancellation and workspace safety boundaries remain in place. It does not integrate with the DSH plugin or marketplace mechanisms.',
+        'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Ask limits model tool calls to read-only tools, while Execute can use every enabled tool and DSH plugin capability. Cancellation and workspace boundaries remain in place.',
       managedSource:
         'Administrator-provided OpenAI-compatible connection',
       connection: 'OpenAI-compatible model connection',
@@ -255,7 +256,81 @@ export const settings = {
       connectionDescription:
         'Choose a GoodBuddy model connection. It must use OpenAI Chat Completions with API-key authentication.',
       advancedDescription:
-        'This Runtime always uses GoodBuddy’s bundled, version-pinned Host. It does not load external DSH plugins, marketplace packages, user profiles, or custom Hosts.'
+        'This Runtime always uses GoodBuddy’s bundled, version-pinned Host and does not load user profiles or custom Hosts. GoodBuddy manages enabled marketplace plugins and loads them with the Host.',
+      marketplace: {
+        title: 'DSH plugin marketplace',
+        previewDescription: 'Preview · public npm registry',
+        switch: {
+          aria: 'Enable the DSH plugin marketplace',
+          enabled: 'On',
+          disabled: 'Off'
+        },
+        disabledDescription:
+          'The plugin marketplace is off by default. Turn it on to connect to the public npm catalog and show its management interface. Turning off the marketplace does not disable or uninstall existing plugins.',
+        permissionNotice:
+          'Third-party install scripts, initialization code, and tools run with your user permissions. Ask limits the model from calling non-read-only tools, but cannot limit plugin initialization code. Execute can call every tool from enabled plugins. Install only packages you trust.',
+        refresh: 'Refresh',
+        refreshAria: 'Refresh the DSH plugin marketplace',
+        searchLabel: 'Search plugins',
+        searchPlaceholder:
+          'Filter by name, package, description, or license',
+        retry: 'Try again',
+        loading: 'Loading the plugin catalog…',
+        catalogUnavailable:
+          'Could not refresh the npm plugin catalog: {{detail}}. Installed plugins remain manageable.',
+        results: 'Showing {{shown}} of {{total}} plugins',
+        noResults: 'No plugins match your search.',
+        empty: 'No DSH plugins were found in the public npm registry.',
+        refineSearch:
+          'Only the first {{count}} plugins are shown. Refine your search to see others.',
+        notInCatalog:
+          'This installed plugin is not currently in the npm marketplace catalog.',
+        installed: 'Installed',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        enableAria: 'Enable {{name}}',
+        install: 'Install and enable',
+        update: 'Update to {{version}}',
+        installing: 'Installing…',
+        installConfirmationTitle: 'Install {{name}}',
+        installConfirmation:
+          'npm runs install scripts declared by this package and its dependencies. After installation, plugin initialization code runs when DeepSeek Harness starts.',
+        trustConfirmation:
+          'I trust {{package}} and understand that its code runs with my user permissions.',
+        confirmInstall: 'Confirm install',
+        cancel: 'Cancel',
+        remove: 'Remove',
+        removeAria: 'Remove {{name}}',
+        confirmRemove: 'Confirm removal',
+        removeMessage:
+          'Remove {{name}} and its GoodBuddy-managed files?',
+        startupFailure:
+          'The plugin failed on its last startup and was disabled automatically. Check its configuration or version before enabling it again.',
+        configuration: {
+          open: 'Configure',
+          close: 'Close configuration',
+          label: '{{name}} configuration JSON',
+          help: 'Save a JSON object and restart the current Runtime to pass it to the plugin.',
+          save: 'Save configuration',
+          invalid: 'Configuration must be a valid JSON object.'
+        },
+        errors: {
+          unavailable:
+            'The DSH plugin marketplace is unavailable in this version',
+          readFailed: 'Could not load the DSH plugin marketplace',
+          operationFailed: 'The DSH plugin operation failed'
+        },
+        notifications: {
+          marketplaceEnabled: 'Enabled the DSH plugin marketplace',
+          marketplaceDisabled: 'Disabled the DSH plugin marketplace',
+          installed: 'Installed and enabled {{name}}',
+          updated: 'Updated {{name}}',
+          enabled: 'Enabled {{name}}',
+          disabled: 'Disabled {{name}}',
+          configured: 'Saved the configuration for {{name}}',
+          removed: 'Removed {{name}}'
+        }
+      }
     }
   },
   documentParsing: {

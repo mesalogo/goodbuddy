@@ -11,7 +11,10 @@ import type {
 } from './runtime'
 import { detectRuntimeBinary } from './runtime-discovery'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
-import type { RuntimeSkillPackage } from '../capabilities/capability-service'
+import type {
+  ResolvedMcpServer,
+  RuntimeSkillPackage
+} from '../capabilities/capability-service'
 import {
   scopedReadToolNames,
   type KnowledgeMcpGateway
@@ -39,6 +42,7 @@ export type ContinueRuntimeOptions = {
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
   knowledgeGateway?: KnowledgeMcpGateway
+  mcpServers?: ResolvedMcpServer[]
   createHostAdapter?: (
     options: ContinueHostAdapterOptions
   ) => Pick<
@@ -293,6 +297,35 @@ export class ContinueAgentRuntime implements AgentRuntime {
             token: request.knowledgeCapabilityToken
           }
         : undefined
+    let customMcpCapability:
+      | { endpoint: string; token: string }
+      | undefined
+    if (
+      execute &&
+      knowledgeEndpoint &&
+      this.options.mcpServers?.length
+    ) {
+      const token = this.options.knowledgeGateway?.grantCustomMcp(
+        request.requestId,
+        this.options.mcpServers,
+        signal
+      )
+      if (token) {
+        customMcpCapability = {
+          endpoint: knowledgeEndpoint,
+          token
+        }
+        try {
+          await this.options.knowledgeGateway?.prepareCustomMcpTools(
+            token,
+            signal
+          )
+        } catch (error) {
+          this.options.knowledgeGateway?.revoke(token)
+          throw error
+        }
+      }
+    }
     let result: ContinueHostRunResult
     const emittedTools = new Map<string, ContinueHostTool>()
     try {
@@ -336,6 +369,9 @@ export class ContinueAgentRuntime implements AgentRuntime {
             workMode: request.workMode,
             images: request.images,
             ...(knowledgeCapability ? { knowledgeCapability } : {}),
+            ...(customMcpCapability
+              ? { customMcpCapability }
+              : {}),
             onEvent
           }
         )
@@ -408,6 +444,12 @@ export class ContinueAgentRuntime implements AgentRuntime {
         }
       }
       throw error
+    } finally {
+      if (customMcpCapability) {
+        this.options.knowledgeGateway?.revoke(
+          customMcpCapability.token
+        )
+      }
     }
     if (!result.text) {
       throw new Error('Continue CLI 未返回内容')

@@ -1,7 +1,13 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer, type Server } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { KnowledgeService } from '../knowledge/knowledge-service'
 import { AssistantDatabase } from '../assistant/assistant-database'
 import {
@@ -64,6 +70,7 @@ function createService() {
 const gateways: KnowledgeMcpGateway[] = []
 const databases: AssistantDatabase[] = []
 const temporaryDirectories: string[] = []
+const httpServers: Server[] = []
 
 afterEach(async () => {
   await Promise.all(gateways.splice(0).map((gateway) => gateway.dispose()))
@@ -74,6 +81,12 @@ afterEach(async () => {
     temporaryDirectories
       .splice(0)
       .map((directory) => rm(directory, { recursive: true, force: true }))
+  )
+  await Promise.all(
+    httpServers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve) => server.close(() => resolve()))
+    )
   )
 })
 
@@ -455,5 +468,123 @@ describe('KnowledgeMcpGateway', () => {
       body: JSON.stringify({ value: 'x'.repeat(100) })
     })
     expect(oversized.status).toBe(413)
+  })
+
+  it('proxies custom MCP through a request-scoped loopback token without exposing the upstream credential', async () => {
+    const upstreamAuthorizations: Array<string | undefined> = []
+    const upstream = createServer(async (request, response) => {
+      upstreamAuthorizations.push(request.headers.authorization)
+      if (request.method !== 'POST') {
+        response.writeHead(405)
+        response.end()
+        return
+      }
+      const chunks: Buffer[] = []
+      for await (const chunk of request) {
+        chunks.push(Buffer.from(chunk))
+      }
+      const body = JSON.parse(
+        Buffer.concat(chunks).toString('utf8')
+      ) as unknown
+      const mcp = new McpServer({
+        name: 'private-upstream',
+        version: '1.0.0'
+      })
+      mcp.registerTool(
+        'echo_private',
+        {
+          description: 'Echo through the private server',
+          inputSchema: {
+            value: z.string().max(100)
+          }
+        },
+        async ({ value }) => ({
+          content: [{ type: 'text', text: `upstream:${value}` }]
+        })
+      )
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined
+      })
+      await mcp.connect(transport)
+      await transport.handleRequest(request, response, body)
+      await Promise.allSettled([transport.close(), mcp.close()])
+    })
+    httpServers.push(upstream)
+    await new Promise<void>((resolve, reject) => {
+      upstream.once('error', reject)
+      upstream.listen(0, '127.0.0.1', resolve)
+    })
+    const address = upstream.address()
+    if (!address || typeof address === 'string') {
+      throw new Error('upstream did not bind')
+    }
+
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    await gateway.start()
+    const controller = new AbortController()
+    const token = gateway.grantCustomMcp(
+      'custom-request',
+      [
+        {
+          id: '00000000-0000-4000-8000-000000000091',
+          name: 'Private MCP',
+          description: '',
+          enabled: true,
+          allowDynamicTools: true,
+          assignments: ['opencode'],
+          secretConfigured: true,
+          secret: 'upstream-secret',
+          transport: 'http',
+          url: `http://127.0.0.1:${address.port}/mcp`
+        }
+      ],
+      controller.signal
+    )!
+    const client = new Client({
+      name: 'loopback-test-client',
+      version: '1.0.0'
+    })
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(gateway.getEndpoint()!),
+        {
+          requestInit: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        }
+      )
+    )
+    try {
+      const listed = await client.listTools()
+      expect(listed.tools).toEqual([
+        expect.objectContaining({
+          name: expect.stringMatching(
+            /^mcp_[a-f0-9]{8}_[a-f0-9]{8}_echo_private$/u
+          ),
+          description: expect.stringContaining('Private MCP')
+        })
+      ])
+      expect(JSON.stringify(listed)).not.toContain('upstream-secret')
+      expect(JSON.stringify(listed)).not.toContain(
+        `127.0.0.1:${address.port}`
+      )
+      const result = await client.callTool({
+        name: listed.tools[0]!.name,
+        arguments: { value: 'hello' }
+      })
+      expect(result).toMatchObject({
+        content: [{ type: 'text', text: 'upstream:hello' }]
+      })
+      expect(upstreamAuthorizations).toContain(
+        'Bearer upstream-secret'
+      )
+    } finally {
+      gateway.revoke(token)
+      await client.close()
+    }
   })
 })

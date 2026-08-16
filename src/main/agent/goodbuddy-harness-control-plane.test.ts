@@ -236,7 +236,7 @@ describe('GoodBuddy Harness internal control plane', () => {
     ).toBeGreaterThan(180)
   })
 
-  it('blocks mutating and shell tools in Ask while allowing reads', async () => {
+  it('allows only the known read-only tools in Ask', async () => {
     const { listeners, handle } = stubAgentContext()
     const executeTool = listeners.get('tools/execute')!
     const next = vi.fn(async () => ({
@@ -249,13 +249,46 @@ describe('GoodBuddy Harness internal control plane', () => {
       agent: handle.agent
     })
 
-    for (const name of ['write', 'edit', 'bash', 'pwsh']) {
+    for (const name of [
+      'write',
+      'edit',
+      'bash',
+      'pwsh',
+      'third_party_deploy'
+    ]) {
       await expect(
         Promise.resolve(executeTool(request(name), next))
       ).rejects.toThrow('Ask 模式不允许')
     }
+    for (const name of ['read', 'skill']) {
+      await expect(
+        Promise.resolve(executeTool(request(name), next))
+      ).resolves.toMatchObject({ isError: false })
+    }
+  })
+
+  it('allows every registered tool in Execute', async () => {
+    const { listeners, handle, internals } = stubAgentContext()
+    internals.sessions.get('session-output')!.inflight.mode =
+      'execute'
+    const executeTool = listeners.get('tools/execute')!
+    const next = vi.fn(async () => ({
+      isError: false,
+      value: {},
+      content: []
+    }))
+
     await expect(
-      Promise.resolve(executeTool(request('read'), next))
+      Promise.resolve(
+        executeTool(
+          {
+            name: 'third_party_deploy',
+            agent: handle.agent
+          },
+          next
+        )
+      )
     ).resolves.toMatchObject({ isError: false })
+    expect(next).toHaveBeenCalledOnce()
   })
 })

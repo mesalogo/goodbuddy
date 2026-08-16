@@ -90,6 +90,47 @@ Keep Electron security boundaries intact:
 - Do not show the same event both inline and as an application notification.
   Preserve user input and actionable error context when an operation fails.
 
+## Commit Messages and Release Notes
+
+Release notes are derived in part from commit history, so commits for
+user-visible changes must record product intent rather than only the
+implementation mechanism.
+
+- Classify the commit by the user-visible behavior. Use `feat` only for a
+  capability users did not previously have. Use `fix` when restoring intended
+  behavior, removing inconsistency, or making two existing entry points reflect
+  the same underlying setting, even if the implementation adds new
+  synchronization logic.
+- Keep the subject concise, then add a commit body for non-trivial user-visible
+  changes. State the previous user-facing problem, the resulting behavior, and
+  the affected surface or workflow. Include permissions, migration,
+  compatibility, cost, data, preview-status, or other usage caveats when
+  relevant.
+- Describe the user outcome precisely. Do not promote an internal refactor,
+  synchronization mechanism, schema change, or newly added implementation code
+  to a product feature unless it creates a genuinely new user capability.
+- When a change is release-note worthy, include a short `Release note:` line in
+  the commit body written in user-facing language. Prefer a concrete usage
+  scenario and benefit over technical implementation terminology.
+- Treat commit messages as evidence, not as the sole source of truth. Before
+  drafting release notes, verify the diff and resulting behavior, correct any
+  inaccurate `feat` or `fix` classification, and include actionable usage
+  notes where the change affects defaults, synchronized settings, permissions,
+  resource usage, compatibility, or user data.
+
+Example:
+
+```text
+fix: unify project settings across channel entry points
+
+The top-left project settings and the project settings shown under messaging
+channels could present or save inconsistent values. They now edit the same
+project configuration for the project name, description, Runtime, and work
+mode.
+
+Release note: 修复左上角项目设置与消息通道项目设置不一致的问题；现在从任一入口修改后，另一处会同步显示相同配置。
+```
+
 ## Release Packaging
 
 - `.github/workflows/packages.yml` is the canonical cross-platform packaging

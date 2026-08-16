@@ -83,6 +83,11 @@ import {
 } from './agent/deepseek-harness-utility-launcher'
 import { buildControlledHarnessEnvironment } from './agent/process-environment'
 import { runStartupPrerequisites } from './startup-prerequisites'
+import { RuntimeExtensionStore } from './agent/runtime-extension-store'
+import {
+  DshNpmExtensionInstaller,
+  DshNpmMarketplaceCatalog
+} from './agent/dsh-extension-marketplace'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -447,6 +452,31 @@ if (hasSingleInstanceLock) {
       app.getPath('userData'),
       'deepseek-harness'
     )
+    const dshExtensionInstaller = new DshNpmExtensionInstaller({
+      dshHome: deepSeekHarnessHome,
+      npmCliPath: app.isPackaged
+        ? join(
+            process.resourcesPath,
+            'runtimes',
+            'npm',
+            'bin',
+            'npm-cli.js'
+          )
+        : join(
+            app.getAppPath(),
+            'node_modules',
+            'npm',
+            'bin',
+            'npm-cli.js'
+          )
+    })
+    const runtimeExtensionStore = new RuntimeExtensionStore(
+      app.getPath('userData'),
+      {
+        catalog: new DshNpmMarketplaceCatalog(),
+        install: (input) => dshExtensionInstaller.install(input)
+      }
+    )
     const launchDeepSeekHarness =
       createDeepSeekHarnessUtilityLauncher({
         bundledHostPath: bundledRuntimePaths.deepseekHarness,
@@ -455,7 +485,9 @@ if (hasSingleInstanceLock) {
           deepSeekHarnessHome
         ),
         fork: forkDeepSeekHarness,
-        terminateProcess: terminateHarnessUtilityProcess
+        terminateProcess: terminateHarnessUtilityProcess,
+        onExtensionStartupFailures: (extensionIds) =>
+          runtimeExtensionStore.markStartupFailed(extensionIds)
       })
     const startupKnowledgeService = new KnowledgeService({
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
@@ -488,13 +520,12 @@ if (hasSingleInstanceLock) {
         skillContext,
         mcpServers,
         browserCapability,
-        webSearchCapability
+        webSearchCapability,
+        deepseekHarnessExtensions
       ] =
         await Promise.all([
           capabilityService.getRuntimeSkillContext(target),
-          target === 'model' || target === 'deepseek-harness'
-            ? capabilityService.getResolvedMcpServers(target)
-            : Promise.resolve([]),
+          capabilityService.getResolvedMcpServers(target),
           target === 'model'
             ? capabilityService.getComputerCapabilityStatus(
                 'host-browser-control'
@@ -502,7 +533,10 @@ if (hasSingleInstanceLock) {
             : Promise.resolve(undefined),
           target === 'model'
             ? capabilityService.getWebSearchCapabilityStatus()
-            : Promise.resolve(undefined)
+            : Promise.resolve(undefined),
+          target === 'deepseek-harness'
+            ? runtimeExtensionStore.getEnabledExtensions()
+            : Promise.resolve([])
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
         skillInstructions: skillContext.instructions,
@@ -515,6 +549,7 @@ if (hasSingleInstanceLock) {
         bundledRuntimePaths,
         continueHostLauncher: launchContinueHost,
         deepseekHarnessLauncher: launchDeepSeekHarness,
+        deepseekHarnessExtensions,
         browserService:
           browserCapability?.enabled && browserCapability.supported
             ? browserService
@@ -674,7 +709,8 @@ if (hasSingleInstanceLock) {
       documentOcrModelManager,
       documentOcrBroker,
       releaseNotesService,
-      goodbuddyConfigService
+      goodbuddyConfigService,
+      runtimeExtensionStore
     )
     loadMainWindow(mainWindow)
 

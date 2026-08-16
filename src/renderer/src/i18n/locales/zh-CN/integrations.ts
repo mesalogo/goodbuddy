@@ -166,7 +166,7 @@ export const integrations = {
       custom: '自定义 MCP'
     },
     customNotice:
-      '自定义 MCP 可分配给直连模型或 DeepSeek Harness，新建时默认分配给直连模型，并仅在 Execute 模式加载。Harness 工具由 GoodBuddy 主进程代理，服务凭据不会进入 Harness Utility。',
+      '自定义 MCP 可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness，新建时默认分配给直连模型，并仅在 Execute 模式加载。Agent Runtime 只接收按请求签发的本机回环权限；服务地址、命令和凭据始终由 GoodBuddy 主进程保管。',
     securityNotice:
       '内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server 及其工具具有当前用户权限，请仅添加可信服务；远程访问令牌将由系统安全存储加密，工具调用前仍需 GoodBuddy 审批。',
     computer: {

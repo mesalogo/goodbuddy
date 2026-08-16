@@ -45,6 +45,7 @@ import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSecti
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
+import { DshMarketplaceSection } from './DshMarketplaceSection'
 import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
 import {
   SettingsCategoryHeader,
@@ -2192,6 +2193,9 @@ export function SettingsPanel({
                 </button>
               </details>
             </div>
+          )}
+          {agentRuntimeType === 'deepseek-harness' && (
+            <DshMarketplaceSection onNotify={onNotify} />
           )}
             </>
           )}

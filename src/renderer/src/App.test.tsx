@@ -482,6 +482,18 @@ const api: DesktopApi = {
       tools: []
     }))
   },
+  runtimeExtensions: {
+    getSnapshot: vi.fn(async () => ({
+      marketplaceEnabled: false,
+      catalog: [],
+      installed: []
+    })),
+    apply: vi.fn(async () => ({
+      marketplaceEnabled: false,
+      catalog: [],
+      installed: []
+    }))
+  },
   context: {
     selectFiles: vi.fn(async () => []),
     onFileSelectionProgress: vi.fn((listener) => {

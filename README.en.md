@@ -10,8 +10,8 @@ A secure, cross-platform, local-first desktop AI assistant and Agent workspace.
 
 - **Controlled execution**: `Ask` stays read-only; `Execute` runs only enabled tools within defined boundaries and records their activity.
 - **Local-first data**: Conversations, tasks, artifacts, memory, knowledge bases, and graphs are stored in local SQLite. API keys are encrypted by the operating system.
-- **Multiple runtimes**: Connect directly to models or use OpenCode and Continue, with cancellation, timeouts, output limits, and process cleanup.
-- **Open integrations**: Supports OpenAI Responses, OpenAI-compatible Chat Completions, Anthropic Messages, OpenAI Images, Embeddings, Skills, and MCP.
+- **Multiple runtimes**: Connect directly to models or use OpenCode, Continue, and the preview DeepSeek Harness, with cancellation, timeouts, output limits, and process cleanup.
+- **Open integrations**: Supports OpenAI Responses, OpenAI-compatible Chat Completions, Anthropic Messages, OpenAI Images, Embeddings, cross-runtime Skills and custom MCP, plus a default-off DeepSeek Harness npm plugin marketplace that users enable explicitly.
 - **Knowledge workspace**: Import files, folders, and web pages, then search them with full-text, phrase, vector, and graph retrieval.
 - **Work management**: Organize projects, conversations, tasks, activity, artifacts, memory, Magic Notes, and Smart Heartbeat.
 - **Remote channels**: Connect WeChat ClawBot, WeCom, and DingTalk with separate remote sessions for each sender.
@@ -59,6 +59,7 @@ See [BUILD.md](BUILD.md) for build and packaging instructions.
 - Model requests are sent only to services selected by the user.
 - Local data stays in the operating system's application data directory by default.
 - The Renderer has no access to raw Electron APIs or model credentials.
+- The DeepSeek Harness plugin marketplace is off by default. After it is enabled and a third-party plugin is installed, its install scripts, initialization, and Execute tools run with the current user's permissions. Turning off the marketplace only hides its catalog and management interface; it does not disable or uninstall existing plugins. Installation requires explicit confirmation, and Ask limits only model tool calls.
 - Remote delegation is disabled until the user configures an endpoint and token.
 - Private-network compatibility permits in-app HTTP and non-standard HTTPS certificates. WeChat credential and media endpoints remain strictly validated.
 

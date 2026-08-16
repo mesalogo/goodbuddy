@@ -789,23 +789,9 @@ export class CapabilityService {
         shouldPersist = true
       }
     }
-    const migrateMcpAssignments = loaded.mcpServers.some((server) =>
-      server.assignments.includes('opencode')
-    )
-    const migrated = migrateMcpAssignments
-      ? {
-          ...loaded,
-          mcpServers: loaded.mcpServers.map((server) => ({
-            ...server,
-            assignments: server.assignments.includes('opencode')
-              ? (['model'] as CapabilityAssignments)
-              : server.assignments
-          }))
-        }
-      : loaded
-    this.state = storedCapabilitiesSchema.parse(migrated)
+    this.state = storedCapabilitiesSchema.parse(loaded)
     await this.validateBrowserProfileReferences(this.state)
-    if (shouldPersist || migrateMcpAssignments) {
+    if (shouldPersist) {
       await this.persist(this.state)
     }
     return this.state
@@ -1609,17 +1595,6 @@ export class CapabilityService {
   ): Promise<CapabilitySnapshot> {
     return this.queue(async () => {
       const value = mcpServerInputSchema.parse(input)
-      if (
-        value.assignments.some(
-          (assignment) =>
-            assignment !== 'model' &&
-            assignment !== 'deepseek-harness'
-        )
-      ) {
-        throw new Error(
-          '当前版本的 MCP Server 只能分配给直连模型或 DeepSeek Harness'
-        )
-      }
       const state = await this.load()
       const id = serverId ? mcpServerIdSchema.parse(serverId) : randomUUID()
       const existing = state.mcpServers.find((server) => server.id === id)
@@ -1818,9 +1793,6 @@ export class CapabilityService {
   async getResolvedMcpServers(
     target: RuntimeTarget
   ): Promise<ResolvedMcpServer[]> {
-    if (target !== 'model' && target !== 'deepseek-harness') {
-      return []
-    }
     const state = await this.load()
     const assigned = state.mcpServers.filter(
       (server) => server.enabled && server.assignments.includes(target)

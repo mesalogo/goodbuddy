@@ -179,7 +179,7 @@ export const integrations = {
       custom: 'Custom MCP'
     },
     customNotice:
-      'Custom MCP can be assigned to direct models or DeepSeek Harness. New servers target direct models by default and load only in Execute mode. GoodBuddy proxies Harness tools in the main process, so server credentials never enter the Harness Utility.',
+      'Custom MCP can be assigned to direct models, GoodBuddy-managed OpenCode, Continue Agent, or DeepSeek Harness. New servers target direct models by default and load only in Execute mode. Agent runtimes receive only a request-scoped loopback capability; GoodBuddy keeps server addresses, commands, and credentials in the main process.',
     securityNotice:
       'Built-in tools are provided by GoodBuddy and are not MCP servers. Custom MCP servers and tools run with the current user’s permissions, so add only trusted services. Remote access tokens are encrypted in secure system storage, and tool calls still require GoodBuddy approval.',
     computer: {

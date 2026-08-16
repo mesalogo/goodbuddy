@@ -25,6 +25,10 @@ import {
   createBoundedAcpStream,
   type GoodBuddyHarnessControlConfig
 } from './agent/goodbuddy-harness-control-plane'
+import {
+  loadControlledHarnessExtensions,
+  type ControlledHarnessExtensionPackage
+} from './agent/deepseek-harness-extension-loader'
 import type { Stream } from '@agentclientprotocol/sdk'
 import { isDeepSeekHarnessCompatibleBaseUrl } from '../shared/deepseek-harness-compatibility'
 
@@ -45,11 +49,17 @@ export type ControlledHarnessHostConfig = Omit<
     id: string
     directory: string
   }[]
+  extensionPackages?: readonly ControlledHarnessExtensionPackage[]
 }
 
 export type ControlledHarnessHost = {
   readonly context: Context
   readonly controlPlane: GoodBuddyHarnessControlPlane
+  readonly failedExtensionIds: readonly string[]
+  readonly extensionFailures: readonly {
+    id: string
+    message: string
+  }[]
   dispose(): Promise<void>
 }
 
@@ -123,7 +133,25 @@ async function canonicalizeHostConfig(
       return { ...skill, directory }
     })
   )
-  return { ...config, workspace, dshHome, skillPackages }
+  const extensionPackages = await Promise.all(
+    (config.extensionPackages ?? []).map(async (extension) => {
+      const entrypoint = await realpath(extension.entrypoint)
+      const metadata = await stat(entrypoint)
+      if (!metadata.isFile()) {
+        throw new Error(
+          'Controlled Harness extension entrypoint must be a file'
+        )
+      }
+      return { ...extension, entrypoint }
+    })
+  )
+  return {
+    ...config,
+    workspace,
+    dshHome,
+    skillPackages,
+    extensionPackages
+  }
 }
 
 async function loadControlledSkills(
@@ -175,9 +203,10 @@ async function loadControlledSkills(
 /**
  * Boots a fixed, programmatic Cordis graph. It never imports app-boot, a
  * profile loader, settings-file, local credentials, persistence, telemetry,
- * web, HMR, marketplace/plugin discovery, direct MCP clients, jobs,
- * subagents, hooks, or workflow packages. The control plane registers only
- * Main-selected Skill snapshots and Main-mediated MCP tool proxies.
+ * web, HMR, marketplace discovery, direct MCP clients, jobs, subagents,
+ * hooks, or workflow packages. The control plane registers Main-selected
+ * Skill snapshots, Main-mediated MCP tool proxies, and explicitly enabled
+ * extension entrypoints.
  */
 export async function startControlledDeepSeekHarnessHost(
   input: ControlledHarnessHostConfig
@@ -256,6 +285,10 @@ export async function startControlledDeepSeekHarnessHost(
       )
     }
     await Promise.all(fibers)
+    const extensions = await loadControlledHarnessExtensions(
+      ctx,
+      config.extensionPackages ?? []
+    )
     const credentialProvider = ctx.credentials
     if (!(credentialProvider instanceof GoodBuddyCredentialProvider)) {
       throw new Error(
@@ -284,6 +317,8 @@ export async function startControlledDeepSeekHarnessHost(
     return {
       context: ctx,
       controlPlane,
+      failedExtensionIds: extensions.failedIds,
+      extensionFailures: extensions.failures,
       async dispose() {
         await controlPlane.dispose()
         await ctx.fiber.dispose()

@@ -2,6 +2,7 @@
 
 const { spawn } = require('node:child_process')
 const {
+  chmod,
   copyFile,
   mkdir,
   mkdtemp,
@@ -11,7 +12,7 @@ const {
 } = require('node:fs/promises')
 const { statSync } = require('node:fs')
 const { tmpdir } = require('node:os')
-const { join, resolve } = require('node:path')
+const { delimiter, join, resolve } = require('node:path')
 
 const unpackedPath = process.argv[2]
   ? resolve(process.argv[2])
@@ -28,20 +29,57 @@ const host = join(
   'main',
   'deepseek-harness-host-bootstrap.js'
 )
+const npmRoot = join(unpackedPath, 'resources', 'runtimes', 'npm')
+const npmCli = join(npmRoot, 'bin', 'npm-cli.js')
+const npmManifestPath = join(npmRoot, 'package.json')
 
 for (const [path, description] of [
   [executable, 'packaged Electron executable'],
-  [host, 'packaged DeepSeek Harness host']
+  [host, 'packaged DeepSeek Harness host'],
+  [npmCli, 'packaged npm CLI'],
+  [npmManifestPath, 'packaged npm manifest']
 ]) {
   if (!statSync(path, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(`${description} is missing: ${path}`)
   }
 }
 
-function run(command, args, env) {
+function quotePosixShell(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+async function prepareNodeCommand(directory) {
+  await mkdir(directory, { recursive: true })
+  if (process.platform === 'win32') {
+    await writeFile(
+      join(directory, 'node.cmd'),
+      [
+        '@echo off',
+        'set "ELECTRON_RUN_AS_NODE=1"',
+        `"${executable.replaceAll('%', '%%')}" %*`,
+        ''
+      ].join('\r\n'),
+      'utf8'
+    )
+    return
+  }
+  const commandPath = join(directory, 'node')
+  await writeFile(
+    commandPath,
+    [
+      '#!/bin/sh',
+      `ELECTRON_RUN_AS_NODE=1 exec ${quotePosixShell(executable)} "$@"`,
+      ''
+    ].join('\n'),
+    'utf8'
+  )
+  await chmod(commandPath, 0o700)
+}
+
+function run(command, args, env, cwd = resolve('.')) {
   return new Promise((resolveExit, rejectExit) => {
     const child = spawn(command, args, {
-      cwd: resolve('.'),
+      cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
@@ -67,6 +105,9 @@ async function main() {
     const project = join(root, 'app')
     const profile = join(root, 'profile')
     const resultPath = join(root, 'result.json')
+    const packageManagerBin = join(root, 'package-manager-bin')
+    const npmProject = join(root, 'npm-project')
+    const npmFixture = join(root, 'npm-fixture')
     await mkdir(project, { recursive: true })
 
     await copyFile(
@@ -116,9 +157,16 @@ async function main() {
       'never',
       `--config.directories.output=${join(root, 'dist')}`
     ]
-    if (process.env.GOODBUDDY_ELECTRON_DIST) {
+    const electronDist = process.env.GOODBUDDY_ELECTRON_DIST
+      ? resolve(process.env.GOODBUDDY_ELECTRON_DIST)
+      : resolve('node_modules/electron/dist')
+    if (
+      statSync(electronDist, {
+        throwIfNoEntry: false
+      })?.isDirectory()
+    ) {
       packageArguments.push(
-        `--config.electronDist=${resolve(process.env.GOODBUDDY_ELECTRON_DIST)}`
+        `--config.electronDist=${electronDist}`
       )
     }
     const packaged = await run(
@@ -153,7 +201,102 @@ async function main() {
         `Packaged DeepSeek Harness smoke failed (${executed.exitCode}, ${executed.signal ?? 'no signal'}): ${JSON.stringify(result)} ${executed.output.trim()}`
       )
     }
+
+    const npmManifest = JSON.parse(
+      await readFile(npmManifestPath, 'utf8')
+    )
+    await prepareNodeCommand(packageManagerBin)
+    await mkdir(npmProject, { recursive: true })
+    await mkdir(npmFixture, { recursive: true })
+    await writeFile(
+      join(npmProject, 'package.json'),
+      '{"name":"goodbuddy-packaged-npm-project","version":"1.0.0","private":true}\n',
+      'utf8'
+    )
+    await writeFile(
+      join(npmFixture, 'package.json'),
+      `${JSON.stringify({
+        name: 'goodbuddy-packaged-npm-smoke',
+        version: '1.0.0',
+        scripts: {
+          install: 'node install.cjs'
+        }
+      })}\n`,
+      'utf8'
+    )
+    await writeFile(
+      join(npmFixture, 'install.cjs'),
+      "require('node:fs').writeFileSync(require('node:path').join(__dirname, 'lifecycle-ran.txt'), 'ready\\n')\n",
+      'utf8'
+    )
+    const inheritedPath =
+      process.env.PATH ?? process.env.Path ?? ''
+    const npmEnvironment = {
+      ...process.env,
+      PATH: inheritedPath
+        ? `${packageManagerBin}${delimiter}${inheritedPath}`
+        : packageManagerBin,
+      Path: inheritedPath
+        ? `${packageManagerBin}${delimiter}${inheritedPath}`
+        : packageManagerBin,
+      ELECTRON_RUN_AS_NODE: '1',
+      npm_execpath: npmCli,
+      npm_node_execpath: executable,
+      npm_config_audit: 'false',
+      npm_config_fund: 'false',
+      npm_config_update_notifier: 'false'
+    }
+    const npmVersion = await run(
+      executable,
+      [npmCli, '--version'],
+      npmEnvironment,
+      npmProject
+    )
+    if (
+      npmVersion.exitCode !== 0 ||
+      npmVersion.signal ||
+      npmVersion.output.trim() !== npmManifest.version
+    ) {
+      throw new Error(
+        `Packaged npm version smoke failed: ${npmVersion.output.trim()}`
+      )
+    }
+    const installed = await run(
+      executable,
+      [
+        npmCli,
+        'install',
+        '--save-exact',
+        '--no-audit',
+        '--no-fund',
+        '--dangerously-allow-all-scripts',
+        '--loglevel=error',
+        npmFixture
+      ],
+      npmEnvironment,
+      npmProject
+    )
+    if (installed.exitCode !== 0 || installed.signal) {
+      throw new Error(
+        `Packaged npm install smoke failed: ${installed.output.trim()}`
+      )
+    }
+    const lifecycleMarker = await readFile(
+      join(
+        npmProject,
+        'node_modules',
+        'goodbuddy-packaged-npm-smoke',
+        'lifecycle-ran.txt'
+      ),
+      'utf8'
+    )
+    if (lifecycleMarker !== 'ready\n') {
+      throw new Error('Packaged npm lifecycle smoke failed')
+    }
     console.log('Packaged DeepSeek Harness utility smoke: ready')
+    console.log(
+      `Packaged npm install smoke: ready (${npmManifest.version})`
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

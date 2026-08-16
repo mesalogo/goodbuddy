@@ -54,6 +54,7 @@ const maximumStreamEvents = 5_000
 const maximumStreamEventBytes = 2 * 1024 * 1024
 const maximumExecutionMilliseconds = 10 * 60_000
 const knowledgeMcpName = 'goodbuddy-knowledge'
+const customMcpName = 'goodbuddy-custom-mcp'
 export const continueConfigurationRequiredMessage =
   'Continue 尚未配置模型连接，请在设置中选择 GoodBuddy 模型连接或指定 Continue 配置文件'
 const utilityBootstrap = [
@@ -200,6 +201,10 @@ export type ContinueHostRunOptions = {
     endpoint: string
     token: string
   }
+  customMcpCapability?: {
+    endpoint: string
+    token: string
+  }
   onEvent?: (event: ContinueHostStreamEvent) => void | Promise<void>
 }
 
@@ -207,11 +212,12 @@ type KnowledgeCapability = NonNullable<
   ContinueHostRunOptions['knowledgeCapability']
 >
 
-function createKnowledgeMcpServer(
+function createLoopbackMcpServer(
+  name: string,
   capability: KnowledgeCapability
 ): Record<string, unknown> {
   return {
-    name: knowledgeMcpName,
+    name,
     type: 'streamable-http',
     url: capability.endpoint,
     requestOptions: {
@@ -914,8 +920,35 @@ export class ContinueHostAdapter {
     runOptions: ContinueHostRunOptions
   ): Promise<string | undefined> {
     const knowledgeCapability = runOptions.knowledgeCapability
+    const customMcpCapability = runOptions.customMcpCapability
+    if (
+      customMcpCapability &&
+      runOptions.workMode !== 'execute'
+    ) {
+      throw new Error(
+        'Continue 自定义 MCP 仅允许在 Agent Execute 模式使用'
+      )
+    }
+    const capabilityServers = [
+      ...(knowledgeCapability
+        ? [
+            createLoopbackMcpServer(
+              knowledgeMcpName,
+              knowledgeCapability
+            )
+          ]
+        : []),
+      ...(customMcpCapability
+        ? [
+            createLoopbackMcpServer(
+              customMcpName,
+              customMcpCapability
+            )
+          ]
+        : [])
+    ]
     if (!this.options.modelProfile) {
-      if (!knowledgeCapability) {
+      if (capabilityServers.length === 0) {
         return undefined
       }
       const configured = await loadContinueConfig(
@@ -942,10 +975,14 @@ export class ContinueHostAdapter {
           : servers.filter(
               (server) =>
                 !isRecord(server) ||
-                server.name !== knowledgeMcpName
+                (
+                  server.name !== knowledgeMcpName &&
+                  server.name !== customMcpName
+                )
             )
       if (
-        retainedServers.length >= maximumConfiguredMcpServers
+        retainedServers.length + capabilityServers.length >
+        maximumConfiguredMcpServers
       ) {
         throw new Error(
           `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
@@ -955,7 +992,7 @@ export class ContinueHostAdapter {
         ...configured,
         mcpServers: [
           ...retainedServers,
-          createKnowledgeMcpServer(knowledgeCapability)
+          ...capabilityServers
         ]
       })
     }
@@ -994,11 +1031,9 @@ export class ContinueHostAdapter {
       version: '1.0.0',
       schema: 'v1',
       models: [modelConfig],
-      ...(knowledgeCapability
+      ...(capabilityServers.length > 0
         ? {
-            mcpServers: [
-              createKnowledgeMcpServer(knowledgeCapability)
-            ]
+            mcpServers: capabilityServers
           }
         : {})
     })

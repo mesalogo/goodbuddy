@@ -69,7 +69,10 @@ const portableRequiredFiles = [
   'resources/icon.ico',
   'resources/tray-icon.png',
   'resources/runtimes/opencode/opencode.exe',
-  'resources/runtimes/continue/package.json'
+  'resources/runtimes/continue/package.json',
+  'resources/runtimes/npm/bin/npm-cli.js',
+  'resources/runtimes/npm/package.json',
+  'resources/runtimes/npm/node_modules/graceful-fs/package.json'
 ]
 const maxPortableZipEntries = 50_000
 const maxPortableCentralDirectoryBytes = 64 * 1024 * 1024
@@ -441,6 +444,20 @@ function assertFile(filePath, description) {
   }
 }
 
+function readJsonFile(filePath, description) {
+  assertFile(filePath, description)
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `${description}无效：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error }
+    )
+  }
+}
+
 function normalizeAsarEntry(filePath) {
   return filePath.split('/').join(sep)
 }
@@ -795,6 +812,45 @@ function verifyHarnessPackage(
       )
     }
   }
+  const npmRoot = join(resources, 'runtimes', 'npm')
+  const npmManifest = readJsonFile(
+    join(npmRoot, 'package.json'),
+    'DSH 插件安装 npm 元数据'
+  )
+  if (npmManifest.version !== packageJson.dependencies?.npm) {
+    throw new Error(
+      `DSH 插件安装 npm 版本错误：期望 ${String(packageJson.dependencies?.npm)}，实际 ${String(npmManifest.version)}`
+    )
+  }
+  assertFile(
+    join(npmRoot, 'bin', 'npm-cli.js'),
+    'DSH 插件安装 npm CLI'
+  )
+  if (
+    !Array.isArray(npmManifest.bundleDependencies) ||
+    npmManifest.bundleDependencies.length === 0
+  ) {
+    throw new Error('DSH 插件安装 npm 依赖清单无效')
+  }
+  for (const packageName of npmManifest.bundleDependencies) {
+    if (
+      typeof packageName !== 'string' ||
+      !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u.test(
+        packageName
+      )
+    ) {
+      throw new Error('DSH 插件安装 npm 依赖清单无效')
+    }
+    assertFile(
+      join(
+        npmRoot,
+        'node_modules',
+        ...packageName.split('/'),
+        'package.json'
+      ),
+      `DSH 插件安装 npm 依赖 ${packageName}`
+    )
+  }
   const targetKoffiManifest = readJson(
     `node_modules/${target.koffiPackage}/package.json`,
     `${target.koffiPackage} 元数据`
@@ -902,6 +958,16 @@ function verifyUnpackedOutput(directory, options) {
   assertFile(
     join(resources, 'runtimes', 'continue', 'dist', 'index.js'),
     'Continue Runtime'
+  )
+  assertFile(
+    join(
+      resources,
+      'runtimes',
+      'npm',
+      'bin',
+      'npm-cli.js'
+    ),
+    'DSH 插件安装 npm Runtime'
   )
   verifyHarnessPackage(resources, options)
   for (const [filePath, label] of [

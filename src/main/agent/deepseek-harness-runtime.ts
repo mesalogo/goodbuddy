@@ -8,6 +8,7 @@ import type {
 } from './runtime'
 import type { ModelToolProviderLike } from './model-tool-provider'
 import type { RuntimeSkillPackage } from '../capabilities/capability-service'
+import type { ControlledHarnessExtensionPackage } from './deepseek-harness-extension-loader'
 import {
   assertObjectJsonSchema,
   validateJsonSchemaValue
@@ -137,6 +138,7 @@ export type DeepSeekHarnessLaunchOptions = {
   model: string
   credentialRefs: readonly string[]
   skillPackages: readonly RuntimeSkillPackage[]
+  extensionPackages: readonly ControlledHarnessExtensionPackage[]
 }
 
 export type DeepSeekHarnessRuntimeOptions = {
@@ -154,6 +156,7 @@ export type DeepSeekHarnessRuntimeOptions = {
   maxRequestOutputCharacters?: number
   credentialRefs?: Readonly<Record<string, string>>
   skillPackages?: RuntimeSkillPackage[]
+  extensionPackages?: ControlledHarnessExtensionPackage[]
   toolProvider?: ModelToolProviderLike
   loadAcpSdk?: () => Promise<DeepSeekHarnessAcpSdk>
 }
@@ -694,7 +697,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           credentialRefs: Object.keys(
             this.options.credentialRefs ?? {}
           ),
-          skillPackages: this.options.skillPackages ?? []
+          skillPackages: this.options.skillPackages ?? [],
+          extensionPackages: this.options.extensionPackages ?? []
         }),
         this.initializationTimeoutMs,
         '启动'

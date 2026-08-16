@@ -127,7 +127,8 @@ describe('DeepSeek Harness utility byte transport', () => {
     utility.emitMessage({
       protocol: 'goodbuddy.deepseek-harness.control',
       version: 1,
-      type: 'ready'
+      type: 'ready',
+      failedExtensionIds: []
     })
 
     const reader = child.stdout.getReader()
@@ -155,6 +156,7 @@ describe('DeepSeek Harness utility byte transport', () => {
       protocol: 'goodbuddy.deepseek-harness.control',
       version: 1,
       type: 'ready',
+      failedExtensionIds: [],
       unexpected: true
     })
 

@@ -136,6 +136,8 @@ export const ipcChannels = {
   capabilitiesRenameBrowserProfile: 'capabilities:browser-profile:rename',
   capabilitiesDefaultBrowserProfile: 'capabilities:browser-profile:default',
   capabilitiesRemoveBrowserProfile: 'capabilities:browser-profile:remove',
+  runtimeExtensionsSnapshot: 'runtime-extensions:snapshot',
+  runtimeExtensionsApply: 'runtime-extensions:apply',
   contextSelectFiles: 'context:select-files',
   contextFileSelectionProgress: 'context:file-selection-progress',
   contextAddPastedImage: 'context:add-pasted-image',

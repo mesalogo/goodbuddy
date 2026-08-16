@@ -298,6 +298,85 @@ describe('ContinueAgentRuntime', () => {
     await expect(authorize?.({ toolName: 'Bash' })).resolves.toBe('deny')
   })
 
+  it('shares assigned custom MCP with Continue Agent only in Execute through a scoped loopback token', async () => {
+    const gateway = {
+      getEndpoint: vi.fn(() => 'http://127.0.0.1:4567/mcp'),
+      grantCustomMcp: vi.fn(() => 'custom-capability'),
+      prepareCustomMcpTools: vi.fn(async () => [
+        {
+          name: 'mcp_12345678_abcdef01_private_tool',
+          inputSchema: { type: 'object' }
+        }
+      ]),
+      revoke: vi.fn()
+    } as unknown as KnowledgeMcpGateway
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      knowledgeGateway: gateway,
+      mcpServers: [
+        {
+          id: '00000000-0000-4000-8000-000000000094',
+          name: 'Private MCP',
+          description: '',
+          enabled: true,
+          allowDynamicTools: false,
+          assignments: ['continue'],
+          secretConfigured: true,
+          secret: 'must-stay-in-main',
+          transport: 'http',
+          url: 'https://private.example/mcp'
+        }
+      ],
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+
+    await collectEvents(runtime, 'execute')
+
+    expect(gateway.grantCustomMcp).toHaveBeenCalledWith(
+      '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+      expect.any(Array),
+      expect.any(AbortSignal)
+    )
+    expect(mocks.runHost).toHaveBeenCalledWith(
+      'test',
+      expect.any(AbortSignal),
+      expect.any(Function),
+      {
+        workMode: 'execute',
+        customMcpCapability: {
+          endpoint: 'http://127.0.0.1:4567/mcp',
+          token: 'custom-capability'
+        },
+        onEvent: expect.any(Function)
+      }
+    )
+    expect(JSON.stringify(mocks.runHost.mock.calls)).not.toContain(
+      'must-stay-in-main'
+    )
+    expect(JSON.stringify(mocks.runHost.mock.calls)).not.toContain(
+      'private.example'
+    )
+    expect(gateway.revoke).toHaveBeenCalledWith('custom-capability')
+
+    vi.clearAllMocks()
+    mocks.detectRuntimeBinary.mockResolvedValue({
+      available: true,
+      path: 'C:\\canonical\\cn.cmd',
+      version: '1.5.47',
+      detail: 'Continue CLI 1.5.47 已就绪'
+    })
+    mocks.runHost.mockResolvedValue({ text: 'Continue response' })
+    await collectEvents(runtime, 'ask')
+    expect(gateway.grantCustomMcp).not.toHaveBeenCalled()
+  })
+
   it('adds assigned Skill instructions to the Continue prompt', async () => {
     let hostOptions: ContinueHostAdapterOptions | undefined
     const runtime = new ContinueAgentRuntime({

@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import {
   lstat,
   open,
@@ -38,10 +38,14 @@ import {
 } from '../browser/browser-model-tools'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import {
+  createMcpToolName,
+  isValidMcpToolName,
+  normalizeMcpToolSchema
+} from './mcp-tool-utils'
 
 const MAX_MODEL_TOOLS = 100
 const MAX_MCP_SERVERS = 16
-const MAX_TOOL_SCHEMA_BYTES = 32 * 1024
 const MAX_TOOL_RESULT_BYTES = 256 * 1024
 const MAX_READ_BYTES = 256 * 1024
 const MAX_WRITE_BYTES = 512 * 1024
@@ -291,47 +295,6 @@ function boundedJson(value: unknown, errorMessage: string): string {
     throw new Error('工具结果超过 256KB 安全限制')
   }
   return serialized
-}
-
-function normalizeToolSchema(value: unknown): Record<string, unknown> {
-  let serialized: string
-  try {
-    serialized = JSON.stringify(value)
-  } catch (error) {
-    throw new Error('MCP 工具参数结构无效', { cause: error })
-  }
-  if (
-    !serialized ||
-    Buffer.byteLength(serialized) > MAX_TOOL_SCHEMA_BYTES
-  ) {
-    throw new Error('MCP 工具参数结构超过 32KB 安全限制')
-  }
-  const schema = JSON.parse(serialized) as unknown
-  if (
-    !schema ||
-    typeof schema !== 'object' ||
-    Array.isArray(schema) ||
-    (schema as Record<string, unknown>).type !== 'object'
-  ) {
-    throw new Error('MCP 工具参数必须使用 object JSON Schema')
-  }
-  return schema as Record<string, unknown>
-}
-
-function createMcpToolName(serverId: string, originalName: string): string {
-  const serverHash = createHash('sha256')
-    .update(serverId)
-    .digest('hex')
-    .slice(0, 8)
-  const toolHash = createHash('sha256')
-    .update(originalName)
-    .digest('hex')
-    .slice(0, 8)
-  const readable = originalName
-    .replace(/[^a-zA-Z0-9_-]+/gu, '_')
-    .replace(/^_+|_+$/gu, '')
-    .slice(0, 36) || 'tool'
-  return `mcp_${serverHash}_${toolHash}_${readable}`.slice(0, 64)
 }
 
 function createTextToolResult(text: string): ModelToolResult {
@@ -852,7 +815,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
           .filter(Boolean)
           .join(' ')
           .slice(0, 1_000),
-        inputSchema: normalizeToolSchema(tool.inputSchema),
+        inputSchema: normalizeMcpToolSchema(tool.inputSchema),
         source: 'mcp',
         serverName: server.name,
         taskSupport: tool.execution?.taskSupport
@@ -860,13 +823,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     }))
     if (
       bindings.some(
-        (tool) =>
-          !tool.originalName ||
-          tool.originalName.length > 128 ||
-          [...tool.originalName].some((character) => {
-            const code = character.charCodeAt(0)
-            return code <= 31 || code === 127
-          })
+        (tool) => !isValidMcpToolName(tool.originalName)
       )
     ) {
       throw new Error(`MCP Server「${server.name}」返回了无效工具名称`)

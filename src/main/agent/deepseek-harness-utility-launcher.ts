@@ -2,121 +2,34 @@ import { Readable } from 'node:stream'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import type { UtilityProcess } from 'electron'
-import { z } from 'zod'
 import { isDeepSeekHarnessCompatibleBaseUrl } from '../../shared/deepseek-harness-compatibility'
 import type {
   DeepSeekHarnessChild,
   DeepSeekHarnessLaunchOptions
 } from './deepseek-harness-runtime'
 import { createDeepSeekHarnessUtilityChild } from './deepseek-harness-utility-transport'
+import {
+  controlledHarnessHostConfigSchema,
+  DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+  DEEPSEEK_HARNESS_CONTROL_VERSION,
+  DEEPSEEK_HARNESS_CREDENTIAL_REF,
+  DEEPSEEK_HARNESS_HOST_VERSION,
+  parseHarnessControlMessage,
+  type DeepSeekHarnessControlMessage as HarnessControlMessage
+} from './deepseek-harness-control-protocol'
 
-export const DEEPSEEK_HARNESS_CONTROL_PROTOCOL =
-  'goodbuddy.deepseek-harness.control'
-export const DEEPSEEK_HARNESS_CONTROL_VERSION = 1
-export const DEEPSEEK_HARNESS_HOST_VERSION = '0.1.0-rc.6'
-export const DEEPSEEK_HARNESS_CREDENTIAL_REF =
-  'GOODBUDDY_HARNESS_MODEL_API_KEY'
-
-const skillPackageSchema = z
-  .object({
-    id: z
-      .string()
-      .min(1)
-      .max(128)
-      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
-    directory: z.string().min(1).max(32_768).refine(isAbsolute)
-  })
-  .strict()
-
-export const controlledHarnessHostConfigSchema = z
-  .object({
-    workspace: z.string().min(1).max(32_768).refine(isAbsolute),
-    dshHome: z.string().min(1).max(32_768).refine(isAbsolute),
-    baseUrl: z
-      .url()
-      .max(2_048)
-      .refine(isDeepSeekHarnessCompatibleBaseUrl),
-    api: z.literal('openai-completions'),
-    provider: z.literal('goodbuddy'),
-    model: z.string().min(1).max(128),
-    harnessVersion: z.literal(DEEPSEEK_HARNESS_HOST_VERSION),
-    credentialRefs: z
-      .tuple([z.literal(DEEPSEEK_HARNESS_CREDENTIAL_REF)])
-      .readonly(),
-    skillPackages: z.array(skillPackageSchema).max(64),
-    maxFrameBytes: z.literal(1024 * 1024)
-  })
-  .strict()
-
-export type ControlledHarnessBootstrapConfig = z.infer<
-  typeof controlledHarnessHostConfigSchema
->
-
-export type DeepSeekHarnessControlMessage =
-  | {
-      protocol: typeof DEEPSEEK_HARNESS_CONTROL_PROTOCOL
-      version: typeof DEEPSEEK_HARNESS_CONTROL_VERSION
-      type: 'start'
-      config: ControlledHarnessBootstrapConfig
-    }
-  | {
-      protocol: typeof DEEPSEEK_HARNESS_CONTROL_PROTOCOL
-      version: typeof DEEPSEEK_HARNESS_CONTROL_VERSION
-      type: 'ready'
-    }
-  | {
-      protocol: typeof DEEPSEEK_HARNESS_CONTROL_PROTOCOL
-      version: typeof DEEPSEEK_HARNESS_CONTROL_VERSION
-      type: 'fatal'
-      code: string
-    }
-
-export function parseHarnessControlMessage(
-  value: unknown
-): DeepSeekHarnessControlMessage | undefined {
-  if (
-    !value ||
-    typeof value !== 'object' ||
-    Array.isArray(value)
-  ) {
-    return undefined
-  }
-  const record = value as Record<string, unknown>
-  if (
-    record.protocol !== DEEPSEEK_HARNESS_CONTROL_PROTOCOL ||
-    record.version !== DEEPSEEK_HARNESS_CONTROL_VERSION
-  ) {
-    return undefined
-  }
-  if (record.type === 'ready' && Object.keys(record).length === 3) {
-    return record as DeepSeekHarnessControlMessage
-  }
-  if (
-    record.type === 'fatal' &&
-    Object.keys(record).length === 4 &&
-    typeof record.code === 'string' &&
-    /^[A-Z][A-Z0-9_]{0,63}$/u.test(record.code)
-  ) {
-    return record as DeepSeekHarnessControlMessage
-  }
-  if (
-    record.type === 'start' &&
-    Object.keys(record).length === 4
-  ) {
-    const parsed = controlledHarnessHostConfigSchema.safeParse(
-      record.config
-    )
-    return parsed.success
-      ? ({
-          protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
-          version: DEEPSEEK_HARNESS_CONTROL_VERSION,
-          type: 'start',
-          config: parsed.data
-        } satisfies DeepSeekHarnessControlMessage)
-      : undefined
-  }
-  return undefined
-}
+export {
+  controlledHarnessHostConfigSchema,
+  DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+  DEEPSEEK_HARNESS_CONTROL_VERSION,
+  DEEPSEEK_HARNESS_CREDENTIAL_REF,
+  DEEPSEEK_HARNESS_HOST_VERSION,
+  parseHarnessControlMessage
+} from './deepseek-harness-control-protocol'
+export type {
+  ControlledHarnessBootstrapConfig,
+  DeepSeekHarnessControlMessage
+} from './deepseek-harness-control-protocol'
 
 export type DeepSeekHarnessFork = (
   modulePath: string,
@@ -135,6 +48,9 @@ export type DeepSeekHarnessUtilityLauncherOptions = {
   environment: NodeJS.ProcessEnv
   fork: DeepSeekHarnessFork
   terminateProcess?: (utility: UtilityProcess) => void
+  onExtensionStartupFailures?: (
+    extensionIds: readonly string[]
+  ) => Promise<void>
   startupTimeoutMs?: number
 }
 
@@ -184,6 +100,21 @@ export function createDeepSeekHarnessUtilityLauncher(
         return {
           id: skill.id,
           directory
+        }
+      })
+    )
+    const canonicalExtensionPackages = await Promise.all(
+      options.extensionPackages.map(async (extension) => {
+        const entrypoint = await realpath(extension.entrypoint)
+        const metadata = await stat(entrypoint)
+        if (!metadata.isFile()) {
+          throw new Error(
+            'DeepSeek Harness 插件入口必须为文件'
+          )
+        }
+        return {
+          ...extension,
+          entrypoint
         }
       })
     )
@@ -240,11 +171,16 @@ export function createDeepSeekHarnessUtilityLauncher(
       }
     }
     const startupTimeoutMs =
-      launcherOptions.startupTimeoutMs ?? 10_000
+      launcherOptions.startupTimeoutMs ??
+      Math.min(
+        120_000,
+        10_000 + canonicalExtensionPackages.length * 5_000
+      )
     let timer: ReturnType<typeof setTimeout> | undefined
     let onAbort: (() => void) | undefined
     try {
       await new Promise<void>((resolve, reject) => {
+        let settled = false
         const cleanup = (): void => {
           if (timer) {
             clearTimeout(timer)
@@ -256,9 +192,21 @@ export function createDeepSeekHarnessUtilityLauncher(
           utility.removeListener('exit', onExit)
         }
         const fail = (error: Error): void => {
+          if (settled) {
+            return
+          }
+          settled = true
           cleanup()
           terminate()
           reject(error)
+        }
+        const succeed = (): void => {
+          if (settled) {
+            return
+          }
+          settled = true
+          cleanup()
+          resolve()
         }
         const onMessage = (message: unknown): void => {
           const control = parseHarnessControlMessage(message)
@@ -267,8 +215,26 @@ export function createDeepSeekHarnessUtilityLauncher(
             return
           }
           if (control.type === 'ready') {
-            cleanup()
-            resolve()
+            utility.removeListener('message', onMessage)
+            if (timer) {
+              clearTimeout(timer)
+              timer = undefined
+            }
+            void (
+              control.failedExtensionIds.length > 0
+                ? launcherOptions.onExtensionStartupFailures?.(
+                    control.failedExtensionIds
+                  ) ?? Promise.resolve()
+                : Promise.resolve()
+            ).then(succeed, (error: unknown) => {
+              fail(
+                error instanceof Error
+                  ? error
+                  : new Error(
+                      'DeepSeek Harness 插件失败状态保存失败'
+                    )
+              )
+            })
           } else if (control.type === 'fatal') {
             fail(
               new Error(
@@ -311,6 +277,7 @@ export function createDeepSeekHarnessUtilityLauncher(
           harnessVersion: DEEPSEEK_HARNESS_HOST_VERSION,
           credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
           skillPackages: canonicalSkillPackages,
+          extensionPackages: canonicalExtensionPackages,
           maxFrameBytes: 1024 * 1024
         })
         utility.postMessage({
@@ -318,7 +285,7 @@ export function createDeepSeekHarnessUtilityLauncher(
           version: DEEPSEEK_HARNESS_CONTROL_VERSION,
           type: 'start',
           config
-        } satisfies DeepSeekHarnessControlMessage)
+        } satisfies HarnessControlMessage)
       })
       return createDeepSeekHarnessUtilityChild(utility, {
         stderrToWeb: (stderr) =>

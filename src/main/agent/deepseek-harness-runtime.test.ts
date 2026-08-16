@@ -400,7 +400,8 @@ describe('DeepSeekHarnessRuntime', () => {
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-test',
       credentialRefs: [],
-      skillPackages: []
+      skillPackages: [],
+      extensionPackages: []
     })
     expect(harness.requests).toContainEqual({
       method: 'goodbuddy/session/prepare',

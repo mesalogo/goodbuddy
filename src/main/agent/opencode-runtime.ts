@@ -42,7 +42,10 @@ import {
   boundedToolDetail,
   safeToolErrorDetail
 } from './approval-summary'
-import type { RuntimeSkillPackage } from '../capabilities/capability-service'
+import type {
+  ResolvedMcpServer,
+  RuntimeSkillPackage
+} from '../capabilities/capability-service'
 import { stageRuntimeSkillPackages } from './runtime-skill-packages'
 
 const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
@@ -385,6 +388,7 @@ export type OpenCodeRuntimeOptions = {
   skillInstructions?: string
   skillPackages?: RuntimeSkillPackage[]
   knowledgeGateway?: KnowledgeMcpGateway
+  mcpServers?: ResolvedMcpServer[]
 }
 
 function createSkillPermissionRules(
@@ -1082,6 +1086,8 @@ export class OpenCodeRuntime implements AgentRuntime {
       createSkillPermissionRules(nativeSkillIds)
     let knowledgeMcpName: string | undefined
     let knowledgeToolIds: string[] = []
+    let customMcpName: string | undefined
+    let customMcpToken: string | undefined
     try {
       if (
         request.knowledgeCapabilityToken &&
@@ -1121,6 +1127,58 @@ export class OpenCodeRuntime implements AgentRuntime {
           this.options.knowledgeGateway
             .getAvailableToolNames(request.knowledgeCapabilityToken)
             .map((toolName) => `${knowledgeMcpName}_${toolName}`)
+      }
+      if (
+        request.workMode === 'execute' &&
+        this.usesEmbeddedPermissionMediation() &&
+        this.options.knowledgeGateway?.getEndpoint() &&
+        this.options.mcpServers?.length
+      ) {
+        customMcpToken = this.options.knowledgeGateway.grantCustomMcp(
+          request.requestId,
+          this.options.mcpServers,
+          signal
+        )
+        if (customMcpToken) {
+          const tools =
+            await this.options.knowledgeGateway.prepareCustomMcpTools(
+              customMcpToken,
+              signal
+            )
+          customMcpName = `goodbuddy-custom-${createHash('sha256')
+            .update(`${request.conversationId}\0${request.requestId}`)
+            .digest('hex')
+            .slice(0, 20)}`
+          const added = await client.mcp.add({
+            directory,
+            name: customMcpName,
+            config: {
+              type: 'remote',
+              url: this.options.knowledgeGateway.getEndpoint()!,
+              enabled: true,
+              headers: {
+                Authorization: `Bearer ${customMcpToken}`
+              },
+              oauth: false
+            }
+          })
+          const addedStatus = added.data?.[customMcpName]
+          if (
+            added.error ||
+            !added.data ||
+            !addedStatus ||
+            addedStatus.status !== 'connected'
+          ) {
+            throw new Error(
+              `OpenCode 自定义 MCP 连接失败（${addedStatus?.status ?? 'unknown'}）`
+            )
+          }
+          knowledgeToolIds.push(
+            ...tools.map(
+              (tool) => `${customMcpName}_${tool.name}`
+            )
+          )
+        }
       }
       const permission =
         request.workMode === 'execute'
@@ -1617,6 +1675,14 @@ export class OpenCodeRuntime implements AgentRuntime {
         await client.mcp
           .disconnect({ name: knowledgeMcpName, directory })
           .catch(() => undefined)
+      }
+      if (customMcpName) {
+        await client.mcp
+          .disconnect({ name: customMcpName, directory })
+          .catch(() => undefined)
+      }
+      if (customMcpToken) {
+        this.options.knowledgeGateway?.revoke(customMcpToken)
       }
     }
   }

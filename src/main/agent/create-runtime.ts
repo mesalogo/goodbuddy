@@ -29,6 +29,7 @@ import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { ModelToolProviderLike } from './model-tool-provider'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { ModelToolProvider } from './model-tool-provider'
+import type { ControlledHarnessExtensionPackage } from './deepseek-harness-extension-loader'
 
 const noSubagentTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -50,6 +51,7 @@ export type AgentCapabilityContext = {
   bundledRuntimePaths?: BundledRuntimePaths
   continueHostLauncher?: ContinueHostLauncher
   deepseekHarnessLauncher?: DeepSeekHarnessRuntimeOptions['launch']
+  deepseekHarnessExtensions?: ControlledHarnessExtensionPackage[]
   browserService?: BrowserToolService
   knowledgeGateway?: KnowledgeMcpGateway
   webSearchEnabled?: boolean
@@ -174,6 +176,7 @@ export function createAgentRuntime(
         GOODBUDDY_HARNESS_MODEL_API_KEY: profile.apiKey
       },
       skillPackages: capabilities.skillPackages,
+      extensionPackages: capabilities.deepseekHarnessExtensions,
       toolProvider: new ModelToolProvider(
         workspace,
         capabilities.mcpServers,
@@ -215,7 +218,8 @@ export function createAgentRuntime(
         process.env.GOODBUDDY_CONTINUE_HOST_CACHE?.trim() ??
         '',
       launchHost: capabilities.continueHostLauncher,
-      knowledgeGateway: capabilities.knowledgeGateway
+      knowledgeGateway: capabilities.knowledgeGateway,
+      mcpServers: capabilities.mcpServers
     })
   }
 
@@ -246,7 +250,8 @@ export function createAgentRuntime(
       skillInstructions: capabilities.skillInstructions,
       skillPackages: capabilities.skillPackages,
       defaultWorkspace: workspace,
-      knowledgeGateway: capabilities.knowledgeGateway
+      knowledgeGateway: capabilities.knowledgeGateway,
+      mcpServers: capabilities.mcpServers
     })
   }
 

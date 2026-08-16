@@ -114,6 +114,10 @@ import type {
   KnowledgeRetrieveInput,
   KnowledgeSettingsUpdateInput
 } from '../shared/knowledge-contracts'
+import type {
+  RuntimeExtensionAction,
+  RuntimeExtensionMarketplaceSnapshot
+} from '../shared/runtime-extension-contracts'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -860,6 +864,17 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.capabilitiesRemoveBrowserProfile, {
         profileId
       }) as Promise<CapabilitySnapshot>
+  },
+  runtimeExtensions: {
+    getSnapshot: () =>
+      ipcRenderer.invoke(
+        ipcChannels.runtimeExtensionsSnapshot
+      ) as Promise<RuntimeExtensionMarketplaceSnapshot>,
+    apply: (action: RuntimeExtensionAction) =>
+      ipcRenderer.invoke(
+        ipcChannels.runtimeExtensionsApply,
+        action
+      ) as Promise<RuntimeExtensionMarketplaceSnapshot>
   },
   context: {
     selectFiles: () =>

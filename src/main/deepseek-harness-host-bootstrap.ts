@@ -3,7 +3,7 @@ import {
   DEEPSEEK_HARNESS_CONTROL_VERSION,
   parseHarnessControlMessage,
   type DeepSeekHarnessControlMessage
-} from './agent/deepseek-harness-utility-launcher'
+} from './agent/deepseek-harness-control-protocol'
 import { createDeepSeekHarnessHostTransport } from './agent/deepseek-harness-utility-transport'
 import {
   createBoundedNdJsonStream,
@@ -85,7 +85,8 @@ parentPort.on('message', (event) => {
       post({
         protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
         version: DEEPSEEK_HARNESS_CONTROL_VERSION,
-        type: 'ready'
+        type: 'ready',
+        failedExtensionIds: host.failedExtensionIds
       })
     })
     .catch((error: unknown) => {

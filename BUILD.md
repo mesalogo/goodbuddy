@@ -51,7 +51,10 @@ npm run test:watch
 GOODBUDDY_RUN_RUNTIME_E2E=1 npm test -- src/main/agent/runtime-e2e.manual.test.ts
 ```
 
-该测试可能发起真实外部模型调用。测试不会输出 API Key，文件操作在临时工作区中执行。
+OpenCode/Continue 用例默认读取 `dist/harness-package-probe/win-unpacked`；也可用
+`GOODBUDDY_E2E_PACKAGED_ROOT` 指定其他已解包应用目录。该测试可能发起真实外部模型
+调用。测试不会输出 API Key，文件操作在临时工作区中执行。文件包含经 Main 回环
+broker 调用已分配自定义 MCP 的真实 OpenCode 和 Continue 用例。
 
 ## 生产构建
 
@@ -117,10 +120,11 @@ npm run dist:linux:arm64
 
 ## Runtime 资源
 
-发布包会携带经过版本与完整性校验的 OpenCode 和 Continue Runtime：
+发布包会携带经过版本与完整性校验的 OpenCode、Continue 和 DSH 插件安装 Runtime：
 
 - OpenCode 平台二进制来自 `.runtime-resources/<arch>`。
 - Continue Runtime 来自锁定版本的 `@continuedev/cli`。
+- DSH 插件安装使用精确锁定并从 `app.asar` 解包的 npm CLI，通过当前 Electron 的 Node 模式运行；最终用户不需要另装 Node.js 或 npm。
 - 打包钩子位于 `build/runtime-hooks.cjs`。
 
 跨架构打包前，确认目标架构的 OpenCode 资源已经准备完成。不要用其他架构的二进制替代目标资源。
@@ -177,8 +181,10 @@ git push github "$tag"
 4. 本地知识库导入、检索和知识图谱。
 5. Ask、Execute 的权限边界与旧版 Plan 数据兼容。
 6. OpenCode 与 Continue 的权限边界、取消和超时。
-7. 智能心跳的创建、暂停、恢复和历史记录。
-8. 应用退出后无残留 Runtime 子进程。
+7. DeepSeek Harness Ask 拒绝写入和第三方插件工具，Execute 可调用已启用插件工具。
+8. DSH 市场可安装、停用、重新启用和移除插件；启动失败插件不会阻止 Host，并显示为自动停用。
+9. 智能心跳的创建、暂停、恢复和历史记录。
+10. 应用退出后无残留 Runtime 子进程。
 
 DeepSeek Harness 的 Electron Utility Host 可单独执行无模型、无凭据冒烟测试：
 
@@ -189,3 +195,38 @@ npm run smoke:deepseek-harness
 该命令先生成 production bundle，再从 CommonJS Electron 主入口启动实际
 `utilityProcess`，等待固定 Host 完成本地主机执行器初始化与内部 ready 握手。它不会发起
 模型请求，也不会读取或传递 API Key。
+
+Windows x64 完整打包后的 Utility Host 与内置 npm 冒烟测试：
+
+```bash
+npm run build
+node node_modules/electron-builder/cli.js --win dir --x64 --publish never --config.directories.output=dist/harness-package-probe
+npm run smoke:deepseek-harness:packaged
+```
+
+该测试启动打包后的 Host，并使用打包资源中的准确 npm 版本安装一个本地临时包，
+确认 npm 依赖闭包、Electron Node 模式、`node` shim 和生命周期脚本都可用。它不访问
+npm registry，也不运行模型请求。
+
+真实 DSH 市场测试会访问公共 npm、运行第三方安装与插件代码，因此只在已明确授权时启用：
+
+```bash
+GOODBUDDY_DSH_MARKETPLACE_E2E=1 npm test -- src/main/agent/dsh-extension-marketplace.e2e.test.ts
+```
+
+该测试使用临时用户目录，经捆绑 npm 路径安装已审查的最小测试插件，并验证 Host
+加载和真实工具调用；测试结束后删除临时目录。
+
+要让真实模型同时验证插件的 Ask 拒绝与 Execute 调用，可显式提供兼容的
+OpenAI Chat Completions 配置：
+
+```bash
+GOODBUDDY_DSH_MODEL_E2E=1 \
+GOODBUDDY_DSH_API_KEY=... \
+GOODBUDDY_DSH_BASE_URL=https://api.deepseek.com \
+GOODBUDDY_DSH_MODEL=deepseek-chat \
+npm test -- src/main/agent/deepseek-harness-acp-e2e.test.ts -t "rejects a real npm plugin"
+```
+
+如需覆盖发布包内置 npm 路径，再设置 `GOODBUDDY_DSH_NPM_CLI` 与
+`GOODBUDDY_DSH_NODE_EXECUTABLE` 指向已解包应用中的 npm CLI 和应用主程序。
