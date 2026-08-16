@@ -56,6 +56,12 @@ for (const [relativePath, content] of [
 
 report(/<html\s+lang="zh-CN">/.test(html), "页面语言必须是 zh-CN");
 report(/<meta\s+name="viewport"/.test(html), "缺少 viewport 元信息");
+report(
+  /<link\s+rel="canonical"\s+href="https:\/\/mesalogo\.github\.io\/goodbuddy\/"\s*\/>/.test(
+    html,
+  ),
+  "canonical 地址必须指向 GitHub Pages 正式站点",
+);
 report((html.match(/<h1[\s>]/g) ?? []).length === 1, "页面必须且只能包含一个 h1");
 report(/class="skip-link"\s+href="#main-content"/.test(html), "缺少跳到主要内容链接");
 report(/<main\s+id="main-content">/.test(html), "缺少 main-content 主区域");

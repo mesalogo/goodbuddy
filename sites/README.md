@@ -2,6 +2,17 @@
 
 `sites` 是无需构建步骤或额外依赖的静态官网源码，可直接托管整个目录。
 
+正式站点地址：<https://mesalogo.github.io/goodbuddy/>
+
+## 部署
+
+`.github/workflows/pages.yml` 会在 `main` 分支中的官网文件发生变化后，
+校验并部署整个 `sites` 目录。工作流也支持在 GitHub Actions 中手动运行。
+
+首次部署前，需要在 GitHub 仓库的 **Settings > Pages** 中将 **Source**
+设为 **GitHub Actions**。站点使用项目 Pages 地址，不需要 `CNAME` 文件
+或自定义域名 DNS 配置。
+
 ## 本地预览
 
 在仓库根目录运行：
