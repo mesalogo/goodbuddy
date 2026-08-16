@@ -5016,7 +5016,7 @@ button > svg {
   padding: 24px 32px 32px;
   overflow: hidden;
   align-items: stretch;
-  grid-template-columns: 190px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   justify-content: start;
   gap: 28px;
 }
@@ -5049,7 +5049,7 @@ button > svg {
   align-self: stretch;
   flex-direction: column;
   grid-template-columns: none;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
 }
 
 .settings-page .settings-panel__content {
@@ -11108,7 +11108,7 @@ details.settings-section > :not(summary) + :not(summary) {
     padding: 20px;
     overflow: hidden;
     align-items: stretch;
-    grid-template-columns: 176px minmax(0, 1fr);
+    grid-template-columns: 196px minmax(0, 1fr);
     justify-content: stretch;
     gap: var(--space-4);
   }
