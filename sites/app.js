@@ -7,7 +7,11 @@
   const navigation = document.querySelector("[data-navigation]");
   const themeToggle = document.querySelector("[data-theme-toggle]");
   const themeColor = document.querySelector('meta[name="theme-color"]');
+  const tiltStage = document.querySelector("[data-tilt-stage]");
+  const tiltCard = tiltStage?.querySelector("[data-tilt-card]");
   const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+  const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const getSavedTheme = () => {
     try {
@@ -89,6 +93,50 @@
   });
 
   window.addEventListener("scroll", setHeaderState, { passive: true });
+
+  if (tiltStage instanceof HTMLElement && tiltCard instanceof HTMLElement) {
+    let tiltFrame = 0;
+
+    const resetTilt = () => {
+      window.cancelAnimationFrame(tiltFrame);
+      tiltStage.classList.remove("is-tilting");
+      tiltStage.style.setProperty("--spotlight-x", "50%");
+      tiltStage.style.setProperty("--spotlight-y", "50%");
+      tiltCard.style.setProperty("--spotlight-x", "50%");
+      tiltCard.style.setProperty("--spotlight-y", "50%");
+      tiltStage.style.setProperty("--scene-tilt-x", "0deg");
+      tiltStage.style.setProperty("--scene-tilt-y", "0deg");
+    };
+
+    const updateTilt = (event) => {
+      if (!finePointer.matches || reducedMotion.matches) {
+        resetTilt();
+        return;
+      }
+
+      const bounds = tiltStage.getBoundingClientRect();
+      const x = Math.min(Math.max((event.clientX - bounds.left) / bounds.width, 0), 1);
+      const y = Math.min(Math.max((event.clientY - bounds.top) / bounds.height, 0), 1);
+
+      window.cancelAnimationFrame(tiltFrame);
+      tiltFrame = window.requestAnimationFrame(() => {
+        const spotlightX = `${(x * 100).toFixed(1)}%`;
+        const spotlightY = `${(y * 100).toFixed(1)}%`;
+        tiltStage.classList.add("is-tilting");
+        tiltStage.style.setProperty("--spotlight-x", spotlightX);
+        tiltStage.style.setProperty("--spotlight-y", spotlightY);
+        tiltCard.style.setProperty("--spotlight-x", spotlightX);
+        tiltCard.style.setProperty("--spotlight-y", spotlightY);
+        tiltStage.style.setProperty("--scene-tilt-x", `${((0.5 - y) * 8).toFixed(2)}deg`);
+        tiltStage.style.setProperty("--scene-tilt-y", `${((x - 0.5) * 11).toFixed(2)}deg`);
+      });
+    };
+
+    tiltStage.addEventListener("pointermove", updateTilt, { passive: true });
+    tiltStage.addEventListener("pointerleave", resetTilt);
+    finePointer.addEventListener("change", resetTilt);
+    reducedMotion.addEventListener("change", resetTilt);
+  }
 
   const sections = [...document.querySelectorAll("main section[id]")];
   const navLinks = [...document.querySelectorAll('.site-navigation a[href^="#"]')];

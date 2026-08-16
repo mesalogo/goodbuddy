@@ -67,22 +67,37 @@ report(/class="skip-link"\s+href="#main-content"/.test(html), "缺少跳到主�
 report(/<main\s+id="main-content">/.test(html), "缺少 main-content 主区域");
 report(/aria-label="主导航"/.test(html), "主导航缺少可访问名称");
 report(/data-theme-toggle/.test(html), "缺少主题切换控件");
+report(/data-tilt-stage/.test(html), "首屏产品界面缺少倾斜交互区域");
+report(/data-tilt-card/.test(html), "首屏产品界面缺少倾斜卡片");
 report(/prefers-reduced-motion:\s*reduce/.test(css), "缺少减少动态效果规则");
 report(/\[data-theme="dark"\]/.test(css), "缺少深色主题令牌");
+report(/--scene-tilt-x/.test(css), "缺少产品界面横向倾斜变量");
+report(/--spotlight-x/.test(css), "缺少产品界面动态光效变量");
+report(
+  /\.floating-card[\s\S]*rotateX\(var\(--scene-tilt-x\)\)/.test(css),
+  "浮动标签必须跟随产品界面倾斜",
+);
+report(/requestAnimationFrame/.test(appJs), "产品界面倾斜交互必须按帧更新");
 
 for (const breakpoint of ["1199px", "959px", "719px"]) {
   report(css.includes(`max-width: ${breakpoint}`), `缺少 ${breakpoint} 响应式断点`);
 }
 
 const requiredCopy = [
-  "在本地管理笔记和待办",
+  "桌面助手",
+  "AI 编程工具台",
+  "Windows、macOS、Linux",
+  "统信 UOS",
+  "银河麒麟",
+  "海光 · 兆芯（x64）",
+  "鲲鹏 · 飞腾（ARM64）",
+  "独创的统一 Agent Runtime",
+  "直连模型、OpenCode、Continue",
+  "DeepSeek Harness",
+  "魔法笔记",
+  "智能心跳",
+  "文件、截图、应用窗口、剪贴板和离线语音",
   "微信、企业微信和钉钉",
-  "单条消息最多 4 个附件",
-  "OpenCode 与 Continue",
-  "单次最多添加 8 个附件，支持同时传入 5 张图片",
-  "auto、low、medium、high",
-  "下载入口始终指向最新正式 Release",
-  "主要安全边界",
 ];
 
 for (const copy of requiredCopy) {
@@ -98,7 +113,7 @@ report(
 const releaseLinks = [
   ...html.matchAll(/<a\b(?=[^>]*data-release-link)[^>]*>/g),
 ].map((match) => match[0]);
-report(releaseLinks.length >= 5, "缺少完整的官方下载入口");
+report(releaseLinks.length >= 3, "缺少三个桌面系统的官方下载入口");
 for (const link of releaseLinks) {
   report(
     /href="https:\/\/github\.com\/mesalogo\/goodbuddy\/releases\/latest"/.test(link),

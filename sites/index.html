@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="GoodBuddy 是桌面 AI 助手，支持项目知识库、魔法笔记、远程消息通道和受控工具执行。"
+      content="GoodBuddy 是跨平台桌面助手与 AI 编程工具台，以统一 Agent Runtime 连接直连模型、OpenCode、Continue 与 DeepSeek Harness。"
     />
     <link rel="canonical" href="https://mesalogo.github.io/goodbuddy/" />
     <meta name="theme-color" content="#f6f8fb" />
-    <title>GoodBuddy｜桌面 AI 助手</title>
+    <title>GoodBuddy｜桌面助手与 AI 编程工具台</title>
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css" />
     <script>
@@ -57,10 +57,9 @@
         </button>
 
         <nav class="site-navigation" id="site-navigation" aria-label="主导航" data-navigation>
-          <a href="#features">功能</a>
-          <a href="#release">亮点</a>
           <a href="#download">下载</a>
-          <a href="#security">安全</a>
+          <a href="#features">Agent Runtime</a>
+          <a href="#assistant">桌面助手</a>
         </nav>
 
         <div class="header-actions">
@@ -92,35 +91,30 @@
           <div class="hero-copy">
             <div class="eyebrow">
               <span class="status-dot" aria-hidden="true"></span>
-              桌面 AI 助手
+              Windows · macOS · Linux
             </div>
-            <h1 id="hero-title">在桌面上使用 AI，<br /><span>工作过程看得见。</span></h1>
+            <h1 id="hero-title">桌面助手，<br /><span>也是 AI 编程工具台。</span></h1>
             <p class="hero-lead">
-              GoodBuddy 可以连接模型、知识库和工具。知识按全局或项目管理，
-              工具执行前可以确认，运行记录随时可查。
+              GoodBuddy 管理对话、知识、笔记与任务，也通过独创的统一 Agent Runtime
+              接入直连模型、OpenCode、Continue 和 DeepSeek Harness。
+              无需反复配置命令行，选择工具和项目即可开始。
             </p>
             <div class="hero-actions">
-              <a class="button button--primary" href="#features">查看功能</a>
-              <a
-                class="button button--secondary"
-                href="https://github.com/mesalogo/goodbuddy/releases/latest"
-                target="_blank"
-                rel="noreferrer"
-                data-release-link
-              >前往官方下载页<span class="sr-only">（在新窗口打开）</span></a>
+              <a class="button button--primary" href="#download">立即下载</a>
+              <a class="button button--secondary" href="#features">了解 Agent Runtime</a>
             </div>
             <ul class="hero-facts" aria-label="产品特性概览">
               <li>
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 3 3 7-7" /></svg>
-                支持 Windows / macOS / Linux
+                3 大桌面系统，x64 / arm64
               </li>
               <li>
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 3 3 7-7" /></svg>
-                全局和项目知识分开管理
+                4 类 Agent Runtime 统一接入
               </li>
               <li>
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 3 3 7-7" /></svg>
-                工具执行前可确认
+                图形化配置，执行仍受控
               </li>
             </ul>
           </div>
@@ -128,15 +122,16 @@
           <div
             class="product-stage"
             role="img"
-            aria-label="GoodBuddy 桌面应用界面示意：在项目范围内对话、引用知识并审批工具调用"
+            aria-label="GoodBuddy 桌面应用界面示意：在统一 Agent Runtime 中选择 AI 编程工具并受控执行"
+            data-tilt-stage
           >
             <div class="stage-glow stage-glow--one"></div>
             <div class="stage-glow stage-glow--two"></div>
-            <div class="app-window">
+            <div class="app-window" data-tilt-card>
               <div class="window-bar">
                 <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
                 <div class="window-title">GoodBuddy</div>
-                <div class="window-status"><span></span> 本地工作区</div>
+                <div class="window-status"><span></span> Runtime 已连接</div>
               </div>
               <div class="app-layout">
                 <aside class="app-sidebar" aria-hidden="true">
@@ -157,32 +152,32 @@
                 <div class="app-content">
                   <div class="app-content-header">
                     <div>
-                      <strong>产品官网维护</strong>
-                      <span>项目：GoodBuddy 官网</span>
+                      <strong>修复跨平台构建</strong>
+                      <span>项目：桌面客户端</span>
                     </div>
-                    <div class="mode-pill">计划模式</div>
+                    <div class="mode-pill">Continue · 执行</div>
                   </div>
                   <div class="message-area">
-                    <div class="message message--user">检查官网内容与下载入口是否需要更新。</div>
+                    <div class="message message--user">修复构建问题，并验证三个桌面系统。</div>
                     <div class="message message--assistant">
                       <div class="assistant-label">
                         <span class="assistant-avatar">G</span>
                         <strong>GoodBuddy</strong>
                       </div>
-                      <p>我会先检查站点内容和发布页，不修改文件。</p>
+                      <p>已通过 Agent Runtime 载入项目、Skills 和受控工具。</p>
                       <div class="tool-card">
                         <div class="tool-icon">
                           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7" /></svg>
                         </div>
-                        <div><strong>读取项目知识</strong><span>范围：GoodBuddy 官网</span></div>
-                        <span class="tool-state">已完成</span>
+                        <div><strong>准备编程环境</strong><span>Continue · 项目范围 · 受控工具</span></div>
+                        <span class="tool-state">已就绪</span>
                       </div>
                       <div class="plan-lines" aria-hidden="true"><span></span><span></span><span></span></div>
                     </div>
                   </div>
                   <div class="composer">
-                    <span>继续补充要求…</span>
-                    <div class="composer-actions"><span>计划</span><b>↑</b></div>
+                    <span>描述你想完成的编程任务…</span>
+                    <div class="composer-actions"><span>执行</span><b>↑</b></div>
                   </div>
                 </div>
               </div>
@@ -191,207 +186,27 @@
               <span class="floating-icon">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 2.8 8.6 7 10 4.2-1.4 7-5.5 7-10V6l-7-3Z" /><path d="m9 12 2 2 4-4" /></svg>
               </span>
-              <span><strong>执行前确认</strong><small>查看工具名称和影响</small></span>
+              <span><strong>统一 Agent Runtime</strong><small>直连模型 · OpenCode · Continue · DSH</small></span>
             </div>
             <div class="floating-card floating-card--scope">
               <span class="scope-dot"></span>
-              <span><strong>项目范围</strong><small>知识和任务按项目区分</small></span>
+              <span><strong>跨平台可用</strong><small>Windows · macOS · Linux</small></span>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="proof-strip" aria-label="核心设计原则">
+      <section class="proof-strip" aria-label="平台与 Runtime 支持概览">
         <div class="section-inner proof-grid">
-          <div><strong>3 种</strong><span>问答 / 计划 / 执行模式</span></div>
-          <div><strong>2 层</strong><span>全局与项目知识范围</span></div>
-          <div><strong>可查看</strong><span>工具调用与活动记录</span></div>
-          <div><strong>6 组</strong><span>系统与架构组合</span></div>
+          <div><strong>3 大系统</strong><span>Windows / macOS / Linux</span></div>
+          <div><strong>2 种架构</strong><span>x64 / arm64</span></div>
+          <div><strong>4 类 Runtime</strong><span>多种 AI 编程路径</span></div>
+          <div><strong>1 个入口</strong><span>选择、配置、运行、审计</span></div>
         </div>
       </section>
 
-      <section class="section features-section" id="features" aria-labelledby="features-title">
+      <section class="section download-section" id="download" aria-label="跨平台下载">
         <div class="section-inner">
-          <div class="section-heading">
-            <div>
-              <p class="kicker">主要功能</p>
-              <h2 id="features-title">GoodBuddy 可以做什么</h2>
-            </div>
-            <p>
-              管理对话和知识，运行任务，并在需要时调用经过确认的工具。
-            </p>
-          </div>
-
-          <div class="feature-grid">
-            <article class="feature-card feature-card--wide">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 3 5 6v5c0 4.5 2.8 8.6 7 10 4.2-1.4 7-5.5 7-10V6l-7-3Z" />
-                  <path d="M9 12h6M12 9v6" />
-                </svg>
-              </div>
-              <span class="feature-number">01</span>
-              <h3>Agent 运行模式</h3>
-              <p>问答和计划模式不执行工具。执行模式通过审批控制调用工具，并支持取消、超时和输出限制。</p>
-              <div class="mode-row" aria-label="三种工作模式">
-                <span>问答 <small>只读</small></span>
-                <span>计划 <small>只读</small></span>
-                <span class="is-accent">执行 <small>需审批</small></span>
-              </div>
-            </article>
-
-            <article class="feature-card">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 6.5C4 5.1 5.1 4 6.5 4H10l2 2h5.5C18.9 6 20 7.1 20 8.5v9c0 1.4-1.1 2.5-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" />
-                  <path d="M8 11h8M8 15h5" />
-                </svg>
-              </div>
-              <span class="feature-number">02</span>
-              <h3>知识库按范围管理</h3>
-              <p>全局知识和项目知识分开保存。搜索结果和引用会显示来源。</p>
-            </article>
-
-            <article class="feature-card">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 13h3l2-6 4 12 2-6h5" />
-                  <path d="M4 4h16v16H4z" />
-                </svg>
-              </div>
-              <span class="feature-number">03</span>
-              <h3>定时任务和运行记录</h3>
-              <p>可以创建周期计划，查看每次运行的状态、结果和活动记录。</p>
-            </article>
-
-            <article class="feature-card">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M7 13.5 13.5 7a3.2 3.2 0 0 1 4.5 4.5l-8 8a5 5 0 1 1-7-7l8-8" />
-                </svg>
-              </div>
-              <span class="feature-number">04</span>
-              <h3>文档和图片</h3>
-              <p>单次最多添加 8 个附件，支持同时传入 5 张图片。</p>
-            </article>
-
-            <article class="feature-card">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 5h16v14H4z" />
-                  <path d="m4 16 5-5 3 3 2-2 6 6" />
-                  <circle cx="15.5" cy="8.5" r="1.5" />
-                </svg>
-              </div>
-              <span class="feature-number">05</span>
-              <h3>生成图片</h3>
-              <p>支持 auto、low、medium、high 四档质量。生成结果会保存到本地。</p>
-            </article>
-
-            <article class="feature-card feature-card--wide feature-card--accent">
-              <div class="feature-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
-                </svg>
-              </div>
-              <span class="feature-number">06</span>
-              <h3>模型、MCP 与运行时</h3>
-              <p>模型连接、MCP 工具和运行时都在桌面端配置。API 密钥只保存在主进程。</p>
-              <div class="provider-pills" aria-label="支持的连接类型">
-                <span>模型提供商</span><span>MCP</span><span>OpenCode</span><span>Continue</span>
-              </div>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="section release-section" id="release" aria-labelledby="release-title">
-        <div class="section-inner">
-          <div class="release-heading">
-            <div class="version-lockup" aria-hidden="true">
-              <span>HIGHLIGHTS</span>
-              <strong>NOW</strong>
-            </div>
-            <div>
-              <p class="kicker">近期新增</p>
-              <h2 id="release-title">笔记、消息通道和运行时改进</h2>
-              <p>下面这些功能已经包含在当前正式版本中。</p>
-            </div>
-          </div>
-
-          <ol class="release-list">
-            <li class="release-item">
-              <div class="release-index">01</div>
-              <div class="release-copy">
-                <div class="release-label">魔法笔记</div>
-                <h3>魔法笔记</h3>
-                <p>在本地管理笔记和待办，支持范围、筛选、富文本编辑和 AI 评论。</p>
-              </div>
-              <div class="release-visual route-visual" aria-hidden="true">
-                <span class="route-node route-node--main">笔记</span>
-                <span class="route-line route-line--one"></span>
-                <span class="route-line route-line--two"></span>
-                <span class="route-node route-node--sub-one">待办</span>
-                <span class="route-node route-node--sub-two">AI 评论</span>
-              </div>
-            </li>
-
-            <li class="release-item">
-              <div class="release-index">02</div>
-              <div class="release-copy">
-                <div class="release-label release-label--preview">远程通道</div>
-                <h3>微信、企业微信和钉钉</h3>
-                <p>每个消息通道使用独立会话和系统项目，并记录发送者范围、运行模式和活动。</p>
-              </div>
-              <div class="release-visual channel-visual" aria-label="渠道状态">
-                <span><b>钉钉</b><small>独立会话</small></span>
-                <span><b>企业微信</b><small>范围控制</small></span>
-                <span class="is-experimental"><b>微信 ClawBot</b><small>扫码连接</small></span>
-              </div>
-            </li>
-
-            <li class="release-item">
-              <div class="release-index">03</div>
-              <div class="release-copy">
-                <div class="release-label">安全媒体</div>
-                <h3>远程消息中的图片和文件</h3>
-                <p>微信私聊支持图片与文件，单条消息最多 4 个附件。回复不会自动发送工作区中的已有文件。</p>
-              </div>
-              <div class="release-visual attachment-visual" aria-hidden="true">
-                <div class="attachment-stack"><span></span><span></span><span></span></div>
-                <div><strong>4</strong><small>单条附件</small></div>
-                <div><strong>12MB</strong><small>合计上限</small></div>
-              </div>
-            </li>
-
-            <li class="release-item">
-              <div class="release-index">04</div>
-              <div class="release-copy">
-                <div class="release-label">Agent Runtime</div>
-                <h3>运行时与 Skills</h3>
-                <p>OpenCode 与 Continue 共用更一致的 Skills、系统消息和工具配置，并保留环境白名单、取消、超时和审批控制。</p>
-              </div>
-              <div class="release-visual quality-visual" aria-label="运行时能力">
-                <span>Skills</span><span>Tools</span><span>OpenCode</span><span class="is-selected">Continue</span>
-              </div>
-            </li>
-          </ol>
-        </div>
-      </section>
-
-      <section class="section download-section" id="download" aria-labelledby="download-title">
-        <div class="section-inner">
-          <div class="section-heading section-heading--center">
-            <div>
-              <p class="kicker">下载</p>
-              <h2 id="download-title">下载 GoodBuddy</h2>
-            </div>
-            <p>
-              最新 Release 提供经过校验的跨平台安装包与哈希清单。进入官方下载页，按系统与架构选择安装包。
-            </p>
-          </div>
-
           <div class="download-grid">
             <article class="download-card">
               <div class="platform-icon">
@@ -406,7 +221,7 @@
                 target="_blank"
                 rel="noreferrer"
                 data-release-link
-              >选择 Windows 安装包<span class="sr-only">（在新窗口打开）</span></a>
+              >下载 Windows 版<span class="sr-only">（在新窗口打开）</span></a>
             </article>
             <article class="download-card">
               <div class="platform-icon">
@@ -421,7 +236,7 @@
                 target="_blank"
                 rel="noreferrer"
                 data-release-link
-              >选择 macOS 安装包<span class="sr-only">（在新窗口打开）</span></a>
+              >下载 macOS 版<span class="sr-only">（在新窗口打开）</span></a>
             </article>
             <article class="download-card">
               <div class="platform-icon">
@@ -437,96 +252,164 @@
                 target="_blank"
                 rel="noreferrer"
                 data-release-link
-              >选择 Linux 安装包<span class="sr-only">（在新窗口打开）</span></a>
+              >下载 Linux 版<span class="sr-only">（在新窗口打开）</span></a>
             </article>
           </div>
 
-          <div class="release-notice" role="status">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" />
-            </svg>
+          <aside class="domestic-support" aria-labelledby="domestic-support-title">
             <div>
-              <strong>下载与校验</strong>
-              <span>下载入口始终指向最新正式 Release；安装前请按系统与架构选择文件，并核对 SHA-256 清单。</span>
+              <p class="kicker">国产化适配</p>
+              <h3 id="domestic-support-title">统信 UOS、银河麒麟，覆盖国产 x64 与 ARM64</h3>
+              <p>使用对应的 Linux x64 或 arm64 安装包。</p>
             </div>
+            <div class="domestic-support__items">
+              <div><span>国产系统</span><strong>统信 UOS · 银河麒麟</strong></div>
+              <div>
+                <span>国产 CPU</span>
+                <strong>海光 · 兆芯（x64）<br />鲲鹏 · 飞腾（ARM64）</strong>
+              </div>
+            </div>
+          </aside>
+
+        </div>
+      </section>
+
+      <section class="section features-section" id="features" aria-labelledby="features-title">
+        <div class="section-inner">
+          <div class="section-heading">
+            <div>
+              <p class="kicker">独创 Agent Runtime</p>
+              <h2 id="features-title">不同工具，同一种使用方式</h2>
+            </div>
+            <p>
+              把 Runtime 选择、模型连接、Skills、MCP 和权限控制集中到桌面界面。
+            </p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card feature-card--wide feature-card--accent">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
+                </svg>
+              </div>
+              <span class="feature-number">01</span>
+              <h3>一个入口，连接多种 Agent Runtime</h3>
+              <p>按任务选择直连模型、OpenCode、Continue 或 DeepSeek Harness，不必为每种工具重新适应一套入口。</p>
+              <div class="provider-pills" aria-label="支持的 Agent Runtime">
+                <span>直连模型</span><span>OpenCode</span><span>Continue</span><span>DeepSeek Harness</span>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 5h16v14H4zM8 22h8M12 19v3" />
+                  <path d="M7 9h2M11 9h2M15 9h2M7 13h10" />
+                </svg>
+              </div>
+              <span class="feature-number">02</span>
+              <h3>覆盖主流桌面系统</h3>
+              <p>Windows、macOS、Linux 同步提供 x64 与 arm64 架构版本。</p>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 4h14v16H5zM8 8h8M8 12h5" />
+                  <path d="m14 16 2 2 3-4" />
+                </svg>
+              </div>
+              <span class="feature-number">03</span>
+              <h3>更低的入门门槛</h3>
+              <p>在图形界面中选择 Runtime、模型、工作模式和项目，不用先记住复杂命令。</p>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3 5 6v5c0 4.5 2.8 8.6 7 10 4.2-1.4 7-5.5 7-10V6l-7-3Z" />
+                  <path d="M9 12h6M12 9v6" />
+                </svg>
+              </div>
+              <span class="feature-number">04</span>
+              <h3>能力统一，边界不打折</h3>
+              <p>Skills、MCP 和工具按 Runtime 分配；Ask 保持只读，Execute 继续经过审批和审计。</p>
+              <div class="mode-row" aria-label="两种工作模式">
+                <span>Ask <small>只读</small></span>
+                <span class="is-accent">Execute <small>受控执行</small></span>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 6.5C4 5.1 5.1 4 6.5 4H10l2 2h5.5C18.9 6 20 7.1 20 8.5v9c0 1.4-1.1 2.5-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" />
+                  <path d="M8 11h8M8 15h5" />
+                </svg>
+              </div>
+              <span class="feature-number">05</span>
+              <h3>项目上下文集中管理</h3>
+              <p>对话、知识、任务和运行记录按项目组织，切换 Runtime 不必丢掉工作上下文。</p>
+            </article>
+
+            <article class="feature-card feature-card--wide">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 13h3l2-6 4 12 2-6h5" />
+                  <path d="M4 4h16v16H4z" />
+                </svg>
+              </div>
+              <span class="feature-number">06</span>
+              <h3>从运行到结果，全程可追踪</h3>
+              <p>统一查看工具调用、取消、超时、Token 用量和活动记录，知道 Runtime 做了什么。</p>
+            </article>
           </div>
         </div>
       </section>
 
-      <section class="section security-section" id="security" aria-labelledby="security-title">
-        <div class="section-inner security-grid">
-          <div class="security-intro">
-            <div class="security-shield" aria-hidden="true">
+      <section class="section assistant-section" id="assistant" aria-labelledby="assistant-title">
+        <div class="section-inner assistant-grid">
+          <div class="assistant-intro">
+            <div class="assistant-mark" aria-hidden="true">
               <svg viewBox="0 0 48 48">
-                <path d="M24 5 9 11v11c0 9.7 6 18.2 15 21 9-2.8 15-11.3 15-21V11L24 5Z" />
-                <path d="m17.5 24 4.5 4.5 9-10" />
+                <path d="M9 25a11 11 0 1 1 22 0v10H20A11 11 0 0 1 9 25Z" />
+                <path d="M21 25a11 11 0 1 1 22 0 11 11 0 0 1-22 0Z" />
               </svg>
             </div>
-            <p class="kicker">安全设计</p>
-            <h2 id="security-title">主要安全边界</h2>
+            <p class="kicker">桌面助手</p>
+            <h2 id="assistant-title">对话、知识、笔记与任务，都在桌面上</h2>
             <p>
-              渲染界面不能直接读取密钥或调用 Node。工具和子运行时通过主进程受控访问系统能力。
+              GoodBuddy 把资料、待办和长期任务放进同一个桌面工作区，
+              日常协作与 AI 编程共享项目上下文。
             </p>
             <a
               class="text-link"
-              href="https://github.com/mesalogo/goodbuddy"
-              target="_blank"
-              rel="noreferrer"
+              href="#download"
             >
-              在 GitHub 查看项目
-              <span aria-hidden="true">↗</span>
-              <span class="sr-only">（在新窗口打开）</span>
+              选择你的桌面版本
+              <span aria-hidden="true">↓</span>
             </a>
           </div>
 
-          <div class="security-list">
+          <div class="assistant-list">
             <article>
-              <span class="security-number">01</span>
-              <div><h3>密钥仅存主进程</h3><p>API 密钥写入加密设置存储，不会暴露给渲染界面。</p></div>
+              <span class="assistant-number">01</span>
+              <div><h3>资料变成可问的知识</h3><p>导入文件、目录和网页，用全文、向量和知识图谱一起检索。</p></div>
             </article>
             <article>
-              <span class="security-number">02</span>
-              <div><h3>IPC 输入经过校验</h3><p>预加载层只暴露明确的方法。IPC 输入使用共享模式校验，并检查发送方。</p></div>
+              <span class="assistant-number">02</span>
+              <div><h3>笔记、待办和长期跟进</h3><p>魔法笔记管理灵感与待办，智能心跳持续回顾、沉淀记忆并提出后续任务。</p></div>
             </article>
             <article>
-              <span class="security-number">03</span>
-              <div><h3>子运行时受限</h3><p>OpenCode 与 Continue 使用环境白名单、沙箱检查和工具审批。</p></div>
+              <span class="assistant-number">03</span>
+              <div><h3>直接理解你的桌面</h3><p>按需加入文件、截图、应用窗口、剪贴板和离线语音，不用来回搬运内容。</p></div>
             </article>
             <article>
-              <span class="security-number">04</span>
-              <div><h3>工具执行可追踪</h3><p>工具名称、状态、取消、超时和输出限制都会记录在活动中。</p></div>
+              <span class="assistant-number">04</span>
+              <div><h3>离开电脑也能继续</h3><p>通过微信、企业微信和钉钉连接独立会话，把任务交给桌面上的 GoodBuddy。</p></div>
             </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="section final-cta" aria-labelledby="cta-title">
-        <div class="section-inner">
-          <div class="cta-card">
-            <div class="cta-orbit" aria-hidden="true"><span></span><span></span></div>
-            <div>
-              <p class="kicker">下载</p>
-              <h2 id="cta-title">选择适合你系统的安装包</h2>
-              <p>发布页提供安装文件、便携版和 SHA-256 校验清单。</p>
-            </div>
-            <div class="cta-actions">
-              <a
-                class="button button--primary"
-                href="https://github.com/mesalogo/goodbuddy/releases/latest"
-                target="_blank"
-                rel="noreferrer"
-                data-release-link
-              >前往官方下载页<span class="sr-only">（在新窗口打开）</span></a>
-              <a
-                class="button button--secondary"
-                href="https://github.com/mesalogo/goodbuddy"
-                target="_blank"
-                rel="noreferrer"
-              >
-                查看 GitHub
-                <span class="sr-only">（在新窗口打开）</span>
-              </a>
-            </div>
           </div>
         </div>
       </section>
@@ -542,11 +425,11 @@
           </svg>
           <span>GoodBuddy</span>
         </a>
-        <p>桌面 AI 助手与 Agent 工作空间。</p>
+        <p>桌面助手｜AI 编程工具台</p>
         <div class="footer-links">
-          <a href="#features">功能</a>
-          <a href="#release">亮点</a>
-          <a href="#security">安全</a>
+          <a href="#download">下载</a>
+          <a href="#features">Agent Runtime</a>
+          <a href="#assistant">桌面助手</a>
           <a href="https://github.com/mesalogo/goodbuddy" target="_blank" rel="noreferrer">
             GitHub<span class="sr-only">（在新窗口打开）</span>
           </a>
