@@ -251,22 +251,31 @@ export const conversationContextMetricsSchema = z
   .object({
     runtimeSelectionKey: z.string().trim().min(1).max(1_000),
     contextTokens: z.number().int().nonnegative().max(50_000_000),
+    source: z.enum(['provider', 'estimated']),
+    basis: z.enum(['model-call', 'conversation']).optional(),
+    // Accepted only to migrate snapshots saved before display settings
+    // were derived from the current Runtime configuration.
     effectiveTriggerTokens: z
       .number()
       .int()
       .nonnegative()
-      .max(10_000_000),
+      .max(10_000_000)
+      .optional(),
     contextWindowTokens: z
       .number()
       .int()
       .nonnegative()
       .max(10_000_000)
       .optional(),
-    compressionEnabled: z.boolean(),
-    source: z.enum(['provider', 'estimated']),
-    basis: z.enum(['model-call', 'conversation']).optional()
+    compressionEnabled: z.boolean().optional(),
   })
   .strict()
+  .transform((metrics) => ({
+    runtimeSelectionKey: metrics.runtimeSelectionKey,
+    contextTokens: metrics.contextTokens,
+    source: metrics.source,
+    basis: metrics.basis
+  }))
 
 export type ConversationContextMetrics = z.infer<
   typeof conversationContextMetricsSchema

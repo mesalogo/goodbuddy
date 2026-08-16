@@ -174,6 +174,45 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('keeps full-page settings navigation readable and content fluid', () => {
+    expect(stylesheet).toMatch(
+      /\.settings-page \.settings-panel__body\s*\{[^}]*grid-template-columns:\s*190px minmax\(0,\s*1fr\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.settings-page \.settings-panel__content\s*\{[^}]*width:\s*min\(100%,\s*var\(--content-standard\)\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.settings-page \.settings-tabs button strong\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.settings-page \.settings-tabs button small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+  })
+
+  it('keeps Runtime customization hierarchy and dangerous actions clear', () => {
+    expect(stylesheet).toMatch(
+      /\.runtime-customization-section__header strong\s*\{[^}]*font-size:\s*var\(--font-section-title\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.runtime-customization-editor\s*\{[^}]*padding:\s*0;[^}]*border:\s*0;[^}]*background:\s*transparent;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.runtime-native-inventory__status\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*42px;/u
+    )
+    expect(stylesheet).not.toContain(
+      '.runtime-native-inventory__header'
+    )
+    expect(stylesheet).toMatch(
+      /\.runtime-customization-section__dirty\s*\{[^}]*display:\s*flex;[^}]*justify-content:\s*space-between;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.danger-ghost\s*\{[^}]*color:\s*var\(--danger\);[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.danger-ghost:disabled\s*\{[^}]*color:\s*var\(--text-muted\);[^}]*cursor:\s*not-allowed;/u
+    )
+  })
+
   it('keeps knowledge settings cards separated as page sections', () => {
     expect(stylesheet).toMatch(
       /\.knowledge-settings\s*\{[^}]*display:\s*grid;[^}]*width:\s*min\(920px,\s*100%\);[^}]*gap:\s*var\(--space-6\);/u

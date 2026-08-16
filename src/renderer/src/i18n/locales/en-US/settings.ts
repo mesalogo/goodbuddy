@@ -196,48 +196,41 @@ export const settings = {
     permissions:
       'Choose Ask or Execute in a conversation. Ask can use only read-only capabilities allowed by the current Runtime. Execute can use enabled tools, and records tool calls in Activity.',
     customization: {
-      title: 'Native Runtime customization',
+      title: 'Capabilities and defaults',
       description:
-        'Manage capabilities supplied by this Runtime. The inventory excludes Skills assigned by GoodBuddy and temporary GoodBuddy MCP servers.',
-      refresh: 'Refresh native Runtime capabilities',
+        'Configure this Runtime’s defaults and inspect its built-in capabilities. The inventory excludes Skills assigned by GoodBuddy and temporary MCP servers.',
+      refresh: 'Refresh capability inventory',
       retry: 'Retry',
-      loading: 'Loading native Runtime capabilities…',
-      save: 'Save Runtime customization',
-      saving: 'Saving…',
-      saved: 'Runtime customization saved',
+      loading: 'Loading capability inventory…',
+      unsaved:
+        'There are unsaved Runtime customization changes. Use “Save settings” at the top right to save everything together.',
+      discard: 'Discard customization changes',
+      unsavedClose:
+        'Save or discard the Runtime customization changes before closing Settings.',
       enabled: 'Enabled',
       disabled: 'Disabled',
       errors: {
-        load: 'Could not load native Runtime capabilities',
+        load: 'Could not load capability inventory',
         save: 'Could not save Runtime customization'
       },
       inventory: {
-        tabsAriaLabel: 'Native Runtime capabilities',
-        nativeOnly:
-          'Only Runtime-native configuration and plugin capabilities are shown. GoodBuddy assignments are excluded.',
-        status: {
-          available: 'Native Runtime capabilities available',
-          partial: 'Native Runtime capabilities partially available',
-          unavailable: 'Native Runtime capabilities unavailable',
-          'connection-only': 'Runtime connection only',
-          unsupported: 'Native inventory is not supported'
-        },
-        agents: 'Native Agents',
-        tools: 'Native Tools',
-        skills: 'Native Skills',
-        mcp: 'Native MCP',
+        tabsAriaLabel: 'Capability inventory',
+        agents: 'Agents',
+        tools: 'Tools',
+        skills: 'Skills',
+        mcp: 'MCP',
         commands: 'Commands',
-        rules: 'Native Rules',
-        prompts: 'Prompt templates',
-        resources: 'MCP Resources',
-        lsp: 'LSP status',
-        formatters: 'Formatter status',
+        rules: 'Rules',
+        prompts: 'Prompts',
+        resources: 'Resources',
+        lsp: 'LSP',
+        formatters: 'Formatters',
         empty: 'None detected',
         emptyDescription:
-          'The current Runtime did not report any native capabilities in this category.',
+          'The current Runtime did not report any capabilities in this category.',
         unsupported: 'Not supported by this Runtime',
         toolsUnsupported:
-          'This Runtime does not support static discovery of native Tools',
+          'This Runtime does not support static discovery of Tools',
         toolModes: 'Ask: {{ask}} · Execute: {{execute}}',
         toolKind: {
           read: 'Read',
@@ -286,12 +279,13 @@ export const settings = {
         title: 'Context and compaction'
       },
       opencode: {
-        defaultAgent: 'Default Runtime Agent',
+        defaultAgent: 'Default Agent',
         runtimeDefault: 'Let OpenCode choose',
         agentDescription:
           'Applies only to GoodBuddy-managed local OpenCode. A conversation can still select a different Agent.'
       },
       continue: {
+        editorTitle: 'Continue configuration presets',
         editPreset: 'Edit configuration preset',
         noPresets: 'No presets',
         addPreset: 'Add preset',
@@ -321,8 +315,9 @@ export const settings = {
         promptContent: '{{name}} content',
         removePrompt: 'Delete Prompt {{name}}',
         mergedRules: 'View {{count}} merged Rules',
+        emptyPresetTitle: 'No Continue presets yet',
         emptyPreset:
-          'Add a preset to manage Continue Rules and Prompt templates.'
+          'Use “Add preset” above to create Rules and Prompt templates.'
       }
     },
     advanced: 'Advanced settings',

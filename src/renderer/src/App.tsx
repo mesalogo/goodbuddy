@@ -76,7 +76,8 @@ import {
 import {
   buildConversationSummaryHistory,
   estimatedContextRequestOverheadTokens,
-  estimateMessagesTokens
+  estimateMessagesTokens,
+  getEffectiveContextTriggerTokens
 } from '../../shared/context-window'
 import {
   agentRuntimeSelectionKey,
@@ -114,6 +115,7 @@ import type {
 import {
   conversationAttachmentSchema,
   conversationContextCompressionMarkerSchema,
+  conversationContextMetricsSchema,
   conversationMessageBlocksSchema,
   interactiveWorkModes,
   normalizeInteractiveWorkMode,
@@ -963,6 +965,11 @@ function isConversationAttachment(
   return conversationAttachmentSchema.safeParse(value).success
 }
 
+function parseConversationContextMetrics(value: unknown) {
+  const parsed = conversationContextMetricsSchema.safeParse(value)
+  return parsed.success ? parsed.data : undefined
+}
+
 function loadConversations(
   greeting: string,
   interruptedStatus: string
@@ -984,6 +991,12 @@ function loadConversations(
       .slice(0, 100)
       .map((conversation) => ({
         ...conversation,
+        contextMetrics:
+          conversation.contextMetrics === undefined
+            ? undefined
+            : parseConversationContextMetrics(
+                conversation.contextMetrics
+              ),
         messages: conversation.messages.slice(-500).map((message) =>
           message.state === 'streaming'
             ? {
@@ -1210,6 +1223,19 @@ function getProjectDefaultRuntimeSelection(
   return !selection || selection.provider === 'auto'
     ? getDefaultRuntimeSelection(settings)
     : selection
+}
+
+function resolveContextMetricsRuntimeSelection(
+  selection: AgentRuntimeSelection,
+  settings: RuntimeSettings
+): AgentRuntimeSelection {
+  if (selection.provider !== 'auto') {
+    return selection
+  }
+  return getRuntimeSelectionForProvider(
+    settings.provider === 'auto' ? 'opencode' : settings.provider,
+    settings
+  )
 }
 
 function getRuntimeSelectionLabel(
@@ -3405,16 +3431,14 @@ function App(): React.JSX.Element {
           }
         })
       } else if (event.type === 'context-metrics') {
-        const { requestId: _requestId, type: _type, ...metrics } = event
-        void _requestId
-        void _type
         setConversations((current) =>
           current.map((conversation) =>
             conversation.id === run.conversationId
               ? {
                   ...conversation,
                   contextMetrics: {
-                    ...metrics,
+                    contextTokens: event.contextTokens,
+                    source: event.source,
                     basis: 'model-call',
                     runtimeSelectionKey: run.runtimeSelectionKey
                   }
@@ -3475,11 +3499,6 @@ function App(): React.JSX.Element {
                     contextMetrics: {
                       runtimeSelectionKey: run.runtimeSelectionKey,
                       contextTokens: estimatedAfterTokens,
-                      effectiveTriggerTokens:
-                        event.effectiveTriggerTokens,
-                      contextWindowTokens:
-                        event.contextWindowTokens,
-                      compressionEnabled: true,
                       source: 'estimated',
                       basis: 'conversation'
                     },
@@ -5434,7 +5453,12 @@ function App(): React.JSX.Element {
       messageId: assistantMessage.id,
       projectId: projectIdSnapshot,
       runtimeSelectionKey: agentRuntimeSelectionKey(
-        runtimeSelectionSnapshot
+        runtimeSettings
+          ? resolveContextMetricsRuntimeSelection(
+              runtimeSelectionSnapshot,
+              runtimeSettings
+            )
+          : runtimeSelectionSnapshot
       )
     })
     preparingConversations.current.delete(conversationId)
@@ -5592,27 +5616,6 @@ function App(): React.JSX.Element {
               content: message.content
             }))
           ])
-        const selectedProfileId =
-          'profileId' in activeRuntimeSelection
-            ? activeRuntimeSelection.profileId
-            : undefined
-        const configuredSelection = runtimeSettings
-          ? getRuntimeSelectionForProvider(
-              activeRuntimeSelection.provider,
-              runtimeSettings
-            )
-          : undefined
-        const configuredProfileId =
-          configuredSelection &&
-          'profileId' in configuredSelection
-            ? configuredSelection.profileId
-            : undefined
-        const contextWindowTokens =
-          runtimeSettings?.modelProfiles.find(
-            (profile) =>
-              profile.id ===
-              (selectedProfileId ?? configuredProfileId)
-          )?.contextWindowTokens
         setConversations((current) =>
           current.map((conversation) =>
             conversation.id === activeConversation.id
@@ -5623,15 +5626,6 @@ function App(): React.JSX.Element {
                     runtimeSelectionKey:
                       activeRuntimeSelectionKey,
                     contextTokens: estimatedAfterTokens,
-                    effectiveTriggerTokens:
-                      contextWindowTokens ??
-                      runtimeSettings?.contextCompression
-                        ?.triggerTokens ??
-                      defaultContextCompressionSettings.triggerTokens,
-                    ...(contextWindowTokens
-                      ? { contextWindowTokens }
-                      : {}),
-                    compressionEnabled: false,
                     source: 'estimated',
                     basis: 'conversation'
                   },
@@ -6175,28 +6169,42 @@ function App(): React.JSX.Element {
     ) {
       return undefined
     }
-    if (
-      activeRuntimeSelection.provider === 'model' &&
-      runtimeSettings.modelProfiles.find(
-        (candidate) =>
-          candidate.id === activeRuntimeSelection.profileId
-      )?.protocol === 'openai-images-generations'
-    ) {
+    const resolvedRuntimeSelection =
+      resolveContextMetricsRuntimeSelection(
+        activeRuntimeSelection,
+        runtimeSettings
+      )
+    const activeModelProfile =
+      'profileId' in resolvedRuntimeSelection &&
+      resolvedRuntimeSelection.profileId
+        ? runtimeSettings.modelProfiles.find(
+            (candidate) =>
+              candidate.id === resolvedRuntimeSelection.profileId
+          )
+        : undefined
+    if (activeModelProfile?.protocol === 'openai-images-generations') {
       return undefined
     }
     const latest = activeConversation.contextMetrics
     const applicableLatest =
-      latest?.runtimeSelectionKey === activeRuntimeSelectionKey
+      latest?.runtimeSelectionKey ===
+      agentRuntimeSelectionKey(resolvedRuntimeSelection)
         ? latest
         : undefined
     if (!applicableLatest) {
       return undefined
     }
+    const compressionSettings =
+      runtimeSettings.contextCompression ??
+      defaultContextCompressionSettings
     const contextTokens = applicableLatest.contextTokens
-    const effectiveTriggerTokens =
-      applicableLatest.effectiveTriggerTokens
-    const denominatorTokens =
-      applicableLatest.contextWindowTokens
+    const contextWindowTokens =
+      activeModelProfile?.contextWindowTokens
+    const effectiveTriggerTokens = getEffectiveContextTriggerTokens({
+      triggerTokens: compressionSettings.triggerTokens,
+      contextWindowTokens
+    })
+    const denominatorTokens = contextWindowTokens
     const percentage =
       denominatorTokens === undefined
         ? undefined
@@ -6207,8 +6215,10 @@ function App(): React.JSX.Element {
     return {
       contextTokens,
       effectiveTriggerTokens,
-      contextWindowTokens: applicableLatest.contextWindowTokens,
-      compressionEnabled: applicableLatest.compressionEnabled,
+      contextWindowTokens,
+      compressionEnabled:
+        resolvedRuntimeSelection.provider === 'model' &&
+        compressionSettings.enabled,
       source: applicableLatest.source,
       basis:
         applicableLatest.basis ??
@@ -6222,7 +6232,6 @@ function App(): React.JSX.Element {
   }, [
     activeConversation,
     activeRuntimeSelection,
-    activeRuntimeSelectionKey,
     runtimeSettings
   ])
 

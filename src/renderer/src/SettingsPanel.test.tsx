@@ -7,10 +7,11 @@ import {
   waitFor,
   within
 } from '@testing-library/react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantExpert } from '../../shared/assistant-contracts'
 import type {
+  CustomizableRuntimeProvider,
   DesktopApi,
   RuntimeSettings
 } from '../../shared/contracts'
@@ -24,7 +25,10 @@ import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import { SettingsPanel } from './SettingsPanel'
-import { RuntimeCustomizationSection } from './RuntimeCustomizationSection'
+import {
+  RuntimeCustomizationSection,
+  type RuntimeCustomizationSectionHandle
+} from './RuntimeCustomizationSection'
 import { changeUiLocale } from './i18n'
 import { UiLocaleProvider } from './i18n/UiLocaleProvider'
 
@@ -480,6 +484,29 @@ const getRuntimeNativeSnapshot = vi.fn<
     detail: 'Context status'
   }
 }))
+
+function RuntimeCustomizationTestHarness({
+  provider
+}: {
+  provider: CustomizableRuntimeProvider
+}): React.JSX.Element {
+  const customizationRef =
+    useRef<RuntimeCustomizationSectionHandle>(null)
+  return (
+    <>
+      <RuntimeCustomizationSection
+        provider={provider}
+        ref={customizationRef}
+      />
+      <button
+        onClick={() => void customizationRef.current?.save()}
+        type="button"
+      >
+        保存 Runtime 定制
+      </button>
+    </>
+  )
+}
 
 describe('SettingsPanel runtime files', () => {
   beforeEach(async () => {
@@ -1986,16 +2013,30 @@ describe('SettingsPanel runtime files', () => {
       async (input) => input
     )
 
-    render(<RuntimeCustomizationSection provider="opencode" />)
+    render(<RuntimeCustomizationTestHarness provider="opencode" />)
 
-    const agent = await screen.findByLabelText(/默认 Runtime Agent/u)
+    const agent = await screen.findByLabelText('默认 Agent')
     expect(agent).toHaveValue('planner')
+    const nativeStatus = screen.getByRole('status')
+    expect(nativeStatus).toHaveTextContent('OpenCode 原生能力已就绪')
+    expect(
+      Boolean(
+        nativeStatus.compareDocumentPosition(agent) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      )
+    ).toBe(true)
+    expect(screen.getByText('能力与默认配置')).toBeInTheDocument()
+    expect(screen.queryByText('Runtime 原生能力')).not.toBeInTheDocument()
+    expect(screen.queryByText('OpenCode 默认 Agent')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Runtime 原生能力可用')
+    ).not.toBeInTheDocument()
     const inventoryTabs = screen.getByRole('tablist', {
-      name: 'Runtime 原生能力'
+      name: '能力清单'
     })
     expect(within(inventoryTabs).getAllByRole('tab')).toHaveLength(11)
     const agentsTab = within(inventoryTabs).getByRole('tab', {
-      name: /原生 Agents/u
+      name: /^Agents/u
     })
     const agentsPanel = screen.getByRole('tabpanel')
     expect(agentsTab).toHaveAttribute('aria-selected', 'true')
@@ -2008,7 +2049,7 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('Explorer')).toBeInTheDocument()
     fireEvent.keyDown(agentsTab, { key: 'ArrowRight' })
     const toolsTab = within(inventoryTabs).getByRole('tab', {
-      name: /原生 Tools/u
+      name: /^Tools/u
     })
     expect(toolsTab).toHaveAttribute('aria-selected', 'true')
     expect(toolsTab).toHaveFocus()
@@ -2026,20 +2067,20 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('未发现')).toBeInTheDocument()
     expect(
       screen.getByText(
-        '当前 Runtime 未报告此类别中的可用原生能力。'
+        '当前 Runtime 未报告此类别中的可用能力。'
       )
     ).toBeInTheDocument()
     expect(screen.queryByText('Native MCP')).not.toBeInTheDocument()
     fireEvent.click(
       within(inventoryTabs).getByRole('tab', {
-        name: /原生 MCP/u
+        name: /^MCP/u
       })
     )
     expect(screen.getByText('Native MCP')).toBeInTheDocument()
     expect(screen.queryByText('Explorer')).not.toBeInTheDocument()
     fireEvent.click(
       within(inventoryTabs).getByRole('tab', {
-        name: /原生 Skills/u
+        name: /^Skills/u
       })
     )
     expect(screen.getByText('Native Skill')).toBeInTheDocument()
@@ -2047,6 +2088,9 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.queryByText('GoodBuddy MCP')).not.toBeInTheDocument()
 
     fireEvent.change(agent, { target: { value: 'reviewer' } })
+    expect(
+      screen.getByText(/有未保存的 Runtime 定制更改/u)
+    ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', { name: '保存 Runtime 定制' })
     )
@@ -2055,6 +2099,11 @@ describe('SettingsPanel runtime files', () => {
         opencode: { defaultAgent: 'reviewer' },
         continue: { presets: [] }
       })
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/有未保存的 Runtime 定制更改/u)
+      ).not.toBeInTheDocument()
     )
   })
 
@@ -2073,14 +2122,28 @@ describe('SettingsPanel runtime files', () => {
 
     render(<RuntimeCustomizationSection provider="opencode" />)
 
-    expect(
-      await screen.findByText('仅确认 Runtime 连接')
-    ).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(await screen.findByRole('status')).toHaveTextContent(
       'External OpenCode connection only'
     )
     expect(
-      screen.queryByText('Runtime 原生能力可用')
+      screen.queryByText('仅确认 Runtime 连接')
+    ).not.toBeInTheDocument()
+  })
+
+  it('uses a guided empty state without a second save action', async () => {
+    render(<RuntimeCustomizationSection provider="continue" />)
+
+    expect(
+      await screen.findByText('还没有 Continue 预设')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('使用上方“添加预设”创建 Rules 与 Prompt 模板。')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '添加预设' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '保存 Runtime 定制' })
     ).not.toBeInTheDocument()
   })
 
@@ -2150,7 +2213,7 @@ describe('SettingsPanel runtime files', () => {
       async (input) => input
     )
 
-    render(<RuntimeCustomizationSection provider="continue" />)
+    render(<RuntimeCustomizationTestHarness provider="continue" />)
 
     expect(
       await screen.findByLabelText('默认配置预设')
@@ -2159,25 +2222,25 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText('查看最终合并的 2 条 Rule')
     ).toBeInTheDocument()
     const inventoryTabs = screen.getByRole('tablist', {
-      name: 'Runtime 原生能力'
+      name: '能力清单'
     })
     fireEvent.click(
       within(inventoryTabs).getByRole('tab', {
-        name: /原生 Tools/u
+        name: /^Tools/u
       })
     )
     expect(
-      screen.getByText('当前 Runtime 不支持静态发现原生 Tools')
+      screen.getByText('当前 Runtime 不支持静态发现 Tools')
     ).toBeInTheDocument()
     fireEvent.click(
       within(inventoryTabs).getByRole('tab', {
-        name: /原生 Skills/u
+        name: /^Skills/u
       })
     )
     expect(screen.getByText('未发现')).toBeInTheDocument()
     fireEvent.click(
       within(inventoryTabs).getByRole('tab', {
-        name: /MCP Resources/u
+        name: /^Resources/u
       })
     )
     expect(
@@ -2240,7 +2303,7 @@ describe('SettingsPanel runtime files', () => {
       .mockRejectedValueOnce(new Error('保存失败'))
       .mockImplementationOnce(async (input) => input)
 
-    render(<RuntimeCustomizationSection provider="continue" />)
+    render(<RuntimeCustomizationTestHarness provider="continue" />)
 
     const nameInput = await screen.findByLabelText('预设名称')
     fireEvent.change(nameInput, {
@@ -2248,7 +2311,7 @@ describe('SettingsPanel runtime files', () => {
     })
     fireEvent.click(
       screen.getByRole('button', {
-        name: '刷新 Runtime 原生能力'
+        name: '刷新能力清单'
       })
     )
     await waitFor(() =>
@@ -2282,6 +2345,82 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(getRuntimeCustomizationSettings).toHaveBeenCalledOnce()
+  })
+
+  it('saves Runtime customization with the page action and protects unsaved drafts', async () => {
+    const presetId = '00000000-0000-4000-8000-000000000705'
+    const customization = {
+      opencode: {},
+      continue: {
+        presets: [
+          {
+            id: presetId,
+            name: 'Saved preset',
+            rules: [],
+            prompts: []
+          }
+        ]
+      }
+    }
+    getRuntimeCustomizationSettings
+      .mockResolvedValueOnce(customization)
+      .mockResolvedValueOnce(customization)
+    updateRuntimeCustomizationSettings.mockImplementationOnce(
+      async (input) => input
+    )
+    const onClose = vi.fn()
+
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={onClose}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+    const presetName = await screen.findByLabelText('预设名称')
+    fireEvent.change(presetName, {
+      target: { value: 'Unsaved preset' }
+    })
+    expect(
+      screen.getByText(/有未保存的 Runtime 定制更改/u)
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+    expect(presetName).toHaveValue('Unsaved preset')
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      await screen.findByText(
+        '请先保存或撤销 Runtime 定制更改，再关闭设置中心。'
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntimeCustomizationSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          continue: expect.objectContaining({
+            presets: [
+              expect.objectContaining({ name: 'Unsaved preset' })
+            ]
+          })
+        })
+      )
+    )
+    expect(updateRuntime).toHaveBeenCalled()
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/有未保存的 Runtime 定制更改/u)
+      ).not.toBeInTheDocument()
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('opens only saved Runtime-owned config files or fixed config directories', async () => {

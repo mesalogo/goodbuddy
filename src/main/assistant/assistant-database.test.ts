@@ -1466,9 +1466,6 @@ describe('AssistantDatabase', () => {
           contextMetrics: {
             runtimeSelectionKey: `model:${channelDefaultProfileId}`,
             contextTokens: 9_000,
-            effectiveTriggerTokens: 20_000,
-            contextWindowTokens: 32_000,
-            compressionEnabled: true,
             source: 'estimated' as const,
             basis: 'conversation' as const
           },
@@ -1574,6 +1571,26 @@ describe('AssistantDatabase', () => {
     )
 
     const durable = new DatabaseSync(databasePath)
+    const contextStateRow = durable
+      .prepare(
+        `SELECT context_state_json
+         FROM conversations
+         WHERE id = ?`
+      )
+      .get(conversationId) as {
+      context_state_json: string
+    }
+    const contextState = JSON.parse(
+      contextStateRow.context_state_json
+    ) as {
+      contextMetrics?: unknown
+    }
+    expect(contextState.contextMetrics).toEqual({
+      runtimeSelectionKey: `model:${channelDefaultProfileId}`,
+      contextTokens: 9_000,
+      source: 'estimated',
+      basis: 'conversation'
+    })
     expect(
       durable
         .prepare(
@@ -1595,6 +1612,32 @@ describe('AssistantDatabase', () => {
         request_id: null
       }
     ])
+    durable
+      .prepare(
+        `UPDATE conversations
+         SET context_state_json = ?
+         WHERE id = ?`
+      )
+      .run(
+        JSON.stringify({
+          contextMetrics: {
+            runtimeSelectionKey: `model:${channelDefaultProfileId}`,
+            contextTokens: 9_000,
+            effectiveTriggerTokens: 20_000,
+            contextWindowTokens: 32_000,
+            compressionEnabled: true,
+            source: 'estimated',
+            basis: 'conversation'
+          }
+        }),
+        conversationId
+      )
+    expect(database.getConversation(conversationId).contextMetrics).toEqual({
+      runtimeSelectionKey: `model:${channelDefaultProfileId}`,
+      contextTokens: 9_000,
+      source: 'estimated',
+      basis: 'conversation'
+    })
     durable.close()
     database.close()
   })

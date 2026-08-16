@@ -2607,7 +2607,7 @@ describe('App', () => {
       })),
       contextCompression: {
         enabled: true,
-        triggerTokens: 20_000,
+        triggerTokens: 12_000,
         recentRawTokens: 4_000,
         modelSource: { kind: 'current' },
         summaryPrompt: 'Preserve important facts.'
@@ -2636,7 +2636,7 @@ describe('App', () => {
     })
 
     expect(
-      screen.getByText('本次调用 22.0K · 压缩线 20.0K')
+      screen.getByText('本次调用 22.0K · 压缩线 12.0K')
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('progressbar', {
@@ -2661,12 +2661,97 @@ describe('App', () => {
 
     expect(
       screen.getByText(
-        '压缩后对话估算 ≈9.4K · 压缩线 20.0K'
+        '压缩后对话估算 ≈9.4K · 压缩线 12.0K'
       )
     ).toBeInTheDocument()
     expect(
-      screen.queryByText('本次调用 22.0K · 压缩线 20.0K')
+      screen.queryByText('本次调用 22.0K · 压缩线 12.0K')
     ).not.toBeInTheDocument()
+  })
+
+  it('updates the composer compression line immediately after settings change', async () => {
+    const settings = await api.settings.getRuntime()
+    const initialSettings = {
+      ...settings,
+      provider: 'model' as const,
+      modelProfiles: settings.modelProfiles.map((profile) => ({
+        ...profile,
+        contextWindowTokens: undefined
+      })),
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 20_000,
+        recentRawTokens: 4_000,
+        modelSource: { kind: 'current' as const },
+        summaryPrompt: 'Preserve important facts.'
+      }
+    }
+    vi.mocked(api.settings.getRuntime)
+      .mockResolvedValueOnce(initialSettings)
+      .mockResolvedValueOnce(initialSettings)
+    vi.mocked(api.settings.updateRuntime).mockImplementationOnce(
+      async (input) => ({
+        ...initialSettings,
+        contextCompression:
+          input.contextCompression ??
+          initialSettings.contextCompression
+      })
+    )
+    render(<App />)
+
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '检查压缩线设置刷新' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-metrics',
+        contextTokens: 9_000,
+        effectiveTriggerTokens: 20_000,
+        compressionEnabled: true,
+        source: 'provider'
+      })
+    })
+    expect(
+      screen.getByText('本次调用 9.0K · 压缩线 20.0K')
+    ).toBeInTheDocument()
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /本地工作区/u })
+    )
+    await screen.findByRole('heading', { name: '设置中心' })
+    fireEvent.click(
+      screen.getByRole('tab', { name: '上下文控制' })
+    )
+    const trigger = await screen.findByLabelText('压缩触发阈值')
+    fireEvent.change(trigger, { target: { value: '12' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(api.settings.updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contextCompression: expect.objectContaining({
+            triggerTokens: 12_000
+          })
+        })
+      )
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '对话' }))
+    expect(
+      await screen.findByText('本次调用 9.0K · 压缩线 12.0K')
+    ).toBeInTheDocument()
   })
 
   it('restores persisted context usage and compression state after restart', async () => {
@@ -2689,8 +2774,15 @@ describe('App', () => {
       defaultModelProfileId: profile.id,
       modelProfiles: settings.modelProfiles.map((candidate) => ({
         ...candidate,
-        contextWindowTokens: 32_000
-      }))
+        contextWindowTokens: undefined
+      })),
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 12_000,
+        recentRawTokens: 4_000,
+        modelSource: { kind: 'current' },
+        summaryPrompt: 'Preserve important facts.'
+      }
     })
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
@@ -2703,9 +2795,6 @@ describe('App', () => {
         contextMetrics: {
           runtimeSelectionKey: `model:${profile.id}`,
           contextTokens: 9_000,
-          effectiveTriggerTokens: 20_000,
-          contextWindowTokens: 32_000,
-          compressionEnabled: true,
           source: 'estimated',
           basis: 'conversation'
         },
@@ -2740,7 +2829,7 @@ describe('App', () => {
 
     expect(
       await screen.findByText(
-        '压缩后对话估算 ≈9.0K / 32.0K · 28%'
+        '压缩后对话估算 ≈9.0K · 压缩线 12.0K'
       )
     ).toBeInTheDocument()
     expect(
@@ -4649,6 +4738,17 @@ describe('App', () => {
       coveredThroughMessageId: messages[0]!.id,
       summary: '用户提出了第一轮问题。'
     }
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 20_000,
+        recentRawTokens: 4_000,
+        modelSource: { kind: 'current' },
+        summaryPrompt: 'Preserve important facts.'
+      }
+    })
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: conversationId,
@@ -4723,6 +4823,9 @@ describe('App', () => {
     expect(
       await screen.findByText('已压缩 Continue 对话历史')
     ).toBeInTheDocument()
+    expect(
+      await screen.findByText(/压缩后对话估算/u)
+    ).not.toHaveTextContent('压缩线')
     await waitFor(() =>
       expect(api.conversations.saveLocal).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -5358,8 +5461,39 @@ describe('App', () => {
   })
 
   it('migrates legacy startup conversations with replace when SQLite has no local conversation', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      modelProfiles: settings.modelProfiles.map((profile) => ({
+        ...profile,
+        contextWindowTokens: undefined
+      })),
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 12_000,
+        recentRawTokens: 4_000,
+        modelSource: { kind: 'current' },
+        summaryPrompt: 'Preserve important facts.'
+      }
+    })
+    const normalizedContextMetrics = {
+      runtimeSelectionKey: `model:${settings.defaultModelProfileId}`,
+      contextTokens: 9_000,
+      source: 'provider' as const,
+      basis: 'model-call' as const
+    }
     const legacyConversation = {
       id: '00000000-0000-4000-8000-000000000461',
+      runtimeSelection: {
+        provider: 'model' as const,
+        profileId: settings.defaultModelProfileId
+      },
+      contextMetrics: {
+        ...normalizedContextMetrics,
+        effectiveTriggerTokens: 20_000,
+        contextWindowTokens: 32_000,
+        compressionEnabled: true
+      },
       title: '待迁移旧会话',
       updatedAt: 1_775_000_000_000,
       messages: [
@@ -5381,10 +5515,14 @@ describe('App', () => {
     expect(
       await screen.findByText('旧版浏览器存储消息')
     ).toBeInTheDocument()
+    expect(
+      screen.getByText('本次调用 9.0K · 压缩线 12.0K')
+    ).toBeInTheDocument()
     await waitFor(() =>
       expect(api.conversations.replace).toHaveBeenCalledWith([
         expect.objectContaining({
           ...legacyConversation,
+          contextMetrics: normalizedContextMetrics,
           projectId
         })
       ])
@@ -5443,11 +5581,35 @@ describe('App', () => {
   })
 
   it('preserves a legacy Auto conversation without silently persisting a replacement', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'auto',
+      opencodeBaseUrl: '',
+      opencodeEmbedded: false,
+      modelProfiles: settings.modelProfiles.map((profile) => ({
+        ...profile,
+        contextWindowTokens: 32_000
+      })),
+      contextCompression: {
+        enabled: true,
+        triggerTokens: 20_000,
+        recentRawTokens: 4_000,
+        modelSource: { kind: 'current' },
+        summaryPrompt: 'Preserve important facts.'
+      }
+    })
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: '00000000-0000-4000-8000-000000000020',
         projectId,
         runtimeSelection: { provider: 'auto' },
+        contextMetrics: {
+          runtimeSelectionKey: 'auto:default',
+          contextTokens: 9_000,
+          source: 'provider',
+          basis: 'model-call'
+        },
         title: '旧自动对话',
         updatedAt: 1,
         messages: [
@@ -5466,8 +5628,49 @@ describe('App', () => {
     expect(
       await screen.findByRole('button', { name: /自动.*sonnet-5/u })
     ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/本次调用 9\.0K/u)
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument()
     expect(api.conversations.replace).not.toHaveBeenCalled()
     expect(api.conversations.saveLocal).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '刷新自动 Runtime 用量' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'context-metrics',
+        contextTokens: 9_000,
+        effectiveTriggerTokens: 20_000,
+        compressionEnabled: false,
+        source: 'provider'
+      })
+    })
+    expect(screen.getByText(/本次调用 9\.0K/u)).toBeInTheDocument()
+    expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument()
+    const currentRuntimeSelectionKey =
+      settings.opencodeModelSource.kind === 'profile'
+        ? `opencode:${settings.opencodeModelSource.profileId}`
+        : 'opencode:platform'
+    await waitFor(() =>
+      expect(api.conversations.saveLocal).toHaveBeenCalledWith([
+        expect.objectContaining({
+          header: expect.objectContaining({
+            contextMetrics: expect.objectContaining({
+              runtimeSelectionKey: currentRuntimeSelectionKey
+            })
+          })
+        })
+      ])
+    )
   })
 
   it('keeps a removed model selection visible until the user replaces it', async () => {

@@ -4949,7 +4949,7 @@ button > svg {
   padding: 24px 32px 32px;
   overflow: hidden;
   align-items: stretch;
-  grid-template-columns: 190px minmax(0, 760px);
+  grid-template-columns: 190px minmax(0, 1fr);
   justify-content: start;
   gap: 28px;
 }
@@ -4986,6 +4986,7 @@ button > svg {
 }
 
 .settings-page .settings-panel__content {
+  width: min(100%, var(--content-standard));
   min-height: 0;
   padding-right: var(--space-1);
   overflow-y: auto;
@@ -5048,9 +5049,16 @@ button > svg {
   text-align: left;
 }
 
+.settings-page .settings-tabs button strong {
+  font-size: var(--font-body);
+  line-height: 1.35;
+}
+
 .settings-page .settings-tabs button small {
   display: block;
   margin-top: 3px;
+  font-size: var(--font-caption);
+  line-height: 1.35;
 }
 
 .settings-page .settings-tabs button[aria-selected='true'] {
@@ -5306,12 +5314,23 @@ button > svg {
 
 .runtime-customization-section__header > div {
   min-width: 0;
-}
-
-.runtime-customization-section__header > div {
+  display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-1);
+}
+
+.runtime-customization-section__header strong {
+  color: var(--text-primary);
+  font-size: var(--font-section-title);
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.runtime-customization-section__header small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
 }
 
 .runtime-customization-section__error {
@@ -5332,18 +5351,22 @@ button > svg {
 .runtime-customization-editor {
   min-width: 0;
   margin: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  background: var(--surface-subtle);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .runtime-native-inventory__status {
-  display: grid;
+  display: flex;
+  align-items: center;
+  min-height: 42px;
   padding: var(--space-3);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
-  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .runtime-native-inventory__status--available {
@@ -5363,13 +5386,16 @@ button > svg {
   background: var(--warning-subtle);
 }
 
-.runtime-native-inventory__status small {
+.runtime-customization-section__dirty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
   color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.runtime-customization-section__actions {
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  font-size: var(--font-caption);
+  gap: var(--space-3);
 }
 
 .runtime-native-inventory > .page-tabs {
@@ -7417,6 +7443,39 @@ details.settings-section > :not(summary) + :not(summary) {
   border: 1px solid var(--border-control);
   background: var(--surface-raised);
   color: var(--text-secondary);
+}
+
+.danger-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: var(--font-caption);
+  font-weight: 650;
+  gap: var(--space-2);
+}
+
+.danger-ghost:hover {
+  border-color: var(--danger-border);
+  background: var(--danger-subtle);
+}
+
+.danger-ghost:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.danger-ghost.icon-button {
+  padding: 0;
 }
 
 .conversation-row {

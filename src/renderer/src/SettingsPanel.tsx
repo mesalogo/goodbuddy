@@ -46,7 +46,10 @@ import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
-import { RuntimeCustomizationSection } from './RuntimeCustomizationSection'
+import {
+  RuntimeCustomizationSection,
+  type RuntimeCustomizationSectionHandle
+} from './RuntimeCustomizationSection'
 import { PageHeader, SegmentedControl } from './WorkspacePrimitives'
 import {
   SettingsCategoryHeader,
@@ -658,6 +661,23 @@ export function SettingsPanel({
     useState(false)
   const [agentRuntimeType, setAgentRuntimeType] =
     useState<AgentRuntimeType>('opencode')
+  const [runtimeCustomizationDirty, setRuntimeCustomizationDirty] =
+    useState(false)
+  const runtimeCustomizationRef =
+    useRef<RuntimeCustomizationSectionHandle>(null)
+  const handleRuntimeCustomizationDirtyChange = useCallback(
+    (dirty: boolean): void => {
+      setRuntimeCustomizationDirty(dirty)
+      if (!dirty) {
+        setError((current) =>
+          current === t('runtime.customization.unsavedClose')
+            ? undefined
+            : current
+        )
+      }
+    },
+    [t]
+  )
   const settingsBodyRef = useRef<HTMLDivElement>(null)
   const hydrateSettings = useCallback(
     (
@@ -848,6 +868,11 @@ export function SettingsPanel({
     }
 
   const close = (): void => {
+    if (runtimeCustomizationDirty) {
+      setActiveTab('runtime')
+      setError(t('runtime.customization.unsavedClose'))
+      return
+    }
     setModelProfiles((profiles) =>
       profiles.map((profile) => ({
         ...profile,
@@ -1008,6 +1033,13 @@ export function SettingsPanel({
         }
       }
       onSaved(value)
+      if (activeTab === 'runtime') {
+        const customizationSaved =
+          (await runtimeCustomizationRef.current?.save()) ?? true
+        if (!customizationSaved) {
+          return undefined
+        }
+      }
       if (notifySuccess) {
         onNotify({
           tone: 'success',
@@ -1889,18 +1921,6 @@ export function SettingsPanel({
               </details>
             </div>
           )}
-          {agentRuntimeType === 'opencode' && (
-            <RuntimeCustomizationSection
-              onNotify={onNotify}
-              profileId={
-                opencodeModelSource.kind === 'profile'
-                  ? opencodeModelSource.profileId
-                  : undefined
-              }
-              provider="opencode"
-            />
-          )}
-
           {agentRuntimeType === 'continue' && (
             <div className="settings-section">
               <div className="settings-section__title">
@@ -2108,17 +2128,6 @@ export function SettingsPanel({
               </details>
             </div>
           )}
-          {agentRuntimeType === 'continue' && (
-            <RuntimeCustomizationSection
-              onNotify={onNotify}
-              profileId={
-                continueModelSource.kind === 'profile'
-                  ? continueModelSource.profileId
-                  : undefined
-              }
-              provider="continue"
-            />
-          )}
           {agentRuntimeType === 'deepseek-harness' && (
             <div className="settings-section">
               <div className="settings-section__title">
@@ -2217,22 +2226,24 @@ export function SettingsPanel({
               </details>
             </div>
           )}
-          {agentRuntimeType === 'deepseek-harness' && (
-            <RuntimeCustomizationSection
-              onNotify={onNotify}
-              profileId={
-                deepseekHarnessModelSource.kind === 'profile'
-                  ? deepseekHarnessModelSource.profileId
-                  : undefined
-              }
-              provider="deepseek-harness"
-            />
-          )}
-          {agentRuntimeType === 'deepseek-harness' && (
-            <DshMarketplaceSection onNotify={onNotify} />
-          )}
             </>
           )}
+          <div hidden={activeTab !== 'runtime'}>
+            <RuntimeCustomizationSection
+              onDirtyChange={handleRuntimeCustomizationDirtyChange}
+              profileId={
+                activeRuntimeModelSource.kind === 'profile'
+                  ? activeRuntimeModelSource.profileId
+                  : undefined
+              }
+              provider={agentRuntimeType}
+              ref={runtimeCustomizationRef}
+            />
+          </div>
+          {activeTab === 'runtime' &&
+            agentRuntimeType === 'deepseek-harness' && (
+              <DshMarketplaceSection onNotify={onNotify} />
+            )}
 
           {activeTab === 'model' && (
             <>

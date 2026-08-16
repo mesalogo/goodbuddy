@@ -1,12 +1,20 @@
 import {
+  forwardRef,
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState
 } from 'react'
-import { Boxes, RefreshCw, Plus, Trash2 } from 'lucide-react'
+import {
+  Boxes,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Trash2
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   runtimeCustomizationLimits,
@@ -15,13 +23,16 @@ import {
   type RuntimeCustomizationSettings,
   type RuntimeNativeSnapshot
 } from '../../shared/contracts'
-import type { AppNotificationInput } from './notifications'
 import { EmptyState, PageTabs } from './WorkspacePrimitives'
 
 type RuntimeCustomizationSectionProps = {
   provider: CustomizableRuntimeProvider
   profileId?: string
-  onNotify?: (notification: AppNotificationInput) => void
+  onDirtyChange?: (dirty: boolean) => void
+}
+
+export type RuntimeCustomizationSectionHandle = {
+  save: () => Promise<boolean>
 }
 
 type RuntimeCustomizationError = {
@@ -140,6 +151,25 @@ const NativeInventoryTabs = memo(function NativeInventoryTabs({
         )}
       </section>
     </>
+  )
+})
+
+const NativeInventoryStatus = memo(function NativeInventoryStatus({
+  snapshot
+}: {
+  snapshot: RuntimeNativeSnapshot
+}): React.JSX.Element {
+  return (
+    <div
+      className={`runtime-native-inventory__status runtime-native-inventory__status--${snapshot.inventoryStatus}`}
+      role={
+        snapshot.inventoryStatus === 'unavailable'
+          ? 'alert'
+          : 'status'
+      }
+    >
+      <span>{snapshot.detail}</span>
+    </div>
   )
 })
 
@@ -323,24 +353,6 @@ const NativeInventory = memo(function NativeInventory({
   ]
   return (
     <div className="runtime-native-inventory">
-      <div
-        className={`runtime-native-inventory__status runtime-native-inventory__status--${snapshot.inventoryStatus}`}
-        role={
-          snapshot.inventoryStatus === 'unavailable'
-            ? 'alert'
-            : 'status'
-        }
-      >
-        <strong>
-          {t(
-            `runtime.customization.inventory.status.${snapshot.inventoryStatus}`
-          )}
-        </strong>
-        <small>{snapshot.detail}</small>
-      </div>
-      <p className="settings-section__description">
-        {t('runtime.customization.inventory.nativeOnly')}
-      </p>
       <NativeInventoryTabs
         groups={groups}
         provider={snapshot.provider}
@@ -349,14 +361,18 @@ const NativeInventory = memo(function NativeInventory({
   )
 })
 
-export function RuntimeCustomizationSection({
-  provider,
-  profileId,
-  onNotify
-}: RuntimeCustomizationSectionProps): React.JSX.Element {
+export const RuntimeCustomizationSection = forwardRef<
+  RuntimeCustomizationSectionHandle,
+  RuntimeCustomizationSectionProps
+>(function RuntimeCustomizationSection(
+  { provider, profileId, onDirtyChange },
+  ref
+): React.JSX.Element {
   const { t } = useTranslation('settings')
   const loadGeneration = useRef(0)
   const [settings, setSettings] =
+    useState<RuntimeCustomizationSettings>()
+  const [persistedSettings, setPersistedSettings] =
     useState<RuntimeCustomizationSettings>()
   const [snapshot, setSnapshot] = useState<RuntimeNativeSnapshot>()
   const [selectedPresetId, setSelectedPresetId] = useState('')
@@ -365,11 +381,32 @@ export function RuntimeCustomizationSection({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<RuntimeCustomizationError>()
   const [mergedRulesOpen, setMergedRulesOpen] = useState(false)
+  const settingsDirty = useMemo(
+    () =>
+      Boolean(
+        settings &&
+          persistedSettings &&
+          JSON.stringify(settings) !== JSON.stringify(persistedSettings)
+      ),
+    [persistedSettings, settings]
+  )
+  const settingsRef = useRef(settings)
+  const settingsDirtyRef = useRef(settingsDirty)
+
+  useEffect(() => {
+    settingsRef.current = settings
+  }, [settings])
+
+  useEffect(() => {
+    settingsDirtyRef.current = settingsDirty
+    onDirtyChange?.(settingsDirty)
+  }, [onDirtyChange, settingsDirty])
 
   const load = useCallback(async (): Promise<void> => {
     const generation = ++loadGeneration.current
     setLoading(true)
     setRefreshing(false)
+    setSnapshot(undefined)
     setError(undefined)
     try {
       const [nextSettings, nextSnapshot] = await Promise.all([
@@ -382,15 +419,21 @@ export function RuntimeCustomizationSection({
       if (generation !== loadGeneration.current) {
         return
       }
-      setSettings(nextSettings)
+      if (!settingsDirtyRef.current) {
+        setSettings(nextSettings)
+        setPersistedSettings(nextSettings)
+      }
       setSnapshot(nextSnapshot)
+      const draftSettings = settingsDirtyRef.current
+        ? settingsRef.current
+        : nextSettings
       setSelectedPresetId((current) =>
-        nextSettings.continue.presets.some(
+        draftSettings?.continue.presets.some(
           (preset) => preset.id === current
         )
           ? current
-          : nextSettings.continue.defaultPresetId ??
-            nextSettings.continue.presets[0]?.id ??
+          : draftSettings?.continue.defaultPresetId ??
+            draftSettings?.continue.presets[0]?.id ??
             ''
       )
     } catch (reason) {
@@ -460,9 +503,12 @@ export function RuntimeCustomizationSection({
     [selectedPresetId, settings]
   )
 
-  const save = async (): Promise<void> => {
+  const save = useCallback(async (): Promise<boolean> => {
     if (!settings) {
-      return
+      return true
+    }
+    if (!settingsDirty) {
+      return true
     }
     setSaving(true)
     setError(undefined)
@@ -472,11 +518,8 @@ export function RuntimeCustomizationSection({
           settings
         )
       setSettings(saved)
-      onNotify?.({
-        tone: 'success',
-        message: t('runtime.customization.saved'),
-        dedupeKey: 'runtime-customization-saved'
-      })
+      setPersistedSettings(saved)
+      return true
     } catch (reason) {
       setError({
         message: errorMessage(
@@ -485,9 +528,25 @@ export function RuntimeCustomizationSection({
         ),
         retry: 'save'
       })
+      return false
     } finally {
       setSaving(false)
     }
+  }, [settings, settingsDirty, t])
+
+  useImperativeHandle(ref, () => ({ save }), [save])
+
+  const discardChanges = (): void => {
+    if (!persistedSettings) {
+      return
+    }
+    setSettings(persistedSettings)
+    setSelectedPresetId(
+      persistedSettings.continue.defaultPresetId ??
+        persistedSettings.continue.presets[0]?.id ??
+        ''
+    )
+    setError(undefined)
   }
 
   const addPreset = (): void => {
@@ -561,7 +620,7 @@ export function RuntimeCustomizationSection({
         <button
           aria-label={t('runtime.customization.refresh')}
           className="icon-button"
-          disabled={loading || refreshing || saving}
+          disabled={!snapshot || refreshing || saving}
           onClick={() => void refreshSnapshot()}
           title={t('runtime.customization.refresh')}
           type="button"
@@ -600,54 +659,62 @@ export function RuntimeCustomizationSection({
         </p>
       ) : null}
 
-      {provider === 'opencode' && settings && snapshot ? (
-        <fieldset
-          aria-busy={saving}
-          className="runtime-customization-editor"
-          disabled={saving}
-        >
-          <label className="field">
-            <span>{t('runtime.customization.opencode.defaultAgent')}</span>
-            <select
-              onChange={(event) =>
-                setSettings({
-                  ...settings,
-                  opencode: event.target.value
-                    ? { defaultAgent: event.target.value }
-                    : {}
-                })
-              }
-              value={settings.opencode.defaultAgent ?? ''}
-            >
-              <option value="">
-                {t('runtime.customization.opencode.runtimeDefault')}
-              </option>
-              {snapshot.agents
-                .filter(
-                  (agent) =>
-                    !agent.hidden &&
-                    (agent.mode === 'primary' ||
-                      agent.mode === 'all')
-                )
-                .map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
-            </select>
-            <small>
-              {t('runtime.customization.opencode.agentDescription')}
-            </small>
-          </label>
-        </fieldset>
+      {snapshot ? (
+        <NativeInventoryStatus snapshot={snapshot} />
       ) : null}
 
-      {provider === 'continue' && settings ? (
+      {provider === 'opencode' && settings && snapshot ? (
+        <label
+          aria-busy={saving}
+          className="field runtime-customization-editor"
+        >
+          <span>{t('runtime.customization.opencode.defaultAgent')}</span>
+          <select
+            aria-label={t(
+              'runtime.customization.opencode.defaultAgent'
+            )}
+            disabled={saving}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                opencode: event.target.value
+                  ? { defaultAgent: event.target.value }
+                  : {}
+              })
+            }
+            value={settings.opencode.defaultAgent ?? ''}
+          >
+            <option value="">
+              {t('runtime.customization.opencode.runtimeDefault')}
+            </option>
+            {snapshot.agents
+              .filter(
+                (agent) =>
+                  !agent.hidden &&
+                  (agent.mode === 'primary' ||
+                    agent.mode === 'all')
+              )
+              .map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+          </select>
+          <small>
+            {t('runtime.customization.opencode.agentDescription')}
+          </small>
+        </label>
+      ) : null}
+
+      {provider === 'continue' && settings && snapshot ? (
         <fieldset
           aria-busy={saving}
           className="runtime-customization-editor"
           disabled={saving}
         >
+          <legend className="sr-only">
+            {t('runtime.customization.continue.editorTitle')}
+          </legend>
           <div className="runtime-preset-toolbar">
             <label className="field">
               <span>
@@ -1069,24 +1136,34 @@ export function RuntimeCustomizationSection({
               </details>
             </div>
           ) : (
-            <p className="settings-empty-state">
-              {t('runtime.customization.continue.emptyPreset')}
-            </p>
+            <EmptyState
+              description={t(
+                'runtime.customization.continue.emptyPreset'
+              )}
+              icon={<Boxes size={22} />}
+              level="table"
+              title={t(
+                'runtime.customization.continue.emptyPresetTitle'
+              )}
+            />
           )}
         </fieldset>
       ) : null}
 
-      {settings && provider !== 'deepseek-harness' ? (
-        <div className="settings-actions runtime-customization-section__actions">
+      {settingsDirty && provider !== 'deepseek-harness' ? (
+        <div
+          className="runtime-customization-section__dirty"
+          role="status"
+        >
+          <span>{t('runtime.customization.unsaved')}</span>
           <button
-            className="primary-button"
-            disabled={refreshing || saving}
-            onClick={() => void save()}
+            className="secondary-button"
+            disabled={saving}
+            onClick={discardChanges}
             type="button"
           >
-            {saving
-              ? t('runtime.customization.saving')
-              : t('runtime.customization.save')}
+            <RotateCcw aria-hidden="true" size={14} />
+            {t('runtime.customization.discard')}
           </button>
         </div>
       ) : null}
@@ -1094,4 +1171,4 @@ export function RuntimeCustomizationSection({
       {snapshot ? <NativeInventory snapshot={snapshot} /> : null}
     </section>
   )
-}
+})

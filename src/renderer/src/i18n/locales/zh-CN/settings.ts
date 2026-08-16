@@ -175,46 +175,39 @@ export const settings = {
     permissions:
       '对话时可选择 Ask 或 Execute。Ask 仅可调用当前 Runtime 允许的只读能力；Execute 可调用已启用工具，调用过程会记录到活动。',
     customization: {
-      title: 'Runtime 原生定制',
+      title: '能力与默认配置',
       description:
-        '管理当前 Runtime 自己提供的能力；清单不包含 GoodBuddy 分配的 Skills 或临时 MCP。',
-      refresh: '刷新 Runtime 原生能力',
+        '设置当前 Runtime 的默认项并查看自带能力；清单不包含 GoodBuddy 分配的 Skills 或临时 MCP。',
+      refresh: '刷新能力清单',
       retry: '重试',
-      loading: '正在读取 Runtime 原生能力…',
-      save: '保存 Runtime 定制',
-      saving: '正在保存…',
-      saved: '已保存 Runtime 定制设置',
+      loading: '正在读取能力清单…',
+      unsaved:
+        '有未保存的 Runtime 定制更改，点击页面右上角“保存设置”统一保存。',
+      discard: '撤销定制更改',
+      unsavedClose:
+        '请先保存或撤销 Runtime 定制更改，再关闭设置中心。',
       enabled: '已启用',
       disabled: '已停用',
       errors: {
-        load: '读取 Runtime 原生能力失败',
+        load: '读取能力清单失败',
         save: '保存 Runtime 定制失败'
       },
       inventory: {
-        tabsAriaLabel: 'Runtime 原生能力',
-        nativeOnly:
-          '这里只显示 Runtime 原生配置与插件能力，不显示 GoodBuddy 分配内容。',
-        status: {
-          available: 'Runtime 原生能力可用',
-          partial: 'Runtime 原生能力部分可用',
-          unavailable: 'Runtime 原生能力不可用',
-          'connection-only': '仅确认 Runtime 连接',
-          unsupported: 'Runtime 不支持原生能力清单'
-        },
-        agents: '原生 Agents',
-        tools: '原生 Tools',
-        skills: '原生 Skills',
-        mcp: '原生 MCP',
+        tabsAriaLabel: '能力清单',
+        agents: 'Agents',
+        tools: 'Tools',
+        skills: 'Skills',
+        mcp: 'MCP',
         commands: 'Commands',
-        rules: '原生 Rules',
-        prompts: 'Prompt 模板',
-        resources: 'MCP Resources',
-        lsp: 'LSP 状态',
-        formatters: 'Formatter 状态',
+        rules: 'Rules',
+        prompts: 'Prompts',
+        resources: 'Resources',
+        lsp: 'LSP',
+        formatters: 'Formatters',
         empty: '未发现',
-        emptyDescription: '当前 Runtime 未报告此类别中的可用原生能力。',
+        emptyDescription: '当前 Runtime 未报告此类别中的可用能力。',
         unsupported: '当前 Runtime 不支持',
-        toolsUnsupported: '当前 Runtime 不支持静态发现原生 Tools',
+        toolsUnsupported: '当前 Runtime 不支持静态发现 Tools',
         toolModes: 'Ask：{{ask}} · Execute：{{execute}}',
         toolKind: {
           read: '读取',
@@ -263,12 +256,13 @@ export const settings = {
         title: '上下文与压缩'
       },
       opencode: {
-        defaultAgent: '默认 Runtime Agent',
+        defaultAgent: '默认 Agent',
         runtimeDefault: '由 OpenCode 选择',
         agentDescription:
           '只影响 GoodBuddy 管理的本机 OpenCode；聊天中仍可为当前对话单独选择。'
       },
       continue: {
+        editorTitle: 'Continue 配置预设',
         editPreset: '编辑配置预设',
         noPresets: '尚无预设',
         addPreset: '添加预设',
@@ -295,7 +289,8 @@ export const settings = {
         promptContent: '{{name}} 内容',
         removePrompt: '删除 Prompt {{name}}',
         mergedRules: '查看最终合并的 {{count}} 条 Rule',
-        emptyPreset: '添加一个预设后即可管理 Rules 与 Prompt 模板。'
+        emptyPresetTitle: '还没有 Continue 预设',
+        emptyPreset: '使用上方“添加预设”创建 Rules 与 Prompt 模板。'
       }
     },
     advanced: '高级设置',
