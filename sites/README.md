@@ -59,5 +59,5 @@ SHA-256 清单。
 - `index.html`：页面结构与简体中文内容
 - `styles.css`：语义令牌、浅深主题、焦点与响应式布局
 - `app.js`：主题、移动导航和当前章节
-- `assets/favicon.svg`：站点图标
+- `assets/goodbuddy-light.png`、`assets/goodbuddy-dark.png`：由 `npm run icons` 与桌面应用同步生成的官方品牌图标
 - `scripts/validate.mjs`：无依赖静态检查

@@ -17,10 +17,125 @@ const darkSourcePath = join(
   'ChatGPT_qPkaIrLGsm.png'
 )
 const rendererAssetRoot = join(root, 'src', 'renderer', 'src', 'assets')
+const websiteAssetRoot = join(root, 'sites', 'assets')
+
+const lightTile = {
+  left: 40,
+  top: 32,
+  right: 704,
+  bottom: 696,
+  radius: 126,
+  edgeColor: [255, 255, 255]
+}
+
+const darkTile = {
+  left: 20,
+  top: 16,
+  right: 684,
+  bottom: 680,
+  radius: 126,
+  edgeColor: [15, 21, 31]
+}
 
 function cropSquare(source, size) {
   const output = new PNG({ width: size, height: size })
   PNG.bitblt(source, output, 0, 0, size, size, 0, 0)
+  return output
+}
+
+function scaleTile(tile, sourceSize, targetSize) {
+  const scale = targetSize / sourceSize
+  return {
+    left: tile.left * scale,
+    top: tile.top * scale,
+    right: tile.right * scale,
+    bottom: tile.bottom * scale,
+    radius: tile.radius * scale,
+    edgeColor: tile.edgeColor
+  }
+}
+
+function cropTile(source, tile) {
+  const width = Math.round(tile.right - tile.left)
+  const height = Math.round(tile.bottom - tile.top)
+  if (width !== height || width <= 0) {
+    throw new Error('图标卡片裁剪区域必须是有效正方形')
+  }
+  const output = new PNG({ width, height })
+  PNG.bitblt(
+    source,
+    output,
+    Math.round(tile.left),
+    Math.round(tile.top),
+    width,
+    height,
+    0,
+    0
+  )
+  return {
+    image: output,
+    tile: {
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: height,
+      radius: tile.radius,
+      edgeColor: tile.edgeColor
+    }
+  }
+}
+
+function roundedRectangleDistance(x, y, tile) {
+  const centerX = (tile.left + tile.right) / 2
+  const centerY = (tile.top + tile.bottom) / 2
+  const halfWidth = (tile.right - tile.left) / 2
+  const halfHeight = (tile.bottom - tile.top) / 2
+  const offsetX = Math.abs(x - centerX) - (halfWidth - tile.radius)
+  const offsetY = Math.abs(y - centerY) - (halfHeight - tile.radius)
+  return (
+    Math.hypot(Math.max(offsetX, 0), Math.max(offsetY, 0)) +
+    Math.min(Math.max(offsetX, offsetY), 0) -
+    tile.radius
+  )
+}
+
+function applyRoundedTransparency(image, tile) {
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const offset = pixelOffset(image, x, y)
+      const distance = roundedRectangleDistance(x + 0.5, y + 0.5, tile)
+      const coverage = Math.min(Math.max(0.5 - distance, 0), 1)
+      if (coverage >= 1) {
+        if (distance > -2 && image.data[offset + 3] < 255) {
+          image.data[offset] = tile.edgeColor[0]
+          image.data[offset + 1] = tile.edgeColor[1]
+          image.data[offset + 2] = tile.edgeColor[2]
+        }
+        continue
+      }
+      image.data[offset] = tile.edgeColor[0]
+      image.data[offset + 1] = tile.edgeColor[1]
+      image.data[offset + 2] = tile.edgeColor[2]
+      image.data[offset + 3] = Math.round(
+        image.data[offset + 3] * coverage
+      )
+    }
+  }
+}
+
+function createRoundedIcon(source, tile, size) {
+  const cropped = cropTile(source, tile)
+  applyRoundedTransparency(cropped.image, cropped.tile)
+  const output = resize(
+    cropped.image,
+    size,
+    size,
+    'bicubicInterpolation'
+  )
+  applyRoundedTransparency(
+    output,
+    scaleTile(cropped.tile, cropped.image.width, size)
+  )
   return output
 }
 
@@ -119,6 +234,51 @@ function assertTaskbarIcon(image) {
   }
 }
 
+function assertTransparentCorners(image, label) {
+  const corners = [
+    pixelOffset(image, 0, 0),
+    pixelOffset(image, image.width - 1, 0),
+    pixelOffset(image, 0, image.height - 1),
+    pixelOffset(image, image.width - 1, image.height - 1)
+  ]
+  if (corners.some((offset) => image.data[offset + 3] !== 0)) {
+    throw new Error(`${label} 的圆角外侧必须透明`)
+  }
+}
+
+function assertDarkEdgeHasNoWhiteFringe(image) {
+  const edgeWidth = Math.max(4, Math.round(image.width * 0.08))
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      if (
+        x >= edgeWidth &&
+        x < image.width - edgeWidth &&
+        y >= edgeWidth &&
+        y < image.height - edgeWidth
+      ) {
+        continue
+      }
+      const offset = pixelOffset(image, x, y)
+      const alpha = image.data[offset + 3]
+      if (
+        alpha > 0 &&
+        alpha < 255 &&
+        Math.max(
+          image.data[offset],
+          image.data[offset + 1],
+          image.data[offset + 2]
+        ) > 96
+      ) {
+        throw new Error(
+          `暗色图标的透明边缘仍包含白色像素：${x},${y} ` +
+            `rgba(${image.data[offset]},${image.data[offset + 1]},` +
+            `${image.data[offset + 2]},${alpha})`
+        )
+      }
+    }
+  }
+}
+
 function repairDarkCursor(dark, light) {
   for (let y = 570; y <= 606; y += 1) {
     const backgroundOffset = pixelOffset(dark, 640, y)
@@ -197,22 +357,31 @@ async function main() {
   repairDarkCursor(darkSquare, lightSquare)
   assertCursorRemoved(lightSquare, darkSquare)
 
-  const light = resize(lightSquare, 512, 512, 'bicubicInterpolation')
-  const dark = resize(darkSquare, 512, 512, 'bicubicInterpolation')
   const taskbar = createTaskbarIcon(lightSquare)
+  const light = createRoundedIcon(lightSquare, lightTile, 512)
+  const dark = createRoundedIcon(darkSquare, darkTile, 512)
+  const rendererLight = createRoundedIcon(lightSquare, lightTile, 128)
+  const rendererDark = createRoundedIcon(darkSquare, darkTile, 128)
   assertTaskbarIcon(taskbar)
+  assertTransparentCorners(light, '亮色图标')
+  assertTransparentCorners(dark, '暗色图标')
+  assertTransparentCorners(rendererLight, '亮色界面图标')
+  assertTransparentCorners(rendererDark, '暗色界面图标')
+  assertTransparentCorners(taskbar, '任务栏图标')
+  assertDarkEdgeHasNoWhiteFringe(dark)
+  assertDarkEdgeHasNoWhiteFringe(rendererDark)
   const tray = resize(taskbar, 32, 32, 'bicubicInterpolation')
+  assertTransparentCorners(tray, '托盘图标')
   const lightPng = PNG.sync.write(light)
   const darkPng = PNG.sync.write(dark)
   const taskbarPng = PNG.sync.write(taskbar)
   const trayPng = PNG.sync.write(tray)
-  const rendererLightPng = PNG.sync.write(
-    resize(light, 128, 128, 'bicubicInterpolation')
-  )
-  const rendererDarkPng = PNG.sync.write(
-    resize(dark, 128, 128, 'bicubicInterpolation')
-  )
-  await mkdir(rendererAssetRoot, { recursive: true })
+  const rendererLightPng = PNG.sync.write(rendererLight)
+  const rendererDarkPng = PNG.sync.write(rendererDark)
+  await Promise.all([
+    mkdir(rendererAssetRoot, { recursive: true }),
+    mkdir(websiteAssetRoot, { recursive: true })
+  ])
 
   const outputs = [
     [join(root, 'build', 'icon-light.png'), lightPng],
@@ -221,7 +390,9 @@ async function main() {
     [join(root, 'build', 'icon-taskbar.png'), taskbarPng],
     [join(root, 'build', 'icon-tray.png'), trayPng],
     [join(rendererAssetRoot, 'goodbuddy-light.png'), rendererLightPng],
-    [join(rendererAssetRoot, 'goodbuddy-dark.png'), rendererDarkPng]
+    [join(rendererAssetRoot, 'goodbuddy-dark.png'), rendererDarkPng],
+    [join(websiteAssetRoot, 'goodbuddy-light.png'), rendererLightPng],
+    [join(websiteAssetRoot, 'goodbuddy-dark.png'), rendererDarkPng]
   ]
   await Promise.all(outputs.map(([path, contents]) => writeFile(path, contents)))
 

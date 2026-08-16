@@ -9,7 +9,8 @@ const requiredFiles = [
   "index.html",
   "styles.css",
   "app.js",
-  "assets/favicon.svg",
+  "assets/goodbuddy-light.png",
+  "assets/goodbuddy-dark.png",
   "README.md",
 ];
 
@@ -67,6 +68,15 @@ report(/class="skip-link"\s+href="#main-content"/.test(html), "缺少跳到主�
 report(/<main\s+id="main-content">/.test(html), "缺少 main-content 主区域");
 report(/aria-label="主导航"/.test(html), "主导航缺少可访问名称");
 report(/data-theme-toggle/.test(html), "缺少主题切换控件");
+report(
+  (html.match(/src="\.\/assets\/goodbuddy-light\.png"/g) ?? []).length >= 5,
+  "品牌位置必须使用官方亮色图标",
+);
+report(
+  (html.match(/src="\.\/assets\/goodbuddy-dark\.png"/g) ?? []).length >= 5,
+  "品牌位置必须使用官方深色图标",
+);
+report(!/class="brand-mark"/.test(html), "官网不得使用自绘品牌标志");
 report(/data-tilt-stage/.test(html), "首屏产品界面缺少倾斜交互区域");
 report(/data-tilt-card/.test(html), "首屏产品界面缺少倾斜卡片");
 report(/prefers-reduced-motion:\s*reduce/.test(css), "缺少减少动态效果规则");

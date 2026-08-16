@@ -10,7 +10,18 @@
     <link rel="canonical" href="https://mesalogo.github.io/goodbuddy/" />
     <meta name="theme-color" content="#f6f8fb" />
     <title>GoodBuddy｜桌面助手与 AI 编程工具台</title>
-    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+    <link
+      rel="icon"
+      href="./assets/goodbuddy-light.png"
+      type="image/png"
+      media="(prefers-color-scheme: light)"
+    />
+    <link
+      rel="icon"
+      href="./assets/goodbuddy-dark.png"
+      type="image/png"
+      media="(prefers-color-scheme: dark)"
+    />
     <link rel="stylesheet" href="./styles.css" />
     <script>
       (() => {
@@ -35,11 +46,10 @@
     <header class="site-header" data-site-header>
       <div class="header-inner">
         <a class="brand" href="#home" aria-label="GoodBuddy 首页">
-          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
-            <path d="M6 21a9 9 0 1 1 18 0v8H15a9 9 0 0 1-9-8Z" />
-            <path d="M16 21a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />
-            <path d="M20 13V8M25 10l3-3M15 10l-3-3" />
-          </svg>
+          <span class="brand-icon" aria-hidden="true">
+            <img class="brand-icon__image brand-icon__image--light" src="./assets/goodbuddy-light.png" alt="" />
+            <img class="brand-icon__image brand-icon__image--dark" src="./assets/goodbuddy-dark.png" alt="" />
+          </span>
           <span>GoodBuddy</span>
         </a>
 
@@ -136,10 +146,10 @@
               <div class="app-layout">
                 <aside class="app-sidebar" aria-hidden="true">
                   <div class="mini-brand">
-                    <svg viewBox="0 0 40 40">
-                      <path d="M6 21a9 9 0 1 1 18 0v8H15a9 9 0 0 1-9-8Z" />
-                      <path d="M16 21a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />
-                    </svg>
+                    <span class="brand-icon" aria-hidden="true">
+                      <img class="brand-icon__image brand-icon__image--light" src="./assets/goodbuddy-light.png" alt="" />
+                      <img class="brand-icon__image brand-icon__image--dark" src="./assets/goodbuddy-dark.png" alt="" />
+                    </span>
                   </div>
                   <div class="side-item is-active"><span></span>对话</div>
                   <div class="side-item"><span></span>知识库</div>
@@ -161,7 +171,12 @@
                     <div class="message message--user">修复构建问题，并验证三个桌面系统。</div>
                     <div class="message message--assistant">
                       <div class="assistant-label">
-                        <span class="assistant-avatar">G</span>
+                        <span class="assistant-avatar" aria-hidden="true">
+                          <span class="brand-icon">
+                            <img class="brand-icon__image brand-icon__image--light" src="./assets/goodbuddy-light.png" alt="" />
+                            <img class="brand-icon__image brand-icon__image--dark" src="./assets/goodbuddy-dark.png" alt="" />
+                          </span>
+                        </span>
                         <strong>GoodBuddy</strong>
                       </div>
                       <p>已通过 Agent Runtime 载入项目、Skills 和受控工具。</p>
@@ -373,10 +388,10 @@
         <div class="section-inner assistant-grid">
           <div class="assistant-intro">
             <div class="assistant-mark" aria-hidden="true">
-              <svg viewBox="0 0 48 48">
-                <path d="M9 25a11 11 0 1 1 22 0v10H20A11 11 0 0 1 9 25Z" />
-                <path d="M21 25a11 11 0 1 1 22 0 11 11 0 0 1-22 0Z" />
-              </svg>
+              <span class="brand-icon">
+                <img class="brand-icon__image brand-icon__image--light" src="./assets/goodbuddy-light.png" alt="" />
+                <img class="brand-icon__image brand-icon__image--dark" src="./assets/goodbuddy-dark.png" alt="" />
+              </span>
             </div>
             <p class="kicker">桌面助手</p>
             <h2 id="assistant-title">对话、知识、笔记与任务，都在桌面上</h2>
@@ -418,11 +433,10 @@
     <footer class="site-footer">
       <div class="section-inner footer-inner">
         <a class="brand brand--footer" href="#home" aria-label="返回 GoodBuddy 首页">
-          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
-            <path d="M6 21a9 9 0 1 1 18 0v8H15a9 9 0 0 1-9-8Z" />
-            <path d="M16 21a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />
-            <path d="M20 13V8M25 10l3-3M15 10l-3-3" />
-          </svg>
+          <span class="brand-icon" aria-hidden="true">
+            <img class="brand-icon__image brand-icon__image--light" src="./assets/goodbuddy-light.png" alt="" />
+            <img class="brand-icon__image brand-icon__image--dark" src="./assets/goodbuddy-dark.png" alt="" />
+          </span>
           <span>GoodBuddy</span>
         </a>
         <p>桌面助手｜AI 编程工具台</p>
