@@ -209,13 +209,19 @@ describe('WorkspacePrimitives', () => {
 
   it('keeps full-page settings navigation readable and content fluid', () => {
     expect(stylesheet).toMatch(
-      /\.settings-page \.settings-panel__body\s*\{[^}]*grid-template-columns:\s*220px minmax\(0,\s*1fr\);/u
+      /\.settings-page \.settings-panel__header\s*\{[^}]*padding:\s*var\(--page-gutter\) var\(--page-gutter\) 0;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.settings-page \.settings-panel__header \.page-header\s*\{[^}]*padding-bottom:\s*var\(--space-4\);[^}]*border-bottom:\s*1px solid var\(--border-subtle\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.settings-page \.settings-panel__body\s*\{[^}]*padding:\s*var\(--space-6\) var\(--page-gutter\) var\(--page-gutter\);[^}]*grid-template-columns:\s*220px minmax\(0,\s*1fr\);/u
     )
     expect(stylesheet).toMatch(
       /@media \(max-width: 1020px\)\s*\{[\s\S]*?\.settings-page \.settings-panel__body\s*\{[^}]*grid-template-columns:\s*196px minmax\(0,\s*1fr\);/u
     )
     expect(stylesheet).toMatch(
-      /\.settings-page \.settings-tabs\s*\{[^}]*scrollbar-gutter:\s*stable both-edges;/u
+      /\.settings-page \.settings-tabs\s*\{[^}]*scrollbar-gutter:\s*auto;/u
     )
     expect(stylesheet).toMatch(
       /\.settings-page \.settings-panel__content\s*\{[^}]*width:\s*min\(100%,\s*var\(--content-standard\)\);/u

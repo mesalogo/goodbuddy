@@ -4914,6 +4914,7 @@ button > svg {
 }
 
 .settings-page .settings-panel__header {
+  padding: var(--page-gutter) var(--page-gutter) 0;
   border-bottom: 0;
 }
 
@@ -4927,8 +4928,8 @@ button > svg {
 }
 
 .settings-page .settings-panel__header .page-header {
-  padding-bottom: 0;
-  border-bottom: 0;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .settings-panel__header .page-header__content {
@@ -5013,7 +5014,7 @@ button > svg {
 .settings-page .settings-panel__body {
   display: grid;
   min-height: 0;
-  padding: 24px 32px 32px;
+  padding: var(--space-6) var(--page-gutter) var(--page-gutter);
   overflow: hidden;
   align-items: stretch;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -5049,7 +5050,7 @@ button > svg {
   align-self: stretch;
   flex-direction: column;
   grid-template-columns: none;
-  scrollbar-gutter: stable both-edges;
+  scrollbar-gutter: auto;
 }
 
 .settings-page .settings-panel__content {
@@ -11105,7 +11106,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
   .settings-page .settings-panel__body {
     display: grid;
-    padding: 20px;
     overflow: hidden;
     align-items: stretch;
     grid-template-columns: 196px minmax(0, 1fr);
