@@ -2027,6 +2027,253 @@ describe('registerIpcHandlers local conversation persistence', () => {
   })
 })
 
+describe('registerIpcHandlers Runtime customization', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates customization, native inventory, and trusted manual compaction', async () => {
+    const projectId = '00000000-0000-4000-8000-000000000601'
+    const conversationId =
+      '00000000-0000-4000-8000-000000000602'
+    const requestId = '00000000-0000-4000-8000-000000000603'
+    const messageIds = [
+      '00000000-0000-4000-8000-000000000604',
+      '00000000-0000-4000-8000-000000000605'
+    ]
+    const customization = {
+      opencode: { defaultAgent: 'planner' },
+      continue: { presets: [] }
+    }
+    const snapshot = {
+      provider: 'opencode' as const,
+      available: true,
+      inventoryStatus: 'available' as const,
+      detail: 'OpenCode native capabilities are ready',
+      agents: [
+        {
+          id: 'planner',
+          name: 'Planner',
+          mode: 'primary' as const,
+          native: true,
+          hidden: false
+        }
+      ],
+      tools: [
+        {
+          id: 'edit',
+          name: 'edit',
+          kind: 'write' as const,
+          source: 'runtime' as const,
+          ask: 'blocked' as const,
+          execute: 'allowed' as const
+        }
+      ],
+      toolsSupported: true,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: true,
+      context: {
+        strategy: 'native' as const,
+        manualCompact: true,
+        detail: 'OpenCode manages native context'
+      }
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isFocused: vi.fn(() => true),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const settingsStore = {
+      getRuntimeCustomization: vi.fn(async () => customization),
+      updateRuntimeCustomization: vi.fn(async () => customization),
+      getResolvedSettings: vi.fn(async () => ({
+        provider: 'opencode',
+        modelProfiles: [],
+        opencodeBaseUrl: '',
+        workspacePath: 'C:\\DefaultWorkspace'
+      }))
+    }
+    const messages = [
+      {
+        id: messageIds[0]!,
+        role: 'user' as const,
+        content: 'First turn',
+        state: 'complete' as const
+      },
+      {
+        id: messageIds[1]!,
+        role: 'assistant' as const,
+        content: 'Second turn',
+        state: 'complete' as const
+      }
+    ]
+    const assistantDatabase = {
+      claimDueSchedules: vi.fn(() => []),
+      getProject: vi.fn(() => ({
+        id: projectId,
+        rootPath: 'C:\\ProjectWorkspace'
+      })),
+      getConversation: vi.fn(() => ({
+        id: conversationId,
+        projectId,
+        runtimeSelection: { provider: 'opencode' as const },
+        title: 'Runtime conversation',
+        updatedAt: Date.now(),
+        messages
+      })),
+      createTask: vi.fn(),
+      updateTaskStatus: vi.fn(),
+      upsertModelUsageCall: vi.fn()
+    }
+    const selectedRuntimes = {
+      getNativeSnapshot: vi.fn(async () => snapshot),
+      compactConversation: vi.fn(async () => ({
+        result: {
+          provider: 'opencode' as const,
+          strategy: 'native' as const,
+          compacted: true,
+          detail: 'OpenCode compacted the conversation'
+        }
+      }))
+    }
+    const approvalBroker = { clear: vi.fn() }
+    const onRuntimeSettingsChanged = vi.fn(async () => undefined)
+    const contextManager = { clear: vi.fn() }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      settingsStore as never,
+      {} as never,
+      contextManager as never,
+      {} as never,
+      assistantDatabase as never,
+      approvalBroker as never,
+      {} as never,
+      onRuntimeSettingsChanged,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      selectedRuntimes as never
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeCustomizationGet
+      )?.(event)
+    ).resolves.toEqual(customization)
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeCustomizationUpdate
+      )?.(event, customization)
+    ).resolves.toEqual(customization)
+    expect(
+      settingsStore.updateRuntimeCustomization
+    ).toHaveBeenCalledWith(customization)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+    expect(approvalBroker.clear).toHaveBeenCalledOnce()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeCustomizationUpdate
+      )?.(event, {
+        ...customization,
+        unknown: true
+      })
+    ).rejects.toThrow()
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeNativeSnapshot
+      )?.(event, {
+        provider: 'opencode',
+        projectId
+      })
+    ).resolves.toEqual(snapshot)
+    expect(selectedRuntimes.getNativeSnapshot).toHaveBeenCalledWith(
+      { provider: 'opencode' },
+      'C:\\ProjectWorkspace'
+    )
+
+    const compactInput = {
+      requestId,
+      conversationId,
+      projectId,
+      runtimeSelection: { provider: 'opencode' as const },
+      history: messages.map(({ role, content }) => ({
+        role,
+        content
+      })),
+      historyMessageIds: messageIds
+    }
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.agentCompactConversation
+      )?.(event, compactInput)
+    ).resolves.toEqual({
+      provider: 'opencode',
+      strategy: 'native',
+      compacted: true,
+      detail: 'OpenCode compacted the conversation'
+    })
+    expect(selectedRuntimes.compactConversation).toHaveBeenCalledWith(
+      expect.objectContaining(compactInput),
+      'C:\\ProjectWorkspace',
+      expect.any(AbortSignal)
+    )
+    expect(assistantDatabase.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: requestId,
+        visible: false
+      })
+    )
+    expect(assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+      requestId,
+      'completed'
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.agentCompactConversation
+      )?.(event, {
+        ...compactInput,
+        requestId: '00000000-0000-4000-8000-000000000606',
+        history: [
+          compactInput.history[0],
+          { role: 'assistant', content: 'stale content' }
+        ]
+      })
+    ).rejects.toThrow('对话历史已更改')
+    expect(selectedRuntimes.compactConversation).toHaveBeenCalledOnce()
+    await dispose()
+  })
+})
+
 describe('registerIpcHandlers agent terminal state', () => {
   afterEach(() => {
     electronMocks.handlers.clear()
@@ -2209,6 +2456,92 @@ describe('registerIpcHandlers agent terminal state', () => {
   }) => ({
     sender: webContents,
     senderFrame: webContents.mainFrame
+  })
+
+  it('publishes Runtime usage as context metrics with one settings read', async () => {
+    const runtime = {
+      runtimeId: 'continue',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        for (const [index, inputTokens] of [100, 120].entries()) {
+          yield {
+            requestId: request.requestId,
+            type: 'model-usage',
+            callId: `continue-call-${index}`,
+            runtime: 'continue',
+            provider: 'anthropic',
+            model: 'summary-model',
+            inputTokens,
+            outputTokens: 20,
+            cacheReadTokens: 10,
+            cacheWriteTokens: 5
+          } as const
+        }
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const harness = createHarness(runtime)
+    harness.getResolvedSettings.mockResolvedValue({
+      toolApproval: 'always',
+      subagentSmartRoutingEnabled: false,
+      continueModelProfile: {
+        contextWindowTokens: 32_000
+      },
+      contextCompression: {
+        triggerTokens: 20_000
+      }
+    })
+    const requestId = '00000000-0000-4000-8000-000000000020'
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'continue-context',
+      prompt: 'report context usage',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+
+    const metrics = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, event]) => event)
+      .filter(
+        (event): event is AgentEvent =>
+          (event as AgentEvent).type === 'context-metrics'
+      )
+    expect(metrics).toEqual([
+      {
+        requestId,
+        type: 'context-metrics',
+        contextTokens: 115,
+        effectiveTriggerTokens: 32_000,
+        contextWindowTokens: 32_000,
+        compressionEnabled: false,
+        source: 'provider',
+        basis: 'model-call'
+      },
+      {
+        requestId,
+        type: 'context-metrics',
+        contextTokens: 135,
+        effectiveTriggerTokens: 32_000,
+        contextWindowTokens: 32_000,
+        compressionEnabled: false,
+        source: 'provider',
+        basis: 'model-call'
+      }
+    ])
+    expect(harness.getResolvedSettings).toHaveBeenCalledOnce()
+    await harness.dispose()
   })
 
   it('rejects unknown knowledge scope and creates no capability for empty scope', async () => {

@@ -1,4 +1,5 @@
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
+import { defaultRuntimeCustomizationSettings } from '../../shared/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   applyRuntimeSelection,
@@ -91,6 +92,7 @@ function settings(
     knowledgeRerankEnabled: false,
     knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
     knowledgeRerankModel: 'rerank-v3.5',
+    runtimeCustomization: defaultRuntimeCustomizationSettings,
     workspacePath: process.cwd(),
     toolApproval: 'always',
     ...overrides

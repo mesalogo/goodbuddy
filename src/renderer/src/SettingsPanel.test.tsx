@@ -24,6 +24,7 @@ import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import { SettingsPanel } from './SettingsPanel'
+import { RuntimeCustomizationSection } from './RuntimeCustomizationSection'
 import { changeUiLocale } from './i18n'
 import { UiLocaleProvider } from './i18n/UiLocaleProvider'
 
@@ -435,6 +436,50 @@ const getRuntimeExtensionSnapshot = vi.fn(
 const applyRuntimeExtension = vi.fn(
   async () => runtimeExtensionSnapshot
 )
+const runtimeCustomizationSettings = {
+  opencode: {},
+  continue: { presets: [] }
+}
+const getRuntimeCustomizationSettings = vi.fn<
+  DesktopApi['runtimeCustomization']['getSettings']
+>(
+  async () => runtimeCustomizationSettings
+)
+const updateRuntimeCustomizationSettings = vi.fn<
+  DesktopApi['runtimeCustomization']['updateSettings']
+>(
+  async () => runtimeCustomizationSettings
+)
+const getRuntimeNativeSnapshot = vi.fn<
+  DesktopApi['runtimeCustomization']['getNativeSnapshot']
+>(async (input) => ({
+  provider: input.provider,
+  available: true,
+  inventoryStatus: 'available',
+  detail: 'Ready',
+  agents: [],
+  tools: [],
+  toolsSupported: input.provider !== 'continue',
+  commands: [],
+  lsp: [],
+  formatters: [],
+  mcpServers: [],
+  skills: [],
+  rules: [],
+  prompts: [],
+  resources: [],
+  resourcesSupported: input.provider === 'opencode',
+  context: {
+    strategy:
+      input.provider === 'opencode'
+        ? ('native' as const)
+        : input.provider === 'continue'
+          ? ('goodbuddy-summary' as const)
+          : ('unsupported' as const),
+    manualCompact: input.provider !== 'deepseek-harness',
+    detail: 'Context status'
+  }
+}))
 
 describe('SettingsPanel runtime files', () => {
   beforeEach(async () => {
@@ -510,6 +555,11 @@ describe('SettingsPanel runtime files', () => {
         runtimeExtensions: {
           getSnapshot: getRuntimeExtensionSnapshot,
           apply: applyRuntimeExtension
+        },
+        runtimeCustomization: {
+          getSettings: getRuntimeCustomizationSettings,
+          updateSettings: updateRuntimeCustomizationSettings,
+          getNativeSnapshot: getRuntimeNativeSnapshot
         },
         updates: {
           getSettings: getApplicationSettings,
@@ -1775,7 +1825,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByText(/自定义 Continue 可执行文件将以当前用户权限运行/)
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/Ask 仅可调用知识库与全局笔记读取工具/)
+      screen.getByText(/Ask 仅可调用当前 Runtime 允许的只读能力/)
     ).toBeInTheDocument()
     fireEvent.click(within(field).getByRole('button', { name: '清除' }))
     expect(input).toHaveValue('')
@@ -1857,6 +1907,381 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('1.5.47')).toBeInTheDocument()
     expect(screen.getByText('高级设置').closest('details'))
       .not.toHaveAttribute('open')
+  })
+
+  it('selects a native OpenCode Agent and excludes GoodBuddy assignments from inventory', async () => {
+    const settings = {
+      opencode: { defaultAgent: 'planner' },
+      continue: { presets: [] }
+    }
+    getRuntimeCustomizationSettings.mockResolvedValueOnce(settings)
+    getRuntimeNativeSnapshot.mockResolvedValueOnce({
+      provider: 'opencode',
+      available: true,
+      inventoryStatus: 'available',
+      detail: 'OpenCode 原生能力已就绪',
+      agents: [
+        {
+          id: 'planner',
+          name: 'Planner',
+          mode: 'primary',
+          native: true,
+          hidden: false
+        },
+        {
+          id: 'reviewer',
+          name: 'Reviewer',
+          mode: 'all',
+          native: true,
+          hidden: false
+        },
+        {
+          id: 'explorer',
+          name: 'Explorer',
+          mode: 'subagent',
+          native: true,
+          hidden: false
+        }
+      ],
+      tools: [
+        {
+          id: 'edit',
+          name: 'edit',
+          description: 'Edit a file',
+          kind: 'write',
+          source: 'runtime',
+          ask: 'blocked',
+          execute: 'allowed'
+        }
+      ],
+      toolsSupported: true,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [
+        {
+          id: 'native-mcp',
+          name: 'Native MCP',
+          status: 'connected'
+        }
+      ],
+      skills: [
+        {
+          id: 'native-skill',
+          name: 'Native Skill',
+          source: 'runtime'
+        }
+      ],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: true,
+      context: {
+        strategy: 'native',
+        manualCompact: true,
+        detail: '由 OpenCode 原生管理'
+      }
+    })
+    updateRuntimeCustomizationSettings.mockImplementationOnce(
+      async (input) => input
+    )
+
+    render(<RuntimeCustomizationSection provider="opencode" />)
+
+    const agent = await screen.findByLabelText(/默认 Runtime Agent/u)
+    expect(agent).toHaveValue('planner')
+    const inventoryTabs = screen.getByRole('tablist', {
+      name: 'Runtime 原生能力'
+    })
+    expect(within(inventoryTabs).getAllByRole('tab')).toHaveLength(11)
+    const agentsTab = within(inventoryTabs).getByRole('tab', {
+      name: /原生 Agents/u
+    })
+    const agentsPanel = screen.getByRole('tabpanel')
+    expect(agentsTab).toHaveAttribute('aria-selected', 'true')
+    expect(agentsTab).toHaveAttribute('aria-controls', agentsPanel.id)
+    expect(agentsPanel).toHaveAttribute(
+      'aria-labelledby',
+      agentsTab.id
+    )
+    expect(screen.getAllByRole('tabpanel')).toHaveLength(1)
+    expect(screen.getByText('Explorer')).toBeInTheDocument()
+    fireEvent.keyDown(agentsTab, { key: 'ArrowRight' })
+    const toolsTab = within(inventoryTabs).getByRole('tab', {
+      name: /原生 Tools/u
+    })
+    expect(toolsTab).toHaveAttribute('aria-selected', 'true')
+    expect(toolsTab).toHaveFocus()
+    expect(screen.getByText('edit')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Edit a file · 文件修改 · Runtime 内置 · Ask：不可用 · Execute：可用'
+      )
+    ).toBeInTheDocument()
+    const commandsTab = within(inventoryTabs).getByRole('tab', {
+      name: /Commands/u
+    })
+    fireEvent.click(commandsTab)
+    expect(commandsTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('未发现')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '当前 Runtime 未报告此类别中的可用原生能力。'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Native MCP')).not.toBeInTheDocument()
+    fireEvent.click(
+      within(inventoryTabs).getByRole('tab', {
+        name: /原生 MCP/u
+      })
+    )
+    expect(screen.getByText('Native MCP')).toBeInTheDocument()
+    expect(screen.queryByText('Explorer')).not.toBeInTheDocument()
+    fireEvent.click(
+      within(inventoryTabs).getByRole('tab', {
+        name: /原生 Skills/u
+      })
+    )
+    expect(screen.getByText('Native Skill')).toBeInTheDocument()
+    expect(screen.queryByText('Native MCP')).not.toBeInTheDocument()
+    expect(screen.queryByText('GoodBuddy MCP')).not.toBeInTheDocument()
+
+    fireEvent.change(agent, { target: { value: 'reviewer' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存 Runtime 定制' })
+    )
+    await waitFor(() =>
+      expect(updateRuntimeCustomizationSettings).toHaveBeenCalledWith({
+        opencode: { defaultAgent: 'reviewer' },
+        continue: { presets: [] }
+      })
+    )
+  })
+
+  it('distinguishes external OpenCode connectivity from readable native inventory', async () => {
+    const fallbackSnapshot = await getRuntimeNativeSnapshot({
+      provider: 'opencode'
+    })
+    getRuntimeNativeSnapshot.mockResolvedValueOnce({
+      ...fallbackSnapshot,
+      provider: 'opencode',
+      available: true,
+      inventoryStatus: 'connection-only',
+      detail: 'External OpenCode connection only',
+      toolsSupported: false
+    })
+
+    render(<RuntimeCustomizationSection provider="opencode" />)
+
+    expect(
+      await screen.findByText('仅确认 Runtime 连接')
+    ).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'External OpenCode connection only'
+    )
+    expect(
+      screen.queryByText('Runtime 原生能力可用')
+    ).not.toBeInTheDocument()
+  })
+
+  it('edits Continue presets, Rules, Prompt metadata, and merged native Rules', async () => {
+    const presetId = '00000000-0000-4000-8000-000000000701'
+    const ruleId = '00000000-0000-4000-8000-000000000702'
+    const promptId = '00000000-0000-4000-8000-000000000703'
+    const settings = {
+      opencode: {},
+      continue: {
+        defaultPresetId: presetId,
+        presets: [
+          {
+            id: presetId,
+            name: '代码审查',
+            rules: [
+              {
+                id: ruleId,
+                name: '安全优先',
+                content: '先检查安全边界。',
+                enabled: true
+              }
+            ],
+            prompts: [
+              {
+                id: promptId,
+                name: '审查变更',
+                prompt: '请审查当前变更。'
+              }
+            ]
+          }
+        ]
+      }
+    }
+    getRuntimeCustomizationSettings.mockResolvedValueOnce(settings)
+    getRuntimeNativeSnapshot.mockResolvedValueOnce({
+      provider: 'continue',
+      available: true,
+      inventoryStatus: 'available',
+      detail: 'Continue 原生能力已就绪',
+      agents: [],
+      tools: [],
+      toolsSupported: false,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [
+        {
+          id: 'configuration-rule-1',
+          name: 'Native Rule',
+          content: '遵循原生规则。',
+          source: 'configuration'
+        }
+      ],
+      prompts: [],
+      resources: [],
+      resourcesSupported: false,
+      context: {
+        strategy: 'goodbuddy-summary',
+        manualCompact: true,
+        detail: '由 GoodBuddy 摘要压缩'
+      }
+    })
+    updateRuntimeCustomizationSettings.mockImplementationOnce(
+      async (input) => input
+    )
+
+    render(<RuntimeCustomizationSection provider="continue" />)
+
+    expect(
+      await screen.findByLabelText('默认配置预设')
+    ).toHaveValue(presetId)
+    expect(
+      screen.getByText('查看最终合并的 2 条 Rule')
+    ).toBeInTheDocument()
+    const inventoryTabs = screen.getByRole('tablist', {
+      name: 'Runtime 原生能力'
+    })
+    fireEvent.click(
+      within(inventoryTabs).getByRole('tab', {
+        name: /原生 Tools/u
+      })
+    )
+    expect(
+      screen.getByText('当前 Runtime 不支持静态发现原生 Tools')
+    ).toBeInTheDocument()
+    fireEvent.click(
+      within(inventoryTabs).getByRole('tab', {
+        name: /原生 Skills/u
+      })
+    )
+    expect(screen.getByText('未发现')).toBeInTheDocument()
+    fireEvent.click(
+      within(inventoryTabs).getByRole('tab', {
+        name: /MCP Resources/u
+      })
+    )
+    expect(
+      screen.getByText('当前 Runtime 不支持')
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('安全优先 内容'), {
+      target: { value: '先检查权限和数据边界。' }
+    })
+    fireEvent.change(screen.getByLabelText('审查变更 说明'), {
+      target: { value: '用于提交前检查' }
+    })
+    fireEvent.change(screen.getByLabelText('审查变更 内容'), {
+      target: { value: '请审查当前提交。' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存 Runtime 定制' })
+    )
+
+    await waitFor(() =>
+      expect(updateRuntimeCustomizationSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          continue: expect.objectContaining({
+            presets: [
+              expect.objectContaining({
+                rules: [
+                  expect.objectContaining({
+                    content: '先检查权限和数据边界。'
+                  })
+                ],
+                prompts: [
+                  expect.objectContaining({
+                    description: '用于提交前检查',
+                    prompt: '请审查当前提交。'
+                  })
+                ]
+              })
+            ]
+          })
+        })
+      )
+    )
+  })
+
+  it('preserves Continue drafts across inventory refreshes and failed-save retries', async () => {
+    const presetId = '00000000-0000-4000-8000-000000000704'
+    getRuntimeCustomizationSettings.mockResolvedValueOnce({
+      opencode: {},
+      continue: {
+        presets: [
+          {
+            id: presetId,
+            name: 'Draft preset',
+            rules: [],
+            prompts: []
+          }
+        ]
+      }
+    })
+    updateRuntimeCustomizationSettings
+      .mockRejectedValueOnce(new Error('保存失败'))
+      .mockImplementationOnce(async (input) => input)
+
+    render(<RuntimeCustomizationSection provider="continue" />)
+
+    const nameInput = await screen.findByLabelText('预设名称')
+    fireEvent.change(nameInput, {
+      target: { value: 'Unsaved draft' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '刷新 Runtime 原生能力'
+      })
+    )
+    await waitFor(() =>
+      expect(getRuntimeNativeSnapshot).toHaveBeenCalledTimes(2)
+    )
+    expect(nameInput).toHaveValue('Unsaved draft')
+    expect(getRuntimeCustomizationSettings).toHaveBeenCalledOnce()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存 Runtime 定制' })
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '保存失败'
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '重试' })
+    )
+
+    await waitFor(() =>
+      expect(updateRuntimeCustomizationSettings).toHaveBeenCalledTimes(2)
+    )
+    expect(
+      updateRuntimeCustomizationSettings
+    ).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        continue: expect.objectContaining({
+          presets: [
+            expect.objectContaining({ name: 'Unsaved draft' })
+          ]
+        })
+      })
+    )
+    expect(getRuntimeCustomizationSettings).toHaveBeenCalledOnce()
   })
 
   it('opens only saved Runtime-owned config files or fixed config directories', async () => {
@@ -3289,6 +3714,31 @@ describe('SettingsPanel runtime files', () => {
           name: 'team_search',
           description: '搜索团队资料'
         }
+      ],
+      promptsSupported: true,
+      promptCount: 1,
+      prompts: [
+        {
+          name: 'prepare_review',
+          description: '准备审查 Prompt',
+          arguments: [
+            {
+              name: 'scope',
+              description: '审查范围',
+              required: true
+            }
+          ]
+        }
+      ],
+      resourcesSupported: true,
+      resourceCount: 1,
+      resources: [
+        {
+          uri: 'mcp://team/review-guide',
+          name: 'Review Guide',
+          description: '团队审查指南',
+          mimeType: 'text/markdown'
+        }
       ]
     })
     render(
@@ -3316,6 +3766,13 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByText('服务端支持动态更新工具列表')
     ).toBeInTheDocument()
+    expect(screen.getByText('prepare_review')).toBeInTheDocument()
+    expect(screen.getByText('参数：scope*（* 必填）')).toBeInTheDocument()
+    expect(screen.getByText('Review Guide')).toBeInTheDocument()
+    expect(
+      screen.getByText('mcp://team/review-guide')
+    ).toBeInTheDocument()
+    expect(screen.getByText('text/markdown')).toBeInTheDocument()
     expect(serverToggle).toHaveAttribute('aria-expanded', 'true')
     expect(
       screen.getByRole('region', { name: '团队工具服务 工具' })

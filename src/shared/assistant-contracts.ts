@@ -234,6 +234,19 @@ export type ConversationMessage = z.infer<
   typeof conversationMessageSchema
 >
 
+export const maximumConversationHistoryMessages = 500
+export const maximumConversationHistoryCharacters = 2_000_000
+export const conversationHistoryMessageSchema =
+  conversationMessageSchema
+    .pick({
+      role: true,
+      content: true
+    })
+    .extend({
+      content: z.string().max(100_000)
+    })
+    .strict()
+
 export const conversationContextMetricsSchema = z
   .object({
     runtimeSelectionKey: z.string().trim().min(1).max(1_000),

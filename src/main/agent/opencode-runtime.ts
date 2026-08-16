@@ -21,11 +21,20 @@ import type {
   AgentQuestionAnswer,
   AgentRuntimeStatus
 } from '../../shared/contracts'
+import {
+  boundedRuntimeIdentifierSchema,
+  runtimeNativeInventoryLimits,
+  type RuntimeConversationCompactInput,
+  type RuntimeCustomizationSettings,
+  type RuntimeNativeSnapshot,
+  type RuntimeNativeTool
+} from '../../shared/runtime-customization-contracts'
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import { createOpenAIApiBaseUrl } from './openai-endpoint'
 import type {
   AgentExecutionRequest,
   AgentRuntime,
+  RuntimeConversationCompactOutcome,
   RuntimeEvent,
   RuntimeModelUsageEvent
 } from './runtime'
@@ -59,8 +68,39 @@ const MAX_TOOL_CALLS_PER_RUN = 100
 const MAX_QUESTION_REQUEST_BYTES = 32 * 1_024
 const MAX_QUESTIONS_PER_REQUEST = 4
 const MAX_QUESTION_OPTIONS = 20
+const MAX_NATIVE_AGENTS = runtimeNativeInventoryLimits.agents
+const MAX_NATIVE_TOOLS = runtimeNativeInventoryLimits.tools
+const MAX_NATIVE_COMMANDS = runtimeNativeInventoryLimits.commands
+const MAX_NATIVE_LSP = runtimeNativeInventoryLimits.lsp
+const MAX_NATIVE_FORMATTERS = runtimeNativeInventoryLimits.formatters
+const MAX_NATIVE_MCP_SERVERS =
+  runtimeNativeInventoryLimits.mcpServers
+const MAX_NATIVE_SKILLS = runtimeNativeInventoryLimits.skills
+const MAX_NATIVE_RESOURCES = runtimeNativeInventoryLimits.resources
 const EMBEDDED_SERVER_USERNAME = 'goodbuddy'
 const OPENCODE_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const TEMPORARY_MCP_PREFIXES = [
+  'goodbuddy-data-',
+  'goodbuddy-custom-'
+] as const
+const OPENCODE_INTERNAL_TOOL_IDS = new Set(['invalid'])
+const OPENCODE_BUILTIN_TOOL_KINDS: Readonly<
+  Partial<Record<string, RuntimeNativeTool['kind']>>
+> = {
+  apply_patch: 'write',
+  bash: 'shell',
+  edit: 'write',
+  glob: 'read',
+  grep: 'read',
+  question: 'interaction',
+  read: 'read',
+  skill: 'agent',
+  task: 'agent',
+  todowrite: 'agent',
+  webfetch: 'network',
+  websearch: 'network',
+  write: 'write'
+}
 
 type SpawnedProcess = ReturnType<typeof spawn>
 
@@ -389,6 +429,103 @@ export type OpenCodeRuntimeOptions = {
   skillPackages?: RuntimeSkillPackage[]
   knowledgeGateway?: KnowledgeMcpGateway
   mcpServers?: ResolvedMcpServer[]
+  customization?: RuntimeCustomizationSettings['opencode']
+}
+
+function boundedNativeIdentifier(value: unknown): string | undefined {
+  const parsed = boundedRuntimeIdentifierSchema.safeParse(value)
+  return parsed.success ? parsed.data : undefined
+}
+
+function boundedNativeText(
+  value: unknown,
+  maximum: number
+): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const normalized = value.trim()
+  return normalized ? normalized.slice(0, maximum) : undefined
+}
+
+function isTemporaryMcpName(value: string): boolean {
+  return TEMPORARY_MCP_PREFIXES.some((prefix) =>
+    value.startsWith(prefix)
+  )
+}
+
+function isTemporaryMcpInventoryItem(
+  ...values: Array<string | undefined>
+): boolean {
+  return values.some(
+    (value) => value !== undefined && isTemporaryMcpName(value)
+  )
+}
+
+function mapOpenCodeNativeTools(
+  values: readonly string[]
+): RuntimeNativeTool[] {
+  const seen = new Set<string>()
+  const tools: RuntimeNativeTool[] = []
+  for (const value of values) {
+    if (tools.length >= MAX_NATIVE_TOOLS) {
+      break
+    }
+    const id = boundedNativeIdentifier(value)
+    if (
+      !id ||
+      seen.has(id) ||
+      OPENCODE_INTERNAL_TOOL_IDS.has(id) ||
+      isTemporaryMcpName(id)
+    ) {
+      continue
+    }
+    seen.add(id)
+    const builtinKind = OPENCODE_BUILTIN_TOOL_KINDS[id]
+    tools.push({
+      id,
+      name: id.slice(0, 200),
+      kind: builtinKind ?? 'other',
+      source: builtinKind ? 'runtime' : 'unknown',
+      ask: id === 'skill' ? 'conditional' : 'blocked',
+      execute: 'allowed'
+    })
+  }
+  return tools
+}
+
+function isLocalPathLikeResourceUri(value: string): boolean {
+  return (
+    /^file:/iu.test(value) ||
+    /^[a-z]:[\\/]/iu.test(value) ||
+    /^(?:[\\/]{1,2}|\.\.?[\\/]|~[\\/])/u.test(value)
+  )
+}
+
+function boundedResourceUri(value: unknown): string | undefined {
+  const bounded = boundedNativeText(value, 2_048)
+  if (
+    !bounded ||
+    isLocalPathLikeResourceUri(bounded) ||
+    /^data:/iu.test(bounded)
+  ) {
+    return undefined
+  }
+  try {
+    const url = new URL(bounded)
+    if (url.protocol === 'file:' || url.protocol === 'data:') {
+      return undefined
+    }
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString().slice(0, 2_048)
+  } catch {
+    return bounded.includes('?') || bounded.includes('#')
+      ? undefined
+      : bounded
+  }
 }
 
 function createSkillPermissionRules(
@@ -562,6 +699,10 @@ export class OpenCodeRuntime implements AgentRuntime {
 
   private usesEmbeddedPermissionMediation(): boolean {
     return this.options.embedded && !this.options.baseUrl
+  }
+
+  private supportsNativeCustomization(): boolean {
+    return this.usesEmbeddedPermissionMediation()
   }
 
   get supportsScopedDataTools(): boolean {
@@ -1011,10 +1152,446 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
   }
 
+  private async discoverAgents(
+    client: OpencodeClient
+  ): Promise<
+    Array<{
+      id: string
+      name: string
+      description?: string
+      mode: 'primary' | 'subagent' | 'all'
+      native: boolean
+      hidden: boolean
+    }>
+  > {
+    const response = await client.app.agents({
+      directory: this.options.defaultWorkspace
+    })
+    if (response.error || !response.data) {
+      throw new Error('OpenCode Agent 清单不可用')
+    }
+    return response.data
+      .flatMap((agent) => {
+        const id = boundedNativeIdentifier(agent.name)
+        if (!id) {
+          return []
+        }
+        const description = boundedNativeText(
+          agent.description,
+          2_000
+        )
+        return [
+          {
+            id,
+            name: id.slice(0, 200),
+            ...(description ? { description } : {}),
+            mode: agent.mode,
+            native: agent.native === true,
+            hidden: agent.hidden === true
+          }
+        ]
+      })
+      .slice(0, MAX_NATIVE_AGENTS)
+  }
+
+  private async resolveSelectedAgent(
+    client: OpencodeClient,
+    request: AgentExecutionRequest
+  ): Promise<string | undefined> {
+    const control =
+      request.runtimeControl?.provider === 'opencode'
+        ? request.runtimeControl
+        : undefined
+    const selected =
+      control?.agent ?? this.options.customization?.defaultAgent
+    if (!selected) {
+      return undefined
+    }
+    if (!this.supportsNativeCustomization()) {
+      throw new Error(
+        '外部 OpenCode Server 不支持由 GoodBuddy 选择 Agent'
+      )
+    }
+    const agents = await this.discoverAgents(client)
+    if (
+      !agents.some(
+        (agent) =>
+          agent.id === selected &&
+          !agent.hidden &&
+          (agent.mode === 'primary' || agent.mode === 'all')
+      )
+    ) {
+      throw new Error(
+        `OpenCode Agent 不存在、已隐藏或不可作为主 Agent：${selected.slice(0, 128)}`
+      )
+    }
+    return selected
+  }
+
+  async getNativeSnapshot(): Promise<RuntimeNativeSnapshot> {
+    const controlled = this.supportsNativeCustomization()
+    const empty: RuntimeNativeSnapshot = {
+      provider: 'opencode',
+      available: false,
+      inventoryStatus: controlled
+        ? 'unavailable'
+        : 'connection-only',
+      detail: controlled
+        ? 'OpenCode 原生能力不可用'
+        : '外部 OpenCode Server 仅支持连接状态；GoodBuddy 不支持读取或控制其原生自定义能力',
+      agents: [],
+      tools: [],
+      toolsSupported: controlled,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: false,
+      context: {
+        strategy: controlled ? 'native' : 'unsupported',
+        manualCompact: controlled,
+        detail: controlled
+          ? '由 OpenCode 原生上下文与手动 Compact 管理'
+          : '外部 OpenCode Server 不支持由 GoodBuddy 管理上下文'
+      }
+    }
+    if (!controlled) {
+      try {
+        const client = await this.getClient()
+        const response = await client.session.list({
+          directory: this.options.defaultWorkspace,
+          limit: 1
+        })
+        if (response.error || !response.data) {
+          throw new Error('connection check failed')
+        }
+        return { ...empty, available: true }
+      } catch {
+        return {
+          ...empty,
+          inventoryStatus: 'unavailable',
+          detail:
+            '外部 OpenCode Server 无法连接，且不支持由 GoodBuddy 读取或控制原生自定义能力'
+        }
+      }
+    }
+
+    let client: OpencodeClient
+    try {
+      client = await this.getClient()
+    } catch {
+      return {
+        ...empty,
+        detail: 'OpenCode Server 无法连接'
+      }
+    }
+
+    const directory = this.options.defaultWorkspace
+    const assignedSkillIds = new Set(
+      (this.options.skillPackages ?? []).map((skill) => skill.id)
+    )
+    const [
+      availabilityResult,
+      agentsResult,
+      toolsResult,
+      commandsResult,
+      lspResult,
+      formattersResult,
+      mcpResult,
+      skillsResult,
+      resourcesResult
+    ] = await Promise.allSettled([
+      client.session.list({
+        directory,
+        limit: 1
+      }),
+      this.discoverAgents(client),
+      client.tool.ids({ directory }),
+      client.command.list({ directory }),
+      client.lsp.status({ directory }),
+      client.formatter.status({ directory }),
+      client.mcp.status({ directory }),
+      client.app.skills({ directory }),
+      client.experimental.resource.list({ directory })
+    ])
+    if (
+      availabilityResult.status === 'rejected' ||
+      availabilityResult.value.error ||
+      !availabilityResult.value.data
+    ) {
+      return {
+        ...empty,
+        detail: 'OpenCode Server 无法连接'
+      }
+    }
+    const unavailable: string[] = []
+
+    const agents =
+      agentsResult.status === 'fulfilled'
+        ? agentsResult.value
+        : (unavailable.push('Agent'), [])
+
+    const toolIds =
+      toolsResult.status === 'fulfilled' &&
+      !toolsResult.value.error &&
+      toolsResult.value.data
+        ? toolsResult.value.data
+        : (unavailable.push('工具'), [])
+    const tools = mapOpenCodeNativeTools(toolIds)
+
+    const commandData =
+      commandsResult.status === 'fulfilled' &&
+      !commandsResult.value.error &&
+      commandsResult.value.data
+        ? commandsResult.value.data
+        : (unavailable.push('命令'), [])
+    const nativeCommandData = commandData
+      .filter((command) => {
+        const name = boundedNativeIdentifier(command.name)
+        return (
+          name !== undefined &&
+          !isTemporaryMcpInventoryItem(name) &&
+          !assignedSkillIds.has(name)
+        )
+      })
+      .slice(0, MAX_NATIVE_COMMANDS)
+    const commands = nativeCommandData.flatMap((command) => {
+      const id = boundedNativeIdentifier(command.name)
+      if (!id) {
+        return []
+      }
+      const description = boundedNativeText(
+        command.description,
+        2_000
+      )
+      const agent = boundedNativeIdentifier(command.agent)
+      return [
+        {
+          id,
+          name: id.slice(0, 200),
+          ...(description ? { description } : {}),
+          source: command.source ?? ('command' as const),
+          ...(agent ? { agent } : {})
+        }
+      ]
+    })
+    const prompts = nativeCommandData.flatMap((command) => {
+      if (command.source !== 'mcp') {
+        return []
+      }
+      const id = boundedNativeIdentifier(command.name)
+      const prompt = boundedNativeText(command.template, 20_000)
+      if (!id || !prompt) {
+        return []
+      }
+      const description = boundedNativeText(
+        command.description,
+        2_000
+      )
+      return [
+        {
+          id,
+          name: id.slice(0, 200),
+          ...(description ? { description } : {}),
+          prompt,
+          source: 'mcp' as const
+        }
+      ]
+    })
+
+    const lspData =
+      lspResult.status === 'fulfilled' &&
+      !lspResult.value.error &&
+      lspResult.value.data
+        ? lspResult.value.data
+        : (unavailable.push('LSP'), [])
+    const lsp = lspData
+      .flatMap((server) => {
+        const id = boundedNativeIdentifier(server.id)
+        const name = boundedNativeText(server.name, 200)
+        if (!id || !name) {
+          return []
+        }
+        return [
+          {
+            id,
+            name,
+            status: server.status
+          }
+        ]
+      })
+      .slice(0, MAX_NATIVE_LSP)
+
+    const formatterData =
+      formattersResult.status === 'fulfilled' &&
+      !formattersResult.value.error &&
+      formattersResult.value.data
+        ? formattersResult.value.data
+        : (unavailable.push('Formatter'), [])
+    const formatters = formatterData
+      .flatMap((formatter) => {
+        const id = boundedNativeIdentifier(formatter.name)
+        if (!id) {
+          return []
+        }
+        return [
+          {
+            id,
+            name: id.slice(0, 200),
+            enabled: formatter.enabled,
+            extensions: formatter.extensions
+              .flatMap((extension) => {
+                const value = boundedNativeText(extension, 32)
+                return value ? [value] : []
+              })
+              .slice(0, 100)
+          }
+        ]
+      })
+      .slice(0, MAX_NATIVE_FORMATTERS)
+
+    const mcpData =
+      mcpResult.status === 'fulfilled' &&
+      !mcpResult.value.error &&
+      mcpResult.value.data
+        ? mcpResult.value.data
+        : (unavailable.push('MCP'), {})
+    const mcpServers = Object.entries(mcpData)
+      .flatMap(([rawName, server]) => {
+        const id = boundedNativeIdentifier(rawName)
+        if (!id || isTemporaryMcpName(id)) {
+          return []
+        }
+        const status =
+          server.status === 'needs_auth'
+            ? ('needs-auth' as const)
+            : server.status === 'needs_client_registration'
+              ? ('unsupported' as const)
+              : server.status
+        return [
+          {
+            id,
+            name: id.slice(0, 200),
+            status
+          }
+        ]
+      })
+      .slice(0, MAX_NATIVE_MCP_SERVERS)
+
+    const skillData =
+      skillsResult.status === 'fulfilled' &&
+      !skillsResult.value.error &&
+      skillsResult.value.data
+        ? skillsResult.value.data
+        : (unavailable.push('Skill'), [])
+    const skills = skillData
+      .flatMap((skill) => {
+        const id = boundedNativeIdentifier(skill.name)
+        if (!id || assignedSkillIds.has(id)) {
+          return []
+        }
+        const description = boundedNativeText(
+          skill.description,
+          2_000
+        )
+        return [
+          {
+            id,
+            name: id.slice(0, 200),
+            ...(description ? { description } : {}),
+            source: 'unknown' as const
+          }
+        ]
+      })
+      .slice(0, MAX_NATIVE_SKILLS)
+
+    const resourceData =
+      resourcesResult.status === 'fulfilled' &&
+      !resourcesResult.value.error &&
+      resourcesResult.value.data
+        ? resourcesResult.value.data
+        : (unavailable.push('资源'), {})
+    const resources = Object.entries(resourceData)
+      .flatMap(([rawId, resource]) => {
+        const id =
+          boundedNativeIdentifier(rawId) ??
+          boundedNativeIdentifier(resource.name)
+        const name = boundedNativeText(resource.name, 200)
+        const uri = boundedResourceUri(resource.uri)
+        const server = boundedNativeText(resource.client, 200)
+        if (
+          !id ||
+          !name ||
+          !uri ||
+          isTemporaryMcpInventoryItem(id, name, server)
+        ) {
+          return []
+        }
+        const description = boundedNativeText(
+          resource.description,
+          2_000
+        )
+        const mimeType = boundedNativeText(resource.mimeType, 200)
+        return [
+          {
+            id,
+            name,
+            uri,
+            ...(description ? { description } : {}),
+            ...(mimeType ? { mimeType } : {}),
+            ...(server ? { server } : {})
+          }
+        ]
+      })
+      .slice(0, MAX_NATIVE_RESOURCES)
+
+    return {
+      provider: 'opencode',
+      available: true,
+      inventoryStatus:
+        unavailable.length === 0 ? 'available' : 'partial',
+      detail:
+        unavailable.length === 0
+          ? 'OpenCode 原生能力已就绪'
+          : `OpenCode 已连接；部分原生清单暂不可用：${unavailable.join('、')}`.slice(
+              0,
+              1_000
+            ),
+      agents,
+      tools,
+      toolsSupported:
+        toolsResult.status === 'fulfilled' &&
+        !toolsResult.value.error &&
+        toolsResult.value.data !== undefined,
+      commands,
+      lsp,
+      formatters,
+      mcpServers,
+      skills,
+      rules: [],
+      prompts,
+      resources,
+      resourcesSupported:
+        resourcesResult.status === 'fulfilled' &&
+        !resourcesResult.value.error &&
+        resourcesResult.value.data !== undefined,
+      context: {
+        strategy: 'native',
+        manualCompact: true,
+        detail: '由 OpenCode 原生上下文与手动 Compact 管理'
+      }
+    }
+  }
+
   private async getSessionId(
     client: OpencodeClient,
     request: AgentExecutionRequest,
     directory: string,
+    agent?: string,
     permission?: PermissionRuleset
   ): Promise<{ id: string; created: boolean }> {
     const current = this.sessions.get(request.conversationId)
@@ -1031,6 +1608,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       .create({
         title: 'GoodBuddy 对话',
         directory,
+        ...(agent ? { agent } : {}),
         ...(permission ? { permission } : {})
       })
       .then((response) => {
@@ -1081,6 +1659,54 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
     const client = await this.getClient(signal)
     const directory = this.options.defaultWorkspace
+    const runtimeControl =
+      request.runtimeControl?.provider === 'opencode'
+        ? request.runtimeControl
+        : undefined
+    if (
+      runtimeControl?.command &&
+      !this.supportsNativeCustomization()
+    ) {
+      throw new Error(
+        '外部 OpenCode Server 不支持由 GoodBuddy 执行原生命令'
+      )
+    }
+    const selectedAgent = await this.resolveSelectedAgent(
+      client,
+      request
+    )
+    let selectedCommand:
+      | {
+          name: string
+          arguments: string
+        }
+      | undefined
+    if (runtimeControl?.command) {
+      const commandResponse = await client.command.list({ directory })
+      if (commandResponse.error || !commandResponse.data) {
+        throw new Error('OpenCode 无法验证原生命令')
+      }
+      const assignedSkillIds = new Set(
+        (this.options.skillPackages ?? []).map((skill) => skill.id)
+      )
+      const command = commandResponse.data.find(
+        (candidate) => {
+          const name = boundedNativeIdentifier(candidate.name)
+          return (
+            name !== undefined &&
+            name === runtimeControl.command?.name &&
+            !isTemporaryMcpName(name) &&
+            !assignedSkillIds.has(name)
+          )
+        }
+      )
+      if (!command) {
+        throw new Error(
+          `OpenCode 原生命令不存在或已失效：${runtimeControl.command.name.slice(0, 128)}`
+        )
+      }
+      selectedCommand = runtimeControl.command
+    }
     const nativeSkillIds = this.getNativeSkillIds()
     const nativeSkillPermissionRules =
       createSkillPermissionRules(nativeSkillIds)
@@ -1227,6 +1853,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         client,
         request,
         directory,
+        selectedAgent,
         permission
       )
       const sessionId = session.id
@@ -1282,32 +1909,58 @@ export class OpenCodeRuntime implements AgentRuntime {
               request.prompt
             ].join('\n')
           : request.prompt
-      const prompt = client.session.promptAsync({
-        sessionID: sessionId,
-        directory,
-        model: this.options.modelProfile
-          ? {
-              providerID: resolveOpenCodeProvider(
-                this.options.modelProfile
-              ).id,
-              modelID: this.options.modelProfile.modelName
-            }
-          : undefined,
-        system:
-          nativeSkillIds.length > 0
-            ? undefined
-            : this.options.skillInstructions || undefined,
-        ...(disabledTools ? { tools: disabledTools } : {}),
-        parts: [
-          { type: 'text' as const, text: promptText },
-          ...(request.images ?? []).map((image) => ({
-            type: 'file' as const,
-            mime: image.mediaType,
-            filename: image.name,
-            url: `data:${image.mediaType};base64,${image.data}`
-          }))
-        ]
-      }, { signal })
+      const imageParts = (request.images ?? []).map((image) => ({
+        type: 'file' as const,
+        mime: image.mediaType,
+        filename: image.name,
+        url: `data:${image.mediaType};base64,${image.data}`
+      }))
+      const prompt = selectedCommand
+        ? client.session.command(
+            {
+              sessionID: sessionId,
+              directory,
+              command: selectedCommand.name,
+              arguments: selectedCommand.arguments,
+              ...(selectedAgent ? { agent: selectedAgent } : {}),
+              ...(this.options.modelProfile
+                ? {
+                    model: `${resolveOpenCodeProvider(
+                      this.options.modelProfile
+                    ).id}/${this.options.modelProfile.modelName}`
+                  }
+                : {}),
+              ...(imageParts.length > 0
+                ? { parts: imageParts }
+                : {})
+            },
+            { signal }
+          )
+        : client.session.promptAsync(
+            {
+              sessionID: sessionId,
+              directory,
+              model: this.options.modelProfile
+                ? {
+                    providerID: resolveOpenCodeProvider(
+                      this.options.modelProfile
+                    ).id,
+                    modelID: this.options.modelProfile.modelName
+                  }
+                : undefined,
+              ...(selectedAgent ? { agent: selectedAgent } : {}),
+              system:
+                nativeSkillIds.length > 0
+                  ? undefined
+                  : this.options.skillInstructions || undefined,
+              ...(disabledTools ? { tools: disabledTools } : {}),
+              parts: [
+                { type: 'text' as const, text: promptText },
+                ...imageParts
+              ]
+            },
+            { signal }
+          )
       prompt.catch(() => undefined)
 
       const repliedPermissionIds = new Set<string>()
@@ -1716,6 +2369,69 @@ export class OpenCodeRuntime implements AgentRuntime {
       )
     }
     this.pendingQuestions.delete(questionId)
+  }
+
+  async compactConversation(
+    request: RuntimeConversationCompactInput,
+    signal: AbortSignal
+  ): Promise<RuntimeConversationCompactOutcome> {
+    signal.throwIfAborted()
+    if (!this.supportsNativeCustomization()) {
+      throw new Error(
+        '外部 OpenCode Server 不支持由 GoodBuddy 执行原生 Compact'
+      )
+    }
+    const releaseEmbedded = await this.acquireEmbeddedRun(signal)
+    let releaseConversation: (() => void) | undefined
+    try {
+      releaseConversation = await this.acquireConversationRun(
+        request.conversationId,
+        signal
+      )
+      const sessionId = this.sessions.get(request.conversationId)
+      if (!sessionId) {
+        return {
+          result: {
+            provider: 'opencode',
+            strategy: 'native',
+            compacted: false,
+            detail: '当前 GoodBuddy 对话尚无可压缩的 OpenCode 会话'
+          }
+        }
+      }
+      const client = await this.getClient(signal)
+      const context = await client.v2.session.context(
+        { sessionID: sessionId },
+        { signal }
+      )
+      if (context.error || !context.data) {
+        throw new Error('OpenCode 原生上下文不可用，无法执行 Compact')
+      }
+      signal.throwIfAborted()
+      const compact = await client.v2.session.compact(
+        { sessionID: sessionId },
+        { signal }
+      )
+      if (compact.error) {
+        throw new Error(
+          opencodeErrorMessage(
+            compact.error,
+            'OpenCode 原生 Compact 失败'
+          )
+        )
+      }
+      return {
+        result: {
+          provider: 'opencode',
+          strategy: 'native',
+          compacted: true,
+          detail: 'OpenCode 已完成原生上下文压缩'
+        }
+      }
+    } finally {
+      releaseConversation?.()
+      releaseEmbedded()
+    }
   }
 
   async dispose(): Promise<void> {

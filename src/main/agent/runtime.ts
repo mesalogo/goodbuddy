@@ -3,7 +3,10 @@ import type {
   AgentEvent,
   AgentQuestionAnswer,
   AgentRequest,
-  AgentRuntimeStatus
+  AgentRuntimeStatus,
+  RuntimeConversationCompactInput,
+  RuntimeConversationCompactResult,
+  RuntimeNativeSnapshot
 } from '../../shared/contracts'
 import type { WorkMode } from '../../shared/assistant-contracts'
 
@@ -47,6 +50,11 @@ export type RuntimeEvent =
   | RuntimeGeneratedImageEvent
   | RuntimeModelUsageEvent
 
+export type RuntimeConversationCompactOutcome = {
+  result: RuntimeConversationCompactResult
+  usageEvents?: RuntimeModelUsageEvent[]
+}
+
 export interface AgentRuntime {
   readonly runtimeId?: AgentRuntimeStatus['id']
   readonly requiresToolApproval: boolean
@@ -56,6 +64,11 @@ export interface AgentRuntime {
   readonly capability?: 'chat' | 'image-generation'
   getStatus(): Promise<AgentRuntimeStatus>
   testConnection?(): Promise<AgentRuntimeStatus>
+  getNativeSnapshot?(): Promise<RuntimeNativeSnapshot>
+  compactConversation?(
+    request: RuntimeConversationCompactInput,
+    signal: AbortSignal
+  ): Promise<RuntimeConversationCompactOutcome>
   run(
     request: AgentExecutionRequest,
     signal: AbortSignal,

@@ -354,7 +354,46 @@ export const mcpServerTestResultSchema = z
           })
           .strict()
       )
+      .max(100),
+    promptCount: z.number().int().min(0).max(10_000).optional(),
+    prompts: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(128),
+            description: z.string().max(500).optional(),
+            arguments: z
+              .array(
+                z
+                  .object({
+                    name: z.string().min(1).max(128),
+                    description: z.string().max(500).optional(),
+                    required: z.boolean()
+                  })
+                  .strict()
+              )
+              .max(32)
+          })
+          .strict()
+      )
       .max(100)
+      .optional(),
+    resourceCount: z.number().int().min(0).max(10_000).optional(),
+    resources: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(200),
+            uri: z.string().min(1).max(2_048),
+            description: z.string().max(500).optional(),
+            mimeType: z.string().min(1).max(200).optional()
+          })
+          .strict()
+      )
+      .max(100)
+      .optional(),
+    promptsSupported: z.boolean().optional(),
+    resourcesSupported: z.boolean().optional()
   })
   .strict()
 export type McpServerTestResult = z.infer<

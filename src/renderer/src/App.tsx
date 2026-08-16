@@ -27,6 +27,7 @@ import {
   Search,
   Send,
   Settings,
+  RefreshCw,
   ShieldCheck,
   PanelRightOpen,
   Sparkles,
@@ -63,11 +64,20 @@ import type {
   ContextFileSelectionProgress,
   KnowledgeSearchReference,
   KnowledgeSnapshot,
+  RuntimeCustomizationSettings,
+  RuntimeNativeSnapshot,
+  RuntimeControl,
   RuntimeSettings
 } from '../../shared/contracts'
 import {
+  defaultContextCompressionSettings,
   maximumPastedImageBytes
 } from '../../shared/contracts'
+import {
+  buildConversationSummaryHistory,
+  estimatedContextRequestOverheadTokens,
+  estimateMessagesTokens
+} from '../../shared/context-window'
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
@@ -1457,6 +1467,12 @@ type ComposerMenuOption<T extends string> = {
   disabled?: boolean
 }
 
+type RuntimeActionChoice = ComposerMenuOption<string> & {
+  action?:
+    | { type: 'command'; id: string }
+    | { type: 'prompt'; prompt: string }
+}
+
 function ComposerMenuSelect<T extends string>({
   ariaLabel,
   className,
@@ -1763,8 +1779,26 @@ function App(): React.JSX.Element {
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>()
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false)
   const [composerMenuOpen, setComposerMenuOpen] = useState<
-    'expert' | 'mode' | undefined
+    | 'expert'
+    | 'mode'
+    | 'runtime-agent'
+    | 'runtime-action'
+    | 'runtime-preset'
+    | undefined
   >()
+  const [runtimeCustomization, setRuntimeCustomization] =
+    useState<RuntimeCustomizationSettings>()
+  const [runtimeNativeSnapshot, setRuntimeNativeSnapshot] =
+    useState<RuntimeNativeSnapshot>()
+  const [selectedRuntimeAgent, setSelectedRuntimeAgent] =
+    useState('')
+  const [selectedRuntimeCommand, setSelectedRuntimeCommand] =
+    useState('')
+  const [selectedContinuePreset, setSelectedContinuePreset] =
+    useState('')
+  const [runtimeContextCompacting, setRuntimeContextCompacting] =
+    useState(false)
+  const runtimeCustomizationRequestRef = useRef(0)
   const runtimeMenuButtonRef = useRef<HTMLButtonElement>(null)
   const runtimeMenuRef = useRef<HTMLDivElement>(null)
   const [runtimeSwitching, setRuntimeSwitching] = useState(false)
@@ -1801,6 +1835,33 @@ function App(): React.JSX.Element {
       setRuntimeMenuOpen(false)
     }
   }, [])
+  const setRuntimeAgentMenuOpen = useCallback(
+    (open: boolean): void => {
+      setComposerMenuOpen(open ? 'runtime-agent' : undefined)
+      if (open) {
+        setRuntimeMenuOpen(false)
+      }
+    },
+    []
+  )
+  const setRuntimeActionMenuOpen = useCallback(
+    (open: boolean): void => {
+      setComposerMenuOpen(open ? 'runtime-action' : undefined)
+      if (open) {
+        setRuntimeMenuOpen(false)
+      }
+    },
+    []
+  )
+  const setRuntimePresetMenuOpen = useCallback(
+    (open: boolean): void => {
+      setComposerMenuOpen(open ? 'runtime-preset' : undefined)
+      if (open) {
+        setRuntimeMenuOpen(false)
+      }
+    },
+    []
+  )
   const assistantExpertOptions = useMemo<
     ComposerMenuOption<string>[]
   >(
@@ -2425,6 +2486,234 @@ function App(): React.JSX.Element {
         configuredRuntimeLabels
       )
     : undefined
+
+  useEffect(() => {
+    const requestId = runtimeCustomizationRequestRef.current + 1
+    runtimeCustomizationRequestRef.current = requestId
+    queueMicrotask(() => {
+      if (runtimeCustomizationRequestRef.current !== requestId) {
+        return
+      }
+      setRuntimeNativeSnapshot(undefined)
+      setRuntimeCustomization(undefined)
+      setSelectedRuntimeAgent('')
+      setSelectedRuntimeCommand('')
+      setSelectedContinuePreset('')
+    })
+    if (
+      !activeRuntimeSelection ||
+      activeConversation?.remote ||
+      (activeRuntimeSelection.provider !== 'opencode' &&
+        activeRuntimeSelection.provider !== 'continue')
+    ) {
+      return
+    }
+    const provider = activeRuntimeSelection.provider
+    void Promise.all([
+      window.goodbuddy.runtimeCustomization.getSettings(),
+      window.goodbuddy.runtimeCustomization.getNativeSnapshot({
+        provider,
+        ...('profileId' in activeRuntimeSelection &&
+        activeRuntimeSelection.profileId
+          ? { profileId: activeRuntimeSelection.profileId }
+          : {}),
+        ...(activeProjectId ? { projectId: activeProjectId } : {})
+      })
+    ])
+      .then(([customization, snapshot]) => {
+        if (runtimeCustomizationRequestRef.current !== requestId) {
+          return
+        }
+        setRuntimeCustomization(customization)
+        setRuntimeNativeSnapshot(snapshot)
+        setSelectedContinuePreset('')
+      })
+      .catch(() => {
+        if (runtimeCustomizationRequestRef.current === requestId) {
+          setRuntimeCustomization(undefined)
+          setRuntimeNativeSnapshot(undefined)
+        }
+      })
+  }, [
+    activeConversation?.remote,
+    activeProjectId,
+    activeRuntimeSelection,
+    activeRuntimeSelectionKey
+  ])
+
+  const runtimeAgentOptions = useMemo<
+    ComposerMenuOption<string>[]
+  >(() => {
+    if (
+      activeRuntimeSelection?.provider !== 'opencode' ||
+      !runtimeNativeSnapshot
+    ) {
+      return []
+    }
+    const configuredDefault =
+      runtimeCustomization?.opencode.defaultAgent
+    return [
+      {
+        value: '',
+        label: configuredDefault
+          ? t('composer.runtimeControls.configuredAgent', {
+              name: configuredDefault
+            })
+          : t('composer.runtimeControls.runtimeDefaultAgent'),
+        description: t(
+          'composer.runtimeControls.runtimeDefaultAgentDescription'
+        )
+      },
+      ...runtimeNativeSnapshot.agents
+        .filter(
+          (agent) =>
+            !agent.hidden &&
+            (agent.mode === 'primary' || agent.mode === 'all')
+        )
+        .map((agent) => ({
+          value: agent.id,
+          label: agent.name,
+          description:
+            agent.description ??
+            t('composer.runtimeControls.agentDescription')
+        }))
+    ]
+  }, [
+    activeRuntimeSelection?.provider,
+    runtimeCustomization?.opencode.defaultAgent,
+    runtimeNativeSnapshot,
+    t
+  ])
+
+  const runtimePresetOptions = useMemo<
+    ComposerMenuOption<string>[]
+  >(() => {
+    if (
+      activeRuntimeSelection?.provider !== 'continue' ||
+      !runtimeCustomization
+    ) {
+      return []
+    }
+    return [
+      {
+        value: '',
+        label: t('composer.runtimeControls.noPreset'),
+        description: t(
+          'composer.runtimeControls.noPresetDescription'
+        )
+      },
+      ...runtimeCustomization.continue.presets.map((preset) => ({
+        value: preset.id,
+        label: preset.name,
+        description:
+          preset.description ??
+          t('composer.runtimeControls.presetDescription', {
+            rules: preset.rules.filter((rule) => rule.enabled).length,
+            prompts: preset.prompts.length
+          })
+      }))
+    ]
+  }, [
+    activeRuntimeSelection?.provider,
+    runtimeCustomization,
+    t
+  ])
+
+  const runtimeActionOptions = useMemo<RuntimeActionChoice[]>(() => {
+    if (!runtimeNativeSnapshot) {
+      return []
+    }
+    const nativePrompts = runtimeNativeSnapshot.prompts
+    const selectedPreset =
+      activeRuntimeSelection?.provider === 'continue'
+        ? runtimeCustomization?.continue.presets.find(
+            (preset) =>
+              preset.id ===
+              (selectedContinuePreset ||
+                runtimeCustomization.continue.defaultPresetId)
+          )
+        : undefined
+    return [
+      {
+        value: '',
+        label: t('composer.runtimeControls.noAction'),
+        description: t(
+          'composer.runtimeControls.noActionDescription'
+        )
+      },
+      ...(activeRuntimeSelection?.provider === 'opencode'
+        ? runtimeNativeSnapshot.commands.map((command) => ({
+            value: JSON.stringify(['command', command.id]),
+            label: `/${command.name}`,
+            description:
+              command.description ??
+              t('composer.runtimeControls.commandDescription'),
+            action: {
+              type: 'command' as const,
+              id: command.id
+            }
+          }))
+        : []),
+      ...nativePrompts.map((prompt) => ({
+        value: JSON.stringify(['native-prompt', prompt.id]),
+        label: prompt.name,
+        description:
+          prompt.description ??
+          t('composer.runtimeControls.promptDescription'),
+        action: {
+          type: 'prompt' as const,
+          prompt: prompt.prompt
+        }
+      })),
+      ...(selectedPreset?.prompts.map((prompt) => ({
+        value: JSON.stringify([
+          'preset-prompt',
+          selectedPreset.id,
+          prompt.id
+        ]),
+        label: prompt.name,
+        description:
+          prompt.description ??
+          t('composer.runtimeControls.promptDescription'),
+        action: {
+          type: 'prompt' as const,
+          prompt: prompt.prompt
+        }
+      })) ?? [])
+    ]
+  }, [
+    activeRuntimeSelection?.provider,
+    runtimeCustomization,
+    runtimeNativeSnapshot,
+    selectedContinuePreset,
+    t
+  ])
+
+  const selectRuntimeAction = useCallback(
+    (value: string): void => {
+      if (!value) {
+        setSelectedRuntimeCommand('')
+        return
+      }
+      const choice = runtimeActionOptions.find(
+        (candidate) => candidate.value === value
+      )
+      if (choice?.action?.type === 'command') {
+        setSelectedRuntimeCommand(choice.action.id)
+        return
+      }
+      if (choice?.action?.type === 'prompt') {
+        setInput(choice.action.prompt)
+        setSelectedRuntimeCommand('')
+        requestAnimationFrame(() => {
+          resizeComposerTextarea(inputRef.current)
+          inputRef.current?.focus()
+        })
+      }
+    },
+    [runtimeActionOptions, setInput]
+  )
+
   useEffect(() => {
     if (!runtimeMenuOpen) {
       return
@@ -4980,7 +5269,19 @@ function App(): React.JSX.Element {
   }, [])
 
   const submit = async (): Promise<void> => {
-    const prompt = input.trim()
+    const command =
+      activeRuntimeSelection?.provider === 'opencode'
+        ? runtimeNativeSnapshot?.commands.find(
+            (candidate) =>
+              candidate.id === selectedRuntimeCommand
+          )
+        : undefined
+    const commandArguments = input.trim()
+    const prompt = command
+      ? `/${command.name}${
+          commandArguments ? ` ${commandArguments}` : ''
+        }`
+      : commandArguments
     if (!prompt || !activeConversation) {
       return
     }
@@ -5049,6 +5350,30 @@ function App(): React.JSX.Element {
       notify({ tone: 'info', message: t('runtime.notSelected') })
       return
     }
+    const runtimeControlSnapshot: RuntimeControl | undefined =
+      runtimeSelectionSnapshot.provider === 'opencode' &&
+      (selectedRuntimeAgent || command)
+        ? {
+            provider: 'opencode',
+            ...(selectedRuntimeAgent
+              ? { agent: selectedRuntimeAgent }
+              : {}),
+            ...(command
+              ? {
+                  command: {
+                    name: command.name,
+                    arguments: commandArguments
+                  }
+                }
+              : {})
+          }
+        : runtimeSelectionSnapshot.provider === 'continue' &&
+            selectedContinuePreset
+          ? {
+              provider: 'continue',
+              presetId: selectedContinuePreset
+            }
+          : undefined
     const selectedExpertSnapshot =
       runtime.capability === 'image-generation' ? '' : selectedExpertId
     const workModeSnapshot = effectiveWorkMode
@@ -5089,7 +5414,9 @@ function App(): React.JSX.Element {
       runtime.capability === 'image-generation'
         ? ''
         : buildMemoryContext(assistantMemories)
-    const executionPrompt = memoryContext
+    const executionPrompt = command
+      ? prompt
+      : memoryContext
       ? `${prompt}\n\n${memoryContext}`
       : prompt
     const assistantMessage: Message = {
@@ -5156,6 +5483,7 @@ function App(): React.JSX.Element {
         conversationId,
         projectId: projectIdSnapshot,
         runtimeSelection: runtimeSelectionSnapshot,
+        runtimeControl: runtimeControlSnapshot,
         expertId:
           selectedExpertSnapshot && selectedExpertSnapshot !== 'team'
             ? selectedExpertSnapshot
@@ -5190,6 +5518,9 @@ function App(): React.JSX.Element {
       for (const attachment of attachmentSnapshot) {
         void window.goodbuddy.context.remove(attachment.id)
       }
+      if (command) {
+        setSelectedRuntimeCommand('')
+      }
     } catch (error) {
       preparingConversations.current.delete(conversationId)
       for (const attachment of attachmentSnapshot) {
@@ -5202,6 +5533,130 @@ function App(): React.JSX.Element {
         message:
           error instanceof Error ? error.message : t('notices.sendFailed')
       })
+    }
+  }
+
+  const compactRuntimeContext = async (): Promise<void> => {
+    if (
+      !activeConversation ||
+      !activeRuntimeSelection ||
+      (activeRuntimeSelection.provider !== 'opencode' &&
+        activeRuntimeSelection.provider !== 'continue') ||
+      runtimeContextCompacting ||
+      isRunning
+    ) {
+      return
+    }
+    const history = activeConversation.messages
+      .filter(
+        (message) =>
+          message.state === 'complete' && message.content.trim()
+      )
+      .slice(-500)
+    if (history.length < 2) {
+      notify({
+        tone: 'info',
+        message: t('composer.context.nothingToCompact'),
+        dedupeKey: 'runtime-context-compact'
+      })
+      return
+    }
+    const requestId = crypto.randomUUID()
+    setRuntimeContextCompacting(true)
+    try {
+      const result =
+        await window.goodbuddy.agent.compactConversation({
+          requestId,
+          conversationId: activeConversation.id,
+          projectId: activeConversation.projectId,
+          runtimeSelection: activeRuntimeSelection,
+          history: history.map((message) => ({
+            role: message.role,
+            content: message.content
+          })),
+          historyMessageIds: history.map((message) => message.id),
+          contextCompressionState:
+            activeConversation.contextCompressionState
+        })
+      if (result.contextCompressionState) {
+        const state = result.contextCompressionState
+        const remainingHistory = history.slice(
+          Math.min(state.coveredMessageCount, history.length)
+        )
+        const estimatedAfterTokens =
+          estimatedContextRequestOverheadTokens +
+          estimateMessagesTokens([
+            ...buildConversationSummaryHistory(state.summary),
+            ...remainingHistory.map((message) => ({
+              role: message.role,
+              content: message.content
+            }))
+          ])
+        const selectedProfileId =
+          'profileId' in activeRuntimeSelection
+            ? activeRuntimeSelection.profileId
+            : undefined
+        const configuredSelection = runtimeSettings
+          ? getRuntimeSelectionForProvider(
+              activeRuntimeSelection.provider,
+              runtimeSettings
+            )
+          : undefined
+        const configuredProfileId =
+          configuredSelection &&
+          'profileId' in configuredSelection
+            ? configuredSelection.profileId
+            : undefined
+        const contextWindowTokens =
+          runtimeSettings?.modelProfiles.find(
+            (profile) =>
+              profile.id ===
+              (selectedProfileId ?? configuredProfileId)
+          )?.contextWindowTokens
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id === activeConversation.id
+              ? {
+                  ...conversation,
+                  contextCompressionState: state,
+                  contextMetrics: {
+                    runtimeSelectionKey:
+                      activeRuntimeSelectionKey,
+                    contextTokens: estimatedAfterTokens,
+                    effectiveTriggerTokens:
+                      contextWindowTokens ??
+                      runtimeSettings?.contextCompression
+                        ?.triggerTokens ??
+                      defaultContextCompressionSettings.triggerTokens,
+                    ...(contextWindowTokens
+                      ? { contextWindowTokens }
+                      : {}),
+                    compressionEnabled: false,
+                    source: 'estimated',
+                    basis: 'conversation'
+                  },
+                  updatedAt: Date.now()
+                }
+              : conversation
+          )
+        )
+      }
+      notify({
+        tone: result.compacted ? 'success' : 'info',
+        message: result.detail,
+        dedupeKey: 'runtime-context-compact'
+      })
+    } catch (reason) {
+      notify({
+        tone: 'error',
+        message:
+          reason instanceof Error
+            ? reason.message
+            : t('composer.context.compactFailed'),
+        dedupeKey: 'runtime-context-compact'
+      })
+    } finally {
+      setRuntimeContextCompacting(false)
     }
   }
 
@@ -5715,18 +6170,17 @@ function App(): React.JSX.Element {
     if (
       !activeConversation ||
       !runtimeSettings ||
-      activeRuntimeSelection?.provider !== 'model' ||
+      !activeRuntimeSelection ||
       activeConversation.remote
     ) {
       return undefined
     }
-    const profile = runtimeSettings.modelProfiles.find(
-      (candidate) =>
-        candidate.id === activeRuntimeSelection.profileId
-    )
     if (
-      !profile ||
-      profile.protocol === 'openai-images-generations'
+      activeRuntimeSelection.provider === 'model' &&
+      runtimeSettings.modelProfiles.find(
+        (candidate) =>
+          candidate.id === activeRuntimeSelection.profileId
+      )?.protocol === 'openai-images-generations'
     ) {
       return undefined
     }
@@ -6727,6 +7181,83 @@ function App(): React.JSX.Element {
                     options={assistantExpertOptions}
                     value={selectedExpertId}
                   />
+                  {activeRuntimeSelection?.provider === 'opencode' &&
+                    runtimeAgentOptions.length > 1 && (
+                      <ComposerMenuSelect
+                        ariaLabel={t(
+                          'composer.runtimeControls.agentLabel'
+                        )}
+                        className="composer-picker--runtime"
+                        disabled={isRunning}
+                        icon={
+                          <TerminalSquare
+                            aria-hidden="true"
+                            size={15}
+                          />
+                        }
+                        menuOpen={
+                          composerMenuOpen === 'runtime-agent'
+                        }
+                        onChange={setSelectedRuntimeAgent}
+                        onOpenChange={setRuntimeAgentMenuOpen}
+                        options={runtimeAgentOptions}
+                        value={selectedRuntimeAgent}
+                      />
+                    )}
+                  {activeRuntimeSelection?.provider === 'continue' &&
+                    runtimePresetOptions.length > 1 && (
+                      <ComposerMenuSelect
+                        ariaLabel={t(
+                          'composer.runtimeControls.presetLabel'
+                        )}
+                        className="composer-picker--runtime"
+                        disabled={isRunning}
+                        icon={
+                          <TerminalSquare
+                            aria-hidden="true"
+                            size={15}
+                          />
+                        }
+                        menuOpen={
+                          composerMenuOpen === 'runtime-preset'
+                        }
+                        onChange={setSelectedContinuePreset}
+                        onOpenChange={setRuntimePresetMenuOpen}
+                        options={runtimePresetOptions}
+                        value={selectedContinuePreset}
+                      />
+                    )}
+                  {(activeRuntimeSelection?.provider === 'opencode' ||
+                    activeRuntimeSelection?.provider === 'continue') &&
+                    runtimeActionOptions.length > 1 && (
+                      <ComposerMenuSelect
+                        ariaLabel={t(
+                          'composer.runtimeControls.actionLabel'
+                        )}
+                        className="composer-picker--runtime-action"
+                        disabled={isRunning}
+                        icon={
+                          <TerminalSquare
+                            aria-hidden="true"
+                            size={15}
+                          />
+                        }
+                        menuOpen={
+                          composerMenuOpen === 'runtime-action'
+                        }
+                        onChange={selectRuntimeAction}
+                        onOpenChange={setRuntimeActionMenuOpen}
+                        options={runtimeActionOptions}
+                        value={
+                          runtimeActionOptions.find(
+                            (option) =>
+                              option.action?.type === 'command' &&
+                              option.action.id ===
+                                selectedRuntimeCommand
+                          )?.value ?? ''
+                        }
+                      />
+                    )}
                   <ComposerMenuSelect
                     ariaLabel={t('composer.modeLabel')}
                     className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
@@ -7014,7 +7545,15 @@ function App(): React.JSX.Element {
                   type="button"
                   aria-label={t('composer.send')}
                   disabled={
-                    !input.trim() ||
+                    (!input.trim() &&
+                      !(
+                        activeRuntimeSelection?.provider ===
+                          'opencode' &&
+                        runtimeNativeSnapshot?.commands.some(
+                          (command) =>
+                            command.id === selectedRuntimeCommand
+                        )
+                      )) ||
                     selectingContextFiles ||
                     !runtime?.available ||
                     runtimeSwitching ||
@@ -7133,6 +7672,30 @@ function App(): React.JSX.Element {
                 )}
               </div>
             )}
+            {(activeRuntimeSelection?.provider === 'opencode' ||
+              activeRuntimeSelection?.provider === 'continue') &&
+              runtimeNativeSnapshot?.context.manualCompact && (
+                <button
+                  className="composer-context-compact"
+                  disabled={runtimeContextCompacting || isRunning}
+                  onClick={() => void compactRuntimeContext()}
+                  title={runtimeNativeSnapshot.context.detail}
+                  type="button"
+                >
+                  {runtimeContextCompacting ? (
+                    <LoaderCircle
+                      aria-hidden="true"
+                      className="context-chip__spinner"
+                      size={13}
+                    />
+                  ) : (
+                    <RefreshCw aria-hidden="true" size={13} />
+                  )}
+                  {runtimeContextCompacting
+                    ? t('composer.context.compacting')
+                    : t('composer.context.compact')}
+                </button>
+              )}
             {contextError && (
               <span className="composer-meta__error">
                 {contextError}

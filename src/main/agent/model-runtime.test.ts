@@ -504,6 +504,75 @@ describe('ModelAgentRuntime', () => {
     )
   })
 
+  it('manually compacts Continue history even when automatic compression is disabled', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(createEventStream('手动压缩摘要'), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher,
+      contextCompression: {
+        settings: {
+          enabled: false,
+          triggerTokens: 20_000,
+          recentRawTokens: 5_000,
+          modelSource: { kind: 'current' },
+          summaryPrompt: 'Summarize earlier history.'
+        },
+        contextWindowTokens: 32_000
+      }
+    })
+    const history = [
+      { role: 'user' as const, content: 'earlier question' },
+      { role: 'assistant' as const, content: 'earlier answer' },
+      { role: 'user' as const, content: 'recent question' },
+      { role: 'assistant' as const, content: 'recent answer' }
+    ]
+    const outcome = await runtime.compactConversation(
+      {
+        requestId: '00000000-0000-4000-8000-000000000081',
+        conversationId: '00000000-0000-4000-8000-000000000082',
+        runtimeSelection: { provider: 'continue' },
+        history,
+        historyMessageIds: [
+          '00000000-0000-4000-8000-000000000083',
+          '00000000-0000-4000-8000-000000000084',
+          '00000000-0000-4000-8000-000000000085',
+          '00000000-0000-4000-8000-000000000086'
+        ]
+      },
+      new AbortController().signal
+    )
+
+    expect(fetcher).toHaveBeenCalledOnce()
+    const body = JSON.parse(
+      fetcher.mock.calls[0]![1]!.body as string
+    ) as { messages: unknown[] }
+    expect(JSON.stringify(body.messages)).toContain('earlier question')
+    expect(JSON.stringify(body.messages)).not.toContain('recent question')
+    expect(outcome.result).toMatchObject({
+      provider: 'continue',
+      strategy: 'goodbuddy-summary',
+      compacted: true,
+      contextCompressionState: {
+        coveredMessageCount: 2,
+        coveredFromMessageId:
+          '00000000-0000-4000-8000-000000000083',
+        coveredThroughMessageId:
+          '00000000-0000-4000-8000-000000000084',
+        summary: '手动压缩摘要'
+      }
+    })
+    await runtime.dispose()
+  })
+
   it('waits for completed provider usage before normal threshold compression', async () => {
     const fetcher = vi
       .fn<typeof fetch>()
@@ -551,7 +620,7 @@ describe('ModelAgentRuntime', () => {
         contextWindowTokens: 32_000
       }
     })
-    const events = []
+    const events: RuntimeEvent[] = []
 
     for await (const event of runtime.run(
       {
@@ -2591,6 +2660,84 @@ describe('ModelAgentRuntime', () => {
       dynamicTool.name
     )
     expect(toolProvider.callTool).toHaveBeenCalledTimes(2)
+  })
+
+  it('continues without tools when the refreshed inventory is empty', async () => {
+    const progressTool: ModelToolDefinition = {
+      name: 'record_progress',
+      displayName: 'Record progress',
+      description: 'Record the final required step',
+      inputSchema: { type: 'object' },
+      source: 'builtin'
+    }
+    const listTools = vi
+      .fn<ModelToolProviderLike['listTools']>()
+      .mockResolvedValueOnce([progressTool])
+      .mockResolvedValueOnce([])
+    const toolProvider = createToolProvider({ listTools })
+    const responses = [
+      {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call-progress',
+              type: 'function',
+              function: {
+                name: progressTool.name,
+                arguments: '{}'
+              }
+            }]
+          }
+        }]
+      },
+      {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: '进度记录完成。'
+          }
+        }]
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+
+    const events = []
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed151',
+        conversationId: 'conversation-empty-refreshed-tools',
+        prompt: '记录进度后完成',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      vi.fn(async () => 'once' as const)
+    )) {
+      events.push(event)
+    }
+
+    expect(listTools).toHaveBeenCalledTimes(2)
+    expect(toolProvider.callTool).toHaveBeenCalledOnce()
+    expect(
+      JSON.parse(fetcher.mock.calls[1]?.[1]?.body as string)
+    ).not.toHaveProperty('tools')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: '进度记录完成。'
+      })
+    )
   })
 
   it('runs only scoped knowledge in Ask without requesting approval', async () => {

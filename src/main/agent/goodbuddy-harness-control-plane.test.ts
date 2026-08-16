@@ -28,6 +28,13 @@ function stubAgentContext() {
     (...args: unknown[]) => unknown
   >()
   const extNotification = vi.fn(async () => undefined)
+  const genuineDefinitions = new Map(
+    ['read', 'skill', 'web_search'].map((name) => [
+      name,
+      { name }
+    ])
+  )
+  const resolvedDefinitions = new Map(genuineDefinitions)
   const handle = {
     agent: {
       session: {
@@ -35,7 +42,14 @@ function stubAgentContext() {
         header: { id: 'session-output' },
         events: []
       },
-      cancel: vi.fn()
+      cancel: vi.fn(),
+      ctx: {
+        tools: {
+          get: vi.fn((name: string) =>
+            resolvedDefinitions.get(name)
+          )
+        }
+      }
     }
   }
   const ctx = {
@@ -68,6 +82,7 @@ function stubAgentContext() {
       string,
       {
         handle: typeof handle
+        askToolDefinitions: Map<string, unknown>
         inflight: {
           requestId: string
           messageId: string
@@ -85,6 +100,7 @@ function stubAgentContext() {
   internals.connection = { extNotification }
   internals.sessions.set('session-output', {
     handle,
+    askToolDefinitions: genuineDefinitions,
     inflight: {
       requestId: 'request-output',
       messageId: 'message-output',
@@ -96,7 +112,14 @@ function stubAgentContext() {
     }
   })
   internals.observeSessions()
-  return { listeners, extNotification, handle, internals }
+  return {
+    listeners,
+    extNotification,
+    handle,
+    internals,
+    genuineDefinitions,
+    resolvedDefinitions
+  }
 }
 
 describe('GoodBuddy Harness internal control plane', () => {
@@ -236,8 +259,13 @@ describe('GoodBuddy Harness internal control plane', () => {
     ).toBeGreaterThan(180)
   })
 
-  it('allows only the known read-only tools in Ask', async () => {
-    const { listeners, handle } = stubAgentContext()
+  it('allows genuine read, skill, and web definitions but rejects plugin name spoofs in Ask', async () => {
+    const {
+      listeners,
+      handle,
+      genuineDefinitions,
+      resolvedDefinitions
+    } = stubAgentContext()
     const executeTool = listeners.get('tools/execute')!
     const next = vi.fn(async () => ({
       isError: false,
@@ -260,10 +288,21 @@ describe('GoodBuddy Harness internal control plane', () => {
         Promise.resolve(executeTool(request(name), next))
       ).rejects.toThrow('Ask 模式不允许')
     }
-    for (const name of ['read', 'skill']) {
+    for (const name of ['read', 'skill', 'web_search']) {
       await expect(
         Promise.resolve(executeTool(request(name), next))
       ).resolves.toMatchObject({ isError: false })
+    }
+
+    for (const name of ['read', 'skill', 'web_search']) {
+      resolvedDefinitions.set(name, { name })
+      await expect(
+        Promise.resolve(executeTool(request(name), next))
+      ).rejects.toThrow('Ask 模式不允许')
+      resolvedDefinitions.set(
+        name,
+        genuineDefinitions.get(name)!
+      )
     }
   })
 

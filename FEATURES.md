@@ -21,7 +21,7 @@
 
 - [x] **直连模型 Runtime**：支持问答、知识总结、受控工具执行和图像生成。
 - [x] **OpenCode 与 Continue**：使用隔离子进程、环境变量白名单、统一配置、取消、超时和活动记录。
-- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；Ask 只允许模型调用 `read` 与 `skill`，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。
+- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。
 - [x] **DSH npm 插件市场**：市场默认关闭，由用户显式开启后搜索公共 npm 的 `dsh-plugin` 包，使用捆绑 npm 执行精确版本安装和普通 lifecycle scripts，并支持启停、JSON 配置、移除、失败启动自动停用和离线管理已安装插件；关闭市场只隐藏目录与管理界面，不改变已有插件的启停状态，第三方代码不受 Ask 初始化隔离。
 - [x] **Ask 与 Execute 工作模式**：Ask 保持只读；Execute 运行已启用且受边界约束的工具。
 - [x] **专家与 Subagent**：支持显式专家、团队分析和最多三个只读专家并行分析。
@@ -29,15 +29,16 @@
 - [x] **多协议模型配置**：支持 Anthropic Messages、OpenAI Chat Completions、OpenAI Images 和无认证本机模型。
 - [x] **上下文用量与自动压缩**：直连模型按每次成功调用更新供应商用量，图片与工具轮次使用同一口径，供应商缺失 usage 时才回退估算；界面明确区分“本次模型调用”和“压缩后对话估算”，压缩标识的前后值使用同一估算口径，运行记录仍保留各次模型调用的供应商 usage。对话与多轮工具 Agent 可在已完成调用越过阈值后自动重复压缩，规划时先为固定提示、工具定义和摘要预留预算；同一回复会分别保留 Agent 工具上下文与对话历史的压缩标识，并在应用重启或较早消息滚出本地历史窗口后继续复用摘要。
 - [x] **Main-only 凭据保护**：API Key 使用系统安全存储加密，不暴露给 Renderer。
-- [ ] **OpenCode Runtime 定制**（规划中）：开放当前受控宿主路径实际支持的 Agent 预设、LSP 与 Formatter 状态、Commands 快捷入口和 Runtime 自有上下文压缩；不开放任意插件安装、Session Share、自动 Worktree 或 OpenCode 原生会话持久化。
-- [ ] **Continue Runtime 定制**（规划中）：提供 Rules、Prompt 模板、配置预设、上下文状态与手动压缩，并把 Agent 交互提问转换为 GoodBuddy 统一问答卡片；Hooks、后台 Job 和 Continue 原生会话管理继续暂缓。
+- [x] **OpenCode Runtime 定制**：GoodBuddy 管理的内置 OpenCode 可发现原生 Agents、Tools、Commands、LSP、Formatters、MCP、Skills、Prompts 与 Resources；Tools 单独显示读取、文件修改、命令、网络、Agent 编排等类型、来源及 Ask/Execute 可用性，并隐藏 OpenCode 内部 `invalid` 与 GoodBuddy 临时 MCP 工具。支持保存默认 Agent、每次请求覆盖 Agent、通过原生 SDK 执行 Command、显示上下文用量并调用原生 Compact；外部 OpenCode Server 只报告连接状态，不宣称原生清单可读。任意插件安装、Session Share、自动 Worktree 和 OpenCode 原生会话持久化仍不开放。
+- [x] **Continue Runtime 定制**：提供静态配置中的原生 Rules、Prompt 模板与 MCP 清单，以及可编辑的 GoodBuddy Rules/Prompt 配置预设；聊天可按请求选择预设和填入可继续编辑的 Prompt。当前 Continue Host 没有可信的静态原生 Tool 发现接口，且使用隔离的 `CONTINUE_GLOBAL_DIR`，因此界面明确标记 Tools 不支持静态发现，也不把 Host 实际不会加载的工作区或用户 Skills 冒充原生能力；GoodBuddy 分配的 Skills 仍按请求暂存执行。Continue 临时 Host 不复用原生会话压缩，手动压缩由 GoodBuddy 摘要模型完成并验证持久化摘要覆盖范围；Agent 交互提问转换为统一问答卡片。Resources、Hooks、后台 Job 和 Continue 原生会话管理继续暂缓。
+- [x] **Runtime 原生清单语义**：原生能力以 Agents、Tools、Commands、Skills、MCP、Rules、Prompts、Resources、LSP、Formatters 和上下文 11 个页签展示；清单状态独立于 Runtime 连通性，区分完整、部分、不可用、仅连接和不支持。DeepSeek Harness 通过 Host Registry 枚举有界的内置/插件 Tools 与 Skills，显示真实 Ask/Execute 边界，并排除 GoodBuddy 按请求分配的 Skills、Web/MCP 代理。
 - [ ] **可执行 Subagent**（规划中）：提供显式 Execute 委派，限制嵌套、并行、Token、时间和工具权限，并保留父子任务审计。
 
 ### Skills、MCP 与知识库
 
 - [x] **Skills 按需接入**：可分配给直连模型、OpenCode、Continue 和 DeepSeek Harness，并使用有界资源和受控 Runtime 边界。
 - [x] **MCP Tools**：显式启用的自定义 MCP 可按 Runtime 分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent Execute 和 DeepSeek Harness，并仅在 Execute 加载；Agent 子进程只获得按请求签发的本机回环权限，MCP 地址、命令和凭据保留在 Main，动态工具仍会重新发现并经过现有执行记录与权限边界。
-- [ ] **MCP Prompts 与 Resources**（规划中）：在现有 MCP Tools 之外发现有界的 Prompt 和 Resource 元数据，将 Prompt 接入可编辑的聊天快捷模板，并按 Runtime 实际支持情况逐步共享。
+- [x] **MCP Prompts 与 Resources 元数据**：MCP 测试仅在 Server 声明对应能力时发现有界的 Prompt、参数与 Resource 元数据，不读取 Resource 内容；Runtime 支持的 Prompt 可填入聊天草稿后继续编辑。OpenCode 可报告实验性 Resource 清单，Continue 当前版本明确不支持 Resources。
 - [x] **本地知识库**：支持文件、目录和网页导入、SQLite FTS5 检索及来源追溯。
 - [x] **知识图谱**：支持规则、模型和混合抽取，以及实体、关系、别名和证据维护。
 - [x] **向量模型配置与检索**：可配置兼容 Embeddings 接口并用于语义检索。

@@ -206,6 +206,9 @@ class RealLongAgentToolProvider implements ModelToolProviderLike {
   readonly completedSteps: number[] = []
 
   async listTools(): Promise<ModelToolDefinition[]> {
+    if (this.completedSteps.length >= 3) {
+      return []
+    }
     const expectedStep = this.completedSteps.length + 1
     return [
       {
@@ -813,7 +816,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
   )
 
   it(
-    'completes an approved file task through bundled OpenCode',
+    'completes an Execute file task through bundled OpenCode',
     async () => {
       const runtime = new AgentRuntimeController(
         new OpenCodeRuntime({
@@ -859,14 +862,10 @@ describe.runIf(enabled)('runtime end-to-end', () => {
           )
         )
         expect(approvals).not.toContain('runtime:whole-run')
-        expect(approvals).toEqual(
-          expect.arrayContaining([
-            expect.stringMatching(/^opencode:/u)
-          ])
-        )
+        expect(approvals).toEqual([])
         await expect(
           readFile(join(workspace, 'opencode-output.txt'), 'utf8')
-        ).resolves.toBe('OPENCODE_E2E_OK')
+        ).resolves.toMatch(/^OPENCODE_E2E_OK\r?\n?$/u)
       } finally {
         await runtime.dispose()
       }
@@ -875,7 +874,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
   )
 
   it(
-    'completes an approved file task through bundled Continue',
+    'completes an Execute file task through bundled Continue',
     async () => {
       const runtime = new AgentRuntimeController(
         new ContinueAgentRuntime({
@@ -905,7 +904,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       const approvals: string[] = []
 
       try {
-        const output = await collectText(
+        await collectText(
           runtime.run(
             {
               requestId: crypto.randomUUID(),
@@ -921,14 +920,10 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             }
           )
         )
-        if (approvals.length === 0) {
-          throw new Error(
-            `Continue did not request tool approval: ${output.slice(0, 500)}`
-          )
-        }
+        expect(approvals).toEqual([])
         await expect(
           readFile(join(workspace, 'continue-output.txt'), 'utf8')
-        ).resolves.toBe('CONTINUE_E2E_OK')
+        ).resolves.toMatch(/^CONTINUE_E2E_OK\r?\n?$/u)
       } finally {
         await runtime.dispose()
       }

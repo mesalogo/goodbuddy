@@ -123,7 +123,7 @@ export function createModelProfileRuntime(
   defaultWorkspace: string,
   settings: ResolvedRuntimeSettings,
   profile: ResolvedModelProfile
-): AgentRuntime {
+): ModelAgentRuntime {
   return new ModelAgentRuntime({
     apiKey: profile.apiKey,
     baseUrl: profile.baseUrl,
@@ -182,7 +182,7 @@ export function createAgentRuntime(
         capabilities.mcpServers,
         undefined,
         capabilities.knowledgeGateway,
-        false
+        capabilities.webSearchEnabled === true
       )
     })
   }
@@ -219,7 +219,8 @@ export function createAgentRuntime(
         '',
       launchHost: capabilities.continueHostLauncher,
       knowledgeGateway: capabilities.knowledgeGateway,
-      mcpServers: capabilities.mcpServers
+      mcpServers: capabilities.mcpServers,
+      customization: settings?.runtimeCustomization.continue
     })
   }
 
@@ -251,7 +252,8 @@ export function createAgentRuntime(
       skillPackages: capabilities.skillPackages,
       defaultWorkspace: workspace,
       knowledgeGateway: capabilities.knowledgeGateway,
-      mcpServers: capabilities.mcpServers
+      mcpServers: capabilities.mcpServers,
+      customization: settings?.runtimeCustomization.opencode
     })
   }
 

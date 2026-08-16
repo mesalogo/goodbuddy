@@ -78,6 +78,67 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('migrates version 17 to empty Runtime customization', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const previous = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    previous.version = 17
+    Reflect.deleteProperty(previous, 'runtimeCustomization')
+    await writeFile(filePath, JSON.stringify(previous))
+
+    const migrated = new RuntimeSettingsStore(
+      filePath,
+      cipher
+    )
+    await expect(migrated.getRuntimeCustomization()).resolves.toEqual({
+      opencode: {},
+      continue: { presets: [] }
+    })
+  })
+
+  it('persists validated Runtime customization independently', async () => {
+    const { store } = await createStore()
+    const presetId = '00000000-0000-4000-8000-000000000071'
+    const ruleId = '00000000-0000-4000-8000-000000000072'
+    const promptId = '00000000-0000-4000-8000-000000000073'
+    const customization = {
+      opencode: { defaultAgent: 'build' },
+      continue: {
+        defaultPresetId: presetId,
+        presets: [
+          {
+            id: presetId,
+            name: '代码审查',
+            rules: [
+              {
+                id: ruleId,
+                name: '只报告可复现问题',
+                content: 'Only report reproducible findings.',
+                enabled: true
+              }
+            ],
+            prompts: [
+              {
+                id: promptId,
+                name: '审查变更',
+                prompt: 'Review the current changes.'
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    await expect(
+      store.updateRuntimeCustomization(customization)
+    ).resolves.toEqual(customization)
+    await expect(store.getRuntimeCustomization()).resolves.toEqual(
+      customization
+    )
+  })
+
   it('migrates version 16 to disabled default context compression', async () => {
     const { filePath, store } = await createStore()
     await store.update(settings())
@@ -390,7 +451,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
-    expect(persisted.version).toBe(17)
+    expect(persisted.version).toBe(18)
     expect(persisted).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
@@ -669,7 +730,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(17)
+    expect(persisted.version).toBe(18)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -689,7 +750,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(17)
+    expect(persisted.version).toBe(18)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -1278,7 +1339,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(17)
+    expect(persisted.version).toBe(18)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -1524,7 +1585,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 17,
+      version: 18,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -1803,7 +1864,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(17)
+    expect(persisted.version).toBe(18)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

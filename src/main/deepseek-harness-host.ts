@@ -285,6 +285,21 @@ export async function startControlledDeepSeekHarnessHost(
       )
     }
     await Promise.all(fibers)
+    const trustedAskToolDefinitions = new Map(
+      ['read']
+        .map(
+          (name) =>
+            [name, ctx.tools.get(name)] as const
+        )
+        .filter(
+          (
+            entry
+          ): entry is readonly [
+            string,
+            NonNullable<(typeof entry)[1]>
+          ] => entry[1] !== undefined
+        )
+    )
     const extensions = await loadControlledHarnessExtensions(
       ctx,
       config.extensionPackages ?? []
@@ -306,6 +321,7 @@ export async function startControlledDeepSeekHarnessHost(
     const controlPlane = new GoodBuddyHarnessControlPlane(ctx, {
       ...config,
       skills,
+      trustedAskToolDefinitions,
       execution: { mode: 'host' },
       stream: createBoundedAcpStream(
         rawStream,

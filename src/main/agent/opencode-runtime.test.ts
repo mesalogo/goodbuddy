@@ -2423,6 +2423,647 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
   })
 })
 
+describe('OpenCodeRuntime native customization', () => {
+  it('maps bounded native inventory and filters GoodBuddy-owned capabilities', async () => {
+    const sourceRoot = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-opencode-native-snapshot-')
+    )
+    const assignedSkillDirectory = join(
+      sourceRoot,
+      'assigned-skill'
+    )
+    await mkdir(assignedSkillDirectory)
+    await writeFile(
+      join(assignedSkillDirectory, 'SKILL.md'),
+      [
+        '---',
+        'name: assigned-skill',
+        'description: Assigned test skill',
+        '---',
+        '',
+        '# Assigned skill'
+      ].join('\n'),
+      'utf8'
+    )
+    const client = {
+      session: {
+        list: vi.fn().mockResolvedValue({
+          data: [],
+          error: undefined
+        })
+      },
+      app: {
+        agents: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'build',
+              description: 'Primary builder',
+              mode: 'primary',
+              native: true,
+              hidden: false,
+              permission: [],
+              options: {}
+            },
+            {
+              name: 'hidden',
+              mode: 'all',
+              hidden: true,
+              permission: [],
+              options: {}
+            }
+          ]
+        }),
+        skills: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'native-skill',
+              description: 'Native skill',
+              location: 'C:\\private\\native',
+              content: 'must not be exposed'
+            },
+            {
+              name: 'assigned-skill',
+              location: 'C:\\private\\assigned',
+              content: 'assigned content'
+            }
+          ]
+        })
+      },
+      tool: {
+        ids: vi.fn().mockResolvedValue({
+          data: [
+            'apply_patch',
+            'bash',
+            'edit',
+            'glob',
+            'grep',
+            'invalid',
+            'question',
+            'read',
+            'skill',
+            'task',
+            'todowrite',
+            'webfetch',
+            'websearch',
+            'write',
+            'goodbuddy-data-123_search',
+            'extension_tool'
+          ],
+          error: undefined
+        })
+      },
+      command: {
+        list: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'review',
+              description: 'Review changes',
+              source: 'command',
+              template: 'private command template',
+              hints: []
+            },
+            {
+              name: 'mcp-prompt',
+              description: 'Prompt from MCP',
+              source: 'mcp',
+              template: 'Inspect $ARGUMENTS',
+              hints: []
+            },
+            {
+              name: 'assigned-skill',
+              source: 'skill',
+              template: 'assigned skill template',
+              hints: []
+            },
+            {
+              name: 'goodbuddy-data-123',
+              source: 'mcp',
+              template: 'temporary prompt',
+              hints: []
+            }
+          ]
+        })
+      },
+      lsp: {
+        status: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'typescript',
+              name: 'TypeScript',
+              root: 'C:\\private\\workspace',
+              status: 'connected'
+            }
+          ]
+        })
+      },
+      formatter: {
+        status: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'prettier',
+              enabled: true,
+              extensions: ['.ts', '.tsx']
+            }
+          ]
+        })
+      },
+      mcp: {
+        status: vi.fn().mockResolvedValue({
+          data: {
+            public: { status: 'failed', error: 'private failure' },
+            'goodbuddy-custom-123': { status: 'connected' }
+          }
+        })
+      },
+      experimental: {
+        resource: {
+          list: vi.fn().mockResolvedValue({
+            data: {
+              'public-resource': {
+                name: 'Public resource',
+                uri: 'docs://public',
+                description: 'Reference',
+                mimeType: 'text/plain',
+                client: 'public'
+              },
+              temporary: {
+                name: 'Temporary resource',
+                uri: 'docs://temporary',
+                client: 'goodbuddy-data-123'
+              }
+            }
+          })
+        }
+      }
+    } as unknown as ReturnType<typeof createOpencodeClient>
+    const runtime = embeddedRuntime(client, {
+      skillPackages: [
+        {
+          id: 'assigned-skill',
+          directory: assignedSkillDirectory
+        }
+      ]
+    })
+
+    const snapshot = await runtime.getNativeSnapshot()
+
+    expect(snapshot).toMatchObject({
+      available: true,
+      inventoryStatus: 'available',
+      detail: 'OpenCode 原生能力已就绪',
+      agents: [
+        {
+          id: 'build',
+          mode: 'primary',
+          native: true,
+          hidden: false
+        },
+        {
+          id: 'hidden',
+          hidden: true
+        }
+      ],
+      toolsSupported: true,
+      tools: expect.arrayContaining([
+        {
+          id: 'edit',
+          name: 'edit',
+          kind: 'write',
+          source: 'runtime',
+          ask: 'blocked',
+          execute: 'allowed'
+        },
+        {
+          id: 'read',
+          name: 'read',
+          kind: 'read',
+          source: 'runtime',
+          ask: 'blocked',
+          execute: 'allowed'
+        },
+        {
+          id: 'skill',
+          name: 'skill',
+          kind: 'agent',
+          source: 'runtime',
+          ask: 'conditional',
+          execute: 'allowed'
+        },
+        {
+          id: 'extension_tool',
+          name: 'extension_tool',
+          kind: 'other',
+          source: 'unknown',
+          ask: 'blocked',
+          execute: 'allowed'
+        }
+      ]),
+      commands: [
+        {
+          id: 'review',
+          source: 'command'
+        },
+        {
+          id: 'mcp-prompt',
+          source: 'mcp'
+        }
+      ],
+      prompts: [
+        {
+          id: 'mcp-prompt',
+          prompt: 'Inspect $ARGUMENTS',
+          source: 'mcp'
+        }
+      ],
+      lsp: [
+        {
+          id: 'typescript',
+          name: 'TypeScript',
+          status: 'connected'
+        }
+      ],
+      formatters: [
+        {
+          id: 'prettier',
+          enabled: true,
+          extensions: ['.ts', '.tsx']
+        }
+      ],
+      mcpServers: [
+        {
+          id: 'public',
+          status: 'failed'
+        }
+      ],
+      skills: [
+        {
+          id: 'native-skill',
+          description: 'Native skill'
+        }
+      ],
+      resources: [
+        {
+          id: 'public-resource',
+          uri: 'docs://public',
+          server: 'public'
+        }
+      ],
+      resourcesSupported: true,
+      context: {
+        strategy: 'native',
+        manualCompact: true
+      }
+    })
+    const serialized = JSON.stringify(snapshot)
+    expect(serialized).not.toContain('private failure')
+    expect(serialized).not.toContain('private command template')
+    expect(serialized).not.toContain('must not be exposed')
+    expect(serialized).not.toContain('C:\\private')
+    expect(serialized).not.toContain('assigned-skill')
+    expect(serialized).not.toContain('goodbuddy-data-')
+    expect(serialized).not.toContain('goodbuddy-custom-')
+    expect(serialized).not.toContain('"invalid"')
+
+    vi.mocked(client.tool.ids).mockRejectedValueOnce(
+      new Error('tool inventory unavailable')
+    )
+    const partialSnapshot = await runtime.getNativeSnapshot()
+    expect(partialSnapshot).toMatchObject({
+      available: true,
+      inventoryStatus: 'partial',
+      tools: [],
+      toolsSupported: false
+    })
+    expect(partialSnapshot.detail).toContain('工具')
+    await runtime.dispose()
+    await rm(sourceRoot, { recursive: true, force: true })
+  })
+
+  it('reports external OpenCode connectivity without claiming readable native inventory', async () => {
+    const client = runClient([]).client
+    const runtime = new OpenCodeRuntime(
+      options({
+        baseUrl: 'http://127.0.0.1:4096',
+        embedded: false
+      }),
+      {
+        createClient: vi.fn(
+          () => client
+        ) as unknown as typeof createOpencodeClient
+      }
+    )
+
+    await expect(runtime.getNativeSnapshot()).resolves.toMatchObject({
+      available: true,
+      inventoryStatus: 'connection-only',
+      tools: [],
+      toolsSupported: false
+    })
+    expect(client.tool.ids).not.toHaveBeenCalled()
+    await runtime.dispose()
+  })
+
+  it('uses an explicit valid agent over the configured default', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    Object.assign(setup.client, {
+      app: {
+        agents: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'build',
+              mode: 'primary',
+              hidden: false,
+              permission: [],
+              options: {}
+            },
+            {
+              name: 'plan',
+              mode: 'all',
+              hidden: false,
+              permission: [],
+              options: {}
+            }
+          ]
+        })
+      }
+    })
+    const runtime = embeddedRuntime(setup.client, {
+      customization: { defaultAgent: 'build' }
+    })
+
+    for await (const _event of runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute',
+        runtimeControl: {
+          provider: 'opencode',
+          agent: 'plan'
+        }
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    expect(setup.session.create).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: 'plan' })
+    )
+    expect(setup.session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: 'plan' }),
+      expect.anything()
+    )
+    await runtime.dispose()
+  })
+
+  it('uses the configured default agent when no request override is present', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    Object.assign(setup.client, {
+      app: {
+        agents: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'build',
+              mode: 'primary',
+              hidden: false,
+              permission: [],
+              options: {}
+            }
+          ]
+        })
+      }
+    })
+    const runtime = embeddedRuntime(setup.client, {
+      customization: { defaultAgent: 'build' }
+    })
+
+    await collectRun(runtime)
+
+    expect(setup.session.create).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: 'build' })
+    )
+    expect(setup.session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: 'build' }),
+      expect.anything()
+    )
+    await runtime.dispose()
+  })
+
+  it('rejects a stale or hidden agent instead of falling back', async () => {
+    const setup = runClient([])
+    Object.assign(setup.client, {
+      app: {
+        agents: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'hidden',
+              mode: 'primary',
+              hidden: true,
+              permission: [],
+              options: {}
+            }
+          ]
+        })
+      }
+    })
+    const runtime = embeddedRuntime(setup.client)
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute',
+        runtimeControl: {
+          provider: 'opencode',
+          agent: 'hidden'
+        }
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).rejects.toThrow(
+      'OpenCode Agent 不存在、已隐藏或不可作为主 Agent：hidden'
+    )
+    expect(setup.session.create).not.toHaveBeenCalled()
+    expect(setup.session.promptAsync).not.toHaveBeenCalled()
+    await runtime.dispose()
+  })
+
+  it('executes validated native commands through the command API', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const command = vi.fn().mockResolvedValue({
+      data: { info: {}, parts: [] }
+    })
+    Object.assign(setup.client, {
+      app: {
+        agents: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'build',
+              mode: 'primary',
+              hidden: false,
+              permission: [],
+              options: {}
+            }
+          ]
+        })
+      },
+      command: {
+        list: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'review',
+              source: 'command',
+              template: 'Review $ARGUMENTS',
+              hints: []
+            }
+          ]
+        })
+      }
+    })
+    Object.assign(setup.client.session, { command })
+    const runtime = embeddedRuntime(setup.client)
+
+    const events = []
+    for await (const event of runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'must not become slash text',
+        workMode: 'execute',
+        runtimeControl: {
+          provider: 'opencode',
+          agent: 'build',
+          command: {
+            name: 'review',
+            arguments: '--staged'
+          }
+        }
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    expect(command).toHaveBeenCalledWith(
+      {
+        sessionID: 'session-1',
+        directory: process.cwd(),
+        command: 'review',
+        arguments: '--staged',
+        agent: 'build'
+      },
+      expect.objectContaining({
+        signal: expect.any(AbortSignal)
+      })
+    )
+    expect(setup.session.promptAsync).not.toHaveBeenCalled()
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      sessionId: 'session-1'
+    })
+    await runtime.dispose()
+  })
+
+  it('compacts an existing managed session through the v2 API', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const context = vi.fn().mockResolvedValue({
+      data: { data: [] }
+    })
+    const compact = vi.fn().mockResolvedValue({
+      data: undefined,
+      error: undefined
+    })
+    Object.assign(setup.client, {
+      v2: {
+        session: { context, compact }
+      }
+    })
+    const runtime = embeddedRuntime(setup.client)
+    await collectRun(runtime)
+    const signal = new AbortController().signal
+
+    await expect(
+      runtime.compactConversation(
+        {
+          requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+          conversationId: 'conversation-1',
+          runtimeSelection: { provider: 'opencode' },
+          history: [],
+          historyMessageIds: []
+        },
+        signal
+      )
+    ).resolves.toEqual({
+      result: {
+        provider: 'opencode',
+        strategy: 'native',
+        compacted: true,
+        detail: 'OpenCode 已完成原生上下文压缩'
+      }
+    })
+    expect(context).toHaveBeenCalledWith(
+      { sessionID: 'session-1' },
+      { signal }
+    )
+    expect(compact).toHaveBeenCalledWith(
+      { sessionID: 'session-1' },
+      { signal }
+    )
+    await runtime.dispose()
+  })
+
+  it('reports when no managed OpenCode session can be compacted', async () => {
+    const runtime = new OpenCodeRuntime(options())
+
+    await expect(
+      runtime.compactConversation(
+        {
+          requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+          conversationId: 'missing-conversation',
+          runtimeSelection: { provider: 'opencode' },
+          history: [],
+          historyMessageIds: []
+        },
+        new AbortController().signal
+      )
+    ).resolves.toEqual({
+      result: {
+        provider: 'opencode',
+        strategy: 'native',
+        compacted: false,
+        detail: '当前 GoodBuddy 对话尚无可压缩的 OpenCode 会话'
+      }
+    })
+    await runtime.dispose()
+  })
+})
+
 describe('OpenCodeRuntime model usage', () => {
   it('emits one provider-reported usage event for each terminal assistant message', async () => {
     const assistantMessage = {

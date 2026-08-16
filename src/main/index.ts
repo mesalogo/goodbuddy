@@ -531,7 +531,7 @@ if (hasSingleInstanceLock) {
                 'host-browser-control'
               )
             : Promise.resolve(undefined),
-          target === 'model'
+          target === 'model' || target === 'deepseek-harness'
             ? capabilityService.getWebSearchCapabilityStatus()
             : Promise.resolve(undefined),
           target === 'deepseek-harness'

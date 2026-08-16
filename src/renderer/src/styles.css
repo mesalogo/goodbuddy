@@ -4481,6 +4481,11 @@ button > svg {
   width: 108px;
 }
 
+.composer-picker--runtime > .model-button,
+.composer-picker--runtime-action > .model-button {
+  width: 138px;
+}
+
 .composer-picker--ask svg {
   color: var(--accent);
 }
@@ -4686,6 +4691,25 @@ button > svg {
 .composer-meta__shortcut {
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+.composer-context-compact {
+  display: inline-flex;
+  min-height: 26px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  align-items: center;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  gap: var(--space-1);
+}
+
+.composer-context-compact:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 .composer-meta kbd {
@@ -5260,6 +5284,213 @@ button > svg {
 
 .runtime-config-card__hint {
   color: var(--text-secondary) !important;
+}
+
+.runtime-customization-section {
+  gap: var(--space-4);
+}
+
+.runtime-customization-section__header,
+.runtime-customization-section__header > div,
+.runtime-customization-item__header,
+.runtime-preset-editor__section > div:first-child {
+  display: flex;
+  align-items: center;
+}
+
+.runtime-customization-section__header,
+.runtime-preset-editor__section > div:first-child {
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.runtime-customization-section__header > div {
+  min-width: 0;
+}
+
+.runtime-customization-section__header > div {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.runtime-customization-section__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.runtime-customization-editor,
+.runtime-native-inventory,
+.runtime-preset-editor,
+.runtime-preset-editor__section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.runtime-customization-editor {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-subtle);
+}
+
+.runtime-native-inventory__status {
+  display: grid;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  gap: var(--space-1);
+}
+
+.runtime-native-inventory__status--available {
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: var(--success-subtle);
+}
+
+.runtime-native-inventory__status--unavailable {
+  border-color: var(--danger-border);
+  background: var(--danger-subtle);
+}
+
+.runtime-native-inventory__status--partial,
+.runtime-native-inventory__status--connection-only,
+.runtime-native-inventory__status--unsupported {
+  border-color: var(--warning-border);
+  background: var(--warning-subtle);
+}
+
+.runtime-native-inventory__status small {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.runtime-customization-section__actions {
+  justify-content: flex-end;
+}
+
+.runtime-native-inventory > .page-tabs {
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.runtime-native-inventory__panel,
+.runtime-customization-item,
+.runtime-merged-rules {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.runtime-native-inventory__panel ul,
+.runtime-merged-rules ol {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.runtime-native-inventory__panel li {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.runtime-native-inventory__panel li + li {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.runtime-native-inventory__panel li small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.runtime-preset-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) max-content max-content;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.runtime-preset-toolbar > button,
+.runtime-preset-editor__section > div:first-child > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.runtime-preset-editor {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.runtime-preset-editor__section {
+  padding-top: var(--space-2);
+}
+
+.runtime-customization-item {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.runtime-customization-item__header {
+  gap: var(--space-2);
+}
+
+.runtime-customization-item__header > input {
+  min-width: 0;
+  flex: 1;
+}
+
+.runtime-customization-item > input,
+.runtime-customization-item textarea {
+  width: 100%;
+}
+
+.runtime-customization-item textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.runtime-customization-item .toggle-row--compact {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.runtime-merged-rules summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.runtime-merged-rules li {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.runtime-merged-rules pre {
+  max-height: 240px;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  overflow: auto;
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-caption);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .runtime-extension-marketplace {
@@ -10838,6 +11069,19 @@ details.settings-section > :not(summary) + :not(summary) {
 
   .agent-runtime-navigation {
     grid-template-columns: 1fr;
+  }
+
+  .runtime-preset-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-preset-toolbar > button {
+    width: 100%;
+  }
+
+  .runtime-customization-section__error {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .model-connection-manager {

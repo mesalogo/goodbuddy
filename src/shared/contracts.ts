@@ -17,8 +17,11 @@ import type {
 } from './capability-contracts'
 import {
   assistantIdSchema,
+  conversationHistoryMessageSchema,
   conversationContextCompressionStateSchema,
   legacyWorkModeSchema,
+  maximumConversationHistoryCharacters,
+  maximumConversationHistoryMessages,
   type AssistantProject,
   type AssistantArtifact,
   type AssistantMemory,
@@ -132,11 +135,47 @@ import {
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
 } from './runtime-selection-contracts'
+import {
+  defaultRuntimeCustomizationSettings,
+  runtimeControlSchema,
+  runtimeCustomizationSettingsSchema,
+  type RuntimeConversationCompactInput,
+  type RuntimeConversationCompactResult,
+  type RuntimeCustomizationSettings,
+  type RuntimeNativeSnapshot,
+  type RuntimeNativeSnapshotInput
+} from './runtime-customization-contracts'
 import { isDeepSeekHarnessModelProfile } from './deepseek-harness-compatibility'
 export {
   isDeepSeekHarnessCompatibleBaseUrl,
   isDeepSeekHarnessModelProfile
 } from './deepseek-harness-compatibility'
+export {
+  defaultRuntimeCustomizationSettings,
+  runtimeConversationCompactInputSchema,
+  runtimeConversationCompactResultSchema,
+  runtimeCustomizationLimits,
+  runtimeNativeInventoryLimits,
+  runtimeCustomizationSettingsSchema,
+  runtimeNativeSnapshotInputSchema,
+  runtimeNativeSnapshotSchema,
+  runtimePromptTemplateSchema,
+  type ContinueConfigurationPreset,
+  type ContinueRule,
+  type CustomizableRuntimeProvider,
+  type RuntimeContextCapability,
+  type RuntimeControl,
+  type RuntimeConversationCompactInput,
+  type RuntimeConversationCompactResult,
+  type RuntimeCustomizationSettings,
+  type RuntimeNativeInventoryStatus,
+  type RuntimeNativePrompt,
+  type RuntimeNativeRule,
+  type RuntimeNativeSnapshot,
+  type RuntimeNativeSnapshotInput,
+  type RuntimeNativeTool,
+  type RuntimePromptTemplate
+} from './runtime-customization-contracts'
 
 export const workspaceRelativePathSchema = z
   .string()
@@ -208,6 +247,7 @@ export const agentRequestSchema = z
     teamMode: z.boolean().optional(),
     smartRouting: z.boolean().optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
+    runtimeControl: runtimeControlSchema.optional(),
     workMode: legacyWorkModeSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
     knowledgeLibraryIds: z
@@ -217,17 +257,13 @@ export const agentRequestSchema = z
     knowledgeRetrievalMode: knowledgeRetrievalModeSchema.default('auto'),
     contextIds: z.array(z.string().uuid()).max(8).optional(),
     history: z
-      .array(
-        z
-          .object({
-            role: z.enum(['user', 'assistant']),
-            content: z.string().max(100_000)
-          })
-          .strict()
-      )
-      .max(500)
+      .array(conversationHistoryMessageSchema)
+      .max(maximumConversationHistoryMessages)
       .optional(),
-    historyMessageIds: z.array(z.string().uuid()).max(500).optional(),
+    historyMessageIds: z
+      .array(z.string().uuid())
+      .max(maximumConversationHistoryMessages)
+      .optional(),
     currentUserMessageId: z.string().uuid().optional(),
     currentAssistantMessageId: z.string().uuid().optional(),
     contextCompressionState:
@@ -240,11 +276,11 @@ export const agentRequestSchema = z
         (total, message) => total + message.content.length,
         0
       ) ?? 0
-    if (historyLength > 2_000_000) {
+    if (historyLength > maximumConversationHistoryCharacters) {
       context.addIssue({
         code: 'custom',
         path: ['history'],
-        message: '会话历史总长度不能超过 2,000,000 个字符'
+        message: `会话历史总长度不能超过 ${maximumConversationHistoryCharacters.toLocaleString()} 个字符`
       })
     }
     if (
@@ -379,6 +415,7 @@ export const defaultRuntimeSettings = {
   knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
   knowledgeRerankModel: 'rerank-v3.5',
   contextCompression: defaultContextCompressionSettings,
+  runtimeCustomization: defaultRuntimeCustomizationSettings,
   workspacePath: '',
   toolApproval: 'always'
 } as const
@@ -525,6 +562,8 @@ export const runtimeSettingsInputSchema = z
       .regex(/^[\w./:-]+$/, '重排模型名称包含不支持的字符'),
     knowledgeRerankApiKey: modelApiKeyUpdateSchema.optional(),
     contextCompression: contextCompressionSettingsSchema.optional(),
+    runtimeCustomization:
+      runtimeCustomizationSettingsSchema.optional(),
     workspacePath: z.string().trim().min(1).max(4_096),
     apiKey: modelApiKeyUpdateSchema,
     modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
@@ -792,6 +831,7 @@ export type RuntimeSettings = {
     | 'environment'
     | 'unreadable'
   contextCompression?: ContextCompressionSettings
+  runtimeCustomization?: RuntimeCustomizationSettings
   workspacePath: string
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment' | 'unreadable'
@@ -946,6 +986,7 @@ export type AgentEvent =
       contextWindowTokens?: number
       compressionEnabled: boolean
       source: 'provider' | 'estimated'
+      basis?: 'model-call' | 'conversation'
     }
   | {
       requestId: string
@@ -1267,6 +1308,9 @@ export type DesktopApi = {
       questionId: string,
       answers?: AgentQuestionAnswer[]
     ) => Promise<void>
+    compactConversation: (
+      input: RuntimeConversationCompactInput
+    ) => Promise<RuntimeConversationCompactResult>
     onEvent: (listener: (event: AgentEvent) => void) => () => void
   }
   browser: {
@@ -1527,6 +1571,15 @@ export type DesktopApi = {
     apply: (
       action: RuntimeExtensionAction
     ) => Promise<RuntimeExtensionMarketplaceSnapshot>
+  }
+  runtimeCustomization: {
+    getSettings: () => Promise<RuntimeCustomizationSettings>
+    updateSettings: (
+      settings: RuntimeCustomizationSettings
+    ) => Promise<RuntimeCustomizationSettings>
+    getNativeSnapshot: (
+      input: RuntimeNativeSnapshotInput
+    ) => Promise<RuntimeNativeSnapshot>
   }
   context: {
     selectFiles: () => Promise<ContextAttachment[]>

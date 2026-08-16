@@ -57,6 +57,32 @@ export async function testMcpServer(
     )
     const version = client.getServerVersion()
     const capabilities = client.getServerCapabilities()
+    const promptsSupported = Boolean(capabilities?.prompts)
+    const resourcesSupported = Boolean(capabilities?.resources)
+    const promptResult = promptsSupported
+      ? await runWithInactivityLimit(() =>
+          client.listPrompts(undefined, {
+            timeout: MCP_TEST_INACTIVITY_TIMEOUT_MS,
+            signal: controller.signal
+          })
+        ).catch((error: unknown) => {
+          controller.signal.throwIfAborted()
+          void error
+          return undefined
+        })
+      : undefined
+    const resourceResult = resourcesSupported
+      ? await runWithInactivityLimit(() =>
+          client.listResources(undefined, {
+            timeout: MCP_TEST_INACTIVITY_TIMEOUT_MS,
+            signal: controller.signal
+          })
+        ).catch((error: unknown) => {
+          controller.signal.throwIfAborted()
+          void error
+          return undefined
+        })
+      : undefined
     return {
       serverName: version?.name.slice(0, 120),
       serverVersion: version?.version.slice(0, 64),
@@ -66,7 +92,30 @@ export async function testMcpServer(
       tools: result.tools.slice(0, 100).map((tool) => ({
         name: tool.name.slice(0, 128),
         description: tool.description?.slice(0, 500)
-      }))
+      })),
+      promptsSupported,
+      promptCount: promptResult?.prompts.length,
+      prompts: promptResult?.prompts.slice(0, 100).map((prompt) => ({
+        name: prompt.name.slice(0, 128),
+        description: prompt.description?.slice(0, 500),
+        arguments: (prompt.arguments ?? [])
+          .slice(0, 32)
+          .map((argument) => ({
+            name: argument.name.slice(0, 128),
+            description: argument.description?.slice(0, 500),
+            required: argument.required === true
+          }))
+      })),
+      resourcesSupported,
+      resourceCount: resourceResult?.resources.length,
+      resources: resourceResult?.resources
+        .slice(0, 100)
+        .map((resource) => ({
+          name: resource.name.slice(0, 200),
+          uri: resource.uri.slice(0, 2_048),
+          description: resource.description?.slice(0, 500),
+          mimeType: resource.mimeType?.slice(0, 200)
+        }))
     }
   } catch (error) {
     if (signal?.aborted && !timedOut) {

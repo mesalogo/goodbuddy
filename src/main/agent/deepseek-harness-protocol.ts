@@ -1,0 +1,10 @@
+export const GOODBUDDY_CONTROL_PROTOCOL_VERSION = 1
+export const GOODBUDDY_HANDSHAKE = 'goodbuddy/handshake'
+export const GOODBUDDY_PREPARE = 'goodbuddy/session/prepare'
+export const GOODBUDDY_RELEASE = 'goodbuddy/session/release'
+export const GOODBUDDY_EVENT = 'goodbuddy/session/event'
+export const GOODBUDDY_CREDENTIAL = 'goodbuddy/credential/resolve'
+export const GOODBUDDY_TOOLS_LIST = 'goodbuddy/tools/list'
+export const GOODBUDDY_TOOLS_CALL = 'goodbuddy/tools/call'
+export const GOODBUDDY_NATIVE_SNAPSHOT = 'goodbuddy/native/snapshot'
+export const GOODBUDDY_SHUTDOWN = 'goodbuddy/shutdown'

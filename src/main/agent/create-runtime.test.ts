@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import { defaultRuntimeCustomizationSettings } from '../../shared/contracts'
 import {
   createAgentRuntime,
   createModelProfileRuntime
@@ -63,6 +64,7 @@ function settings(
     knowledgeRerankEnabled: false,
     knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
     knowledgeRerankModel: 'rerank-v3.5',
+    runtimeCustomization: defaultRuntimeCustomizationSettings,
     workspacePath: process.cwd(),
     toolApproval: 'always',
     ...overrides

@@ -308,6 +308,8 @@ export const integrations = {
       dynamicToolsUnsupported:
         'Server does not advertise dynamic tool-list updates',
       toolsUndetected: 'Tools not checked',
+      contentCounts:
+        '{{tools}} tools · {{prompts}} Prompts · {{resources}} Resources',
       testAriaLabel: 'Test {{name}}',
       test: 'Test',
       editAriaLabel: 'Edit {{name}}',
@@ -318,7 +320,18 @@ export const integrations = {
       assignmentSeparator: ', ',
       none: 'None',
       noTools: 'The server exposes no available tools.',
-      testHelp: 'Select Test to connect to the server and load its tool list.'
+      prompts: 'MCP Prompts',
+      promptCount: '{{count}} Prompts',
+      promptsAriaLabel: '{{name}} Prompts',
+      promptArguments: 'Arguments: {{names}} (* required)',
+      noPrompts: 'The server exposes no Prompts.',
+      resources: 'MCP Resources',
+      resourceCount: '{{count}} Resources',
+      resourcesAriaLabel: '{{name}} Resources',
+      noResources: 'The server exposes no Resources.',
+      notSupported: 'Not advertised by the server',
+      testHelp:
+        'Select Test to load the server Tools, Prompts, and Resources metadata.'
     }
   }
 } satisfies TranslationShape<typeof chineseIntegrations>

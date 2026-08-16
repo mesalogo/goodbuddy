@@ -321,6 +321,25 @@ export const app = {
     settings: 'Conversation settings',
     expertLabel: 'Expert role',
     modeLabel: 'Work mode',
+    runtimeControls: {
+      agentLabel: 'OpenCode Runtime Agent',
+      presetLabel: 'Continue configuration preset',
+      actionLabel: 'Runtime shortcut',
+      configuredAgent: 'Default · {{name}}',
+      runtimeDefaultAgent: 'OpenCode default Agent',
+      runtimeDefaultAgentDescription:
+        'Use the default Runtime Agent saved in settings',
+      agentDescription: 'Native OpenCode Runtime Agent',
+      noPreset: 'Use the settings default',
+      noPresetDescription:
+        'Apply the default Continue preset from Runtime settings',
+      presetDescription:
+        '{{rules}} enabled Rules · {{prompts}} Prompts',
+      noAction: 'Runtime shortcuts',
+      noActionDescription: 'Send the composer input directly',
+      commandDescription: 'Run an OpenCode Command',
+      promptDescription: 'Insert a Prompt and keep editing'
+    },
     stop: 'Stop generating',
     send: 'Send',
     sendTitle: 'Send message',
@@ -343,7 +362,11 @@ export const app = {
       conversationThresholdUsage:
         'Estimated compressed conversation ≈{{used}} · Compression at {{total}}',
       progressLabel: 'Current context usage',
-      compressionTrigger: 'Automatic compression at ≈{{tokens}}'
+      compressionTrigger: 'Automatic compression at ≈{{tokens}}',
+      compact: 'Compact context',
+      compacting: 'Compacting…',
+      nothingToCompact: 'There is no earlier conversation history to compact',
+      compactFailed: 'Context compaction failed'
     },
     experts: {
       general: 'General assistant',

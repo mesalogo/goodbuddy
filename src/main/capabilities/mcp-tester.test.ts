@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => {
   const client = {
     connect: vi.fn(),
     listTools: vi.fn(),
+    listPrompts: vi.fn(),
+    listResources: vi.fn(),
     getServerVersion: vi.fn(),
     getServerCapabilities: vi.fn(),
     close: vi.fn()
@@ -105,7 +107,74 @@ describe('testMcpServer', () => {
       serverVersion: '1.0.0',
       dynamicToolsSupported: false,
       toolCount: 1,
-      tools: [{ name: 'search', description: 'Search documents' }]
+      tools: [{ name: 'search', description: 'Search documents' }],
+      promptsSupported: false,
+      resourcesSupported: false
+    })
+  })
+
+  it('reports bounded prompt and resource metadata without reading content', async () => {
+    mocks.client.getServerCapabilities.mockReturnValue({
+      tools: { listChanged: false },
+      prompts: { listChanged: true },
+      resources: { subscribe: false, listChanged: true }
+    })
+    mocks.client.listPrompts.mockResolvedValue({
+      prompts: [
+        {
+          name: 'review',
+          description: 'Review a change',
+          arguments: [
+            {
+              name: 'scope',
+              description: 'Files to inspect',
+              required: true
+            }
+          ]
+        }
+      ]
+    })
+    mocks.client.listResources.mockResolvedValue({
+      resources: [
+        {
+          name: 'Guide',
+          uri: 'docs://guide',
+          description: 'Project guide',
+          mimeType: 'text/markdown'
+        }
+      ]
+    })
+
+    await expect(
+      testMcpServer({
+        ...common,
+        transport: 'stdio',
+        command: 'node',
+        args: ['server.js']
+      } satisfies ResolvedMcpServer)
+    ).resolves.toMatchObject({
+      promptsSupported: true,
+      promptCount: 1,
+      prompts: [
+        {
+          name: 'review',
+          arguments: [
+            {
+              name: 'scope',
+              required: true
+            }
+          ]
+        }
+      ],
+      resourcesSupported: true,
+      resourceCount: 1,
+      resources: [
+        {
+          name: 'Guide',
+          uri: 'docs://guide',
+          mimeType: 'text/markdown'
+        }
+      ]
     })
   })
 

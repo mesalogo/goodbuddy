@@ -1,11 +1,14 @@
 import type {
   AgentQuestionAnswer,
-  AgentRuntimeStatus
+  AgentRuntimeStatus,
+  RuntimeConversationCompactInput,
+  RuntimeNativeSnapshot
 } from '../../shared/contracts'
 import type {
   AgentExecutionRequest,
   AgentRuntime,
   RuntimeAuthorizer,
+  RuntimeConversationCompactOutcome,
   RuntimeEvent
 } from './runtime'
 
@@ -81,19 +84,50 @@ export class AgentRuntimeController implements AgentRuntime {
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
-    return this.probe((runtime) => runtime.getStatus())
+    return this.probeStatus((runtime) => runtime.getStatus())
   }
 
   async testConnection(): Promise<AgentRuntimeStatus> {
-    return this.probe(
+    return this.probeStatus(
       (runtime) =>
         runtime.testConnection?.() ?? runtime.getStatus()
     )
   }
 
-  private async probe(
+  async getNativeSnapshot(): Promise<RuntimeNativeSnapshot> {
+    return this.invoke((runtime) => {
+      if (!runtime.getNativeSnapshot) {
+        throw new Error('当前 Runtime 不支持原生能力清单')
+      }
+      return runtime.getNativeSnapshot()
+    })
+  }
+
+  async compactConversation(
+    request: RuntimeConversationCompactInput,
+    signal: AbortSignal
+  ): Promise<RuntimeConversationCompactOutcome> {
+    return this.invoke((runtime) => {
+      if (!runtime.compactConversation) {
+        throw new Error('当前 Runtime 不支持手动压缩')
+      }
+      return runtime.compactConversation(request, signal)
+    })
+  }
+
+  private async probeStatus(
     operation: (runtime: AgentRuntime) => Promise<AgentRuntimeStatus>
   ): Promise<AgentRuntimeStatus> {
+    const status = await this.invoke(operation)
+    return {
+      ...status,
+      supportsToolExecution: this.current.runtime.supportsToolExecution
+    }
+  }
+
+  private async invoke<T>(
+    operation: (runtime: AgentRuntime) => Promise<T>
+  ): Promise<T> {
     if (this.closing) {
       throw new Error('Agent Runtime 正在关闭')
     }
@@ -104,10 +138,7 @@ export class AgentRuntimeController implements AgentRuntime {
       if (slot !== this.current) {
         throw new Error('Runtime 已切换，请重试')
       }
-      return {
-        ...status,
-        supportsToolExecution: slot.runtime.supportsToolExecution
-      }
+      return status
     } finally {
       slot.activeRequests -= 1
       if (slot.retiring && slot.activeRequests === 0) {

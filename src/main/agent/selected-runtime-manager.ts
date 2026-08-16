@@ -2,8 +2,15 @@ import {
   agentRuntimeSelectionKey,
   type AgentRuntimeSelection
 } from '../../shared/runtime-selection-contracts'
-import type { AgentRuntimeStatus } from '../../shared/contracts'
-import type { AgentRuntime } from './runtime'
+import type {
+  AgentRuntimeStatus,
+  RuntimeConversationCompactInput,
+  RuntimeNativeSnapshot
+} from '../../shared/contracts'
+import type {
+  AgentRuntime,
+  RuntimeConversationCompactOutcome
+} from './runtime'
 import { AgentRuntimeController } from './runtime-controller'
 
 export type SelectedRuntimeResolver = {
@@ -17,6 +24,15 @@ export type SelectedRuntimeResolver = {
   testStatus(
     selection: AgentRuntimeSelection
   ): Promise<AgentRuntimeStatus>
+  getNativeSnapshot(
+    selection: AgentRuntimeSelection,
+    workspacePath?: string
+  ): Promise<RuntimeNativeSnapshot>
+  compactConversation(
+    request: RuntimeConversationCompactInput,
+    workspacePath: string | undefined,
+    signal: AbortSignal
+  ): Promise<RuntimeConversationCompactOutcome>
   releaseConversation(conversationId: string): Promise<void>
   reset?(): Promise<void>
 }
@@ -29,6 +45,9 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
   private disposed = false
   private readonly retiring = new Set<Promise<void>>()
   private readonly tests = new Set<Promise<AgentRuntimeStatus>>()
+  private readonly snapshots = new Set<
+    Promise<RuntimeNativeSnapshot>
+  >()
 
   constructor(
     private readonly createRuntime: (
@@ -40,7 +59,7 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
   async getRuntime(
     selection: AgentRuntimeSelection,
     workspacePath?: string
-  ): Promise<AgentRuntime> {
+  ): Promise<AgentRuntimeController> {
     if (this.disposed) {
       throw new Error('Agent Runtime 正在关闭')
     }
@@ -93,6 +112,37 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     }
   }
 
+  async getNativeSnapshot(
+    selection: AgentRuntimeSelection,
+    workspacePath?: string
+  ): Promise<RuntimeNativeSnapshot> {
+    if (this.disposed) {
+      throw new Error('Agent Runtime 正在关闭')
+    }
+    const operation = this.runNativeSnapshot(
+      selection,
+      workspacePath
+    )
+    this.snapshots.add(operation)
+    try {
+      return await operation
+    } finally {
+      this.snapshots.delete(operation)
+    }
+  }
+
+  async compactConversation(
+    request: RuntimeConversationCompactInput,
+    workspacePath: string | undefined,
+    signal: AbortSignal
+  ): Promise<RuntimeConversationCompactOutcome> {
+    const runtime = await this.getRuntime(
+      request.runtimeSelection,
+      workspacePath
+    )
+    return runtime.compactConversation(request, signal)
+  }
+
   async releaseConversation(conversationId: string): Promise<void> {
     const controllers = await Promise.allSettled([
       ...this.entries.values()
@@ -122,6 +172,7 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
       entries.map((entry) => this.startRetiring(entry, true))
     )
     await Promise.allSettled([...this.tests])
+    await Promise.allSettled([...this.snapshots])
     await Promise.allSettled([...this.retiring])
   }
 
@@ -137,6 +188,24 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
         (await runtime.testConnection?.()) ??
         (await runtime.getStatus())
       )
+    } finally {
+      await runtime.dispose()
+    }
+  }
+
+  private async runNativeSnapshot(
+    selection: AgentRuntimeSelection,
+    workspacePath?: string
+  ): Promise<RuntimeNativeSnapshot> {
+    const runtime = await this.createRuntime(selection, workspacePath)
+    try {
+      if (this.disposed) {
+        throw new Error('Agent Runtime 正在关闭')
+      }
+      if (!runtime.getNativeSnapshot) {
+        throw new Error('当前 Runtime 不支持原生能力清单')
+      }
+      return await runtime.getNativeSnapshot()
     } finally {
       await runtime.dispose()
     }

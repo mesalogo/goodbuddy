@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ContinueHostAdapter,
+  inspectContinueNativeConfiguration,
   type ContinueHostLauncher
 } from './continue-host-adapter'
 
@@ -172,6 +173,13 @@ describe('ContinueHostAdapter', () => {
     expect(bundle).toContain('goodbuddyEventsOverflow:!1')
     expect(bundle).toContain('goodbuddyEventsOverflow=!0')
     expect(bundle).toContain('goodbuddyEvents:ce')
+    expect(bundle).toContain('/goodbuddy/question-answer')
+    expect(bundle).toContain(
+      'goodbuddyQuestion:Lbe.currentState.pendingQuestion'
+    )
+    expect(bundle.indexOf('GOODBUDDY_CONTINUE_HOST_TOKEN')).toBeLessThan(
+      bundle.indexOf('/goodbuddy/question-answer')
+    )
     expect(bundle).toContain('type:"text",delta:l')
     expect(bundle).toContain('onToolStart?.(c.name,c.arguments,c.id)')
     expect(bundle).toContain(
@@ -528,7 +536,7 @@ describe('ContinueHostAdapter', () => {
         cacheWriteTokens: 0
       }
     })
-    expect(launch?.entryPath).toContain('host-v6')
+    expect(launch?.entryPath).toContain('host-v7')
     expect(launch?.args).toEqual([
       '--config',
       expect.stringContaining('model-config-'),
@@ -1290,6 +1298,334 @@ describe('ContinueHostAdapter', () => {
     expect(permissionBodies).toEqual([
       { requestId: 'permission-1', approved: true }
     ])
+  })
+
+  it('merges enabled preset Rules and prompts after native configuration metadata', async () => {
+    const distribution = await createDistribution()
+    const configPath = join(
+      distribution.cacheRoot,
+      '..',
+      'preset-continue.yaml'
+    )
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        name: 'Native',
+        version: '1.0.0',
+        schema: 'v1',
+        models: [{ provider: 'ollama', model: 'qwen3' }],
+        rules: [{ name: 'Native rule', rule: 'Native content' }],
+        prompts: [
+          { name: 'Native prompt', prompt: 'Native prompt content' }
+        ]
+      }),
+      'utf8'
+    )
+    let generatedConfig: Record<string, unknown> = {}
+    const launchHost: ContinueHostLauncher = (_entry, args) => {
+      const index = args.indexOf('--config')
+      generatedConfig = JSON.parse(
+        readFileSync(args[index + 1] ?? '', 'utf8')
+      )
+      return {
+        exitCode: null,
+        killed: false,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true
+      }
+    }
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/state')) {
+          stateRequests += 1
+          return Response.json({
+            session: {
+              history:
+                stateRequests === 1
+                  ? []
+                  : [
+                      {
+                        message: {
+                          role: 'assistant',
+                          content: 'PRESET_OK'
+                        }
+                      }
+                    ]
+            },
+            isProcessing: false,
+            messageQueueLength: 0,
+            pendingPermission: null
+          })
+        }
+        return Response.json({})
+      })
+    )
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath,
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost
+    })
+
+    await adapter.run(
+      'hello',
+      new AbortController().signal,
+      async () => 'deny',
+      {
+        preset: {
+          id: randomUUID(),
+          name: 'Preset',
+          rules: [
+            {
+              id: randomUUID(),
+              name: 'Enabled',
+              content: 'Enabled content',
+              enabled: true
+            },
+            {
+              id: randomUUID(),
+              name: 'Disabled',
+              content: 'Disabled content',
+              enabled: false
+            }
+          ],
+          prompts: [
+            {
+              id: randomUUID(),
+              name: 'Preset prompt',
+              description: 'Preset description',
+              prompt: 'Preset prompt content'
+            }
+          ]
+        }
+      }
+    )
+
+    expect(generatedConfig).toMatchObject({
+      rules: [
+        { name: 'Native rule', rule: 'Native content' },
+        { name: 'Enabled', rule: 'Enabled content' }
+      ],
+      prompts: [
+        { name: 'Native prompt', prompt: 'Native prompt content' },
+        {
+          name: 'Preset prompt',
+          description: 'Preset description',
+          prompt: 'Preset prompt content'
+        }
+      ]
+    })
+    expect(JSON.stringify(generatedConfig)).not.toContain(
+      'Disabled content'
+    )
+  })
+
+  it('returns a redacted native inventory without scanning host-inaccessible Skills', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-continue-inventory-'))
+    temporaryDirectories.push(root)
+    const workspace = join(root, 'workspace')
+    const configPath = join(root, 'continue.jsonc')
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            name: 'Native Rule',
+            rule: 'Only bounded rule content is exposed'
+          }
+        ],
+        prompts: [
+          {
+            name: 'Native Prompt',
+            description: 'Safe metadata',
+            prompt: 'Prompt body'
+          }
+        ],
+        mcpServers: [
+          {
+            name: 'private-tools',
+            command: 'secret-command.exe',
+            url: 'https://secret.example/mcp',
+            apiKey: 'secret-value'
+          },
+          {
+            name: 'goodbuddy-knowledge',
+            url: 'http://127.0.0.1/token'
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    const inventory = await inspectContinueNativeConfiguration({
+      configPath,
+      workspace
+    })
+
+    expect(inventory.rules).toEqual([
+      expect.objectContaining({
+        name: 'Native Rule',
+        content: 'Only bounded rule content is exposed'
+      })
+    ])
+    expect(inventory.prompts).toEqual([
+      expect.objectContaining({
+        name: 'Native Prompt',
+        prompt: 'Prompt body'
+      })
+    ])
+    expect(inventory.mcpServers).toEqual([
+      expect.objectContaining({
+        name: 'private-tools',
+        status: 'unknown'
+      })
+    ])
+    expect(inventory).not.toHaveProperty('skills')
+    expect(JSON.stringify(inventory)).not.toMatch(
+      /secret-command|secret\.example|secret-value|goodbuddy-knowledge/u
+    )
+    expect(inventory.detail).toContain('不提供 Resources')
+  })
+
+  it('bridges authenticated QuizService questions and cleans answered mappings', async () => {
+    const distribution = await createDistribution()
+    const configPath = join(
+      distribution.cacheRoot,
+      '..',
+      'question-continue.yaml'
+    )
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        models: [{ provider: 'ollama', model: 'qwen3' }]
+      }),
+      'utf8'
+    )
+    const answerBodies: unknown[] = []
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit
+      ) => {
+        const url = String(input)
+        if (url.endsWith('/goodbuddy/question-answer')) {
+          answerBodies.push(JSON.parse(String(init?.body)))
+          return Response.json({ success: true })
+        }
+        if (url.endsWith('/state')) {
+          stateRequests += 1
+          if (stateRequests === 1) {
+            return Response.json({
+              session: { history: [] },
+              isProcessing: false,
+              messageQueueLength: 0,
+              pendingPermission: null
+            })
+          }
+          if (stateRequests === 2) {
+            return Response.json({
+              session: { history: [] },
+              isProcessing: true,
+              messageQueueLength: 0,
+              pendingPermission: null,
+              goodbuddyQuestion: {
+                requestId: 'quiz-123',
+                timestamp: Date.now(),
+                question: {
+                  question: 'Choose safely',
+                  options: ['Safe', 'Fast'],
+                  defaultAnswer: 'Safe'
+                }
+              }
+            })
+          }
+          return Response.json({
+            session: {
+              history: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: 'QUESTION_OK'
+                  }
+                }
+              ]
+            },
+            isProcessing: false,
+            messageQueueLength: 0,
+            pendingPermission: null,
+            goodbuddyQuestion: null
+          })
+        }
+        return Response.json({})
+      })
+    )
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath,
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost: () => ({
+        exitCode: null,
+        killed: false,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true
+      })
+    })
+    const events: unknown[] = []
+
+    await expect(
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        async () => 'deny',
+        {
+          onEvent: async (event) => {
+            events.push(event)
+            if (event.type === 'question') {
+              await adapter.respondToQuestion(
+                event.questionId,
+                [['Safe']]
+              )
+            }
+          }
+        }
+      )
+    ).resolves.toEqual({ text: 'QUESTION_OK' })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'question',
+        questionId: 'quiz-123',
+        questions: [
+          expect.objectContaining({
+            question: 'Choose safely',
+            options: [
+              { label: 'Safe', description: '' },
+              { label: 'Fast', description: '' }
+            ]
+          })
+        ]
+      })
+    )
+    expect(answerBodies).toEqual([
+      {
+        requestId: 'quiz-123',
+        answer: 'Safe',
+        isCustomAnswer: false
+      }
+    ])
+    await expect(
+      adapter.respondToQuestion('quiz-123', [['Safe']])
+    ).rejects.toThrow('已失效或不存在')
   })
 
   it.each([

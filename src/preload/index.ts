@@ -15,6 +15,11 @@ import {
   type KnowledgeSearchReference,
   type KnowledgeSnapshot,
   type PastedImageInput,
+  type RuntimeConversationCompactInput,
+  type RuntimeConversationCompactResult,
+  type RuntimeCustomizationSettings,
+  type RuntimeNativeSnapshot,
+  type RuntimeNativeSnapshotInput,
   type RuntimeSettings,
   type RuntimeSettingsInput,
   type RuntimeConfigActionInput,
@@ -219,6 +224,11 @@ const desktopApi: DesktopApi = {
         answers: answers ?? []
       })
     },
+    compactConversation: (input: RuntimeConversationCompactInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.agentCompactConversation,
+        input
+      ) as Promise<RuntimeConversationCompactResult>,
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: AgentEvent): void =>
         listener(payload)
@@ -875,6 +885,22 @@ const desktopApi: DesktopApi = {
         ipcChannels.runtimeExtensionsApply,
         action
       ) as Promise<RuntimeExtensionMarketplaceSnapshot>
+  },
+  runtimeCustomization: {
+    getSettings: () =>
+      ipcRenderer.invoke(
+        ipcChannels.runtimeCustomizationGet
+      ) as Promise<RuntimeCustomizationSettings>,
+    updateSettings: (settings: RuntimeCustomizationSettings) =>
+      ipcRenderer.invoke(
+        ipcChannels.runtimeCustomizationUpdate,
+        settings
+      ) as Promise<RuntimeCustomizationSettings>,
+    getNativeSnapshot: (input: RuntimeNativeSnapshotInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.runtimeNativeSnapshot,
+        input
+      ) as Promise<RuntimeNativeSnapshot>
   },
   context: {
     selectFiles: () =>

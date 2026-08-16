@@ -1342,8 +1342,10 @@ export function McpSettingsSection({
                   </div>
                   <span className="mcp-server-card__summary">
                     {result
-                      ? t('mcp.builtin.toolCount', {
-                          count: result.toolCount
+                      ? t('mcp.custom.contentCounts', {
+                          tools: result.toolCount,
+                          prompts: result.promptCount ?? 0,
+                          resources: result.resourceCount ?? 0
                         })
                       : t('mcp.custom.toolsUndetected')}
                     <ChevronDown
@@ -1465,6 +1467,93 @@ export function McpSettingsSection({
                             {t('mcp.custom.noTools')}
                           </p>
                         )}
+                      </section>
+                      <section
+                        aria-label={t('mcp.custom.promptsAriaLabel', {
+                          name: server.name
+                        })}
+                        className="mcp-server-tools"
+                      >
+                        <div className="mcp-server-tools__heading">
+                          <strong>{t('mcp.custom.prompts')}</strong>
+                          <small>
+                            {result.promptsSupported
+                              ? t('mcp.custom.promptCount', {
+                                  count: result.promptCount ?? 0
+                                })
+                              : t('mcp.custom.notSupported')}
+                          </small>
+                        </div>
+                        {result.prompts?.length ? (
+                          <ul>
+                            {result.prompts.map((prompt) => (
+                              <li key={prompt.name}>
+                                <div>
+                                  <code>{prompt.name}</code>
+                                </div>
+                                {prompt.description && (
+                                  <p>{prompt.description}</p>
+                                )}
+                                {prompt.arguments.length > 0 && (
+                                  <small>
+                                    {t('mcp.custom.promptArguments', {
+                                      names: prompt.arguments
+                                        .map((argument) =>
+                                          argument.required
+                                            ? `${argument.name}*`
+                                            : argument.name
+                                        )
+                                        .join(', ')
+                                    })}
+                                  </small>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : result.promptsSupported ? (
+                          <p className="settings-empty">
+                            {t('mcp.custom.noPrompts')}
+                          </p>
+                        ) : null}
+                      </section>
+                      <section
+                        aria-label={t('mcp.custom.resourcesAriaLabel', {
+                          name: server.name
+                        })}
+                        className="mcp-server-tools"
+                      >
+                        <div className="mcp-server-tools__heading">
+                          <strong>{t('mcp.custom.resources')}</strong>
+                          <small>
+                            {result.resourcesSupported
+                              ? t('mcp.custom.resourceCount', {
+                                  count: result.resourceCount ?? 0
+                                })
+                              : t('mcp.custom.notSupported')}
+                          </small>
+                        </div>
+                        {result.resources?.length ? (
+                          <ul>
+                            {result.resources.map((resource) => (
+                              <li key={`${resource.uri}\0${resource.name}`}>
+                                <div>
+                                  <strong>{resource.name}</strong>
+                                  {resource.mimeType && (
+                                    <small>{resource.mimeType}</small>
+                                  )}
+                                </div>
+                                <code>{resource.uri}</code>
+                                {resource.description && (
+                                  <p>{resource.description}</p>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : result.resourcesSupported ? (
+                          <p className="settings-empty">
+                            {t('mcp.custom.noResources')}
+                          </p>
+                        ) : null}
                       </section>
                     </>
                   ) : (

@@ -131,6 +131,12 @@ const api: DesktopApi = {
     cancel: vi.fn(async () => {}),
     respondApproval: vi.fn(async () => {}),
     respondQuestion: vi.fn(async () => {}),
+    compactConversation: vi.fn(async () => ({
+      provider: 'continue' as const,
+      strategy: 'goodbuddy-summary' as const,
+      compacted: false,
+      detail: 'No context to compact'
+    })),
     onEvent: vi.fn((listener) => {
       agentListener = listener
       return () => {
@@ -492,6 +498,36 @@ const api: DesktopApi = {
       marketplaceEnabled: false,
       catalog: [],
       installed: []
+    }))
+  },
+  runtimeCustomization: {
+    getSettings: vi.fn(async () => ({
+      opencode: {},
+      continue: { presets: [] }
+    })),
+    updateSettings: vi.fn(async (settings) => settings),
+    getNativeSnapshot: vi.fn(async (input) => ({
+      provider: input.provider,
+      available: true,
+      inventoryStatus: 'available' as const,
+      detail: 'Ready',
+      agents: [],
+      tools: [],
+      toolsSupported: input.provider !== 'continue',
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: false,
+      context: {
+        strategy: 'unsupported' as const,
+        manualCompact: false,
+        detail: 'Unsupported'
+      }
     }))
   },
   context: {
@@ -4361,6 +4397,346 @@ describe('App', () => {
     )
     }
   )
+
+  it('submits native OpenCode Agent and Command controls', async () => {
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'opencode',
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: 'platform' }
+    })
+    vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
+      id: 'opencode',
+      label: 'OpenCode',
+      available: true,
+      supportsToolExecution: true,
+      detail: 'Ready'
+    })
+    vi.mocked(
+      api.runtimeCustomization.getSettings
+    ).mockResolvedValueOnce({
+      opencode: {},
+      continue: { presets: [] }
+    })
+    vi.mocked(
+      api.runtimeCustomization.getNativeSnapshot
+    ).mockResolvedValueOnce({
+      provider: 'opencode',
+      available: true,
+      inventoryStatus: 'available',
+      detail: 'Ready',
+      agents: [
+        {
+          id: 'planner',
+          name: 'Planner',
+          description: 'Plan before editing',
+          mode: 'primary',
+          native: true,
+          hidden: false
+        }
+      ],
+      tools: [],
+      toolsSupported: true,
+      commands: [
+        {
+          id: 'review',
+          name: 'review',
+          description: 'Review a target',
+          source: 'command'
+        }
+      ],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: true,
+      context: {
+        strategy: 'native',
+        manualCompact: true,
+        detail: 'OpenCode native context'
+      }
+    })
+
+    render(<App />)
+
+    const agentPicker = await screen.findByRole('button', {
+      name: /OpenCode Runtime Agent/u
+    })
+    fireEvent.click(agentPicker)
+    fireEvent.click(
+      within(
+        screen.getByRole('menu', {
+          name: 'OpenCode Runtime Agent'
+        })
+      ).getByRole('menuitemradio', { name: /Planner/u })
+    )
+    const actionPicker = screen.getByRole('button', {
+      name: /Runtime 快捷操作/u
+    })
+    fireEvent.click(actionPicker)
+    fireEvent.click(
+      within(
+        screen.getByRole('menu', {
+          name: 'Runtime 快捷操作'
+        })
+      ).getByRole('menuitemradio', { name: /\/review/u })
+    )
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: 'src/main' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '/review src/main',
+          runtimeControl: {
+            provider: 'opencode',
+            agent: 'planner',
+            command: {
+              name: 'review',
+              arguments: 'src/main'
+            }
+          }
+        })
+      )
+    )
+  })
+
+  it('fills editable Continue Prompts and submits the selected preset', async () => {
+    const presetId = '00000000-0000-4000-8000-000000000721'
+    const promptId = '00000000-0000-4000-8000-000000000722'
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'continue',
+      continueModelSource: { kind: 'platform' }
+    })
+    vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
+      id: 'continue',
+      label: 'Continue',
+      available: true,
+      supportsToolExecution: true,
+      detail: 'Ready'
+    })
+    vi.mocked(
+      api.runtimeCustomization.getSettings
+    ).mockResolvedValueOnce({
+      opencode: {},
+      continue: {
+        defaultPresetId: presetId,
+        presets: [
+          {
+            id: presetId,
+            name: '代码审查',
+            rules: [],
+            prompts: [
+              {
+                id: promptId,
+                name: '审查草稿',
+                description: '检查当前草稿',
+                prompt: '请审查当前草稿。'
+              }
+            ]
+          }
+        ]
+      }
+    })
+    vi.mocked(
+      api.runtimeCustomization.getNativeSnapshot
+    ).mockResolvedValueOnce({
+      provider: 'continue',
+      available: true,
+      inventoryStatus: 'available',
+      detail: 'Ready',
+      agents: [],
+      tools: [],
+      toolsSupported: false,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [],
+      prompts: [
+        {
+          id: promptId,
+          name: '原生同 ID Prompt',
+          prompt: '不应填入此原生 Prompt。',
+          source: 'configuration'
+        }
+      ],
+      resources: [],
+      resourcesSupported: false,
+      context: {
+        strategy: 'goodbuddy-summary',
+        manualCompact: true,
+        detail: 'GoodBuddy summary context'
+      }
+    })
+
+    render(<App />)
+
+    const presetPicker = await screen.findByRole('button', {
+      name: /Continue 配置预设.*使用设置默认预设/u
+    })
+    fireEvent.click(presetPicker)
+    fireEvent.click(
+      within(
+        screen.getByRole('menu', {
+          name: 'Continue 配置预设'
+        })
+      ).getByRole('menuitemradio', { name: /代码审查/u })
+    )
+    const actionPicker = screen.getByRole('button', {
+      name: /Runtime 快捷操作/u
+    })
+    fireEvent.click(actionPicker)
+    fireEvent.click(
+      within(
+        screen.getByRole('menu', {
+          name: 'Runtime 快捷操作'
+        })
+      ).getByRole('menuitemradio', { name: /审查草稿/u })
+    )
+    const composer = screen.getByLabelText('向 GoodBuddy 提问')
+    expect(composer).toHaveValue('请审查当前草稿。')
+    fireEvent.change(composer, {
+      target: { value: '请审查当前草稿，并优先检查权限。' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '请审查当前草稿，并优先检查权限。',
+          runtimeControl: {
+            provider: 'continue',
+            presetId
+          }
+        })
+      )
+    )
+  })
+
+  it('manually compacts Continue context and persists the summary state', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000731'
+    const messages = [
+      {
+        id: '00000000-0000-4000-8000-000000000732',
+        role: 'user' as const,
+        content: '第一轮问题',
+        createdAt: 1_775_000_000_000,
+        state: 'complete' as const
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000733',
+        role: 'assistant' as const,
+        content: '第一轮回答',
+        createdAt: 1_775_000_000_001,
+        state: 'complete' as const
+      }
+    ]
+    const summaryState = {
+      coveredHistoryDigest: 'a'.repeat(64),
+      coveredMessageCount: 1,
+      coveredFromMessageId: messages[0]!.id,
+      coveredThroughMessageId: messages[0]!.id,
+      summary: '用户提出了第一轮问题。'
+    }
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: conversationId,
+        projectId,
+        runtimeSelection: { provider: 'continue' },
+        title: 'Continue 长对话',
+        updatedAt: 1_775_000_000_001,
+        messages
+      }
+    ])
+    vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
+      id: 'continue',
+      label: 'Continue',
+      available: true,
+      supportsToolExecution: true,
+      detail: 'Ready'
+    })
+    vi.mocked(
+      api.runtimeCustomization.getNativeSnapshot
+    ).mockResolvedValueOnce({
+      provider: 'continue',
+      available: true,
+      inventoryStatus: 'available',
+      detail: 'Ready',
+      agents: [],
+      tools: [],
+      toolsSupported: false,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: false,
+      context: {
+        strategy: 'goodbuddy-summary',
+        manualCompact: true,
+        detail: 'GoodBuddy summary context'
+      }
+    })
+    vi.mocked(api.agent.compactConversation).mockResolvedValueOnce({
+      provider: 'continue',
+      strategy: 'goodbuddy-summary',
+      compacted: true,
+      detail: '已压缩 Continue 对话历史',
+      contextCompressionState: summaryState
+    })
+
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '压缩上下文'
+      })
+    )
+    await waitFor(() =>
+      expect(api.agent.compactConversation).toHaveBeenCalledWith({
+        requestId: expect.any(String),
+        conversationId,
+        projectId,
+        runtimeSelection: { provider: 'continue' },
+        history: messages.map(({ role, content }) => ({
+          role,
+          content
+        })),
+        historyMessageIds: messages.map((message) => message.id),
+        contextCompressionState: undefined
+      })
+    )
+    expect(
+      await screen.findByText('已压缩 Continue 对话历史')
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.conversations.saveLocal).toHaveBeenCalledWith([
+        expect.objectContaining({
+          header: expect.objectContaining({
+            contextCompressionState: summaryState,
+            contextMetrics: expect.objectContaining({
+              basis: 'conversation',
+              source: 'estimated'
+            })
+          })
+        })
+      ])
+    )
+  })
 
   it('restores the direct-model mode after leaving an Agent Runtime', async () => {
     const settings = await api.settings.getRuntime()

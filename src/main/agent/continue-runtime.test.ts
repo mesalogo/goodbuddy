@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeEvent } from './runtime'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   ContinueHostRunError,
   type ContinueHostAdapterOptions
@@ -10,6 +18,7 @@ import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 const mocks = vi.hoisted(() => ({
   detectRuntimeBinary: vi.fn(),
   runHost: vi.fn(),
+  respondHostQuestion: vi.fn(),
   disposeHost: vi.fn(),
   prepareHost: vi.fn()
 }))
@@ -29,6 +38,7 @@ function createRuntime(): ContinueAgentRuntime {
     createHostAdapter: () => ({
       getPreparedHost: mocks.prepareHost,
       run: mocks.runHost,
+      respondToQuestion: mocks.respondHostQuestion,
       dispose: mocks.disposeHost
     })
   })
@@ -69,6 +79,7 @@ describe('ContinueAgentRuntime', () => {
     mocks.runHost.mockResolvedValue({
       text: 'Continue response'
     })
+    mocks.respondHostQuestion.mockResolvedValue(undefined)
   })
 
   it('does not launch the CLI for an already-cancelled request', async () => {
@@ -119,6 +130,51 @@ describe('ContinueAgentRuntime', () => {
       expect.objectContaining({ type: 'model-usage' })
     )
     expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('does not advertise host-inaccessible Skills or statically undiscoverable Tools', async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-continue-native-snapshot-')
+    )
+    const workspace = join(root, 'workspace')
+    const skillDirectory = join(
+      workspace,
+      '.continue',
+      'skills',
+      'native-skill'
+    )
+    const configPath = join(root, 'continue.json')
+    try {
+      await mkdir(skillDirectory, { recursive: true })
+      await writeFile(
+        join(skillDirectory, 'SKILL.md'),
+        [
+          '---',
+          'name: Native Skill',
+          'description: Not reachable by the isolated Continue host',
+          '---'
+        ].join('\n'),
+        'utf8'
+      )
+      await writeFile(configPath, '{}', 'utf8')
+      const runtime = new ContinueAgentRuntime({
+        binaryPath: '',
+        configPath,
+        defaultWorkspace: workspace,
+        hostCacheRoot: join(root, 'host-cache')
+      })
+
+      await expect(runtime.getNativeSnapshot()).resolves.toMatchObject({
+        provider: 'continue',
+        available: true,
+        inventoryStatus: 'available',
+        skills: [],
+        tools: [],
+        toolsSupported: false
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('forwards images to the Continue host when configuration allows them', async () => {
@@ -528,6 +584,128 @@ describe('ContinueAgentRuntime', () => {
     expect(mocks.runHost.mock.calls[0]?.[0]).toBe('current request')
   })
 
+  it('uses a verified persisted summary and retains recent history', async () => {
+    const history = [
+      { role: 'user' as const, content: 'old secret turn' },
+      { role: 'assistant' as const, content: 'old answer' },
+      { role: 'user' as const, content: 'recent question' },
+      { role: 'assistant' as const, content: 'recent answer' }
+    ]
+    const runtime = createRuntime()
+    for await (const _event of runtime.run(
+      {
+        requestId: randomUUID(),
+        conversationId: 'summary-conversation',
+        prompt: 'continue',
+        history,
+        contextCompressionState: {
+          coveredHistoryDigest: createHash('sha256')
+            .update(JSON.stringify(history.slice(0, 2)))
+            .digest('hex'),
+          coveredMessageCount: 2,
+          summary: 'trusted persisted facts'
+        }
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    const prompt = String(mocks.runHost.mock.calls[0]?.[0])
+    expect(prompt).toContain('UNTRUSTED CONVERSATION SUMMARY')
+    expect(prompt).toContain('trusted persisted facts')
+    expect(prompt).toContain('recent question')
+    expect(prompt).not.toContain('old secret turn')
+  })
+
+  it('falls back to bounded raw history when a persisted summary is stale', async () => {
+    const runtime = createRuntime()
+    for await (const _event of runtime.run(
+      {
+        requestId: randomUUID(),
+        conversationId: 'stale-summary-conversation',
+        prompt: 'continue',
+        history: [
+          { role: 'user', content: 'raw old question' },
+          { role: 'assistant', content: 'raw old answer' }
+        ],
+        contextCompressionState: {
+          coveredHistoryDigest: '0'.repeat(64),
+          coveredMessageCount: 2,
+          summary: 'stale summary must not appear'
+        }
+      },
+      new AbortController().signal
+    )) {
+      void _event
+    }
+
+    const prompt = String(mocks.runHost.mock.calls[0]?.[0])
+    expect(prompt).toContain('raw old question')
+    expect(prompt).not.toContain('stale summary must not appear')
+  })
+
+  it('selects a Continue preset and rejects stale preset IDs', async () => {
+    const preset = {
+      id: randomUUID(),
+      name: 'Review',
+      rules: [
+        {
+          id: randomUUID(),
+          name: 'Be concise',
+          content: 'Use concise answers.',
+          enabled: true
+        }
+      ],
+      prompts: []
+    }
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      customization: {
+        defaultPresetId: preset.id,
+        presets: [preset]
+      },
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+
+    await collectEvents(runtime)
+    expect(mocks.runHost.mock.calls[0]?.[3]).toMatchObject({
+      preset
+    })
+
+    const staleRuntime = new ContinueAgentRuntime({
+      binaryPath: '',
+      configPath: 'C:\\safe config\\continue.yaml',
+      defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      customization: {
+        defaultPresetId: randomUUID(),
+        presets: []
+      },
+      createHostAdapter: () => ({
+        getPreparedHost: mocks.prepareHost,
+        run: mocks.runHost,
+        dispose: mocks.disposeHost
+      })
+    })
+    const stream = staleRuntime.run(
+      {
+        requestId: randomUUID(),
+        conversationId: 'stale-preset',
+        prompt: 'test'
+      },
+      new AbortController().signal
+    )
+    await expect(stream.next()).rejects.toThrow('预设已失效或不存在')
+  })
+
   it('reuses discovery for availability and reports safe diagnostics', async () => {
     mocks.detectRuntimeBinary.mockResolvedValue({
       available: false,
@@ -710,6 +888,78 @@ describe('ContinueAgentRuntime', () => {
       }),
       expect.objectContaining({ type: 'text', delta: '再回答' })
     ])
+  })
+
+  it('routes structured question answers and cleans completed mappings', async () => {
+    let finishQuestion: (() => void) | undefined
+    const answered = new Promise<void>((resolve) => {
+      finishQuestion = resolve
+    })
+    mocks.respondHostQuestion.mockImplementation(async () => {
+      finishQuestion?.()
+    })
+    mocks.runHost.mockImplementation(
+      async (_prompt, _signal, _authorize, options) => {
+        await options?.onEvent?.({
+          type: 'question',
+          questionId: 'quiz-123',
+          questions: [
+            {
+              header: 'Continue',
+              question: 'Choose a plan',
+              options: [
+                { label: 'Safe', description: '' }
+              ],
+              multiple: false,
+              custom: true
+            }
+          ]
+        })
+        await answered
+        return { text: 'Plan selected' }
+      }
+    )
+    const runtime = createRuntime()
+    const stream = runtime.run(
+      {
+        requestId: randomUUID(),
+        conversationId: 'question-conversation',
+        prompt: 'plan'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'question',
+        questionId: 'quiz-123',
+        questions: [
+          expect.objectContaining({ question: 'Choose a plan' })
+        ]
+      }
+    })
+    await runtime.respondToQuestion('quiz-123', [['Safe']])
+    const remaining: RuntimeEvent[] = []
+    for await (const event of stream) {
+      remaining.push(event)
+    }
+
+    expect(mocks.respondHostQuestion).toHaveBeenCalledWith(
+      'quiz-123',
+      [['Safe']]
+    )
+    expect(remaining).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: 'Plan selected'
+      })
+    )
+    await expect(
+      runtime.respondToQuestion('quiz-123', [['Safe']])
+    ).rejects.toThrow('已失效或不存在')
   })
 
   it('fails instead of silently dropping an overflowing stream queue', async () => {

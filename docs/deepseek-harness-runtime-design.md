@@ -19,7 +19,7 @@
 
 DeepSeek Harness 的底层库使用 Cordis 组合服务。GoodBuddy 不采用官方产品 profile，也不允许用户配置覆盖内部 Host 或控制服务；GoodBuddy 自行维护 Host、控制协议和生命周期，同时提供一个由 Main 管理、默认关闭的 npm 插件市场。用户显式开启后，市场只搜索带精确 `dsh-plugin` 关键字的公共 npm 包，不代表 GoodBuddy 审核、推荐或承诺兼容这些包。
 
-用户明确安装并启用的插件以当前用户权限运行。Ask/Execute 只控制模型经过 `tools/execute` 发起的工具调用：Ask 只允许 `read` 与 `skill`，Execute 放行 Host 中全部已注册工具。插件安装脚本和初始化代码不属于模型工具调用，不能由 Ask 限制，因此界面在安装前必须明确确认这一边界。
+用户明确安装并启用的插件以当前用户权限运行。Ask/Execute 只控制模型经过 `tools/execute` 发起的工具调用：Ask 只允许 Host 中真实注册的 `read`、`skill` 和 Main 管理的 Web Search/Fetch 代理，Execute 放行 Host 中全部已注册工具。插件不能用同名工具冒充 Ask 允许项。插件安装脚本和初始化代码不属于模型工具调用，不能由 Ask 限制，因此界面在安装前必须明确确认这一边界。
 
 整体分成两个互相约束的部分：
 
@@ -76,10 +76,12 @@ GoodBuddy 自己的 Runtime 和控制面不包装成标准 DSH 插件，也不�
 - 增加 `deepseek-harness` Runtime，并在设置、聊天和消息通道中可选择。
 - 使用 GoodBuddy 管理的模型连接，不在 Renderer 或持久化 Harness 配置中写入 API Key。
 - Ask 模式在 Runtime 工具分发边界强制只读，阻止 Shell、写入和编辑工具。
+- 在 Web Search 能力启用时，通过 Main 代理向 Ask 与 Execute 提供有界的 `web_search` 和 `web_fetch`，Harness Utility 不持有服务凭据。
 - Execute 模式使用 DSH 本地 Provider，以当前用户权限执行文件与命令工具；工作区是默认工作目录，不是 OS 权限边界。
 - 提供默认关闭的公共 npm DSH 插件市场总开关；用户显式开启后可搜索、查看详情、精确版本安装、启用、停用、配置和移除，首次安装前明确确认当前用户权限。
 - 只加载 Main 明确传入的已启用插件；单个插件启动失败不得阻止 Host，并自动停用失败插件。
 - 允许 Skills 和自定义 MCP 显式分配给 DeepSeek Harness；自定义 MCP 只在 Execute 中通过 Main 代理。
+- 设置页可读取有界的 Host/插件原生 Tool 与 Skill 清单；Tool 元数据显示类型、来源及 Ask/Execute 可用性，并明确排除 GoodBuddy 分配的 Skills、Web/MCP 请求代理。
 - 支持多会话、同会话串行、跨会话并行。
 - 支持按请求取消、超时、会话释放和应用退出时完整回收。
 - 输出文本、推理、工具参数、工具结果、stderr 和协议队列全部有界。
@@ -95,7 +97,7 @@ GoodBuddy 自己的 Runtime 和控制面不包装成标准 DSH 插件，也不�
 - 不提供 Runtime OS 沙箱模式或相关持久设置。
 - 不向 Utility 暴露 MCP 凭据或建立直连 MCP Client。只有用户明确分配给 Harness 的 MCP 工具可以通过 Main 代理调用。
 - 不在首版向 Harness 暴露 GoodBuddy 浏览器控制、知识库或 Magic Notes。
-- 不在首版支持图像输入、会话恢复、Harness Subagent、后台 Job、Hook、Web Search 或 Workflow。
+- 不在首版支持图像输入、会话恢复、Harness Subagent、后台 Job、Hook、浏览器控制或 Workflow；Web Search/Fetch 只通过 Main 代理提供，不加载 Harness 自有网页服务。
 - 不发布独立 npm 包，也不创建上游 PR。
 - 不为第三方插件增加权限矩阵、风险等级、逐工具审批、沙箱档位、回滚代际或兼容性背书。
 
@@ -237,8 +239,9 @@ GoodBuddy 不扫描任意目录、不读取用户 profile 插件清单，也不�
 | `goodbuddy/session/release` | Main → Control Plane | 取消并释放指定 Session |
 | `goodbuddy/session/event` | Control Plane → Main | 文本、推理、工具、状态和用量事件 |
 | `goodbuddy/credential/resolve` | Control Plane → Main | 按已登记引用请求当前 Runtime 的临时凭据 |
-| `goodbuddy/tools/list` | Control Plane → Main | 取得用户分配给 Harness 的有界 MCP 工具 schema |
-| `goodbuddy/tools/call` | Control Plane → Main | 通过当前 Execute 请求、schema 校验和既有 RuntimeAuthorizer 调用 MCP |
+| `goodbuddy/tools/list` | Control Plane → Main | 取得 Main 管理的有界 Web 工具与当前 Execute 请求的 MCP 工具 schema |
+| `goodbuddy/tools/call` | Control Plane → Main | 校验活动请求、工作模式、参数和精确注册代理身份后调用 Main Web/MCP 工具 |
+| `goodbuddy/native/snapshot` | Main → Control Plane | 从无 Agent scope 的 Host Registry 读取有界的原生 Tool/Skill 元数据，排除 GoodBuddy 分配项与请求级代理 |
 | `goodbuddy/shutdown` | Main → Control Plane | 停止接收新请求并有序清理 |
 
 扩展版本独立于 ACP 版本。握手响应至少包含：
@@ -322,6 +325,7 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 
 ### 9.4 释放与退出
 
+- 原生能力清单通过一次性 Runtime 探测，取得有界快照后立即 dispose，不得因浏览设置或切换项目把 Host 缓存在执行 Runtime 池中。
 - 删除或释放对话时调用 `goodbuddy/session/release`。
 - Runtime dispose 时先拒绝新请求，再取消所有 Session。
 - Harness Control Plane 完成 Agent、工具和会话清理，Host 完成 Cordis Fiber 与子进程的反向清理。
@@ -333,16 +337,17 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 
 ### 10.1 模式映射
 
-| GoodBuddy 模式 | Host 内置与插件工具 | GoodBuddy 自定义 MCP | 行为 |
-| --- | --- | --- | --- |
-| Ask | 只允许已注册的 `read` 与 `skill`；其他任意工具名一律拒绝 | 不注册 | 模型工具调用保持只读 |
-| Execute | 放行 Host 中全部已注册的内置与插件工具 | 按分配注册并经过既有 RuntimeAuthorizer | 不增加逐工具审批，以当前用户权限运行 |
+| GoodBuddy 模式 | Host 内置与插件工具 | Main Web Search/Fetch | GoodBuddy 自定义 MCP | 行为 |
+| --- | --- | --- | --- | --- |
+| Ask | 只允许 Host Registry 中真实注册的 `read` 与 `skill`；其他 Host/插件工具一律拒绝 | 能力启用时注册 Main 的精确代理对象，无逐次审批 | 不注册 | 模型工具调用保持只读 |
+| Execute | 放行 Host 中全部已注册的内置与插件工具 | 能力启用时注册 Main 代理 | 按分配注册并经过既有 RuntimeAuthorizer | 不增加插件权限层，以当前用户权限运行 |
 
 ### 10.2 Ask 模式
 
 - Harness Control Plane 在 `tools/execute` 分发边界识别当前 Session 和在途请求。
-- 采用只读允许列表，只接受 `read` 与 `skill`；`write`、`edit`、Shell、MCP 及任意新插件工具默认拒绝，不能仅靠系统提示词保持只读。
+- 采用所有权感知的只读允许列表，只接受 Registry 中真实的 `read`、`skill` 和 Main 注册的 Web 代理对象；`write`、`edit`、Shell、MCP 及任意新插件工具默认拒绝。只比较工具名不足以授权，插件注册同名工具仍会被拒绝。
 - Ask 不注册 Main 代理的 MCP 工具。
+- Web Search/Fetch 的凭据、传输与结果限制保留在 Main；Utility 只看到有界 schema 和结果。
 - 只读不等于无限输出，读取仍受字节和工具结果上限控制。
 - 插件安装脚本和 Cordis 初始化生命周期不经过 `tools/execute`。Ask 不能把已启用第三方代码变成沙箱，也不能保证第三方代码没有启动副作用。
 
@@ -385,7 +390,7 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 - Token Meter 和必要的上下文压缩。
 - 有界的读取、写入、编辑和 Shell 工具。
 - Agent scope 的 Skill Registry 与 `skill` 工具。Skill 目录由 Main 选择并在 Launcher 和 Host 两次规范化、校验。
-- Main 代理的 MCP schema 工具。Utility 不持有 MCP URL 凭据或 Transport。
+- Main 代理的 Web 与 MCP schema 工具。Utility 不持有 Web/MCP URL、凭据或 Transport。
 - Main 明确传入的第三方 Cordis 插件及其 JSON 配置。
 
 首版明确不加载：
@@ -394,7 +399,7 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 - Harness 遥测。
 - Settings File 和 Local Credentials。
 - 用户 profile 与全局补丁。
-- Web Search、Fetch、Utility 直连 MCP、Hooks。
+- Harness 自有 Web Search/Fetch、Utility 直连 Web/MCP、Hooks。
 - Subagent、Workflow、Ralph、后台 Job。
 - JSONL Session Persistence 和 SQLite Session Query。
 - 自动技能发现、任意目录扫描和 profile 市场状态。
@@ -592,10 +597,11 @@ Renderer 只接收公开 npm 元数据和受管插件状态。任何凭据、完
 - 二进制检测、版本解析和路径规范化。
 - ACP 握手、事件转换和请求关联。
 - 每个会话单请求、跨会话并行。
-- Ask 在工具分发边界只允许 `read` 与 `skill`，并拒绝任意新插件工具；Execute 放行插件工具。
+- Ask 在工具分发边界只允许真实注册的 `read`、`skill` 与 Main Web 代理，并拒绝同名冒充和任意新插件工具；Execute 放行插件工具。
 - 握手只接受明确的 `execution.mode = 'host'`。
 - 未分配 Skill/MCP 不可见；分配后的 Skill catalog 可调用 `skill` 加载。
-- Ask 不注册 MCP 工具；Execute 每轮刷新有界 schema，并在调用前再次校验活动请求、模式、参数和 RuntimeAuthorizer 结果。
+- 原生能力快照只包含 Host/插件原生 Skills，不包含 GoodBuddy 分配的 Skills 或 MCP。
+- Ask 不注册 MCP 工具；Web 代理可用于 Ask 与 Execute；Execute 每轮刷新有界 MCP schema，并在调用前再次校验活动请求、模式、参数和 RuntimeAuthorizer 结果。
 - MCP URL、启动命令和凭据不进入 Utility 启动配置或协议结果。
 - 未知授权结果失败关闭。
 - 超时、取消、迟到帧和进程意外退出。
@@ -627,16 +633,17 @@ Renderer 只接收公开 npm 元数据和受管插件状态。任何凭据、完
 
 1. 文本问答成功，并记录正确 Runtime 和模型用量。
 2. Ask 可以读取工作区，但写入被拒绝，且不会弹出权限对话框。
-3. Execute 可以在工作区创建测试文件。
-4. Execute 工具确实以当前用户权限运行，且状态和握手不宣称 OS 隔离。
-5. Ask、delegation 和无活动请求不能绕过工具分发检查。
-6. 取消长请求后不再产生文本，并可继续使用其他 Session。
-7. 两个 Session 可并行，事件不会串线。
-8. 释放会话和关闭应用后没有残留 Harness 或工具进程。
-9. 从全新用户设置流程启用一个 3D 游戏 Skill 和实际本地或开放 MCP，工具事件能够证明二者确实被调用。
-10. Harness 生成的 3D 游戏项目可以安装、启动和实际游玩，包含 3D 渲染、玩家控制、目标和反馈，浏览器无关键错误。
-11. 使用公共 npm 搜索，通过 GoodBuddy 捆绑的 npm 安装经审查的最小第三方插件，Host 成功加载并执行其真实工具。
-12. 实际 ACP 路径中 Ask 拒绝该插件工具，Execute 允许该工具，不出现 GoodBuddy 逐工具确认。
+3. 启用 Web Search 后，Ask 可以调用 Main 管理的 `web_search` 与 `web_fetch`，插件同名工具仍被拒绝。
+4. Execute 可以在工作区创建测试文件。
+5. Execute 工具确实以当前用户权限运行，且状态和握手不宣称 OS 隔离。
+6. Ask、delegation 和无活动请求不能绕过工具分发检查。
+7. 取消长请求后不再产生文本，并可继续使用其他 Session。
+8. 两个 Session 可并行，事件不会串线。
+9. 释放会话和关闭应用后没有残留 Harness 或工具进程。
+10. 从全新用户设置流程启用一个 3D 游戏 Skill 和实际本地或开放 MCP，工具事件能够证明二者确实被调用。
+11. Harness 生成的 3D 游戏项目可以安装、启动和实际游玩，包含 3D 渲染、玩家控制、目标和反馈，浏览器无关键错误。
+12. 使用公共 npm 搜索，通过 GoodBuddy 捆绑的 npm 安装经审查的最小第三方插件，Host 成功加载并执行其真实工具。
+13. 实际 ACP 路径中 Ask 拒绝该插件工具，Execute 允许该工具，不出现 GoodBuddy 逐工具确认。
 
 测试不得打印、快照或提交 API Key。测试创建的文件只能位于专用临时工作区，并在确认可再现后清理。
 
@@ -662,7 +669,9 @@ npm run build
 - Skills 与 MCP 设置页可把能力分配给 DeepSeek Harness，布局、键盘语义、文案和保存回显通过真机检查。
 - DSH 市场初始关闭且不加载 npm 目录；显式开启后可以搜索、安装、启停、配置和移除插件，安装前只出现一次准确的当前用户权限确认。关闭市场后已有启用插件继续运行，重新开启后管理状态不变。
 - Ask 写入测试在 Runtime 边界失败。
+- Ask 可使用已启用的 Main Web Search/Fetch，且插件无法通过同名工具绕过所有权校验。
 - Ask 拒绝任意插件工具，Execute 可调用全部已启用插件工具。
+- Runtime 原生清单只显示 Host/插件原生 Skills，不显示 GoodBuddy 分配项。
 - Execute 工作区内写入成功。
 - Runtime OS 沙箱设置、平台 Runner、启动探测和原生沙箱打包产物均不存在。
 - 取消、超时、切换 Runtime 和退出应用均能回收进程。
@@ -681,7 +690,7 @@ npm run build
 - DeepSeek Harness 底层库当前是 RC，但 GoodBuddy 不自动跟随升级；每次升级都可能要求同步修改内部控制面。
 - Harness 文件和命令工具没有 Runtime OS 隔离，会继承 GoodBuddy 客户端当前用户能够访问的主机资源。
 - 首版不恢复 Harness 原生 Session，Runtime 重启后由 GoodBuddy 历史重建。
-- 首版不支持图片、知识库、浏览器工具和 Harness Subagent；MCP 仅支持用户分配、Main 代理和 Execute 自动单次授权路径。
+- 首版不支持图片、知识库、浏览器控制和 Harness Subagent；Web Search/Fetch 仅使用 Main 代理，MCP 仅支持用户分配、Main 代理和 Execute 自动单次授权路径。
 - 推理、工具和用量扩展属于 GoodBuddy 协议，不是标准 ACP 保证。
 - 市场来自公共 npm 关键字搜索，不是精选目录；包的质量、兼容性和维护状态由发布者负责。
 - 插件安装、初始化、后台生命周期和 Execute 工具使用当前用户权限，不受 Runtime OS 沙箱保护；Ask 只控制模型工具调用。

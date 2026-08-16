@@ -16,6 +16,29 @@ function runtime() {
     supportsToolExecution: true,
     detail: 'ready'
   }))
+  const getNativeSnapshot = vi.fn(async () => ({
+    provider: 'opencode' as const,
+    available: true,
+    inventoryStatus: 'available' as const,
+    detail: 'ready',
+    agents: [],
+    tools: [],
+    toolsSupported: true,
+    commands: [],
+    lsp: [],
+    formatters: [],
+    mcpServers: [],
+    skills: [],
+    rules: [],
+    prompts: [],
+    resources: [],
+    resourcesSupported: true,
+    context: {
+      strategy: 'native' as const,
+      manualCompact: true,
+      detail: 'ready'
+    }
+  }))
   const value: AgentRuntime = {
     runtimeId: 'model',
     requiresToolApproval: false,
@@ -29,6 +52,7 @@ function runtime() {
       detail: 'ready'
     })),
     testConnection,
+    getNativeSnapshot,
     async *run(
       request: AgentExecutionRequest
     ): AsyncGenerator<RuntimeEvent, void, void> {
@@ -40,7 +64,13 @@ function runtime() {
     releaseConversation,
     dispose
   }
-  return { value, releaseConversation, dispose, testConnection }
+  return {
+    value,
+    releaseConversation,
+    dispose,
+    testConnection,
+    getNativeSnapshot
+  }
 }
 
 describe('SelectedRuntimeManager', () => {
@@ -149,6 +179,30 @@ describe('SelectedRuntimeManager', () => {
     expect(tested.dispose).toHaveBeenCalledOnce()
 
     await manager.getRuntime(selection)
+    expect(create).toHaveBeenCalledTimes(2)
+    await manager.dispose()
+  })
+
+  it('disposes a native-inventory runtime without caching it', async () => {
+    const inspected = runtime()
+    const cached = runtime()
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(inspected.value)
+      .mockResolvedValueOnce(cached.value)
+    const manager = new SelectedRuntimeManager(create)
+    const selection = { provider: 'opencode' as const }
+
+    await expect(
+      manager.getNativeSnapshot(selection, 'C:\\Projects\\One')
+    ).resolves.toMatchObject({
+      provider: 'opencode',
+      inventoryStatus: 'available'
+    })
+    expect(inspected.getNativeSnapshot).toHaveBeenCalledOnce()
+    expect(inspected.dispose).toHaveBeenCalledOnce()
+
+    await manager.getRuntime(selection, 'C:\\Projects\\One')
     expect(create).toHaveBeenCalledTimes(2)
     await manager.dispose()
   })

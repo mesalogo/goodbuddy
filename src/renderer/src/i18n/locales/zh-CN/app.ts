@@ -313,6 +313,23 @@ export const app = {
     settings: '对话设置',
     expertLabel: '专家角色',
     modeLabel: '工作模式',
+    runtimeControls: {
+      agentLabel: 'OpenCode Runtime Agent',
+      presetLabel: 'Continue 配置预设',
+      actionLabel: 'Runtime 快捷操作',
+      configuredAgent: '默认 · {{name}}',
+      runtimeDefaultAgent: 'OpenCode 默认 Agent',
+      runtimeDefaultAgentDescription: '使用设置中保存的默认 Runtime Agent',
+      agentDescription: 'OpenCode 原生 Runtime Agent',
+      noPreset: '使用设置默认预设',
+      noPresetDescription: '按 Runtime 设置应用默认 Continue 预设',
+      presetDescription:
+        '{{rules}} 条启用 Rule · {{prompts}} 个 Prompt',
+      noAction: 'Runtime 快捷操作',
+      noActionDescription: '直接发送输入内容',
+      commandDescription: '执行 OpenCode Command',
+      promptDescription: '填入 Prompt 后可继续编辑'
+    },
     stop: '停止生成',
     send: '发送',
     sendTitle: '发送消息',
@@ -334,7 +351,11 @@ export const app = {
       conversationThresholdUsage:
         '压缩后对话估算 ≈{{used}} · 压缩线 {{total}}',
       progressLabel: '当前上下文使用量',
-      compressionTrigger: '自动压缩线：≈{{tokens}}'
+      compressionTrigger: '自动压缩线：≈{{tokens}}',
+      compact: '压缩上下文',
+      compacting: '正在压缩…',
+      nothingToCompact: '当前没有可压缩的较早对话历史',
+      compactFailed: '上下文压缩失败'
     },
     experts: {
       general: '通用助手',

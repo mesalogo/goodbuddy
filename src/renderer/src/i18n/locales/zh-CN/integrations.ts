@@ -292,6 +292,8 @@ export const integrations = {
       dynamicToolsSupported: '服务端支持动态更新工具列表',
       dynamicToolsUnsupported: '服务端未声明支持动态更新工具列表',
       toolsUndetected: '工具未检测',
+      contentCounts:
+        '{{tools}} 个工具 · {{prompts}} 个 Prompt · {{resources}} 个 Resource',
       testAriaLabel: '测试 {{name}}',
       test: '测试',
       editAriaLabel: '编辑 {{name}}',
@@ -302,7 +304,18 @@ export const integrations = {
       assignmentSeparator: '、',
       none: '无',
       noTools: '服务器未公开可用工具。',
-      testHelp: '点击“测试”连接服务器并读取其工具列表。'
+      prompts: 'MCP Prompts',
+      promptCount: '{{count}} 个 Prompt',
+      promptsAriaLabel: '{{name}} Prompts',
+      promptArguments: '参数：{{names}}（* 必填）',
+      noPrompts: '服务器未公开 Prompt。',
+      resources: 'MCP Resources',
+      resourceCount: '{{count}} 个 Resource',
+      resourcesAriaLabel: '{{name}} Resources',
+      noResources: '服务器未公开 Resource。',
+      notSupported: '服务端未声明支持',
+      testHelp:
+        '点击“测试”连接服务器并读取其 Tools、Prompts 与 Resources 元数据。'
     }
   }
 } as const

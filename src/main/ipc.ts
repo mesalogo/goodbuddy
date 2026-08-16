@@ -24,6 +24,7 @@ import {
   agentRequestSchema,
   browserInteractRequestSchema,
   browserStopRequestSchema,
+  defaultRuntimeSettings,
   knowledgeCreateSchema,
   knowledgeEntityUpdateSchema,
   knowledgeIdSchema,
@@ -31,10 +32,16 @@ import {
   knowledgeRelationInputSchema,
   knowledgeUpdateLibrarySchema,
   knowledgeUrlImportSchema,
+  isAgentRuntimeModelProtocol,
   modelProfileIdSchema,
   pastedImageInputSchema,
+  runtimeConversationCompactInputSchema,
+  runtimeConversationCompactResultSchema,
   runtimeConfigActionInputSchema,
+  runtimeCustomizationSettingsSchema,
   runtimeFileSelectionKindSchema,
+  runtimeNativeSnapshotInputSchema,
+  runtimeNativeSnapshotSchema,
   runtimeSettingsInputSchema,
   windowCaptureRequestSchema,
   workspaceDirectoryRequestSchema,
@@ -113,6 +120,7 @@ import {
   documentParsingTestInputSchema
 } from '../shared/document-parsing-contracts'
 import {
+  agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
 } from '../shared/runtime-selection-contracts'
@@ -161,7 +169,10 @@ import {
   createDefaultModelRuntime,
   createModelProfileRuntime
 } from './agent/create-runtime'
-import { resolveConfiguredAgentRuntimeSelection } from './agent/runtime-selection'
+import {
+  applyRuntimeSelection,
+  resolveConfiguredAgentRuntimeSelection
+} from './agent/runtime-selection'
 import { safeToolErrorDetail } from './agent/approval-summary'
 import { ReasoningTagStreamParser } from './agent/reasoning-stream'
 import {
@@ -2361,6 +2372,9 @@ export function registerIpcHandlers(
       let executionRequest = request
       let preflightReferences: KnowledgeSearchReference[] = []
       let referencesPublished = false
+      let runtimeMetricSettings:
+        | Promise<Awaited<ReturnType<RuntimeSettingsStore['getResolvedSettings']>>>
+        | undefined
       const persistedEventBuffer = new AgentEventBuffer({
         onError: (error) => controller.abort(error),
         onEvent: (event) => {
@@ -2665,6 +2679,50 @@ export function registerIpcHandlers(
         for await (const agentEvent of splitTaggedReasoning(eventStream)) {
           if (agentEvent.type === 'model-usage') {
             persistModelUsage(agentEvent)
+            if (agentEvent.runtime !== 'model') {
+              runtimeMetricSettings ??=
+                settingsStore.getResolvedSettings()
+              const runtimeSettings = await runtimeMetricSettings
+              const selectedSettings = request.runtimeSelection
+                ? applyRuntimeSelection(
+                    runtimeSettings,
+                    request.runtimeSelection
+                  ).settings
+                : runtimeSettings
+              const profile =
+                agentEvent.runtime === 'opencode'
+                  ? selectedSettings.opencodeModelProfile
+                  : agentEvent.runtime === 'continue'
+                    ? selectedSettings.continueModelProfile
+                    : selectedSettings.deepseekHarnessModelProfile
+              const contextWindowTokens =
+                profile?.contextWindowTokens
+              const providerUsesSeparateCacheTokens =
+                /anthropic/iu.test(agentEvent.provider)
+              const contextTokens = Math.min(
+                50_000_000,
+                agentEvent.inputTokens +
+                  (providerUsesSeparateCacheTokens
+                    ? agentEvent.cacheReadTokens +
+                      agentEvent.cacheWriteTokens
+                    : 0)
+              )
+              eventBuffer.push({
+                requestId: request.requestId,
+                type: 'context-metrics',
+                contextTokens,
+                effectiveTriggerTokens:
+                  contextWindowTokens ??
+                  selectedSettings.contextCompression?.triggerTokens ??
+                  defaultRuntimeSettings.contextCompression.triggerTokens,
+                ...(contextWindowTokens
+                  ? { contextWindowTokens }
+                  : {}),
+                compressionEnabled: false,
+                source: 'provider',
+                basis: 'model-call'
+              })
+            }
             continue
           }
           const publicEvent: AgentEvent =
@@ -2844,10 +2902,214 @@ export function registerIpcHandlers(
   )
 
   registerHandler(
+    ipcChannels.agentCompactConversation,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (executionPaused || shuttingDown) {
+        throw new Error('本地数据维护期间暂不支持压缩上下文')
+      }
+      const request = runtimeConversationCompactInputSchema.parse(input)
+      if (
+        request.runtimeSelection.provider !== 'opencode' &&
+        request.runtimeSelection.provider !== 'continue'
+      ) {
+        throw new Error('当前 Runtime 不支持手动压缩')
+      }
+      if (activeRequests.has(request.requestId)) {
+        throw new Error('上下文压缩请求正在执行')
+      }
+      const conversation = assistantDatabase.getConversation(
+        request.conversationId
+      )
+      if (
+        conversation.projectId !== request.projectId ||
+        !conversation.runtimeSelection ||
+        agentRuntimeSelectionKey(conversation.runtimeSelection) !==
+          agentRuntimeSelectionKey(request.runtimeSelection)
+      ) {
+        throw new Error('对话 Runtime 或 Project 已更改，请刷新后重试')
+      }
+      const persistedHistory = conversation.messages
+        .filter(
+          (message) =>
+            message.state === 'complete' && message.content.trim()
+        )
+        .slice(-500)
+      if (
+        persistedHistory.length !== request.history.length ||
+        persistedHistory.some(
+          (message, index) =>
+            message.id !== request.historyMessageIds[index] ||
+            message.role !== request.history[index]?.role ||
+            message.content !== request.history[index]?.content
+        )
+      ) {
+        throw new Error('对话历史已更改，请刷新后重试')
+      }
+      const trustedRequest = {
+        ...request,
+        contextCompressionState:
+          conversation.contextCompressionState
+      }
+      const settings = await settingsStore.getResolvedSettings()
+      const selected = applyRuntimeSelection(
+        settings,
+        request.runtimeSelection
+      )
+      const workspacePath = request.projectId
+        ? assistantDatabase.getProject(request.projectId).rootPath
+        : selected.settings.workspacePath
+      const controller = new AbortController()
+      const timeout = setTimeout(
+        () =>
+          controller.abort(
+            new Error('上下文压缩超过 5 分钟安全时限')
+          ),
+        5 * 60_000
+      )
+      activeRequests.set(request.requestId, controller)
+      assistantDatabase.createTask({
+        id: request.requestId,
+        projectId: request.projectId,
+        conversationId: request.conversationId,
+        title: '压缩对话上下文',
+        instructions: '手动压缩对话上下文',
+        workMode: 'ask',
+        visible: false
+      })
+      try {
+        let outcome
+        if (request.runtimeSelection.provider === 'opencode') {
+          if (!selectedRuntimes) {
+            throw new Error('OpenCode Runtime 管理器不可用')
+          }
+          outcome = await selectedRuntimes.compactConversation(
+            trustedRequest,
+            workspacePath,
+            controller.signal
+          )
+        } else {
+          const compressionSource =
+            selected.settings.contextCompression?.modelSource
+          const profile =
+            (compressionSource?.kind === 'profile'
+              ? selected.settings.modelProfiles.find(
+                  (candidate) =>
+                    candidate.id === compressionSource.profileId
+                )
+              : selected.settings.continueModelProfile) ??
+            selected.settings.modelProfiles.find(
+              (candidate) =>
+                candidate.id ===
+                  selected.settings.defaultModelProfileId &&
+                isAgentRuntimeModelProtocol(candidate.protocol)
+            ) ??
+            selected.settings.modelProfiles.find((candidate) =>
+              isAgentRuntimeModelProtocol(candidate.protocol)
+            )
+          if (!profile) {
+            throw new Error('没有可用于 Continue 上下文摘要的文本模型连接')
+          }
+          if (
+            profile.authentication === 'api-key' &&
+            !profile.apiKey
+          ) {
+            throw new Error(
+              `上下文摘要模型连接“${profile.name}”未配置 API Key`
+            )
+          }
+          const compactor = createModelProfileRuntime(
+            workspacePath,
+            selected.settings,
+            profile
+          )
+          try {
+            outcome = await compactor.compactConversation(
+              trustedRequest,
+              controller.signal
+            )
+          } finally {
+            await compactor.dispose()
+          }
+        }
+        for (const usageEvent of outcome.usageEvents ?? []) {
+          persistModelUsage(usageEvent)
+        }
+        assistantDatabase.updateTaskStatus(
+          request.requestId,
+          'completed'
+        )
+        return runtimeConversationCompactResultSchema.parse(
+          outcome.result
+        )
+      } catch (error) {
+        assistantDatabase.updateTaskStatus(
+          request.requestId,
+          controller.signal.aborted ? 'cancelled' : 'failed',
+          safeRuntimeError(error, '上下文压缩失败')
+        )
+        throw error
+      } finally {
+        clearTimeout(timeout)
+        activeRequests.delete(request.requestId)
+      }
+    }
+  )
+
+  registerHandler(
     ipcChannels.runtimeSettingsGet,
     (event): Promise<RuntimeSettings> => {
       assertTrustedSender(event, window)
       return settingsStore.getPublicSettings()
+    }
+  )
+
+  registerHandler(
+    ipcChannels.runtimeCustomizationGet,
+    (event) => {
+      assertTrustedSender(event, window)
+      return settingsStore.getRuntimeCustomization()
+    }
+  )
+
+  registerHandler(
+    ipcChannels.runtimeCustomizationUpdate,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const settings =
+        runtimeCustomizationSettingsSchema.parse(input)
+      const saved =
+        await settingsStore.updateRuntimeCustomization(settings)
+      abortActiveRequests('Runtime 定制设置已更改')
+      approvalBroker.clear()
+      await onRuntimeSettingsChanged()
+      return saved
+    }
+  )
+
+  registerHandler(
+    ipcChannels.runtimeNativeSnapshot,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!selectedRuntimes) {
+        throw new Error('Runtime 管理器不可用')
+      }
+      const request = runtimeNativeSnapshotInputSchema.parse(input)
+      const selection: AgentRuntimeSelection = {
+        provider: request.provider,
+        ...(request.profileId
+          ? { profileId: request.profileId }
+          : {})
+      }
+      const workspacePath = request.projectId
+        ? assistantDatabase.getProject(request.projectId).rootPath
+        : (await settingsStore.getResolvedSettings()).workspacePath
+      return runtimeNativeSnapshotSchema.parse(
+        await selectedRuntimes.getNativeSnapshot(
+          selection,
+          workspacePath
+        )
+      )
     }
   )
 

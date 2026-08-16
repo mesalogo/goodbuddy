@@ -1,4 +1,10 @@
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -513,6 +519,26 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
         mkdir(workspace),
         mkdir(dshHome)
       ])
+      const inventoryPlugin = join(
+        root,
+        'native-inventory-plugin.mjs'
+      )
+      await writeFile(
+        inventoryPlugin,
+        [
+          "export const name = 'native-inventory-plugin'",
+          "export const inject = ['skills']",
+          'export function apply(ctx) {',
+          '  ctx.skills.register({',
+          "    name: 'plugin-native-skill',",
+          "    description: 'Skill contributed by a Host plugin.',",
+          "    content: '# Plugin native skill',",
+          "    source: 'custom'",
+          '  })',
+          '}'
+        ].join('\n'),
+        'utf8'
+      )
       const provider = new ModelToolProvider(workspace, [
         {
           id: 'fbf42200-4e60-48d0-b5f2-e816db38ac54',
@@ -555,6 +581,13 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
             )
           }
         ],
+        extensionPackages: [
+          {
+            id: 'native-inventory-plugin',
+            entrypoint: inventoryPlugin,
+            configuration: {}
+          }
+        ],
         toolProvider: provider,
         initializationTimeoutMs: 20_000,
         promptTimeoutMs: 20_000,
@@ -574,6 +607,50 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
       )
 
       try {
+        await runtime.getStatus()
+        expect(inProcess.hosts[0]?.extensionFailures).toEqual([])
+        await expect(runtime.getNativeSnapshot()).resolves.toMatchObject({
+          provider: 'deepseek-harness',
+          available: true,
+          inventoryStatus: 'available',
+          toolsSupported: true,
+          tools: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'read',
+              kind: 'read',
+              source: 'runtime',
+              ask: 'allowed',
+              execute: 'allowed'
+            }),
+            expect.objectContaining({
+              id: 'edit',
+              kind: 'write',
+              source: 'runtime',
+              ask: 'blocked',
+              execute: 'allowed'
+            })
+          ]),
+          skills: [
+            {
+              id: 'plugin-native-skill',
+              name: 'plugin-native-skill',
+              description: 'Skill contributed by a Host plugin.',
+              source: 'plugin'
+            }
+          ],
+          mcpServers: [],
+          agents: [],
+          commands: [],
+          lsp: [],
+          formatters: [],
+          prompts: [],
+          resources: [],
+          resourcesSupported: false,
+          context: {
+            strategy: 'unsupported',
+            manualCompact: false
+          }
+        })
         const executeEvents = await collect(
           runtime.run(
             {
@@ -687,7 +764,15 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
           'Ask 模式不允许执行非只读工具'
         )
         expect(callTool).toHaveBeenCalledTimes(callsBeforeAsk)
-        expect(listTools).toHaveBeenCalledTimes(listsBeforeAsk)
+        expect(listTools).toHaveBeenCalledTimes(listsBeforeAsk + 1)
+        expect(listTools).toHaveBeenLastCalledWith(
+          {
+            conversationId: 'acp-e2e',
+            workMode: 'ask',
+            knowledgeCapabilityToken: undefined
+          },
+          expect.any(AbortSignal)
+        )
         expect(authorize).toHaveBeenCalledTimes(approvalsBeforeAsk)
         expect(askEvents).toEqual(
           expect.arrayContaining([
@@ -720,6 +805,101 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
       }
     },
     60_000
+  )
+
+  it.runIf(liveModelEnabled)(
+    'lets a real model use Main-brokered Web Search and Fetch in Ask',
+    async () => {
+      if (!liveApiKey) {
+        throw new Error(
+          'GOODBUDDY_DSH_API_KEY is required for live DSH model E2E'
+        )
+      }
+      const root = await realpath(
+        await mkdtemp(join(tmpdir(), 'goodbuddy-harness-web-model-'))
+      )
+      const workspace = join(root, 'workspace')
+      const dshHome = join(root, 'dsh-home')
+      await Promise.all([mkdir(workspace), mkdir(dshHome)])
+      const observedRequests: GenerateOptions[] = []
+      const inProcess = createInProcessLaunch(
+        dshHome,
+        undefined,
+        (options) => observedRequests.push(options)
+      )
+      const toolProvider = new ModelToolProvider(
+        workspace,
+        [],
+        undefined,
+        undefined,
+        true
+      )
+      const runtime = new DeepSeekHarnessRuntime({
+        defaultWorkspace: workspace,
+        baseUrl: liveBaseUrl,
+        model: liveModel,
+        launch: (options) => inProcess.launch(options),
+        credentialRefs: {
+          [CREDENTIAL_REF]: liveApiKey
+        },
+        toolProvider,
+        initializationTimeoutMs: 20_000,
+        promptTimeoutMs: 120_000,
+        shutdownTimeoutMs: 5_000
+      })
+
+      try {
+        const events = await collect(
+          runtime.run(
+            {
+              requestId: 'request-live-web-search',
+              conversationId: 'live-web-search',
+              prompt:
+                'DSH_WEB_TOOLS_PROBE: First call web_search exactly once with query "GoodBuddy GitHub desktop assistant" and numResults 2. Then call web_fetch exactly once with urls ["https://example.com/"] and maxCharacters 1000. Do not call another tool. After both results, reply with DSH_WEB_TOOLS_E2E_OK.',
+              workMode: 'ask'
+            },
+            new AbortController().signal
+          )
+        )
+        expect(
+          observedRequests.flatMap(
+            (options) =>
+              options.tools?.map((tool) => tool.name) ?? []
+          )
+        ).toEqual(
+          expect.arrayContaining(['web_search', 'web_fetch'])
+        )
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'tool',
+              name: 'web_search',
+              state: 'completed'
+            }),
+            expect.objectContaining({
+              type: 'tool',
+              name: 'web_fetch',
+              state: 'completed'
+            })
+          ])
+        )
+        expect(
+          events
+            .flatMap((event) =>
+              event.type === 'text' ? [event.delta] : []
+            )
+            .join('')
+        ).toContain('DSH_WEB_TOOLS_E2E_OK')
+      } finally {
+        await runtime.dispose()
+        await toolProvider.dispose()
+        await Promise.allSettled(
+          inProcess.hosts.map((host) => host.dispose())
+        )
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    180_000
   )
 
   it.runIf(liveModelEnabled)(

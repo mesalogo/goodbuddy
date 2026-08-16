@@ -1,4 +1,13 @@
-import type { AgentRuntimeStatus } from '../../shared/contracts'
+import type {
+  AgentRuntimeStatus,
+  RuntimeNativeSnapshot,
+  RuntimeNativeTool
+} from '../../shared/contracts'
+import {
+  runtimeNativeInventoryLimits,
+  runtimeNativeSkillSchema,
+  runtimeNativeToolSchema
+} from '../../shared/runtime-customization-contracts'
 import { RequestError } from '@agentclientprotocol/sdk'
 import type {
   AgentExecutionRequest,
@@ -13,6 +22,18 @@ import {
   assertObjectJsonSchema,
   validateJsonSchemaValue
 } from '@deepseek-ai/dsh-tools'
+import {
+  GOODBUDDY_CONTROL_PROTOCOL_VERSION,
+  GOODBUDDY_CREDENTIAL,
+  GOODBUDDY_EVENT,
+  GOODBUDDY_HANDSHAKE,
+  GOODBUDDY_NATIVE_SNAPSHOT,
+  GOODBUDDY_PREPARE,
+  GOODBUDDY_RELEASE,
+  GOODBUDDY_SHUTDOWN,
+  GOODBUDDY_TOOLS_CALL,
+  GOODBUDDY_TOOLS_LIST
+} from './deepseek-harness-protocol'
 
 const ACP_PACKAGE_NAME = '@agentclientprotocol/sdk'
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000
@@ -25,16 +46,30 @@ const MAX_QUEUED_UPDATES = 1_000
 const MAX_APPROVAL_DETAIL_CHARACTERS = 4_000
 const MAX_MCP_PROXY_TOOLS = 100
 const MAX_MCP_TOOL_DESCRIPTION_CHARACTERS = 1_000
+const MAX_NATIVE_TOOLS = runtimeNativeInventoryLimits.tools
 const MAX_MCP_TOOL_SCHEMA_BYTES = 32 * 1024
-const CONTROL_PROTOCOL_VERSION = 1
-const GOODBUDDY_HANDSHAKE = 'goodbuddy/handshake'
-const GOODBUDDY_PREPARE = 'goodbuddy/session/prepare'
-const GOODBUDDY_RELEASE = 'goodbuddy/session/release'
-const GOODBUDDY_EVENT = 'goodbuddy/session/event'
-const GOODBUDDY_CREDENTIAL = 'goodbuddy/credential/resolve'
-const GOODBUDDY_TOOLS_LIST = 'goodbuddy/tools/list'
-const GOODBUDDY_TOOLS_CALL = 'goodbuddy/tools/call'
-const GOODBUDDY_SHUTDOWN = 'goodbuddy/shutdown'
+const MAIN_WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+const DSH_BUILTIN_TOOL_KINDS: Readonly<
+  Partial<Record<string, RuntimeNativeTool['kind']>>
+> = {
+  bash: 'shell',
+  edit: 'write',
+  pwsh: 'shell',
+  read: 'read',
+  read_image: 'read',
+  write: 'write'
+}
+const DSH_SCHEMA_SCALAR_KEYS = new Set([
+  'type',
+  'required',
+  'additionalProperties',
+  'enum',
+  'const',
+  'description',
+  'title',
+  'default',
+  'examples'
+])
 
 type AcpPermissionRequest = {
   sessionId: string
@@ -166,6 +201,7 @@ type ActiveRun = {
   toolController: AbortController
   authorize?: RuntimeAuthorizer
   updates: AcpSessionNotification['update'][]
+  toolNames: Map<string, string>
   wake?: () => void
   closed: boolean
   outputCharacters: number
@@ -227,16 +263,97 @@ export function harnessPromptError(error: unknown): unknown {
     : error
 }
 
-function boundedMcpToolCatalog(
+function isMainWebTool(
+  tool: Awaited<
+    ReturnType<ModelToolProviderLike['listTools']>
+  >[number]
+): boolean {
+  return (
+    tool.source === 'builtin' &&
+    MAIN_WEB_TOOL_NAMES.has(tool.name)
+  )
+}
+
+function dshCompatibleWebInputSchema(
+  schema: Record<string, unknown>
+): Record<string, unknown> {
+  const compatible: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(schema)) {
+    if (DSH_SCHEMA_SCALAR_KEYS.has(key)) {
+      compatible[key] = value
+      continue
+    }
+    if (
+      key === 'properties' &&
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      compatible.properties = Object.fromEntries(
+        Object.entries(value).map(([name, propertySchema]) => [
+          name,
+          propertySchema &&
+          typeof propertySchema === 'object' &&
+          !Array.isArray(propertySchema)
+            ? dshCompatibleWebInputSchema(
+                propertySchema as Record<string, unknown>
+              )
+            : propertySchema
+        ])
+      )
+      continue
+    }
+    if (
+      key === 'items' &&
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      compatible.items = dshCompatibleWebInputSchema(
+        value as Record<string, unknown>
+      )
+      continue
+    }
+    if (key === 'oneOf' && Array.isArray(value)) {
+      compatible.oneOf = value.map((candidate) =>
+        candidate &&
+        typeof candidate === 'object' &&
+        !Array.isArray(candidate)
+          ? dshCompatibleWebInputSchema(
+              candidate as Record<string, unknown>
+            )
+          : candidate
+      )
+    }
+  }
+  return compatible
+}
+
+function proxyToolInputSchema(
+  tool: Awaited<
+    ReturnType<ModelToolProviderLike['listTools']>
+  >[number]
+): Record<string, unknown> {
+  return isMainWebTool(tool)
+    ? dshCompatibleWebInputSchema(tool.inputSchema)
+    : tool.inputSchema
+}
+
+function boundedProxyToolCatalog(
   tools: Awaited<
     ReturnType<ModelToolProviderLike['listTools']>
-  >
+  >,
+  workMode: 'ask' | 'execute'
 ): Array<{
   name: string
   description: string
   inputSchema: Record<string, unknown>
 }> {
-  const catalog = tools.filter((tool) => tool.source === 'mcp')
+  const catalog = tools.filter(
+    (tool) =>
+      isMainWebTool(tool) ||
+      (workMode === 'execute' && tool.source === 'mcp')
+  )
   if (catalog.length > MAX_MCP_PROXY_TOOLS) {
     throw new Error(
       'DeepSeek Harness MCP 工具数量超过安全限制'
@@ -255,9 +372,10 @@ function boundedMcpToolCatalog(
       0,
       MAX_MCP_TOOL_DESCRIPTION_CHARACTERS
     )
+    const inputSchema = proxyToolInputSchema(tool)
     let serialized: string
     try {
-      serialized = JSON.stringify(tool.inputSchema)
+      serialized = JSON.stringify(inputSchema)
     } catch (error) {
       throw new Error('DeepSeek Harness MCP 工具结构无效', {
         cause: error
@@ -275,7 +393,7 @@ function boundedMcpToolCatalog(
     return {
       name: tool.name,
       description,
-      inputSchema: tool.inputSchema
+      inputSchema
     }
   })
 }
@@ -597,7 +715,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     const supports = capabilities.supports
     if (
       capabilities.controlProtocolVersion !==
-        CONTROL_PROTOCOL_VERSION ||
+        GOODBUDDY_CONTROL_PROTOCOL_VERSION ||
       capabilities.acpProtocolVersion !== protocolVersion ||
       typeof capabilities.harnessVersion !== 'string' ||
       !supports?.cancellation ||
@@ -732,15 +850,28 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 if (!this.options.toolProvider) {
                   return { tools: [] }
                 }
+                const run = this.activeRuns.get(params.sessionId)
+                const context = {
+                  conversationId:
+                    run?.request.conversationId ??
+                    'deepseek-harness-tool-catalog',
+                  workMode:
+                    run?.request.workMode === 'ask'
+                      ? ('ask' as const)
+                      : ('execute' as const),
+                  knowledgeCapabilityToken:
+                    run?.request.knowledgeCapabilityToken
+                }
                 const tools = await this.options.toolProvider.listTools(
-                  {
-                    conversationId:
-                      'deepseek-harness-tool-catalog',
-                    workMode: 'execute'
-                  },
+                  context,
                   connection.signal
                 )
-                return { tools: boundedMcpToolCatalog(tools) }
+                return {
+                  tools: boundedProxyToolCatalog(
+                    tools,
+                    context.workMode
+                  )
+                }
               }
               if (method === GOODBUDDY_TOOLS_CALL) {
                 const sessionId = params.sessionId
@@ -779,16 +910,18 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 const tool = tools.find(
                   (candidate) =>
                     candidate.name === name &&
-                    candidate.source === 'mcp'
+                    (candidate.source === 'mcp' ||
+                      isMainWebTool(candidate))
                 )
                 if (!tool) {
                   throw new Error(
-                    'DeepSeek Harness 请求了未知 MCP 工具'
+                    'DeepSeek Harness 请求了未知 Main 代理工具'
                   )
                 }
+                const isWebTool = isMainWebTool(tool)
                 if (
-                  context.workMode !== 'execute' ||
-                  !run.authorize
+                  !isWebTool &&
+                  (context.workMode !== 'execute' || !run.authorize)
                 ) {
                   throw new Error(
                     'DeepSeek Harness MCP 工具需要 Execute 模式授权'
@@ -796,8 +929,9 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 }
                 const argumentSummary =
                   safeStringify(argumentsValue) ?? '{}'
+                const inputSchema = proxyToolInputSchema(tool)
                 try {
-                  assertObjectJsonSchema(tool.inputSchema)
+                  assertObjectJsonSchema(inputSchema)
                 } catch (error) {
                   throw new Error(
                     'DeepSeek Harness MCP 工具参数结构不受支持',
@@ -805,7 +939,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   )
                 }
                 const violations = validateJsonSchemaValue(
-                  tool.inputSchema,
+                  inputSchema,
                   argumentsValue
                 )
                 if (violations.length > 0) {
@@ -816,19 +950,22 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                       .slice(0, 1_000)}`
                   )
                 }
-                const approval = this.options.toolProvider.getApproval(
-                  tool,
-                  argumentsValue as Record<string, unknown>,
-                  argumentSummary,
-                  context
-                )
-                const decision = await run
-                  .authorize(approval)
-                  .catch(() => 'deny')
-                if (decision === 'deny') {
-                  throw new Error(
-                    'DeepSeek Harness MCP 工具调用未获执行授权'
-                  )
+                if (!isWebTool) {
+                  const approval =
+                    this.options.toolProvider.getApproval(
+                      tool,
+                      argumentsValue as Record<string, unknown>,
+                      argumentSummary,
+                      context
+                    )
+                  const decision = await run
+                    .authorize!(approval)
+                    .catch(() => 'deny')
+                  if (decision === 'deny') {
+                    throw new Error(
+                      'DeepSeek Harness MCP 工具调用未获执行授权'
+                    )
+                  }
                 }
                 const result = await this.options.toolProvider.callTool(
                   name,
@@ -902,7 +1039,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           stateWithoutCapabilities.agent.extMethod(
             GOODBUDDY_HANDSHAKE,
             {
-              controlProtocolVersion: CONTROL_PROTOCOL_VERSION
+              controlProtocolVersion:
+                GOODBUDDY_CONTROL_PROTOCOL_VERSION
             }
           ),
           this.initializationTimeoutMs,
@@ -961,6 +1099,151 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           error instanceof Error
             ? error.message
             : 'DeepSeek Harness 不可用'
+      }
+    }
+  }
+
+  async getNativeSnapshot(): Promise<RuntimeNativeSnapshot> {
+    const state = await this.getState()
+    const response = await withTimeout(
+      state.agent.extMethod(GOODBUDDY_NATIVE_SNAPSHOT, {}),
+      this.initializationTimeoutMs,
+      '原生能力清单'
+    )
+    const assignedSkillIds = new Set(
+      (this.options.skillPackages ?? []).map((skill) => skill.id)
+    )
+    const rawSkills = Array.isArray(response.skills)
+      ? response.skills
+      : []
+    const skills = rawSkills
+      .filter(
+        (
+          candidate
+        ): candidate is Record<string, unknown> => {
+          if (
+            !candidate ||
+            typeof candidate !== 'object' ||
+            Array.isArray(candidate)
+          ) {
+            return false
+          }
+          const skill = candidate as Record<string, unknown>
+          return (
+            typeof skill.id === 'string' &&
+            typeof skill.name === 'string' &&
+            !assignedSkillIds.has(skill.id.trim())
+          )
+        }
+      )
+      .flatMap((skill) => {
+        const source =
+          typeof skill.source === 'string'
+            ? skill.source
+            : ''
+        const mappedSource =
+          source === 'project-dsh' ||
+          source === 'project-agents'
+            ? ('workspace' as const)
+            : source === 'user-dsh' ||
+                source === 'user-agents'
+              ? ('global' as const)
+              : source === 'runtime'
+                ? ('runtime' as const)
+                : source === 'custom'
+                  ? ('plugin' as const)
+                  : ('unknown' as const)
+        const description =
+          typeof skill.description === 'string'
+            ? skill.description.trim()
+            : ''
+        const parsed = runtimeNativeSkillSchema.safeParse({
+          id: skill.id,
+          name: skill.name,
+          ...(description
+            ? {
+                description
+              }
+            : {}),
+          source: mappedSource
+        })
+        return parsed.success ? [parsed.data] : []
+      })
+      .slice(0, runtimeNativeInventoryLimits.skills)
+    const rawTools = Array.isArray(response.tools)
+      ? response.tools
+      : []
+    const toolsSupported =
+      response.toolsSupported === true &&
+      Array.isArray(response.tools)
+    const tools = rawTools
+      .flatMap((candidate) => {
+        if (
+          !candidate ||
+          typeof candidate !== 'object' ||
+          Array.isArray(candidate)
+        ) {
+          return []
+        }
+        const tool = candidate as Record<string, unknown>
+        if (
+          typeof tool.id !== 'string' ||
+          typeof tool.name !== 'string'
+        ) {
+          return []
+        }
+        const id = tool.id.trim()
+        const builtinKind = DSH_BUILTIN_TOOL_KINDS[id]
+        const description =
+          typeof tool.description === 'string'
+            ? tool.description.trim()
+            : ''
+        const parsed = runtimeNativeToolSchema.safeParse({
+          id,
+          name: tool.name,
+          ...(description ? { description } : {}),
+          kind: builtinKind ?? 'other',
+          source:
+            id === 'skill'
+              ? 'skill'
+              : builtinKind
+                ? 'runtime'
+                : 'plugin',
+          ask:
+            id === 'read'
+              ? 'allowed'
+              : id === 'skill'
+                ? 'conditional'
+                : 'blocked',
+          execute: 'allowed'
+        })
+        return parsed.success ? [parsed.data] : []
+      })
+      .slice(0, MAX_NATIVE_TOOLS)
+    return {
+      provider: 'deepseek-harness',
+      available: true,
+      inventoryStatus: toolsSupported ? 'available' : 'partial',
+      detail:
+        toolsSupported
+          ? '显示 DeepSeek Harness Host 与插件原生能力；GoodBuddy 分配的 Skill 和 MCP 不在此清单中。'
+          : 'DeepSeek Harness 已连接，但工具清单暂不可用；GoodBuddy 分配的 Skill 和 MCP 不在原生清单中。',
+      agents: [],
+      tools,
+      toolsSupported,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills,
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: false,
+      context: {
+        strategy: 'unsupported',
+        manualCompact: false,
+        detail: 'DeepSeek Harness 暂不支持原生上下文压缩。'
       }
     }
   }
@@ -1049,7 +1332,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
 
   private toRuntimeEvent(
     requestId: string,
-    update: AcpSessionNotification['update']
+    update: AcpSessionNotification['update'],
+    toolNames: Map<string, string>
   ): RuntimeEvent | undefined {
     if (update.goodBuddyEvent) {
       return this.toUsageEvent(
@@ -1085,15 +1369,25 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
             : update.status === 'failed'
               ? 'failed'
               : 'pending'
-      const name = (
+      const reportedName = (
         update.name ??
         update.title ??
         'DeepSeek Harness 工具'
       ).slice(0, 200)
+      const callId = update.toolCallId.slice(0, 256)
+      const name =
+        reportedName === 'tool'
+          ? toolNames.get(callId) ?? reportedName
+          : reportedName
+      if (state === 'pending' || state === 'running') {
+        toolNames.set(callId, name)
+      } else {
+        toolNames.delete(callId)
+      }
       return {
         requestId,
         type: 'tool',
-        callId: update.toolCallId.slice(0, 256),
+        callId,
         name,
         state,
         summary: `DeepSeek Harness 工具：${name}`,
@@ -1141,6 +1435,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         toolController,
         authorize,
         updates: [],
+        toolNames: new Map(),
         closed: false,
         outputCharacters: 0
       }
@@ -1211,7 +1506,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           const update = run.updates.shift()!
           const event = this.toRuntimeEvent(
             request.requestId,
-            update
+            update,
+            run.toolNames
           )
           if (event) {
             yield event

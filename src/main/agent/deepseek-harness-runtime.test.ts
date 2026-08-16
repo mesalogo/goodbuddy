@@ -38,6 +38,10 @@ function deferred<T>() {
 function setup(
   options: {
     toolProvider?: ModelToolProviderLike
+    skillPackages?: Array<{ id: string; directory: string }>
+    nativeSkills?: Array<Record<string, unknown>>
+    nativeTools?: Array<Record<string, unknown>>
+    toolsSupported?: boolean
     promptTimeoutMs?: number
     maxEventCharacters?: number
     maxRequestOutputCharacters?: number
@@ -149,6 +153,13 @@ function setup(
         if (method === 'goodbuddy/session/release') {
           return { released: true }
         }
+        if (method === 'goodbuddy/native/snapshot') {
+          return {
+            skills: options.nativeSkills ?? [],
+            tools: options.nativeTools ?? [],
+            toolsSupported: options.toolsSupported ?? true
+          }
+        }
         if (method === 'goodbuddy/shutdown') {
           return { shutdown: true }
         }
@@ -210,7 +221,8 @@ function setup(
     maxEventCharacters: options.maxEventCharacters,
     maxRequestOutputCharacters:
       options.maxRequestOutputCharacters,
-    toolProvider: options.toolProvider
+    toolProvider: options.toolProvider,
+    skillPackages: options.skillPackages
   })
   const emit = async (
     sessionId: string,
@@ -312,6 +324,51 @@ function mcpTool(
     },
     source: 'mcp',
     serverName: 'Local Game Assets'
+  }
+}
+
+function webTool(
+  name: 'web_search' | 'web_fetch' = 'web_search'
+): ModelToolDefinition {
+  return {
+    name,
+    displayName: name === 'web_search' ? '联网搜索' : '网页读取',
+    description: `Main-owned ${name}`,
+    inputSchema: {
+      type: 'object',
+      properties:
+        name === 'web_search'
+          ? {
+              query: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 1_000
+              },
+              numResults: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 10,
+                default: 6
+              }
+            }
+          : {
+              urls: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 5,
+                items: { type: 'string', format: 'uri' }
+              },
+              maxCharacters: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 12_000,
+                default: 4_000
+              }
+            },
+      required: [name === 'web_search' ? 'query' : 'urls'],
+      additionalProperties: false
+    },
+    source: 'builtin'
   }
 }
 
@@ -426,6 +483,52 @@ describe('DeepSeekHarnessRuntime', () => {
     expect(
       harness.requests.filter(({ method }) => method === 'session/new')
     ).toHaveLength(1)
+    await harness.runtime.dispose()
+  })
+
+  it('keeps the original tool name on generic completion updates', async () => {
+    const harness = setup()
+    const running = collect(
+      harness.runtime.run(
+        request('tool-events'),
+        new AbortController().signal
+      )
+    )
+    await vi.waitFor(() =>
+      expect(harness.promptGates).toHaveLength(1)
+    )
+    await harness.emit('session-1', {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-web-search',
+      name: 'web_search',
+      status: 'pending',
+      rawInput: { query: 'GoodBuddy' }
+    })
+    await harness.emit('session-1', {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-web-search',
+      name: 'tool',
+      status: 'completed',
+      rawOutput: 'search result'
+    })
+    harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
+
+    expect(await running).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool',
+          callId: 'call-web-search',
+          name: 'web_search',
+          state: 'pending'
+        }),
+        expect.objectContaining({
+          type: 'tool',
+          callId: 'call-web-search',
+          name: 'web_search',
+          state: 'completed'
+        })
+      ])
+    )
     await harness.runtime.dispose()
   })
 
@@ -563,9 +666,10 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('lists only bounded MCP schemas without exposing server secrets', async () => {
+  it('lists only bounded Main proxy schemas without exposing server secrets', async () => {
     const provider = toolProvider([
       mcpTool(),
+      webTool(),
       {
         ...mcpTool('workspace_read_text'),
         source: 'builtin'
@@ -584,6 +688,22 @@ describe('DeepSeekHarnessRuntime', () => {
           name: mcpTool().name,
           description: mcpTool().description,
           inputSchema: mcpTool().inputSchema
+        },
+        {
+          name: 'web_search',
+          description: webTool().description,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: { type: 'string' },
+              numResults: {
+                type: 'integer',
+                default: 6
+              }
+            },
+            required: ['query'],
+            additionalProperties: false
+          }
         }
       ]
     })
@@ -594,6 +714,175 @@ describe('DeepSeekHarnessRuntime', () => {
         })
       )
     ).not.toContain('secret')
+    await harness.runtime.dispose()
+  })
+
+  it('exposes and calls Main-owned web tools in Ask without approval', async () => {
+    const provider = toolProvider([
+      webTool('web_search'),
+      webTool('web_fetch'),
+      mcpTool()
+    ])
+    const harness = setup({ toolProvider: provider })
+    const authorize = vi.fn().mockResolvedValue('once')
+    const running = collect(
+      harness.runtime.run(
+        request('web-ask', 'ask'),
+        new AbortController().signal,
+        authorize
+      )
+    )
+    await vi.waitFor(() =>
+      expect(harness.promptGates).toHaveLength(1)
+    )
+
+    await expect(
+      harness.extension('goodbuddy/tools/list', {
+        sessionId: 'session-1'
+      })
+    ).resolves.toEqual({
+      tools: [
+        expect.objectContaining({ name: 'web_search' }),
+        expect.objectContaining({ name: 'web_fetch' })
+      ]
+    })
+    await expect(
+      harness.extension('goodbuddy/tools/call', {
+        sessionId: 'session-1',
+        name: 'web_search',
+        arguments: { query: 'GoodBuddy' }
+      })
+    ).resolves.toEqual({
+      content: [
+        { type: 'text', text: '{"asset":"cube"}' }
+      ]
+    })
+    expect(authorize).not.toHaveBeenCalled()
+    expect(provider.getApproval).not.toHaveBeenCalled()
+    expect(provider.callTool).toHaveBeenCalledWith(
+      'web_search',
+      { query: 'GoodBuddy' },
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        conversationId: 'web-ask',
+        workMode: 'ask'
+      })
+    )
+    harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
+    await running
+    await harness.runtime.dispose()
+  })
+
+  it('filters GoodBuddy assignments from the native Host inventory', async () => {
+    const harness = setup({
+      skillPackages: [
+        { id: 'assigned-skill', directory: 'C:\\assigned' }
+      ],
+      nativeSkills: [
+        {
+          id: 'assigned-skill',
+          name: 'Assigned Skill',
+          description: 'GoodBuddy assignment',
+          source: 'bundled',
+          provider: 'runtime'
+        },
+        {
+          id: 'plugin-skill',
+          name: 'Plugin Skill',
+          description: 'Host plugin contribution',
+          source: 'custom',
+          provider: 'third-party-plugin'
+        }
+      ],
+      nativeTools: [
+        {
+          id: 'read',
+          name: 'read',
+          description: 'Read a workspace file'
+        },
+        {
+          id: 'edit',
+          name: 'edit',
+          description: 'Edit a workspace file'
+        },
+        {
+          id: 'plugin_tool',
+          name: 'plugin_tool',
+          description: 'Plugin capability'
+        }
+      ]
+    })
+
+    await expect(harness.runtime.getNativeSnapshot()).resolves.toEqual({
+      provider: 'deepseek-harness',
+      available: true,
+      inventoryStatus: 'available',
+      detail: expect.stringContaining('GoodBuddy'),
+      agents: [],
+      toolsSupported: true,
+      tools: [
+        {
+          id: 'read',
+          name: 'read',
+          description: 'Read a workspace file',
+          kind: 'read',
+          source: 'runtime',
+          ask: 'allowed',
+          execute: 'allowed'
+        },
+        {
+          id: 'edit',
+          name: 'edit',
+          description: 'Edit a workspace file',
+          kind: 'write',
+          source: 'runtime',
+          ask: 'blocked',
+          execute: 'allowed'
+        },
+        {
+          id: 'plugin_tool',
+          name: 'plugin_tool',
+          description: 'Plugin capability',
+          kind: 'other',
+          source: 'plugin',
+          ask: 'blocked',
+          execute: 'allowed'
+        }
+      ],
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [
+        {
+          id: 'plugin-skill',
+          name: 'Plugin Skill',
+          description: 'Host plugin contribution',
+          source: 'plugin'
+        }
+      ],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: false,
+      context: {
+        strategy: 'unsupported',
+        manualCompact: false,
+        detail: expect.any(String)
+      }
+    })
+    await harness.runtime.dispose()
+  })
+
+  it('reports a partial native inventory when Host tool discovery is unavailable', async () => {
+    const harness = setup({ toolsSupported: false })
+
+    await expect(harness.runtime.getNativeSnapshot()).resolves.toMatchObject({
+      available: true,
+      inventoryStatus: 'partial',
+      tools: [],
+      toolsSupported: false
+    })
     await harness.runtime.dispose()
   })
 

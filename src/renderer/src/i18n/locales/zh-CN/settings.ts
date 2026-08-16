@@ -173,7 +173,131 @@ export const settings = {
     followGoodBuddy: '跟随 GoodBuddy · {{name}}（{{model}}）',
     noCompatibleModel: '尚未配置兼容的文本模型',
     permissions:
-      '对话时可选择 Ask 或 Execute。Ask 仅可调用知识库与全局笔记读取工具；Execute 可调用已启用工具及笔记写入工具，调用过程会记录到活动。',
+      '对话时可选择 Ask 或 Execute。Ask 仅可调用当前 Runtime 允许的只读能力；Execute 可调用已启用工具，调用过程会记录到活动。',
+    customization: {
+      title: 'Runtime 原生定制',
+      description:
+        '管理当前 Runtime 自己提供的能力；清单不包含 GoodBuddy 分配的 Skills 或临时 MCP。',
+      refresh: '刷新 Runtime 原生能力',
+      retry: '重试',
+      loading: '正在读取 Runtime 原生能力…',
+      save: '保存 Runtime 定制',
+      saving: '正在保存…',
+      saved: '已保存 Runtime 定制设置',
+      enabled: '已启用',
+      disabled: '已停用',
+      errors: {
+        load: '读取 Runtime 原生能力失败',
+        save: '保存 Runtime 定制失败'
+      },
+      inventory: {
+        tabsAriaLabel: 'Runtime 原生能力',
+        nativeOnly:
+          '这里只显示 Runtime 原生配置与插件能力，不显示 GoodBuddy 分配内容。',
+        status: {
+          available: 'Runtime 原生能力可用',
+          partial: 'Runtime 原生能力部分可用',
+          unavailable: 'Runtime 原生能力不可用',
+          'connection-only': '仅确认 Runtime 连接',
+          unsupported: 'Runtime 不支持原生能力清单'
+        },
+        agents: '原生 Agents',
+        tools: '原生 Tools',
+        skills: '原生 Skills',
+        mcp: '原生 MCP',
+        commands: 'Commands',
+        rules: '原生 Rules',
+        prompts: 'Prompt 模板',
+        resources: 'MCP Resources',
+        lsp: 'LSP 状态',
+        formatters: 'Formatter 状态',
+        empty: '未发现',
+        emptyDescription: '当前 Runtime 未报告此类别中的可用原生能力。',
+        unsupported: '当前 Runtime 不支持',
+        toolsUnsupported: '当前 Runtime 不支持静态发现原生 Tools',
+        toolModes: 'Ask：{{ask}} · Execute：{{execute}}',
+        toolKind: {
+          read: '读取',
+          write: '文件修改',
+          shell: '命令执行',
+          network: '网络访问',
+          agent: 'Agent 编排',
+          interaction: '用户交互',
+          other: '其他'
+        },
+        toolSource: {
+          runtime: 'Runtime 内置',
+          plugin: 'Runtime 插件',
+          mcp: 'MCP',
+          skill: 'Skill',
+          unknown: '来源未知'
+        },
+        toolAccess: {
+          allowed: '可用',
+          blocked: '不可用',
+          conditional: '按当前请求可用'
+        }
+      },
+      agentMode: {
+        primary: '主 Agent',
+        subagent: '子 Agent',
+        all: '主 Agent / 子 Agent'
+      },
+      status: {
+        connected: '已连接',
+        disabled: '已停用',
+        failed: '失败',
+        'needs-auth': '需要认证',
+        unsupported: '不支持',
+        unknown: '未知',
+        error: '错误',
+        'not-loaded': '未加载'
+      },
+      commandSource: {
+        command: 'Runtime Command',
+        mcp: 'MCP Prompt',
+        skill: 'Skill Command',
+        runtime: 'Runtime'
+      },
+      context: {
+        title: '上下文与压缩'
+      },
+      opencode: {
+        defaultAgent: '默认 Runtime Agent',
+        runtimeDefault: '由 OpenCode 选择',
+        agentDescription:
+          '只影响 GoodBuddy 管理的本机 OpenCode；聊天中仍可为当前对话单独选择。'
+      },
+      continue: {
+        editPreset: '编辑配置预设',
+        noPresets: '尚无预设',
+        addPreset: '添加预设',
+        removePreset: '删除预设',
+        defaultPreset: '默认配置预设',
+        noDefaultPreset: '不应用 GoodBuddy 预设',
+        newPreset: '新 Continue 预设',
+        presetName: '预设名称',
+        presetDescription: '预设说明',
+        rules: 'Rules',
+        addRule: '添加 Rule',
+        newRule: '新 Rule',
+        newRuleContent: '在此输入每次请求都应遵守的规则。',
+        ruleName: 'Rule 名称',
+        ruleContent: '{{name}} 内容',
+        removeRule: '删除 Rule {{name}}',
+        prompts: 'Prompt 模板',
+        addPrompt: '添加 Prompt',
+        newPrompt: '新 Prompt',
+        newPromptContent: '在此输入可从聊天输入区调用的 Prompt。',
+        promptName: 'Prompt 名称',
+        promptDescription: '{{name}} 说明',
+        promptDescriptionPlaceholder: '可选，说明此 Prompt 的用途',
+        promptContent: '{{name}} 内容',
+        removePrompt: '删除 Prompt {{name}}',
+        mergedRules: '查看最终合并的 {{count}} 条 Rule',
+        emptyPreset: '添加一个预设后即可管理 Rules 与 Prompt 模板。'
+      }
+    },
     advanced: '高级设置',
     sourceLegend: '模型配置来源',
     followRecommended: '跟随 GoodBuddy 模型（推荐）',
@@ -223,7 +347,7 @@ export const settings = {
       title: 'DeepSeek Harness',
       previewDescription: '开发者预览 · OpenAI 兼容',
       description:
-        '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Ask 仅允许模型调用只读工具，Execute 可调用全部已启用工具及 DSH 插件能力，并保留取消和工作区边界。',
+        '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Ask 可调用 Harness 原生 read/skill 与已启用的网页搜索/抓取，Execute 可调用全部已启用工具及 DSH 插件能力，并保留取消和工作区边界。',
       managedSource: '管理员预置的 OpenAI 兼容连接',
       connection: 'OpenAI 兼容模型连接',
       connectionPlaceholder: '选择 OpenAI 兼容模型连接',
@@ -242,7 +366,7 @@ export const settings = {
         disabledDescription:
           '插件市场默认关闭。开启后才会连接公共 npm 目录并显示管理界面；关闭市场不会停用或卸载已有插件。',
         permissionNotice:
-          '第三方插件的安装脚本、初始化代码及工具均以当前用户权限运行。Ask 只限制模型调用非只读工具，无法限制插件初始化代码；Execute 可调用已启用插件提供的全部工具。请仅安装可信包。',
+          '第三方插件的安装脚本、初始化代码及工具均以当前用户权限运行。Ask 不允许模型调用第三方插件工具，但无法限制插件初始化代码；Execute 可调用已启用插件提供的全部工具。请仅安装可信包。',
         refresh: '刷新',
         refreshAria: '刷新 DSH 插件市场',
         searchLabel: '搜索插件',

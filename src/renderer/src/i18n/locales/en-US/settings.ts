@@ -194,7 +194,137 @@ export const settings = {
     followGoodBuddy: 'Follow GoodBuddy · {{name}} ({{model}})',
     noCompatibleModel: 'No compatible text model is configured',
     permissions:
-      'Choose Ask or Execute in a conversation. Ask can only use read-only knowledge base and global note tools. Execute can use enabled tools and note-writing tools, and records tool calls in Activity.',
+      'Choose Ask or Execute in a conversation. Ask can use only read-only capabilities allowed by the current Runtime. Execute can use enabled tools, and records tool calls in Activity.',
+    customization: {
+      title: 'Native Runtime customization',
+      description:
+        'Manage capabilities supplied by this Runtime. The inventory excludes Skills assigned by GoodBuddy and temporary GoodBuddy MCP servers.',
+      refresh: 'Refresh native Runtime capabilities',
+      retry: 'Retry',
+      loading: 'Loading native Runtime capabilities…',
+      save: 'Save Runtime customization',
+      saving: 'Saving…',
+      saved: 'Runtime customization saved',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      errors: {
+        load: 'Could not load native Runtime capabilities',
+        save: 'Could not save Runtime customization'
+      },
+      inventory: {
+        tabsAriaLabel: 'Native Runtime capabilities',
+        nativeOnly:
+          'Only Runtime-native configuration and plugin capabilities are shown. GoodBuddy assignments are excluded.',
+        status: {
+          available: 'Native Runtime capabilities available',
+          partial: 'Native Runtime capabilities partially available',
+          unavailable: 'Native Runtime capabilities unavailable',
+          'connection-only': 'Runtime connection only',
+          unsupported: 'Native inventory is not supported'
+        },
+        agents: 'Native Agents',
+        tools: 'Native Tools',
+        skills: 'Native Skills',
+        mcp: 'Native MCP',
+        commands: 'Commands',
+        rules: 'Native Rules',
+        prompts: 'Prompt templates',
+        resources: 'MCP Resources',
+        lsp: 'LSP status',
+        formatters: 'Formatter status',
+        empty: 'None detected',
+        emptyDescription:
+          'The current Runtime did not report any native capabilities in this category.',
+        unsupported: 'Not supported by this Runtime',
+        toolsUnsupported:
+          'This Runtime does not support static discovery of native Tools',
+        toolModes: 'Ask: {{ask}} · Execute: {{execute}}',
+        toolKind: {
+          read: 'Read',
+          write: 'File modification',
+          shell: 'Command execution',
+          network: 'Network access',
+          agent: 'Agent orchestration',
+          interaction: 'User interaction',
+          other: 'Other'
+        },
+        toolSource: {
+          runtime: 'Runtime built-in',
+          plugin: 'Runtime plugin',
+          mcp: 'MCP',
+          skill: 'Skill',
+          unknown: 'Unknown source'
+        },
+        toolAccess: {
+          allowed: 'Available',
+          blocked: 'Unavailable',
+          conditional: 'Request-dependent'
+        }
+      },
+      agentMode: {
+        primary: 'Primary Agent',
+        subagent: 'Subagent',
+        all: 'Primary / subagent'
+      },
+      status: {
+        connected: 'Connected',
+        disabled: 'Disabled',
+        failed: 'Failed',
+        'needs-auth': 'Authentication required',
+        unsupported: 'Unsupported',
+        unknown: 'Unknown',
+        error: 'Error',
+        'not-loaded': 'Not loaded'
+      },
+      commandSource: {
+        command: 'Runtime command',
+        mcp: 'MCP prompt',
+        skill: 'Skill command',
+        runtime: 'Runtime'
+      },
+      context: {
+        title: 'Context and compaction'
+      },
+      opencode: {
+        defaultAgent: 'Default Runtime Agent',
+        runtimeDefault: 'Let OpenCode choose',
+        agentDescription:
+          'Applies only to GoodBuddy-managed local OpenCode. A conversation can still select a different Agent.'
+      },
+      continue: {
+        editPreset: 'Edit configuration preset',
+        noPresets: 'No presets',
+        addPreset: 'Add preset',
+        removePreset: 'Delete preset',
+        defaultPreset: 'Default configuration preset',
+        noDefaultPreset: 'Do not apply a GoodBuddy preset',
+        newPreset: 'New Continue preset',
+        presetName: 'Preset name',
+        presetDescription: 'Preset description',
+        rules: 'Rules',
+        addRule: 'Add Rule',
+        newRule: 'New Rule',
+        newRuleContent:
+          'Enter a rule that should apply to every request.',
+        ruleName: 'Rule name',
+        ruleContent: '{{name}} content',
+        removeRule: 'Delete Rule {{name}}',
+        prompts: 'Prompt templates',
+        addPrompt: 'Add Prompt',
+        newPrompt: 'New Prompt',
+        newPromptContent:
+          'Enter a Prompt that can be used from the chat composer.',
+        promptName: 'Prompt name',
+        promptDescription: '{{name}} description',
+        promptDescriptionPlaceholder:
+          'Optional description of when to use this Prompt',
+        promptContent: '{{name}} content',
+        removePrompt: 'Delete Prompt {{name}}',
+        mergedRules: 'View {{count}} merged Rules',
+        emptyPreset:
+          'Add a preset to manage Continue Rules and Prompt templates.'
+      }
+    },
     advanced: 'Advanced settings',
     sourceLegend: 'Model configuration source',
     followRecommended: 'Follow the GoodBuddy model (recommended)',
@@ -247,7 +377,7 @@ export const settings = {
       title: 'DeepSeek Harness',
       previewDescription: 'Developer preview · OpenAI-compatible',
       description:
-        'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Ask limits model tool calls to read-only tools, while Execute can use every enabled tool and DSH plugin capability. Cancellation and workspace boundaries remain in place.',
+        'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Ask can call native read/skill plus enabled Web Search/Fetch, while Execute can use every enabled tool and DSH plugin capability. Cancellation and workspace boundaries remain in place.',
       managedSource:
         'Administrator-provided OpenAI-compatible connection',
       connection: 'OpenAI-compatible model connection',
@@ -268,7 +398,7 @@ export const settings = {
         disabledDescription:
           'The plugin marketplace is off by default. Turn it on to connect to the public npm catalog and show its management interface. Turning off the marketplace does not disable or uninstall existing plugins.',
         permissionNotice:
-          'Third-party install scripts, initialization code, and tools run with your user permissions. Ask limits the model from calling non-read-only tools, but cannot limit plugin initialization code. Execute can call every tool from enabled plugins. Install only packages you trust.',
+          'Third-party install scripts, initialization code, and tools run with your user permissions. Ask cannot call third-party plugin tools, but it cannot limit plugin initialization code. Execute can call every tool from enabled plugins. Install only packages you trust.',
         refresh: 'Refresh',
         refreshAria: 'Refresh the DSH plugin marketplace',
         searchLabel: 'Search plugins',

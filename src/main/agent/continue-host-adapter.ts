@@ -21,7 +21,16 @@ import {
 import json5 from 'json5'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
-import type { RuntimeSettings } from '../../shared/contracts'
+import type {
+  AgentQuestionAnswer,
+  RuntimeNativeSnapshot,
+  RuntimeSettings
+} from '../../shared/contracts'
+import {
+  continueConfigurationPresetSchema,
+  runtimeNativeInventoryLimits,
+  type ContinueConfigurationPreset
+} from '../../shared/runtime-customization-contracts'
 import type { AgentImage, RuntimeAuthorizer } from './runtime'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type { RuntimeSkillPackage } from '../capabilities/capability-service'
@@ -40,6 +49,7 @@ import {
 import { stageRuntimeSkillPackages } from './runtime-skill-packages'
 import { readBoundedResponseText } from './bounded-response'
 import { scopedReadToolNames } from '../../shared/scoped-data-tools'
+import { readBoundedFile } from '../workspace-file-access'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -49,7 +59,10 @@ const maximumBundleBytes = 32 * 1024 * 1024
 const maximumStateBytes = 8 * 1024 * 1024
 const maximumMessageBytes = 20 * 1024 * 1024
 const maximumConfigBytes = 1024 * 1024
-const maximumConfiguredMcpServers = 100
+const maximumConfiguredMcpServers =
+  runtimeNativeInventoryLimits.mcpServers
+const maximumConfiguredRules = runtimeNativeInventoryLimits.rules
+const maximumConfiguredPrompts = runtimeNativeInventoryLimits.prompts
 const maximumStreamEvents = 5_000
 const maximumStreamEventBytes = 2 * 1024 * 1024
 const maximumExecutionMilliseconds = 10 * 60_000
@@ -103,6 +116,23 @@ const continueHostStreamEventSchema = z.discriminatedUnion('type', [
     .strict()
 ])
 
+const continueHostQuestionSchema = z
+  .object({
+    requestId: z.string().min(1).max(128),
+    timestamp: z.number().finite().optional(),
+    question: z
+      .object({
+        question: z.string().trim().min(1).max(2_000),
+        options: z
+          .array(z.string().trim().min(1).max(200))
+          .max(20)
+          .optional(),
+        defaultAnswer: z.string().trim().max(2_000).optional()
+      })
+      .passthrough()
+  })
+  .strict()
+
 const stateSchema = z.object({
   session: z.object({
     history: z.array(z.unknown()).max(5_000),
@@ -122,7 +152,8 @@ const stateSchema = z.object({
     .array(continueHostStreamEventSchema)
     .max(maximumStreamEvents)
     .optional(),
-  goodbuddyEventsOverflow: z.boolean().optional()
+  goodbuddyEventsOverflow: z.boolean().optional(),
+  goodbuddyQuestion: continueHostQuestionSchema.nullable().optional()
 })
 
 type ContinueHostState = z.infer<typeof stateSchema>
@@ -168,6 +199,20 @@ export type ContinueHostRunResult = {
 export type ContinueHostStreamEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool'; tool: ContinueHostTool }
+  | {
+      type: 'question'
+      questionId: string
+      questions: Array<{
+        header: string
+        question: string
+        options: Array<{
+          label: string
+          description: string
+        }>
+        multiple: boolean
+        custom: boolean
+      }>
+    }
 
 export class ContinueHostRunError extends Error {
   constructor(
@@ -205,6 +250,7 @@ export type ContinueHostRunOptions = {
     endpoint: string
     token: string
   }
+  preset?: ContinueConfigurationPreset
   onEvent?: (event: ContinueHostStreamEvent) => void | Promise<void>
 }
 
@@ -228,20 +274,28 @@ function createLoopbackMcpServer(
   }
 }
 
-async function loadContinueConfig(
+export async function loadContinueConfig(
   configPath: string
 ): Promise<Record<string, unknown>> {
-  const configStat = await stat(configPath)
-  if (!configStat.isFile()) {
-    throw new Error('Continue 配置路径不是文件')
-  }
-  if (configStat.size > maximumConfigBytes) {
-    throw new Error('Continue 配置文件超过 1 MB 安全大小限制')
-  }
-  const source = await readFile(configPath, 'utf8')
-  if (Buffer.byteLength(source) > maximumConfigBytes) {
-    throw new Error('Continue 配置文件超过 1 MB 安全大小限制')
-  }
+  const tooLargeMessage =
+    'Continue 配置文件超过 1 MB 安全大小限制'
+  const invalidFileMessage = 'Continue 配置路径不是文件'
+  const data = await readBoundedFile(
+    configPath,
+    maximumConfigBytes,
+    tooLargeMessage,
+    invalidFileMessage
+  ).catch((error: unknown) => {
+    if (
+      error instanceof Error &&
+      (error.message === tooLargeMessage ||
+        error.message === invalidFileMessage)
+    ) {
+      throw error
+    }
+    throw new Error('Continue 配置文件无法读取', { cause: error })
+  })
+  const source = data.toString('utf8')
 
   let parsed: unknown
   try {
@@ -260,6 +314,176 @@ async function loadContinueConfig(
     throw new Error('Continue 配置文件必须包含配置对象')
   }
   return parsed
+}
+
+function boundedText(
+  value: unknown,
+  maximum: number
+): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const normalized = value.trim()
+  if (
+    !normalized ||
+    normalized.length > maximum ||
+    [...normalized].some((character) => {
+      const code = character.charCodeAt(0)
+      return code <= 31 && code !== 9 && code !== 10 && code !== 13
+    })
+  ) {
+    return undefined
+  }
+  return normalized
+}
+
+function configuredRules(config: Record<string, unknown>): unknown[] {
+  if (config.rules === undefined) {
+    return []
+  }
+  if (
+    !Array.isArray(config.rules) ||
+    config.rules.length > maximumConfiguredRules
+  ) {
+    throw new Error(
+      `Continue 配置文件中的 Rules 不能超过 ${maximumConfiguredRules} 个`
+    )
+  }
+  return config.rules
+}
+
+function configuredPrompts(config: Record<string, unknown>): unknown[] {
+  if (config.prompts === undefined) {
+    return []
+  }
+  if (
+    !Array.isArray(config.prompts) ||
+    config.prompts.length > maximumConfiguredPrompts
+  ) {
+    throw new Error(
+      `Continue 配置文件中的 Prompts 不能超过 ${maximumConfiguredPrompts} 个`
+    )
+  }
+  return config.prompts
+}
+
+function presetConfig(
+  preset: ContinueConfigurationPreset | undefined
+): {
+  rules: Array<Record<string, unknown>>
+  prompts: Array<Record<string, unknown>>
+} {
+  if (!preset) {
+    return { rules: [], prompts: [] }
+  }
+  const validPreset = continueConfigurationPresetSchema.parse(preset)
+  return {
+    rules: validPreset.rules
+      .filter((rule) => rule.enabled)
+      .map((rule) => ({
+        name: rule.name,
+        rule: rule.content
+      })),
+    prompts: validPreset.prompts.map((prompt) => ({
+      name: prompt.name,
+      ...(prompt.description
+        ? { description: prompt.description }
+        : {}),
+      prompt: prompt.prompt
+    }))
+  }
+}
+
+export async function inspectContinueNativeConfiguration(options: {
+  configPath: string
+  workspace: string
+}): Promise<
+  Pick<
+    RuntimeNativeSnapshot,
+    'mcpServers' | 'rules' | 'prompts'
+  > & { detail: string }
+> {
+  const config = options.configPath.trim()
+    ? await loadContinueConfig(options.configPath.trim())
+    : {}
+  const prompts: RuntimeNativeSnapshot['prompts'] = []
+  const rules: RuntimeNativeSnapshot['rules'] = []
+  for (const [index, value] of configuredRules(config).entries()) {
+    if (!isRecord(value)) {
+      continue
+    }
+    const prompt = boundedText(value.rule ?? value.content, 20_000)
+    const name =
+      boundedText(value.name, 200) ?? `Rule ${index + 1}`
+    if (prompt) {
+      rules.push({
+        id: `configuration-rule-${index + 1}`,
+        name,
+        content: prompt,
+        source: 'configuration'
+      })
+    }
+  }
+  for (const [index, value] of configuredPrompts(config).entries()) {
+    if (!isRecord(value)) {
+      continue
+    }
+    const prompt = boundedText(value.prompt, 20_000)
+    const name =
+      boundedText(value.name, 200) ?? `Prompt ${index + 1}`
+    const description = boundedText(value.description, 2_000)
+    if (prompt) {
+      prompts.push({
+        id: `configuration-prompt-${index + 1}`,
+        name,
+        ...(description ? { description } : {}),
+        prompt,
+        source: 'configuration'
+      })
+    }
+  }
+  const mcpServers: RuntimeNativeSnapshot['mcpServers'] = []
+  if (
+    config.mcpServers !== undefined &&
+    !Array.isArray(config.mcpServers)
+  ) {
+    throw new Error('Continue 配置文件中的 mcpServers 必须是数组')
+  }
+  const servers = config.mcpServers ?? []
+  if (servers.length > maximumConfiguredMcpServers) {
+    throw new Error(
+      `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
+    )
+  }
+  for (const [index, value] of servers.entries()) {
+    if (!isRecord(value)) {
+      continue
+    }
+    const name = boundedText(value.name, 200)
+    if (
+      !name ||
+      name === knowledgeMcpName ||
+      name === customMcpName
+    ) {
+      continue
+    }
+    mcpServers.push({
+      id: `configuration-mcp-${index + 1}`,
+      name,
+      status: value.disabled === true ? 'disabled' : 'unknown',
+      detail:
+        value.disabled === true
+          ? '已在 Continue 配置中停用'
+          : '已配置；静态快照不会启动 MCP Server 或验证连接'
+    })
+  }
+  return {
+    mcpServers,
+    rules,
+    prompts: prompts.slice(0, 200),
+    detail:
+      'Rules 与 Prompts 来自原始静态配置；MCP Prompt 仅在 MCPService 运行并连接后可发现，非运行快照不会启动服务器。Continue MCPService 不提供 Resources。'
+  }
 }
 
 export function hasContinueModelConfiguration(
@@ -568,6 +792,14 @@ function extractUsageDelta(
 
 export class ContinueHostAdapter {
   private readonly children = new Set<ContinueHostChild>()
+  private readonly pendingQuestions = new Map<
+    string,
+    {
+      origin: string
+      token: string
+      signal: AbortSignal
+    }
+  >()
   private preparation?: Promise<PreparedHost>
 
   constructor(private readonly options: ContinueHostAdapterOptions) {}
@@ -670,7 +902,7 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       serverMarker,
-      'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"20mb"})),j.get("/state"'
+      'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"20mb"})),j.post("/goodbuddy/question-answer",(we,Te)=>{let{requestId:ue,answer:ce,isCustomAnswer:de}=we.body??{};typeof ue==="string"&&ue.length>0&&ue.length<=128&&typeof ce==="string"&&ce.length>0&&ce.length<=2e3?Lbe.answerQuestion(ue,ce,de===!0)?Te.json({success:!0}):Te.status(404).json({error:"Question not pending"}):Te.status(400).json({error:"Invalid question answer"})}),j.get("/state"'
     )
     patched = replaceExactly(
       patched,
@@ -725,7 +957,7 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       serverStateEndpointMarker,
-      'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission),ce=M.goodbuddyEvents.splice(0),de=M.goodbuddyEventsOverflow;M.goodbuddyEventsBytes=0,M.goodbuddyEventsOverflow=!1;Te.json({...ue,goodbuddyEvents:ce,goodbuddyEventsOverflow:de})})'
+      'j.get("/state",(we,Te)=>{M.lastActivity=Date.now(),B();let ue=e7e(M.session,M.isProcessing,rS.getQueueLength(),M.pendingPermission),ce=M.goodbuddyEvents.splice(0),de=M.goodbuddyEventsOverflow;M.goodbuddyEventsBytes=0,M.goodbuddyEventsOverflow=!1;Te.json({...ue,goodbuddyEvents:ce,goodbuddyEventsOverflow:de,goodbuddyQuestion:Lbe.currentState.pendingQuestion})})'
     )
     patched = replaceExactly(
       patched,
@@ -766,7 +998,7 @@ export class ContinueHostAdapter {
     const digest = sourceHash.slice(0, 16)
     const targetRoot = join(
       this.options.cacheRoot,
-      `host-v6-${supportedVersion}-${digest}`
+      `host-v7-${supportedVersion}-${digest}`
     )
     const targetDist = join(targetRoot, 'dist')
     const targetBundle = join(targetDist, 'index.js')
@@ -832,6 +1064,44 @@ export class ContinueHostAdapter {
       throw error
     })
     return this.preparation
+  }
+
+  async respondToQuestion(
+    questionId: string,
+    answers?: AgentQuestionAnswer[]
+  ): Promise<void> {
+    const pending = this.pendingQuestions.get(questionId)
+    if (!pending) {
+      throw new Error('Continue 提问已失效或不存在')
+    }
+    let answer = 'User declined to answer this question.'
+    let isCustomAnswer = true
+    if (answers) {
+      if (
+        answers.length !== 1 ||
+        answers[0]?.length !== 1 ||
+        !answers[0][0]?.trim()
+      ) {
+        throw new Error('Continue 提问回答数量不匹配')
+      }
+      answer = answers[0][0].trim()
+      isCustomAnswer = false
+    }
+    await this.request(
+      pending.origin,
+      pending.token,
+      '/goodbuddy/question-answer',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requestId: questionId,
+          answer,
+          isCustomAnswer
+        }),
+        signal: pending.signal
+      }
+    )
+    this.pendingQuestions.delete(questionId)
   }
 
   private async request(
@@ -947,13 +1217,35 @@ export class ContinueHostAdapter {
           ]
         : [])
     ]
+    const selectedPreset = presetConfig(runOptions.preset)
+    const hasPresetContent =
+      selectedPreset.rules.length > 0 ||
+      selectedPreset.prompts.length > 0
     if (!this.options.modelProfile) {
-      if (capabilityServers.length === 0) {
+      if (capabilityServers.length === 0 && !hasPresetContent) {
         return undefined
       }
       const configured = await loadContinueConfig(
         this.options.configPath.trim()
       )
+      const nativeRules = configuredRules(configured)
+      const nativePrompts = configuredPrompts(configured)
+      if (
+        nativeRules.length + selectedPreset.rules.length >
+        maximumConfiguredRules
+      ) {
+        throw new Error(
+          `Continue 合并后的 Rules 不能超过 ${maximumConfiguredRules} 个`
+        )
+      }
+      if (
+        nativePrompts.length + selectedPreset.prompts.length >
+        maximumConfiguredPrompts
+      ) {
+        throw new Error(
+          `Continue 合并后的 Prompts 不能超过 ${maximumConfiguredPrompts} 个`
+        )
+      }
       const existingServers = configured.mcpServers
       if (
         existingServers !== undefined &&
@@ -970,7 +1262,7 @@ export class ContinueHostAdapter {
         )
       }
       const retainedServers =
-        runOptions.workMode === 'ask'
+        runOptions.workMode === 'ask' && Boolean(knowledgeCapability)
           ? []
           : servers.filter(
               (server) =>
@@ -988,13 +1280,28 @@ export class ContinueHostAdapter {
           `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
         )
       }
-      return this.writeTemporaryConfig('knowledge-config', {
-        ...configured,
-        mcpServers: [
-          ...retainedServers,
-          ...capabilityServers
-        ]
-      })
+      return this.writeTemporaryConfig(
+        capabilityServers.length > 0
+          ? 'knowledge-config'
+          : 'customization-config',
+        {
+          ...configured,
+          ...(nativeRules.length + selectedPreset.rules.length > 0
+            ? {
+                rules: [...nativeRules, ...selectedPreset.rules]
+              }
+            : {}),
+          ...(nativePrompts.length + selectedPreset.prompts.length > 0
+            ? {
+                prompts: [...nativePrompts, ...selectedPreset.prompts]
+              }
+            : {}),
+          mcpServers: [
+            ...retainedServers,
+            ...capabilityServers
+          ]
+        }
+      )
     }
 
     if (
@@ -1026,11 +1333,42 @@ export class ContinueHostAdapter {
         ? '${{ secrets.ANTHROPIC_API_KEY }}'
         : '${{ secrets.OPENAI_API_KEY }}'
     }
+    const configured = this.options.configPath.trim()
+      ? await loadContinueConfig(this.options.configPath.trim())
+      : {}
+    const nativeRules = configuredRules(configured)
+    const nativePrompts = configuredPrompts(configured)
+    if (
+      nativeRules.length + selectedPreset.rules.length >
+      maximumConfiguredRules
+    ) {
+      throw new Error(
+        `Continue 合并后的 Rules 不能超过 ${maximumConfiguredRules} 个`
+      )
+    }
+    if (
+      nativePrompts.length + selectedPreset.prompts.length >
+      maximumConfiguredPrompts
+    ) {
+      throw new Error(
+        `Continue 合并后的 Prompts 不能超过 ${maximumConfiguredPrompts} 个`
+      )
+    }
     return this.writeTemporaryConfig('model-config', {
       name: 'GoodBuddy Runtime',
       version: '1.0.0',
       schema: 'v1',
       models: [modelConfig],
+      ...(nativeRules.length + selectedPreset.rules.length > 0
+        ? {
+            rules: [...nativeRules, ...selectedPreset.rules]
+          }
+        : {}),
+      ...(nativePrompts.length + selectedPreset.prompts.length > 0
+        ? {
+            prompts: [...nativePrompts, ...selectedPreset.prompts]
+          }
+        : {}),
       ...(capabilityServers.length > 0
         ? {
             mcpServers: capabilityServers
@@ -1186,6 +1524,7 @@ export class ContinueHostAdapter {
     signal.addEventListener('abort', abort, { once: true })
 
     let observedTools: ContinueHostTool[] = []
+    const reportedQuestionIds = new Set<string>()
     let streamedText = false
     let executionTimeoutSignal: AbortSignal | undefined
     try {
@@ -1278,6 +1617,39 @@ export class ContinueHostAdapter {
           }
           observedTools = mergeContinueTools(observedTools, [tool])
           await runOptions.onEvent?.({ type: 'tool', tool })
+        }
+        const pendingQuestion = state.goodbuddyQuestion
+        if (
+          pendingQuestion &&
+          !reportedQuestionIds.has(pendingQuestion.requestId)
+        ) {
+          if (this.pendingQuestions.has(pendingQuestion.requestId)) {
+            throw new Error('Continue 提问 ID 与另一活动请求冲突')
+          }
+          reportedQuestionIds.add(pendingQuestion.requestId)
+          this.pendingQuestions.set(pendingQuestion.requestId, {
+            origin,
+            token,
+            signal: executionSignal
+          })
+          await runOptions.onEvent?.({
+            type: 'question',
+            questionId: pendingQuestion.requestId,
+            questions: [
+              {
+                header: 'Continue',
+                question: pendingQuestion.question.question,
+                options: (
+                  pendingQuestion.question.options ?? []
+                ).map((option) => ({
+                  label: option,
+                  description: ''
+                })),
+                multiple: false,
+                custom: true
+              }
+            ]
+          })
         }
         const pending = state.pendingPermission
         if (pending && !handledPermissionIds.has(pending.requestId)) {
@@ -1383,6 +1755,9 @@ export class ContinueHostAdapter {
       )
     } finally {
       signal.removeEventListener('abort', abort)
+      for (const questionId of reportedQuestionIds) {
+        this.pendingQuestions.delete(questionId)
+      }
       try {
         const cleanupSignal = AbortSignal.timeout(1_000)
         if (signal.aborted) {
@@ -1441,6 +1816,7 @@ export class ContinueHostAdapter {
   }
 
   dispose(): void {
+    this.pendingQuestions.clear()
     for (const child of this.children) {
       this.terminate(child)
     }

@@ -27,16 +27,30 @@ import {
 } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import * as ToolSkill from '@deepseek-ai/dsh-tool-skill'
-
-export const GOODBUDDY_CONTROL_PROTOCOL_VERSION = 1
-export const GOODBUDDY_HANDSHAKE = 'goodbuddy/handshake'
-export const GOODBUDDY_PREPARE = 'goodbuddy/session/prepare'
-export const GOODBUDDY_RELEASE = 'goodbuddy/session/release'
-export const GOODBUDDY_EVENT = 'goodbuddy/session/event'
-export const GOODBUDDY_CREDENTIAL = 'goodbuddy/credential/resolve'
-export const GOODBUDDY_TOOLS_LIST = 'goodbuddy/tools/list'
-export const GOODBUDDY_TOOLS_CALL = 'goodbuddy/tools/call'
-export const GOODBUDDY_SHUTDOWN = 'goodbuddy/shutdown'
+import {
+  GOODBUDDY_CONTROL_PROTOCOL_VERSION,
+  GOODBUDDY_CREDENTIAL,
+  GOODBUDDY_EVENT,
+  GOODBUDDY_HANDSHAKE,
+  GOODBUDDY_NATIVE_SNAPSHOT,
+  GOODBUDDY_PREPARE,
+  GOODBUDDY_RELEASE,
+  GOODBUDDY_SHUTDOWN,
+  GOODBUDDY_TOOLS_CALL,
+  GOODBUDDY_TOOLS_LIST
+} from './deepseek-harness-protocol'
+export {
+  GOODBUDDY_CONTROL_PROTOCOL_VERSION,
+  GOODBUDDY_CREDENTIAL,
+  GOODBUDDY_EVENT,
+  GOODBUDDY_HANDSHAKE,
+  GOODBUDDY_NATIVE_SNAPSHOT,
+  GOODBUDDY_RELEASE,
+  GOODBUDDY_SHUTDOWN,
+  GOODBUDDY_TOOLS_CALL,
+  GOODBUDDY_TOOLS_LIST,
+  GOODBUDDY_PREPARE
+} from './deepseek-harness-protocol'
 
 const DEFAULT_MAX_EVENT_CHARACTERS = 64 * 1024
 const DEFAULT_MAX_REQUEST_CHARACTERS = 4 * 1024 * 1024
@@ -45,7 +59,10 @@ const DELTA_BATCH_CHARACTERS = 4 * 1024
 const DELTA_BATCH_INTERVAL_MS = 100
 const MAX_SUMMARY_CHARACTERS = 4_000
 const MAX_MCP_PROXY_RESULT_BYTES = 256 * 1024
-const ASK_READ_ONLY_TOOL_NAMES = new Set(['read', 'skill'])
+const MAX_NATIVE_SKILLS = 200
+const MAX_NATIVE_TOOLS = 200
+const NATIVE_SNAPSHOT_TIMEOUT_MS = 2_000
+const MAIN_WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const GOODBUDDY_EXECUTION_GUIDANCE = [
   'GoodBuddy controlled execution rules:',
   '- In Execute mode, act through the available tools instead of writing a long implementation plan.',
@@ -87,6 +104,7 @@ export type GoodBuddyHarnessControlConfig = {
     content: string
     directory: string
   }[]
+  trustedAskToolDefinitions?: ReadonlyMap<string, ToolDefinition>
   stream?: Stream
   maxEventCharacters?: number
   maxRequestCharacters?: number
@@ -100,7 +118,14 @@ type Preparation = {
 type OwnedSession = {
   handle: AgentHandle
   preparation?: Preparation
-  proxyToolDisposers: Map<string, () => void>
+  proxyTools: Map<
+    string,
+    {
+      definition: ToolDefinition
+      dispose: () => void
+    }
+  >
+  askToolDefinitions: Map<string, ToolDefinition>
   inflight?: {
     requestId: string
     messageId: string
@@ -650,12 +675,23 @@ export class GoodBuddyHarnessControlPlane {
       if (
         record &&
         record.handle.agent === exec.agent &&
-        record.inflight?.mode === 'ask' &&
-        !ASK_READ_ONLY_TOOL_NAMES.has(exec.name)
+        record.inflight?.mode === 'ask'
       ) {
-        throw new Error(
-          `Ask 模式不允许执行非只读工具：${exec.name}`
-        )
+        const registeredDefinition =
+          record.askToolDefinitions.get(exec.name)
+        const executingDefinition =
+          record.handle.agent.ctx.tools.get(
+            exec.name,
+            exec.agent
+          )
+        if (
+          !registeredDefinition ||
+          executingDefinition !== registeredDefinition
+        ) {
+          throw new Error(
+            `Ask 模式不允许执行非只读工具：${exec.name}`
+          )
+        }
       }
       return next()
     })
@@ -832,21 +868,92 @@ export class GoodBuddyHarnessControlPlane {
     )
     const tools = parseProxyToolCatalog(response.tools)
     const nextNames = new Set(tools.map((tool) => tool.name))
-    for (const [name, dispose] of record.proxyToolDisposers) {
+    for (const [name, registration] of record.proxyTools) {
       if (!nextNames.has(name)) {
-        dispose()
-        record.proxyToolDisposers.delete(name)
+        registration.dispose()
+        record.proxyTools.delete(name)
+        record.askToolDefinitions.delete(name)
       }
     }
     for (const tool of tools) {
-      if (!record.proxyToolDisposers.has(tool.name)) {
-        record.proxyToolDisposers.set(
-          tool.name,
-          record.handle.agent.ctx.tools.register(
-            this.proxyToolDefinition(sessionId, tool)
-          )
-        )
+      if (!record.proxyTools.has(tool.name)) {
+        const definition = this.proxyToolDefinition(sessionId, tool)
+        const dispose =
+          record.handle.agent.ctx.tools.register(definition)
+        record.proxyTools.set(tool.name, {
+          definition,
+          dispose
+        })
+        if (MAIN_WEB_TOOL_NAMES.has(tool.name)) {
+          record.askToolDefinitions.set(tool.name, definition)
+        }
       }
+    }
+  }
+
+  private async nativeSnapshot(): Promise<Record<string, unknown>> {
+    const controller = new AbortController()
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new Error('DeepSeek Harness native inventory timed out')
+        ),
+      NATIVE_SNAPSHOT_TIMEOUT_MS
+    )
+    try {
+      const skills = await Promise.race([
+        this.ctx.skills.list({
+          cwd: this.config.workspace,
+          signal: controller.signal
+        }),
+        new Promise<never>((_resolve, reject) => {
+          controller.signal.addEventListener(
+            'abort',
+            () => reject(controller.signal.reason),
+            { once: true }
+          )
+        })
+      ])
+      let toolsSupported = true
+      let tools: Array<{
+        id: string
+        name: string
+        description?: string
+      }> = []
+      try {
+        tools = this.ctx.tools
+          .schemas()
+          .slice(0, MAX_NATIVE_TOOLS)
+          .flatMap((tool) => {
+            const name = tool.name.trim().slice(0, 128)
+            if (!name) {
+              return []
+            }
+            const description = tool.description.trim().slice(0, 2_000)
+            return [
+              {
+                id: name,
+                name: name.slice(0, 200),
+                ...(description ? { description } : {})
+              }
+            ]
+          })
+      } catch {
+        toolsSupported = false
+      }
+      return {
+        tools,
+        toolsSupported,
+        skills: skills.slice(0, MAX_NATIVE_SKILLS).map((skill) => ({
+          id: skill.name.slice(0, 128),
+          name: skill.name.slice(0, 200),
+          description: skill.description.slice(0, 2_000),
+          source: skill.source.slice(0, 128),
+          provider: skill.provider.slice(0, 128)
+        }))
+      }
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -890,6 +997,7 @@ export class GoodBuddyHarnessControlPlane {
           )
         }
         const sessionId = SessionId(randomUUID())
+        let genuineSkillDefinition: ToolDefinition | undefined
         const handle = await this.ctx.agents.create({
           sessionId,
           meta: { cwd: params.cwd },
@@ -904,7 +1012,6 @@ export class GoodBuddyHarnessControlPlane {
               order: 50,
               text: GOODBUDDY_EXECUTION_GUIDANCE
             })
-            const skillTool = agentCtx.plugin(ToolSkill)
             const skillRegistrations = agentCtx.inject(
               ['skills'],
               (skillCtx) => {
@@ -926,12 +1033,25 @@ export class GoodBuddyHarnessControlPlane {
                 }
               }
             )
-            await Promise.all([skillTool, skillRegistrations])
+            await agentCtx.plugin(ToolSkill)
+            genuineSkillDefinition =
+              agentCtx.tools.get('skill')
+            await skillRegistrations
           }
         })
+        const askToolDefinitions = new Map(
+          this.config.trustedAskToolDefinitions ?? []
+        )
+        if (genuineSkillDefinition) {
+          askToolDefinitions.set(
+            'skill',
+            genuineSkillDefinition
+          )
+        }
         this.sessions.set(sessionId, {
           handle,
-          proxyToolDisposers: new Map()
+          proxyTools: new Map(),
+          askToolDefinitions
         })
         return {
           sessionId,
@@ -963,14 +1083,7 @@ export class GoodBuddyHarnessControlPlane {
             'a single-use goodbuddy/session/prepare is required'
           )
         }
-        if (preparation.mode === 'execute') {
-          await this.refreshProxyTools(params.sessionId, record)
-        } else {
-          for (const dispose of record.proxyToolDisposers.values()) {
-            dispose()
-          }
-          record.proxyToolDisposers.clear()
-        }
+        await this.refreshProxyTools(params.sessionId, record)
         const text = promptText(params.prompt)
         if (!text.trim()) {
           throw RequestError.invalidParams(
@@ -1117,6 +1230,9 @@ export class GoodBuddyHarnessControlPlane {
         requiredString(params, 'sessionId')
       )
       return { released: true }
+    }
+    if (method === GOODBUDDY_NATIVE_SNAPSHOT) {
+      return this.nativeSnapshot()
     }
     if (method === GOODBUDDY_SHUTDOWN) {
       await this.dispose()
