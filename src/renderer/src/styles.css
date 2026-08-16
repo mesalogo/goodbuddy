@@ -4038,7 +4038,7 @@ button > svg {
   padding:
     var(--space-3)
     max(var(--page-gutter), calc((100% - var(--content-reading)) / 2))
-    var(--space-4);
+    var(--space-2);
   background: var(--surface-raised);
 }
 
@@ -4387,6 +4387,42 @@ button > svg {
   gap: var(--space-3);
 }
 
+.composer__toolbar--with-runtime-controls {
+  border-radius: 0;
+}
+
+.composer__runtime-toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: 52px;
+  padding: var(--space-2) var(--space-3);
+  align-items: center;
+  border-top: 1px solid var(--border-default);
+  border-radius: 0 0 calc(var(--radius-card) - 1px)
+    calc(var(--radius-card) - 1px);
+  background: var(--surface-muted);
+  gap: var(--space-3);
+}
+
+.composer__runtime-toolbar-label {
+  min-width: 0;
+  padding-right: var(--space-3);
+  border-right: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.composer__runtime-controls {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .composer__controls {
   display: flex;
   min-width: 0;
@@ -4483,7 +4519,7 @@ button > svg {
 
 .composer-picker--runtime > .model-button,
 .composer-picker--runtime-action > .model-button {
-  width: 138px;
+  width: 220px;
 }
 
 .composer-picker--ask svg {
@@ -4670,14 +4706,24 @@ button > svg {
 }
 
 .composer-meta {
+  --composer-context-compact-width: 124px;
+
+  position: relative;
   display: flex;
-  margin: var(--space-2) 0 0;
+  min-height: 26px;
+  margin: var(--space-1) 0 0;
   align-items: center;
   justify-content: flex-end;
   font-size: var(--font-caption);
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-3);
   line-height: 1.45;
+}
+
+.composer-meta--with-context-compact {
+  padding-left: calc(
+    var(--composer-context-compact-width) + var(--space-3)
+  );
 }
 
 .composer-meta__error {
@@ -4694,12 +4740,17 @@ button > svg {
 }
 
 .composer-context-compact {
+  position: absolute;
+  bottom: 0;
+  left: 0;
   display: inline-flex;
+  width: var(--composer-context-compact-width);
   min-height: 26px;
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   align-items: center;
+  justify-content: center;
   background: var(--surface-raised);
   color: var(--text-secondary);
   font-size: var(--font-caption);
@@ -4784,6 +4835,22 @@ button > svg {
   .composer-picker,
   .runtime-picker {
     flex: 1 1 150px;
+  }
+
+  .composer__runtime-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .composer__runtime-toolbar-label {
+    padding-right: 0;
+    padding-bottom: var(--space-2);
+    border-right: 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .composer__runtime-controls .composer-picker {
+    flex-basis: 220px;
   }
 
   .composer-picker > .model-button,

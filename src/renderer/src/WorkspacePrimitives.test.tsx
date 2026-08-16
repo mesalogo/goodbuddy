@@ -119,6 +119,39 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('floats Runtime context compaction without shifting the composer', () => {
+    expect(stylesheet).toMatch(
+      /\.composer-wrap\s*\{[^}]*var\(--space-2\);[^}]*background:\s*var\(--surface-raised\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer-meta\s*\{[^}]*position:\s*relative;[^}]*min-height:\s*26px;[^}]*margin:\s*var\(--space-1\) 0 0;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer-meta--with-context-compact\s*\{[^}]*padding-left:\s*calc\(/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer-context-compact\s*\{[^}]*position:\s*absolute;[^}]*bottom:\s*0;[^}]*left:\s*0;/u
+    )
+  })
+
+  it('separates Runtime-specific controls from the main composer toolbar', () => {
+    expect(stylesheet).toMatch(
+      /\.composer__toolbar--with-runtime-controls\s*\{[^}]*border-radius:\s*0;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer__runtime-toolbar\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*52px;[^}]*border-top:\s*1px solid var\(--border-default\);[^}]*background:\s*var\(--surface-muted\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer__runtime-controls\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer-picker--runtime > \.model-button,\s*\.composer-picker--runtime-action > \.model-button\s*\{[^}]*width:\s*220px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.composer__runtime-controls \.composer-picker\s*\{[^}]*flex-basis:\s*220px;/u
+    )
+  })
+
   it('keeps shared controls keyboard and pointer accessible at narrow widths', () => {
     expect(stylesheet).toMatch(
       /button\s*>\s*svg,\s*button\s*>\s*svg\s+\*\s*\{[^}]*pointer-events:\s*none;/u

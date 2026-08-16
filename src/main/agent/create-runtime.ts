@@ -171,6 +171,7 @@ export function createAgentRuntime(
       defaultWorkspace: workspace,
       baseUrl: profile.baseUrl,
       model: profile.modelName,
+      supportsImageInput: profile.supportsImageInput === true,
       launch: capabilities.deepseekHarnessLauncher,
       credentialRefs: {
         GOODBUDDY_HARNESS_MODEL_API_KEY: profile.apiKey

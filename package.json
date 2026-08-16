@@ -60,7 +60,9 @@
       "node_modules/node-pty/prebuilds/**/*",
       "node_modules/node-pty/build/Release/**/*",
       "node_modules/koffi/**/*",
-      "node_modules/@koromix/koffi-*/**/*"
+      "node_modules/@koromix/koffi-*/**/*",
+      "node_modules/@napi-rs/canvas{,/**/*}",
+      "node_modules/@napi-rs/canvas-*/**/*"
     ],
     "npmRebuild": false,
     "compression": "maximum",
@@ -131,6 +133,10 @@
       {
         "from": "node_modules/koffi/LICENSE.txt",
         "to": "licenses/koffi-MIT.txt"
+      },
+      {
+        "from": "node_modules/@napi-rs/canvas/LICENSE",
+        "to": "licenses/napi-rs-canvas-MIT.txt"
       },
       {
         "from": "node_modules/@continuedev/cli",
@@ -246,6 +252,7 @@
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "@deepseek-ai/dsh-user-approval": "0.1.0-rc.6",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@napi-rs/canvas": "1.0.3",
     "@opencode-ai/sdk": "^1.18.9",
     "@wecom/aibot-node-sdk": "^1.0.6",
     "cross-spawn": "^7.0.6",

@@ -14,6 +14,7 @@ import {
   DEEPSEEK_HARNESS_CONTROL_VERSION,
   DEEPSEEK_HARNESS_CREDENTIAL_REF,
   DEEPSEEK_HARNESS_HOST_VERSION,
+  DEEPSEEK_HARNESS_MAX_FRAME_BYTES,
   parseHarnessControlMessage,
   type DeepSeekHarnessControlMessage as HarnessControlMessage
 } from './deepseek-harness-control-protocol'
@@ -24,6 +25,7 @@ export {
   DEEPSEEK_HARNESS_CONTROL_VERSION,
   DEEPSEEK_HARNESS_CREDENTIAL_REF,
   DEEPSEEK_HARNESS_HOST_VERSION,
+  DEEPSEEK_HARNESS_MAX_FRAME_BYTES,
   parseHarnessControlMessage
 } from './deepseek-harness-control-protocol'
 export type {
@@ -274,11 +276,12 @@ export function createDeepSeekHarnessUtilityLauncher(
           api: 'openai-completions',
           provider: 'goodbuddy',
           model: options.model,
+          supportsImageInput: options.supportsImageInput,
           harnessVersion: DEEPSEEK_HARNESS_HOST_VERSION,
           credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
           skillPackages: canonicalSkillPackages,
           extensionPackages: canonicalExtensionPackages,
-          maxFrameBytes: 1024 * 1024
+          maxFrameBytes: DEEPSEEK_HARNESS_MAX_FRAME_BYTES
         })
         utility.postMessage({
           protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,

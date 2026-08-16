@@ -21,7 +21,7 @@
 
 - [x] **直连模型 Runtime**：支持问答、知识总结、受控工具执行和图像生成。
 - [x] **OpenCode 与 Continue**：使用隔离子进程、环境变量白名单、统一配置、取消、超时和活动记录。
-- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。
+- [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。图像输入跟随所选模型连接的能力声明，文本模型在 Host 或模型调用前拒绝图片，图片模型通过有界内联内容和临时 Attachment Store 接收 JPEG/PNG。
 - [x] **DSH npm 插件市场**：市场默认关闭，由用户显式开启后搜索公共 npm 的 `dsh-plugin` 包，使用捆绑 npm 执行精确版本安装和普通 lifecycle scripts，并支持启停、JSON 配置、移除、失败启动自动停用和离线管理已安装插件；关闭市场只隐藏目录与管理界面，不改变已有插件的启停状态，第三方代码不受 Ask 初始化隔离。
 - [x] **Ask 与 Execute 工作模式**：Ask 保持只读；Execute 运行已启用且受边界约束的工具。
 - [x] **专家与 Subagent**：支持显式专家、团队分析和最多三个只读专家并行分析。
@@ -32,7 +32,8 @@
 - [x] **OpenCode Runtime 定制**：GoodBuddy 管理的内置 OpenCode 可发现原生 Agents、Tools、Commands、LSP、Formatters、MCP、Skills、Prompts 与 Resources；Tools 单独显示读取、文件修改、命令、网络、Agent 编排等类型、来源及 Ask/Execute 可用性，并隐藏 OpenCode 内部 `invalid` 与 GoodBuddy 临时 MCP 工具。支持保存默认 Agent、每次请求覆盖 Agent、通过原生 SDK 执行 Command、显示上下文用量并调用原生 Compact；外部 OpenCode Server 只报告连接状态，不宣称原生清单可读。任意插件安装、Session Share、自动 Worktree 和 OpenCode 原生会话持久化仍不开放。
 - [x] **Continue Runtime 定制**：提供静态配置中的原生 Rules、Prompt 模板与 MCP 清单，以及可编辑的 GoodBuddy Rules/Prompt 配置预设；聊天可按请求选择预设和填入可继续编辑的 Prompt。当前 Continue Host 没有可信的静态原生 Tool 发现接口，且使用隔离的 `CONTINUE_GLOBAL_DIR`，因此界面明确标记 Tools 不支持静态发现，也不把 Host 实际不会加载的工作区或用户 Skills 冒充原生能力；GoodBuddy 分配的 Skills 仍按请求暂存执行。Continue 临时 Host 不复用原生会话压缩，手动压缩由 GoodBuddy 摘要模型完成并验证持久化摘要覆盖范围；Agent 交互提问转换为统一问答卡片。Resources、Hooks、后台 Job 和 Continue 原生会话管理继续暂缓。
 - [x] **Runtime 原生清单语义**：原生能力以 Agents、Tools、Commands、Skills、MCP、Rules、Prompts、Resources、LSP、Formatters 和上下文 11 个页签展示；清单状态独立于 Runtime 连通性，区分完整、部分、不可用、仅连接和不支持。DeepSeek Harness 通过 Host Registry 枚举有界的内置/插件 Tools 与 Skills，显示真实 Ask/Execute 边界，并排除 GoodBuddy 按请求分配的 Skills、Web/MCP 代理。
-- [ ] **可执行 Subagent**（规划中）：提供显式 Execute 委派，限制嵌套、并行、Token、时间和工具权限，并保留父子任务审计。
+- [ ] **Runtime 监督侧栏**（规划中）：在聊天右侧助手工作栏统一承载 OpenCode、Continue 和 DeepSeek Harness 的 Subagent 控制、后台 Job、Workflow/Hook、长任务与原生会话监督；Composer 只保留对当前消息生效的高频上下文选择。
+- [ ] **可执行 Subagent**（规划中）：提供显式 Execute 委派，限制嵌套、并行、Token、时间和工具权限，在右侧 Runtime 监督页签显示父子状态、取消入口和审计归属。
 
 ### Skills、MCP 与知识库
 

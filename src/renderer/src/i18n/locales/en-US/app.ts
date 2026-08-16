@@ -322,6 +322,7 @@ export const app = {
     expertLabel: 'Expert role',
     modeLabel: 'Work mode',
     runtimeControls: {
+      groupLabel: '{{runtime}} controls',
       agentLabel: 'OpenCode Runtime Agent',
       presetLabel: 'Continue configuration preset',
       actionLabel: 'Runtime shortcut',

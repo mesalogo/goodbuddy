@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { createCanvas } from '@napi-rs/canvas'
 import type { Stream } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import {
@@ -9,17 +10,24 @@ import {
   GoodBuddyHarnessControlPlane,
   createBoundedAcpStream
 } from './goodbuddy-harness-control-plane'
+import { GoodBuddyHarnessAttachmentStore } from './goodbuddy-harness-attachment-store'
 
 function controlPlane() {
-  return new GoodBuddyHarnessControlPlane({} as Context, {
-    provider: 'goodbuddy',
-    model: 'deepseek-test',
-    workspace: resolve('workspace'),
-    harnessVersion: '0.1.0-rc.6',
-    execution: { mode: 'host' },
-    credentialRefs: ['GOODBUDDY_API_KEY'],
-    skills: []
-  })
+  return new GoodBuddyHarnessControlPlane(
+    {
+      on: vi.fn(),
+      get: vi.fn()
+    } as unknown as Context,
+    {
+      provider: 'goodbuddy',
+      model: 'deepseek-test',
+      workspace: resolve('workspace'),
+      harnessVersion: '0.1.0-rc.6',
+      execution: { mode: 'host' },
+      credentialRefs: ['GOODBUDDY_API_KEY'],
+      skills: []
+    }
+  )
 }
 
 function stubAgentContext() {
@@ -123,6 +131,127 @@ function stubAgentContext() {
 }
 
 describe('GoodBuddy Harness internal control plane', () => {
+  it('advertises and stores only model-enabled inline image prompts', async () => {
+    const textOnly = controlPlane() as unknown as {
+      createAgentApi(): {
+        initialize(): Promise<{
+          agentCapabilities: {
+            promptCapabilities: { image: boolean }
+          }
+        }>
+      }
+      storePromptImages(
+        prompt: Array<Record<string, unknown>>
+      ): Promise<unknown[]>
+    }
+    await expect(textOnly.createAgentApi().initialize()).resolves.toMatchObject({
+      agentCapabilities: {
+        promptCapabilities: { image: false }
+      }
+    })
+    await expect(
+      textOnly.storePromptImages([
+        {
+          type: 'image',
+          mimeType: 'image/png',
+          data: 'aW1hZ2U='
+        }
+      ])
+    ).rejects.toThrow('does not accept image input')
+
+    const storeContext = new Context()
+    const store = new GoodBuddyHarnessAttachmentStore(storeContext)
+    const ctx = {
+      on: vi.fn(),
+      get: vi.fn((name: string) =>
+        name === 'attachments' ? store : undefined
+      )
+    } as unknown as Context
+    const subject = new GoodBuddyHarnessControlPlane(ctx, {
+      provider: 'goodbuddy',
+      model: 'vision-test',
+      supportsImageInput: true,
+      workspace: resolve('workspace'),
+      harnessVersion: '0.1.0-rc.6',
+      execution: { mode: 'host' },
+      credentialRefs: ['GOODBUDDY_API_KEY'],
+      skills: []
+    }) as unknown as {
+      createAgentApi(): {
+        initialize(): Promise<{
+          agentCapabilities: {
+            promptCapabilities: { image: boolean }
+          }
+        }>
+      }
+      storePromptImages(
+        prompt: Array<Record<string, unknown>>
+      ): Promise<
+        Array<
+          Parameters<GoodBuddyHarnessAttachmentStore['readImage']>[0]
+        >
+      >
+      releaseAttachments(
+        refs: Array<
+          Parameters<GoodBuddyHarnessAttachmentStore['readImage']>[0]
+        >
+      ): void
+    }
+    const png = createCanvas(1, 1).toBuffer('image/png')
+
+    await expect(subject.createAgentApi().initialize()).resolves.toMatchObject({
+      agentCapabilities: {
+        promptCapabilities: { image: true }
+      }
+    })
+    const refs = await subject.storePromptImages([
+      { type: 'text', text: 'describe this image' },
+      {
+        type: 'image',
+        mimeType: 'image/png',
+        data: png.toString('base64')
+      }
+    ])
+    expect(refs).toHaveLength(1)
+    await expect(store.readImage(refs[0]!)).resolves.toMatchObject({
+      ref: expect.objectContaining({
+        mediaType: 'image/png',
+        width: 1,
+        height: 1
+      })
+    })
+
+    subject.releaseAttachments(refs)
+    await expect(store.readImage(refs[0]!)).rejects.toMatchObject({
+      code: 'NOT_FOUND'
+    })
+    await expect(
+      subject.storePromptImages([
+        {
+          type: 'image',
+          mimeType: 'image/png',
+          data: png.toString('base64'),
+          uri: 'https://example.com/reference.png'
+        }
+      ])
+    ).rejects.toThrow('invalid inline image')
+    const saveImages = vi.spyOn(store, 'saveImages')
+    const largeInlineData = Buffer.alloc(800 * 1024).toString(
+      'base64'
+    )
+    await expect(
+      subject.storePromptImages(
+        Array.from({ length: 3 }, () => ({
+          type: 'image' as const,
+          mimeType: 'image/png',
+          data: largeInlineData
+        }))
+      )
+    ).rejects.toThrow('invalid inline image')
+    expect(saveImages).not.toHaveBeenCalled()
+    await storeContext.fiber.dispose()
+  })
+
   it('requires a versioned handshake before privileged extensions', async () => {
     const subject = controlPlane()
 

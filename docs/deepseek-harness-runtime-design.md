@@ -75,6 +75,7 @@ GoodBuddy 自己的 Runtime 和控制面不包装成标准 DSH 插件，也不�
 
 - 增加 `deepseek-harness` Runtime，并在设置、聊天和消息通道中可选择。
 - 使用 GoodBuddy 管理的模型连接，不在 Renderer 或持久化 Harness 配置中写入 API Key。
+- 当所选模型连接明确声明支持图像输入时，允许向 DeepSeek Harness 发送有界的 JPEG/PNG；文本模型在启动 Host 或调用模型前拒绝图片。
 - Ask 模式在 Runtime 工具分发边界强制只读，阻止 Shell、写入和编辑工具。
 - 在 Web Search 能力启用时，通过 Main 代理向 Ask 与 Execute 提供有界的 `web_search` 和 `web_fetch`，Harness Utility 不持有服务凭据。
 - Execute 模式使用 DSH 本地 Provider，以当前用户权限执行文件与命令工具；工作区是默认工作目录，不是 OS 权限边界。
@@ -97,7 +98,7 @@ GoodBuddy 自己的 Runtime 和控制面不包装成标准 DSH 插件，也不�
 - 不提供 Runtime OS 沙箱模式或相关持久设置。
 - 不向 Utility 暴露 MCP 凭据或建立直连 MCP Client。只有用户明确分配给 Harness 的 MCP 工具可以通过 Main 代理调用。
 - 不在首版向 Harness 暴露 GoodBuddy 浏览器控制、知识库或 Magic Notes。
-- 不在首版支持图像输入、会话恢复、Harness Subagent、后台 Job、Hook、浏览器控制或 Workflow；Web Search/Fetch 只通过 Main 代理提供，不加载 Harness 自有网页服务。
+- 不在首版支持会话恢复、Harness Subagent、后台 Job、Hook、浏览器控制或 Workflow；Web Search/Fetch 只通过 Main 代理提供，不加载 Harness 自有网页服务。上述长生命周期能力未来统一进入右侧 Runtime 监督栏，不进入 Composer 工具栏。
 - 不发布独立 npm 包，也不创建上游 PR。
 - 不为第三方插件增加权限矩阵、风险等级、逐工具审批、沙箱档位、回滚代际或兼容性背书。
 
@@ -158,6 +159,7 @@ Electron utilityProcess
        ├─ 固定 Cordis 组合
        ├─ GoodBuddy Harness Control Plane（内部组件）
        ├─ DSH Agent 与 LLM seam
+       ├─ 按模型能力挂载的有界内存图片存储
        ├─ 本地 Shell / Filesystem Provider
        ├─ 最小工具集与 Main 代理 MCP
        └─ Main 明确启用的第三方 Cordis 插件
@@ -190,6 +192,7 @@ Harness 子进程崩溃、输出异常、拒绝协议或加载错误时，Main �
 - 在 Prompt 前应用 GoodBuddy 指定的 Ask/Execute 权限。
 - 将 DSH Session 事件转换为有界的 GoodBuddy 事件。
 - 将 LLM 用量转换为稳定的模型用量事件。
+- 根据 Main 传入的模型能力声明 ACP 图片能力，验证内联图片并转换为 DSH 的不可变 Attachment 引用。
 - 在 dispose 时先取消 Agent，再等待子 Agent 和工具清理。
 - 保证 stdout 只包含协议帧，诊断只写 stderr。
 
@@ -223,10 +226,11 @@ GoodBuddy 不扫描任意目录、不读取用户 profile 插件清单，也不�
 - stdout 不得出现日志、Banner、进度条或调试输出。
 - stderr 只允许有界诊断，不得包含 Prompt、工具完整输出或凭据。
 - 每一帧、每一字段和每个请求累计输出都必须在解析前或接收时限流。
+- 图片只允许作为 ACP 内联 base64 内容传入；拒绝远程 URI，Host 不替用户获取图片 URL。
 
 ### 8.2 标准 ACP 方法
 
-首版保留 ACP 的初始化、`session/new`、`session/prompt` 和 `session/cancel` 语义。标准 ACP 客户端可以使用只读默认行为，但只有完成 GoodBuddy 能力握手的客户端才能启用 Execute。
+首版保留 ACP 的初始化、`session/new`、`session/prompt` 和 `session/cancel` 语义。`promptCapabilities.image` 必须与所选模型连接的 `supportsImageInput` 完全一致，不能仅根据 Provider 或模型名称猜测。标准 ACP 客户端可以使用只读默认行为，但只有完成 GoodBuddy 能力握手的客户端才能启用 Execute。
 
 ### 8.3 GoodBuddy 扩展
 
@@ -244,7 +248,7 @@ GoodBuddy 不扫描任意目录、不读取用户 profile 插件清单，也不�
 | `goodbuddy/native/snapshot` | Main → Control Plane | 从无 Agent scope 的 Host Registry 读取有界的原生 Tool/Skill 元数据，排除 GoodBuddy 分配项与请求级代理 |
 | `goodbuddy/shutdown` | Main → Control Plane | 停止接收新请求并有序清理 |
 
-扩展版本独立于 ACP 版本。握手响应至少包含：
+Utility 启动控制协议使用版本 2，严格携带 `supportsImageInput` 与固定 8 MiB 帧上限；版本 1 或缺少该字段的启动消息失败关闭，不能让 Host 自行猜测模型能力。扩展版本独立于 ACP 版本。握手响应至少包含：
 
 ```ts
 type GoodBuddyHarnessCapabilities = {
@@ -386,6 +390,7 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 - Agent、Session、LLM 和 Tool Registry 基础服务。
 - GoodBuddy Harness Control Plane。
 - OpenAI 兼容 Chat Completions LLM 适配器。
+- 仅在所选模型声明图片能力时挂载的进程内 Attachment Store；它完整解码图片、校验格式/尺寸/摘要，以内容寻址引用保存，并随 Session 或 Host 释放。
 - DSH 本地 Subprocess、Filesystem 和平台 Shell Provider。
 - Token Meter 和必要的上下文压缩。
 - 有界的读取、写入、编辑和 Shell 工具。
@@ -418,6 +423,7 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 - 服务地址可以使用自定义主机、端口和部署路径，但不得包含用户名、密码、查询参数或片段。
 - 模型名称不限制为 DeepSeek 品牌，由所选 OpenAI 兼容服务决定。
 - 模型名称和服务地址由 Main 传入受控 Host。
+- 图片能力只读取所选 GoodBuddy 模型连接的 `supportsImageInput`；Main、Utility 启动配置、ACP 能力和 Pi-AI 模型输入模态必须使用同一个布尔值。
 - API Key 继续保存在 GoodBuddy 加密设置中。
 - 启动环境提供的部署连接只由 Main 自动解析，不在 Renderer 中显示为可选来源。
 
@@ -429,8 +435,12 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 
 ### 12.3 输入限制
 
-- 首版只支持文本。
-- 图片输入应在发起网络调用前返回明确错误。
+- 文本始终可用；图片是否可用完全取决于所选模型连接是否显式声明 `supportsImageInput: true`。
+- 文本模型收到图片时必须在启动 Host 或发起模型网络调用前返回明确错误，不能静默丢弃图片。
+- 图片模型只接受内联 JPEG/PNG，不接受 URL、文件路径、ACP `uri` 或其他媒体类型。
+- Main 已通过 `nativeImage` 解码用户选择的图片并生成有界模型输入；Utility 仍须独立执行严格 base64、签名、容器结构、CRC（PNG）、完整解码、尺寸和摘要校验，不能把 Main 校验当作跨进程信任替代。
+- 每条消息最多 8 张图，单图编码后最多 1 MiB，图片合计最多 2 MiB，单图最多 1,600 万像素，累计解码像素最多 3,200 万（重复引用也计入预算）。进程内 Store 另设 32 MiB、256 个唯一对象的总上限。
+- Attachment Store 只服务当前非持久 Harness Session；引用按 Session 释放，Host 退出时清空，不写入磁盘或 GoodBuddy 第二份会话日志。
 - GoodBuddy 历史、Prompt、系统指令分别保持不同信任层。
 - 任何用户文本都不能进入 Cordis 配置表达式或模块名。
 
@@ -440,7 +450,10 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 
 | 项目 | 默认上限 |
 | --- | --- |
-| 单个 JSON-RPC 帧 | 1 MiB |
+| 单个 JSON-RPC 帧 | 8 MiB |
+| 单图 / 单条消息图片 | 1 MiB / 8 张且合计 2 MiB |
+| 单图 / 单条消息解码像素 | 1,600 万 / 3,200 万 |
+| Host 临时图片存储 | 32 MiB 且最多 256 个唯一对象 |
 | 单个文本或推理事件 | 64 KiB |
 | 单次请求累计协议输出 | 4 MiB |
 | 工具输入摘要 | 4,000 字符 |
@@ -495,8 +508,24 @@ Host 始终由当前 GoodBuddy 版本提供，不存在自定义 Host 入口。
 - 已安装插件使用共享 Switch 启停，并提供 JSON 配置、明确移除确认和启动失败信息。
 - npm 目录离线时仍显示并允许管理已安装插件；目录错误就地显示并可重试。
 - 安装、启停、配置和移除的短期结果通过应用通知显示，不重复保留页内成功提示。
+- DSH 不提供独立的“允许图片”开关。Runtime 连接选择只引用“模型连接”中维护的图片能力声明，避免同一模型出现两份冲突配置。
 
 聊天顶栏只显示简短 Runtime 状态，不显示文件路径和版本。完整诊断只在设置页展示。
+
+### 14.3 Agent Runtime 交互表面归属
+
+OpenCode、Continue 和 DeepSeek Harness 的后续能力按操作生命周期放置，不按上游产品分别堆叠入口：
+
+| 表面 | 负责内容 | 不负责内容 |
+| --- | --- | --- |
+| Composer 通用行 | 附件、语音、知识范围、专家、Ask/Execute、Runtime 和发送 | Session 监督、后台进度、历史任务管理 |
+| Composer Runtime 专属行 | 仅对当前消息生效且需要高频选择的 Agent、预设、Prompt/Command 快捷操作 | Subagent 树、后台 Job、Workflow/Hook 生命周期 |
+| 右侧助手工作栏的未来“Runtime”页签 | 当前会话的 Runtime 状态、Subagent 层级与取消、后台 Job 队列/进度/结果、Workflow/Hook 运行、长任务暂停/恢复/终止和会话监督 | 持久模型、程序路径、默认 Agent/预设配置 |
+| 设置 > Agent Runtime | 持久 Runtime 配置、默认值、插件管理、能力清单和连接诊断 | 某次活动会话的实时控制 |
+
+右侧 Runtime 页签采用统一监督模型，再按当前 Runtime 能力显示 OpenCode、Continue 或 DSH 的具体区块。未支持的能力不渲染空卡片或一排禁用按钮；只有用户需要理解缺口时才显示简短说明。切换 Runtime 或会话时，侧栏必须明确更新归属，不能把上一 Runtime 的 Job/Subagent 状态留在当前会话中。
+
+所有未来的 Subagent、Job、Workflow、Hook 和会话操作仍须经过 Main 的 Runtime 边界，保留取消、超时、权限、父子任务关系、用量和活动审计。高风险动作在侧栏就地确认，运行结果进入活动与成果记录，不以 Composer 按钮代替监督面板。DeepSeek Harness 首版仍不加载这些服务，本节只确定未来跨 Runtime 的产品位置和协议归属。
 
 ## 15. IPC 与共享契约
 
@@ -506,6 +535,7 @@ Host 始终由当前 GoodBuddy 版本提供，不存在自定义 Host 入口。
 - Runtime 选择中的 `deepseekHarness` 分支。
 - 检测结果中的路径、版本、详情和主机执行模式。
 - GoodBuddy 模型连接选择。
+- 从所选模型连接解析并传到 Host 的 `supportsImageInput`，以及 ACP 图片能力的一致性。
 - DeepSeek Harness 模型用量归属。
 - Skill 与 MCP 对 `deepseek-harness` 的显式分配。
 - 插件市场总开关、目录、已安装状态、启停状态、JSON 配置和有界启动错误。
@@ -549,6 +579,7 @@ Renderer 只接收公开 npm 元数据和受管插件状态。任何凭据、完
 
 - `node-pty`，用于受管理的工具子进程。
 - `koffi`，用于本地 Filesystem 在 Windows 上保持文件 ACL 和原子替换。
+- `@napi-rs/canvas` 及当前平台二进制，用于在 Utility 内完整解码并复核 JPEG/PNG；原生模块必须从 ASAR 解包并通过目标架构校验。
 
 构建 GoodBuddy 自身时不得广泛批准依赖安装脚本；只允许生产组合实际需要、来源已审查、版本已锁定的脚本。这与用户确认后由市场插件执行自身 lifecycle scripts 是两个不同阶段。六个平台的构建必须验证：
 
@@ -606,6 +637,8 @@ Renderer 只接收公开 npm 元数据和受管插件状态。任何凭据、完
 - 未知授权结果失败关闭。
 - 超时、取消、迟到帧和进程意外退出。
 - 协议帧、事件队列、工具摘要和 stderr 上限。
+- 文本模型在 Host 启动前拒绝图片；图片模型的能力声明、ACP 图片块、Pi-AI 模态和 Attachment Store 保持一致。
+- 图片 base64、格式签名、PNG CRC、完整解码、尺寸、单图/单消息/Store 上限、内容摘要、Session 释放和 Host 清空。
 - release 和 dispose 的幂等性。
 - 状态卡中的状态、路径、版本和当前用户执行权限。
 - 插件 action 与目录 schema 接受严格的市场总开关并拒绝权限、回滚、任意路径和非精确版本等未支持字段。
@@ -690,7 +723,8 @@ npm run build
 - DeepSeek Harness 底层库当前是 RC，但 GoodBuddy 不自动跟随升级；每次升级都可能要求同步修改内部控制面。
 - Harness 文件和命令工具没有 Runtime OS 隔离，会继承 GoodBuddy 客户端当前用户能够访问的主机资源。
 - 首版不恢复 Harness 原生 Session，Runtime 重启后由 GoodBuddy 历史重建。
-- 首版不支持图片、知识库、浏览器控制和 Harness Subagent；Web Search/Fetch 仅使用 Main 代理，MCP 仅支持用户分配、Main 代理和 Execute 自动单次授权路径。
+- 图片输入仅在所选模型连接明确声明支持时可用；首版仍不支持知识库、浏览器控制和 Harness Subagent。Web Search/Fetch 仅使用 Main 代理，MCP 仅支持用户分配、Main 代理和 Execute 自动单次授权路径。
+- Harness Subagent、后台 Job、Workflow、Hook 和原生会话监督尚未实现；未来入口固定在右侧 Runtime 监督栏，不扩张 Composer 工具栏。
 - 推理、工具和用量扩展属于 GoodBuddy 协议，不是标准 ACP 保证。
 - 市场来自公共 npm 关键字搜索，不是精选目录；包的质量、兼容性和维护状态由发布者负责。
 - 插件安装、初始化、后台生命周期和 Execute 工具使用当前用户权限，不受 Runtime OS 沙箱保护；Ask 只控制模型工具调用。

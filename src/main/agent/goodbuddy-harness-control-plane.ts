@@ -6,10 +6,16 @@ import {
   RequestError,
   type Agent,
   type AgentSideConnection as AcpAgentConnection,
+  type ContentBlock as AcpContentBlock,
   type Stream
 } from '@agentclientprotocol/sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
+import {
+  AttachmentError,
+  type ImageAttachmentRef,
+  type SaveImageAttachment
+} from '@deepseek-ai/dsh-attachment'
 import {
   CredentialProvider,
   type CredentialInfo,
@@ -19,6 +25,7 @@ import {
 import {
   createUserMessage,
   errorChain,
+  type ContentBlock as HarnessContentBlock,
   type TokenUsage
 } from '@deepseek-ai/dsh-llm'
 import {
@@ -39,6 +46,7 @@ import {
   GOODBUDDY_TOOLS_CALL,
   GOODBUDDY_TOOLS_LIST
 } from './deepseek-harness-protocol'
+import { GoodBuddyHarnessAttachmentStore } from './goodbuddy-harness-attachment-store'
 export {
   GOODBUDDY_CONTROL_PROTOCOL_VERSION,
   GOODBUDDY_CREDENTIAL,
@@ -94,6 +102,7 @@ export type GoodBuddyHarnessCapabilities = {
 export type GoodBuddyHarnessControlConfig = {
   provider: string
   model: string
+  supportsImageInput?: boolean
   workspace: string
   harnessVersion: string
   execution: GoodBuddyHarnessCapabilities['execution']
@@ -117,6 +126,7 @@ type Preparation = {
 
 type OwnedSession = {
   handle: AgentHandle
+  attachmentRefs: ImageAttachmentRef[]
   preparation?: Preparation
   proxyTools: Map<
     string,
@@ -375,24 +385,27 @@ function boundedJson(value: unknown): string | undefined {
   }
 }
 
-function promptText(
-  prompt: readonly { type: string; text?: string }[]
-): string {
-  if (
-    prompt.some(
-      (block) =>
-        block.type !== 'text' &&
-        block.type !== 'resource_link'
-    )
-  ) {
-    throw RequestError.invalidParams(
-      undefined,
-      'only text and resource_link prompt content is supported'
-    )
+function promptText(prompt: readonly AcpContentBlock[]): string {
+  const text: string[] = []
+  for (const block of prompt) {
+    switch (block.type) {
+      case 'text':
+        text.push(block.text)
+        break
+      case 'image':
+      case 'resource_link':
+        break
+      case 'audio':
+      case 'resource':
+        throw RequestError.invalidParams(
+          undefined,
+          `unsupported ACP prompt content: ${block.type}`
+        )
+      default:
+        block satisfies never
+    }
   }
-  return prompt
-    .map((block) => (block.type === 'text' ? block.text ?? '' : ''))
-    .join('')
+  return text.join('')
 }
 
 function turnReason(event: SessionEvent): string | undefined {
@@ -957,6 +970,118 @@ export class GoodBuddyHarnessControlPlane {
     }
   }
 
+  private attachmentStore(): GoodBuddyHarnessAttachmentStore {
+    const store = this.ctx.get('attachments')
+    if (!(store instanceof GoodBuddyHarnessAttachmentStore)) {
+      throw RequestError.internalError(
+        undefined,
+        'Harness image attachment service is unavailable'
+      )
+    }
+    return store
+  }
+
+  private releaseAttachments(refs: readonly ImageAttachmentRef[]): void {
+    if (refs.length === 0) {
+      return
+    }
+    const store = this.attachmentStore()
+    for (const ref of refs) {
+      store.releaseImage(ref)
+    }
+  }
+
+  private async storePromptImages(
+    prompt: readonly AcpContentBlock[]
+  ): Promise<ImageAttachmentRef[]> {
+    const imageBlocks = prompt.filter(
+      (
+        block
+      ): block is Extract<AcpContentBlock, { type: 'image' }> =>
+        block.type === 'image'
+    )
+    if (imageBlocks.length === 0) {
+      return []
+    }
+    if (!this.config.supportsImageInput) {
+      throw RequestError.invalidParams(
+        undefined,
+        'the selected model does not accept image input'
+      )
+    }
+    const store = this.attachmentStore()
+    if (imageBlocks.length > store.imageLimits.maxImagesPerMessage) {
+      throw RequestError.invalidParams(
+        undefined,
+        'too many images in one prompt'
+      )
+    }
+    const inputs: SaveImageAttachment[] = []
+    let totalBytes = 0
+    for (const block of imageBlocks) {
+      if (
+        block.uri != null ||
+        !store.imageLimits.mediaTypes.includes(
+          block.mimeType as SaveImageAttachment['mediaType']
+        ) ||
+        block.data.length === 0 ||
+        block.data.length % 4 !== 0 ||
+        block.data.length >
+          Math.ceil(store.imageLimits.maxImageBytes / 3) * 4 ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+          block.data
+        )
+      ) {
+        throw RequestError.invalidParams(
+          undefined,
+          'invalid inline image prompt content'
+        )
+      }
+      const data = Buffer.from(block.data, 'base64')
+      totalBytes += data.byteLength
+      if (
+        data.byteLength === 0 ||
+        data.byteLength > store.imageLimits.maxImageBytes ||
+        totalBytes > store.imageLimits.maxMessageImageBytes ||
+        data.toString('base64') !== block.data
+      ) {
+        throw RequestError.invalidParams(
+          undefined,
+          'invalid inline image prompt content'
+        )
+      }
+      inputs.push({
+        data,
+        mediaType: block.mimeType as SaveImageAttachment['mediaType']
+      })
+    }
+    try {
+      return await store.saveImages(inputs)
+    } catch (error) {
+      if (error instanceof AttachmentError) {
+        if (error.code === 'INVALID_IMAGE') {
+          throw RequestError.invalidParams(
+            undefined,
+            'invalid inline image prompt content'
+          )
+        }
+        if (
+          error.code === 'STORAGE_LIMIT' ||
+          error.code === 'DECODER_UNAVAILABLE'
+        ) {
+          throw RequestError.internalError(
+            undefined,
+            'Harness image attachment service is unavailable'
+          )
+        }
+      }
+      throw RequestError.internalError(
+        undefined,
+        'Harness image attachment storage failed'
+      )
+    }
+  }
+
   private createAgentApi(): Agent {
     this.observeSessions()
     return {
@@ -968,7 +1093,7 @@ export class GoodBuddyHarnessControlPlane {
         },
         agentCapabilities: {
           promptCapabilities: {
-            image: false,
+            image: this.config.supportsImageInput === true,
             audio: false,
             embeddedContext: false
           },
@@ -1050,6 +1175,7 @@ export class GoodBuddyHarnessControlPlane {
         }
         this.sessions.set(sessionId, {
           handle,
+          attachmentRefs: [],
           proxyTools: new Map(),
           askToolDefinitions
         })
@@ -1091,10 +1217,26 @@ export class GoodBuddyHarnessControlPlane {
             'empty prompt'
           )
         }
-        const message = createUserMessage({
-          content: [{ type: 'text', text }],
-          source: { kind: 'user' }
-        })
+        const attachmentRefs = await this.storePromptImages(
+          params.prompt
+        )
+        let message: ReturnType<typeof createUserMessage>
+        try {
+          const content: HarnessContentBlock[] = [
+            { type: 'text', text },
+            ...attachmentRefs.map((attachment) => ({
+              type: 'image' as const,
+              attachment
+            }))
+          ]
+          message = createUserMessage({
+            content,
+            source: { kind: 'user' }
+          })
+        } catch (error) {
+          this.releaseAttachments(attachmentRefs)
+          throw error
+        }
         const stopReason = await new Promise<string>(
           (resolve, reject) => {
             record.inflight = {
@@ -1110,9 +1252,11 @@ export class GoodBuddyHarnessControlPlane {
               record.handle.agent.followup(message)
             } catch (error) {
               record.inflight = undefined
+              this.releaseAttachments(attachmentRefs)
               reject(error)
               return
             }
+            record.attachmentRefs.push(...attachmentRefs)
             void record.handle.agent.whenIdle().then(() => {
               const current = record.inflight
               if (current?.messageId !== message.id) {
@@ -1255,7 +1399,11 @@ export class GoodBuddyHarnessControlPlane {
       record.inflight.resolve('cancelled')
       record.inflight = undefined
     }
-    await record.handle.dispose()
+    try {
+      await record.handle.dispose()
+    } finally {
+      this.releaseAttachments(record.attachmentRefs)
+    }
   }
 
   async dispose(): Promise<void> {
@@ -1273,6 +1421,9 @@ export class GoodBuddyHarnessControlPlane {
       await Promise.allSettled(
         sessions.map(([, record]) => record.handle.dispose())
       )
+      for (const [, record] of sessions) {
+        this.releaseAttachments(record.attachmentRefs)
+      }
     })()
     await this.disposing
   }

@@ -45,6 +45,8 @@ function setup(
     promptTimeoutMs?: number
     maxEventCharacters?: number
     maxRequestOutputCharacters?: number
+    supportsImageInput?: boolean
+    advertisedImageInput?: boolean
   } = {}
 ) {
   const exit = deferred<{
@@ -95,7 +97,13 @@ function setup(
     if (method === 'initialize') {
       return {
         protocolVersion: 1,
-        agentCapabilities: {}
+        agentCapabilities: {
+          promptCapabilities: {
+            image:
+              options.advertisedImageInput ??
+              (options.supportsImageInput === true)
+          }
+        }
       }
     }
     if (method === 'session/new') {
@@ -212,6 +220,7 @@ function setup(
     defaultWorkspace: 'C:\\workspace',
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-test',
+    supportsImageInput: options.supportsImageInput,
     launch,
     loadAcpSdk: async () => sdk,
     initializationTimeoutMs: 100,
@@ -417,6 +426,86 @@ describe('DeepSeekHarnessRuntime', () => {
     ).toBeInstanceOf(RequestError)
   })
 
+  it('rejects images before launch when the selected model is text-only', async () => {
+    const harness = setup()
+
+    await expect(
+      collect(
+        harness.runtime.run(
+          {
+            ...request('text-only-image'),
+            images: [
+              {
+                name: 'reference.png',
+                mediaType: 'image/png',
+                data: 'aW1hZ2U='
+              }
+            ]
+          },
+          new AbortController().signal
+        )
+      )
+    ).rejects.toThrow('未启用图像输入')
+    expect(harness.launch).not.toHaveBeenCalled()
+  })
+
+  it('forwards inline images when the selected model supports them', async () => {
+    const harness = setup({ supportsImageInput: true })
+    const running = collect(
+      harness.runtime.run(
+        {
+          ...request('vision'),
+          images: [
+            {
+              name: 'reference.png',
+              mediaType: 'image/png',
+              data: 'aW1hZ2U='
+            }
+          ]
+        },
+        new AbortController().signal
+      )
+    )
+    await vi.waitFor(() =>
+      expect(harness.promptGates).toHaveLength(1)
+    )
+
+    expect(harness.launch).toHaveBeenCalledWith(
+      expect.objectContaining({ supportsImageInput: true })
+    )
+    expect(
+      harness.requests.find(
+        (entry) => entry.method === 'session/prompt'
+      )?.params
+    ).toMatchObject({
+      prompt: [
+        { type: 'text', text: 'hello' },
+        {
+          type: 'image',
+          mimeType: 'image/png',
+          data: 'aW1hZ2U='
+        }
+      ]
+    })
+    harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
+    await expect(running).resolves.toContainEqual(
+      expect.objectContaining({ type: 'done' })
+    )
+  })
+
+  it('fails closed when Host image capability disagrees with the model', async () => {
+    const harness = setup({
+      supportsImageInput: true,
+      advertisedImageInput: false
+    })
+
+    await expect(harness.runtime.getStatus()).resolves.toMatchObject({
+      available: false,
+      detail: expect.stringContaining('图片能力')
+    })
+    expect(harness.child.terminate).toHaveBeenCalled()
+  })
+
   it('uses ACP stdio, maps conversations to sessions, and streams text', async () => {
     const harness = setup()
     const first = collect(
@@ -456,6 +545,7 @@ describe('DeepSeekHarnessRuntime', () => {
       signal: expect.any(AbortSignal),
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-test',
+      supportsImageInput: false,
       credentialRefs: [],
       skillPackages: [],
       extensionPackages: []

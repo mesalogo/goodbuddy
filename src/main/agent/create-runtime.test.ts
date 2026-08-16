@@ -103,7 +103,7 @@ describe('createAgentRuntime model compatibility', () => {
     )
   })
 
-  it('creates DeepSeek Harness with a compatible HTTPS gateway profile', async () => {
+  it('forwards a compatible gateway profile to DeepSeek Harness', async () => {
     const profile = {
       id: '00000000-0000-4000-8000-000000000006',
       name: 'OpenAI-compatible gateway',
@@ -111,9 +111,13 @@ describe('createAgentRuntime model compatibility', () => {
       modelName: 'qwen-plus',
       protocol: 'openai-chat-completions' as const,
       authentication: 'api-key' as const,
+      supportsImageInput: true,
       imageGenerationQuality: 'auto' as const,
       apiKey: 'gateway-key'
     }
+    const deepseekHarnessLauncher = vi
+      .fn()
+      .mockRejectedValue(new Error('stop after launch options'))
     const runtime = createAgentRuntime(
       process.cwd(),
       settings({
@@ -122,10 +126,16 @@ describe('createAgentRuntime model compatibility', () => {
         defaultModelProfileId: profile.id,
         deepseekHarnessModelProfile: profile
       }),
-      { deepseekHarnessLauncher: vi.fn() }
+      { deepseekHarnessLauncher }
     )
 
     expect(runtime.runtimeId).toBe('deepseek-harness')
+    await expect(runtime.getStatus()).resolves.toMatchObject({
+      available: false
+    })
+    expect(deepseekHarnessLauncher).toHaveBeenCalledWith(
+      expect.objectContaining({ supportsImageInput: true })
+    )
     await runtime.dispose()
   })
 

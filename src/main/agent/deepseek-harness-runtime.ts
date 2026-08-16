@@ -171,6 +171,7 @@ export type DeepSeekHarnessLaunchOptions = {
   signal: AbortSignal
   baseUrl: string
   model: string
+  supportsImageInput: boolean
   credentialRefs: readonly string[]
   skillPackages: readonly RuntimeSkillPackage[]
   extensionPackages: readonly ControlledHarnessExtensionPackage[]
@@ -180,6 +181,7 @@ export type DeepSeekHarnessRuntimeOptions = {
   defaultWorkspace: string
   baseUrl: string
   model: string
+  supportsImageInput?: boolean
   launch: (
     options: DeepSeekHarnessLaunchOptions
   ) => Promise<DeepSeekHarnessChild>
@@ -812,6 +814,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           signal: launchController.signal,
           baseUrl: this.options.baseUrl,
           model: this.options.model,
+          supportsImageInput:
+            this.options.supportsImageInput === true,
           credentialRefs: Object.keys(
             this.options.credentialRefs ?? {}
           ),
@@ -1022,7 +1026,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         () =>
           this.fail(new Error('DeepSeek Harness ACP 连接异常关闭'))
       )
-      await withTimeout(
+      const initialization = await withTimeout(
         stateWithoutCapabilities.agent.initialize({
           protocolVersion: sdk.PROTOCOL_VERSION,
           clientCapabilities: {},
@@ -1034,6 +1038,26 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         this.initializationTimeoutMs,
         'ACP 初始化'
       )
+      const advertisedImageInput =
+        Boolean(
+          initialization &&
+            typeof initialization === 'object' &&
+            (
+              initialization as {
+                agentCapabilities?: {
+                  promptCapabilities?: { image?: unknown }
+                }
+              }
+            ).agentCapabilities?.promptCapabilities?.image === true
+        )
+      if (
+        advertisedImageInput !==
+        (this.options.supportsImageInput === true)
+      ) {
+        throw new Error(
+          'DeepSeek Harness Host 图片能力与所选模型连接不一致'
+        )
+      }
       const capabilities = this.parseCapabilities(
         await withTimeout(
           stateWithoutCapabilities.agent.extMethod(
@@ -1408,8 +1432,11 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void> {
     signal.throwIfAborted()
-    if (request.images?.length) {
-      throw new Error('DeepSeek Harness Runtime 暂不支持图像输入')
+    if (
+      request.images?.length &&
+      this.options.supportsImageInput !== true
+    ) {
+      throw new Error('当前 DeepSeek Harness 模型连接未启用图像输入')
     }
     const release = await this.acquireConversation(
       request.conversationId,
@@ -1477,7 +1504,12 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
             {
               type: 'text',
               text: flattenPrompt(request)
-            }
+            },
+            ...(request.images ?? []).map((image) => ({
+              type: 'image' as const,
+              data: image.data,
+              mimeType: image.mediaType
+            }))
           ]
         }),
         this.promptTimeoutMs,

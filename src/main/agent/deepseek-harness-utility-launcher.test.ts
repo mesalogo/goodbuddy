@@ -52,6 +52,7 @@ async function fixture() {
       signal: new AbortController().signal,
       baseUrl: 'https://gateway.example/openai/v1',
       model: 'qwen-plus',
+      supportsImageInput: false,
       credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
       skillPackages: [],
       extensionPackages: []
@@ -103,6 +104,7 @@ describe('DeepSeek Harness utility launcher', () => {
       config: {
         baseUrl: 'https://gateway.example/openai/v1',
         model: 'qwen-plus',
+        supportsImageInput: false,
         credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF]
       }
     })

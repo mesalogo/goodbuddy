@@ -20,6 +20,9 @@ import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import {
+  GoodBuddyHarnessAttachmentStore
+} from './agent/goodbuddy-harness-attachment-store'
+import {
   GoodBuddyCredentialProvider,
   GoodBuddyHarnessControlPlane,
   createBoundedAcpStream,
@@ -31,8 +34,8 @@ import {
 } from './agent/deepseek-harness-extension-loader'
 import type { Stream } from '@agentclientprotocol/sdk'
 import { isDeepSeekHarnessCompatibleBaseUrl } from '../shared/deepseek-harness-compatibility'
+import { DEEPSEEK_HARNESS_MAX_FRAME_BYTES } from './agent/deepseek-harness-control-protocol'
 
-const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024
 
 export type ControlledHarnessHostConfig = Omit<
@@ -204,9 +207,10 @@ async function loadControlledSkills(
  * Boots a fixed, programmatic Cordis graph. It never imports app-boot, a
  * profile loader, settings-file, local credentials, persistence, telemetry,
  * web, HMR, marketplace discovery, direct MCP clients, jobs, subagents,
- * hooks, or workflow packages. The control plane registers Main-selected
- * Skill snapshots, Main-mediated MCP tool proxies, and explicitly enabled
- * extension entrypoints.
+ * hooks, or workflow packages. When the selected model declares image input,
+ * the graph adds only a bounded process-local attachment store. The control
+ * plane registers Main-selected Skill snapshots, Main-mediated MCP tool
+ * proxies, and explicitly enabled extension entrypoints.
  */
 export async function startControlledDeepSeekHarnessHost(
   input: ControlledHarnessHostConfig
@@ -219,6 +223,9 @@ export async function startControlledDeepSeekHarnessHost(
   const specs: PluginSpec[] = [
     { plugin: LlmRuntime },
     { plugin: SessionStore },
+    ...(config.supportsImageInput
+      ? [{ plugin: GoodBuddyHarnessAttachmentStore }]
+      : []),
     { plugin: SkillRegistry },
     {
       plugin: SystemPrompt,
@@ -242,7 +249,14 @@ export async function startControlledDeepSeekHarnessHost(
             apiKeyEnv: config.credentialRefs[0],
             api: config.api,
             baseURL: config.baseUrl,
-            models: [{ id: config.model, input: ['text'] }]
+            models: [
+              {
+                id: config.model,
+                input: config.supportsImageInput
+                  ? ['text', 'image']
+                  : ['text']
+              }
+            ]
           }
         }
       }
@@ -310,13 +324,22 @@ export async function startControlledDeepSeekHarnessHost(
         'Controlled Harness credential provider failed to start'
       )
     }
+    const attachmentStore = ctx.get('attachments')
+    if (
+      config.supportsImageInput &&
+      !(attachmentStore instanceof GoodBuddyHarnessAttachmentStore)
+    ) {
+      throw new Error(
+        'Controlled Harness attachment store failed to start'
+      )
+    }
     startupCode = 'HOST_CONTROL_PLANE_FAILED'
     const rawStream =
       config.stream ??
       createBoundedNdJsonStream(
         stdoutStream(),
         stdinStream(),
-        config.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES
+        config.maxFrameBytes ?? DEEPSEEK_HARNESS_MAX_FRAME_BYTES
       )
     const controlPlane = new GoodBuddyHarnessControlPlane(ctx, {
       ...config,
@@ -325,7 +348,7 @@ export async function startControlledDeepSeekHarnessHost(
       execution: { mode: 'host' },
       stream: createBoundedAcpStream(
         rawStream,
-        config.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES
+        config.maxFrameBytes ?? DEEPSEEK_HARNESS_MAX_FRAME_BYTES
       )
     })
     controlPlane.bindCredentialProvider(credentialProvider)
@@ -337,6 +360,9 @@ export async function startControlledDeepSeekHarnessHost(
       extensionFailures: extensions.failures,
       async dispose() {
         await controlPlane.dispose()
+        if (attachmentStore instanceof GoodBuddyHarnessAttachmentStore) {
+          attachmentStore.clear()
+        }
         await ctx.fiber.dispose()
       }
     }

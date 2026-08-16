@@ -17,8 +17,9 @@ const {
 const { app, utilityProcess } = require('electron/main')
 
 const protocol = 'goodbuddy.deepseek-harness.control'
-const version = 1
+const controlVersion = 2
 const byteProtocol = 'goodbuddy.deepseek-harness.byte-stream'
+const byteProtocolVersion = 1
 const configuredHostPath =
   process.env.GOODBUDDY_HARNESS_SMOKE_HOST
 const hostPath = configuredHostPath
@@ -132,12 +133,12 @@ async function run() {
   child.on('message', (message) => {
     if (
       message?.protocol === protocol &&
-      message.version === version &&
+      message.version === controlVersion &&
       message.type === 'ready'
     ) {
       child.postMessage({
         protocol: byteProtocol,
-        version,
+        version: byteProtocolVersion,
         type: 'data',
         stream: 'stdin',
         seq: 0,
@@ -147,7 +148,7 @@ async function run() {
     }
     if (
       message?.protocol === byteProtocol &&
-      message.version === version &&
+      message.version === byteProtocolVersion &&
       message.type === 'ack' &&
       message.stream === 'stdin' &&
       message.seq === 0
@@ -158,7 +159,7 @@ async function run() {
     }
     if (
       message?.protocol === protocol &&
-      message.version === version &&
+      message.version === controlVersion &&
       message.type === 'fatal'
     ) {
       finish('fatal', String(message.code))
@@ -172,7 +173,7 @@ async function run() {
   })
   child.postMessage({
     protocol,
-    version,
+    version: controlVersion,
     type: 'start',
     config: {
       workspace,
@@ -181,11 +182,12 @@ async function run() {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'qwen-plus',
+      supportsImageInput: false,
       harnessVersion: '0.1.0-rc.6',
       credentialRefs: ['GOODBUDDY_HARNESS_MODEL_API_KEY'],
       skillPackages: [],
       extensionPackages: [],
-      maxFrameBytes: 1024 * 1024
+      maxFrameBytes: 8 * 1024 * 1024
     }
   })
 

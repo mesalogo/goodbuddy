@@ -330,7 +330,9 @@ describe('release build arguments', () => {
         'node_modules/node-pty/prebuilds/**/*',
         'node_modules/node-pty/build/Release/**/*',
         'node_modules/koffi/**/*',
-        'node_modules/@koromix/koffi-*/**/*'
+        'node_modules/@koromix/koffi-*/**/*',
+        'node_modules/@napi-rs/canvas{,/**/*}',
+        'node_modules/@napi-rs/canvas-*/**/*'
       ])
     )
     expect(packageJson.build.asarUnpack).not.toContain(

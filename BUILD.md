@@ -125,6 +125,7 @@ npm run dist:linux:arm64
 - OpenCode 平台二进制来自 `.runtime-resources/<arch>`。
 - Continue Runtime 来自锁定版本的 `@continuedev/cli`。
 - DSH 插件安装使用精确锁定并从 `app.asar` 解包的 npm CLI，通过当前 Electron 的 Node 模式运行；最终用户不需要另装 Node.js 或 npm。
+- DSH 图片输入使用精确锁定的 `@napi-rs/canvas` 完整解码 JPEG/PNG。通用包与当前平台的 Skia 原生包必须从 `app.asar` 解包；发布校验会检查版本、目标架构和 MIT 许可证。
 - 打包钩子位于 `build/runtime-hooks.cjs`。
 
 跨架构打包前，确认目标架构的 OpenCode 资源已经准备完成。不要用其他架构的二进制替代目标资源。
@@ -181,7 +182,7 @@ git push github "$tag"
 4. 本地知识库导入、检索和知识图谱。
 5. Ask、Execute 的权限边界与旧版 Plan 数据兼容。
 6. OpenCode 与 Continue 的权限边界、取消和超时。
-7. DeepSeek Harness Ask 拒绝写入和第三方插件工具，可调用 Main 管理的 Web Search/Fetch；Execute 可调用已启用插件工具。
+7. DeepSeek Harness Ask 拒绝写入和第三方插件工具，可调用 Main 管理的 Web Search/Fetch；Execute 可调用已启用插件工具。文本模型在网络调用前拒绝图片，声明图片能力的模型可以实际接收 JPEG/PNG。
 8. OpenCode Agent/Command、原生上下文 Compact，以及 Continue Rules/Prompt 预设、结构化提问和 GoodBuddy 手动摘要压缩。
 9. Runtime 原生清单把 Tools 与 Commands/LSP/Formatters 分开，显示来源及 Ask/Execute 可用性，不混入 GoodBuddy 分配的 Skills/MCP；外部 OpenCode 只报告连接状态，Continue 明确标记原生 Tools 静态发现不支持；MCP 测试只读取有界 Prompt/Resource 元数据，不读取 Resource 内容。
 10. DSH 市场可安装、停用、重新启用和移除插件；启动失败插件不会阻止 Host，并显示为自动停用。

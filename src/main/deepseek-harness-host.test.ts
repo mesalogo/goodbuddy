@@ -11,6 +11,7 @@ import type {
   CreateAgentOptions
 } from '@deepseek-ai/dsh-agent'
 import { GOODBUDDY_HARNESS_MAX_STEP_TOKENS } from './agent/goodbuddy-harness-control-plane'
+import { GoodBuddyHarnessAttachmentStore } from './agent/goodbuddy-harness-attachment-store'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -80,6 +81,7 @@ describe('controlled DeepSeek Harness host', () => {
       api: 'openai-completions',
       provider: 'goodbuddy',
       model: 'qwen-plus',
+      supportsImageInput: true,
       harnessVersion: '0.1.0-rc.6',
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skillPackages: [],
@@ -91,6 +93,9 @@ describe('controlled DeepSeek Harness host', () => {
 
     expect(host.context.fs.sandboxMode).toBeUndefined()
     expect(host.context.shell.sandboxMode).toBeUndefined()
+    expect(host.context.get('attachments')).toBeInstanceOf(
+      GoodBuddyHarnessAttachmentStore
+    )
     expect(
       host.context.shell.resolve({
         command: 'echo goodbuddy-host-execution'

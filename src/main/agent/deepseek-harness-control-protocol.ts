@@ -8,10 +8,12 @@ import {
 
 export const DEEPSEEK_HARNESS_CONTROL_PROTOCOL =
   'goodbuddy.deepseek-harness.control'
-export const DEEPSEEK_HARNESS_CONTROL_VERSION = 1
+export const DEEPSEEK_HARNESS_CONTROL_VERSION = 2
 export const DEEPSEEK_HARNESS_HOST_VERSION = '0.1.0-rc.6'
 export const DEEPSEEK_HARNESS_CREDENTIAL_REF =
   'GOODBUDDY_HARNESS_MODEL_API_KEY'
+export const DEEPSEEK_HARNESS_MAX_FRAME_BYTES =
+  8 * 1024 * 1024
 
 const skillPackageSchema = z
   .object({
@@ -43,13 +45,14 @@ export const controlledHarnessHostConfigSchema = z
     api: z.literal('openai-completions'),
     provider: z.literal('goodbuddy'),
     model: z.string().min(1).max(128),
+    supportsImageInput: z.boolean(),
     harnessVersion: z.literal(DEEPSEEK_HARNESS_HOST_VERSION),
     credentialRefs: z
       .tuple([z.literal(DEEPSEEK_HARNESS_CREDENTIAL_REF)])
       .readonly(),
     skillPackages: z.array(skillPackageSchema).max(64),
     extensionPackages: z.array(extensionPackageSchema).max(64),
-    maxFrameBytes: z.literal(1024 * 1024)
+    maxFrameBytes: z.literal(DEEPSEEK_HARNESS_MAX_FRAME_BYTES)
   })
   .strict()
 

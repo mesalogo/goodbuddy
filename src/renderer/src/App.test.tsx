@@ -886,6 +886,9 @@ describe('App', () => {
 
     expect(await screen.findByText('桌面工作区')).toBeInTheDocument()
     expect(screen.getByText('GOODBUDDY 工作台')).toBeInTheDocument()
+    expect(
+      document.querySelector('.composer__runtime-toolbar')
+    ).not.toBeInTheDocument()
   })
 
   it('schedules lazy workspace routes for idle preloading', () => {
@@ -4555,6 +4558,18 @@ describe('App', () => {
     const agentPicker = await screen.findByRole('button', {
       name: /OpenCode Runtime Agent/u
     })
+    const runtimeToolbar = screen.getByRole('group', {
+      name: 'OpenCode 专属功能'
+    })
+    const universalSettings = screen.getByRole('group', {
+      name: '对话设置'
+    })
+    expect(runtimeToolbar).toHaveClass('composer__runtime-toolbar')
+    expect(runtimeToolbar).toContainElement(agentPicker)
+    expect(universalSettings).not.toContainElement(agentPicker)
+    expect(universalSettings.closest('.composer__toolbar')).toHaveClass(
+      'composer__toolbar--with-runtime-controls'
+    )
     fireEvent.click(agentPicker)
     fireEvent.click(
       within(
@@ -4566,6 +4581,7 @@ describe('App', () => {
     const actionPicker = screen.getByRole('button', {
       name: /Runtime 快捷操作/u
     })
+    expect(runtimeToolbar).toContainElement(actionPicker)
     fireEvent.click(actionPicker)
     fireEvent.click(
       within(
@@ -4673,6 +4689,14 @@ describe('App', () => {
     const presetPicker = await screen.findByRole('button', {
       name: /Continue 配置预设.*使用设置默认预设/u
     })
+    const runtimeToolbar = screen.getByRole('group', {
+      name: 'Continue 专属功能'
+    })
+    expect(runtimeToolbar).toHaveClass('composer__runtime-toolbar')
+    expect(runtimeToolbar).toContainElement(presetPicker)
+    expect(
+      screen.getByRole('group', { name: '对话设置' })
+    ).not.toContainElement(presetPicker)
     fireEvent.click(presetPicker)
     fireEvent.click(
       within(
@@ -4684,6 +4708,7 @@ describe('App', () => {
     const actionPicker = screen.getByRole('button', {
       name: /Runtime 快捷操作/u
     })
+    expect(runtimeToolbar).toContainElement(actionPicker)
     fireEvent.click(actionPicker)
     fireEvent.click(
       within(
@@ -4801,11 +4826,17 @@ describe('App', () => {
 
     render(<App />)
 
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: '压缩上下文'
-      })
+    const compactContext = await screen.findByRole('button', {
+      name: '压缩上下文'
+    })
+    expect(compactContext.parentElement).toHaveClass(
+      'composer-meta',
+      'composer-meta--with-context-compact'
     )
+    expect(
+      compactContext.parentElement?.firstElementChild
+    ).toBe(compactContext)
+    fireEvent.click(compactContext)
     await waitFor(() =>
       expect(api.agent.compactConversation).toHaveBeenCalledWith({
         requestId: expect.any(String),

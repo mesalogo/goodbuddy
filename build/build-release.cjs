@@ -52,6 +52,7 @@ const harnessHostEntry =
 const harnessBundleManifest = 'out/main/package.json'
 const harnessPackageVersions = {
   '@deepseek-ai/dsh-agent': '0.1.0-rc.6',
+  '@napi-rs/canvas': '1.0.3',
   'node-pty': '1.1.0'
 }
 const koffiVersion = '3.1.4'
@@ -60,6 +61,7 @@ const harnessLicenseFiles = [
   'deepseek-cordis-MIT.txt',
   'deepseek-harness-MIT.txt',
   'koffi-MIT.txt',
+  'napi-rs-canvas-MIT.txt',
   'node-pty-MIT.txt'
 ]
 const portableRequiredFiles = [
@@ -505,7 +507,14 @@ function targetHarnessPaths(options) {
     macos: `darwin_${options.arch}/koffi.node`,
     linux: `linux_${options.arch}/koffi.node`
   }[options.platform]
+  const canvasTarget = {
+    windows: `win32-${options.arch}-msvc`,
+    macos: `darwin-${options.arch}`,
+    linux: `linux-${options.arch}-gnu`
+  }[options.platform]
   return {
+    canvasPackage: `@napi-rs/canvas-${canvasTarget}`,
+    canvasBinary: `skia.${canvasTarget}.node`,
     koffiPackage,
     koffiBinary,
     nodePtyBinary:
@@ -860,6 +869,18 @@ function verifyHarnessPackage(
       `${target.koffiPackage} 版本错误：期望 ${koffiVersion}，实际 ${String(targetKoffiManifest.version)}`
     )
   }
+  const targetCanvasManifest = readJson(
+    `node_modules/${target.canvasPackage}/package.json`,
+    `${target.canvasPackage} 元数据`
+  )
+  if (
+    targetCanvasManifest.version !==
+    harnessPackageVersions['@napi-rs/canvas']
+  ) {
+    throw new Error(
+      `${target.canvasPackage} 版本错误：期望 ${harnessPackageVersions['@napi-rs/canvas']}，实际 ${String(targetCanvasManifest.version)}`
+    )
+  }
 
   const ptyBinary = join(
     unpackedRoot,
@@ -872,6 +893,12 @@ function verifyHarnessPackage(
     'node_modules',
     ...target.koffiPackage.split('/'),
     ...target.koffiBinary.split('/')
+  )
+  const canvasBinary = join(
+    unpackedRoot,
+    'node_modules',
+    ...target.canvasPackage.split('/'),
+    target.canvasBinary
   )
   assertBinaryArchitecture(
     ptyBinary,
@@ -892,9 +919,17 @@ function verifyHarnessPackage(
     'DeepSeek Harness Koffi 元数据',
     statAsarFile
   )
+  const canvasMetadata = asarEntryMetadata(
+    asarPath,
+    entries,
+    `node_modules/${target.canvasPackage}/${target.canvasBinary}`,
+    'DeepSeek Harness Canvas 元数据',
+    statAsarFile
+  )
   for (const [metadata, description] of [
     [nodePtyMetadata, 'DeepSeek Harness node-pty'],
-    [koffiMetadata, 'DeepSeek Harness Koffi']
+    [koffiMetadata, 'DeepSeek Harness Koffi'],
+    [canvasMetadata, 'DeepSeek Harness Canvas']
   ]) {
     if (!('unpacked' in metadata) || !metadata.unpacked) {
       throw new Error(`${description}未从 ASAR 解包`)
@@ -904,6 +939,11 @@ function verifyHarnessPackage(
     koffiBinary,
     options.arch,
     'DeepSeek Harness Koffi'
+  )
+  assertBinaryArchitecture(
+    canvasBinary,
+    options.arch,
+    'DeepSeek Harness Canvas'
   )
 
   if (options.platform === 'darwin') {

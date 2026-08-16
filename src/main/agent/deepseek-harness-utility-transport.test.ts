@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   DEEPSEEK_HARNESS_BYTE_PROTOCOL,
   DEEPSEEK_HARNESS_BYTE_PROTOCOL_VERSION,
@@ -7,6 +9,10 @@ import {
   createDeepSeekHarnessUtilityChild,
   type DeepSeekHarnessParentPortLike
 } from './deepseek-harness-utility-transport'
+import {
+  DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+  DEEPSEEK_HARNESS_CONTROL_VERSION
+} from './deepseek-harness-control-protocol'
 
 type Listener = (value: unknown) => void
 
@@ -120,13 +126,27 @@ function setup() {
 const tick = () => new Promise<void>((resolve) => queueMicrotask(resolve))
 
 describe('DeepSeek Harness utility byte transport', () => {
+  it('keeps the Electron smoke protocol versions aligned', () => {
+    const smokeSource = readFileSync(
+      resolve('build/deepseek-harness-utility-smoke.cjs'),
+      'utf8'
+    )
+
+    expect(smokeSource).toContain(
+      `const controlVersion = ${DEEPSEEK_HARNESS_CONTROL_VERSION}`
+    )
+    expect(smokeSource).toContain(
+      `const byteProtocolVersion = ${DEEPSEEK_HARNESS_BYTE_PROTOCOL_VERSION}`
+    )
+  })
+
   it('ignores trusted control-plane messages that share the UtilityProcess port', async () => {
     const { child, hostPort, utility } = setup()
     await tick()
     utility.kill.mockClear()
     utility.emitMessage({
-      protocol: 'goodbuddy.deepseek-harness.control',
-      version: 1,
+      protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+      version: DEEPSEEK_HARNESS_CONTROL_VERSION,
       type: 'ready',
       failedExtensionIds: []
     })
@@ -153,8 +173,8 @@ describe('DeepSeek Harness utility byte transport', () => {
     const { child, utility } = setup()
     const reader = child.stdout.getReader()
     utility.emitMessage({
-      protocol: 'goodbuddy.deepseek-harness.control',
-      version: 1,
+      protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+      version: DEEPSEEK_HARNESS_CONTROL_VERSION,
       type: 'ready',
       failedExtensionIds: [],
       unexpected: true

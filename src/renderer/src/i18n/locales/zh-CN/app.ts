@@ -314,6 +314,7 @@ export const app = {
     expertLabel: '专家角色',
     modeLabel: '工作模式',
     runtimeControls: {
+      groupLabel: '{{runtime}} 专属功能',
       agentLabel: 'OpenCode Runtime Agent',
       presetLabel: 'Continue 配置预设',
       actionLabel: 'Runtime 快捷操作',

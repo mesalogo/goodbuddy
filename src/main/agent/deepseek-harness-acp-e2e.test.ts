@@ -8,6 +8,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { createCanvas } from '@napi-rs/canvas'
 import {
   CallId,
   type GenerateOptions,
@@ -31,8 +32,8 @@ import {
 } from './deepseek-harness-runtime'
 import { GOODBUDDY_HARNESS_MAX_STEP_TOKENS } from './goodbuddy-harness-control-plane'
 import { DshNpmExtensionInstaller } from './dsh-extension-marketplace'
+import { DEEPSEEK_HARNESS_MAX_FRAME_BYTES } from './deepseek-harness-control-protocol'
 
-const MAX_FRAME_BYTES = 1024 * 1024
 const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
 const SKILL_CALL_ID = 'e2e-skill-call'
 const MCP_CALL_ID = 'e2e-mcp-call'
@@ -327,6 +328,7 @@ function createInProcessLaunch(
         api: 'openai-completions',
         provider: 'goodbuddy',
         model: options.model,
+        supportsImageInput: options.supportsImageInput,
         harnessVersion: '0.1.0-rc.6',
         credentialRefs: options.credentialRefs,
         skillPackages: options.skillPackages,
@@ -334,7 +336,7 @@ function createInProcessLaunch(
         stream: createBoundedNdJsonStream(
           hostToClient.writable,
           clientToHost.readable,
-          MAX_FRAME_BYTES
+          DEEPSEEK_HARNESS_MAX_FRAME_BYTES
         )
       })
       hosts.push(host)
@@ -378,6 +380,88 @@ function createInProcessLaunch(
 }
 
 describe('DeepSeek Harness real ACP control-plane E2E', () => {
+  it('delivers bounded inline images to an image-capable Harness model', async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'goodbuddy-harness-acp-image-'))
+    )
+    const workspace = join(root, 'workspace')
+    const dshHome = join(root, 'dsh-home')
+    await Promise.all([mkdir(workspace), mkdir(dshHome)])
+    let observedRequest: GenerateOptions | undefined
+    const inProcess = createInProcessLaunch(dshHome, {
+      stream(options) {
+        observedRequest = options
+        return textResponse('Image received.')
+      }
+    })
+    const runtime = new DeepSeekHarnessRuntime({
+      defaultWorkspace: workspace,
+      baseUrl: 'https://api.deepseek.com',
+      model: 'vision-test',
+      supportsImageInput: true,
+      launch: (options) => inProcess.launch(options),
+      credentialRefs: {
+        [CREDENTIAL_REF]: 'unused-in-memory-model-credential'
+      },
+      initializationTimeoutMs: 20_000,
+      promptTimeoutMs: 20_000,
+      shutdownTimeoutMs: 5_000
+    })
+    const png = createCanvas(1, 1).toBuffer('image/png')
+
+    try {
+      const events = await collect(
+        runtime.run(
+          {
+            requestId: 'request-acp-image',
+            conversationId: 'acp-image',
+            prompt: 'Describe this image.',
+            workMode: 'ask',
+            images: [
+              {
+                name: 'reference.png',
+                mediaType: 'image/png',
+                data: png.toString('base64')
+              }
+            ]
+          },
+          new AbortController().signal
+        )
+      )
+      const image = observedRequest?.messages
+        .flatMap((message) => message.content)
+        .find(
+          (
+            block
+          ): block is Extract<
+            GenerateOptions['messages'][number]['content'][number],
+            { type: 'image' }
+          > => block.type === 'image'
+        )
+
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: 'done' })
+      )
+      expect(image?.attachment).toMatchObject({
+        mediaType: 'image/png',
+        bytes: png.byteLength,
+        width: 1,
+        height: 1
+      })
+      const stored =
+        await inProcess.hosts[0]!.context.attachments.readImage(
+          image!.attachment
+        )
+      expect(Buffer.from(stored.data).equals(png)).toBe(true)
+    } finally {
+      await runtime.dispose()
+      await Promise.allSettled(
+        inProcess.hosts.map((host) => host.dispose())
+      )
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it(
     'coalesces micro reasoning deltas without losing content and caps each model step',
     async () => {

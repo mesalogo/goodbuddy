@@ -6159,6 +6159,36 @@ function App(): React.JSX.Element {
     activeConversation?.messages.some(
       (message) => message.state === 'streaming'
     ) ?? false
+  const runtimeAgentControlAvailable =
+    activeRuntimeSelection?.provider === 'opencode' &&
+    runtimeAgentOptions.length > 1
+  const runtimePresetControlAvailable =
+    activeRuntimeSelection?.provider === 'continue' &&
+    runtimePresetOptions.length > 1
+  const runtimeActionControlAvailable =
+    (activeRuntimeSelection?.provider === 'opencode' ||
+      activeRuntimeSelection?.provider === 'continue') &&
+    runtimeActionOptions.length > 1
+  const runtimeControlsAvailable =
+    runtimeAgentControlAvailable ||
+    runtimePresetControlAvailable ||
+    runtimeActionControlAvailable
+  const runtimeControlsProvider = runtimeControlsAvailable
+    ? activeRuntimeSelection?.provider === 'opencode'
+      ? 'OpenCode'
+      : activeRuntimeSelection?.provider === 'continue'
+        ? 'Continue'
+        : undefined
+    : undefined
+  const runtimeControlsLabel = runtimeControlsProvider
+    ? t('composer.runtimeControls.groupLabel', {
+        runtime: runtimeControlsProvider
+      })
+    : ''
+  const runtimeContextCompactAvailable =
+    (activeRuntimeSelection?.provider === 'opencode' ||
+      activeRuntimeSelection?.provider === 'continue') &&
+    runtimeNativeSnapshot?.context.manualCompact === true
 
   const composerContextMetrics = useMemo(() => {
     if (
@@ -7027,7 +7057,13 @@ function App(): React.JSX.Element {
                 }}
               />
             </div>
-            <div className="composer__toolbar">
+            <div
+              className={`composer__toolbar${
+                runtimeControlsProvider
+                  ? ' composer__toolbar--with-runtime-controls'
+                  : ''
+              }`}
+            >
               <div className="composer__controls">
                 <div
                   aria-label={t('composer.addContent')}
@@ -7190,83 +7226,6 @@ function App(): React.JSX.Element {
                     options={assistantExpertOptions}
                     value={selectedExpertId}
                   />
-                  {activeRuntimeSelection?.provider === 'opencode' &&
-                    runtimeAgentOptions.length > 1 && (
-                      <ComposerMenuSelect
-                        ariaLabel={t(
-                          'composer.runtimeControls.agentLabel'
-                        )}
-                        className="composer-picker--runtime"
-                        disabled={isRunning}
-                        icon={
-                          <TerminalSquare
-                            aria-hidden="true"
-                            size={15}
-                          />
-                        }
-                        menuOpen={
-                          composerMenuOpen === 'runtime-agent'
-                        }
-                        onChange={setSelectedRuntimeAgent}
-                        onOpenChange={setRuntimeAgentMenuOpen}
-                        options={runtimeAgentOptions}
-                        value={selectedRuntimeAgent}
-                      />
-                    )}
-                  {activeRuntimeSelection?.provider === 'continue' &&
-                    runtimePresetOptions.length > 1 && (
-                      <ComposerMenuSelect
-                        ariaLabel={t(
-                          'composer.runtimeControls.presetLabel'
-                        )}
-                        className="composer-picker--runtime"
-                        disabled={isRunning}
-                        icon={
-                          <TerminalSquare
-                            aria-hidden="true"
-                            size={15}
-                          />
-                        }
-                        menuOpen={
-                          composerMenuOpen === 'runtime-preset'
-                        }
-                        onChange={setSelectedContinuePreset}
-                        onOpenChange={setRuntimePresetMenuOpen}
-                        options={runtimePresetOptions}
-                        value={selectedContinuePreset}
-                      />
-                    )}
-                  {(activeRuntimeSelection?.provider === 'opencode' ||
-                    activeRuntimeSelection?.provider === 'continue') &&
-                    runtimeActionOptions.length > 1 && (
-                      <ComposerMenuSelect
-                        ariaLabel={t(
-                          'composer.runtimeControls.actionLabel'
-                        )}
-                        className="composer-picker--runtime-action"
-                        disabled={isRunning}
-                        icon={
-                          <TerminalSquare
-                            aria-hidden="true"
-                            size={15}
-                          />
-                        }
-                        menuOpen={
-                          composerMenuOpen === 'runtime-action'
-                        }
-                        onChange={selectRuntimeAction}
-                        onOpenChange={setRuntimeActionMenuOpen}
-                        options={runtimeActionOptions}
-                        value={
-                          runtimeActionOptions.find(
-                            (option) =>
-                              option.action?.type === 'command' &&
-                              option.action.id ===
-                                selectedRuntimeCommand
-                          )?.value ?? ''
-                        }
-                      />
-                    )}
                   <ComposerMenuSelect
                     ariaLabel={t('composer.modeLabel')}
                     className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
@@ -7575,8 +7534,113 @@ function App(): React.JSX.Element {
                 </button>
               )}
             </div>
+            {runtimeControlsProvider && (
+              <div
+                aria-label={runtimeControlsLabel}
+                className="composer__runtime-toolbar"
+                role="group"
+              >
+                <strong className="composer__runtime-toolbar-label">
+                  {runtimeControlsLabel}
+                </strong>
+                <div className="composer__runtime-controls">
+                  {runtimeAgentControlAvailable && (
+                    <ComposerMenuSelect
+                      ariaLabel={t(
+                        'composer.runtimeControls.agentLabel'
+                      )}
+                      className="composer-picker--runtime"
+                      disabled={isRunning}
+                      icon={
+                        <TerminalSquare aria-hidden="true" size={15} />
+                      }
+                      menuOpen={
+                        composerMenuOpen === 'runtime-agent'
+                      }
+                      onChange={setSelectedRuntimeAgent}
+                      onOpenChange={setRuntimeAgentMenuOpen}
+                      options={runtimeAgentOptions}
+                      value={selectedRuntimeAgent}
+                    />
+                  )}
+                  {runtimePresetControlAvailable && (
+                    <ComposerMenuSelect
+                      ariaLabel={t(
+                        'composer.runtimeControls.presetLabel'
+                      )}
+                      className="composer-picker--runtime"
+                      disabled={isRunning}
+                      icon={
+                        <TerminalSquare aria-hidden="true" size={15} />
+                      }
+                      menuOpen={
+                        composerMenuOpen === 'runtime-preset'
+                      }
+                      onChange={setSelectedContinuePreset}
+                      onOpenChange={setRuntimePresetMenuOpen}
+                      options={runtimePresetOptions}
+                      value={selectedContinuePreset}
+                    />
+                  )}
+                  {runtimeActionControlAvailable && (
+                    <ComposerMenuSelect
+                      ariaLabel={t(
+                        'composer.runtimeControls.actionLabel'
+                      )}
+                      className="composer-picker--runtime-action"
+                      disabled={isRunning}
+                      icon={
+                        <TerminalSquare aria-hidden="true" size={15} />
+                      }
+                      menuOpen={
+                        composerMenuOpen === 'runtime-action'
+                      }
+                      onChange={selectRuntimeAction}
+                      onOpenChange={setRuntimeActionMenuOpen}
+                      options={runtimeActionOptions}
+                      value={
+                        runtimeActionOptions.find(
+                          (option) =>
+                            option.action?.type === 'command' &&
+                            option.action.id ===
+                              selectedRuntimeCommand
+                        )?.value ?? ''
+                      }
+                    />
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-          <div className="composer-meta">
+          <div
+            className={`composer-meta${
+              runtimeContextCompactAvailable
+                ? ' composer-meta--with-context-compact'
+                : ''
+            }`}
+          >
+            {runtimeContextCompactAvailable && (
+              <button
+                className="composer-context-compact"
+                disabled={runtimeContextCompacting || isRunning}
+                onClick={() => void compactRuntimeContext()}
+                title={runtimeNativeSnapshot?.context.detail}
+                type="button"
+              >
+                {runtimeContextCompacting ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="context-chip__spinner"
+                    size={13}
+                  />
+                ) : (
+                  <RefreshCw aria-hidden="true" size={13} />
+                )}
+                {runtimeContextCompacting
+                  ? t('composer.context.compacting')
+                  : t('composer.context.compact')}
+              </button>
+            )}
             {composerContextMetrics && (
               <div
                 className={`composer-context-meter${
@@ -7681,30 +7745,6 @@ function App(): React.JSX.Element {
                 )}
               </div>
             )}
-            {(activeRuntimeSelection?.provider === 'opencode' ||
-              activeRuntimeSelection?.provider === 'continue') &&
-              runtimeNativeSnapshot?.context.manualCompact && (
-                <button
-                  className="composer-context-compact"
-                  disabled={runtimeContextCompacting || isRunning}
-                  onClick={() => void compactRuntimeContext()}
-                  title={runtimeNativeSnapshot.context.detail}
-                  type="button"
-                >
-                  {runtimeContextCompacting ? (
-                    <LoaderCircle
-                      aria-hidden="true"
-                      className="context-chip__spinner"
-                      size={13}
-                    />
-                  ) : (
-                    <RefreshCw aria-hidden="true" size={13} />
-                  )}
-                  {runtimeContextCompacting
-                    ? t('composer.context.compacting')
-                    : t('composer.context.compact')}
-                </button>
-              )}
             {contextError && (
               <span className="composer-meta__error">
                 {contextError}
