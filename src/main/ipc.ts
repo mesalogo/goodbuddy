@@ -81,6 +81,9 @@ import {
   browserProfileCreateInputSchema,
   browserProfileRenameInputSchema,
   browserProfileSelectionInputSchema,
+  builtinMcpServerAssignmentsInputSchema,
+  builtinMcpServerIdSchema,
+  builtinMcpServerToggleInputSchema,
   computerCapabilityConfigInputSchema,
   computerCapabilityIdSchema,
   computerCapabilityToggleInputSchema,
@@ -90,6 +93,8 @@ import {
   skillIdSchema,
   skillImportKindSchema,
   skillToggleInputSchema,
+  runtimeTargetSchema,
+  type BuiltinMcpServerId,
   type CapabilitySnapshot,
   type CapabilityDiagnosticReport,
   type McpServerTestResult,
@@ -316,6 +321,19 @@ function isAgentRuntime(runtime: AgentRuntime): boolean {
   )
 }
 
+function runtimeTargetFor(
+  runtime: AgentRuntime
+): ReturnType<typeof runtimeTargetSchema.parse> | undefined {
+  const target = runtimeTargetSchema.safeParse(runtime.runtimeId)
+  if (target.success) {
+    return target.data
+  }
+  return runtime.runtimeId === undefined &&
+    runtime.supportsScopedDataTools !== false
+    ? 'model'
+    : undefined
+}
+
 type ScopedDataCapability = {
   token?: string
   toolNames: readonly string[]
@@ -324,6 +342,7 @@ type ScopedDataCapability = {
 function grantScopedDataCapability(input: {
   gateway?: KnowledgeMcpGateway
   runtime: AgentRuntime
+  enabledServers: readonly BuiltinMcpServerId[]
   requestId: string
   libraryIds: readonly string[]
   magicNotesAccess: MagicNotesCapabilityAccess
@@ -335,11 +354,21 @@ function grantScopedDataCapability(input: {
   ) => Promise<boolean>
   signal: AbortSignal
 }): ScopedDataCapability {
+  const enabledServers = new Set(input.enabledServers)
+  const libraryIds = enabledServers.has('knowledge-base')
+    ? input.libraryIds
+    : []
+  const magicNotesAccess = enabledServers.has('magic-notes')
+    ? input.magicNotesAccess
+    : 'none'
+  const configAccess = enabledServers.has('goodbuddy-config')
+    ? input.configAccess ?? 'none'
+    : 'none'
   if (
     input.runtime.supportsScopedDataTools === false ||
-    (input.libraryIds.length === 0 &&
-      input.magicNotesAccess === 'none' &&
-      (input.configAccess ?? 'none') === 'none')
+    (libraryIds.length === 0 &&
+      magicNotesAccess === 'none' &&
+      configAccess === 'none')
   ) {
     return { toolNames: [] }
   }
@@ -347,9 +376,9 @@ function grantScopedDataCapability(input: {
     throw new Error('内置数据工具服务不可用')
   }
   const config =
-    input.configAccess && input.configAccess !== 'none' && input.workspacePath
+    configAccess !== 'none' && input.workspacePath
       ? {
-          access: input.configAccess,
+          access: configAccess,
           workspacePath: input.workspacePath,
           authorizeApply: input.authorizeConfigApply
         }
@@ -357,16 +386,16 @@ function grantScopedDataCapability(input: {
   const token = config
     ? input.gateway.grant(
         input.requestId,
-        input.libraryIds,
+        libraryIds,
         input.signal,
-        input.magicNotesAccess,
+        magicNotesAccess,
         config
       )
     : input.gateway.grant(
         input.requestId,
-        input.libraryIds,
+        libraryIds,
         input.signal,
-        input.magicNotesAccess
+        magicNotesAccess
       )
   return {
     token,
@@ -1301,9 +1330,18 @@ export function registerIpcHandlers(
         origin === 'channel' &&
         ((await applicationSettingsStore?.get())?.magicNotesEnabled ??
           false)
+      const requestRuntimeTarget = runtimeTargetFor(requestRuntime)
+      const enabledBuiltinMcpServers = requestRuntimeTarget
+        ? capabilityService.getEnabledBuiltinMcpServerIds
+          ? await capabilityService.getEnabledBuiltinMcpServerIds(
+              requestRuntimeTarget
+            )
+          : [...builtinMcpServerIdSchema.options]
+        : []
       const notesCapability = grantScopedDataCapability({
         gateway: knowledgeGateway,
         runtime: requestRuntime,
+        enabledServers: enabledBuiltinMcpServers,
         requestId,
         libraryIds: [],
         magicNotesAccess: magicNotesToolEnabled
@@ -2303,9 +2341,18 @@ export function registerIpcHandlers(
         : enrichedRequest.projectId
           ? assistantDatabase.getProject(enrichedRequest.projectId).rootPath
           : (await settingsStore.getResolvedSettings()).workspacePath
+    const selectedRuntimeTarget = runtimeTargetFor(selectedRuntime)
+    const enabledBuiltinMcpServers = selectedRuntimeTarget
+      ? capabilityService.getEnabledBuiltinMcpServerIds
+        ? await capabilityService.getEnabledBuiltinMcpServerIds(
+            selectedRuntimeTarget
+          )
+        : [...builtinMcpServerIdSchema.options]
+      : []
     const scopedCapability = grantScopedDataCapability({
       gateway: knowledgeGateway,
       runtime: selectedRuntime,
+      enabledServers: enabledBuiltinMcpServers,
       requestId: enrichedRequest.requestId,
       libraryIds: hasKnowledgeScope ? knowledgeLibraryIds : [],
       magicNotesAccess: magicNotesToolEnabled
@@ -4391,6 +4438,34 @@ export function registerIpcHandlers(
       return refreshCapabilities(
         capabilityService.setSkillAssignments(
           value.skillId,
+          value.assignments
+        )
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.capabilitiesToggleBuiltinMcp,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = builtinMcpServerToggleInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.setBuiltinMcpServerEnabled(
+          value.serverId,
+          value.enabled
+        )
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.capabilitiesAssignBuiltinMcp,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const value = builtinMcpServerAssignmentsInputSchema.parse(input)
+      return refreshCapabilities(
+        capabilityService.setBuiltinMcpServerAssignments(
+          value.serverId,
           value.assignments
         )
       )

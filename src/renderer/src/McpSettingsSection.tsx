@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
 import type {
+  BuiltinMcpServerId,
   CapabilityDiagnosticReport,
   CapabilityAssignments,
   CapabilitySnapshot,
@@ -43,7 +44,11 @@ const configurableMcpTargets: RuntimeTarget[] = [
   'continue',
   'deepseek-harness'
 ]
-type McpSettingsTab = 'builtin' | 'computer' | 'custom'
+type McpSettingsTab =
+  | 'builtin'
+  | 'custom'
+  | 'model-tools'
+  | 'computer'
 
 type McpEditor = {
   id?: string
@@ -342,6 +347,23 @@ export function McpSettingsSection({
     })
   }
 
+  const updateBuiltinAssignment = (
+    serverId: BuiltinMcpServerId,
+    assignments: CapabilityAssignments,
+    target: RuntimeTarget,
+    checked: boolean
+  ): void => {
+    const next = checked
+      ? [...assignments, target]
+      : assignments.filter((item) => item !== target)
+    void run(`builtin:assign:${serverId}`, () =>
+      window.goodbuddy.capabilities.setBuiltinMcpServerAssignments(
+        serverId,
+        next
+      )
+    )
+  }
+
   const openEditor = (
     nextEditor: McpEditor,
     trigger: HTMLButtonElement
@@ -374,11 +396,8 @@ export function McpSettingsSection({
   }
 
   const computerCapabilities = snapshot?.computerCapabilities ?? []
-  const visibleComputerCapabilities = computerCapabilities.filter(
-    (capability) =>
-      activeTab === 'builtin'
-        ? capability.id === 'host-browser-control'
-        : capability.id !== 'host-browser-control'
+  const builtinMcpStates = new Map(
+    snapshot?.builtinMcpServers?.map((server) => [server.id, server])
   )
   const browserProfiles = snapshot?.browserProfiles ?? {
     profiles: [],
@@ -414,24 +433,43 @@ export function McpSettingsSection({
         headingId="mcp-settings-heading"
       />
       <SettingsWarningList warnings={snapshot?.warnings} />
-      <PageTabs
-        ariaLabel={t('mcp.tabs.ariaLabel')}
-        idPrefix="mcp-settings"
-        onChange={(tab) => {
-          setError(undefined)
-          setActiveTab(tab)
-        }}
-        tabs={[
-          { id: 'builtin', label: t('mcp.tabs.builtin') },
-          { id: 'computer', label: t('mcp.tabs.computer') },
-          { id: 'custom', label: t('mcp.tabs.custom') }
-        ]}
-        value={activeTab}
-        variant="segmented"
-      />
+      <div className="mcp-settings__tabs">
+        <PageTabs
+          ariaLabel={t('mcp.tabs.ariaLabel')}
+          idPrefix="mcp-settings"
+          onChange={(tab) => {
+            setError(undefined)
+            setActiveTab(tab)
+          }}
+          tabs={[
+            {
+              id: 'builtin',
+              icon: <Database size={14} />,
+              label: t('mcp.tabs.builtin')
+            },
+            {
+              id: 'model-tools',
+              icon: <Wrench size={14} />,
+              label: t('mcp.tabs.modelTools')
+            },
+            {
+              id: 'custom',
+              icon: <Network size={14} />,
+              label: t('mcp.tabs.custom')
+            },
+            {
+              id: 'computer',
+              icon: <MonitorCog size={14} />,
+              label: t('mcp.tabs.computer')
+            }
+          ]}
+          value={activeTab}
+          variant="segmented"
+        />
+      </div>
       <section
         aria-labelledby={`mcp-settings-tab-${activeTab}`}
-        className="settings-section"
+        className="settings-section mcp-settings__panel"
         id={`mcp-settings-panel-${activeTab}`}
         role="tabpanel"
       >
@@ -446,36 +484,24 @@ export function McpSettingsSection({
           </p>
         </>
       )}
-      {activeTab !== 'custom' && (
+      {activeTab === 'computer' && (
         <section
         aria-labelledby="computer-capabilities-heading"
         className="mcp-tool-section"
       >
         <div className="mcp-subsection-heading">
           <div>
-            {activeTab === 'builtin' ? (
-              <Globe2 size={15} />
-            ) : (
-              <MonitorCog size={15} />
-            )}
+            <MonitorCog size={15} />
             <strong id="computer-capabilities-heading">
-              {t(
-                activeTab === 'builtin'
-                  ? 'mcp.computer.browserTitle'
-                  : 'mcp.computer.title'
-              )}
+              {t('mcp.computer.title')}
             </strong>
           </div>
           <small>
-            {t(
-              activeTab === 'builtin'
-                ? 'mcp.computer.browserSubtitle'
-                : 'mcp.computer.subtitle'
-            )}
+            {t('mcp.computer.subtitle')}
           </small>
         </div>
         <div className="capability-list">
-          {visibleComputerCapabilities.map((capability) => {
+          {computerCapabilities.map((capability) => {
             const report = diagnostics[capability.id]
             return (
               <article className="capability-card" key={capability.id}>
@@ -601,8 +627,7 @@ export function McpSettingsSection({
       </section>
       )}
 
-      {activeTab === 'builtin' && (
-        <>
+      {activeTab === 'computer' && (
         <section
         aria-labelledby="browser-profiles-heading"
         className="mcp-tool-section"
@@ -748,7 +773,9 @@ export function McpSettingsSection({
           })}
         </div>
       </section>
+      )}
 
+      {activeTab === 'builtin' && (
       <section
         aria-labelledby="builtin-mcp-heading"
         className="mcp-tool-section"
@@ -777,16 +804,126 @@ export function McpSettingsSection({
             const expansionId = `builtin:${server.id}`
             const expanded = expandedItemIds.has(expansionId)
             const panelId = `mcp-server-tools-${server.id}`
-            const enabled =
+            const state = builtinMcpStates.get(server.id) ?? {
+              id: server.id,
+              enabled: true,
+              assignments:
+                [...server.supportedAssignments] as CapabilityAssignments
+            }
+            const featureAvailable =
               !('requiresFeature' in server) ||
               magicNotesEnabled === true
             return (
               <article
-                className={`mcp-server-card${
-                  enabled ? '' : ' mcp-server-card--disabled'
+                className={`capability-card builtin-mcp-card${
+                  state.enabled && featureAvailable
+                    ? ''
+                    : ' capability-card--disabled'
                 }`}
                 key={server.id}
               >
+                <div className="capability-card__header">
+                  <div>
+                    <strong>{server.name}</strong>
+                    <small>
+                      {!state.enabled
+                        ? t('mcp.builtin.disabled')
+                        : !featureAvailable
+                        ? t('mcp.builtin.serverSummaryDisabled')
+                        : server.access === 'mixed'
+                          ? t('mcp.builtin.serverSummaryMixed')
+                          : t('mcp.builtin.serverSummaryReadOnly')}
+                    </small>
+                  </div>
+                </div>
+                <label className="toggle-row">
+                  <input
+                    aria-label={t('mcp.builtin.enableAriaLabel', {
+                      name: server.name
+                    })}
+                    checked={state.enabled}
+                    disabled={Boolean(busy)}
+                    onChange={(event) =>
+                      void run(`builtin:toggle:${server.id}`, () =>
+                        window.goodbuddy.capabilities.setBuiltinMcpServerEnabled(
+                          server.id,
+                          event.target.checked
+                        )
+                      )
+                    }
+                    role="switch"
+                    type="checkbox"
+                  />
+                  <span>
+                    {state.enabled
+                      ? t('mcp.builtin.enabled')
+                      : t('mcp.builtin.disabled')}
+                  </span>
+                </label>
+                <p>{server.description}</p>
+                {!featureAvailable && (
+                  <p className="computer-capability-risk">
+                    <CircleAlert aria-hidden="true" size={13} />
+                    {t('mcp.builtin.featureDisabled')}
+                  </p>
+                )}
+                <div className="runtime-assignments">
+                  <small>{t('mcp.builtin.assignedTo')}</small>
+                  {configurableMcpTargets.map((target) => {
+                    const unsupported =
+                      !server.supportedAssignments.some(
+                        (supportedTarget) =>
+                          supportedTarget === target
+                      )
+                    return (
+                      <label
+                        className={
+                          unsupported
+                            ? 'runtime-assignment--unsupported'
+                            : undefined
+                        }
+                        key={target}
+                        title={
+                          unsupported
+                            ? t('mcp.builtin.runtimeUnsupported')
+                            : undefined
+                        }
+                      >
+                        <input
+                          aria-label={
+                            unsupported
+                              ? t(
+                                  'mcp.builtin.runtimeAssignmentUnsupportedAriaLabel',
+                                  {
+                                    name: server.name,
+                                    runtime: runtimeLabels[target]
+                                  }
+                                )
+                              : undefined
+                          }
+                          checked={
+                            !unsupported &&
+                            state.assignments.includes(target)
+                          }
+                          disabled={Boolean(busy) || unsupported}
+                          onChange={(event) =>
+                            updateBuiltinAssignment(
+                              server.id,
+                              state.assignments,
+                              target,
+                              event.target.checked
+                            )
+                          }
+                          type="checkbox"
+                        />
+                        {runtimeLabels[target]}
+                        {unsupported
+                          ? t('mcp.builtin.unsupportedSuffix')
+                          : ''}
+                      </label>
+                    )
+                  })}
+                </div>
                 <button
                   aria-controls={panelId}
                   aria-expanded={expanded}
@@ -796,43 +933,28 @@ export function McpSettingsSection({
                       : 'mcp.builtin.expandServer',
                     { name: server.name }
                   )}
-                  className="mcp-server-card__toggle"
+                  className="secondary-button builtin-mcp-card__details"
                   onClick={() => toggleItem(expansionId)}
                   type="button"
                 >
-                  <div>
-                    <strong>{server.name}</strong>
-                    <small>
-                      {!enabled
-                        ? t('mcp.builtin.serverSummaryDisabled')
-                        : server.access === 'mixed'
-                        ? t('mcp.builtin.serverSummaryMixed')
-                        : t('mcp.builtin.serverSummaryReadOnly')}
-                    </small>
-                  </div>
-                  <span className="mcp-server-card__summary">
-                    {t('mcp.builtin.toolCount', {
-                      count: server.tools.length
-                    })}
-                    <ChevronDown
-                      aria-hidden="true"
-                      className={
-                        expanded
-                          ? 'mcp-server-card__chevron mcp-server-card__chevron--expanded'
-                          : 'mcp-server-card__chevron'
-                      }
-                      size={15}
-                    />
-                  </span>
+                  {t('mcp.builtin.toolCount', {
+                    count: server.tools.length
+                  })}
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={
+                      expanded
+                        ? 'mcp-server-card__chevron mcp-server-card__chevron--expanded'
+                        : 'mcp-server-card__chevron'
+                    }
+                    size={15}
+                  />
                 </button>
                 {expanded && (
-                  <div className="mcp-server-card__body" id={panelId}>
-                    {!enabled && (
-                      <p className="mcp-server-card__disabled-notice">
-                        {t('mcp.builtin.featureDisabled')}
-                      </p>
-                    )}
-                    <p>{server.description}</p>
+                  <div
+                    className="builtin-mcp-card__tools"
+                    id={panelId}
+                  >
                     <section
                       aria-label={t('mcp.builtin.toolsAriaLabel', {
                         name: server.name
@@ -870,7 +992,9 @@ export function McpSettingsSection({
           })}
         </div>
       </section>
+      )}
 
+      {activeTab === 'model-tools' && (
       <div className="mcp-tool-section">
         <div className="mcp-subsection-heading">
           <div>
@@ -884,89 +1008,142 @@ export function McpSettingsSection({
           </small>
         </div>
         <div className="mcp-server-list">
-          <article className="capability-card">
-            <div className="capability-card__header">
-              <div>
-                <strong>{t('mcp.webSearch.title')}</strong>
-                <small>{t('mcp.webSearch.subtitle')}</small>
-              </div>
-            </div>
-            <label className="toggle-row">
-              <input
-                aria-label={t('mcp.webSearch.enableAriaLabel')}
-                checked={webSearch.enabled}
-                disabled={Boolean(busy)}
-                onChange={(event) =>
-                  void run('web-search:toggle', () =>
-                    window.goodbuddy.capabilities.setWebSearchEnabled?.(
-                      event.target.checked
-                    ) ??
-                    Promise.reject(
-                      new Error(t('mcp.webSearch.unsupported'))
-                    )
-                  )
-                }
-                role="switch"
-                type="checkbox"
-              />
-              <span>
-                {webSearch.enabled
-                  ? t('mcp.webSearch.enabled')
-                  : t('mcp.webSearch.disabled')}
-              </span>
-            </label>
-            <p>{t('mcp.webSearch.description')}</p>
-            <p className="computer-capability-risk">
-              <CircleAlert aria-hidden="true" size={13} />
-              {t('mcp.webSearch.privacy')}
-            </p>
-            <div className="capability-card__actions">
-              <button
-                className="secondary-button"
-                disabled={Boolean(busy)}
-                onClick={() => void testDirectModelWebSearch()}
-                type="button"
-              >
-                <FlaskConical aria-hidden="true" size={13} />
-                {busy === 'test:web-search'
-                  ? t('mcp.webSearch.testing')
-                  : t('mcp.webSearch.test')}
-              </button>
-            </div>
-            {webSearchTestResult && (
-              <div
-                aria-label={t('mcp.webSearch.resultAriaLabel')}
-                className="capability-diagnostic__result"
-              >
-                <strong>
-                  {t('mcp.webSearch.result', {
-                    duration: webSearchTestResult.durationMs
-                  })}
-                </strong>
-                <p>{webSearchTestResult.preview}</p>
-              </div>
-            )}
-            <section
-              aria-label={t('mcp.webSearch.toolsAriaLabel')}
-              className="mcp-server-tools"
-            >
-              <ul>
-                {builtinModelToolGroups
-                  .find((group) => group.id === 'web')
-                  ?.tools.map((tool) => (
-                    <li key={tool.name}>
-                      <div>
-                        <code>{tool.name}</code>
-                        <span className="builtin-tool-badge">
-                          {t('mcp.builtin.readOnly')}
+          {builtinModelToolGroups
+            .filter((group) => group.id === 'web')
+            .map((group) => {
+              const expansionId = `model-tools:${group.id}`
+              const expanded = expandedItemIds.has(expansionId)
+              const panelId = `model-tool-group-${group.id}`
+              return (
+                <article className="mcp-server-card" key={group.id}>
+                  <button
+                    aria-controls={panelId}
+                    aria-expanded={expanded}
+                    aria-label={t(
+                      expanded
+                        ? 'mcp.modelTools.collapseGroup'
+                        : 'mcp.modelTools.expandGroup',
+                      { name: t('mcp.webSearch.title') }
+                    )}
+                    className="mcp-server-card__toggle"
+                    onClick={() => toggleItem(expansionId)}
+                    type="button"
+                  >
+                    <div>
+                      <strong>{t('mcp.webSearch.title')}</strong>
+                      <small>{t('mcp.webSearch.subtitle')}</small>
+                    </div>
+                    <span className="mcp-server-card__summary">
+                      {t('mcp.builtin.toolCount', {
+                        count: group.tools.length
+                      })}
+                      <ChevronDown
+                        aria-hidden="true"
+                        className={
+                          expanded
+                            ? 'mcp-server-card__chevron mcp-server-card__chevron--expanded'
+                            : 'mcp-server-card__chevron'
+                        }
+                        size={15}
+                      />
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div className="mcp-server-card__body" id={panelId}>
+                      <label className="toggle-row">
+                        <input
+                          aria-label={t('mcp.webSearch.enableAriaLabel')}
+                          checked={webSearch.enabled}
+                          disabled={Boolean(busy)}
+                          onChange={(event) =>
+                            void run('web-search:toggle', () =>
+                              window.goodbuddy.capabilities.setWebSearchEnabled?.(
+                                event.target.checked
+                              ) ??
+                              Promise.reject(
+                                new Error(t('mcp.webSearch.unsupported'))
+                              )
+                            )
+                          }
+                          role="switch"
+                          type="checkbox"
+                        />
+                        <span>
+                          {webSearch.enabled
+                            ? t('mcp.webSearch.enabled')
+                            : t('mcp.webSearch.disabled')}
                         </span>
+                      </label>
+                      <p>{t('mcp.webSearch.description')}</p>
+                      <p className="computer-capability-risk">
+                        <CircleAlert aria-hidden="true" size={13} />
+                        {t('mcp.webSearch.privacy')}
+                      </p>
+                      <div className="capability-card__actions">
+                        <button
+                          className="secondary-button"
+                          disabled={Boolean(busy)}
+                          onClick={() => void testDirectModelWebSearch()}
+                          type="button"
+                        >
+                          <FlaskConical aria-hidden="true" size={13} />
+                          {busy === 'test:web-search'
+                            ? t('mcp.webSearch.testing')
+                            : t('mcp.webSearch.test')}
+                        </button>
                       </div>
-                      <p>{tool.description}</p>
-                    </li>
-                  ))}
-              </ul>
-            </section>
-          </article>
+                      {webSearchTestResult && (
+                        <div
+                          aria-label={t(
+                            'mcp.webSearch.resultAriaLabel'
+                          )}
+                          className="capability-diagnostic__result"
+                        >
+                          <strong>
+                            {t('mcp.webSearch.result', {
+                              duration:
+                                webSearchTestResult.durationMs
+                            })}
+                          </strong>
+                          <p>{webSearchTestResult.preview}</p>
+                        </div>
+                      )}
+                      <section
+                        aria-label={t(
+                          'mcp.webSearch.toolsAriaLabel'
+                        )}
+                        className="mcp-server-tools"
+                      >
+                        <div className="mcp-server-tools__heading">
+                          <strong>{t('mcp.builtin.tools')}</strong>
+                          <small>
+                            {t('mcp.profiles.count', {
+                              count: group.tools.length
+                            })}
+                          </small>
+                        </div>
+                        <ul>
+                          {group.tools.map((tool) => (
+                            <li key={tool.name}>
+                              <div>
+                                <span className="mcp-server-tool__identity">
+                                  <strong>{tool.displayName}</strong>
+                                  <code>{tool.name}</code>
+                                </span>
+                                <span className="builtin-tool-badge">
+                                  {t('mcp.builtin.readOnly')}
+                                </span>
+                              </div>
+                              <p>{tool.description}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    </div>
+                  )}
+                </article>
+              )
+            })}
           {builtinModelToolGroups
             .filter((group) => group.id !== 'web')
             .map((group) => {
@@ -1050,7 +1227,6 @@ export function McpSettingsSection({
           })}
         </div>
       </div>
-        </>
       )}
 
       {editor &&

@@ -35,8 +35,8 @@ export const settings = {
     },
     runtime: {
       label: 'Agent Runtime',
-      navigationDescription: 'OpenCode、Continue、DeepSeek Harness 与工作区',
-      description: 'OpenCode、Continue、DeepSeek Harness 与工作区'
+      navigationDescription: '配置 Agent Runtime、默认工作区与原生能力',
+      description: '配置 Agent Runtime、默认工作区与原生能力'
     },
     security: {
       label: '安全与数据',

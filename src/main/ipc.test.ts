@@ -118,6 +118,8 @@ describe('registerIpcHandlers computer capabilities', () => {
     }
     const capabilityService = {
       importSkill: vi.fn(async () => snapshot),
+      setBuiltinMcpServerEnabled: vi.fn(async () => snapshot),
+      setBuiltinMcpServerAssignments: vi.fn(async () => snapshot),
       setComputerCapabilityEnabled: vi.fn(async () => snapshot),
       setWebSearchEnabled: vi.fn(async () => snapshot),
       createBrowserProfile: vi.fn(async () => snapshot),
@@ -215,6 +217,31 @@ describe('registerIpcHandlers computer capabilities', () => {
     expect(capabilityService.setWebSearchEnabled).toHaveBeenCalledWith(false)
     expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(2)
 
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesToggleBuiltinMcp
+      )?.(event, {
+        serverId: 'knowledge-base',
+        enabled: false
+      })
+    ).resolves.toEqual(snapshot)
+    expect(
+      capabilityService.setBuiltinMcpServerEnabled
+    ).toHaveBeenCalledWith('knowledge-base', false)
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.capabilitiesAssignBuiltinMcp
+      )?.(event, {
+        serverId: 'knowledge-base',
+        assignments: ['model', 'continue']
+      })
+    ).resolves.toEqual(snapshot)
+    expect(
+      capabilityService.setBuiltinMcpServerAssignments
+    ).toHaveBeenCalledWith('knowledge-base', ['model', 'continue'])
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(4)
+
     electronMocks.showOpenDialog.mockResolvedValueOnce({
       canceled: false,
       filePaths: ['C:\\meeting-helper.zip']
@@ -290,7 +317,7 @@ describe('registerIpcHandlers computer capabilities', () => {
     expect(capabilityService.createBrowserProfile).toHaveBeenCalledWith(
       '工作配置'
     )
-    expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(3)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(5)
 
     expect(() =>
       electronMocks.handlers.get(
@@ -2290,7 +2317,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     knowledgeServiceOverride?: Record<string, unknown>,
     knowledgeGateway?: Record<string, unknown>,
     magicNotesEnabled = false,
-    goodbuddyConfigService?: Record<string, unknown>
+    goodbuddyConfigService?: Record<string, unknown>,
+    capabilityServiceOverride?: Record<string, unknown>
   ) {
     const assistantDatabase = {
       claimDueSchedules: vi.fn(() => []),
@@ -2394,7 +2422,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         getPolicySettings,
         getResolvedSettings
       } as never,
-      {} as never,
+      (capabilityServiceOverride ?? {}) as never,
       contextManager as never,
       (knowledgeServiceOverride ?? {
         database: { listKnowledgeBases: vi.fn(() => []) }
@@ -2694,6 +2722,58 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.any(AbortSignal),
       'write'
     )
+    await harness.dispose()
+  })
+
+  it('does not grant a built-in MCP that is disabled or unassigned for the runtime', async () => {
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'must-not-be-granted'),
+      getAvailableToolNames: vi.fn(() => ['note_list']),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const getEnabledBuiltinMcpServerIds = vi.fn(async () => [
+      'knowledge-base'
+    ])
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      true,
+      undefined,
+      { getEnabledBuiltinMcpServerIds }
+    )
+    const requestId = '00000000-0000-4000-8000-000000000025'
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'disabled-notes',
+      prompt: '读取笔记',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+
+    expect(getEnabledBuiltinMcpServerIds).toHaveBeenCalledWith('model')
+    expect(knowledgeGateway.grant).not.toHaveBeenCalled()
     await harness.dispose()
   })
 

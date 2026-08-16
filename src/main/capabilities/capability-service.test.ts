@@ -236,6 +236,70 @@ describe('CapabilityService', () => {
     })
   })
 
+  it('persists built-in MCP enablement and supported runtime assignments', async () => {
+    const { filePath, builtinRoot, importedRoot, service } =
+      await createService()
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      builtinMcpServers: [
+        {
+          id: 'knowledge-base',
+          enabled: true,
+          assignments: ['model', 'opencode', 'continue']
+        },
+        {
+          id: 'magic-notes',
+          enabled: true,
+          assignments: ['model', 'opencode', 'continue']
+        },
+        {
+          id: 'goodbuddy-config',
+          enabled: true,
+          assignments: ['model', 'opencode', 'continue']
+        }
+      ]
+    })
+
+    await service.setBuiltinMcpServerEnabled('magic-notes', false)
+    await service.setBuiltinMcpServerAssignments('knowledge-base', [
+      'model'
+    ])
+    expect(() =>
+      service.setBuiltinMcpServerAssignments('knowledge-base', [
+        'deepseek-harness'
+      ])
+    ).toThrow('DeepSeek Harness 当前不支持内置 MCP')
+
+    await expect(
+      service.getEnabledBuiltinMcpServerIds('model')
+    ).resolves.toEqual(['knowledge-base', 'goodbuddy-config'])
+    await expect(
+      service.getEnabledBuiltinMcpServerIds('opencode')
+    ).resolves.toEqual(['goodbuddy-config'])
+    await expect(
+      service.getEnabledBuiltinMcpServerIds('deepseek-harness')
+    ).resolves.toEqual([])
+
+    const reloaded = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+    await expect(reloaded.getSnapshot()).resolves.toMatchObject({
+      builtinMcpServers: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'knowledge-base',
+          assignments: ['model']
+        }),
+        expect.objectContaining({
+          id: 'magic-notes',
+          enabled: false
+        })
+      ])
+    })
+  })
+
   it('discovers built-in skills and persists enablement and assignments', async () => {
     const { filePath, builtinRoot, importedRoot, service } =
       await createService()
@@ -723,7 +787,7 @@ describe('CapabilityService', () => {
     await expect(service.getResolvedMcpServers('model')).resolves.toEqual([])
   })
 
-  it('migrates v1 to v3 without losing skills, MCP configuration, or encrypted secrets', async () => {
+  it('migrates v1 to v5 without losing skills, MCP configuration, or encrypted secrets', async () => {
     const { filePath, builtinRoot, importedRoot } = await createService()
     const credential = Buffer.from(
       'encrypted:{"version":1,"serverId":"d2ef774b-146c-4467-a909-6feb112a9c2c","secret":"preserved-secret"}'
@@ -803,7 +867,7 @@ describe('CapabilityService', () => {
       }
     })
     const persisted = await readFile(filePath, 'utf8')
-    expect(persisted).toContain('"version": 4')
+    expect(persisted).toContain('"version": 5')
     expect(persisted).toContain(credential)
     expect(persisted).not.toContain('preserved-secret')
   })
@@ -839,7 +903,7 @@ describe('CapabilityService', () => {
     await expect(service.getSnapshot()).resolves.toMatchObject({
       webSearch: { enabled: true }
     })
-    expect(await readFile(filePath, 'utf8')).toContain('"version": 4')
+    expect(await readFile(filePath, 'utf8')).toContain('"version": 5')
   })
 
   it('migrates v3 MCP servers with dynamic tools disabled', async () => {
@@ -889,8 +953,49 @@ describe('CapabilityService', () => {
       ]
     })
     const persisted = await readFile(filePath, 'utf8')
-    expect(persisted).toContain('"version": 4')
+    expect(persisted).toContain('"version": 5')
     expect(persisted).toContain('"allowDynamicTools": false')
+  })
+
+  it('migrates v4 capabilities with built-in MCP enabled for supported runtimes', async () => {
+    const { filePath, builtinRoot, importedRoot } = await createService()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 4,
+        skills: {},
+        mcpServers: [],
+        webSearch: { enabled: true },
+        computerCapabilities: {
+          'host-browser-control': {
+            enabled: false,
+            browserProfileId: null
+          },
+          'linux-desktop-control': {
+            enabled: false,
+            browserProfileId: null
+          }
+        }
+      }),
+      'utf8'
+    )
+    const service = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      builtinMcpServers: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'knowledge-base',
+          enabled: true,
+          assignments: ['model', 'opencode', 'continue']
+        })
+      ])
+    })
+    expect(await readFile(filePath, 'utf8')).toContain('"version": 5')
   })
 
   it('preserves capabilities created by a newer unsupported version', async () => {

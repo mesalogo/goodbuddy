@@ -18,6 +18,9 @@ import {
   browserProfileIdSchema,
   browserProfileNameSchema,
   browserProfilesSummarySchema,
+  builtinMcpAssignmentsSchema,
+  builtinMcpServerIdSchema,
+  builtinMcpServerStateSummarySchema,
   capabilityDiagnosticReportSchema,
   capabilityAssignmentsSchema,
   computerCapabilityConfigSummarySchema,
@@ -25,6 +28,7 @@ import {
   mcpServerIdSchema,
   mcpServerInputSchema,
   mcpServerSummarySchema,
+  runtimeTargetSchema,
   skillIdSchema,
   skillSummarySchema,
   webSearchCapabilitySchema,
@@ -32,6 +36,7 @@ import {
   type CapabilityDiagnosticReport,
   type CapabilitySnapshot,
   type BrowserProfilesSummary,
+  type BuiltinMcpServerId,
   type ComputerCapabilityId,
   type McpServerInput,
   type McpServerSummary,
@@ -102,6 +107,21 @@ const skillStateSchema = z
   .object({
     enabled: z.boolean(),
     assignments: capabilityAssignmentsSchema
+  })
+  .strict()
+
+const builtinMcpServerStateSchema = z
+  .object({
+    enabled: z.boolean(),
+    assignments: builtinMcpAssignmentsSchema
+  })
+  .strict()
+
+const builtinMcpServerStatesSchema = z
+  .object({
+    'knowledge-base': builtinMcpServerStateSchema,
+    'magic-notes': builtinMcpServerStateSchema,
+    'goodbuddy-config': builtinMcpServerStateSchema
   })
   .strict()
 
@@ -193,8 +213,13 @@ const storedCapabilitiesV3Schema = z
   })
   .strict()
 
-const storedCapabilitiesSchema = storedCapabilitiesV3Schema.extend({
+const storedCapabilitiesV4Schema = storedCapabilitiesV3Schema.extend({
   version: z.literal(4)
+})
+
+const storedCapabilitiesSchema = storedCapabilitiesV4Schema.extend({
+  version: z.literal(5),
+  builtinMcpServers: builtinMcpServerStatesSchema
 })
 
 type StoredCapabilitiesV1 = z.infer<typeof storedCapabilitiesV1Schema>
@@ -254,12 +279,25 @@ function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabili
   }
 }
 
+function defaultBuiltinMcpServerStates(): StoredCapabilities['builtinMcpServers'] {
+  const defaultState = (): z.infer<typeof builtinMcpServerStateSchema> => ({
+    enabled: true,
+    assignments: ['model', 'opencode', 'continue']
+  })
+  return {
+    'knowledge-base': defaultState(),
+    'magic-notes': defaultState(),
+    'goodbuddy-config': defaultState()
+  }
+}
+
 function emptyStoredCapabilities(
   webSearchEnabled = true
 ): StoredCapabilities {
   return {
-    version: 4,
+    version: 5,
     skills: {},
+    builtinMcpServers: defaultBuiltinMcpServerStates(),
     mcpServers: [],
     webSearch: { enabled: webSearchEnabled },
     computerCapabilities: defaultComputerCapabilityStates()
@@ -728,7 +766,7 @@ export class CapabilityService {
     let shouldPersist = false
     try {
       const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
-      assertSupportedSettingsVersion(raw, 4, (version) =>
+      assertSupportedSettingsVersion(raw, 5, (version) =>
         `当前 GoodBuddy 不支持能力设置版本 ${version}，请升级应用后重试`
       )
       const version = z
@@ -737,7 +775,8 @@ export class CapabilityService {
             z.literal(1),
             z.literal(2),
             z.literal(3),
-            z.literal(4)
+            z.literal(4),
+            z.literal(5)
           ])
         })
         .passthrough()
@@ -746,8 +785,9 @@ export class CapabilityService {
         const legacy: StoredCapabilitiesV1 =
           storedCapabilitiesV1Schema.parse(raw)
         loaded = {
-          version: 4,
+          version: 5,
           skills: legacy.skills,
+          builtinMcpServers: defaultBuiltinMcpServerStates(),
           mcpServers: legacy.mcpServers,
           webSearch: { enabled: true },
           computerCapabilities: defaultComputerCapabilityStates()
@@ -757,7 +797,8 @@ export class CapabilityService {
         const legacy = storedCapabilitiesV2Schema.parse(raw)
         loaded = {
           ...legacy,
-          version: 4,
+          version: 5,
+          builtinMcpServers: defaultBuiltinMcpServerStates(),
           webSearch: { enabled: true }
         }
         shouldPersist = true
@@ -765,7 +806,16 @@ export class CapabilityService {
         const legacy = storedCapabilitiesV3Schema.parse(raw)
         loaded = {
           ...legacy,
-          version: 4
+          version: 5,
+          builtinMcpServers: defaultBuiltinMcpServerStates()
+        }
+        shouldPersist = true
+      } else if (version === 4) {
+        const legacy = storedCapabilitiesV4Schema.parse(raw)
+        loaded = {
+          ...legacy,
+          version: 5,
+          builtinMcpServers: defaultBuiltinMcpServerStates()
         }
         shouldPersist = true
       } else {
@@ -891,6 +941,12 @@ export class CapabilityService {
               ? -1
               : 1
         ),
+      builtinMcpServers: builtinMcpServerIdSchema.options.map((id) =>
+        builtinMcpServerStateSummarySchema.parse({
+          id,
+          ...state.builtinMcpServers[id]
+        })
+      ),
       mcpServers: state.mcpServers.map((server) =>
         this.toMcpSummary(server)
       ),
@@ -1564,6 +1620,43 @@ export class CapabilityService {
     })
   }
 
+  setBuiltinMcpServerEnabled(
+    serverId: BuiltinMcpServerId,
+    enabled: boolean
+  ): Promise<CapabilitySnapshot> {
+    return this.updateBuiltinMcpServerState(serverId, { enabled })
+  }
+
+  setBuiltinMcpServerAssignments(
+    serverId: BuiltinMcpServerId,
+    assignments: CapabilityAssignments
+  ): Promise<CapabilitySnapshot> {
+    return this.updateBuiltinMcpServerState(serverId, {
+      assignments: builtinMcpAssignmentsSchema.parse(assignments)
+    })
+  }
+
+  private updateBuiltinMcpServerState(
+    serverId: BuiltinMcpServerId,
+    update: Partial<z.infer<typeof builtinMcpServerStateSchema>>
+  ): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      const id = builtinMcpServerIdSchema.parse(serverId)
+      const state = await this.load()
+      await this.persistUserChange({
+        ...state,
+        builtinMcpServers: {
+          ...state.builtinMcpServers,
+          [id]: {
+            ...state.builtinMcpServers[id],
+            ...update
+          }
+        }
+      })
+      return this.getSnapshot()
+    })
+  }
+
   private updateSkillState(
     skillId: string,
     update: Partial<z.infer<typeof skillStateSchema>>
@@ -1800,5 +1893,19 @@ export class CapabilityService {
     return Promise.all(
       assigned.map((server) => this.getResolvedMcpServer(server.id))
     )
+  }
+
+  async getEnabledBuiltinMcpServerIds(
+    target: RuntimeTarget
+  ): Promise<BuiltinMcpServerId[]> {
+    const runtime = runtimeTargetSchema.parse(target)
+    if (runtime === 'deepseek-harness') {
+      return []
+    }
+    const state = await this.load()
+    return builtinMcpServerIdSchema.options.filter((id) => {
+      const server = state.builtinMcpServers[id]
+      return server.enabled && server.assignments.includes(runtime)
+    })
   }
 }

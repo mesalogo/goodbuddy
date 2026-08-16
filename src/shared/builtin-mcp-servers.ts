@@ -1,4 +1,7 @@
-import type { RuntimeTarget } from './capability-contracts'
+import type {
+  BuiltinMcpServerId,
+  RuntimeTarget
+} from './capability-contracts'
 
 import {
   knowledgeScopedDataTools,
@@ -7,7 +10,7 @@ import {
 import { goodbuddyConfigTools } from './goodbuddy-config-tools'
 
 export type BuiltinMcpServerSummary = {
-  id: string
+  id: BuiltinMcpServerId
   name: string
   description: string
   tools: readonly {
@@ -15,7 +18,7 @@ export type BuiltinMcpServerSummary = {
     description: string
     access: 'read' | 'write'
   }[]
-  assignments: readonly RuntimeTarget[]
+  supportedAssignments: readonly RuntimeTarget[]
   access: 'read' | 'mixed'
   authorization: 'conversation-scoped'
   requiresFeature?: 'magic-notes'
@@ -32,7 +35,7 @@ export const builtinMcpServers = [
       description: summary,
       access
     })),
-    assignments: ['model', 'opencode', 'continue'],
+    supportedAssignments: ['model', 'opencode', 'continue'],
     access: 'read',
     authorization: 'conversation-scoped'
   },
@@ -46,7 +49,7 @@ export const builtinMcpServers = [
       description: summary,
       access
     })),
-    assignments: ['model', 'opencode', 'continue'],
+    supportedAssignments: ['model', 'opencode', 'continue'],
     access: 'mixed',
     authorization: 'conversation-scoped',
     requiresFeature: 'magic-notes'
@@ -61,7 +64,7 @@ export const builtinMcpServers = [
       description: summary,
       access
     })),
-    assignments: ['model', 'opencode', 'continue'],
+    supportedAssignments: ['model', 'opencode', 'continue'],
     access: 'mixed',
     authorization: 'conversation-scoped'
   }

@@ -474,6 +474,14 @@ const api: DesktopApi = {
       skills: [],
       mcpServers: []
     })),
+    setBuiltinMcpServerEnabled: vi.fn(async () => ({
+      skills: [],
+      mcpServers: []
+    })),
+    setBuiltinMcpServerAssignments: vi.fn(async () => ({
+      skills: [],
+      mcpServers: []
+    })),
     saveMcpServer: vi.fn(async () => ({
       skills: [],
       mcpServers: []

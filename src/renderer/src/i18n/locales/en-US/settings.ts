@@ -43,9 +43,9 @@ export const settings = {
     runtime: {
       label: 'Agent Runtime',
       navigationDescription:
-        'OpenCode, Continue, DeepSeek Harness, and workspace settings',
+        'Configure Agent Runtimes, the default workspace, and native capabilities',
       description:
-        'OpenCode, Continue, DeepSeek Harness, and workspace settings'
+        'Configure Agent Runtimes, the default workspace, and native capabilities'
     },
     security: {
       label: 'Security and data',

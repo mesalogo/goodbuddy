@@ -35,6 +35,46 @@ export type CapabilityAssignments = z.infer<
   typeof capabilityAssignmentsSchema
 >
 
+export const builtinMcpServerIdSchema = z.enum([
+  'knowledge-base',
+  'magic-notes',
+  'goodbuddy-config'
+])
+export type BuiltinMcpServerId = z.infer<
+  typeof builtinMcpServerIdSchema
+>
+
+export const builtinMcpAssignmentsSchema =
+  capabilityAssignmentsSchema.refine(
+    (assignments) => !assignments.includes('deepseek-harness'),
+    'DeepSeek Harness 当前不支持内置 MCP'
+  )
+
+export const builtinMcpServerToggleInputSchema = z
+  .object({
+    serverId: builtinMcpServerIdSchema,
+    enabled: z.boolean()
+  })
+  .strict()
+
+export const builtinMcpServerAssignmentsInputSchema = z
+  .object({
+    serverId: builtinMcpServerIdSchema,
+    assignments: builtinMcpAssignmentsSchema
+  })
+  .strict()
+
+export const builtinMcpServerStateSummarySchema = z
+  .object({
+    id: builtinMcpServerIdSchema,
+    enabled: z.boolean(),
+    assignments: builtinMcpAssignmentsSchema
+  })
+  .strict()
+export type BuiltinMcpServerStateSummary = z.infer<
+  typeof builtinMcpServerStateSummarySchema
+>
+
 export const secretActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('keep') }).strict(),
   z
@@ -327,6 +367,10 @@ export type WebSearchCapability = z.infer<
 export const capabilitySnapshotSchema = z
   .object({
     skills: z.array(skillSummarySchema).max(256),
+    builtinMcpServers: z
+      .array(builtinMcpServerStateSummarySchema)
+      .max(3)
+      .optional(),
     mcpServers: z.array(mcpServerSummarySchema).max(64),
     webSearch: webSearchCapabilitySchema.optional(),
     computerCapabilities: z

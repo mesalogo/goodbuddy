@@ -174,7 +174,8 @@ export const integrations = {
     sectionAriaLabel: 'MCP configuration',
     tabs: {
       ariaLabel: 'MCP settings categories',
-      builtin: 'Built-in capabilities',
+      builtin: 'Built-in MCP',
+      modelTools: 'Direct model',
       computer: 'Computer control',
       custom: 'Custom MCP'
     },
@@ -222,9 +223,19 @@ export const integrations = {
     },
     builtin: {
       title: 'Built-in GoodBuddy MCP',
-      availableTo: 'Available to: Model, OpenCode, Continue',
+      availableTo:
+        'Provided per request with independent enablement and runtime assignment',
       notice:
-        'GoodBuddy grants built-in MCP short-lived permissions for the current conversation in the main process without exposing service addresses or credentials.',
+        'GoodBuddy grants built-in MCP short-lived permissions for the current conversation in the main process without exposing service addresses or credentials. Changes apply to subsequent requests, while Ask and Execute access boundaries remain enforced by the system.',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      enableAriaLabel: 'Enable the built-in {{name}} MCP',
+      assignedTo: 'Assign to',
+      runtimeUnsupported:
+        'This runtime does not currently support request-scoped built-in MCP',
+      runtimeAssignmentUnsupportedAriaLabel:
+        '{{name}} cannot be assigned to {{runtime}} because this runtime does not support built-in MCP',
+      unsupportedSuffix: ' (not supported yet)',
       serverSummaryMixed:
         'Built-in MCP server · Access depends on mode · Authorized per conversation',
       serverSummaryReadOnly:

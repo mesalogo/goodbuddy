@@ -128,6 +128,8 @@ export const ipcChannels = {
   capabilitiesRemoveSkill: 'capabilities:skill:remove',
   capabilitiesToggleSkill: 'capabilities:skill:toggle',
   capabilitiesAssignSkill: 'capabilities:skill:assign',
+  capabilitiesToggleBuiltinMcp: 'capabilities:builtin-mcp:toggle',
+  capabilitiesAssignBuiltinMcp: 'capabilities:builtin-mcp:assign',
   capabilitiesSaveMcp: 'capabilities:mcp:save',
   capabilitiesRemoveMcp: 'capabilities:mcp:remove',
   capabilitiesTestMcp: 'capabilities:mcp:test',

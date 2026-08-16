@@ -6,6 +6,7 @@ import {
 import type {
   BrowserProfileCreateInput,
   BrowserProfileRenameInput,
+  BuiltinMcpServerId,
   CapabilityDiagnosticReport,
   CapabilityAssignments,
   CapabilitySnapshot,
@@ -1530,6 +1531,14 @@ export type DesktopApi = {
     ) => Promise<CapabilitySnapshot>
     setSkillAssignments: (
       skillId: string,
+      assignments: CapabilityAssignments
+    ) => Promise<CapabilitySnapshot>
+    setBuiltinMcpServerEnabled: (
+      serverId: BuiltinMcpServerId,
+      enabled: boolean
+    ) => Promise<CapabilitySnapshot>
+    setBuiltinMcpServerAssignments: (
+      serverId: BuiltinMcpServerId,
       assignments: CapabilityAssignments
     ) => Promise<CapabilitySnapshot>
     saveMcpServer: (

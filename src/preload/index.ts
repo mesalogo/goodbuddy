@@ -30,6 +30,7 @@ import { ipcChannels } from '../shared/ipc-channels'
 import type {
   BrowserProfileCreateInput,
   BrowserProfileRenameInput,
+  BuiltinMcpServerId,
   CapabilityDiagnosticReport,
   CapabilitySnapshot,
   ComputerCapabilityId,
@@ -809,6 +810,22 @@ const desktopApi: DesktopApi = {
     setSkillAssignments: (skillId, assignments) =>
       ipcRenderer.invoke(ipcChannels.capabilitiesAssignSkill, {
         skillId,
+        assignments
+      }) as Promise<CapabilitySnapshot>,
+    setBuiltinMcpServerEnabled: (
+      serverId: BuiltinMcpServerId,
+      enabled: boolean
+    ) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesToggleBuiltinMcp, {
+        serverId,
+        enabled
+      }) as Promise<CapabilitySnapshot>,
+    setBuiltinMcpServerAssignments: (
+      serverId: BuiltinMcpServerId,
+      assignments
+    ) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesAssignBuiltinMcp, {
+        serverId,
         assignments
       }) as Promise<CapabilitySnapshot>,
     saveMcpServer: (serverId, input) =>

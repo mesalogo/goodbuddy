@@ -15,7 +15,10 @@ import type {
   DesktopApi,
   RuntimeSettings
 } from '../../shared/contracts'
-import type { CapabilitySnapshot } from '../../shared/capability-contracts'
+import type {
+  CapabilityAssignments,
+  CapabilitySnapshot
+} from '../../shared/capability-contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type {
   EmbeddingDiagnosticResult,
@@ -191,6 +194,35 @@ const capabilitySnapshot = {
       )[]
     }
   ],
+  builtinMcpServers: [
+    {
+      id: 'knowledge-base' as const,
+      enabled: true,
+      assignments: ['model', 'opencode', 'continue'] as (
+        | 'model'
+        | 'opencode'
+        | 'continue'
+      )[]
+    },
+    {
+      id: 'magic-notes' as const,
+      enabled: true,
+      assignments: ['model', 'opencode', 'continue'] as (
+        | 'model'
+        | 'opencode'
+        | 'continue'
+      )[]
+    },
+    {
+      id: 'goodbuddy-config' as const,
+      enabled: true,
+      assignments: ['model', 'opencode', 'continue'] as (
+        | 'model'
+        | 'opencode'
+        | 'continue'
+      )[]
+    }
+  ],
   mcpServers: [] as CapabilitySnapshot['mcpServers'],
   webSearch: {
     provider: 'exa' as const,
@@ -254,6 +286,24 @@ const setSkillEnabled = vi.fn(async (_skillId: string, enabled: boolean) => ({
     enabled
   }))
 }))
+const setBuiltinMcpServerEnabled = vi.fn(
+  async (serverId: string, enabled: boolean) => ({
+    ...capabilitySnapshot,
+    builtinMcpServers: capabilitySnapshot.builtinMcpServers.map(
+      (server) =>
+        server.id === serverId ? { ...server, enabled } : server
+    )
+  })
+)
+const setBuiltinMcpServerAssignments = vi.fn(
+  async (serverId: string, assignments: CapabilityAssignments) => ({
+    ...capabilitySnapshot,
+    builtinMcpServers: capabilitySnapshot.builtinMcpServers.map(
+      (server) =>
+        server.id === serverId ? { ...server, assignments } : server
+    )
+  })
+)
 const setComputerCapabilityEnabled = vi.fn(
   async (_capabilityId: string, enabled: boolean) => ({
     ...capabilitySnapshot,
@@ -539,6 +589,8 @@ describe('SettingsPanel runtime files', () => {
           removeSkill: vi.fn(async () => capabilitySnapshot),
           setSkillEnabled,
           setSkillAssignments: vi.fn(async () => capabilitySnapshot),
+          setBuiltinMcpServerEnabled,
+          setBuiltinMcpServerAssignments,
           saveMcpServer,
           removeMcpServer: vi.fn(async () => capabilitySnapshot),
           testMcpServer: vi.fn(async () => ({
@@ -1042,7 +1094,7 @@ describe('SettingsPanel runtime files', () => {
       name: '展开服务器 笔记'
     })
     expect(noteServerToggle.closest('article')).toHaveClass(
-      'mcp-server-card--disabled'
+      'capability-card--disabled'
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
@@ -1063,7 +1115,7 @@ describe('SettingsPanel runtime files', () => {
         screen
           .getByRole('button', { name: '展开服务器 笔记' })
           .closest('article')
-      ).not.toHaveClass('mcp-server-card--disabled')
+      ).not.toHaveClass('capability-card--disabled')
     )
     expect(
       screen.getAllByText('内置 MCP Server · 按模式读写 · 按对话授权')
@@ -1089,6 +1141,9 @@ describe('SettingsPanel runtime files', () => {
     expect(navigation.parentElement).toHaveClass('settings-panel__body')
     expect(content.parentElement).toBe(navigation.parentElement)
     expect(content).toHaveClass('settings-panel__content')
+    expect(
+      screen.getByRole('tab', { name: 'Agent Runtime' })
+    ).toHaveTextContent('配置 Agent Runtime、默认工作区与原生能力')
   })
 
   it('omits the redundant close-only footer on passive settings pages', () => {
@@ -3470,12 +3525,11 @@ describe('SettingsPanel runtime files', () => {
       within(mcpTabs)
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-    ).toEqual(['内置能力', '电脑控制', '自定义 MCP'])
+    ).toEqual(['内置 MCP', '直连模型', '自定义 MCP', '电脑控制'])
     expect(
-      within(mcpTabs).getByRole('tab', { name: '内置能力' })
+      within(mcpTabs).getByRole('tab', { name: '内置 MCP' })
     ).toHaveAttribute('aria-selected', 'true')
-    expect(await screen.findByText('浏览器能力')).toBeInTheDocument()
-    expect(screen.getAllByText('托管浏览器配置').length).toBeGreaterThan(0)
+    expect(await screen.findByText('GoodBuddy 内置 MCP')).toBeInTheDocument()
     expect(
       screen.queryByRole('switch', {
         name: '启用 Linux 桌面控制'
@@ -3484,6 +3538,43 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByRole('button', { name: /添加 Server/ })
     ).not.toBeInTheDocument()
+    const knowledgeBuiltinCard = screen
+      .getByRole('switch', { name: '启用 知识库 内置 MCP' })
+      .closest('article')
+    expect(knowledgeBuiltinCard).not.toBeNull()
+    expect(
+      within(knowledgeBuiltinCard!).getByLabelText(
+        /知识库 无法分配给 DeepSeek Harness/
+      )
+    ).toBeDisabled()
+    expect(
+      within(knowledgeBuiltinCard!).getByLabelText(
+        /知识库 无法分配给 DeepSeek Harness/
+      )
+    ).not.toBeChecked()
+    fireEvent.click(
+      within(knowledgeBuiltinCard!).getByLabelText('Continue')
+    )
+    await waitFor(() =>
+      expect(setBuiltinMcpServerAssignments).toHaveBeenCalledWith(
+        'knowledge-base',
+        ['model', 'opencode']
+      )
+    )
+    fireEvent.click(
+      screen.getByRole('switch', { name: '启用 知识库 内置 MCP' })
+    )
+    await waitFor(() =>
+      expect(setBuiltinMcpServerEnabled).toHaveBeenCalledWith(
+        'knowledge-base',
+        false
+      )
+    )
+    fireEvent.click(
+      within(mcpTabs).getByRole('tab', { name: '电脑控制' })
+    )
+    expect(await screen.findByText('电脑控制能力')).toBeInTheDocument()
+    expect(screen.getAllByText('托管浏览器配置').length).toBeGreaterThan(0)
     fireEvent.click(
       screen.getByRole('switch', { name: '启用 浏览器控制' })
     )
@@ -3529,24 +3620,28 @@ describe('SettingsPanel runtime files', () => {
     await waitFor(() =>
       expect(removeBrowserProfile).toHaveBeenCalledWith(browserProfileId)
     )
-    fireEvent.click(
-      within(mcpTabs).getByRole('tab', { name: '电脑控制' })
-    )
-    expect(await screen.findByText('电脑控制能力')).toBeInTheDocument()
     expect(
       screen.getByRole('switch', {
         name: '启用 Linux 桌面控制'
       })
     ).toBeDisabled()
     expect(
-      screen.queryByRole('switch', { name: '启用 浏览器控制' })
-    ).not.toBeInTheDocument()
+      screen.getByRole('switch', { name: '启用 浏览器控制' })
+    ).toBeInTheDocument()
     fireEvent.click(
-      within(mcpTabs).getByRole('tab', { name: '内置能力' })
+      within(mcpTabs).getByRole('tab', { name: '直连模型' })
     )
     expect(await screen.findByText('文件系统操作')).toBeInTheDocument()
     expect(screen.getByText('浏览器操作')).toBeInTheDocument()
     expect(screen.getByText('联网搜索')).toBeInTheDocument()
+    expect(screen.queryByText('web_search')).not.toBeInTheDocument()
+    expect(screen.queryByText('web_fetch')).not.toBeInTheDocument()
+    const webSearchToggle = screen.getByRole('button', {
+      name: '展开工具组 联网搜索'
+    })
+    expect(webSearchToggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(webSearchToggle)
+    expect(webSearchToggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('web_search')).toBeInTheDocument()
     expect(screen.getByText('web_fetch')).toBeInTheDocument()
     expect(
@@ -3569,6 +3664,9 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('GoodBuddy search result')).toBeInTheDocument()
     expect(testWebSearch).toHaveBeenCalledOnce()
     expect(screen.queryByText('读取工作区文本')).not.toBeInTheDocument()
+    fireEvent.click(
+      within(mcpTabs).getByRole('tab', { name: '内置 MCP' })
+    )
     expect(screen.getByText('知识库')).toBeInTheDocument()
     expect(screen.queryByText('knowledge_list')).not.toBeInTheDocument()
     expect(screen.queryByText('knowledge_search')).not.toBeInTheDocument()
@@ -3599,7 +3697,7 @@ describe('SettingsPanel runtime files', () => {
       )
     ).toBeInTheDocument()
     expect(noteServerToggle.closest('article')).toHaveClass(
-      'mcp-server-card--disabled'
+      'capability-card--disabled'
     )
     fireEvent.click(noteServerToggle)
     expect(
@@ -3614,11 +3712,14 @@ describe('SettingsPanel runtime files', () => {
       })
     ).toHaveLength(builtinMcpServers.length)
     expect(
-      screen.getByText('可用于：模型、OpenCode、Continue')
+      screen.getByText(/按请求提供，可分别控制启停与 Runtime 分配/)
     ).toBeInTheDocument()
     expect(
       screen.getByText(/不公开服务地址或凭据/)
     ).toBeInTheDocument()
+    fireEvent.click(
+      within(mcpTabs).getByRole('tab', { name: '直连模型' })
+    )
     const filesystemToggle = screen.getByRole('button', {
       name: '展开工具组 文件系统操作'
     })
@@ -3633,9 +3734,7 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('浏览器导航')).toBeInTheDocument()
     expect(
       screen.getAllByRole('button', { name: /工具组/u })
-    ).toHaveLength(
-      builtinModelToolGroups.filter((group) => group.id !== 'web').length
-    )
+    ).toHaveLength(builtinModelToolGroups.length)
     fireEvent.click(
       within(mcpTabs).getByRole('tab', { name: '自定义 MCP' })
     )

@@ -6812,6 +6812,27 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: var(--space-3);
 }
 
+.mcp-settings__tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  flex: 0 0 auto;
+}
+
+.mcp-settings__tabs > .page-tabs {
+  width: 100%;
+  min-width: max-content;
+}
+
+.mcp-settings__tabs .page-tabs__tab {
+  justify-content: center;
+  flex: 1;
+}
+
+.mcp-settings__panel {
+  min-width: 0;
+  gap: var(--space-4);
+}
+
 .mcp-server-list {
   display: grid;
   gap: var(--space-2);
@@ -6831,6 +6852,32 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .mcp-server-card--disabled .mcp-server-card__toggle strong {
   color: var(--text-muted);
+}
+
+.capability-card--disabled {
+  border-style: dashed;
+  background: var(--surface-muted);
+}
+
+.builtin-mcp-card__details {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.builtin-mcp-card__tools {
+  display: grid;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.runtime-assignment--unsupported {
+  color: var(--text-muted);
+}
+
+.runtime-assignment--unsupported input {
+  cursor: not-allowed;
 }
 
 .mcp-server-card__header {

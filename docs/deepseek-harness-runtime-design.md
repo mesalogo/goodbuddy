@@ -699,7 +699,7 @@ npm run build
 
 - `deepseek-harness` 可被保存、选择、检测和显示。
 - Runtime 详情卡内显示状态、路径、版本和当前用户执行权限。
-- Skills 与 MCP 设置页可把能力分配给 DeepSeek Harness，布局、键盘语义、文案和保存回显通过真机检查。
+- Skills 与自定义 MCP 设置可把能力分配给 DeepSeek Harness；请求级 GoodBuddy 内置 MCP 当前不支持分配，并在内置 MCP 卡片中以置灰、未选择状态明确显示。布局、键盘语义、文案和保存回显通过真机检查。
 - DSH 市场初始关闭且不加载 npm 目录；显式开启后可以搜索、安装、启停、配置和移除插件，安装前只出现一次准确的当前用户权限确认。关闭市场后已有启用插件继续运行，重新开启后管理状态不变。
 - Ask 写入测试在 Runtime 边界失败。
 - Ask 可使用已启用的 Main Web Search/Fetch，且插件无法通过同名工具绕过所有权校验。

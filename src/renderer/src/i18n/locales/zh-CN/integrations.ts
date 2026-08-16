@@ -161,7 +161,8 @@ export const integrations = {
     sectionAriaLabel: 'MCP 配置',
     tabs: {
       ariaLabel: 'MCP 设置分类',
-      builtin: '内置能力',
+      builtin: '内置 MCP',
+      modelTools: '直连模型',
       computer: '电脑控制',
       custom: '自定义 MCP'
     },
@@ -209,9 +210,17 @@ export const integrations = {
     },
     builtin: {
       title: 'GoodBuddy 内置 MCP',
-      availableTo: '可用于：模型、OpenCode、Continue',
+      availableTo: '按请求提供，可分别控制启停与 Runtime 分配',
       notice:
-        '内置 MCP 由 GoodBuddy 在主进程按当前对话签发短期权限，不公开服务地址或凭据。',
+        '内置 MCP 由 GoodBuddy 在主进程按当前对话签发短期权限，不公开服务地址或凭据。设置更改会应用到后续请求，Ask / Execute 的读写边界仍由系统强制。',
+      enabled: '已启用',
+      disabled: '已停用',
+      enableAriaLabel: '启用 {{name}} 内置 MCP',
+      assignedTo: '分配给',
+      runtimeUnsupported: '当前 Runtime 不支持请求级内置 MCP',
+      runtimeAssignmentUnsupportedAriaLabel:
+        '{{name}} 无法分配给 {{runtime}}，当前 Runtime 不支持内置 MCP',
+      unsupportedSuffix: '（暂不支持）',
       serverSummaryMixed: '内置 MCP Server · 按模式读写 · 按对话授权',
       serverSummaryReadOnly: '内置 MCP Server · 只读 · 按对话授权',
       serverSummaryDisabled:
