@@ -324,6 +324,55 @@ describe.runIf(enabled)('runtime end-to-end', () => {
   )
 
   it(
+    'continues real direct-model history with local message IDs',
+    async () => {
+      const runtime = new ModelAgentRuntime({
+        apiKey,
+        baseUrl,
+        model: modelName,
+        protocol,
+        authentication: 'api-key',
+        maxOutputTokens: 128
+      })
+
+      try {
+        const output = await collectText(
+          runtime.run(
+            {
+              requestId: crypto.randomUUID(),
+              conversationId: crypto.randomUUID(),
+              workMode: 'ask',
+              prompt:
+                'Return exactly this text and nothing else: LOCAL_HISTORY_ID_E2E_OK',
+              history: [
+                {
+                  role: 'user',
+                  content:
+                    'The required verification text is LOCAL_HISTORY_ID_E2E_OK.'
+                },
+                {
+                  role: 'assistant',
+                  content:
+                    'I will return that verification text when asked.'
+                }
+              ],
+              historyMessageIds: [
+                crypto.randomUUID(),
+                crypto.randomUUID()
+              ]
+            },
+            new AbortController().signal
+          )
+        )
+        expect(output).toContain('LOCAL_HISTORY_ID_E2E_OK')
+      } finally {
+        await runtime.dispose()
+      }
+    },
+    120_000
+  )
+
+  it(
     'counts a real image in provider-reported input usage',
     async () => {
       const runtime = new ModelAgentRuntime({

@@ -64,6 +64,17 @@ type ConversationMessage = {
   content: string
 }
 
+type ProviderConversationMessage = Pick<
+  ConversationMessage,
+  'role' | 'content'
+>
+
+function toProviderConversationMessages(
+  messages: readonly ConversationMessage[]
+): ProviderConversationMessage[] {
+  return messages.map(({ role, content }) => ({ role, content }))
+}
+
 type ConversationSummaryState = {
   coveredHistoryDigest: string
   coveredMessageCount: number
@@ -2225,7 +2236,9 @@ export class ModelAgentRuntime implements AgentRuntime {
   private getAnthropicMessages(
     request: AgentExecutionRequest
   ): AnthropicApiMessage[] {
-    const history = this.getConversationHistory(request)
+    const history = toProviderConversationMessages(
+      this.getConversationHistory(request)
+    )
     const content: AnthropicApiMessage['content'] =
       request.images && request.images.length > 0
         ? [
@@ -2256,7 +2269,9 @@ export class ModelAgentRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     system: string
   ): Array<Record<string, unknown>> {
-    const history = this.getConversationHistory(request)
+    const history = toProviderConversationMessages(
+      this.getConversationHistory(request)
+    )
     const userContent =
       request.images && request.images.length > 0
         ? [
@@ -2282,7 +2297,9 @@ export class ModelAgentRuntime implements AgentRuntime {
   private getResponsesInput(
     request: AgentExecutionRequest
   ): Array<Record<string, unknown>> {
-    const history = this.getConversationHistory(request)
+    const history = toProviderConversationMessages(
+      this.getConversationHistory(request)
+    )
     const userContent =
       request.images && request.images.length > 0
         ? [

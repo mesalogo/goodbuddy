@@ -273,6 +273,102 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it.each([
+    {
+      protocol: 'anthropic-messages' as const,
+      payloadKey: 'messages' as const,
+      response: () =>
+        new Response(createEventStream('history accepted'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+    },
+    {
+      protocol: 'openai-chat-completions' as const,
+      payloadKey: 'messages' as const,
+      response: () =>
+        new Response(
+          [
+            'data: {"choices":[{"delta":{"content":"history accepted"}}]}',
+            '',
+            'data: [DONE]',
+            '',
+            ''
+          ].join('\n'),
+          {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          }
+        )
+    },
+    {
+      protocol: 'openai-responses' as const,
+      payloadKey: 'input' as const,
+      response: () =>
+        new Response(createResponsesEventStream('history accepted'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        })
+    }
+  ])(
+    'omits local message IDs from $protocol history',
+    async ({ protocol, payloadKey, response }) => {
+      const localMessageIds = [
+        '00000000-0000-4000-8000-000000000011',
+        '00000000-0000-4000-8000-000000000012'
+      ]
+      const fetcher = vi.fn<typeof fetch>(async () => response())
+      const runtime = new ModelAgentRuntime({
+        apiKey: 'test-key',
+        baseUrl: 'https://model.example/v1',
+        model: 'test-model',
+        protocol,
+        authentication: 'api-key',
+        fetcher
+      })
+
+      try {
+        for await (const _event of runtime.run(
+          {
+            requestId: '00000000-0000-4000-8000-000000000010',
+            conversationId: 'conversation-local-message-ids',
+            prompt: 'current question',
+            history: [
+              { role: 'user', content: 'earlier question' },
+              { role: 'assistant', content: 'earlier answer' }
+            ],
+            historyMessageIds: localMessageIds
+          },
+          new AbortController().signal
+        )) {
+          void _event
+        }
+      } finally {
+        await runtime.dispose()
+      }
+
+      const body = JSON.parse(
+        fetcher.mock.calls[0]?.[1]?.body as string
+      ) as Record<string, unknown>
+      const messages = body[payloadKey] as Array<
+        Record<string, unknown>
+      >
+      expect(
+        messages.filter(
+          (message) =>
+            message.role === 'user' ||
+            message.role === 'assistant'
+        )
+      ).toEqual([
+        { role: 'user', content: 'earlier question' },
+        { role: 'assistant', content: 'earlier answer' },
+        { role: 'user', content: 'current question' }
+      ])
+      expect(JSON.stringify(body)).not.toContain(localMessageIds[0])
+      expect(JSON.stringify(body)).not.toContain(localMessageIds[1])
+    }
+  )
+
   it('performs a real minimal request when testing the connection', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       Response.json({
@@ -429,6 +525,14 @@ describe('ModelAgentRuntime', () => {
         content: `new-assistant-${'f'.repeat(16_000)}`
       }
     ]
+    const historyMessageIds = [
+      '00000000-0000-4000-8000-000000000221',
+      '00000000-0000-4000-8000-000000000222',
+      '00000000-0000-4000-8000-000000000223',
+      '00000000-0000-4000-8000-000000000224',
+      '00000000-0000-4000-8000-000000000225',
+      '00000000-0000-4000-8000-000000000226'
+    ]
     const events: RuntimeEvent[] = []
 
     for await (const event of runtime.run(
@@ -436,7 +540,8 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed222',
         conversationId: 'conversation-compressed',
         prompt: '继续',
-        history
+        history,
+        historyMessageIds
       },
       new AbortController().signal
     )) {
@@ -451,6 +556,9 @@ describe('ModelAgentRuntime', () => {
     expect(summaryBody.system).toContain('Summarize earlier history.')
     expect(JSON.stringify(summaryBody.messages)).toContain('old-user-')
     expect(JSON.stringify(summaryBody.messages)).not.toContain('new-user-')
+    expect(JSON.stringify(summaryBody)).not.toContain(
+      historyMessageIds[0]
+    )
 
     const answerBody = JSON.parse(
       fetcher.mock.calls[1]![1]!.body as string
@@ -459,6 +567,9 @@ describe('ModelAgentRuntime', () => {
     expect(answerMessages).toContain('压缩后的摘要')
     expect(answerMessages).toContain('new-user-')
     expect(answerMessages).not.toContain('old-user-')
+    for (const id of historyMessageIds) {
+      expect(answerMessages).not.toContain(id)
+    }
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'context-compression',
@@ -473,6 +584,8 @@ describe('ModelAgentRuntime', () => {
         estimatedAfterTokens: expect.any(Number),
         conversationState: expect.objectContaining({
           coveredMessageCount: 4,
+          coveredFromMessageId: historyMessageIds[0],
+          coveredThroughMessageId: historyMessageIds[3],
           coveredHistoryDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
           summary: '压缩后的摘要'
         })
@@ -3351,6 +3464,14 @@ describe('ModelAgentRuntime', () => {
         requestId: 'a431666e-5ec8-45e6-beb4-654132eed134',
         conversationId: 'conversation-responses-tools',
         prompt: '读取 README',
+        history: [
+          { role: 'user', content: '此前问题' },
+          { role: 'assistant', content: '此前回答' }
+        ],
+        historyMessageIds: [
+          '00000000-0000-4000-8000-000000000341',
+          '00000000-0000-4000-8000-000000000342'
+        ],
         workMode: 'execute'
       },
       new AbortController().signal,
@@ -3365,6 +3486,20 @@ describe('ModelAgentRuntime', () => {
     expect(firstBody).toMatchObject({
       model: 'gpt-5',
       stream: true,
+      input: [
+        {
+          role: 'user',
+          content: '此前问题'
+        },
+        {
+          role: 'assistant',
+          content: '此前回答'
+        },
+        {
+          role: 'user',
+          content: '读取 README'
+        }
+      ],
       tools: [
         {
           type: 'function',
@@ -3379,6 +3514,14 @@ describe('ModelAgentRuntime', () => {
     ) as Record<string, unknown>
     expect(secondBody).toMatchObject({
       input: [
+        {
+          role: 'user',
+          content: '此前问题'
+        },
+        {
+          role: 'assistant',
+          content: '此前回答'
+        },
         {
           role: 'user',
           content: '读取 README'
@@ -3448,8 +3591,15 @@ describe('ModelAgentRuntime', () => {
       }
     ])
     for (const [, init] of fetcher.mock.calls) {
-      expect(JSON.parse(init?.body as string)).not.toHaveProperty(
+      const body = JSON.parse(init?.body as string)
+      expect(body).not.toHaveProperty(
         'previous_response_id'
+      )
+      expect(JSON.stringify(body)).not.toContain(
+        '00000000-0000-4000-8000-000000000341'
+      )
+      expect(JSON.stringify(body)).not.toContain(
+        '00000000-0000-4000-8000-000000000342'
       )
     }
     expect(
