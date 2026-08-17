@@ -400,6 +400,7 @@ const diagnoseEmbedding = vi.fn(
 )
 let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
+  updateSource: 'github',
   magicNotesEnabled: false,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
@@ -565,6 +566,7 @@ describe('SettingsPanel runtime files', () => {
     await changeUiLocale('zh-CN')
     applicationSettings = {
       checkUpdatesOnStartup: true,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'

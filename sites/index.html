@@ -229,14 +229,33 @@
                   <path d="m3 5 8-1v8H3V5Zm10-1.3L21 3v9h-8V3.7ZM3 14h8v8l-8-1v-7Zm10 0h8v9l-8-1v-8Z" />
                 </svg>
               </div>
-              <div><h3>Windows</h3><p>x64 / arm64 · NSIS / 便携版</p></div>
+              <div><h3>Windows</h3><p>x64 / arm64 · 安装版 / 便携版</p></div>
+              <div class="download-options" data-download-card="windows">
+                <label>
+                  <span>处理器</span>
+                  <select data-download-arch aria-label="Windows 处理器架构">
+                    <option value="x64">x64（Intel / AMD）</option>
+                    <option value="arm64">ARM64</option>
+                  </select>
+                </label>
+                <label>
+                  <span>类型</span>
+                  <select data-download-format aria-label="Windows 安装包类型">
+                    <option value="nsis">安装版（推荐）</option>
+                    <option value="portable">便携版 ZIP</option>
+                  </select>
+                </label>
+              </div>
               <a
                 class="button button--download"
                 href="https://github.com/mesalogo/goodbuddy/releases/latest"
                 target="_blank"
                 rel="noreferrer"
                 data-release-link
-              >下载 Windows 版<span class="sr-only">（在新窗口打开）</span></a>
+              >下载 Windows 版 →<span class="sr-only">（在新窗口打开）</span></a>
+              <p class="download-meta" data-download-meta aria-live="polite">
+                正在获取最新版本，暂时可前往 GitHub 下载。
+              </p>
             </article>
             <article class="download-card">
               <div class="platform-icon">
@@ -244,31 +263,69 @@
                   <path d="M16.8 12.7c0-2.7 2.2-4 2.3-4.1A5 5 0 0 0 15.2 6c-1.7-.2-3.2 1-4.1 1-.9 0-2.2-1-3.6-1-1.8 0-3.5 1.1-4.5 2.7-2 3.5-.5 8.7 1.4 11.5.9 1.4 2 2.8 3.5 2.7 1.4 0 1.9-.9 3.7-.9 1.7 0 2.2.9 3.7.9s2.5-1.4 3.4-2.7a10 10 0 0 0 1.6-3.3 4.6 4.6 0 0 1-3.5-4.2ZM14.1 4.3A4.7 4.7 0 0 0 15.2 1a4.8 4.8 0 0 0-3.1 1.6A4.4 4.4 0 0 0 11 5.8c1.2.1 2.3-.5 3.1-1.5Z" />
                 </svg>
               </div>
-              <div><h3>macOS</h3><p>x64 / arm64 · DMG / ZIP</p></div>
+              <div><h3>macOS</h3><p>Apple 芯片 / Intel · DMG / ZIP</p></div>
+              <div class="download-options" data-download-card="macos">
+                <label>
+                  <span>处理器</span>
+                  <select data-download-arch aria-label="macOS 处理器架构">
+                    <option value="arm64">Apple 芯片（推荐）</option>
+                    <option value="x64">Intel</option>
+                  </select>
+                </label>
+                <label>
+                  <span>类型</span>
+                  <select data-download-format aria-label="macOS 安装包类型">
+                    <option value="dmg">DMG（推荐）</option>
+                    <option value="zip">ZIP</option>
+                  </select>
+                </label>
+              </div>
               <a
                 class="button button--download"
                 href="https://github.com/mesalogo/goodbuddy/releases/latest"
                 target="_blank"
                 rel="noreferrer"
                 data-release-link
-              >下载 macOS 版<span class="sr-only">（在新窗口打开）</span></a>
+              >下载 macOS 版 →<span class="sr-only">（在新窗口打开）</span></a>
+              <p class="download-meta" data-download-meta aria-live="polite">
+                正在获取最新版本，暂时可前往 GitHub 下载。
+              </p>
             </article>
             <article class="download-card">
               <div class="platform-icon">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 3c-3 0-4.7 2.5-4.5 5.4-1.3 1.4-2 3.4-2 5.6 0 3.9 2.9 7 6.5 7s6.5-3.1 6.5-7c0-2.2-.7-4.2-2-5.6C16.7 5.5 15 3 12 3Z" />
-                  <path d="M9.3 10.2h.1M14.6 10.2h.1M9.5 15c1.6 1.2 3.4 1.2 5 0M7 19l-2 2M17 19l2 2" />
-                </svg>
+                <img src="./assets/linux-plain.svg" alt="" />
               </div>
               <div><h3>Linux</h3><p>x64 / arm64 · AppImage / DEB</p></div>
+              <div class="download-options" data-download-card="linux">
+                <label>
+                  <span>处理器</span>
+                  <select data-download-arch aria-label="Linux 处理器架构">
+                    <option value="x64">x64（Intel / AMD）</option>
+                    <option value="arm64">ARM64</option>
+                  </select>
+                </label>
+                <label>
+                  <span>类型</span>
+                  <select data-download-format aria-label="Linux 安装包类型">
+                    <option value="AppImage">AppImage（推荐）</option>
+                    <option value="deb">DEB</option>
+                  </select>
+                </label>
+              </div>
               <a
                 class="button button--download"
                 href="https://github.com/mesalogo/goodbuddy/releases/latest"
                 target="_blank"
                 rel="noreferrer"
                 data-release-link
-              >下载 Linux 版<span class="sr-only">（在新窗口打开）</span></a>
+              >下载 Linux 版 →<span class="sr-only">（在新窗口打开）</span></a>
+              <p class="download-meta" data-download-meta aria-live="polite">
+                正在获取最新版本，暂时可前往 GitHub 下载。
+              </p>
             </article>
+          </div>
+          <div class="download-release-status" data-release-status role="status">
+            正在连接官方下载源…
           </div>
 
           <aside class="domestic-support" aria-labelledby="domestic-support-title">

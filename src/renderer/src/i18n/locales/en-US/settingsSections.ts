@@ -285,16 +285,31 @@ export const settingsSections = {
         'Version checks are not available in this version',
       readSettingsFailed: 'Could not load application settings',
       saveSettingsFailed: 'Could not save update settings',
+      saveSourceFailed: 'Could not save the update source',
       checkFailed: 'Version check failed',
-      network:
-        '{{fallback}}: Could not connect to the official GoodBuddy GitHub Release. Check your network or proxy and try again.'
+      network: '{{fallback}}. Check the system status and try again.',
+      sourceNetwork:
+        '{{fallback}}: Could not connect to update source "{{source}}". Check your network or proxy and try again.'
     },
     loadingAppInfo: 'Loading application information…',
+    source: {
+      label: 'Update source',
+      description:
+        'Used for manual checks, startup checks, and the download page.',
+      options: {
+        github: 'GitHub (default)',
+        mirror: 'Mirror node'
+      },
+      names: {
+        github: 'GitHub',
+        mirror: 'Mirror node'
+      }
+    },
     checkOnStartup: 'Check for updates at startup',
     actions: {
       checking: 'Checking…',
       checkNow: 'Check for updates now',
-      openDownloadPage: 'Open official download page'
+      openDownloadPage: 'Open download page'
     },
     result: {
       available: 'New version {{version}} is available',

@@ -12,9 +12,16 @@ export type MagicNoteCommentMode = z.infer<
   typeof magicNoteCommentModeSchema
 >
 
+export const updateSourceSchema = z.enum([
+  'github',
+  'mirror'
+])
+export type UpdateSource = z.infer<typeof updateSourceSchema>
+
 const applicationPreferencesSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
+    updateSource: updateSourceSchema,
     magicNotesEnabled: z.boolean(),
     magicNoteCommentMode: magicNoteCommentModeSchema,
     magicNoteCommentFormat: magicNoteCommentFormatSchema

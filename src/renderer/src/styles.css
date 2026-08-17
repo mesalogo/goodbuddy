@@ -6297,6 +6297,39 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: var(--space-2);
 }
 
+.field.update-settings__source {
+  display: grid;
+  min-height: 36px;
+  align-items: center;
+  grid-template-columns: max-content minmax(160px, 220px) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.update-settings__source > span {
+  color: var(--text-primary);
+  font-size: var(--font-caption);
+  font-weight: 650;
+}
+
+.update-settings__source > select {
+  min-width: 0;
+}
+
+.update-settings__source > select:disabled {
+  cursor: not-allowed;
+}
+
+.update-settings__source:has(select:disabled) > span,
+.update-settings__source:has(select:disabled) > small {
+  color: var(--text-muted);
+}
+
+.update-settings__source > small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+
 .update-settings__actions button {
   display: inline-flex;
   align-items: center;
@@ -6359,6 +6392,12 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 @media (max-width: 720px) {
+  .field.update-settings__source {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
+
   .speech-model-settings .settings-section__title--actions {
     align-items: flex-start;
     flex-wrap: wrap;

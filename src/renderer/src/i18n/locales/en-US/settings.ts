@@ -84,7 +84,7 @@ export const settings = {
       label: 'About and updates',
       navigationDescription: 'Version checks and downloads',
       description:
-        'Checks only the official GoodBuddy GitHub Release and never installs automatically'
+        'Checks the selected official update source and never installs automatically'
     }
   },
   actions: {

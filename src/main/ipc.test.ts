@@ -334,6 +334,102 @@ describe('registerIpcHandlers computer capabilities', () => {
   })
 })
 
+describe('registerIpcHandlers update source routing', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('uses the persisted source for checks and the download page', async () => {
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const result = {
+      updateAvailable: true,
+      currentVersion: '1.0.0',
+      latestVersion: '1.1.0',
+      releaseUrl: 'https://mesalogo.github.io/goodbuddy/#download',
+      target: {
+        platform: 'windows',
+        arch: 'x64',
+        formats: ['nsis', 'portable'],
+        files: []
+      }
+    }
+    const getApplicationSettings = vi
+      .fn()
+      .mockResolvedValue({ updateSource: 'mirror' })
+    const versionChecker = {
+      check: vi.fn(async () => result)
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { get: getApplicationSettings } as never,
+      versionChecker as never
+    )
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.versionCheck)?.(event)
+    ).resolves.toEqual(result)
+    expect(versionChecker.check).toHaveBeenCalledWith('mirror')
+    expect(webContents.send).toHaveBeenCalledWith(
+      ipcChannels.versionCheckResult,
+      result
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.versionOpenReleasePage
+      )?.(event)
+    ).resolves.toBeUndefined()
+    expect(electronMocks.openExternal).toHaveBeenLastCalledWith(
+      'https://mesalogo.github.io/goodbuddy/#download'
+    )
+
+    getApplicationSettings.mockResolvedValueOnce({
+      updateSource: 'github'
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.versionOpenReleasePage
+      )?.(event)
+    ).resolves.toBeUndefined()
+    expect(electronMocks.openExternal).toHaveBeenLastCalledWith(
+      'https://github.com/mesalogo/goodbuddy/releases'
+    )
+
+    await dispose()
+  })
+})
+
 vi.mock('electron', () => ({
   app: {
     getName: vi.fn(() => 'GoodBuddy'),

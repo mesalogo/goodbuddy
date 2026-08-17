@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   ApplicationSettings,
+  UpdateSource,
   VersionCheckResult
 } from '../../shared/application-settings-contracts'
 import type { AppInfo } from '../../shared/contracts'
@@ -110,6 +111,34 @@ export function UpdateSettingsSection(): React.JSX.Element {
     }
   }
 
+  const changeUpdateSource = async (
+    updateSource: UpdateSource
+  ): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates || !settings) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      setSettings(await updates.updateSettings({ updateSource }))
+      setResult(undefined)
+    } catch (reason) {
+      const fallback = t('updates.errors.saveSourceFailed')
+      setError(
+        updateErrorMessage(
+          reason,
+          fallback,
+          t('updates.errors.network', {
+            fallback
+          })
+        )
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const check = async (): Promise<void> => {
     const updates = window.goodbuddy.updates
     if (!updates) {
@@ -125,7 +154,12 @@ export function UpdateSettingsSection(): React.JSX.Element {
         updateErrorMessage(
           reason,
           fallback,
-          t('updates.errors.network', { fallback })
+          t('updates.errors.sourceNetwork', {
+            fallback,
+            source: t(
+              `updates.source.names.${settings?.updateSource ?? 'github'}`
+            )
+          })
         )
       )
     } finally {
@@ -169,6 +203,33 @@ export function UpdateSettingsSection(): React.JSX.Element {
             type="checkbox"
           />
           <span>{t('updates.checkOnStartup')}</span>
+        </label>
+
+        <label className="field update-settings__source">
+          <span>{t('updates.source.label')}</span>
+          <select
+            aria-label={t('updates.source.label')}
+            disabled={
+              !settings ||
+              !settings.checkUpdatesOnStartup ||
+              saving ||
+              checking
+            }
+            onChange={(event) =>
+              void changeUpdateSource(
+                event.target.value as UpdateSource
+              )
+            }
+            value={settings?.updateSource ?? 'github'}
+          >
+            <option value="github">
+              {t('updates.source.options.github')}
+            </option>
+            <option value="mirror">
+              {t('updates.source.options.mirror')}
+            </option>
+          </select>
+          <small>{t('updates.source.description')}</small>
         </label>
 
         <div className="update-settings__actions">

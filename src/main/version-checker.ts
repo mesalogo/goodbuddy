@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type {
+  UpdateSource,
   VersionCheckFile,
   VersionCheckResult,
   VersionCheckTarget
@@ -11,10 +12,14 @@ export type {
 
 export const GOODBUDDY_LATEST_RELEASE_API_URL =
   'https://api.github.com/repos/mesalogo/goodbuddy/releases/latest'
+export const GOODBUDDY_MIRROR_RELEASE_INDEX_URL =
+  'https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/latest.json'
 
 const PRODUCT_NAME = 'GoodBuddy'
 const RELEASE_WEB_ROOT =
   'https://github.com/mesalogo/goodbuddy/releases'
+const MIRROR_DOWNLOAD_PAGE =
+  'https://mesalogo.github.io/goodbuddy/#download'
 const DEFAULT_TIMEOUT_MS = 10_000
 const DEFAULT_MAX_JSON_BYTES = 512 * 1024
 const MAX_TIMEOUT_MS = 60_000
@@ -90,6 +95,37 @@ const aggregateReleaseManifestSchema = z
     version: z.string().min(1).max(256),
     targets: z.array(releaseTargetSchema).min(1).max(6),
     files: z.array(aggregateFileSchema).min(1).max(96)
+  })
+  .strict()
+
+const mirrorReleaseFileSchema = releaseFileSchema
+  .extend({
+    url: z.url().max(2_048)
+  })
+  .strict()
+
+const mirrorReleaseTargetSchema = z
+  .object({
+    platform: platformSchema,
+    arch: architectureSchema,
+    files: z.record(
+      z.string().min(1).max(32),
+      mirrorReleaseFileSchema
+    )
+  })
+  .strict()
+
+const mirrorReleaseIndexSchema = z
+  .object({
+    formatVersion: z.literal(1),
+    productName: z.literal(PRODUCT_NAME),
+    version: z.string().min(1).max(256),
+    targets: z.record(
+      z.string().min(1).max(64),
+      mirrorReleaseTargetSchema
+    ),
+    checksumUrl: z.url().max(2_048),
+    fallbackUrl: z.url().max(2_048)
   })
   .strict()
 
@@ -329,6 +365,108 @@ function sameFile(left: ReleaseFile, right: ReleaseFile): boolean {
   )
 }
 
+function assertExactMirrorUrl(
+  value: string,
+  expected: string,
+  label: string
+): void {
+  const url = new URL(value)
+  if (
+    url.href !== expected ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(`${label} is not a trusted mirror URL`)
+  }
+}
+
+function validateMirrorIndex(
+  index: z.infer<typeof mirrorReleaseIndexSchema>,
+  platform: ReleasePlatform,
+  arch: ReleaseArchitecture
+): VersionCheckTarget {
+  const parsedVersion = parseSemVer(index.version)
+  if (parsedVersion.prerelease.length > 0) {
+    throw new Error('Mirror release index must point to a stable version')
+  }
+  const targetKeys = [
+    'windows-x64',
+    'windows-arm64',
+    'macos-x64',
+    'macos-arm64',
+    'linux-x64',
+    'linux-arm64'
+  ]
+  if (
+    Object.keys(index.targets).length !== targetKeys.length ||
+    targetKeys.some((key) => !index.targets[key])
+  ) {
+    throw new Error('Mirror release index targets are incomplete')
+  }
+
+  const releaseBase = new URL(
+    `v${index.version}/`,
+    GOODBUDDY_MIRROR_RELEASE_INDEX_URL
+  )
+  for (const key of targetKeys) {
+    const target = index.targets[key]
+    if (!target || `${target.platform}-${target.arch}` !== key) {
+      throw new Error(`Mirror release target is invalid: ${key}`)
+    }
+    const formats = expectedFormats[target.platform]
+    if (
+      Object.keys(target.files).length !== formats.length ||
+      formats.some((format) => !target.files[format])
+    ) {
+      throw new Error(`Mirror release files are incomplete: ${key}`)
+    }
+    const files = formats.map((format) => target.files[format]!)
+    if (
+      !hasExpectedFileFormats(target.platform, files) ||
+      new Set(files.map((file) => file.name)).size !== files.length
+    ) {
+      throw new Error(`Mirror release files are invalid: ${key}`)
+    }
+    for (const file of files) {
+      assertExactMirrorUrl(
+        file.url,
+        new URL(encodeURIComponent(file.name), releaseBase).href,
+        'Mirror release file'
+      )
+    }
+  }
+
+  assertExactMirrorUrl(
+    index.checksumUrl,
+    new URL('SHA256SUMS', releaseBase).href,
+    'Mirror checksum manifest'
+  )
+  if (index.fallbackUrl !== `${RELEASE_WEB_ROOT}/latest`) {
+    throw new Error('Mirror fallback release URL is invalid')
+  }
+
+  const target = index.targets[`${platform}-${arch}`]
+  if (!target) {
+    throw new Error(`Mirror release target is missing: ${platform}/${arch}`)
+  }
+  const formats = expectedFormats[platform]
+  return {
+    platform,
+    arch,
+    formats: [...formats],
+    files: formats.map((format) => {
+      const file = target.files[format]!
+      return {
+        name: file.name,
+        size: file.size,
+        sha256: file.sha256
+      }
+    })
+  }
+}
+
 function validateCurrentTarget(
   manifest: z.infer<typeof aggregateReleaseManifestSchema>,
   platform: ReleasePlatform,
@@ -427,6 +565,34 @@ async function fetchJson(
   }
 }
 
+async function fetchMirrorJson(
+  transport: typeof fetch,
+  signal: AbortSignal,
+  maximumBytes: number
+): Promise<unknown> {
+  const response = await transport(GOODBUDDY_MIRROR_RELEASE_INDEX_URL, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'GoodBuddy-Version-Checker'
+    },
+    cache: 'no-store',
+    credentials: 'omit',
+    redirect: 'manual',
+    referrerPolicy: 'no-referrer',
+    signal
+  })
+  if (REDIRECT_STATUSES.has(response.status)) {
+    throw new Error('Mirror release index must not redirect')
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Version check request failed with HTTP ${response.status}`
+    )
+  }
+  return readBoundedJson(response, maximumBytes, signal)
+}
+
 export async function checkForUpdates(
   dependencies: VersionCheckerDependencies
 ): Promise<VersionCheckResult> {
@@ -503,10 +669,58 @@ export async function checkForUpdates(
   }
 }
 
+export async function checkMirrorForUpdates(
+  dependencies: VersionCheckerDependencies
+): Promise<VersionCheckResult> {
+  const timeoutMs = boundedInteger(
+    dependencies.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    'timeoutMs',
+    1,
+    MAX_TIMEOUT_MS
+  )
+  const maximumBytes = boundedInteger(
+    dependencies.maxJsonBytes ?? DEFAULT_MAX_JSON_BYTES,
+    'maxJsonBytes',
+    1,
+    MAX_JSON_BYTES
+  )
+  parseSemVer(dependencies.currentVersion)
+  const platform = normalizePlatform(dependencies.platform)
+  const arch = normalizeArchitecture(dependencies.arch)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const index = mirrorReleaseIndexSchema.parse(
+      await fetchMirrorJson(
+        dependencies.fetch,
+        controller.signal,
+        maximumBytes
+      )
+    )
+    const target = validateMirrorIndex(index, platform, arch)
+    return {
+      updateAvailable:
+        compareStrictSemVer(index.version, dependencies.currentVersion) > 0,
+      currentVersion: dependencies.currentVersion,
+      latestVersion: index.version,
+      releaseUrl: MIRROR_DOWNLOAD_PAGE,
+      target
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export function getUpdateDownloadPage(source: UpdateSource): string {
+  return source === 'mirror' ? MIRROR_DOWNLOAD_PAGE : RELEASE_WEB_ROOT
+}
+
 export class VersionChecker {
   constructor(private readonly dependencies: VersionCheckerDependencies) {}
 
-  check(): Promise<VersionCheckResult> {
-    return checkForUpdates(this.dependencies)
+  check(source: UpdateSource = 'github'): Promise<VersionCheckResult> {
+    return source === 'mirror'
+      ? checkMirrorForUpdates(this.dependencies)
+      : checkForUpdates(this.dependencies)
   }
 }

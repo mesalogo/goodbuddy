@@ -239,7 +239,10 @@ import {
   SqliteChannelOutbox
 } from './channels/sqlite-channel-state'
 import type { ApplicationSettingsStore } from './application-settings-store'
-import type { VersionChecker } from './version-checker'
+import {
+  getUpdateDownloadPage,
+  type VersionChecker
+} from './version-checker'
 import type { SpeechModelManager } from './speech/speech-model-manager'
 import type { SpeechTranscriptionService } from './speech/speech-transcription-service'
 import { diagnoseEmbeddingProvider } from './knowledge/embedding-index-coordinator'
@@ -267,8 +270,6 @@ import {
 import { AgentEventBuffer } from './agent-event-buffer'
 
 const requestIdSchema = z.string().uuid()
-const GOODBUDDY_RELEASES_URL =
-  'https://github.com/mesalogo/goodbuddy/releases'
 const runtimeConfigFileMetadata = {
   opencode: {
     filterName: 'OpenCode 配置',
@@ -3692,10 +3693,11 @@ export function registerIpcHandlers(
 
   registerHandler(ipcChannels.versionCheck, async (event) => {
     assertTrustedSender(event, window)
-    if (!versionChecker) {
+    if (!versionChecker || !applicationSettingsStore) {
       throw new Error('版本检查服务不可用')
     }
-    const result = await versionChecker.check()
+    const { updateSource } = await applicationSettingsStore.get()
+    const result = await versionChecker.check(updateSource)
     if (!window.isDestroyed()) {
       window.webContents.send(ipcChannels.versionCheckResult, result)
     }
@@ -3704,7 +3706,11 @@ export function registerIpcHandlers(
 
   registerHandler(ipcChannels.versionOpenReleasePage, async (event) => {
     assertTrustedSender(event, window)
-    await shell.openExternal(GOODBUDDY_RELEASES_URL)
+    if (!applicationSettingsStore) {
+      throw new Error('应用设置服务不可用')
+    }
+    const { updateSource } = await applicationSettingsStore.get()
+    await shell.openExternal(getUpdateDownloadPage(updateSource))
   })
 
   registerHandler(ipcChannels.releaseNotesGetPending, (event) => {

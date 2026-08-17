@@ -266,16 +266,30 @@ export const settingsSections = {
       serviceUnavailable: '当前版本未提供版本检查服务',
       readSettingsFailed: '读取应用设置失败',
       saveSettingsFailed: '保存更新设置失败',
+      saveSourceFailed: '保存检查更新源失败',
       checkFailed: '版本检查失败',
-      network:
-        '{{fallback}}：无法连接 GoodBuddy 官方 GitHub Release，请检查网络或代理后重试'
+      network: '{{fallback}}：请检查系统状态后重试',
+      sourceNetwork:
+        '{{fallback}}：无法连接更新源“{{source}}”，请检查网络或代理后重试'
     },
     loadingAppInfo: '正在读取应用信息…',
+    source: {
+      label: '检查更新源',
+      description: '用于手动检查、启动时检查和打开下载页。',
+      options: {
+        github: 'GitHub（默认）',
+        mirror: '镜像节点'
+      },
+      names: {
+        github: 'GitHub',
+        mirror: '镜像节点'
+      }
+    },
     checkOnStartup: '启动时检查新版本',
     actions: {
       checking: '正在检查…',
       checkNow: '立即检查更新',
-      openDownloadPage: '打开官方下载页'
+      openDownloadPage: '打开下载页'
     },
     result: {
       available: '发现新版本 {{version}}',

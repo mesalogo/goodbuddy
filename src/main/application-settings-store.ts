@@ -20,7 +20,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 5
+const CURRENT_SETTINGS_VERSION = 6
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -47,8 +47,17 @@ const versionThreeStoredApplicationSettingsSchema = z
   .strict()
 
 const versionFourStoredApplicationSettingsSchema = applicationSettingsSchema
+  .omit({ updateSource: true })
   .extend({
     version: z.literal(4)
+  })
+  .strict()
+
+const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
+  .omit({ updateSource: true })
+  .extend({
+    version: z.literal(5),
+    lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
   })
   .strict()
 
@@ -65,6 +74,7 @@ type StoredApplicationSettings = z.infer<
 
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
+  updateSource: 'github',
   magicNotesEnabled: false,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
@@ -121,12 +131,23 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionFiveResult =
+          versionFiveStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionFiveResult.success) {
+          this.settings = {
+            ...versionFiveResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            updateSource: 'github'
+          }
+          return this.settings
+        }
         const versionFourResult =
           versionFourStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionFourResult.success) {
           this.settings = {
             ...versionFourResult.data,
             version: CURRENT_SETTINGS_VERSION,
+            updateSource: 'github',
             lastSeenReleaseNotesVersion: null
           }
           return this.settings
@@ -137,6 +158,7 @@ export class ApplicationSettingsStore {
           this.settings = {
             ...versionThreeResult.data,
             version: CURRENT_SETTINGS_VERSION,
+            updateSource: 'github',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
           }
@@ -148,6 +170,7 @@ export class ApplicationSettingsStore {
           this.settings = {
             ...versionTwoResult.data,
             version: CURRENT_SETTINGS_VERSION,
+            updateSource: 'github',
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
@@ -161,6 +184,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             checkUpdatesOnStartup:
               legacyResult.data.checkUpdatesOnStartup,
+            updateSource: 'github',
             magicNotesEnabled: false,
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
@@ -200,6 +224,7 @@ export class ApplicationSettingsStore {
     const stored = await this.loadStored()
     return {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
+      updateSource: stored.updateSource,
       magicNotesEnabled: stored.magicNotesEnabled,
       magicNoteCommentMode: stored.magicNoteCommentMode,
       magicNoteCommentFormat: stored.magicNoteCommentFormat,
@@ -231,6 +256,7 @@ export class ApplicationSettingsStore {
       this.warnings = []
       return {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
+        updateSource: next.updateSource,
         magicNotesEnabled: next.magicNotesEnabled,
         magicNoteCommentMode: next.magicNoteCommentMode,
         magicNoteCommentFormat: next.magicNoteCommentFormat

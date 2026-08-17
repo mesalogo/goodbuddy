@@ -62,19 +62,22 @@ describe('ApplicationSettingsStore', () => {
       })
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 5,
+      version: 6,
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined',
@@ -98,6 +101,7 @@ describe('ApplicationSettingsStore', () => {
       new ApplicationSettingsStore(filePath).get()
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -119,6 +123,7 @@ describe('ApplicationSettingsStore', () => {
 
       await expect(store.get()).resolves.toEqual({
         checkUpdatesOnStartup: false,
+        updateSource: 'github',
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate',
         magicNoteCommentFormat: 'combined'
@@ -140,6 +145,7 @@ describe('ApplicationSettingsStore', () => {
 
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -161,6 +167,7 @@ describe('ApplicationSettingsStore', () => {
 
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'combined'
@@ -187,13 +194,41 @@ describe('ApplicationSettingsStore', () => {
       new ApplicationSettingsStore(filePath).getLastSeenReleaseNotesVersion()
     ).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 5,
+      version: 6,
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'narrative',
       lastSeenReleaseNotesVersion: '0.8.18'
     })
+  })
+
+  it('migrates version 5 settings to the default GitHub update source', async () => {
+    const { filePath, store } = await createStore()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 5,
+        checkUpdatesOnStartup: false,
+        magicNotesEnabled: true,
+        magicNoteCommentMode: 'after-save-auto',
+        magicNoteCommentFormat: 'structured',
+        lastSeenReleaseNotesVersion: '0.8.18'
+      }),
+      'utf8'
+    )
+
+    await expect(store.get()).resolves.toEqual({
+      checkUpdatesOnStartup: false,
+      updateSource: 'github',
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-auto',
+      magicNoteCommentFormat: 'structured'
+    })
+    await expect(store.getLastSeenReleaseNotesVersion()).resolves.toBe(
+      '0.8.18'
+    )
   })
 
   it('strictly rejects incomplete full settings', () => {
@@ -238,9 +273,25 @@ describe('ApplicationSettingsStore', () => {
       store.update({ checkUpdatesOnStartup: false })
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
+    })
+  })
+
+  it('persists the selected mirror update source', async () => {
+    const { filePath, store } = await createStore()
+
+    await expect(store.update({ updateSource: 'mirror' })).resolves.toEqual({
+      ...defaultApplicationSettings,
+      updateSource: 'mirror'
+    })
+    await expect(
+      new ApplicationSettingsStore(filePath).get()
+    ).resolves.toEqual({
+      ...defaultApplicationSettings,
+      updateSource: 'mirror'
     })
   })
 
@@ -335,13 +386,15 @@ describe('ApplicationSettingsStore', () => {
 
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 5,
+      version: 6,
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined',
@@ -365,6 +418,7 @@ describe('ApplicationSettingsStore', () => {
       })
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'

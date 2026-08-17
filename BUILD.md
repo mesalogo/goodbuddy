@@ -169,8 +169,9 @@ ZIP，以及 Linux 的 AppImage 与 DEB。Windows portable ZIP 解压后可直�
 推送 `v${package.version}` 标签时，工作流运行验证和六平台打包。只有在
 全部目标成功后，才会严格校验并聚合所有平台产物，生成按平台重命名的
 manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流创建或
-更新 draft GitHub Release，上传全部资产成功后才发布。重跑会保留人工
-编辑的 Release notes 和未知附件。
+更新 draft GitHub Release，上传全部资产成功后才发布，并在全部下载资产
+验证通过后切换官网最新版本索引。任一步失败都不会切换官网最新版本。
+重跑会保留人工编辑的 Release notes 和未知附件。
 
 中英文发布说明统一维护在 `resources/release-notes.json`。新版本按“本次
 亮点 / Highlights”“功能更新 / Features”“问题修复 / Bug Fixes”“使用前

@@ -39,20 +39,21 @@ node sites/scripts/validate.mjs
 node --check sites/app.js
 ```
 
-校验脚本会检查必需文件、页内链接、本地资源、关键产品文案、主题与响应式规则，以及下载入口是否始终指向官方最新 Release。
+校验脚本会检查必需文件、页内链接、本地资源、关键产品文案、主题与响应式
+规则，以及下载选择器是否从受信任的正式发布索引加载并保留 GitHub
+Release 回退入口。
 
 ## 下载入口
 
-官网正文不展示具体版本号，三个系统下载按钮直接指向 GitHub 最新正式
+官网正文不写死版本号，页面启动后读取最新正式发布索引。
+Windows、macOS 和 Linux 下载卡片分别提供处理器架构与安装包类型选择器，
+选择后直接下载经过发布校验的不可变版本对象。发布索引请求失败、
+格式无效或返回非受信任的官方下载地址时，按钮继续指向 GitHub 最新正式
 Release：
 
 ```text
 https://github.com/mesalogo/goodbuddy/releases/latest
 ```
-
-新版本发布后 GitHub 会自动更新该地址的目标，官网无需同步修改版本号
-或安装资产名称。用户在 Release 页面按系统与架构选择文件并核对
-SHA-256 清单。
 
 ## 文件
 
@@ -60,4 +61,5 @@ SHA-256 清单。
 - `styles.css`：语义令牌、浅深主题、焦点与响应式布局
 - `app.js`：主题、移动导航和当前章节
 - `assets/goodbuddy-light.png`、`assets/goodbuddy-dark.png`：由 `npm run icons` 与桌面应用同步生成的官方品牌图标
+- `assets/linux-plain.svg`：Devicon v2.17.0 提供的黑白 Linux 图标，许可见 `assets/devicon-LICENSE`
 - `scripts/validate.mjs`：无依赖静态检查

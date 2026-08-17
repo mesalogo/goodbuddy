@@ -131,14 +131,17 @@ jobs:
           retention-days: 30
 
   release:
-    name: Publish GitHub Release
+    name: Publish GitHub and OSS release
     if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: package
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
+    environment:
+      name: aliyun-oss-release
     permissions:
       contents: write
       actions: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v7
@@ -181,7 +184,102 @@ jobs:
       - name: Verify and aggregate release assets
         run: node build/aggregate-release.cjs --input dist/release-downloads --output dist/release-upload
 
-      - name: Create or update draft release
+      - name: Verify OSS release configuration
+        shell: bash
+        env:
+          OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+          OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          ROLE_ARN: ${{ vars.ALIYUN_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          test -n "$OSS_BUCKET"
+          test -n "$OSS_ENDPOINT"
+          test -n "$OIDC_PROVIDER_ARN"
+          test -n "$ROLE_ARN"
+          case "$OSS_BUCKET" in
+            *[!a-z0-9-]*|'') echo "OSS Bucket 名称无效" >&2; exit 1 ;;
+          esac
+          case "$OSS_ENDPOINT" in
+            https://oss-*.aliyuncs.com) ;;
+            *) echo "OSS Endpoint 必须使用标准 HTTPS 地址" >&2; exit 1 ;;
+          esac
+          case "$OIDC_PROVIDER_ARN" in
+            acs:ram::*:oidc-provider/*) ;;
+            *) echo "OIDC Provider ARN 无效" >&2; exit 1 ;;
+          esac
+          case "$ROLE_ARN" in
+            acs:ram::*:role/*) ;;
+            *) echo "RAM Role ARN 无效" >&2; exit 1 ;;
+          esac
+
+      - name: Authenticate to Alibaba Cloud
+        uses: aliyun/configure-aliyun-credentials-action@v1
+        with:
+          role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-session-name: goodbuddy-release-${{ github.run_id }}
+          role-session-expiration: 3600
+          audience: sts.aliyuncs.com
+
+      - name: Install ossutil
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="2.3.0"
+          archive="$RUNNER_TEMP/ossutil.zip"
+          directory="$RUNNER_TEMP/ossutil"
+          curl --fail --silent --show-error --location \
+            "https://gosspublic.alicdn.com/ossutil/v2/$version/ossutil-$version-linux-amd64.zip" \
+            --output "$archive"
+          mkdir "$directory"
+          unzip -q "$archive" -d "$directory"
+          binary="$(find "$directory" -type f -name ossutil -print -quit)"
+          test -n "$binary"
+          chmod +x "$binary"
+          echo "$(dirname "$binary")" >> "$GITHUB_PATH"
+
+      - name: Prepare OSS website release index
+        id: oss-release
+        shell: bash
+        env:
+          OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          endpoint_host="${OSS_ENDPOINT#https://}"
+          base_url="https://${OSS_BUCKET}.${endpoint_host}/releases/${GITHUB_REF_NAME}/"
+          node build/create-site-release.cjs \
+            --manifest dist/release-upload/release-manifest.json \
+            --base-url "$base_url" \
+            --output dist/site-release.json
+          echo "base-url=$base_url" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable release assets to OSS
+        shell: bash
+        env:
+          OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          export OSS_ACCESS_KEY_ID="$ALIBABA_CLOUD_ACCESS_KEY_ID"
+          export OSS_ACCESS_KEY_SECRET="$ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+          export OSS_SESSION_TOKEN="$ALIBABA_CLOUD_SECURITY_TOKEN"
+          test -n "$OSS_ACCESS_KEY_ID"
+          test -n "$OSS_ACCESS_KEY_SECRET"
+          test -n "$OSS_SESSION_TOKEN"
+          for file in dist/release-upload/* dist/site-release.json; do
+            name="$(basename "$file")"
+            ossutil cp "$file" \
+              "oss://${OSS_BUCKET}/releases/${GITHUB_REF_NAME}/${name}" \
+              --endpoint "$OSS_ENDPOINT" \
+              --update
+          done
+
+      - name: Verify public OSS release assets
+        run: node build/verify-site-release.cjs --manifest dist/site-release.json
+
+      - name: Create or update draft GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -196,3 +294,18 @@ jobs:
           fi
           gh release upload "$tag" dist/release-upload/* --clobber
           gh release edit "$tag" --draft=false --latest
+
+      - name: Point website to verified OSS release
+        shell: bash
+        env:
+          OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          export OSS_ACCESS_KEY_ID="$ALIBABA_CLOUD_ACCESS_KEY_ID"
+          export OSS_ACCESS_KEY_SECRET="$ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+          export OSS_SESSION_TOKEN="$ALIBABA_CLOUD_SECURITY_TOKEN"
+          ossutil cp dist/site-release.json \
+            "oss://${OSS_BUCKET}/releases/latest.json" \
+            --endpoint "$OSS_ENDPOINT" \
+            --force

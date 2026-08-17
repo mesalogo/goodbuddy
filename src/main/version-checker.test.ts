@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  checkMirrorForUpdates,
   checkForUpdates,
   compareStrictSemVer,
-  GOODBUDDY_LATEST_RELEASE_API_URL
+  getUpdateDownloadPage,
+  GOODBUDDY_LATEST_RELEASE_API_URL,
+  GOODBUDDY_MIRROR_RELEASE_INDEX_URL,
+  VersionChecker
 } from './version-checker'
 
 const latestVersion = '1.2.3'
@@ -93,6 +97,93 @@ function successfulFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
     }
     throw new Error(`Unexpected request: ${url}`)
   })
+}
+
+type MirrorTestFile = {
+  name: string
+  size: number
+  sha256: string
+  url: string
+}
+
+type MirrorTestTarget = {
+  platform: 'windows' | 'macos' | 'linux'
+  arch: 'x64' | 'arm64'
+  files: Record<string, MirrorTestFile>
+}
+
+type MirrorTestIndex = {
+  formatVersion: 1
+  productName: 'GoodBuddy'
+  version: string
+  targets: Record<string, MirrorTestTarget>
+  checksumUrl: string
+  fallbackUrl: string
+}
+
+function mirrorFileName(
+  platform: MirrorTestTarget['platform'],
+  arch: MirrorTestTarget['arch'],
+  format: string
+): string {
+  const suffixes: Record<string, string> = {
+    nsis: 'setup.exe',
+    portable: 'portable.zip',
+    dmg: 'installer.dmg',
+    zip: 'portable.zip',
+    AppImage: 'portable.AppImage',
+    deb: 'installer.deb'
+  }
+  return `GoodBuddy-${latestVersion}-${platform}-${arch}-${suffixes[format]}`
+}
+
+function mirrorIndexPayload(): MirrorTestIndex {
+  const definitions: Array<{
+    platform: MirrorTestTarget['platform']
+    arch: MirrorTestTarget['arch']
+    formats: string[]
+  }> = [
+    { platform: 'windows', arch: 'x64', formats: ['nsis', 'portable'] },
+    { platform: 'windows', arch: 'arm64', formats: ['nsis', 'portable'] },
+    { platform: 'macos', arch: 'x64', formats: ['dmg', 'zip'] },
+    { platform: 'macos', arch: 'arm64', formats: ['dmg', 'zip'] },
+    { platform: 'linux', arch: 'x64', formats: ['AppImage', 'deb'] },
+    { platform: 'linux', arch: 'arm64', formats: ['AppImage', 'deb'] }
+  ]
+  const releaseBase =
+    `https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/` +
+    `v${latestVersion}/`
+  const targets: Record<string, MirrorTestTarget> = {}
+  for (const definition of definitions) {
+    const targetFiles: Record<string, MirrorTestFile> = {}
+    for (const [index, format] of definition.formats.entries()) {
+      const name = mirrorFileName(
+        definition.platform,
+        definition.arch,
+        format
+      )
+      targetFiles[format] = {
+        name,
+        size: 100 + index,
+        sha256: (index === 0 ? 'a' : 'b').repeat(64),
+        url: new URL(encodeURIComponent(name), releaseBase).href
+      }
+    }
+    targets[`${definition.platform}-${definition.arch}`] = {
+      platform: definition.platform,
+      arch: definition.arch,
+      files: targetFiles
+    }
+  }
+  return {
+    formatVersion: 1,
+    productName: 'GoodBuddy',
+    version: latestVersion,
+    targets,
+    checksumUrl: new URL('SHA256SUMS', releaseBase).href,
+    fallbackUrl:
+      'https://github.com/mesalogo/goodbuddy/releases/latest'
+  }
 }
 
 describe('compareStrictSemVer', () => {
@@ -472,5 +563,113 @@ describe('checkForUpdates', () => {
         timeoutMs: 5
       })
     ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+})
+
+describe('checkMirrorForUpdates', () => {
+  it('reads the fixed mirror index and returns the current platform files', async () => {
+    const payload = mirrorIndexPayload()
+    const transport = vi.fn<typeof fetch>(async () =>
+      jsonResponse(payload)
+    )
+
+    await expect(
+      checkMirrorForUpdates({
+        fetch: transport,
+        currentVersion: '1.0.0',
+        platform: 'win32',
+        arch: 'x64'
+      })
+    ).resolves.toEqual({
+      updateAvailable: true,
+      currentVersion: '1.0.0',
+      latestVersion,
+      releaseUrl: 'https://mesalogo.github.io/goodbuddy/#download',
+      target: {
+        platform: 'windows',
+        arch: 'x64',
+        formats: ['nsis', 'portable'],
+        files: Object.values(
+          payload.targets['windows-x64']!.files
+        ).map((file) => ({
+          name: file.name,
+          size: file.size,
+          sha256: file.sha256
+        }))
+      }
+    })
+
+    expect(transport).toHaveBeenCalledTimes(1)
+    expect(String(transport.mock.calls[0]?.[0])).toBe(
+      GOODBUDDY_MIRROR_RELEASE_INDEX_URL
+    )
+    expect(transport.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      redirect: 'manual',
+      credentials: 'omit',
+      cache: 'no-store'
+    })
+  })
+
+  it('rejects redirects, incomplete targets, and untrusted file URLs', async () => {
+    const redirecting = vi.fn<typeof fetch>(async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://attacker.invalid/latest.json' }
+      })
+    )
+    await expect(
+      checkMirrorForUpdates({
+        fetch: redirecting,
+        currentVersion: '1.0.0',
+        platform: 'win32',
+        arch: 'x64'
+      })
+    ).rejects.toThrow('must not redirect')
+
+    const incomplete = mirrorIndexPayload()
+    delete incomplete.targets['linux-arm64']
+    await expect(
+      checkMirrorForUpdates({
+        fetch: vi.fn<typeof fetch>(async () => jsonResponse(incomplete)),
+        currentVersion: '1.0.0',
+        platform: 'win32',
+        arch: 'x64'
+      })
+    ).rejects.toThrow('targets are incomplete')
+
+    const untrusted = mirrorIndexPayload()
+    untrusted.targets['windows-x64']!.files.nsis!.url =
+      'https://attacker.invalid/GoodBuddy.exe'
+    await expect(
+      checkMirrorForUpdates({
+        fetch: vi.fn<typeof fetch>(async () => jsonResponse(untrusted)),
+        currentVersion: '1.0.0',
+        platform: 'win32',
+        arch: 'x64'
+      })
+    ).rejects.toThrow('not a trusted mirror URL')
+  })
+
+  it('routes VersionChecker and download pages through the selected source', async () => {
+    const transport = vi.fn<typeof fetch>(async () =>
+      jsonResponse(mirrorIndexPayload())
+    )
+    const checker = new VersionChecker({
+      fetch: transport,
+      currentVersion: '1.0.0',
+      platform: 'win32',
+      arch: 'x64'
+    })
+
+    await expect(checker.check('mirror')).resolves.toMatchObject({
+      latestVersion
+    })
+    expect(getUpdateDownloadPage('github')).toBe(
+      'https://github.com/mesalogo/goodbuddy/releases'
+    )
+    expect(getUpdateDownloadPage('mirror')).toBe(
+      'https://mesalogo.github.io/goodbuddy/#download'
+    )
   })
 })

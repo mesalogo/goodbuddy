@@ -71,7 +71,7 @@ export const settings = {
     about: {
       label: '关于与更新',
       navigationDescription: '版本检查与下载页',
-      description: '只检查 GoodBuddy 官方 GitHub Release，不自动下载安装'
+      description: '检查所选官方更新源，不自动下载安装'
     }
   },
   actions: {

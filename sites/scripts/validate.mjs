@@ -11,6 +11,8 @@ const requiredFiles = [
   "app.js",
   "assets/goodbuddy-light.png",
   "assets/goodbuddy-dark.png",
+  "assets/linux-plain.svg",
+  "assets/devicon-LICENSE",
   "README.md",
 ];
 
@@ -132,6 +134,31 @@ for (const link of releaseLinks) {
   report(/target="_blank"/.test(link), `下载入口必须在新窗口打开：${link}`);
   report(/rel="[^"]*noreferrer[^"]*"/.test(link), `下载入口缺少 noreferrer：${link}`);
 }
+report(
+  (html.match(/data-download-card="(?:windows|macos|linux)"/g) ?? []).length === 3,
+  "下载区必须包含 Windows、macOS 和 Linux 选择器",
+);
+report(
+  (html.match(/data-download-arch/g) ?? []).length === 3,
+  "每个平台必须提供处理器架构选择器",
+);
+report(
+  (html.match(/data-download-format/g) ?? []).length === 3,
+  "每个平台必须提供安装包类型选择器",
+);
+report(/data-release-status/.test(html), "下载区缺少发布源状态");
+report(
+  appJs.includes(
+    "https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/latest.json",
+  ),
+  "官网必须从 GoodBuddy OSS 加载最新发布索引",
+);
+report(
+  appJs.includes("https://github.com/mesalogo/goodbuddy/releases/latest"),
+  "官网必须保留 GitHub Release 回退地址",
+);
+report(/credentials:\s*"omit"/.test(appJs), "OSS 发布索引请求不得携带凭据");
+report(/isTrustedReleaseUrl/.test(appJs), "OSS 下载链接缺少来源校验");
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
@@ -173,7 +200,7 @@ for (const link of externalBlankLinks) {
 
 report(
   !/<a\b[^>]*href="[^"]+\.(?:exe|dmg|zip|AppImage|deb)(?:[?#][^"]*)?"/i.test(html),
-  "具体安装资产链接应由 Release 页面统一提供",
+  "具体安装资产链接应由 OSS 发布索引动态提供",
 );
 report(
   !/(?:react|vue|angular|bootstrap|tailwind)(?:\.min)?\.(?:js|css)/i.test(html),

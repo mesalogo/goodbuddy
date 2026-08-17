@@ -133,6 +133,7 @@ describe('GoodBuddy configuration contracts', () => {
     const snapshot = {
       application: {
         checkUpdatesOnStartup: true,
+        updateSource: 'github',
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate',
         magicNoteCommentFormat: 'combined'

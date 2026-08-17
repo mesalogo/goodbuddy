@@ -1082,6 +1082,7 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        updateSource: 'github' as const,
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -1173,12 +1174,14 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        updateSource: 'github' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        updateSource: 'github' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -1271,12 +1274,14 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        updateSource: 'github' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
+        updateSource: 'github' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7062,12 +7067,14 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        updateSource: 'github' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        updateSource: 'github' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7107,12 +7114,14 @@ describe('App', () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        updateSource: 'github' as const,
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
+        updateSource: 'github' as const,
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7144,6 +7153,7 @@ describe('App', () => {
   it('keeps platform-feature switches in Settings without navigating', async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'

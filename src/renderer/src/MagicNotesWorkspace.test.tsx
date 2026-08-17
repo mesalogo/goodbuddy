@@ -168,6 +168,7 @@ const onAnalysisEvent = vi.fn<
 })
 const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async () => ({
   checkUpdatesOnStartup: false,
+  updateSource: 'github',
   magicNotesEnabled: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
@@ -178,6 +179,7 @@ beforeEach(() => {
   analysisEventListener = undefined
   getApplicationSettings.mockResolvedValue({
     checkUpdatesOnStartup: false,
+    updateSource: 'github',
     magicNotesEnabled: true,
     magicNoteCommentMode: 'immediate',
     magicNoteCommentFormat: 'combined'
@@ -677,6 +679,7 @@ describe('MagicNotesWorkspace', () => {
   it('reuses the AI comments pane for selected todos', async () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'combined'
@@ -707,6 +710,7 @@ describe('MagicNotesWorkspace', () => {
   it('streams with snapshotted sidebar options while later changes stay local', async () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'narrative'
@@ -820,6 +824,7 @@ describe('MagicNotesWorkspace', () => {
   it('automatically comments on a newly saved record in auto mode', async () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
+      updateSource: 'github',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-auto',
       magicNoteCommentFormat: 'combined'
