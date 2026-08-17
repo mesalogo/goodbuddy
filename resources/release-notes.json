@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.10.2",
+      "releasedAt": "2026-08-17",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.10.2 新增可选的镜像节点，并改进最近对话的时间显示。"
+          ],
+          "features": [
+            "**镜像节点与更新源。** 在“关于与更新”中可选择 GitHub（默认）或镜像节点。手动检查、启动时检查和打开下载页会使用同一选择，应用仍只检查版本，不会自动下载安装。"
+          ],
+          "fixes": [
+            "**最近对话时间。** 侧栏中的当天对话显示本地时间，较早对话显示日期，跨年记录同时显示年份；悬停可查看完整日期和时间。"
+          ],
+          "notices": [
+            "**默认更新源。** 现有用户升级后仍默认使用 GitHub；只有手动选择后才会使用镜像节点。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.10.2 adds an optional mirror node and improves how recent conversation times are displayed."
+          ],
+          "features": [
+            "**Mirror node and update source.** About & Updates now lets you choose GitHub (default) or the mirror node. Manual checks, startup checks, and the download page use the same selection. GoodBuddy still checks versions only and never downloads or installs updates automatically."
+          ],
+          "fixes": [
+            "**Recent conversation times.** Today’s conversations show local time in the sidebar, older conversations show the date, and entries from another year include the year. Hovering reveals the complete date and time."
+          ],
+          "notices": [
+            "**Default update source.** Existing users continue to use GitHub after upgrading. The mirror node is used only after it is selected manually."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.10.1",
       "releasedAt": "2026-08-17",
       "notes": {
