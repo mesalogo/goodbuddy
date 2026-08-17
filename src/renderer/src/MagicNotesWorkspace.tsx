@@ -2155,9 +2155,17 @@ export function MagicNotesWorkspace({
             )
           ) : !detail ? (
             <EmptyState
-              description={t('comments.selectNote')}
+              description={
+                loadStatus === 'loading'
+                  ? t('status.loadingNotes')
+                  : t('comments.selectNote')
+              }
               icon={<Bot size={20} />}
-              title={t('comments.emptyTitle')}
+              title={
+                loadStatus === 'loading'
+                  ? t('status.loading')
+                  : t('comments.emptyTitle')
+              }
             />
           ) : aiEntries.length === 0 &&
             draftAnalyses.length === 0 &&

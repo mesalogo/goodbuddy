@@ -2,12 +2,12 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.10.0",
+      "version": "0.10.1",
       "releasedAt": "2026-08-17",
       "notes": {
         "zh-CN": {
           "highlights": [
-            "0.10.0 重点完善多 Runtime 工作流。OpenCode、Continue 和 DeepSeek Harness 的能力、MCP、插件与上下文管理现在可以在 GoodBuddy 内统一查看和配置，长对话、多会话和任务通知也更加连贯。"
+            "0.10.1 重点完善多 Runtime 工作流。OpenCode、Continue 和 DeepSeek Harness 的能力、MCP、插件与上下文管理现在可以在 GoodBuddy 内统一查看和配置，长对话、多会话和任务通知也更加连贯。"
           ],
           "features": [
             "**Runtime 能力概览。** 切换 Runtime 或排查不可用工具，设置页会展示内置 OpenCode、Continue 和 DeepSeek Harness 实际提供的 Agents、Tools、Commands、Rules、Prompts、Skills、MCP 等能力，并提供 Runtime 默认项与上下文压缩配置。",
@@ -35,7 +35,7 @@
         },
         "en-US": {
           "highlights": [
-            "GoodBuddy 0.10.0 strengthens multi-Runtime workflows. OpenCode, Continue, and DeepSeek Harness capabilities, MCP, plugins, and context controls can now be viewed and configured in one place, with smoother long conversations, parallel work, and task notifications."
+            "GoodBuddy 0.10.1 strengthens multi-Runtime workflows. OpenCode, Continue, and DeepSeek Harness capabilities, MCP, plugins, and context controls can now be viewed and configured in one place, with smoother long conversations, parallel work, and task notifications."
           ],
           "features": [
             "**Runtime capability overview.** Switching Runtimes or diagnosing unavailable tools now reveals the Agents, Tools, Commands, Rules, Prompts, Skills, MCP, and other capabilities actually provided by managed OpenCode, Continue, and DeepSeek Harness, along with Runtime defaults and context controls.",

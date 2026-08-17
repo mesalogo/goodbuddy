@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -449,14 +450,35 @@ describe('MagicNotesWorkspace', () => {
   })
 
   it('shows a concise empty state before a note has AI comments', async () => {
-    get.mockResolvedValueOnce(alternateDetail(noteId, detail.title))
+    let resolveDetail:
+      | ((value: MagicNoteDetail) => void)
+      | undefined
+    const delayedDetail = new Promise<MagicNoteDetail>((resolve) => {
+      resolveDetail = resolve
+    })
+    get.mockReturnValueOnce(delayedDetail)
 
     render(<MagicNotesWorkspace onNotify={onNotify} />)
 
-    expect(await screen.findByText('暂无 AI 评论')).toBeInTheDocument()
+    const pane = await screen.findByLabelText('AI 评论')
+    expect(within(pane).getByText('正在加载')).toBeInTheDocument()
+    expect(within(pane).getByText('正在加载笔记…')).toBeInTheDocument()
     expect(
-      screen.getByText('写完一句并停止输入 5 秒后，评论会显示在这里。')
+      within(pane).queryByText('暂无 AI 评论')
+    ).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveDetail?.(alternateDetail(noteId, detail.title))
+      await delayedDetail
+    })
+
+    expect(
+      await within(pane).findByText(
+        '写完一句并停止输入 5 秒后，评论会显示在这里。'
+      )
     ).toBeInTheDocument()
+    expect(within(pane).getByText('暂无 AI 评论')).toBeInTheDocument()
+    expect(within(pane).queryByText('正在加载')).not.toBeInTheDocument()
   })
 
   it('resizes the AI comments pane with pointer and keyboard controls', async () => {

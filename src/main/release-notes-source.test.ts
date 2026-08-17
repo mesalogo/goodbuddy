@@ -30,7 +30,7 @@ describe('packaged release notes', () => {
     }
 
     const currentRelease = parsed.releases.find(
-      (release) => release.version === '0.10.0'
+      (release) => release.version === '0.10.1'
     )
     expect(currentRelease).toBeDefined()
     expect(currentRelease?.releasedAt).toBe('2026-08-17')
