@@ -2072,14 +2072,9 @@ describe('SettingsPanel runtime files', () => {
 
     const agent = await screen.findByLabelText('默认 Agent')
     expect(agent).toHaveValue('planner')
-    const nativeStatus = screen.getByRole('status')
-    expect(nativeStatus).toHaveTextContent('OpenCode 原生能力已就绪')
     expect(
-      Boolean(
-        nativeStatus.compareDocumentPosition(agent) &
-          Node.DOCUMENT_POSITION_FOLLOWING
-      )
-    ).toBe(true)
+      screen.queryByText('OpenCode 原生能力已就绪')
+    ).not.toBeInTheDocument()
     expect(screen.getByText('能力与默认配置')).toBeInTheDocument()
     expect(screen.queryByText('Runtime 原生能力')).not.toBeInTheDocument()
     expect(screen.queryByText('OpenCode 默认 Agent')).not.toBeInTheDocument()
@@ -2161,6 +2156,35 @@ describe('SettingsPanel runtime files', () => {
       ).not.toBeInTheDocument()
     )
   })
+
+  it.each([
+    ['opencode', 'OpenCode 原生能力已就绪'],
+    [
+      'continue',
+      '内置 Continue CLI 已就绪；Rules 与 Prompts 来自原始静态配置；MCP Prompt 仅在 MCPService 运行并连接后可发现，非运行快照不会启动服务器。Continue MCPService 不提供 Resources。'
+    ],
+    [
+      'deepseek-harness',
+      '显示 DeepSeek Harness Host 与插件原生能力；GoodBuddy 分配的 Skill 和 MCP 不在此清单中。'
+    ]
+  ] as const)(
+    'hides the redundant ready detail for %s',
+    async (provider, detail) => {
+      const fallbackSnapshot = await getRuntimeNativeSnapshot({
+        provider
+      })
+      getRuntimeNativeSnapshot.mockResolvedValueOnce({
+        ...fallbackSnapshot,
+        detail
+      })
+
+      render(<RuntimeCustomizationSection provider={provider} />)
+
+      await screen.findByRole('tablist', { name: '能力清单' })
+      expect(screen.queryByText(detail)).not.toBeInTheDocument()
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    }
+  )
 
   it('distinguishes external OpenCode connectivity from readable native inventory', async () => {
     const fallbackSnapshot = await getRuntimeNativeSnapshot({

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DshNpmExtensionInstaller,
   DshNpmMarketplaceCatalog,
+  runPackageManager,
   type PackageManagerRunner
 } from './dsh-extension-marketplace'
 
@@ -139,7 +140,7 @@ describe('DSH npm marketplace', () => {
     expect(fetcher).toHaveBeenCalledOnce()
   })
 
-  it('uses bundled npm to install the exact package and verifies its entrypoint', async () => {
+  it('installs the exact package when an older manifest lacks DSH bundle metadata', async () => {
     const destinationDirectory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-dsh-npm-installer-')
     )
@@ -161,6 +162,11 @@ describe('DSH npm marketplace', () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       response({
         versions: {
+          '0.0.1': {
+            name: packageName,
+            version: '0.0.1',
+            dist: { integrity }
+          },
           [version]: manifest
         }
       })
@@ -293,5 +299,96 @@ describe('DSH npm marketplace', () => {
         destinationDirectory: directory
       })
     ).rejects.toThrow()
+  })
+
+  it('aborts an active package-manager process and settles the run', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-dsh-npm-abort-')
+    )
+    temporaryDirectories.push(directory)
+    const controller = new AbortController()
+    const operation = runPackageManager(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1_000)'],
+      {
+        cwd: directory,
+        env: process.env,
+        timeoutMs: 60_000,
+        signal: controller.signal
+      }
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    controller.abort(new Error('installer cancellation fixture'))
+
+    await expect(operation).rejects.toThrow(
+      'installer cancellation fixture'
+    )
+  })
+
+  it('disposes active installs, propagates cancellation, and rejects new work', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-dsh-installer-dispose-')
+    )
+    temporaryDirectories.push(directory)
+    const integrity = `sha512-${Buffer.from('verified').toString(
+      'base64'
+    )}`
+    const packageName = 'dsh-plugin-cancellable'
+    const version = '1.0.0'
+    const runner: PackageManagerRunner = vi.fn(
+      (_command, _args, options) =>
+        new Promise<{
+          exitCode: number
+          stdout: string
+          stderr: string
+        }>((_resolve, reject) => {
+          const rejectCancellation = (): void => {
+            reject(options.signal?.reason)
+          }
+          options.signal?.addEventListener(
+            'abort',
+            rejectCancellation,
+            { once: true }
+          )
+        })
+    )
+    const installer = new DshNpmExtensionInstaller({
+      dshHome: directory,
+      fetcher: vi.fn<typeof fetch>(async () =>
+        response({
+          versions: {
+            [version]: {
+              name: packageName,
+              version,
+              main: 'index.js',
+              dist: { integrity },
+              dsh: { bundle: { patch: './cordis.patch.yml' } }
+            }
+          }
+        })
+      ),
+      runner
+    })
+    const input = {
+      entry: {
+        id: 'cancellable',
+        package: { name: packageName, version },
+        displayName: packageName,
+        description: 'Cancellation fixture.'
+      },
+      destinationDirectory: directory
+    }
+    const installation = installer.install(input)
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce())
+
+    await installer.dispose()
+
+    await expect(installation).rejects.toThrow(
+      '应用退出，DSH 插件安装已取消'
+    )
+    await expect(installer.install(input)).rejects.toThrow(
+      'DSH 插件安装器正在关闭'
+    )
   })
 })

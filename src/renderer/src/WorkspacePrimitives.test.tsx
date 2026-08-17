@@ -188,6 +188,12 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('keeps DSH marketplace search text clear of its icon', () => {
+    expect(stylesheet).toMatch(
+      /\.field \.runtime-extension-marketplace__search-input > input\s*\{[^}]*padding-left:\s*34px;/u
+    )
+  })
+
   it('separates model service fields from credential status', () => {
     expect(stylesheet).toMatch(
       /\.model-service-form\s*\{[^}]*display:\s*grid;[^}]*gap:\s*var\(--space-3\);/u

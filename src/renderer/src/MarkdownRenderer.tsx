@@ -92,6 +92,25 @@ type MarkdownRendererProps = {
   children: string
 }
 
+const inlineMarkdownComponents: Components = {
+  p: ({ children }) => <>{children}</>
+}
+
+export const InlineMarkdown = memo(function InlineMarkdown({
+  children
+}: MarkdownRendererProps): React.JSX.Element {
+  return (
+    <ReactMarkdown
+      allowedElements={['p', 'strong']}
+      components={inlineMarkdownComponents}
+      skipHtml
+      unwrapDisallowed
+    >
+      {children}
+    </ReactMarkdown>
+  )
+})
+
 const wholeMarkdownFence =
   /^```(?:markdown|md)\s*\r?\n([\s\S]*?)\r?\n```$/iu
 

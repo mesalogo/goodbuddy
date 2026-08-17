@@ -4373,6 +4373,16 @@ button > svg {
   color: var(--accent);
 }
 
+.release-notes-dialog__section li strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.release-notes-dialog__section--notices :is(h3, h4) svg,
+.release-notes-dialog__section--notices li::marker {
+  color: var(--warning);
+}
+
 .release-notes-dialog__footer {
   display: flex;
   align-items: center;
@@ -5496,11 +5506,6 @@ button > svg {
   overflow-wrap: anywhere;
 }
 
-.runtime-native-inventory__status--available {
-  border-color: color-mix(in srgb, var(--success) 35%, transparent);
-  background: var(--success-subtle);
-}
-
 .runtime-native-inventory__status--unavailable {
   border-color: var(--danger-border);
   background: var(--danger-subtle);
@@ -5678,7 +5683,7 @@ button > svg {
   transform: translateY(-50%);
 }
 
-.runtime-extension-marketplace__search-input > input {
+.field .runtime-extension-marketplace__search-input > input {
   padding-left: 34px;
 }
 

@@ -33,6 +33,7 @@ const MAXIMUM_CATALOG_ENTRIES = 1_000
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
 const DEFAULT_INSTALL_TIMEOUT_MS = 5 * 60_000
 const MAXIMUM_PROCESS_OUTPUT_CHARACTERS = 64 * 1024
+const MAXIMUM_PACKUMENT_VERSIONS = 20_000
 
 const npmSearchPackageSchema = z
   .object({
@@ -93,11 +94,59 @@ const npmVersionManifestSchema = npmInstalledManifestSchema.extend({
   dist: npmDistributionSchema
 })
 
-const npmPackumentSchema = z
-  .object({
-    versions: z.record(z.string(), npmVersionManifestSchema)
+function isPlainObject(
+  value: unknown
+): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+const npmPackumentVersionsSchema = z
+  .custom<Record<string, unknown>>(isPlainObject, {
+    message: 'npm packument versions must be a plain object'
   })
-  .passthrough()
+  .superRefine((versions, context) => {
+    const keys = Object.keys(versions)
+    if (keys.length > MAXIMUM_PACKUMENT_VERSIONS) {
+      context.addIssue({
+        code: 'too_big',
+        origin: 'object',
+        maximum: MAXIMUM_PACKUMENT_VERSIONS,
+        inclusive: true,
+        path: [],
+        message: 'npm packument contains too many versions'
+      })
+    }
+    if (
+      keys.some(
+        (key) =>
+          key === '__proto__' ||
+          key === 'prototype' ||
+          key === 'constructor'
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: [],
+        message: 'npm packument contains an unsafe version key'
+      })
+    }
+  })
+
+const npmPackumentSchema = z
+  .custom<Record<string, unknown>>(isPlainObject, {
+    message: 'npm packument must be a plain object'
+  })
+  .pipe(
+    z
+      .object({
+        versions: npmPackumentVersionsSchema
+      })
+      .passthrough()
+  )
 
 type NpmVersionManifest = z.infer<typeof npmVersionManifestSchema>
 
@@ -114,6 +163,7 @@ export type PackageManagerRunner = (
     cwd: string
     env: NodeJS.ProcessEnv
     timeoutMs: number
+    signal?: AbortSignal
   }
 ) => Promise<PackageManagerRunResult>
 
@@ -124,11 +174,13 @@ function waitForProcessClose(
     return Promise.resolve()
   }
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, 5_000)
-    child.once('close', () => {
+    const finish = (): void => {
       clearTimeout(timer)
+      child.removeListener('close', finish)
       resolve()
-    })
+    }
+    const timer = setTimeout(finish, 5_000)
+    child.once('close', finish)
   })
 }
 
@@ -147,11 +199,13 @@ async function terminatePackageManager(
       }
     )
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 5_000)
       const finish = (): void => {
         clearTimeout(timer)
+        killer.removeListener('close', finish)
+        killer.removeListener('error', finish)
         resolve()
       }
+      const timer = setTimeout(finish, 5_000)
       killer.once('close', finish)
       killer.once('error', finish)
     })
@@ -183,6 +237,14 @@ export const runPackageManager: PackageManagerRunner = (
   options
 ) =>
   new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(
+        options.signal.reason instanceof Error
+          ? options.signal.reason
+          : new Error('DSH 插件安装已取消')
+      )
+      return
+    }
     const child = spawn(command, [...args], {
       cwd: options.cwd,
       env: options.env,
@@ -194,42 +256,79 @@ export const runPackageManager: PackageManagerRunner = (
     let stdout = ''
     let stderr = ''
     let settled = false
-    const timer = setTimeout(() => {
-      if (settled) {
-        return
-      }
-      settled = true
-      void terminatePackageManager(child).then(
-        () => reject(new Error('DSH 插件安装超时')),
-        () => reject(new Error('DSH 插件安装超时'))
-      )
-    }, options.timeoutMs)
-    child.stdout?.on('data', (chunk) => {
+    let terminating = false
+    const onStdout = (chunk: unknown): void => {
       stdout = boundedAppend(stdout, chunk)
-    })
-    child.stderr?.on('data', (chunk) => {
+    }
+    const onStderr = (chunk: unknown): void => {
       stderr = boundedAppend(stderr, chunk)
-    })
-    child.once('error', (error) => {
+    }
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      options.signal?.removeEventListener('abort', onAbort)
+      child.stdout?.removeListener('data', onStdout)
+      child.stderr?.removeListener('data', onStderr)
+      child.removeListener('error', onError)
+      child.removeListener('close', onClose)
+    }
+    const settleRejected = (error: Error): void => {
       if (settled) {
         return
       }
       settled = true
-      clearTimeout(timer)
+      cleanup()
       reject(error)
-    })
-    child.once('close', (code) => {
-      if (settled) {
+    }
+    const terminateAndReject = (error: Error): void => {
+      if (settled || terminating) {
+        return
+      }
+      terminating = true
+      void terminatePackageManager(child).then(
+        () => settleRejected(error),
+        () => settleRejected(error)
+      )
+    }
+    const onAbort = (): void => {
+      terminateAndReject(
+        options.signal?.reason instanceof Error
+          ? options.signal.reason
+          : new Error('DSH 插件安装已取消')
+      )
+    }
+    const onError = (error: Error): void => {
+      if (terminating) {
+        return
+      }
+      settleRejected(error)
+    }
+    const onClose = (code: number | null): void => {
+      if (settled || terminating) {
         return
       }
       settled = true
-      clearTimeout(timer)
+      cleanup()
       resolve({
         exitCode: code ?? 1,
         stdout,
         stderr
       })
+    }
+    const timer = setTimeout(
+      () =>
+        terminateAndReject(new Error('DSH 插件安装超时')),
+      options.timeoutMs
+    )
+    child.stdout?.on('data', onStdout)
+    child.stderr?.on('data', onStderr)
+    child.once('error', onError)
+    child.once('close', onClose)
+    options.signal?.addEventListener('abort', onAbort, {
+      once: true
     })
+    if (options.signal?.aborted) {
+      onAbort()
+    }
   })
 
 function publicHttpUrl(value: string | undefined): string | undefined {
@@ -292,14 +391,18 @@ function catalogEntry(
 async function fetchJson(
   fetcher: typeof fetch,
   url: URL,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<unknown> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
   const response = await fetcher(url, {
     headers: {
       accept: 'application/json',
       'user-agent': 'GoodBuddy-DSH-Marketplace/1'
     },
-    signal: AbortSignal.timeout(timeoutMs)
+    signal: signal
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal
   })
   if (!response.ok) {
     throw new Error(`DSH 插件市场请求失败（HTTP ${response.status}）`)
@@ -520,6 +623,15 @@ async function prepareNodeCommand(
 }
 
 export class DshNpmExtensionInstaller {
+  private disposed = false
+  private readonly activeInstalls = new Map<
+    Promise<{
+      entrypoint: string
+      integrity?: string
+    }>,
+    AbortController
+  >()
+
   constructor(
     private readonly options: {
       dshHome: string
@@ -534,7 +646,7 @@ export class DshNpmExtensionInstaller {
     }
   ) {}
 
-  async install(
+  install(
     input: Parameters<
       RuntimeExtensionStoreDependencies['install']
     >[0]
@@ -542,7 +654,45 @@ export class DshNpmExtensionInstaller {
     entrypoint: string
     integrity?: string
   }> {
-    const manifest = await this.resolveManifest(input.entry)
+    if (this.disposed) {
+      return Promise.reject(new Error('DSH 插件安装器正在关闭'))
+    }
+    const controller = new AbortController()
+    const operation = this.performInstall(input, controller.signal)
+    this.activeInstalls.set(operation, controller)
+    void operation.then(
+      () => {
+        this.activeInstalls.delete(operation)
+      },
+      () => {
+        this.activeInstalls.delete(operation)
+      }
+    )
+    return operation
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true
+    const active = [...this.activeInstalls.entries()]
+    for (const [, controller] of active) {
+      controller.abort(new Error('应用退出，DSH 插件安装已取消'))
+    }
+    await Promise.allSettled(
+      active.map(([operation]) => operation)
+    )
+  }
+
+  private async performInstall(
+    input: Parameters<
+      RuntimeExtensionStoreDependencies['install']
+    >[0],
+    signal: AbortSignal
+  ): Promise<{
+    entrypoint: string
+    integrity?: string
+  }> {
+    const manifest = await this.resolveManifest(input.entry, signal)
+    signal.throwIfAborted()
     await writeFile(
       join(input.destinationDirectory, 'package.json'),
       `${JSON.stringify(
@@ -608,6 +758,7 @@ export class DshNpmExtensionInstaller {
         ],
         {
           cwd: input.destinationDirectory,
+          signal,
           env: {
             ...packageManagerEnvironment,
             npm_config_audit: 'false',
@@ -625,6 +776,7 @@ export class DshNpmExtensionInstaller {
     } catch (error) {
       throw packageManagerError(error)
     }
+    signal.throwIfAborted()
     if (result.exitCode !== 0) {
       const detail =
         result.stderr.trim() ||
@@ -686,7 +838,8 @@ export class DshNpmExtensionInstaller {
   }
 
   private async resolveManifest(
-    entry: RuntimeExtensionCatalogEntry
+    entry: RuntimeExtensionCatalogEntry,
+    signal: AbortSignal
   ): Promise<NpmVersionManifest> {
     const registryUrl = (
       this.options.registryUrl ?? NPM_REGISTRY_URL
@@ -699,13 +852,21 @@ export class DshNpmExtensionInstaller {
         this.options.fetcher ?? fetch,
         url,
         this.options.requestTimeoutMs ??
-          DEFAULT_REQUEST_TIMEOUT_MS
+          DEFAULT_REQUEST_TIMEOUT_MS,
+        signal
       )
     )
-    const manifest = packument.versions[entry.package.version]
-    if (!manifest) {
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        packument.versions,
+        entry.package.version
+      )
+    ) {
       throw new Error('DSH 插件精确版本未发布')
     }
+    const manifest = npmVersionManifestSchema.parse(
+      packument.versions[entry.package.version]
+    )
     if (
       manifest.name !== entry.package.name ||
       manifest.version !== entry.package.version

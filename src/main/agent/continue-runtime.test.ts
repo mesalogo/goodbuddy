@@ -27,7 +27,10 @@ vi.mock('./runtime-discovery', () => ({
   detectRuntimeBinary: mocks.detectRuntimeBinary
 }))
 
-import { ContinueAgentRuntime } from './continue-runtime'
+import {
+  buildContinuePrompt,
+  ContinueAgentRuntime
+} from './continue-runtime'
 
 function createRuntime(): ContinueAgentRuntime {
   return new ContinueAgentRuntime({
@@ -616,6 +619,151 @@ describe('ContinueAgentRuntime', () => {
     expect(prompt).toContain('trusted persisted facts')
     expect(prompt).toContain('recent question')
     expect(prompt).not.toContain('old secret turn')
+  })
+
+  it('keeps a persisted summary when its covered prefix rolls out of the bounded history window', () => {
+    const history = Array.from({ length: 500 }, (_, index) => ({
+      role:
+        index % 2 === 0
+          ? ('user' as const)
+          : ('assistant' as const),
+      content: `recent message ${index}`
+    }))
+    const prompt = buildContinuePrompt({
+      requestId: randomUUID(),
+      conversationId: 'evicted-summary-conversation',
+      prompt: 'continue',
+      history,
+      historyMessageIds: history.map(() => randomUUID()),
+      contextCompressionState: {
+        coveredHistoryDigest: createHash('sha256')
+          .update(
+            JSON.stringify([
+              { role: 'user', content: 'evicted question' },
+              { role: 'assistant', content: 'evicted answer' }
+            ])
+          )
+          .digest('hex'),
+        coveredMessageCount: 2,
+        coveredFromMessageId: randomUUID(),
+        coveredThroughMessageId: randomUUID(),
+        summary: 'persisted evicted facts'
+      }
+    })
+
+    expect(prompt).toContain('persisted evicted facts')
+    expect(prompt).toContain('recent message 499')
+    expect(prompt).not.toContain('evicted question')
+  })
+
+  it('keeps a persisted summary when filtered messages shorten the bounded history window', () => {
+    const history = Array.from({ length: 499 }, (_, index) => ({
+      role:
+        index % 2 === 0
+          ? ('user' as const)
+          : ('assistant' as const),
+      content: `filtered recent message ${index}`
+    }))
+    const prompt = buildContinuePrompt({
+      requestId: randomUUID(),
+      conversationId: 'filtered-evicted-summary-conversation',
+      prompt: 'continue',
+      history,
+      historyMessageIds: history.map(() => randomUUID()),
+      contextCompressionState: {
+        coveredHistoryDigest: createHash('sha256')
+          .update(
+            JSON.stringify([
+              { role: 'user', content: 'evicted question' },
+              { role: 'assistant', content: 'evicted answer' }
+            ])
+          )
+          .digest('hex'),
+        coveredMessageCount: 2,
+        coveredFromMessageId: randomUUID(),
+        coveredThroughMessageId: randomUUID(),
+        summary: 'persisted facts after filtering'
+      }
+    })
+
+    expect(prompt).toContain('persisted facts after filtering')
+    expect(prompt).toContain('filtered recent message 498')
+    expect(prompt).not.toContain('evicted question')
+  })
+
+  it('keeps a persisted summary when only its covered start rolls out of the history window', () => {
+    const coveredThroughMessageId = randomUUID()
+    const history = [
+      {
+        role: 'assistant' as const,
+        content: 'covered answer still at window start'
+      },
+      ...Array.from({ length: 499 }, (_, index) => ({
+        role:
+          index % 2 === 0
+            ? ('user' as const)
+            : ('assistant' as const),
+        content: `later message ${index}`
+      }))
+    ]
+    const prompt = buildContinuePrompt({
+      requestId: randomUUID(),
+      conversationId: 'partially-evicted-summary-conversation',
+      prompt: 'continue',
+      history,
+      historyMessageIds: [
+        coveredThroughMessageId,
+        ...history.slice(1).map(() => randomUUID())
+      ],
+      contextCompressionState: {
+        coveredHistoryDigest: createHash('sha256')
+          .update(
+            JSON.stringify([
+              { role: 'user', content: 'evicted covered question' },
+              history[0]
+            ])
+          )
+          .digest('hex'),
+        coveredMessageCount: 2,
+        coveredFromMessageId: randomUUID(),
+        coveredThroughMessageId,
+        summary: 'persisted partially evicted facts'
+      }
+    })
+
+    expect(prompt).toContain('persisted partially evicted facts')
+    expect(prompt).toContain('later message 498')
+    expect(prompt).not.toContain('covered answer still at window start')
+  })
+
+  it('rejects a persisted summary that contradicts the current bounded history window', () => {
+    const coveredThroughMessageId = randomUUID()
+    const history = Array.from({ length: 500 }, (_, index) => ({
+      role:
+        index % 2 === 0
+          ? ('user' as const)
+          : ('assistant' as const),
+      content: `conflicting message ${index}`
+    }))
+    const historyMessageIds = history.map(() => randomUUID())
+    historyMessageIds[10] = coveredThroughMessageId
+    const prompt = buildContinuePrompt({
+      requestId: randomUUID(),
+      conversationId: 'conflicting-summary-conversation',
+      prompt: 'continue',
+      history,
+      historyMessageIds,
+      contextCompressionState: {
+        coveredHistoryDigest: '0'.repeat(64),
+        coveredMessageCount: 2,
+        coveredFromMessageId: randomUUID(),
+        coveredThroughMessageId,
+        summary: 'contradictory summary must not appear'
+      }
+    })
+
+    expect(prompt).toContain('conflicting message 499')
+    expect(prompt).not.toContain('contradictory summary must not appear')
   })
 
   it('falls back to bounded raw history when a persisted summary is stale', async () => {

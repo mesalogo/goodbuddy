@@ -15,10 +15,11 @@ export const app = {
   releaseNotes: {
     eyebrow: 'VERSION UPDATE',
     title: "What's New in GoodBuddy {{version}}",
-    description:
-      'This release includes the following features and bug fixes.',
+    description: 'Review the key changes and usage notes in this release.',
+    highlights: 'Highlights',
     features: 'Features',
     fixes: 'Bug Fixes',
+    notices: 'Before You Start',
     close: 'Close release notes',
     start: 'Get Started',
     closing: 'Closing…',

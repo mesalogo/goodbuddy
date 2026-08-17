@@ -138,7 +138,7 @@ npm run dist:linux:arm64
 - OpenCode 平台二进制来自 `.runtime-resources/<arch>`。
 - Continue Runtime 来自锁定版本的 `@continuedev/cli`。
 - DSH 插件安装使用精确锁定并从 `app.asar` 解包的 npm CLI，通过当前 Electron 的 Node 模式运行；最终用户不需要另装 Node.js 或 npm。
-- DSH 图片输入使用精确锁定的 `@napi-rs/canvas` 完整解码 JPEG/PNG。通用包与当前平台的 Skia 原生包必须从 `app.asar` 解包；发布校验会检查版本、目标架构和 MIT 许可证。
+- DSH 图片输入使用精确锁定的 `@napi-rs/canvas` 完整解码 JPEG/PNG。通用包与目标平台、目标架构的 Skia 原生包必须从 `app.asar` 解包；当打包 Runner 的架构与目标架构不同时，发布脚本会根据 lockfile 的精确版本、下载地址和 integrity 临时暂存目标原生包，完成后清理。发布校验会检查版本、目标架构和 MIT 许可证。
 - 打包钩子位于 `build/runtime-hooks.cjs`。
 
 跨架构打包前，确认目标架构的 OpenCode 资源已经准备完成。不要用其他架构的二进制替代目标资源。
@@ -171,6 +171,12 @@ ZIP，以及 Linux 的 AppImage 与 DEB。Windows portable ZIP 解压后可直�
 manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流创建或
 更新 draft GitHub Release，上传全部资产成功后才发布。重跑会保留人工
 编辑的 Release notes 和未知附件。
+
+中英文发布说明统一维护在 `resources/release-notes.json`。新版本按“本次
+亮点 / Highlights”“功能更新 / Features”“问题修复 / Bug Fixes”“使用前
+请留意 / Before You Start”四段组织，应用首次启动弹窗与 GitHub Release
+正文共用该来源。旧版两段式记录会兼容读取，无需改写。提交发布候选前运行
+`npm run release:notes:verify` 校验版本、双语条目数量并生成 Markdown。
 
 发布标签必须与 `package.json` 版本完全一致。实际推送标签和触发发布前仍
 需人工确认，例如当前版本应使用：

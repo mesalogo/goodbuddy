@@ -6,6 +6,7 @@ import {
   Menu,
   safeStorage,
   session,
+  shell,
   Tray,
   utilityProcess
 } from 'electron'
@@ -88,6 +89,12 @@ import {
   DshNpmExtensionInstaller,
   DshNpmMarketplaceCatalog
 } from './agent/dsh-extension-marketplace'
+import { registerDesktopNotificationActivation } from './desktop-notification'
+import {
+  isInstalledWindowsBuild,
+  repairStaleWindowsNotificationShortcuts,
+  resolveWindowsAppUserModelId
+} from './windows-notification-identity'
 
 const shortcut = 'CommandOrControl+Shift+Space'
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -99,8 +106,18 @@ const portableUserDataPath = resolvePortableUserDataPath({
 if (portableUserDataPath) {
   app.setPath('userData', portableUserDataPath)
 }
+const installedWindowsBuild = isInstalledWindowsBuild({
+  packaged: app.isPackaged,
+  platform: process.platform,
+  executablePath: process.execPath
+})
 if (process.platform === 'win32') {
-  app.setAppUserModelId('live.digiman.goodbuddy')
+  app.setAppUserModelId(
+    resolveWindowsAppUserModelId({
+      installed: installedWindowsBuild,
+      executablePath: process.execPath
+    })
+  )
 }
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -122,6 +139,7 @@ let globalTlsPolicy: GlobalTlsPolicy | undefined
 let documentOcrBroker: DocumentOcrBroker | undefined
 let documentOcrModelManager: DocumentOcrModelManager | undefined
 let stopRuntimeReconfiguration: (() => Promise<void>) | undefined
+let dshExtensionInstaller: DshNpmExtensionInstaller | undefined
 
 function createEmbeddingProvider(
   settings: ResolvedRuntimeSettings
@@ -367,6 +385,7 @@ if (hasSingleInstanceLock) {
     )
 
     mainWindow = createMainWindow(() => isQuitting)
+    registerDesktopNotificationActivation(mainWindow)
     tray = buildTray()
     const defaultWorkspace = process.env.GOODBUDDY_WORKSPACE ?? homedir()
     const secureCipher = {
@@ -452,7 +471,7 @@ if (hasSingleInstanceLock) {
       app.getPath('userData'),
       'deepseek-harness'
     )
-    const dshExtensionInstaller = new DshNpmExtensionInstaller({
+    const startupDshExtensionInstaller = new DshNpmExtensionInstaller({
       dshHome: deepSeekHarnessHome,
       npmCliPath: app.isPackaged
         ? join(
@@ -470,11 +489,13 @@ if (hasSingleInstanceLock) {
             'npm-cli.js'
           )
     })
+    dshExtensionInstaller = startupDshExtensionInstaller
     const runtimeExtensionStore = new RuntimeExtensionStore(
       app.getPath('userData'),
       {
         catalog: new DshNpmMarketplaceCatalog(),
-        install: (input) => dshExtensionInstaller.install(input)
+        install: (input) =>
+          startupDshExtensionInstaller.install(input)
       }
     )
     const launchDeepSeekHarness =
@@ -713,6 +734,48 @@ if (hasSingleInstanceLock) {
       runtimeExtensionStore
     )
     loadMainWindow(mainWindow)
+    setImmediate(() => {
+      void repairStaleWindowsNotificationShortcuts({
+        platform: process.platform,
+        installed: installedWindowsBuild,
+        executablePath: process.execPath,
+        programsDirectory: join(
+          app.getPath('appData'),
+          'Microsoft',
+          'Windows',
+          'Start Menu',
+          'Programs'
+        ),
+        shortcutAccess: {
+          readShortcutLink: (shortcutPath) =>
+            shell.readShortcutLink(shortcutPath),
+          writeShortcutLink: (
+            shortcutPath,
+            operation,
+            options
+          ) =>
+            shell.writeShortcutLink(
+              shortcutPath,
+              operation,
+              options
+            )
+        }
+      }).then(
+        ({ failed }) => {
+          if (failed > 0) {
+            console.warn(
+              `Failed to repair ${failed} stale notification shortcut(s)`
+            )
+          }
+        },
+        (error: unknown) => {
+          console.warn(
+            'Failed to inspect stale notification shortcuts',
+            error
+          )
+        }
+      )
+    })
 
     app.on('activate', () => {
       if (mainWindow) {
@@ -744,7 +807,10 @@ app.on('before-quit', (event) => {
   void (async () => {
     try {
       const cleanup = settleCleanupPhases([
-        [() => removeIpcHandlers?.()],
+        [
+          () => dshExtensionInstaller?.dispose(),
+          () => removeIpcHandlers?.()
+        ],
         [() => stopRuntimeReconfiguration?.()],
         [
           () => runtime?.dispose(),

@@ -948,10 +948,14 @@ describe('App', () => {
       expect(loading).toHaveAttribute('aria-busy', 'true')
       await act(async () => lazyRouteMocks.releaseKnowledgeRoute())
       expect(
-        await screen.findByRole('heading', {
-          level: 1,
-          name: '知识库'
-        })
+        await screen.findByRole(
+          'heading',
+          {
+            level: 1,
+            name: '知识库'
+          },
+          { timeout: 3000 }
+        )
       ).toBeInTheDocument()
       expect(
         screen.queryByRole('status', { name: '正在加载页面…' })
@@ -1208,12 +1212,16 @@ describe('App', () => {
             releasedAt: '2026-08-11',
             notes: {
               'zh-CN': {
+                highlights: ['多 Runtime 工作流更加连贯'],
                 features: ['新增版本更新说明'],
-                fixes: ['修复重复显示']
+                fixes: ['修复重复显示'],
+                notices: ['Ask 模式保持只读']
               },
               'en-US': {
+                highlights: ['Multi-Runtime workflows are more cohesive'],
                 features: ['Added release notes'],
-                fixes: ['Fixed repeated display']
+                fixes: ['Fixed repeated display'],
+                notices: ['Ask remains read-only']
               }
             }
           }

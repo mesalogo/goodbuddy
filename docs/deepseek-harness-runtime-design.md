@@ -212,7 +212,9 @@ GoodBuddy 控制面自身不导出 `apply(ctx, config)`，也不提供默认 std
 - Main 只传递受管 Store 中已启用插件的稳定 ID、规范化入口文件和 JSON 配置。
 - Launcher 与 Host 对消息结构和绝对入口路径执行严格校验；Host 解析真实路径并要求入口是普通文件。
 - Host 动态加载 Cordis 插件并等待激活，每个插件有独立的 5 秒激活超时，完整插件序列最多占用 90 秒。
+- Main 的 Host 启动预算使用 10 秒基础预算，加上每个已启用插件 5 秒激活与最多 1 秒失败清理、且整个插件序列最多占用 91 秒，再预留 2 秒保存失败插件状态；显式测试超时仍作为调用方指定的硬上限。
 - 插件按清单依次加载；导入、导出形态或激活失败只记录该插件，不阻止其他插件和 Host 启动。失败 Fiber 的清理同样有界。
+- 有限但超过预算的同步导入或同步 `apply` 在返回后按超时失败并继续加载后续插件；JavaScript 不能在同一事件循环内抢占永不返回的同步第三方代码，此时由 Main 的独立启动截止时间终止整个 Utility。
 - 失败 ID 在 ready 握手中返回 Main；Main 原子写入停用状态和启动错误。
 - 插件成功激活后可注册工具或后台生命周期逻辑。Ask 只能拦截模型工具调用，不能撤销初始化阶段已经发生的副作用。
 
@@ -335,6 +337,7 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 - Harness Control Plane 完成 Agent、工具和会话清理，Host 完成 Cordis Fiber 与子进程的反向清理。
 - Main 在宽限期内等待正常退出。
 - 超时后终止 utilityProcess，并在平台允许时清理完整进程树。
+- 应用退出时中止正在运行的 npm 插件安装并终止其完整进程树，不能让 lifecycle script 在 GoodBuddy 退出后继续运行。
 - 应用退出不得因 Harness 清理无限阻塞。
 
 ## 10. 权限与主机执行
@@ -460,7 +463,8 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 | 工具输出摘要 | 4,000 字符 |
 | 待处理事件数 | 1,000 |
 | stderr 累计 | 64 KiB |
-| 初始化 | 10 秒 |
+| Host 启动 | 10 秒基础预算 + 每插件 5 秒激活与最多 1 秒失败清理，插件序列最多 91 秒；Main 另预留 2 秒持久化失败状态 |
+| ACP 初始化与内部握手 | 每阶段 10 秒 |
 | 单次 Prompt | 10 分钟 |
 | 有序关闭宽限期 | 2 秒 |
 

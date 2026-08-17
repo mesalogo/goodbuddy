@@ -8,10 +8,13 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { Server as McpProtocolServer } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import type { JsonSchemaValidator } from '@modelcontextprotocol/sdk/validation'
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import {
   CallToolRequestSchema,
   CallToolResultSchema,
   ListToolsRequestSchema,
+  isInitializeRequest,
   type CallToolResult,
   type Tool
 } from '@modelcontextprotocol/sdk/types.js'
@@ -57,6 +60,7 @@ import type {
 import {
   createMcpToolName,
   isValidMcpToolName,
+  listAllMcpTools,
   normalizeMcpToolSchema
 } from './mcp-tool-utils'
 
@@ -65,11 +69,13 @@ const MAX_RESULT_BYTES = 128 * 1024
 const MAX_CUSTOM_MCP_RESULT_BYTES = 256 * 1024
 const MAX_CUSTOM_MCP_SERVERS = 16
 const MAX_CUSTOM_MCP_TOOLS = 100
+const MAX_DOWNSTREAM_MCP_SESSIONS_PER_CAPABILITY = 8
 const CUSTOM_MCP_TIMEOUT_MS = 30_000
 const CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
 const CUSTOM_MCP_TASK_CANCEL_TIMEOUT_MS = 5_000
 const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000
 const MAX_CAPABILITY_TTL_MS = 15 * 60_000
+const customMcpJsonSchemaValidator = new AjvJsonSchemaValidator()
 
 export {
   knowledgeToolNames,
@@ -179,6 +185,7 @@ type CustomMcpBinding = {
   originalName: string
   exposedTool: Tool
   taskSupport?: 'forbidden' | 'optional' | 'required'
+  outputValidator?: JsonSchemaValidator<Record<string, unknown>>
 }
 
 type CustomMcpConnection = {
@@ -187,6 +194,19 @@ type CustomMcpConnection = {
   bindings: CustomMcpBinding[]
   dynamicToolsSupported: boolean
   dynamicToolsChanged: boolean
+  dynamicToolsChangeVersion: number
+  dynamicToolsRefresh?: Promise<void>
+}
+
+type DownstreamMcpSession = {
+  id?: string
+  registryKey: string
+  token: string
+  mcp: McpProtocolServer
+  transport: StreamableHTTPServerTransport
+  initialized: boolean
+  listedTools: boolean
+  closing?: Promise<void>
 }
 
 export type KnowledgeMcpGatewayOptions = {
@@ -308,6 +328,11 @@ async function readBoundedJson(
 
 export class KnowledgeMcpGateway {
   private readonly capabilities = new Map<string, Capability>()
+  private readonly downstreamMcpSessions = new Map<
+    string,
+    DownstreamMcpSession
+  >()
+  private readonly downstreamMcpCleanups = new Set<Promise<void>>()
   private readonly customMcpCleanups = new Set<Promise<void>>()
   private readonly now: () => number
   private readonly capabilityTtlMs: number
@@ -490,6 +515,11 @@ export class KnowledgeMcpGateway {
     capability.brokerController.abort(
       new Error('MCP capability was revoked')
     )
+    for (const session of this.downstreamMcpSessions.values()) {
+      if (session.token === token) {
+        void this.closeDownstreamMcpSession(session)
+      }
+    }
     if (capability.configAccess !== 'none') {
       this.configService?.revokeRequest(capability.requestId)
     }
@@ -498,6 +528,24 @@ export class KnowledgeMcpGateway {
     void cleanup.finally(() => {
       this.customMcpCleanups.delete(cleanup)
     })
+  }
+
+  private closeDownstreamMcpSession(
+    session: DownstreamMcpSession
+  ): Promise<void> {
+    if (session.closing) {
+      return session.closing
+    }
+    this.downstreamMcpSessions.delete(session.registryKey)
+    const cleanup = session.mcp
+      .close()
+      .catch(() => undefined)
+      .finally(() => {
+        this.downstreamMcpCleanups.delete(cleanup)
+      })
+    session.closing = cleanup
+    this.downstreamMcpCleanups.add(cleanup)
+    return cleanup
   }
 
   drainReferences(
@@ -673,6 +721,11 @@ export class KnowledgeMcpGateway {
         server,
         originalName: tool.name,
         taskSupport: tool.execution?.taskSupport,
+        outputValidator: tool.outputSchema
+          ? customMcpJsonSchemaValidator.getValidator<
+              Record<string, unknown>
+            >(normalizeMcpToolSchema(tool.outputSchema))
+          : undefined,
         exposedTool: {
           name: createMcpToolName(server.id, tool.name),
           title: `${server.name} / ${tool.name}`.slice(0, 200),
@@ -690,11 +743,116 @@ export class KnowledgeMcpGateway {
     })
   }
 
+  private async listAllCustomMcpTools(
+    client: Client,
+    server: ResolvedMcpServer,
+    signal: AbortSignal
+  ): Promise<Awaited<ReturnType<Client['listTools']>>['tools']> {
+    return listAllMcpTools(client, server.name, signal, {
+      maximumTools: MAX_CUSTOM_MCP_TOOLS,
+      pageTimeoutMs: CUSTOM_MCP_TIMEOUT_MS,
+      totalTimeoutMs: CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS
+    })
+  }
+
+  private async publishCustomMcpToolListChanged(
+    capability: Capability
+  ): Promise<void> {
+    const token = [...this.capabilities.entries()].find(
+      ([, value]) => value === capability
+    )?.[0]
+    if (!token) {
+      return
+    }
+    const sessions = [...this.downstreamMcpSessions.values()].filter(
+      (session) =>
+        session.token === token &&
+        session.initialized &&
+        session.listedTools
+    )
+    await Promise.allSettled(
+      sessions.map((session) => session.mcp.sendToolListChanged())
+    )
+  }
+
+  private scheduleDynamicToolsRefresh(
+    capability: Capability,
+    connection: CustomMcpConnection
+  ): void {
+    void this.refreshDynamicTools(capability, connection).catch(
+      () => undefined
+    )
+  }
+
+  private refreshDynamicTools(
+    capability: Capability,
+    connection: CustomMcpConnection,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (connection.dynamicToolsRefresh) {
+      return connection.dynamicToolsRefresh
+    }
+    const effectiveSignal = signal
+      ? AbortSignal.any([
+          signal,
+          capability.signal,
+          capability.brokerController.signal
+        ])
+      : AbortSignal.any([
+          capability.signal,
+          capability.brokerController.signal
+        ])
+    const changeVersion = connection.dynamicToolsChangeVersion
+    let refreshSucceeded = false
+    const refresh = (async () => {
+      try {
+        const tools = await this.listAllCustomMcpTools(
+          connection.client,
+          connection.server,
+          effectiveSignal
+        )
+        const bindings = this.createCustomMcpBindings(
+          connection.client,
+          connection.server,
+          tools
+        )
+        connection.bindings = bindings
+        connection.dynamicToolsChanged =
+          connection.dynamicToolsChangeVersion !== changeVersion
+        refreshSucceeded = true
+        await this.publishCustomMcpToolListChanged(capability)
+      } catch (error) {
+        connection.dynamicToolsChanged = true
+        if (effectiveSignal.aborted) {
+          throw effectiveSignal.reason
+        }
+        throw new Error(
+          `无法刷新 MCP Server「${connection.server.name}」的工具`,
+          { cause: error }
+        )
+      }
+    })()
+    connection.dynamicToolsRefresh = refresh
+    void refresh.finally(() => {
+      connection.dynamicToolsRefresh = undefined
+      if (
+        refreshSucceeded &&
+        connection.dynamicToolsChanged &&
+        !capability.signal.aborted &&
+        !capability.brokerController.signal.aborted
+      ) {
+        this.scheduleDynamicToolsRefresh(capability, connection)
+      }
+    }).catch(() => undefined)
+    return refresh
+  }
+
   private async connectCustomMcpServer(
     capability: Capability,
     server: ResolvedMcpServer
   ): Promise<CustomMcpConnection> {
     let connection: CustomMcpConnection | undefined
+    let dynamicToolsChangeVersion = 0
     const client = new Client(
       {
         name: 'goodbuddy-main-mcp-broker',
@@ -707,8 +865,17 @@ export class KnowledgeMcpGateway {
                 autoRefresh: false,
                 debounceMs: 0,
                 onChanged: (error) => {
-                  if (!error && connection) {
-                    connection.dynamicToolsChanged = true
+                  if (!error) {
+                    dynamicToolsChangeVersion += 1
+                    if (connection) {
+                      connection.dynamicToolsChangeVersion =
+                        dynamicToolsChangeVersion
+                      connection.dynamicToolsChanged = true
+                      this.scheduleDynamicToolsRefresh(
+                        capability,
+                        connection
+                      )
+                    }
                   }
                 }
               }
@@ -725,22 +892,29 @@ export class KnowledgeMcpGateway {
         timeout: CUSTOM_MCP_TIMEOUT_MS,
         signal
       })
-      const result = await client.listTools(undefined, {
-        timeout: CUSTOM_MCP_TIMEOUT_MS,
+      const listedAtChangeVersion = dynamicToolsChangeVersion
+      const tools = await this.listAllCustomMcpTools(
+        client,
+        server,
         signal
-      })
+      )
       connection = {
         client,
         server,
         bindings: this.createCustomMcpBindings(
           client,
           server,
-          result.tools
+          tools
         ),
         dynamicToolsSupported:
           server.allowDynamicTools &&
           client.getServerCapabilities()?.tools?.listChanged === true,
-        dynamicToolsChanged: false
+        dynamicToolsChanged:
+          dynamicToolsChangeVersion !== listedAtChangeVersion,
+        dynamicToolsChangeVersion
+      }
+      if (connection.dynamicToolsChanged) {
+        this.scheduleDynamicToolsRefresh(capability, connection)
       }
       return connection
     } catch (error) {
@@ -791,41 +965,19 @@ export class KnowledgeMcpGateway {
       throw error
     }
     if (refreshDynamic) {
-      const effectiveSignal = signal
-        ? AbortSignal.any([
-            signal,
-            capability.signal,
-            capability.brokerController.signal
-          ])
-        : AbortSignal.any([
-            capability.signal,
-            capability.brokerController.signal
-          ])
       for (const connection of connections) {
         if (
           !connection.dynamicToolsSupported ||
-          !connection.dynamicToolsChanged
+          (!connection.dynamicToolsChanged &&
+            !connection.dynamicToolsRefresh)
         ) {
           continue
         }
-        connection.dynamicToolsChanged = false
-        try {
-          const result = await connection.client.listTools(undefined, {
-            timeout: CUSTOM_MCP_TIMEOUT_MS,
-            signal: effectiveSignal
-          })
-          connection.bindings = this.createCustomMcpBindings(
-            connection.client,
-            connection.server,
-            result.tools
-          )
-        } catch (error) {
-          connection.dynamicToolsChanged = true
-          throw new Error(
-            `无法刷新 MCP Server「${connection.server.name}」的工具`,
-            { cause: error }
-          )
-        }
+        await this.refreshDynamicTools(
+          capability,
+          connection,
+          signal
+        )
       }
     }
     const bindings = new Map<string, CustomMcpBinding>()
@@ -877,7 +1029,8 @@ export class KnowledgeMcpGateway {
     }
     try {
       if (binding.taskSupport !== 'required') {
-        return ensureBoundedCustomMcpResult(
+        return this.validateCustomMcpResult(
+          binding,
           await binding.client.callTool(params, undefined, options)
         )
       }
@@ -886,7 +1039,10 @@ export class KnowledgeMcpGateway {
         for await (const message of binding.client.experimental.tasks.callToolStream(
           params,
           undefined,
-          options
+          {
+            ...options,
+            task: {}
+          }
         )) {
           if (
             (message.type === 'taskCreated' ||
@@ -895,7 +1051,10 @@ export class KnowledgeMcpGateway {
           ) {
             taskId = message.task.taskId
           } else if (message.type === 'result') {
-            return ensureBoundedCustomMcpResult(message.result)
+            return this.validateCustomMcpResult(
+              binding,
+              message.result
+            )
           } else if (message.type === 'error') {
             throw message.error
           }
@@ -921,6 +1080,33 @@ export class KnowledgeMcpGateway {
         { cause: error }
       )
     }
+  }
+
+  private validateCustomMcpResult(
+    binding: CustomMcpBinding,
+    result: unknown
+  ): CallToolResult {
+    const bounded = ensureBoundedCustomMcpResult(result)
+    if (!binding.outputValidator) {
+      return bounded
+    }
+    if (!bounded.structuredContent) {
+      if (!bounded.isError) {
+        throw new Error(
+          `MCP 工具「${binding.originalName}」未返回结构化结果`
+        )
+      }
+      return bounded
+    }
+    const validation = binding.outputValidator(
+      bounded.structuredContent
+    )
+    if (!validation.valid) {
+      throw new Error(
+        `MCP 工具「${binding.originalName}」返回结果不符合声明结构：${validation.errorMessage.slice(0, 500)}`
+      )
+    }
+    return bounded
   }
 
   private async closeCustomMcpConnections(
@@ -1218,55 +1404,10 @@ export class KnowledgeMcpGateway {
     }
   }
 
-  private async handleRequest(
-    request: IncomingMessage,
-    response: ServerResponse
-  ): Promise<void> {
-    if (request.url !== '/mcp') {
-      sendJson(response, 404, { error: 'Not found' })
-      return
-    }
-    if (request.method !== 'POST') {
-      response.setHeader('allow', 'POST')
-      sendJson(response, 405, {
-        jsonrpc: '2.0',
-        error: { code: -32000, message: 'Method not allowed' },
-        id: null
-      })
-      return
-    }
-    const authorization = request.headers.authorization
-    if (
-      typeof authorization !== 'string' ||
-      !authorization.startsWith('Bearer ')
-    ) {
-      sendJson(response, 401, { error: 'Unauthorized' })
-      return
-    }
-    const token = authorization.slice('Bearer '.length)
-    try {
-      this.getCapability(token)
-    } catch {
-      sendJson(response, 401, { error: 'Unauthorized' })
-      return
-    }
-
-    let body: unknown
-    try {
-      body = await readBoundedJson(request, this.maximumBodyBytes)
-    } catch (error) {
-      sendJson(response, error instanceof RangeError ? 413 : 400, {
-        error:
-          error instanceof RangeError
-            ? 'Request body too large'
-            : 'Invalid JSON'
-      })
-      return
-    }
-
-    const availableScopedTools = new Set(
-      this.getAvailableToolNames(token)
-    )
+  private createDownstreamMcpSession(
+    token: string,
+    availableScopedTools: ReadonlySet<ScopedDataToolName>
+  ): DownstreamMcpSession {
     const mcp = new McpProtocolServer(
       {
         name: 'goodbuddy-request-scoped-capabilities',
@@ -1274,10 +1415,38 @@ export class KnowledgeMcpGateway {
       },
       {
         capabilities: {
-          tools: {}
+          tools: {
+            listChanged: true
+          }
         }
       }
     )
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomBytes(32).toString('base64url'),
+      onsessioninitialized: (sessionId) => {
+        this.downstreamMcpSessions.delete(session.registryKey)
+        session.id = sessionId
+        session.registryKey = sessionId
+        this.downstreamMcpSessions.set(sessionId, session)
+      },
+      onsessionclosed: (sessionId) => {
+        this.downstreamMcpSessions.delete(sessionId)
+      }
+    })
+    const session: DownstreamMcpSession = {
+      registryKey: randomBytes(32).toString('base64url'),
+      token,
+      mcp,
+      transport,
+      initialized: false,
+      listedTools: false
+    }
+    transport.onclose = () => {
+      this.downstreamMcpSessions.delete(session.registryKey)
+    }
+    mcp.oninitialized = () => {
+      session.initialized = true
+    }
     mcp.setRequestHandler(
       ListToolsRequestSchema,
       async (_request, extra) => {
@@ -1287,9 +1456,7 @@ export class KnowledgeMcpGateway {
         )
         const scopedTools = [...availableScopedTools].flatMap(
           (name): Tool[] => {
-            const definition = scopedDataToolByName.get(
-              name as ScopedDataToolName
-            )
+            const definition = scopedDataToolByName.get(name)
             if (!definition) {
               return []
             }
@@ -1315,6 +1482,7 @@ export class KnowledgeMcpGateway {
             ]
           }
         )
+        session.listedTools = true
         return {
           tools: [
             ...scopedTools,
@@ -1330,9 +1498,7 @@ export class KnowledgeMcpGateway {
       async (call, extra) => {
         const name = call.params.name
         const input = call.params.arguments ?? {}
-        if (
-          availableScopedTools.has(name as ScopedDataToolName)
-        ) {
+        if (availableScopedTools.has(name as ScopedDataToolName)) {
           const definition = scopedDataToolByName.get(
             name as ScopedDataToolName
           )
@@ -1369,20 +1535,123 @@ export class KnowledgeMcpGateway {
         )
       }
     )
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined
-    })
-    const close = (): void => {
-      void Promise.allSettled([transport.close(), mcp.close()])
+    return session
+  }
+
+  private async handleRequest(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    if (request.url !== '/mcp') {
+      sendJson(response, 404, { error: 'Not found' })
+      return
     }
-    response.once('close', close)
+    if (
+      request.method !== 'POST' &&
+      request.method !== 'GET' &&
+      request.method !== 'DELETE'
+    ) {
+      response.setHeader('allow', 'POST, GET, DELETE')
+      sendJson(response, 405, {
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Method not allowed' },
+        id: null
+      })
+      return
+    }
+    const authorization = request.headers.authorization
+    if (
+      typeof authorization !== 'string' ||
+      !authorization.startsWith('Bearer ')
+    ) {
+      sendJson(response, 401, { error: 'Unauthorized' })
+      return
+    }
+    const token = authorization.slice('Bearer '.length)
     try {
-      await mcp.connect(transport)
-      await transport.handleRequest(request, response, body)
+      this.getCapability(token)
+    } catch {
+      sendJson(response, 401, { error: 'Unauthorized' })
+      return
+    }
+
+    let body: unknown
+    if (request.method === 'POST') {
+      try {
+        body = await readBoundedJson(request, this.maximumBodyBytes)
+      } catch (error) {
+        sendJson(response, error instanceof RangeError ? 413 : 400, {
+          error:
+            error instanceof RangeError
+              ? 'Request body too large'
+              : 'Invalid JSON'
+        })
+        return
+      }
+    }
+
+    const sessionId = request.headers['mcp-session-id']
+    let createdSession = false
+    let session =
+      typeof sessionId === 'string'
+        ? this.downstreamMcpSessions.get(sessionId)
+        : undefined
+    if (session && session.token !== token) {
+      session = undefined
+    }
+    if (!session) {
+      if (
+        request.method !== 'POST' ||
+        !isInitializeRequest(body) ||
+        typeof sessionId === 'string'
+      ) {
+        sendJson(response, typeof sessionId === 'string' ? 404 : 400, {
+          jsonrpc: '2.0',
+          error: {
+            code:
+              typeof sessionId === 'string' ? -32001 : -32000,
+            message:
+              typeof sessionId === 'string'
+                ? 'Session not found'
+                : 'Bad Request: No valid session ID provided'
+          },
+          id: null
+        })
+        return
+      }
+      const sessionCount = [
+        ...this.downstreamMcpSessions.values()
+      ].filter((candidate) => candidate.token === token).length
+      if (
+        sessionCount >=
+        MAX_DOWNSTREAM_MCP_SESSIONS_PER_CAPABILITY
+      ) {
+        sendJson(response, 429, {
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Too many MCP sessions'
+          },
+          id: null
+        })
+        return
+      }
+      const availableScopedTools = new Set(
+        this.getAvailableToolNames(token)
+      )
+      session = this.createDownstreamMcpSession(
+        token,
+        availableScopedTools
+      )
+      createdSession = true
+      this.downstreamMcpSessions.set(session.registryKey, session)
+      await session.mcp.connect(session.transport)
+    }
+    try {
+      await session.transport.handleRequest(request, response, body)
     } finally {
-      if (response.writableFinished) {
-        response.off('close', close)
-        close()
+      if (createdSession && session.id === undefined) {
+        await this.closeDownstreamMcpSession(session)
       }
     }
   }
@@ -1391,6 +1660,7 @@ export class KnowledgeMcpGateway {
     for (const token of [...this.capabilities.keys()]) {
       this.revoke(token)
     }
+    await Promise.allSettled([...this.downstreamMcpCleanups])
     await Promise.allSettled([...this.customMcpCleanups])
     const server = this.server
     this.server = undefined

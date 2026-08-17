@@ -490,6 +490,134 @@ describe('ModelToolProvider', () => {
     await overflowingProvider.dispose()
   })
 
+  it('loads every paginated MCP tool before exposing the catalog', async () => {
+    const workspace = await createWorkspace()
+    mocks.client.listTools.mockImplementation(
+      async (params?: { cursor?: string }) =>
+        params?.cursor === ''
+          ? {
+              tools: [
+                {
+                  name: 'second',
+                  inputSchema: {
+                    type: 'object',
+                    properties: {}
+                  }
+                }
+              ]
+            }
+          : {
+              tools: [
+                {
+                  name: 'first',
+                  inputSchema: {
+                    type: 'object',
+                    properties: {}
+                  }
+                }
+              ],
+              nextCursor: ''
+            }
+    )
+    const provider = new ModelToolProvider(workspace, [
+      createMcpServer()
+    ])
+
+    const tools = await provider.listTools(
+      toolContext,
+      new AbortController().signal
+    )
+
+    expect(tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ displayName: 'Search MCP / first' }),
+        expect.objectContaining({ displayName: 'Search MCP / second' })
+      ])
+    )
+    expect(mocks.client.listTools).toHaveBeenNthCalledWith(
+      2,
+      { cursor: '' },
+      expect.objectContaining({ timeout: expect.any(Number) })
+    )
+    await provider.dispose()
+  })
+
+  it('refreshes a dynamic MCP change announced during initial listing', async () => {
+    const workspace = await createWorkspace()
+    let resolveInitialList:
+      | ((value: {
+          tools: Array<{
+            name: string
+            inputSchema: {
+              type: 'object'
+              properties: Record<string, never>
+            }
+          }>
+        }) => void)
+      | undefined
+    mocks.client.getServerCapabilities.mockReturnValue({
+      tools: { listChanged: true }
+    })
+    mocks.client.listTools
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInitialList = resolve
+          })
+      )
+      .mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'current',
+            inputSchema: {
+              type: 'object',
+              properties: {}
+            }
+          }
+        ]
+      })
+    const provider = new ModelToolProvider(workspace, [
+      createMcpServer(true)
+    ])
+
+    const listing = provider.listTools(
+      toolContext,
+      new AbortController().signal
+    )
+    await vi.waitFor(() => {
+      expect(mocks.client.listTools).toHaveBeenCalledOnce()
+    })
+    const options = mocks.Client.mock.calls[0]?.[1] as
+      | {
+          listChanged?: {
+            tools?: {
+              onChanged?: (error?: Error) => void
+            }
+          }
+        }
+      | undefined
+    options?.listChanged?.tools?.onChanged?.()
+    resolveInitialList?.({
+      tools: [
+        {
+          name: 'stale',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        }
+      ]
+    })
+
+    await expect(listing).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ displayName: 'Search MCP / current' })
+      ])
+    )
+    expect(mocks.client.listTools).toHaveBeenCalledTimes(2)
+    await provider.dispose()
+  })
+
   it('rejects workspace traversal before accessing the filesystem', async () => {
     const workspace = await createWorkspace()
     const provider = new ModelToolProvider(workspace)

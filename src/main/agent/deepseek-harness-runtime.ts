@@ -34,6 +34,7 @@ import {
   GOODBUDDY_TOOLS_CALL,
   GOODBUDDY_TOOLS_LIST
 } from './deepseek-harness-protocol'
+import { deepSeekHarnessStartupBudget } from './deepseek-harness-control-protocol'
 
 const ACP_PACKAGE_NAME = '@agentclientprotocol/sdk'
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000
@@ -185,6 +186,11 @@ export type DeepSeekHarnessRuntimeOptions = {
   launch: (
     options: DeepSeekHarnessLaunchOptions
   ) => Promise<DeepSeekHarnessChild>
+  /**
+   * Explicit hard timeout for each initialization operation, including the
+   * complete launcher call. When omitted, launcher startup is expanded from
+   * the enabled extension count while later ACP operations retain 10 seconds.
+   */
   initializationTimeoutMs?: number
   promptTimeoutMs?: number
   shutdownTimeoutMs?: number
@@ -450,6 +456,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   readonly supportsScopedDataTools = false
   private state?: HarnessState
   private initialization?: Promise<HarnessState>
+  private launchController?: AbortController
   private disposed = false
   private fatalError?: Error
   private stderrBytes = 0
@@ -467,6 +474,15 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     return (
       this.options.initializationTimeoutMs ??
       DEFAULT_INITIALIZATION_TIMEOUT_MS
+    )
+  }
+
+  private get launchTimeoutMs(): number {
+    return (
+      this.options.initializationTimeoutMs ??
+      deepSeekHarnessStartupBudget(
+        this.options.extensionPackages?.length ?? 0
+      ).mainTimeoutMs
     )
   }
 
@@ -806,6 +822,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
       throw new Error('DeepSeek Harness Runtime 已关闭')
     }
     const launchController = new AbortController()
+    this.launchController = launchController
     let child: DeepSeekHarnessChild | undefined
     try {
       child = await withTimeout(
@@ -822,9 +839,12 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           skillPackages: this.options.skillPackages ?? [],
           extensionPackages: this.options.extensionPackages ?? []
         }),
-        this.initializationTimeoutMs,
+        this.launchTimeoutMs,
         '启动'
       )
+      if (this.disposed) {
+        throw new Error('DeepSeek Harness Runtime 已关闭')
+      }
       const sdk = await (this.options.loadAcpSdk ?? defaultLoadAcpSdk)()
       let agent: AcpAgent | undefined
       const connection = new sdk.ClientSideConnection(
@@ -1076,6 +1096,9 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         ...stateWithoutCapabilities,
         capabilities
       }
+      if (this.disposed) {
+        throw new Error('DeepSeek Harness Runtime 已关闭')
+      }
       this.state = state
       return state
     } catch (error) {
@@ -1084,6 +1107,10 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         await this.terminate(child)
       }
       throw error
+    } finally {
+      if (this.launchController === launchController) {
+        this.launchController = undefined
+      }
     }
   }
 
@@ -1611,6 +1638,10 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
       return
     }
     this.disposed = true
+    this.launchController?.abort(
+      new Error('DeepSeek Harness Runtime 已关闭')
+    )
+    this.launchController = undefined
     const state = this.state
     this.state = undefined
     this.initialization = undefined

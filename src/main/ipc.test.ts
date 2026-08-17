@@ -2151,6 +2151,9 @@ describe('registerIpcHandlers Runtime customization', () => {
         state: 'complete' as const
       }
     ]
+    let persistedRuntimeSelection:
+      | { provider: 'opencode' }
+      | undefined = { provider: 'opencode' }
     const assistantDatabase = {
       claimDueSchedules: vi.fn(() => []),
       getProject: vi.fn(() => ({
@@ -2160,7 +2163,7 @@ describe('registerIpcHandlers Runtime customization', () => {
       getConversation: vi.fn(() => ({
         id: conversationId,
         projectId,
-        runtimeSelection: { provider: 'opencode' as const },
+        runtimeSelection: persistedRuntimeSelection,
         title: 'Runtime conversation',
         updatedAt: Date.now(),
         messages
@@ -2290,13 +2293,54 @@ describe('registerIpcHandlers Runtime customization', () => {
       )?.(event, {
         ...compactInput,
         requestId: '00000000-0000-4000-8000-000000000606',
+        runtimeSelection: { provider: 'continue' }
+      })
+    ).rejects.toThrow('对话 Runtime 或 Project 已更改')
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.agentCompactConversation
+      )?.(event, {
+        ...compactInput,
+        requestId: '00000000-0000-4000-8000-000000000607',
+        projectId: '00000000-0000-4000-8000-000000000608'
+      })
+    ).rejects.toThrow('对话 Runtime 或 Project 已更改')
+
+    persistedRuntimeSelection = undefined
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.agentCompactConversation
+      )?.(event, {
+        ...compactInput,
+        requestId: '00000000-0000-4000-8000-000000000609'
+      })
+    ).resolves.toMatchObject({
+      provider: 'opencode',
+      compacted: true
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.agentCompactConversation
+      )?.(event, {
+        ...compactInput,
+        requestId: '00000000-0000-4000-8000-000000000610',
+        runtimeSelection: { provider: 'continue' }
+      })
+    ).rejects.toThrow('对话 Runtime 或 Project 已更改')
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.agentCompactConversation
+      )?.(event, {
+        ...compactInput,
+        requestId: '00000000-0000-4000-8000-000000000611',
         history: [
           compactInput.history[0],
           { role: 'assistant', content: 'stale content' }
         ]
       })
     ).rejects.toThrow('对话历史已更改')
-    expect(selectedRuntimes.compactConversation).toHaveBeenCalledOnce()
+    expect(selectedRuntimes.compactConversation).toHaveBeenCalledTimes(2)
     await dispose()
   })
 })

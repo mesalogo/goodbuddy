@@ -7,16 +7,40 @@ export const releaseVersionSchema = z
     'Release version must be a stable semantic version'
   )
 
-const localizedReleaseNotesSchema = z
-  .object({
-    features: z.array(z.string().trim().min(1).max(240)).max(20),
-    fixes: z.array(z.string().trim().min(1).max(240)).max(20)
-  })
-  .strict()
-  .refine(
-    (notes) => notes.features.length > 0 || notes.fixes.length > 0,
-    'Release notes must contain at least one item'
-  )
+const releaseNoteItemSchema = z.string().trim().min(1).max(500)
+
+const localizedReleaseNotesSchema = z.preprocess(
+  (value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return value
+    }
+    const notes = value as Record<string, unknown>
+    if ('highlights' in notes || 'notices' in notes) {
+      return value
+    }
+    return {
+      highlights: [],
+      ...notes,
+      notices: []
+    }
+  },
+  z
+    .object({
+      highlights: z.array(releaseNoteItemSchema).max(3),
+      features: z.array(releaseNoteItemSchema).max(20),
+      fixes: z.array(releaseNoteItemSchema).max(20),
+      notices: z.array(releaseNoteItemSchema).max(20)
+    })
+    .strict()
+    .refine(
+      (notes) =>
+        notes.highlights.length > 0 ||
+        notes.features.length > 0 ||
+        notes.fixes.length > 0 ||
+        notes.notices.length > 0,
+      'Release notes must contain at least one item'
+    )
+)
 
 export const releaseNoteSchema = z
   .object({
@@ -48,17 +72,23 @@ export const releaseNotesFileSchema = z
         })
       }
       versions.add(release.version)
-      if (
-        release.notes['zh-CN'].features.length !==
-          release.notes['en-US'].features.length ||
-        release.notes['zh-CN'].fixes.length !==
-          release.notes['en-US'].fixes.length
-      ) {
-        context.addIssue({
-          code: 'custom',
-          message: 'Localized release-note sections must have matching counts',
-          path: ['releases', index, 'notes']
-        })
+      for (const section of [
+        'highlights',
+        'features',
+        'fixes',
+        'notices'
+      ] as const) {
+        if (
+          release.notes['zh-CN'][section].length !==
+          release.notes['en-US'][section].length
+        ) {
+          context.addIssue({
+            code: 'custom',
+            message:
+              'Localized release-note sections must have matching counts',
+            path: ['releases', index, 'notes', section]
+          })
+        }
       }
     }
   })

@@ -110,41 +110,74 @@ function flattenContinueSegment(value: string): string {
     .trim()
 }
 
-function hasValidCompressionPrefix(
+function getCurrentCompressionPrefixLength(
   request: AgentExecutionRequest
-): boolean {
+): number | undefined {
   const state = request.contextCompressionState
   const history = request.history
   if (
     !state ||
     !history ||
-    state.coveredMessageCount <= 0 ||
-    state.coveredMessageCount > history.length
+    state.coveredMessageCount <= 0
   ) {
-    return false
-  }
-  const coveredHistory = history.slice(0, state.coveredMessageCount)
-  if (
-    createHash('sha256')
-      .update(JSON.stringify(coveredHistory))
-      .digest('hex') !== state.coveredHistoryDigest
-  ) {
-    return false
+    return undefined
   }
   const ids = request.historyMessageIds
   if (
     (state.coveredFromMessageId || state.coveredThroughMessageId) &&
     (!ids || ids.length !== history.length)
   ) {
-    return false
+    return undefined
   }
-  return (
-    (!state.coveredFromMessageId ||
-      ids?.[0] === state.coveredFromMessageId) &&
-    (!state.coveredThroughMessageId ||
-      ids?.[state.coveredMessageCount - 1] ===
-        state.coveredThroughMessageId)
+
+  if (state.coveredMessageCount <= history.length) {
+    const coveredHistory = history.slice(
+      0,
+      state.coveredMessageCount
+    )
+    const digestMatches =
+      createHash('sha256')
+        .update(JSON.stringify(coveredHistory))
+        .digest('hex') === state.coveredHistoryDigest
+    const boundariesMatch =
+      (!state.coveredFromMessageId ||
+        ids?.[0] === state.coveredFromMessageId) &&
+      (!state.coveredThroughMessageId ||
+        ids?.[state.coveredMessageCount - 1] ===
+          state.coveredThroughMessageId)
+    if (digestMatches && boundariesMatch) {
+      return state.coveredMessageCount
+    }
+  }
+
+  if (
+    !ids ||
+    !state.coveredFromMessageId ||
+    !state.coveredThroughMessageId
+  ) {
+    return undefined
+  }
+
+  const coveredFromIndex = ids.indexOf(
+    state.coveredFromMessageId
   )
+  const coveredThroughIndex = ids.indexOf(
+    state.coveredThroughMessageId
+  )
+  if (
+    coveredFromIndex === -1 &&
+    coveredThroughIndex >= 0 &&
+    coveredThroughIndex < state.coveredMessageCount - 1
+  ) {
+    return coveredThroughIndex + 1
+  }
+  if (
+    coveredFromIndex === -1 &&
+    coveredThroughIndex === -1
+  ) {
+    return 0
+  }
+  return undefined
 }
 
 export function buildContinuePrompt(
@@ -176,7 +209,9 @@ export function buildContinuePrompt(
       'Answer the CURRENT USER REQUEST now.'
     ].join(' | ')
 
-  if (hasValidCompressionPrefix(request)) {
+  const compressionPrefixLength =
+    getCurrentCompressionPrefixLength(request)
+  if (compressionPrefixLength !== undefined) {
     const state = request.contextCompressionState!
     const summaryEnvelope = {
       role: 'user' as const,
@@ -207,9 +242,7 @@ export function buildContinuePrompt(
     }
     if (compose(summaryPair).length <= MAX_CONTINUE_PROMPT_CHARACTERS) {
       const retained = [...summaryPair]
-      const recent = request.history!.slice(
-        state.coveredMessageCount
-      )
+      const recent = request.history!.slice(compressionPrefixLength)
       for (const message of recent.slice(-18).reverse()) {
         const candidate = [
           ...summaryPair,

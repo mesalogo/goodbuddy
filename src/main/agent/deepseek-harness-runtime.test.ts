@@ -6,6 +6,7 @@ import {
   type ModelToolDefinition,
   type ModelToolProviderLike
 } from './model-tool-provider'
+import { deepSeekHarnessStartupBudget } from './deepseek-harness-control-protocol'
 import type {
   ResolvedMcpServer
 } from '../capabilities/capability-service'
@@ -47,6 +48,19 @@ function setup(
     maxRequestOutputCharacters?: number
     supportsImageInput?: boolean
     advertisedImageInput?: boolean
+    initializationTimeoutMs?: number
+    useDefaultInitializationTimeout?: boolean
+    launchDelayMs?: number
+    extensionPackages?: Array<{
+      id: string
+      entrypoint: string
+      configuration: Record<string, unknown>
+    }>
+    launch?: (
+      options: Parameters<
+        ConstructorParameters<typeof DeepSeekHarnessRuntime>[0]['launch']
+      >[0]
+    ) => Promise<DeepSeekHarnessChild>
   } = {}
 ) {
   const exit = deferred<{
@@ -215,7 +229,17 @@ function setup(
     ClientSideConnection,
     ndJsonStream: vi.fn(() => ({ stream: true }))
   } as unknown as DeepSeekHarnessAcpSdk
-  const launch = vi.fn(async () => child)
+  const launch = vi.fn(
+    options.launch ??
+      (async () => {
+        if (options.launchDelayMs !== undefined) {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, options.launchDelayMs)
+          )
+        }
+        return child
+      })
+  )
   const runtime = new DeepSeekHarnessRuntime({
     defaultWorkspace: 'C:\\workspace',
     baseUrl: 'https://api.deepseek.com',
@@ -223,7 +247,12 @@ function setup(
     supportsImageInput: options.supportsImageInput,
     launch,
     loadAcpSdk: async () => sdk,
-    initializationTimeoutMs: 100,
+    ...(options.useDefaultInitializationTimeout
+      ? {}
+      : {
+          initializationTimeoutMs:
+            options.initializationTimeoutMs ?? 100
+        }),
     promptTimeoutMs: options.promptTimeoutMs ?? 100,
     shutdownTimeoutMs: 10,
     maxStderrBytes: 16,
@@ -231,7 +260,8 @@ function setup(
     maxRequestOutputCharacters:
       options.maxRequestOutputCharacters,
     toolProvider: options.toolProvider,
-    skillPackages: options.skillPackages
+    skillPackages: options.skillPackages,
+    extensionPackages: options.extensionPackages
   })
   const emit = async (
     sessionId: string,
@@ -409,6 +439,104 @@ function toolProvider(
 }
 
 describe('DeepSeekHarnessRuntime', () => {
+  it('includes bounded failed-extension cleanup in the startup budget', () => {
+    expect(deepSeekHarnessStartupBudget(11)).toEqual({
+      hostTimeoutMs: 76_000,
+      mainTimeoutMs: 78_000
+    })
+    expect(deepSeekHarnessStartupBudget(64)).toEqual({
+      hostTimeoutMs: 101_000,
+      mainTimeoutMs: 103_000
+    })
+  })
+
+  it('expands the default launcher deadline for enabled extensions', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = setup({
+        useDefaultInitializationTimeout: true,
+        launchDelayMs: 10_001,
+        extensionPackages: [
+          {
+            id: 'slow-one',
+            entrypoint: 'C:\\extensions\\slow-one.js',
+            configuration: {}
+          },
+          {
+            id: 'slow-two',
+            entrypoint: 'C:\\extensions\\slow-two.js',
+            configuration: {}
+          }
+        ]
+      })
+
+      const status = harness.runtime.getStatus()
+      await vi.advanceTimersByTimeAsync(10_001)
+
+      await expect(status).resolves.toMatchObject({
+        available: true
+      })
+      expect(harness.child.terminate).not.toHaveBeenCalled()
+      const disposal = harness.runtime.dispose()
+      await vi.advanceTimersByTimeAsync(10)
+      await disposal
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the default no-extension launcher deadline bounded', async () => {
+    vi.useFakeTimers()
+    try {
+      let launchSignal: AbortSignal | undefined
+      const harness = setup({
+        useDefaultInitializationTimeout: true,
+        launch: (options) => {
+          launchSignal = options.signal
+          return new Promise<DeepSeekHarnessChild>(
+            () => undefined
+          )
+        }
+      })
+
+      const status = harness.runtime.getStatus()
+      await vi.advanceTimersByTimeAsync(12_000)
+
+      await expect(status).resolves.toMatchObject({
+        available: false,
+        detail: 'DeepSeek Harness 启动超时'
+      })
+      expect(launchSignal?.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('aborts a pending launch and terminates a child returned after disposal', async () => {
+    const launch = deferred<DeepSeekHarnessChild>()
+    let launchSignal: AbortSignal | undefined
+    const harness = setup({
+      launch: (options) => {
+        launchSignal = options.signal
+        return launch.promise
+      }
+    })
+
+    const status = harness.runtime.getStatus()
+    await vi.waitFor(() => expect(harness.launch).toHaveBeenCalledOnce())
+
+    await harness.runtime.dispose()
+    expect(launchSignal?.aborted).toBe(true)
+
+    launch.resolve(harness.child)
+
+    await expect(status).resolves.toMatchObject({
+      available: false,
+      detail: 'DeepSeek Harness Runtime 已关闭'
+    })
+    expect(harness.child.terminate).toHaveBeenCalledOnce()
+  })
+
   it('surfaces bounded internal Harness details from ACP errors', () => {
     expect(
       harnessPromptError(

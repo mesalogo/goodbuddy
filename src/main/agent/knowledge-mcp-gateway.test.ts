@@ -7,7 +7,14 @@ import { z } from 'zod'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { Server as McpProtocolServer } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import {
+  LATEST_PROTOCOL_VERSION,
+  ListToolsRequestSchema,
+  isInitializeRequest,
+  type Tool
+} from '@modelcontextprotocol/sdk/types.js'
 import type { KnowledgeService } from '../knowledge/knowledge-service'
 import { AssistantDatabase } from '../assistant/assistant-database'
 import {
@@ -65,6 +72,115 @@ function createService() {
     searchHybridMany
   } as unknown as KnowledgeService
   return { service, searchHybridMany }
+}
+
+function customMcpServer(
+  url: string,
+  id = '00000000-0000-4000-8000-000000000092'
+) {
+  return {
+    id,
+    name: 'Paged MCP',
+    description: '',
+    enabled: true,
+    allowDynamicTools: true,
+    assignments: ['opencode' as const],
+    secretConfigured: false,
+    transport: 'http' as const,
+    url
+  }
+}
+
+async function startToolUpstream(
+  listTools: (
+    cursor: string | undefined
+  ) =>
+    | { tools: Tool[]; nextCursor?: string }
+    | Promise<{ tools: Tool[]; nextCursor?: string }>
+): Promise<{
+  url: string
+  notifyToolsChanged: () => Promise<void>
+}> {
+  const sessions = new Map<
+    string,
+    {
+      protocol: McpProtocolServer
+      transport: StreamableHTTPServerTransport
+    }
+  >()
+  const server = createServer(async (request, response) => {
+    let body: unknown
+    if (request.method === 'POST') {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) {
+        chunks.push(Buffer.from(chunk))
+      }
+      body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    }
+    const sessionId = request.headers['mcp-session-id']
+    let session =
+      typeof sessionId === 'string'
+        ? sessions.get(sessionId)
+        : undefined
+    if (!session) {
+      if (
+        request.method !== 'POST' ||
+        !isInitializeRequest(body)
+      ) {
+        response.writeHead(404)
+        response.end()
+        return
+      }
+      const protocol = new McpProtocolServer(
+        { name: 'tool-upstream', version: '1.0.0' },
+        { capabilities: { tools: { listChanged: true } } }
+      )
+      protocol.setRequestHandler(
+        ListToolsRequestSchema,
+        async (requestValue) =>
+          listTools(requestValue.params?.cursor)
+      )
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        onsessioninitialized: (idValue) => {
+          sessions.set(idValue, { protocol, transport })
+        },
+        onsessionclosed: (idValue) => {
+          sessions.delete(idValue)
+        }
+      })
+      session = { protocol, transport }
+      await protocol.connect(transport)
+    }
+    await session.transport.handleRequest(request, response, body)
+  })
+  httpServers.push(server)
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('tool upstream did not bind')
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp`,
+    notifyToolsChanged: async () => {
+      await Promise.all(
+        [...sessions.values()].map(({ protocol }) =>
+          protocol.sendToolListChanged()
+        )
+      )
+    }
+  }
+}
+
+function testTool(name: string): Tool {
+  return {
+    name,
+    description: name,
+    inputSchema: { type: 'object' }
+  }
 }
 
 const gateways: KnowledgeMcpGateway[] = []
@@ -437,7 +553,7 @@ describe('KnowledgeMcpGateway', () => {
     ).toThrow('笔记不存在')
   })
 
-  it('binds a POST-only authenticated endpoint and rejects oversized bodies', async () => {
+  it('binds an authenticated MCP endpoint and rejects oversized bodies', async () => {
     const { service } = createService()
     const gateway = new KnowledgeMcpGateway(service, {
       maximumBodyBytes: 32
@@ -452,7 +568,7 @@ describe('KnowledgeMcpGateway', () => {
     )!
 
     const getResponse = await fetch(endpoint)
-    expect(getResponse.status).toBe(405)
+    expect(getResponse.status).toBe(401)
     expect(getResponse.headers.get('access-control-allow-origin')).toBeNull()
 
     const unauthorized = await fetch(endpoint, {
@@ -584,6 +700,349 @@ describe('KnowledgeMcpGateway', () => {
       )
     } finally {
       gateway.revoke(token)
+      await client.close()
+    }
+  })
+
+  it('loads every tools/list page before exposing custom MCP tools', async () => {
+    const listTools = vi.fn((cursor: string | undefined) =>
+      cursor !== undefined
+        ? { tools: [testTool('second')] }
+        : {
+            tools: [testTool('first')],
+            nextCursor: 'page-2'
+          }
+    )
+    const upstream = await startToolUpstream(listTools)
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    const token = gateway.grantCustomMcp(
+      'paged-tools',
+      [customMcpServer(upstream.url)],
+      new AbortController().signal
+    )!
+
+    const tools = await gateway.prepareCustomMcpTools(token)
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      expect.stringMatching(/_first$/u),
+      expect.stringMatching(/_second$/u)
+    ])
+    expect(listTools).toHaveBeenNthCalledWith(1, undefined)
+    expect(listTools).toHaveBeenNthCalledWith(2, 'page-2')
+  })
+
+  it('continues tools/list pagination with an empty cursor', async () => {
+    const listTools = vi.fn((cursor: string | undefined) =>
+      cursor === undefined
+        ? {
+            tools: [testTool('first')],
+            nextCursor: ''
+          }
+        : { tools: [testTool('second')] }
+    )
+    const upstream = await startToolUpstream(listTools)
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    const token = gateway.grantCustomMcp(
+      'empty-cursor-tools',
+      [customMcpServer(upstream.url)],
+      new AbortController().signal
+    )!
+
+    const tools = await gateway.prepareCustomMcpTools(token)
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      expect.stringMatching(/_first$/u),
+      expect.stringMatching(/_second$/u)
+    ])
+    expect(listTools).toHaveBeenNthCalledWith(2, '')
+  })
+
+  it('explicitly requests task execution for required tools from earlier pages', async () => {
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    const server = customMcpServer('http://127.0.0.1:1/mcp')
+    const token = gateway.grantCustomMcp(
+      'required-task-tool',
+      [server],
+      new AbortController().signal
+    )!
+    const callToolStream = vi.fn(
+      async function* () {
+        yield {
+          type: 'result' as const,
+          result: {
+            content: [{ type: 'text' as const, text: 'done' }],
+            structuredContent: { value: 'done' }
+          }
+        }
+      }
+    )
+    const outputValidator = vi.fn(() => ({
+      valid: true as const,
+      data: { value: 'done' },
+      errorMessage: undefined
+    }))
+    const callRequiredTool = (
+      gateway as unknown as {
+        callCustomMcpTool(
+          capabilityToken: string,
+          binding: unknown,
+          input: Record<string, unknown>,
+          signal: AbortSignal
+        ): Promise<unknown>
+      }
+    ).callCustomMcpTool.bind(gateway)
+
+    await expect(
+      callRequiredTool(
+        token,
+        {
+          client: {
+            experimental: {
+              tasks: {
+                callToolStream,
+                cancelTask: vi.fn()
+              }
+            }
+          },
+          server,
+          originalName: 'required-first-page',
+          taskSupport: 'required',
+          outputValidator,
+          exposedTool: testTool('required-first-page')
+        },
+        {},
+        new AbortController().signal
+      )
+    ).resolves.toMatchObject({
+      content: [{ type: 'text', text: 'done' }]
+    })
+    expect(callToolStream).toHaveBeenCalledWith(
+      {
+        name: 'required-first-page',
+        arguments: {}
+      },
+      undefined,
+      expect.objectContaining({ task: {} })
+    )
+    expect(outputValidator).toHaveBeenCalledWith({ value: 'done' })
+  })
+
+  it('rejects cyclic cursors and custom MCP tool counts over 100', async () => {
+    const cyclicUpstream = await startToolUpstream(
+      (cursor: string | undefined) => ({
+        tools: [testTool(cursor ? 'second' : 'first')],
+        nextCursor: 'cycle'
+      })
+    )
+    const excessiveUpstream = await startToolUpstream(() => ({
+      tools: Array.from({ length: 101 }, (_, index) =>
+        testTool(`tool-${index}`)
+      )
+    }))
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    const cycleToken = gateway.grantCustomMcp(
+      'cursor-cycle',
+      [customMcpServer(cyclicUpstream.url)],
+      new AbortController().signal
+    )!
+    const excessiveToken = gateway.grantCustomMcp(
+      'excessive-tools',
+      [
+        customMcpServer(
+          excessiveUpstream.url,
+          '00000000-0000-4000-8000-000000000093'
+        )
+      ],
+      new AbortController().signal
+    )!
+
+    await expect(
+      gateway.prepareCustomMcpTools(cycleToken)
+    ).rejects.toMatchObject({
+      cause: expect.objectContaining({
+        message: expect.stringContaining('分页游标发生循环')
+      })
+    })
+    await expect(
+      gateway.prepareCustomMcpTools(excessiveToken)
+    ).rejects.toMatchObject({
+      cause: expect.objectContaining({
+        message: expect.stringContaining('工具数量超过安全限制')
+      })
+    })
+  })
+
+  it('releases rejected initialize attempts before enforcing the session limit', async () => {
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    await gateway.start()
+    const endpoint = gateway.getEndpoint()!
+    const token = gateway.grant(
+      'initialize-retry',
+      [firstLibraryId],
+      new AbortController().signal
+    )!
+    const initialize = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: {
+          name: 'initialize-retry-fixture',
+          version: '1.0.0'
+        }
+      }
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const rejected = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(initialize)
+      })
+      expect(rejected.status).toBe(406)
+    }
+
+    const accepted = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(initialize)
+    })
+    expect(accepted.status).toBe(200)
+    expect(accepted.headers.get('mcp-session-id')).toEqual(
+      expect.any(String)
+    )
+  })
+
+  it('publishes upstream tool changes downstream after a successful refresh', async () => {
+    let tools = [testTool('before')]
+    const listTools = vi.fn(async () => ({ tools }))
+    const upstream = await startToolUpstream(listTools)
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    await gateway.start()
+    const token = gateway.grantCustomMcp(
+      'dynamic-tools',
+      [customMcpServer(upstream.url)],
+      new AbortController().signal
+    )!
+    const listChanged = vi.fn()
+    const client = new Client(
+      { name: 'dynamic-client', version: '1.0.0' },
+      {
+        listChanged: {
+          tools: {
+            autoRefresh: false,
+            debounceMs: 0,
+            onChanged: listChanged
+          }
+        }
+      }
+    )
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(gateway.getEndpoint()!),
+        {
+          requestInit: {
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        }
+      )
+    )
+    try {
+      const initial = await client.listTools()
+      expect(initial.tools[0]?.name).toMatch(/_before$/u)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      tools = [testTool('after')]
+
+      await upstream.notifyToolsChanged()
+
+      await vi.waitFor(() => {
+        expect(listChanged).toHaveBeenCalledWith(null, null)
+      })
+      const updated = await client.listTools()
+      expect(updated.tools.map((tool) => tool.name)).toEqual([
+        expect.stringMatching(/_after$/u)
+      ])
+    } finally {
+      await client.close()
+    }
+  })
+
+  it('does not publish a downstream change when dynamic refresh fails', async () => {
+    let failRefresh = false
+    const listTools = vi.fn(async () => {
+      if (failRefresh) {
+        throw new Error('refresh failed')
+      }
+      return { tools: [testTool('stable')] }
+    })
+    const upstream = await startToolUpstream(listTools)
+    const { service } = createService()
+    const gateway = new KnowledgeMcpGateway(service)
+    gateways.push(gateway)
+    await gateway.start()
+    const token = gateway.grantCustomMcp(
+      'failed-refresh',
+      [customMcpServer(upstream.url)],
+      new AbortController().signal
+    )!
+    const listChanged = vi.fn()
+    const client = new Client(
+      { name: 'failed-refresh-client', version: '1.0.0' },
+      {
+        listChanged: {
+          tools: {
+            autoRefresh: false,
+            debounceMs: 0,
+            onChanged: listChanged
+          }
+        }
+      }
+    )
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(gateway.getEndpoint()!),
+        {
+          requestInit: {
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        }
+      )
+    )
+    try {
+      await client.listTools()
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      failRefresh = true
+
+      await upstream.notifyToolsChanged()
+
+      await vi.waitFor(() => {
+        expect(listTools).toHaveBeenCalledTimes(2)
+      })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(listChanged).not.toHaveBeenCalled()
+    } finally {
       await client.close()
     }
   })

@@ -19,12 +19,22 @@ describe.skipIf(!enabled)('DSH marketplace live E2E', () => {
       const userDataPath = await mkdtemp(
         join(tmpdir(), 'goodbuddy-dsh-marketplace-live-')
       )
+      let installer: DshNpmExtensionInstaller | undefined
+      let host:
+        | Awaited<
+            ReturnType<typeof startControlledDeepSeekHarnessHost>
+          >
+        | undefined
       try {
         const market = new DshNpmMarketplaceCatalog()
         const greet = (await market.list()).find(
           (entry) => entry.package.name === 'dsh-plugin-greet'
         )
         expect(greet).toBeDefined()
+        expect(greet?.package).toEqual({
+          name: 'dsh-plugin-greet',
+          version: '0.2.0'
+        })
         const npmCliPath = process.env.GOODBUDDY_DSH_NPM_CLI
           ? resolve(process.env.GOODBUDDY_DSH_NPM_CLI)
           : resolve(
@@ -39,16 +49,17 @@ describe.skipIf(!enabled)('DSH marketplace live E2E', () => {
                 process.env.GOODBUDDY_DSH_NODE_EXECUTABLE
               )
             : undefined
-        const installer = new DshNpmExtensionInstaller({
+        const activeInstaller = new DshNpmExtensionInstaller({
           dshHome: userDataPath,
           npmCliPath,
           ...(nodeExecutablePath ? { nodeExecutablePath } : {})
         })
+        installer = activeInstaller
         const store = new RuntimeExtensionStore(userDataPath, {
           catalog: {
             list: async () => [greet!]
           },
-          install: (input) => installer.install(input)
+          install: (input) => activeInstaller.install(input)
         })
         await store.apply({
           type: 'set-marketplace-enabled',
@@ -77,7 +88,7 @@ describe.skipIf(!enabled)('DSH marketplace live E2E', () => {
           Record<string, unknown>,
           Record<string, unknown>
         >()
-        const host = await startControlledDeepSeekHarnessHost({
+        host = await startControlledDeepSeekHarnessHost({
           workspace: userDataPath,
           dshHome: userDataPath,
           baseUrl: 'https://api.deepseek.com',
@@ -103,10 +114,16 @@ describe.skipIf(!enabled)('DSH marketplace live E2E', () => {
           } as never)
         ).resolves.toMatchObject({
           isError: false,
-          value: 'Hello, GoodBuddy!'
+          value: {
+            message: 'Hello, GoodBuddy!',
+            name: 'GoodBuddy',
+            language: 'en',
+            style: 'friendly'
+          }
         })
-        await host.dispose()
       } finally {
+        await host?.dispose().catch(() => undefined)
+        await installer?.dispose().catch(() => undefined)
         await rm(userDataPath, {
           recursive: true,
           force: true,

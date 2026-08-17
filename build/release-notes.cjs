@@ -32,12 +32,20 @@ function validateItems(value, label) {
       fail(`${label} contains a non-string item`)
     }
     const normalized = item.trim()
-    if (!normalized || normalized.length > 240) {
+    if (!normalized || normalized.length > 500) {
       fail(`${label} contains an empty or oversized item`)
     }
     return normalized
   })
 }
+
+const releaseNoteSections = [
+  'highlights',
+  'features',
+  'fixes',
+  'notices'
+]
+const legacyReleaseNoteSections = ['features', 'fixes']
 
 function validateRelease(value, index) {
   const label = `releases[${index}]`
@@ -63,28 +71,50 @@ function validateRelease(value, index) {
   const notes = Object.fromEntries(
     ['zh-CN', 'en-US'].map((locale) => {
       const localized = value.notes[locale]
-      if (!hasExactKeys(localized, ['features', 'fixes'])) {
+      const isCurrentFormat = hasExactKeys(
+        localized,
+        releaseNoteSections
+      )
+      const isLegacyFormat = hasExactKeys(
+        localized,
+        legacyReleaseNoteSections
+      )
+      if (!isCurrentFormat && !isLegacyFormat) {
         fail(`${label}.notes.${locale} has invalid fields`)
       }
-      const features = validateItems(
-        localized.features,
-        `${label}.notes.${locale}.features`
+      const normalized = Object.fromEntries(
+        releaseNoteSections.map((section) => [
+          section,
+          section in localized
+            ? validateItems(
+                localized[section],
+                `${label}.notes.${locale}.${section}`
+              )
+            : []
+        ])
       )
-      const fixes = validateItems(
-        localized.fixes,
-        `${label}.notes.${locale}.fixes`
-      )
-      if (features.length + fixes.length === 0) {
+      if (normalized.highlights.length > 3) {
+        fail(
+          `${label}.notes.${locale}.highlights must contain no more than 3 items`
+        )
+      }
+      if (
+        releaseNoteSections.every(
+          (section) => normalized[section].length === 0
+        )
+      ) {
         fail(`${label}.notes.${locale} must not be empty`)
       }
-      return [locale, { features, fixes }]
+      return [locale, normalized]
     })
   )
-  if (
-    notes['zh-CN'].features.length !== notes['en-US'].features.length ||
-    notes['zh-CN'].fixes.length !== notes['en-US'].fixes.length
-  ) {
-    fail(`${label} localized section counts do not match`)
+  for (const section of releaseNoteSections) {
+    if (
+      notes['zh-CN'][section].length !==
+      notes['en-US'][section].length
+    ) {
+      fail(`${label} localized ${section} counts do not match`)
+    }
   }
   return {
     version: value.version,
@@ -126,14 +156,18 @@ const localizedDefinitions = [
   {
     locale: 'zh-CN',
     title: `GoodBuddy ${release.version} 更新内容`,
+    highlights: '本次亮点',
     features: '功能更新',
-    fixes: '问题修复'
+    fixes: '问题修复',
+    notices: '使用前请留意'
   },
   {
     locale: 'en-US',
     title: `What's New in GoodBuddy ${release.version}`,
+    highlights: 'Highlights',
     features: 'Features',
-    fixes: 'Bug Fixes'
+    fixes: 'Bug Fixes',
+    notices: 'Before You Start'
   }
 ]
 
@@ -151,8 +185,13 @@ const markdown = localizedDefinitions
       ...(index === 0 ? [] : ['---', '']),
       `# ${definition.title}`,
       '',
+      ...markdownSection(
+        definition.highlights,
+        notes.highlights
+      ),
       ...markdownSection(definition.features, notes.features),
-      ...markdownSection(definition.fixes, notes.fixes)
+      ...markdownSection(definition.fixes, notes.fixes),
+      ...markdownSection(definition.notices, notes.notices)
     ]
   })
   .join('\n')

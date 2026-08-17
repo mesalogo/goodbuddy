@@ -12,9 +12,11 @@ export const app = {
   releaseNotes: {
     eyebrow: '版本更新',
     title: 'GoodBuddy {{version}} 更新内容',
-    description: '本次版本带来了以下功能更新与问题修复。',
+    description: '查看本次版本的主要更新与使用提示。',
+    highlights: '本次亮点',
     features: '功能更新',
     fixes: '问题修复',
+    notices: '使用前请留意',
     close: '关闭版本更新说明',
     start: '开始使用',
     closing: '正在关闭…',

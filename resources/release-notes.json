@@ -2,6 +2,68 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.10.0",
+      "releasedAt": "2026-08-17",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "0.10.0 重点完善多 Runtime 工作流。OpenCode、Continue 和 DeepSeek Harness 的能力、MCP、插件与上下文管理现在可以在 GoodBuddy 内统一查看和配置，长对话、多会话和任务通知也更加连贯。"
+          ],
+          "features": [
+            "**Runtime 能力概览。** 切换 Runtime 或排查不可用工具，设置页会展示内置 OpenCode、Continue 和 DeepSeek Harness 实际提供的 Agents、Tools、Commands、Rules、Prompts、Skills、MCP 等能力，并提供 Runtime 默认项与上下文压缩配置。",
+            "**DSH 插件管理。** DeepSeek Harness 的工具能力可以通过默认关闭的插件市场扩展，支持搜索、安装、更新和启停 npm 插件，并填写插件所需的 JSON 配置。",
+            "**按 Runtime 分配 MCP。** 知识库、魔法笔记等内置 MCP 可以分别分配给直连模型、OpenCode 和 Continue；自定义 MCP 也能分配给 OpenCode、Continue 和 DeepSeek Harness，同一套工具服务不必重复配置。",
+            "**上下文压缩。** 内置 OpenCode 默认自动整理上下文，也可手动触发；Continue 可手动生成并复用 GoodBuddy 摘要；直连模型是否自动压缩由用户决定。界面会分别显示本次调用用量和压缩后的对话估算。",
+            "**DSH 图片输入。** 支持图片的模型连接可以接收经过校验的 JPEG/PNG 截图与图片；文本模型会在调用前明确提示不支持图片，避免提交后才发现无法处理。",
+            "**多会话并行处理。** 多个会话可以在后台运行任务，另一个会话仍可继续聊天。侧栏会标记活动和未读状态，聊天内容与页面位置也会按会话保留。",
+            "**Runtime 用量统计。** 运行记录会按 Runtime 和模型归类每次调用，连续工具调用与上下文摘要不再合并计数，并会显示归一化的缓存命中率。"
+          ],
+          "fixes": [
+            "**Windows 通知激活。** 任务完成后，点击系统通知会回到 GoodBuddy，不再打开 Electron 默认页；开发版、解包版和安装版也使用相互隔离的通知身份。",
+            "**直连模型连续对话。** 较长的连续对话和消息重编辑不再因本地消息 ID 被发送给模型服务而失败，工具调用与上下文摘要也不会覆盖前序用量记录。",
+            "**DSH 插件与 MCP 稳定性。** 多个 DSH 插件共同运行、MCP 返回大量分页工具，启动、取消和退出依然可靠；单个插件失败会被隔离，循环游标和未释放会话也会得到处理。",
+            "**设置界面一致性。** DSH 搜索文字不再被图标遮挡，正常状态不会重复显示说明，导航高亮与页面边距也保持一致。",
+            "**跨架构发布包。** Windows、macOS 和 Linux 的 x64、arm64 安装包会校验 Canvas、Koffi 等原生依赖，避免构建成功后加载错误架构的二进制文件。",
+            "**魔法笔记编辑体验。** 更高且可纵向拖动的编辑区域为长笔记留出空间，数字字号选项、工具栏和分栏间距也更加清楚。"
+          ],
+          "notices": [
+            "**DSH 插件市场。** 该功能仍处于预览阶段并默认关闭。第三方插件的安装脚本、初始化代码和 Execute 工具会以当前用户权限运行，请只安装可信的包。关闭市场不会自动停用或卸载已有插件。",
+            "**工作模式权限。** Ask 模式仍保持只读；Execute 模式下，经过批准的工具会以当前用户权限操作文件、运行命令或访问外部服务。",
+            "**上下文压缩默认行为。** 内置 OpenCode 默认启用原生自动压缩；直连模型的自动压缩默认关闭；Continue 当前不会自动生成摘要，需要手动执行压缩。压缩可能调用所选模型并产生额外 Token 用量，GoodBuddy 中的原始聊天记录不会删除。",
+            "**Runtime 兼容性。** 外部 OpenCode Server 当前只提供连接状态，Continue 暂不支持静态发现原生 Tools；DeepSeek Harness 暂不支持内置 MCP，但可在 Execute 模式使用已分配的自定义 MCP。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.10.0 strengthens multi-Runtime workflows. OpenCode, Continue, and DeepSeek Harness capabilities, MCP, plugins, and context controls can now be viewed and configured in one place, with smoother long conversations, parallel work, and task notifications."
+          ],
+          "features": [
+            "**Runtime capability overview.** Switching Runtimes or diagnosing unavailable tools now reveals the Agents, Tools, Commands, Rules, Prompts, Skills, MCP, and other capabilities actually provided by managed OpenCode, Continue, and DeepSeek Harness, along with Runtime defaults and context controls.",
+            "**DSH plugin management.** DeepSeek Harness can be extended through the default-off plugin marketplace, with npm plugin search, installation, updates, enablement, and JSON configuration.",
+            "**MCP assignment by Runtime.** Built-in MCP servers such as Knowledge and Magic Notes can be assigned individually to direct models, OpenCode, and Continue. Custom MCP can also be shared with OpenCode, Continue, and DeepSeek Harness without duplicating service configuration.",
+            "**Context compaction.** Managed OpenCode compacts context automatically by default and also provides a manual action. Continue can manually create and reuse GoodBuddy summaries, while users decide whether to enable automatic compaction for direct models. Latest-call usage and compressed-conversation estimates are shown separately.",
+            "**DSH image input.** Image-capable model connections accept validated JPEG/PNG screenshots and images. GoodBuddy rejects image input with a clear message before invoking a text-only model.",
+            "**Parallel conversations.** Multiple conversations can keep running tasks in the background while you continue chatting in another. The sidebar marks active and unread conversations, while chat content and page position remain preserved per conversation.",
+            "**Runtime usage reporting.** Run History groups every call by Runtime and model. Consecutive tool calls and context summaries remain separate usage records, with normalized prompt-cache hit rates for easier comparison."
+          ],
+          "fixes": [
+            "**Windows notification activation.** Clicking a task-completion notification now opens GoodBuddy instead of Electron’s default page. Development, unpacked, and installed builds also use isolated notification identities.",
+            "**Direct-model follow-ups.** Long conversations and edited messages no longer fail because local message IDs reached model providers. Tool and context-summary calls also preserve earlier usage records.",
+            "**DSH plugin and MCP reliability.** Startup, cancellation, and shutdown remain reliable with several DSH plugins or large paginated MCP tool sets. Plugin failures are isolated, cursor loops are bounded, and sessions are released.",
+            "**Settings consistency.** DSH plugin search text no longer overlaps its icon, healthy status descriptions are no longer duplicated, and navigation highlights and page gutters remain aligned.",
+            "**Cross-architecture packages.** Windows, macOS, and Linux packages validate Canvas, Koffi, and related native dependencies for x64 and arm64, preventing successful builds from loading binaries for the wrong architecture.",
+            "**Magic Notes editing.** The editor is taller and vertically resizable, with numeric font-size choices and clearer toolbar and pane spacing."
+          ],
+          "notices": [
+            "**DSH plugin marketplace.** This preview feature is disabled by default. Third-party install scripts, initialization code, and Execute tools run with current-user permissions, so install only trusted packages. Disabling the marketplace does not disable or remove installed plugins.",
+            "**Work mode permissions.** Ask remains read-only. In Execute, approved tools can modify files, run commands, or access external services with current-user permissions.",
+            "**Context compaction defaults.** Managed OpenCode enables native automatic compaction by default. Automatic compaction for direct models is disabled by default, while Continue requires manual compaction to create a summary. Compaction may call the selected model and incur additional token usage; original chat history in GoodBuddy is not deleted.",
+            "**Runtime compatibility.** External OpenCode Servers currently expose connection status only, and Continue cannot statically discover native Tools. DeepSeek Harness does not yet support built-in MCP, but assigned custom MCP is available in Execute mode."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.9.3",
       "releasedAt": "2026-08-15",
       "notes": {

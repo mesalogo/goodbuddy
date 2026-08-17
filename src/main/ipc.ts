@@ -127,6 +127,7 @@ import {
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
+  getDefaultRuntimeSelection,
   type AgentRuntimeSelection
 } from '../shared/runtime-selection-contracts'
 import {
@@ -2968,10 +2969,13 @@ export function registerIpcHandlers(
       const conversation = assistantDatabase.getConversation(
         request.conversationId
       )
+      const settings = await settingsStore.getResolvedSettings()
+      const persistedRuntimeSelection =
+        conversation.runtimeSelection ??
+        getDefaultRuntimeSelection(settings)
       if (
         conversation.projectId !== request.projectId ||
-        !conversation.runtimeSelection ||
-        agentRuntimeSelectionKey(conversation.runtimeSelection) !==
+        agentRuntimeSelectionKey(persistedRuntimeSelection) !==
           agentRuntimeSelectionKey(request.runtimeSelection)
       ) {
         throw new Error('对话 Runtime 或 Project 已更改，请刷新后重试')
@@ -2998,7 +3002,6 @@ export function registerIpcHandlers(
         contextCompressionState:
           conversation.contextCompressionState
       }
-      const settings = await settingsStore.getResolvedSettings()
       const selected = applyRuntimeSelection(
         settings,
         request.runtimeSelection

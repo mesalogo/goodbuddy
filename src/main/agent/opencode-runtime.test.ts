@@ -2984,7 +2984,7 @@ describe('OpenCodeRuntime native customization', () => {
     await runtime.dispose()
   })
 
-  it('compacts an existing managed session through the v2 API', async () => {
+  it('compacts a managed session through the supported native API', async () => {
     const setup = runClient([
       {
         id: 'idle',
@@ -2993,19 +2993,74 @@ describe('OpenCodeRuntime native customization', () => {
       }
     ])
     const context = vi.fn().mockResolvedValue({
-      data: { data: [] }
+      data: {
+        data: [
+          {
+            type: 'assistant',
+            model: {
+              providerID: 'anthropic',
+              id: 'claude-sonnet'
+            }
+          }
+        ]
+      }
     })
-    const compact = vi.fn().mockResolvedValue({
-      data: undefined,
+    const summarize = vi.fn().mockResolvedValue({
+      data: true,
       error: undefined
     })
     Object.assign(setup.client, {
       v2: {
-        session: { context, compact }
-      }
+        session: { context }
+      },
+      session: { ...setup.client.session, summarize }
     })
     const runtime = embeddedRuntime(setup.client)
     await collectRun(runtime)
+    vi.mocked(setup.event.subscribe).mockResolvedValueOnce({
+      stream: (async function* () {
+        yield {
+          type: 'message.updated',
+          properties: {
+            sessionID: 'session-1',
+            info: {
+              id: 'compaction-message',
+              sessionID: 'session-1',
+              role: 'assistant',
+              time: {
+                created: 1,
+                completed: 2
+              },
+              parentID: 'compaction-parent',
+              modelID: 'claude-sonnet',
+              providerID: 'anthropic',
+              mode: 'compaction',
+              agent: 'build',
+              path: {
+                cwd: process.cwd(),
+                root: process.cwd()
+              },
+              cost: 0,
+              tokens: {
+                input: 100,
+                output: 20,
+                reasoning: 0,
+                cache: {
+                  read: 30,
+                  write: 4
+                },
+                total: 124
+              },
+              finish: 'stop'
+            }
+          }
+        }
+        yield {
+          type: 'session.idle',
+          properties: { sessionID: 'session-1' }
+        }
+      })()
+    } as never)
     const signal = new AbortController().signal
 
     await expect(
@@ -3025,16 +3080,81 @@ describe('OpenCodeRuntime native customization', () => {
         strategy: 'native',
         compacted: true,
         detail: 'OpenCode 已完成原生上下文压缩'
-      }
+      },
+      usageEvents: [
+        {
+          requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+          type: 'model-usage',
+          callId: 'compaction-message',
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'claude-sonnet',
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 4,
+          reportedTotalTokens: 124
+        }
+      ]
     })
     expect(context).toHaveBeenCalledWith(
       { sessionID: 'session-1' },
       { signal }
     )
-    expect(compact).toHaveBeenCalledWith(
-      { sessionID: 'session-1' },
+    expect(summarize).toHaveBeenCalledWith(
+      {
+        sessionID: 'session-1',
+        directory: process.cwd(),
+        providerID: 'anthropic',
+        modelID: 'claude-sonnet',
+        auto: false
+      },
       { signal }
     )
+    await runtime.dispose()
+  })
+
+  it('reports when a managed session has no model to compact with', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const context = vi.fn().mockResolvedValue({
+      data: { data: [] }
+    })
+    const summarize = vi.fn()
+    Object.assign(setup.client, {
+      v2: {
+        session: { context }
+      },
+      session: { ...setup.client.session, summarize }
+    })
+    const runtime = embeddedRuntime(setup.client)
+    await collectRun(runtime)
+
+    await expect(
+      runtime.compactConversation(
+        {
+          requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+          conversationId: 'conversation-1',
+          runtimeSelection: { provider: 'opencode' },
+          history: [],
+          historyMessageIds: []
+        },
+        new AbortController().signal
+      )
+    ).resolves.toEqual({
+      result: {
+        provider: 'opencode',
+        strategy: 'native',
+        compacted: false,
+        detail: '当前 OpenCode 会话尚无可用于压缩的模型记录'
+      }
+    })
+    expect(summarize).not.toHaveBeenCalled()
     await runtime.dispose()
   })
 

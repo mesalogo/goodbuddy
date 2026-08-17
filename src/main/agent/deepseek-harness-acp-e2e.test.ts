@@ -1005,174 +1005,181 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
         mkdir(dshHome),
         mkdir(installation)
       ])
-      const entry = {
-        id: 'dsh-plugin-greet-live',
-        package: {
-          name: 'dsh-plugin-greet',
-          version: '0.1.0'
-        },
-        displayName: 'dsh-plugin-greet',
-        description: 'Reviewed minimal live DSH plugin fixture.'
-      }
-      const npmCliPath = process.env.GOODBUDDY_DSH_NPM_CLI
-        ? resolve(process.env.GOODBUDDY_DSH_NPM_CLI)
-        : resolve(
-            'node_modules',
-            'npm',
-            'bin',
-            'npm-cli.js'
-          )
-      const nodeExecutablePath =
-        process.env.GOODBUDDY_DSH_NODE_EXECUTABLE
-          ? resolve(process.env.GOODBUDDY_DSH_NODE_EXECUTABLE)
-          : undefined
-      const installer = new DshNpmExtensionInstaller({
-        dshHome,
-        npmCliPath,
-        ...(nodeExecutablePath ? { nodeExecutablePath } : {})
-      })
-      const installed = await installer.install({
-        entry,
-        destinationDirectory: installation
-      })
-      const observedRequests: GenerateOptions[] = []
-      const inProcess = createInProcessLaunch(
-        dshHome,
-        undefined,
-        (options) => observedRequests.push(options)
-      )
-      const runtime = new DeepSeekHarnessRuntime({
-        defaultWorkspace: workspace,
-        baseUrl: liveBaseUrl,
-        model: liveModel,
-        launch: (options) => inProcess.launch(options),
-        credentialRefs: {
-          [CREDENTIAL_REF]: liveApiKey
-        },
-        extensionPackages: [
-          {
-            id: entry.id,
-            entrypoint: join(
-              installation,
-              ...installed.entrypoint.split('/')
-            ),
-            configuration: {}
-          }
-        ],
-        initializationTimeoutMs: 20_000,
-        promptTimeoutMs: 120_000,
-        shutdownTimeoutMs: 5_000
-      })
-
+      let installer: DshNpmExtensionInstaller | undefined
       try {
-        const askEvents = await collect(
-          runtime.run(
-            {
-              requestId: 'request-live-plugin-ask',
-              conversationId: 'live-plugin-ask',
-              prompt:
-                'DSH_ASK_PLUGIN_PROBE: attempt to call greet exactly once with name GoodBuddyAsk. The runtime must reject it. After the tool result, reply with DSH_ASK_PLUGIN_BLOCKED.',
-              workMode: 'ask'
-            },
-            new AbortController().signal
-          )
-        )
-        const askRequests = observedRequests.filter((options) =>
-          latestUserText(options).includes(
-            'DSH_ASK_PLUGIN_PROBE'
-          )
-        )
-        expect(askRequests.length).toBeGreaterThan(0)
-        expect(
-          askRequests.flatMap(
-            (options) =>
-              options.tools?.map((tool) => tool.name) ?? []
-          )
-        ).toContain('greet')
-        expect(askEvents).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              type: 'tool',
-              name: 'greet',
-              state: 'pending'
-            }),
-            expect.objectContaining({
-              type: 'tool',
-              state: 'failed',
-              output: expect.stringContaining(
-                'Ask 模式不允许执行非只读工具'
-              )
-            }),
-            expect.objectContaining({ type: 'done' })
-          ])
-        )
-        expect(
-          askEvents.some(
-            (event) =>
-              event.type === 'tool' &&
-              event.state === 'completed'
-          )
-        ).toBe(false)
-        expect(
-          askEvents
-            .flatMap((event) =>
-              event.type === 'text' ? [event.delta] : []
+        const entry = {
+          id: 'dsh-plugin-greet-live',
+          package: {
+            name: 'dsh-plugin-greet',
+            version: '0.2.0'
+          },
+          displayName: 'dsh-plugin-greet',
+          description: 'Reviewed minimal live DSH plugin fixture.'
+        }
+        const npmCliPath = process.env.GOODBUDDY_DSH_NPM_CLI
+          ? resolve(process.env.GOODBUDDY_DSH_NPM_CLI)
+          : resolve(
+              'node_modules',
+              'npm',
+              'bin',
+              'npm-cli.js'
             )
-            .join('')
-        ).toContain('DSH_ASK_PLUGIN_BLOCKED')
+        const nodeExecutablePath =
+          process.env.GOODBUDDY_DSH_NODE_EXECUTABLE
+            ? resolve(
+                process.env.GOODBUDDY_DSH_NODE_EXECUTABLE
+              )
+            : undefined
+        installer = new DshNpmExtensionInstaller({
+          dshHome,
+          npmCliPath,
+          ...(nodeExecutablePath ? { nodeExecutablePath } : {})
+        })
+        const installed = await installer.install({
+          entry,
+          destinationDirectory: installation
+        })
+        const observedRequests: GenerateOptions[] = []
+        const inProcess = createInProcessLaunch(
+          dshHome,
+          undefined,
+          (options) => observedRequests.push(options)
+        )
+        const runtime = new DeepSeekHarnessRuntime({
+          defaultWorkspace: workspace,
+          baseUrl: liveBaseUrl,
+          model: liveModel,
+          launch: (options) => inProcess.launch(options),
+          credentialRefs: {
+            [CREDENTIAL_REF]: liveApiKey
+          },
+          extensionPackages: [
+            {
+              id: entry.id,
+              entrypoint: join(
+                installation,
+                ...installed.entrypoint.split('/')
+              ),
+              configuration: {}
+            }
+          ],
+          initializationTimeoutMs: 20_000,
+          promptTimeoutMs: 120_000,
+          shutdownTimeoutMs: 5_000
+        })
 
-        const executeEvents = await collect(
-          runtime.run(
-            {
-              requestId: 'request-live-plugin-execute',
-              conversationId: 'live-plugin-execute',
-              prompt:
-                'DSH_EXECUTE_PLUGIN_PROBE: call greet exactly once with name GoodBuddyLive. After its result, reply with DSH_EXECUTE_PLUGIN_OK and the exact greeting.',
-              workMode: 'execute'
-            },
-            new AbortController().signal
-          )
-        )
-        const executeRequests = observedRequests.filter((options) =>
-          latestUserText(options).includes(
-            'DSH_EXECUTE_PLUGIN_PROBE'
-          )
-        )
-        expect(executeRequests.length).toBeGreaterThan(0)
-        expect(
-          executeRequests.some((options) =>
-            options.tools?.some((tool) => tool.name === 'greet')
-          )
-        ).toBe(true)
-        expect(executeEvents).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              type: 'tool',
-              name: 'greet',
-              state: 'pending'
-            }),
-            expect.objectContaining({
-              type: 'tool',
-              state: 'completed',
-              output: expect.stringContaining(
-                'Hello, GoodBuddyLive!'
-              )
-            }),
-            expect.objectContaining({ type: 'done' })
-          ])
-        )
-        expect(
-          executeEvents
-            .flatMap((event) =>
-              event.type === 'text' ? [event.delta] : []
+        try {
+          const askEvents = await collect(
+            runtime.run(
+              {
+                requestId: 'request-live-plugin-ask',
+                conversationId: 'live-plugin-ask',
+                prompt:
+                  'DSH_ASK_PLUGIN_PROBE: attempt to call greet exactly once with name GoodBuddyAsk. The runtime must reject it. After the tool result, reply with DSH_ASK_PLUGIN_BLOCKED.',
+                workMode: 'ask'
+              },
+              new AbortController().signal
             )
-            .join('')
-        ).toContain('DSH_EXECUTE_PLUGIN_OK')
+          )
+          const askRequests = observedRequests.filter((options) =>
+            latestUserText(options).includes(
+              'DSH_ASK_PLUGIN_PROBE'
+            )
+          )
+          expect(askRequests.length).toBeGreaterThan(0)
+          expect(
+            askRequests.flatMap(
+              (options) =>
+                options.tools?.map((tool) => tool.name) ?? []
+            )
+          ).toContain('greet')
+          expect(askEvents).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: 'tool',
+                name: 'greet',
+                state: 'pending'
+              }),
+              expect.objectContaining({
+                type: 'tool',
+                state: 'failed',
+                output: expect.stringContaining(
+                  'Ask 模式不允许执行非只读工具'
+                )
+              }),
+              expect.objectContaining({ type: 'done' })
+            ])
+          )
+          expect(
+            askEvents.some(
+              (event) =>
+                event.type === 'tool' &&
+                event.state === 'completed'
+            )
+          ).toBe(false)
+          expect(
+            askEvents
+              .flatMap((event) =>
+                event.type === 'text' ? [event.delta] : []
+              )
+              .join('')
+          ).toContain('DSH_ASK_PLUGIN_BLOCKED')
+
+          const executeEvents = await collect(
+            runtime.run(
+              {
+                requestId: 'request-live-plugin-execute',
+                conversationId: 'live-plugin-execute',
+                prompt:
+                  'DSH_EXECUTE_PLUGIN_PROBE: call greet exactly once with name GoodBuddyLive. After its result, reply with DSH_EXECUTE_PLUGIN_OK and the exact greeting.',
+                workMode: 'execute'
+              },
+              new AbortController().signal
+            )
+          )
+          const executeRequests = observedRequests.filter((options) =>
+            latestUserText(options).includes(
+              'DSH_EXECUTE_PLUGIN_PROBE'
+            )
+          )
+          expect(executeRequests.length).toBeGreaterThan(0)
+          expect(
+            executeRequests.some((options) =>
+              options.tools?.some((tool) => tool.name === 'greet')
+            )
+          ).toBe(true)
+          expect(executeEvents).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: 'tool',
+                name: 'greet',
+                state: 'pending'
+              }),
+              expect.objectContaining({
+                type: 'tool',
+                state: 'completed',
+                output: expect.stringContaining(
+                  'Hello, GoodBuddyLive!'
+                )
+              }),
+              expect.objectContaining({ type: 'done' })
+            ])
+          )
+          expect(
+            executeEvents
+              .flatMap((event) =>
+                event.type === 'text' ? [event.delta] : []
+              )
+              .join('')
+          ).toContain('DSH_EXECUTE_PLUGIN_OK')
+        } finally {
+          await Promise.allSettled([
+            runtime.dispose(),
+            ...inProcess.hosts.map((host) => host.dispose())
+          ])
+        }
       } finally {
-        await runtime.dispose()
-        await Promise.allSettled(
-          inProcess.hosts.map((host) => host.dispose())
-        )
+        await installer?.dispose().catch(() => undefined)
         await rm(root, { recursive: true, force: true })
       }
     },

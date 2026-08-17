@@ -58,7 +58,68 @@ export type RuntimeSelectionRepairSettings = {
     | { kind: 'profile'; profileId: string }
 }
 
+type RuntimeModelSource =
+  | { kind: 'platform' }
+  | { kind: 'profile'; profileId: string }
+
+export type RuntimeSelectionDefaultSettings = {
+  provider: AgentRuntimeSelection['provider']
+  defaultModelProfileId: string
+  opencodeBaseUrl: string
+  opencodeEmbedded: boolean
+  opencodeModelSource?: RuntimeModelSource
+  continueModelSource?: RuntimeModelSource
+  deepseekHarnessModelSource?: RuntimeModelSource
+  opencodeModelProfile?: { id: string }
+  continueModelProfile?: { id: string }
+  deepseekHarnessModelProfile?: { id: string }
+}
+
 type ChannelModelProfile = RuntimeSelectionRepairSettings['modelProfiles'][number]
+
+export function getRuntimeSelectionForProvider(
+  provider: Exclude<AgentRuntimeSelection['provider'], 'auto'>,
+  settings: RuntimeSelectionDefaultSettings
+): AgentRuntimeSelection {
+  if (provider === 'model') {
+    return {
+      provider,
+      profileId: settings.defaultModelProfileId
+    }
+  }
+  const source =
+    provider === 'opencode'
+      ? settings.opencodeModelSource
+      : provider === 'continue'
+        ? settings.continueModelSource
+        : settings.deepseekHarnessModelSource
+  const resolvedProfile =
+    provider === 'opencode'
+      ? settings.opencodeModelProfile
+      : provider === 'continue'
+        ? settings.continueModelProfile
+        : settings.deepseekHarnessModelProfile
+  return {
+    provider,
+    ...(source?.kind === 'profile'
+      ? { profileId: source.profileId }
+      : !source && resolvedProfile
+        ? { profileId: resolvedProfile.id }
+      : {})
+  }
+}
+
+export function getDefaultRuntimeSelection(
+  settings: RuntimeSelectionDefaultSettings
+): AgentRuntimeSelection {
+  const provider = settings.provider
+  if (provider !== 'auto') {
+    return getRuntimeSelectionForProvider(provider, settings)
+  }
+  return settings.opencodeBaseUrl || settings.opencodeEmbedded
+    ? getRuntimeSelectionForProvider('opencode', settings)
+    : getRuntimeSelectionForProvider('model', settings)
+}
 
 export function isChannelModelProfileUsable(
   profile: ChannelModelProfile

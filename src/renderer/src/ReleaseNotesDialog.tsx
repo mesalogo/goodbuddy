@@ -1,4 +1,10 @@
-import { Sparkles, Wrench, X } from 'lucide-react'
+import {
+  Lightbulb,
+  Sparkles,
+  TriangleAlert,
+  Wrench,
+  X
+} from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -8,12 +14,54 @@ import type {
 } from '../../shared/release-notes-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type { UiLocale } from './i18n'
+import { InlineMarkdown } from './MarkdownRenderer'
 
 type ReleaseNotesDialogProps = {
   locale: UiLocale
   snapshot: ReleaseNotesSnapshot
   onAcknowledge: (version: string) => Promise<void>
   onClose: () => void
+}
+
+function ReleaseNotesSection({
+  heading,
+  headingLevel,
+  icon,
+  items,
+  variant
+}: {
+  heading: string
+  headingLevel: 'h3' | 'h4'
+  icon: React.ReactNode
+  items: string[]
+  variant?: 'notices'
+}): React.JSX.Element | null {
+  if (items.length === 0) {
+    return null
+  }
+  const SectionHeading = headingLevel
+  return (
+    <div
+      className={[
+        'release-notes-dialog__section',
+        variant && `release-notes-dialog__section--${variant}`
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      <SectionHeading>
+        {icon}
+        {heading}
+      </SectionHeading>
+      <ul>
+        {items.map((item) => (
+          <li key={item}>
+            <InlineMarkdown>{item}</InlineMarkdown>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 function ReleaseSection({
@@ -28,7 +76,7 @@ function ReleaseSection({
   const { t } = useTranslation('app')
   const notes = release.notes[locale]
   const releaseHeadingId = useId()
-  const SectionHeading = showVersion ? 'h4' : 'h3'
+  const headingLevel = showVersion ? 'h4' : 'h3'
   return (
     <section
       aria-labelledby={showVersion ? releaseHeadingId : undefined}
@@ -42,32 +90,31 @@ function ReleaseSection({
           GoodBuddy {release.version}
         </h3>
       )}
-      {notes.features.length > 0 && (
-        <div className="release-notes-dialog__section">
-          <SectionHeading>
-            <Sparkles aria-hidden="true" size={16} />
-            {t('releaseNotes.features')}
-          </SectionHeading>
-          <ul>
-            {notes.features.map((feature) => (
-              <li key={feature}>{feature}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {notes.fixes.length > 0 && (
-        <div className="release-notes-dialog__section">
-          <SectionHeading>
-            <Wrench aria-hidden="true" size={16} />
-            {t('releaseNotes.fixes')}
-          </SectionHeading>
-          <ul>
-            {notes.fixes.map((fix) => (
-              <li key={fix}>{fix}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <ReleaseNotesSection
+        heading={t('releaseNotes.highlights')}
+        headingLevel={headingLevel}
+        icon={<Lightbulb aria-hidden="true" size={16} />}
+        items={notes.highlights}
+      />
+      <ReleaseNotesSection
+        heading={t('releaseNotes.features')}
+        headingLevel={headingLevel}
+        icon={<Sparkles aria-hidden="true" size={16} />}
+        items={notes.features}
+      />
+      <ReleaseNotesSection
+        heading={t('releaseNotes.fixes')}
+        headingLevel={headingLevel}
+        icon={<Wrench aria-hidden="true" size={16} />}
+        items={notes.fixes}
+      />
+      <ReleaseNotesSection
+        heading={t('releaseNotes.notices')}
+        headingLevel={headingLevel}
+        icon={<TriangleAlert aria-hidden="true" size={16} />}
+        items={notes.notices}
+        variant="notices"
+      />
     </section>
   )
 }

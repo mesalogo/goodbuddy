@@ -659,7 +659,7 @@ export const RuntimeCustomizationSection = forwardRef<
         </p>
       ) : null}
 
-      {snapshot ? (
+      {snapshot && snapshot.inventoryStatus !== 'available' ? (
         <NativeInventoryStatus snapshot={snapshot} />
       ) : null}
 

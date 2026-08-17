@@ -19,12 +19,18 @@ const snapshot: ReleaseNotesSnapshot = {
       releasedAt: '2026-08-11',
       notes: {
         'zh-CN': {
-          features: ['新增双语界面'],
-          fixes: ['修复开关尺寸']
+          highlights: ['多 Runtime 工作流更加连贯。'],
+          features: ['**Runtime 能力概览。** 查看实际可用能力。'],
+          fixes: ['**设置界面一致性。** 修复开关尺寸。'],
+          notices: ['**工作模式权限。** Ask 模式保持只读。']
         },
         'en-US': {
-          features: ['Added a bilingual interface'],
-          fixes: ['Fixed switch dimensions']
+          highlights: ['Multi-Runtime workflows are more cohesive.'],
+          features: [
+            '**Runtime capability overview.** View actual capabilities.'
+          ],
+          fixes: ['**Settings consistency.** Fixed switch dimensions.'],
+          notices: ['**Work mode permissions.** Ask remains read-only.']
         }
       }
     }
@@ -71,8 +77,26 @@ describe('ReleaseNotesDialog', () => {
         name: 'GoodBuddy 0.8.18 更新内容'
       })
     ).toBeInTheDocument()
-    expect(screen.getByText('新增双语界面')).toBeInTheDocument()
-    expect(screen.getByText('修复开关尺寸')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '本次亮点' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('多 Runtime 工作流更加连贯。')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '功能更新' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('Runtime 能力概览。').tagName).toBe(
+      'STRONG'
+    )
+    expect(screen.getByText('查看实际可用能力。')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '问题修复' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '使用前请留意' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('工作模式权限。').tagName).toBe('STRONG')
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
     expect(
       container.querySelector<HTMLElement>('.app-shell')?.inert
@@ -115,9 +139,20 @@ describe('ReleaseNotesDialog', () => {
       })
     ).toBeInTheDocument()
     expect(
-      screen.getByText('Added a bilingual interface')
+      screen.getByRole('heading', { name: 'Highlights' })
     ).toBeInTheDocument()
-    expect(screen.getByText('Fixed switch dimensions')).toBeInTheDocument()
+    expect(
+      screen.getByText('Multi-Runtime workflows are more cohesive.')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Runtime capability overview.').tagName
+    ).toBe('STRONG')
+    expect(
+      screen.getByRole('heading', { name: 'Before You Start' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('Work mode permissions.').tagName).toBe(
+      'STRONG'
+    )
     expect(
       screen.getByRole('button', { name: 'Get Started' })
     ).toBeInTheDocument()

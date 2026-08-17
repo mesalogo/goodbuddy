@@ -58,6 +58,28 @@ interface ReleaseBuilderModule {
     integrity: string
     filename: string
   }
+  lockedTargetRuntimePackage: (
+    packageName: string,
+    packageJson?: {
+      dependencies?: Record<string, string>
+      optionalDependencies?: Record<string, string>
+    },
+    packageLock?: {
+      packages?: Record<
+        string,
+        {
+          version?: string
+          resolved?: string
+          integrity?: string
+          optionalDependencies?: Record<string, string>
+        }
+      >
+    }
+  ) => {
+    name: string
+    version: string
+    integrity: string
+  }
   replaceOutput: (
     stagingDirectory: string,
     destination: string,
@@ -66,6 +88,39 @@ interface ReleaseBuilderModule {
   targetRuntimePackageNames: (
     options: ReleaseOptions
   ) => string[]
+  stageTargetRuntimeDependencies: (
+    options: ReleaseOptions,
+    dependencies?: {
+      root: string
+      packageJson: {
+        dependencies?: Record<string, string>
+        optionalDependencies?: Record<string, string>
+      }
+      packageLock: {
+        packages?: Record<
+          string,
+          {
+            version?: string
+            resolved?: string
+            integrity?: string
+            optionalDependencies?: Record<string, string>
+          }
+        >
+      }
+      npmInvocation: () => {
+        command: string
+        prefixArgs: string[]
+      }
+      runCapture: (
+        command: string,
+        arguments_: string[]
+      ) => Promise<string>
+      extractArchive: (
+        archivePath: string,
+        destination: string
+      ) => Promise<void>
+    }
+  ) => Promise<() => void>
   verifyHarnessPackage: (
     resources: string,
     options: ReleaseOptions,
@@ -354,14 +409,216 @@ describe('release build arguments', () => {
         ...windowsOptions,
         arch: 'arm64'
       })
-    ).toEqual(['@koromix/koffi-win32-arm64'])
+    ).toEqual([
+      '@koromix/koffi-win32-arm64',
+      '@napi-rs/canvas-win32-arm64-msvc'
+    ])
     expect(
       releaseBuilder.targetRuntimePackageNames({
         ...windowsOptions,
         platform: 'linux',
         formats: ['AppImage', 'deb']
       })
-    ).toEqual(['@koromix/koffi-linux-x64'])
+    ).toEqual([
+      '@koromix/koffi-linux-x64',
+      '@napi-rs/canvas-linux-x64-gnu'
+    ])
+    expect(
+      releaseBuilder.targetRuntimePackageNames({
+        ...windowsOptions,
+        platform: 'macos',
+        arch: 'arm64',
+        formats: ['dmg', 'zip']
+      })
+    ).toEqual([
+      '@koromix/koffi-darwin-arm64',
+      '@napi-rs/canvas-darwin-arm64'
+    ])
+  })
+
+  it('stages a missing target Canvas package from locked metadata', async () => {
+    const runtimeRoot = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-release-canvas-stage-')
+    )
+    const canvasPackage =
+      '@napi-rs/canvas-win32-arm64-msvc'
+    const koffiPackage = '@koromix/koffi-win32-arm64'
+    const archiveContents = Buffer.from('locked Canvas archive')
+    const integrity = `sha512-${createHash('sha512')
+      .update(archiveContents)
+      .digest('base64')}`
+    const packageJson = {
+      dependencies: {
+        '@napi-rs/canvas': '1.0.3'
+      },
+      optionalDependencies: {
+        [koffiPackage]: '3.1.4'
+      }
+    }
+    const packageLock = {
+      packages: {
+        'node_modules/@napi-rs/canvas': {
+          version: '1.0.3',
+          optionalDependencies: {
+            [canvasPackage]: '1.0.3'
+          }
+        },
+        [`node_modules/${canvasPackage}`]: {
+          version: '1.0.3',
+          resolved: 'https://registry.npmjs.org/locked-canvas.tgz',
+          integrity
+        },
+        [`node_modules/${koffiPackage}`]: {
+          version: '3.1.4',
+          resolved: 'https://registry.npmjs.org/locked-koffi.tgz',
+          integrity: 'sha512-locked'
+        }
+      }
+    }
+    const koffiDirectory = join(
+      runtimeRoot,
+      'node_modules',
+      ...koffiPackage.split('/')
+    )
+    const canvasDirectory = join(
+      runtimeRoot,
+      'node_modules',
+      ...canvasPackage.split('/')
+    )
+    const invocations: string[][] = []
+    let cleanup: () => void = () => undefined
+
+    try {
+      mkdirSync(koffiDirectory, { recursive: true })
+      writeFileSync(
+        join(koffiDirectory, 'package.json'),
+        JSON.stringify({
+          name: koffiPackage,
+          version: '3.1.4'
+        })
+      )
+
+      cleanup =
+        await releaseBuilder.stageTargetRuntimeDependencies(
+          {
+            ...windowsOptions,
+            arch: 'arm64'
+          },
+          {
+            root: runtimeRoot,
+            packageJson,
+            packageLock,
+            npmInvocation: () => ({
+              command: 'npm-test',
+              prefixArgs: []
+            }),
+            runCapture: async (_command, arguments_) => {
+              invocations.push(arguments_)
+              const destination = arguments_[
+                arguments_.indexOf('--pack-destination') + 1
+              ]
+              if (!destination) {
+                throw new Error('pack destination is missing')
+              }
+              writeFileSync(
+                join(destination, 'locked-canvas.tgz'),
+                archiveContents
+              )
+              return JSON.stringify([
+                {
+                  name: canvasPackage,
+                  version: '1.0.3',
+                  integrity,
+                  filename: 'locked-canvas.tgz'
+                }
+              ])
+            },
+            extractArchive: async (_archive, destination) => {
+              writeFileSync(
+                join(destination, 'package.json'),
+                JSON.stringify({
+                  name: canvasPackage,
+                  version: '1.0.3'
+                })
+              )
+            }
+          }
+        )
+
+      expect(invocations).toHaveLength(1)
+      expect(invocations[0]).toEqual(
+        expect.arrayContaining([
+          'pack',
+          `${canvasPackage}@1.0.3`,
+          '--ignore-scripts',
+          '--json'
+        ])
+      )
+      expect(invocations[0]).not.toContain(
+        `${canvasPackage}@latest`
+      )
+      expect(
+        JSON.parse(
+          readFileSync(
+            join(canvasDirectory, 'package.json'),
+            'utf8'
+          )
+        )
+      ).toMatchObject({
+        name: canvasPackage,
+        version: '1.0.3'
+      })
+
+      cleanup()
+      cleanup = () => undefined
+      expect(existsSync(canvasDirectory)).toBe(false)
+      expect(existsSync(koffiDirectory)).toBe(true)
+    } finally {
+      cleanup()
+      rmSync(runtimeRoot, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    [
+      'the target package version differs',
+      {
+        version: '1.0.4',
+        resolved: 'https://registry.npmjs.org/canvas.tgz',
+        integrity: 'sha512-locked'
+      }
+    ],
+    [
+      'target package integrity is missing',
+      {
+        version: '1.0.3',
+        resolved: 'https://registry.npmjs.org/canvas.tgz'
+      }
+    ]
+  ])('fails closed when %s in the lockfile', (_case, targetLock) => {
+    const canvasPackage =
+      '@napi-rs/canvas-win32-arm64-msvc'
+    expect(() =>
+      releaseBuilder.lockedTargetRuntimePackage(
+        canvasPackage,
+        {
+          dependencies: {
+            '@napi-rs/canvas': '1.0.3'
+          }
+        },
+        {
+          packages: {
+            'node_modules/@napi-rs/canvas': {
+              version: '1.0.3',
+              optionalDependencies: {
+                [canvasPackage]: '1.0.3'
+              }
+            },
+            [`node_modules/${canvasPackage}`]: targetLock
+          }
+        }
+      )
+    ).toThrow('目标 Runtime 依赖未完整锁定')
   })
 
   it('validates packed target dependency metadata and archive integrity', () => {

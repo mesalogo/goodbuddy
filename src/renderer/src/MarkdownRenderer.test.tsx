@@ -15,7 +15,10 @@ import {
   vi
 } from 'vitest'
 import { changeUiLocale } from './i18n'
-import { MarkdownRenderer } from './MarkdownRenderer'
+import {
+  InlineMarkdown,
+  MarkdownRenderer
+} from './MarkdownRenderer'
 
 const mermaidMock = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -39,6 +42,21 @@ describe('MarkdownRenderer', () => {
     cleanup()
     delete document.documentElement.dataset.theme
     vi.clearAllMocks()
+  })
+
+  it('renders bounded inline emphasis without links or raw HTML', () => {
+    const { container } = render(
+      <p>
+        <InlineMarkdown>
+          {'**明确标题。** 查看[外部页面](https://example.com)。<script>bad()</script>'}
+        </InlineMarkdown>
+      </p>
+    )
+
+    expect(screen.getByText('明确标题。').tagName).toBe('STRONG')
+    expect(container).toHaveTextContent('外部页面')
+    expect(container.querySelector('a')).not.toBeInTheDocument()
+    expect(container.querySelector('script')).not.toBeInTheDocument()
   })
 
   it('renders CommonMark and GitHub Flavored Markdown', () => {

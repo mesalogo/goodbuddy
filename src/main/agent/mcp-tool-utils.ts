@@ -1,6 +1,77 @@
 import { createHash } from 'node:crypto'
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
 const MAXIMUM_MCP_TOOL_SCHEMA_BYTES = 32 * 1024
+const DEFAULT_MAXIMUM_MCP_TOOL_PAGES = 100
+
+type ListedMcpTool =
+  Awaited<ReturnType<Client['listTools']>>['tools'][number]
+
+export async function listAllMcpTools(
+  client: Pick<Client, 'listTools'>,
+  serverName: string,
+  signal: AbortSignal,
+  options: {
+    maximumTools: number
+    pageTimeoutMs: number
+    totalTimeoutMs: number
+    maximumPages?: number
+  }
+): Promise<ListedMcpTool[]> {
+  const tools: ListedMcpTool[] = []
+  const toolNames = new Set<string>()
+  const cursors = new Set<string>()
+  const deadline = Date.now() + options.totalTimeoutMs
+  const maximumPages =
+    options.maximumPages ?? DEFAULT_MAXIMUM_MCP_TOOL_PAGES
+  let cursor: string | undefined
+  for (let page = 0; page < maximumPages; page += 1) {
+    signal.throwIfAborted()
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) {
+      throw new Error(
+        `MCP Server「${serverName}」的工具分页超过总超时`
+      )
+    }
+    const result = await client.listTools(
+      cursor !== undefined ? { cursor } : undefined,
+      {
+        timeout: Math.max(
+          1,
+          Math.min(options.pageTimeoutMs, remainingMs)
+        ),
+        signal
+      }
+    )
+    for (const tool of result.tools) {
+      if (toolNames.has(tool.name)) {
+        throw new Error(
+          `MCP Server「${serverName}」返回了重复工具「${tool.name}」`
+        )
+      }
+      toolNames.add(tool.name)
+      tools.push(tool)
+      if (tools.length > options.maximumTools) {
+        throw new Error(
+          `MCP Server「${serverName}」提供的工具数量超过安全限制`
+        )
+      }
+    }
+    if (result.nextCursor === undefined) {
+      return tools
+    }
+    if (cursors.has(result.nextCursor)) {
+      throw new Error(
+        `MCP Server「${serverName}」的工具分页游标发生循环`
+      )
+    }
+    cursors.add(result.nextCursor)
+    cursor = result.nextCursor
+  }
+  throw new Error(
+    `MCP Server「${serverName}」的工具分页超过安全限制`
+  )
+}
 
 export function isValidMcpToolName(value: unknown): value is string {
   return (

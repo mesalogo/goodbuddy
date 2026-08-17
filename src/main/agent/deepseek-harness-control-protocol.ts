@@ -14,6 +14,42 @@ export const DEEPSEEK_HARNESS_CREDENTIAL_REF =
   'GOODBUDDY_HARNESS_MODEL_API_KEY'
 export const DEEPSEEK_HARNESS_MAX_FRAME_BYTES =
   8 * 1024 * 1024
+export const DEEPSEEK_HARNESS_EXTENSION_ACTIVATION_TIMEOUT_MS =
+  5_000
+export const DEEPSEEK_HARNESS_EXTENSION_DISPOSAL_TIMEOUT_MS =
+  1_000
+export const DEEPSEEK_HARNESS_TOTAL_EXTENSION_ACTIVATION_TIMEOUT_MS =
+  90_000
+const DEEPSEEK_HARNESS_HOST_STARTUP_OVERHEAD_MS = 10_000
+const DEEPSEEK_HARNESS_STARTUP_FAILURE_CLEANUP_MS = 2_000
+
+export function deepSeekHarnessStartupBudget(
+  extensionCount: number
+): {
+  hostTimeoutMs: number
+  mainTimeoutMs: number
+} {
+  const boundedExtensionCount = Math.max(
+    0,
+    Math.floor(extensionCount)
+  )
+  const extensionSequenceMs = Math.min(
+    DEEPSEEK_HARNESS_TOTAL_EXTENSION_ACTIVATION_TIMEOUT_MS +
+      DEEPSEEK_HARNESS_EXTENSION_DISPOSAL_TIMEOUT_MS,
+    boundedExtensionCount *
+      (DEEPSEEK_HARNESS_EXTENSION_ACTIVATION_TIMEOUT_MS +
+        DEEPSEEK_HARNESS_EXTENSION_DISPOSAL_TIMEOUT_MS)
+  )
+  const hostTimeoutMs =
+    DEEPSEEK_HARNESS_HOST_STARTUP_OVERHEAD_MS +
+    extensionSequenceMs
+  return {
+    hostTimeoutMs,
+    mainTimeoutMs:
+      hostTimeoutMs +
+      DEEPSEEK_HARNESS_STARTUP_FAILURE_CLEANUP_MS
+  }
+}
 
 const skillPackageSchema = z
   .object({

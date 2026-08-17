@@ -1,10 +1,14 @@
 import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import {
+  DEEPSEEK_HARNESS_EXTENSION_ACTIVATION_TIMEOUT_MS,
+  DEEPSEEK_HARNESS_EXTENSION_DISPOSAL_TIMEOUT_MS,
+  DEEPSEEK_HARNESS_TOTAL_EXTENSION_ACTIVATION_TIMEOUT_MS
+} from './deepseek-harness-control-protocol'
 
-const DEFAULT_ACTIVATION_TIMEOUT_MS = 5_000
-const DEFAULT_TOTAL_ACTIVATION_TIMEOUT_MS = 90_000
-const DISPOSAL_TIMEOUT_MS = 1_000
+const ACTIVATION_TIMEOUT_MESSAGE =
+  'DeepSeek Harness extension activation timed out'
 
 export type ControlledHarnessExtensionPackage = {
   id: string
@@ -117,16 +121,18 @@ export async function loadControlledHarnessExtensions(
   const failedIds: string[] = []
   const failures: Array<{ id: string; message: string }> = []
   const activationTimeoutMs =
-    options.activationTimeoutMs ?? DEFAULT_ACTIVATION_TIMEOUT_MS
+    options.activationTimeoutMs ??
+    DEEPSEEK_HARNESS_EXTENSION_ACTIVATION_TIMEOUT_MS
   const deadline =
     Date.now() +
     (options.totalActivationTimeoutMs ??
-      DEFAULT_TOTAL_ACTIVATION_TIMEOUT_MS)
+      DEEPSEEK_HARNESS_TOTAL_EXTENSION_ACTIVATION_TIMEOUT_MS)
   const importModule = options.importModule ?? defaultImportModule
 
   for (const extension of extensions) {
     let fiber: (Fiber & PromiseLike<Fiber>) | undefined
     let acceptActivation = true
+    let activationDeadline: number | undefined
     try {
       const remainingMs = deadline - Date.now()
       if (remainingMs <= 0) {
@@ -134,32 +140,54 @@ export async function loadControlledHarnessExtensions(
           'DeepSeek Harness extension startup deadline exceeded'
         )
       }
+      const extensionBudgetMs = Math.max(
+        1,
+        Math.min(activationTimeoutMs, remainingMs)
+      )
+      activationDeadline = Date.now() + extensionBudgetMs
+      const rejectLateSynchronousWork = (): void => {
+        if (Date.now() > activationDeadline!) {
+          acceptActivation = false
+          throw new Error(ACTIVATION_TIMEOUT_MESSAGE)
+        }
+      }
+      const activation = (async () => {
+        const module = await importModule(
+          pathToFileURL(extension.entrypoint).href
+        )
+        rejectLateSynchronousWork()
+        if (!acceptActivation) {
+          throw new Error(ACTIVATION_TIMEOUT_MESSAGE)
+        }
+        const plugin = resolvePlugin(module)
+        fiber = ctx.plugin(plugin, extension.configuration)
+        // A timer cannot run while CommonJS evaluation or a plugin's
+        // synchronous apply body owns this event loop. Re-check elapsed
+        // wall time immediately after those calls return so finite
+        // over-budget work is never reported as successfully activated.
+        rejectLateSynchronousWork()
+        await Promise.resolve(fiber)
+        rejectLateSynchronousWork()
+      })()
       await withTimeout(
-        (async () => {
-          const module = await importModule(
-            pathToFileURL(extension.entrypoint).href
-          )
-          if (!acceptActivation) {
-            throw new Error(
-              'DeepSeek Harness extension activation timed out'
-            )
-          }
-          const plugin = resolvePlugin(module)
-          fiber = ctx.plugin(plugin, extension.configuration)
-          await Promise.resolve(fiber)
-        })(),
-        Math.max(1, Math.min(activationTimeoutMs, remainingMs)),
-        'DeepSeek Harness extension activation timed out',
+        activation,
+        Math.max(1, activationDeadline - Date.now()),
+        ACTIVATION_TIMEOUT_MESSAGE,
         () => {
           acceptActivation = false
         }
       )
       loadedIds.push(extension.id)
     } catch (error) {
+      const failure =
+        activationDeadline !== undefined &&
+        Date.now() > activationDeadline
+          ? new Error(ACTIVATION_TIMEOUT_MESSAGE)
+          : error
       if (fiber) {
         await withTimeout(
           fiber.dispose(),
-          DISPOSAL_TIMEOUT_MS,
+          DEEPSEEK_HARNESS_EXTENSION_DISPOSAL_TIMEOUT_MS,
           'DeepSeek Harness extension disposal timed out'
         ).catch(() => undefined)
       }
@@ -167,8 +195,8 @@ export async function loadControlledHarnessExtensions(
       failures.push({
         id: extension.id,
         message:
-          error instanceof Error && error.message.trim()
-            ? error.message.slice(0, 1_000)
+          failure instanceof Error && failure.message.trim()
+            ? failure.message.slice(0, 1_000)
             : 'DeepSeek Harness extension failed to start'
       })
     }

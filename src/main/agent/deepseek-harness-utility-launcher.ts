@@ -15,6 +15,7 @@ import {
   DEEPSEEK_HARNESS_CREDENTIAL_REF,
   DEEPSEEK_HARNESS_HOST_VERSION,
   DEEPSEEK_HARNESS_MAX_FRAME_BYTES,
+  deepSeekHarnessStartupBudget,
   parseHarnessControlMessage,
   type DeepSeekHarnessControlMessage as HarnessControlMessage
 } from './deepseek-harness-control-protocol'
@@ -53,6 +54,11 @@ export type DeepSeekHarnessUtilityLauncherOptions = {
   onExtensionStartupFailures?: (
     extensionIds: readonly string[]
   ) => Promise<void>
+  /**
+   * Explicit hard Host-handshake deadline. Callers that also set the Runtime
+   * initialization timeout must leave enough additional time for startup
+   * failure persistence.
+   */
   startupTimeoutMs?: number
 }
 
@@ -174,10 +180,9 @@ export function createDeepSeekHarnessUtilityLauncher(
     }
     const startupTimeoutMs =
       launcherOptions.startupTimeoutMs ??
-      Math.min(
-        120_000,
-        10_000 + canonicalExtensionPackages.length * 5_000
-      )
+      deepSeekHarnessStartupBudget(
+        canonicalExtensionPackages.length
+      ).hostTimeoutMs
     let timer: ReturnType<typeof setTimeout> | undefined
     let onAbort: (() => void) | undefined
     try {

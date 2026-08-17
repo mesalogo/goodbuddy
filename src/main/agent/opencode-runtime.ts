@@ -77,6 +77,7 @@ const MAX_NATIVE_MCP_SERVERS =
   runtimeNativeInventoryLimits.mcpServers
 const MAX_NATIVE_SKILLS = runtimeNativeInventoryLimits.skills
 const MAX_NATIVE_RESOURCES = runtimeNativeInventoryLimits.resources
+const COMPACTION_USAGE_EVENT_GRACE_MS = 1_000
 const EMBEDDED_SERVER_USERNAME = 'goodbuddy'
 const OPENCODE_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 const TEMPORARY_MCP_PREFIXES = [
@@ -2407,26 +2408,119 @@ export class OpenCodeRuntime implements AgentRuntime {
       if (context.error || !context.data) {
         throw new Error('OpenCode 原生上下文不可用，无法执行 Compact')
       }
-      signal.throwIfAborted()
-      const compact = await client.v2.session.compact(
-        { sessionID: sessionId },
-        { signal }
-      )
-      if (compact.error) {
-        throw new Error(
-          opencodeErrorMessage(
-            compact.error,
-            'OpenCode 原生 Compact 失败'
-          )
-        )
-      }
-      return {
-        result: {
-          provider: 'opencode',
-          strategy: 'native',
-          compacted: true,
-          detail: 'OpenCode 已完成原生上下文压缩'
+      const latestAssistant = [...context.data.data]
+        .reverse()
+        .find((message) => message.type === 'assistant')
+      const configuredModel = this.options.modelProfile
+        ? {
+            providerID: resolveOpenCodeProvider(
+              this.options.modelProfile
+            ).id,
+            modelID: this.options.modelProfile.modelName
+          }
+        : latestAssistant?.type === 'assistant'
+          ? {
+              providerID: latestAssistant.model.providerID,
+              modelID: latestAssistant.model.id
+            }
+          : undefined
+      if (!configuredModel) {
+        return {
+          result: {
+            provider: 'opencode',
+            strategy: 'native',
+            compacted: false,
+            detail: '当前 OpenCode 会话尚无可用于压缩的模型记录'
+          }
         }
+      }
+      signal.throwIfAborted()
+      const subscriptionController = new AbortController()
+      const subscription = await client.event.subscribe(
+        { directory: this.options.defaultWorkspace },
+        {
+          signal: AbortSignal.any([
+            signal,
+            subscriptionController.signal
+          ])
+        }
+      )
+      const usageEvents: RuntimeModelUsageEvent[] = []
+      const reportedMessageIds = new Set<string>()
+      const usageCapture = (async () => {
+        for await (const event of subscription.stream) {
+          if (
+            event.type === 'message.updated' &&
+            event.properties.sessionID === sessionId &&
+            event.properties.info.sessionID === sessionId &&
+            event.properties.info.role === 'assistant' &&
+            !reportedMessageIds.has(event.properties.info.id)
+          ) {
+            const usage = createUsageEvent(
+              request.requestId,
+              event.properties.info
+            )
+            if (usage) {
+              reportedMessageIds.add(event.properties.info.id)
+              usageEvents.push(usage)
+            }
+          }
+          if (
+            event.type === 'session.idle' &&
+            event.properties.sessionID === sessionId
+          ) {
+            return
+          }
+        }
+      })()
+      try {
+        const compact = await client.session.summarize(
+          {
+            sessionID: sessionId,
+            directory: this.options.defaultWorkspace,
+            providerID: configuredModel.providerID,
+            modelID: configuredModel.modelID,
+            auto: false
+          },
+          { signal }
+        )
+        if (compact.error || compact.data !== true) {
+          throw new Error(
+            opencodeErrorMessage(
+              compact.error,
+              'OpenCode 原生 Compact 失败'
+            )
+          )
+        }
+        let graceTimer: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            usageCapture,
+            new Promise<void>((resolveGrace) => {
+              graceTimer = setTimeout(
+                resolveGrace,
+                COMPACTION_USAGE_EVENT_GRACE_MS
+              )
+              graceTimer.unref?.()
+            })
+          ])
+        } finally {
+          if (graceTimer) {
+            clearTimeout(graceTimer)
+          }
+        }
+        return {
+          result: {
+            provider: 'opencode',
+            strategy: 'native',
+            compacted: true,
+            detail: 'OpenCode 已完成原生上下文压缩'
+          },
+          ...(usageEvents.length > 0 ? { usageEvents } : {})
+        }
+      } finally {
+        subscriptionController.abort()
+        await usageCapture.catch(() => undefined)
       }
     } finally {
       releaseConversation?.()

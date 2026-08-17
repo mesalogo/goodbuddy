@@ -15,6 +15,13 @@ function extension(
   }
 }
 
+function blockEventLoop(durationMs: number): void {
+  const deadline = Date.now() + durationMs
+  while (Date.now() <= deadline) {
+    // Deliberately model finite synchronous CommonJS/plugin startup work.
+  }
+}
+
 describe('DeepSeek Harness extension loader', () => {
   it('loads named Cordis plugin exports and keeps working extensions active', async () => {
     const ctx = new Context()
@@ -155,6 +162,93 @@ describe('DeepSeek Harness extension loader', () => {
     await Promise.resolve()
 
     expect(apply).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
+  it('rejects a synchronous import that returns after its budget', async () => {
+    const ctx = new Context()
+    const apply = vi.fn()
+
+    const result = await loadControlledHarnessExtensions(
+      ctx,
+      [extension('slow-import')],
+      {
+        activationTimeoutMs: 10,
+        importModule: async () => {
+          blockEventLoop(25)
+          return { apply }
+        }
+      }
+    )
+
+    expect(result).toEqual({
+      loadedIds: [],
+      failedIds: ['slow-import'],
+      failures: [
+        {
+          id: 'slow-import',
+          message:
+            'DeepSeek Harness extension activation timed out'
+        }
+      ]
+    })
+    expect(apply).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
+  it('rejects over-budget synchronous apply and loads the next extension', async () => {
+    const ctx = new Context()
+    const laterApply = vi.fn()
+
+    const result = await loadControlledHarnessExtensions(
+      ctx,
+      [extension('slow-apply'), extension('later')],
+      {
+        activationTimeoutMs: 10,
+        totalActivationTimeoutMs: 100,
+        importModule: async (url) =>
+          url.includes('slow-apply')
+            ? {
+                apply() {
+                  blockEventLoop(25)
+                }
+              }
+            : { apply: laterApply }
+      }
+    )
+
+    expect(result.loadedIds).toEqual(['later'])
+    expect(result.failedIds).toEqual(['slow-apply'])
+    expect(result.failures[0]?.message).toBe(
+      'DeepSeek Harness extension activation timed out'
+    )
+    expect(laterApply).toHaveBeenCalledOnce()
+    await ctx.fiber.dispose()
+  })
+
+  it('times out asynchronous activation and disposes its effects', async () => {
+    const ctx = new Context()
+    const cleanup = vi.fn()
+
+    const result = await loadControlledHarnessExtensions(
+      ctx,
+      [extension('async-slow')],
+      {
+        activationTimeoutMs: 10,
+        importModule: async () => ({
+          apply(pluginContext: Context) {
+            pluginContext.effect(() => cleanup)
+            return new Promise<void>((resolve) =>
+              setTimeout(resolve, 30)
+            )
+          }
+        })
+      }
+    )
+
+    expect(result.failedIds).toEqual(['async-slow'])
+    expect(result.failures[0]?.message).toContain('timed out')
+    expect(cleanup).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })
 })

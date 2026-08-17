@@ -923,6 +923,103 @@ describe.runIf(enabled)('runtime end-to-end', () => {
   )
 
   it(
+    'compacts and continues a real bundled OpenCode session',
+    async () => {
+      const runtime = new OpenCodeRuntime({
+        embedded: true,
+        binaryPath: '',
+        bundledBinaryPath: join(
+          portableRoot,
+          'resources',
+          'runtimes',
+          'opencode',
+          'opencode.exe'
+        ),
+        configPath: '',
+        defaultWorkspace: workspace,
+        modelProfile: {
+          id: crypto.randomUUID(),
+          name: 'E2E model',
+          baseUrl,
+          modelName,
+          apiKey,
+          protocol,
+          authentication: 'api-key'
+        }
+      })
+      const conversationId = crypto.randomUUID()
+      const signal = new AbortController().signal
+
+      try {
+        await expect(
+          collectText(
+            runtime.run(
+              {
+                requestId: crypto.randomUUID(),
+                conversationId,
+                workMode: 'ask',
+                prompt:
+                  'Remember that the verification codename is NATIVE-COMPACT-739. Reply with exactly OPENCODE_COMPACT_READY.'
+              },
+              signal
+            )
+          )
+        ).resolves.toContain('OPENCODE_COMPACT_READY')
+
+        await expect(
+          runtime.compactConversation(
+            {
+              requestId: crypto.randomUUID(),
+              conversationId,
+              runtimeSelection: { provider: 'opencode' },
+              history: [
+                {
+                  role: 'user',
+                  content:
+                    'The verification codename is NATIVE-COMPACT-739.'
+                },
+                {
+                  role: 'assistant',
+                  content: 'OPENCODE_COMPACT_READY'
+                }
+              ],
+              historyMessageIds: [
+                crypto.randomUUID(),
+                crypto.randomUUID()
+              ]
+            },
+            signal
+          )
+        ).resolves.toMatchObject({
+          result: {
+            provider: 'opencode',
+            strategy: 'native',
+            compacted: true
+          }
+        })
+
+        await expect(
+          collectText(
+            runtime.run(
+              {
+                requestId: crypto.randomUUID(),
+                conversationId,
+                workMode: 'ask',
+                prompt:
+                  'Return exactly the verification codename from before and nothing else.'
+              },
+              signal
+            )
+          )
+        ).resolves.toContain('NATIVE-COMPACT-739')
+      } finally {
+        await runtime.dispose()
+      }
+    },
+    180_000
+  )
+
+  it(
     'completes an Execute file task through bundled Continue',
     async () => {
       const runtime = new AgentRuntimeController(

@@ -527,14 +527,39 @@ function targetHarnessPaths(options) {
 
 function targetRuntimePackageNames(options) {
   const target = targetHarnessPaths(options)
-  return [target.koffiPackage]
+  return [target.koffiPackage, target.canvasPackage]
 }
 
-function lockedTargetRuntimePackage(packageName) {
-  const expectedVersion =
-    packageJson.optionalDependencies?.[packageName]
+function lockedTargetRuntimePackage(
+  packageName,
+  packageMetadata = packageJson,
+  lockMetadata = packageLock
+) {
+  let expectedVersion =
+    packageMetadata.optionalDependencies?.[packageName]
+  if (
+    typeof expectedVersion !== 'string' &&
+    packageName.startsWith('@napi-rs/canvas-')
+  ) {
+    const canvasPackageName = '@napi-rs/canvas'
+    const canvasVersion =
+      packageMetadata.dependencies?.[canvasPackageName]
+    const canvasLockEntry =
+      lockMetadata.packages?.[`node_modules/${canvasPackageName}`]
+    if (
+      typeof canvasVersion !== 'string' ||
+      canvasLockEntry?.version !== canvasVersion ||
+      canvasLockEntry.optionalDependencies?.[packageName] !==
+        canvasVersion
+    ) {
+      throw new Error(
+        `目标 Runtime 依赖未完整锁定：${packageName}`
+      )
+    }
+    expectedVersion = canvasVersion
+  }
   const lockEntry =
-    packageLock.packages?.[`node_modules/${packageName}`]
+    lockMetadata.packages?.[`node_modules/${packageName}`]
   if (
     typeof expectedVersion !== 'string' ||
     lockEntry?.version !== expectedVersion ||
@@ -548,7 +573,6 @@ function lockedTargetRuntimePackage(packageName) {
   return {
     name: packageName,
     version: expectedVersion,
-    resolved: lockEntry.resolved,
     integrity: lockEntry.integrity
   }
 }
@@ -596,9 +620,13 @@ function verifyArchiveIntegrity(filePath, expectedIntegrity) {
   }
 }
 
-function installedPackageMatches(packageName, expectedVersion) {
+function installedPackageMatches(
+  packageName,
+  expectedVersion,
+  runtimeRoot = root
+) {
   const manifestPath = join(
-    root,
+    runtimeRoot,
     'node_modules',
     ...packageName.split('/'),
     'package.json'
@@ -618,14 +646,29 @@ function installedPackageMatches(packageName, expectedVersion) {
   return true
 }
 
-async function stageTargetRuntimeDependencies(options) {
+async function stageTargetRuntimeDependencies(
+  options,
+  dependencies = {}
+) {
+  const runtimeRoot = dependencies.root ?? root
+  const runtimePackageJson =
+    dependencies.packageJson ?? packageJson
+  const runtimePackageLock =
+    dependencies.packageLock ?? packageLock
   const missing = targetRuntimePackageNames(options)
-    .map(lockedTargetRuntimePackage)
+    .map((packageName) =>
+      lockedTargetRuntimePackage(
+        packageName,
+        runtimePackageJson,
+        runtimePackageLock
+      )
+    )
     .filter(
       (dependency) =>
         !installedPackageMatches(
           dependency.name,
-          dependency.version
+          dependency.version,
+          runtimeRoot
         )
     )
   if (missing.length === 0) {
@@ -644,14 +687,27 @@ async function stageTargetRuntimeDependencies(options) {
   }
 
   try {
-    const npm = npmInvocation()
+    const npm = dependencies.npmInvocation?.() ?? npmInvocation()
+    const captureCommand =
+      dependencies.runCapture ?? runCapture
+    const extractArchive =
+      dependencies.extractArchive ??
+      ((archivePath, destination) =>
+        run('tar', [
+          '-xzf',
+          archivePath,
+          '-C',
+          destination,
+          '--strip-components',
+          '1'
+        ]))
     for (const [index, dependency] of missing.entries()) {
       const archiveDirectory = join(
         stagingRoot,
         `package-${index}`
       )
       mkdirSync(archiveDirectory, { recursive: true })
-      const output = await runCapture(npm.command, [
+      const output = await captureCommand(npm.command, [
         ...npm.prefixArgs,
         'pack',
         `${dependency.name}@${dependency.version}`,
@@ -671,7 +727,7 @@ async function stageTargetRuntimeDependencies(options) {
       verifyArchiveIntegrity(archivePath, dependency.integrity)
 
       const destination = join(
-        root,
+        runtimeRoot,
         'node_modules',
         ...dependency.name.split('/')
       )
@@ -682,18 +738,12 @@ async function stageTargetRuntimeDependencies(options) {
       }
       mkdirSync(destination, { recursive: true })
       stagedDirectories.push(destination)
-      await run('tar', [
-        '-xzf',
-        archivePath,
-        '-C',
-        destination,
-        '--strip-components',
-        '1'
-      ])
+      await extractArchive(archivePath, destination)
       if (
         !installedPackageMatches(
           dependency.name,
-          dependency.version
+          dependency.version,
+          runtimeRoot
         )
       ) {
         throw new Error(
@@ -1619,6 +1669,7 @@ module.exports = {
   parseArguments,
   parsePackedPackageMetadata,
   platformDefinitions,
+  lockedTargetRuntimePackage,
   replaceOutput,
   stageTargetRuntimeDependencies,
   targetRuntimePackageNames,

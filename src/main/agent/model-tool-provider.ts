@@ -41,6 +41,7 @@ import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import {
   createMcpToolName,
   isValidMcpToolName,
+  listAllMcpTools,
   normalizeMcpToolSchema
 } from './mcp-tool-utils'
 
@@ -736,6 +737,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     clientScope: Set<Client> = this.customMcpClients
   ): Promise<ConnectedMcp> {
     let connection: ConnectedMcp | undefined
+    let dynamicToolsChangeVersion = 0
     const client = new Client(
       {
         name: 'goodbuddy-direct-model',
@@ -748,8 +750,11 @@ export class ModelToolProvider implements ModelToolProviderLike {
                 autoRefresh: false,
                 debounceMs: 0,
                 onChanged: (error) => {
-                  if (!error && connection) {
-                    connection.dynamicToolsChanged = true
+                  if (!error) {
+                    dynamicToolsChangeVersion += 1
+                    if (connection) {
+                      connection.dynamicToolsChanged = true
+                    }
                   }
                 }
               }
@@ -764,18 +769,27 @@ export class ModelToolProvider implements ModelToolProviderLike {
         timeout: MCP_TIMEOUT_MS,
         signal
       })
-      const result = await client.listTools(undefined, {
-        timeout: MCP_TIMEOUT_MS,
-        signal
-      })
+      const listedAtChangeVersion = dynamicToolsChangeVersion
+      const tools = await listAllMcpTools(
+        client,
+        server.name,
+        signal,
+        {
+          maximumTools:
+            MAX_MODEL_TOOLS - this.getReservedToolCount(),
+          pageTimeoutMs: MCP_TIMEOUT_MS,
+          totalTimeoutMs: MCP_CALL_MAX_TOTAL_TIMEOUT_MS
+        }
+      )
       connection = {
         client,
         server,
-        tools: this.createMcpBindings(client, server, result.tools),
+        tools: this.createMcpBindings(client, server, tools),
         dynamicToolsSupported:
           server.allowDynamicTools &&
           client.getServerCapabilities()?.tools?.listChanged === true,
-        dynamicToolsChanged: false
+        dynamicToolsChanged:
+          dynamicToolsChangeVersion !== listedAtChangeVersion
       }
       return connection
     } catch (error) {
@@ -863,14 +877,21 @@ export class ModelToolProvider implements ModelToolProviderLike {
           }
           connection.dynamicToolsChanged = false
           try {
-            const result = await connection.client.listTools(undefined, {
-              timeout: MCP_TIMEOUT_MS,
-              signal
-            })
+            const tools = await listAllMcpTools(
+              connection.client,
+              connection.server.name,
+              signal,
+              {
+                maximumTools:
+                  MAX_MODEL_TOOLS - this.getReservedToolCount(),
+                pageTimeoutMs: MCP_TIMEOUT_MS,
+                totalTimeoutMs: MCP_CALL_MAX_TOTAL_TIMEOUT_MS
+              }
+            )
             connection.tools = this.createMcpBindings(
               connection.client,
               connection.server,
-              result.tools
+              tools
             )
           } catch (error) {
             connection.dynamicToolsChanged = true
