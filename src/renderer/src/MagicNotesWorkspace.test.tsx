@@ -377,7 +377,7 @@ describe('MagicNotesWorkspace', () => {
     ).toBeInTheDocument()
   })
 
-  it('keeps history editing contained and uses standard delete buttons', async () => {
+  it('keeps history editing contained and de-emphasizes note deletion', async () => {
     const { container } = render(
       <MagicNotesWorkspace onNotify={onNotify} />
     )
@@ -389,8 +389,11 @@ describe('MagicNotesWorkspace', () => {
     const deleteEntry = screen.getByRole('button', {
       name: '删除记录'
     })
-    expect(deleteNote).toHaveClass('danger-button', 'danger-button--quiet')
-    expect(deleteNote).toHaveTextContent('删除笔记')
+    expect(deleteNote).toHaveClass(
+      'icon-button',
+      'magic-note-detail-header__delete'
+    )
+    expect(deleteNote).toHaveTextContent('')
     expect(deleteEntry).toHaveClass('danger-button', 'danger-button--quiet')
     expect(deleteEntry).toHaveTextContent('删除记录')
 
@@ -445,6 +448,17 @@ describe('MagicNotesWorkspace', () => {
     expect(pane).toBeVisible()
   })
 
+  it('shows a concise empty state before a note has AI comments', async () => {
+    get.mockResolvedValueOnce(alternateDetail(noteId, detail.title))
+
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    expect(await screen.findByText('暂无 AI 评论')).toBeInTheDocument()
+    expect(
+      screen.getByText('写完一句并停止输入 5 秒后，评论会显示在这里。')
+    ).toBeInTheDocument()
+  })
+
   it('resizes the AI comments pane with pointer and keyboard controls', async () => {
     const originalInnerWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', {
@@ -465,6 +479,8 @@ describe('MagicNotesWorkspace', () => {
       hasPointerCapture: { value: () => true },
       releasePointerCapture: { value: releasePointerCapture }
     })
+
+    expect(separator).toHaveAttribute('aria-valuenow', '280')
 
     fireEvent.pointerDown(separator, {
       button: 0,

@@ -85,8 +85,7 @@ export const magicNotes = {
     emptySelectionDescription:
       'Select a note on the left, or create a note to start writing.',
     newEntryLabel: 'New entry content',
-    composerImmediateHint:
-      'Press Enter, then stop typing for 5 seconds for AI to comment on the draft',
+    composerImmediateHint: 'AI comments after you stop typing for 5 seconds',
     composerRichTextHint:
       'Supports rich text and pasting or dropping local images, videos, and attachments',
     emptyEntries: 'No entries yet. Write the first entry above.',
@@ -122,10 +121,11 @@ export const magicNotes = {
   comments: {
     paneLabel: 'AI comments',
     closePane: 'Close AI comments pane',
+    emptyTitle: 'No AI comments yet',
     directionLabel: 'Comment direction',
     directionAriaLabel: 'AI comment direction',
     directionHelp:
-      'Direction changes apply only to the next comment and do not alter existing content. Change the comment format in Settings.',
+      'Applies only to the next comment. Change the format in Settings.',
     directions: {
       general: 'General feedback',
       expand: 'Expand writing',
@@ -144,7 +144,7 @@ export const magicNotes = {
       'Choose “Analyze with AI” in the to-do details to show comments here.',
     selectNote: 'Select a note to show AI comments.',
     immediateHint:
-      'Finish a sentence, press Enter, and stop typing for 5 seconds to show comments here.',
+      'Finish a sentence and stop typing for 5 seconds to show comments here.',
     autoHint: 'AI comments automatically after you save an entry.',
     manualHint:
       'Choose “Analyze with AI” on an entry to show comments here.'
@@ -154,6 +154,7 @@ export const magicNotes = {
     aiPaneWidth: 'AI comments pane, {{width}} pixels'
   },
   editor: {
+    toolbarLabel: 'Note formatting toolbar',
     imageReadFailed: 'Could not read the image',
     fileReadFailed: 'Could not read the file',
     maxImages: 'Each entry can contain up to {{count}} images',
@@ -173,10 +174,10 @@ export const magicNotes = {
     heading3: 'Heading 3',
     body: 'Body',
     fontSize: 'Font size',
-    fontSizeSmall: 'Small',
-    fontSizeNormal: 'Normal',
-    fontSizeLarge: 'Large',
-    fontSizeHuge: 'Extra large',
+    fontSizeSmall: '12',
+    fontSizeNormal: '14',
+    fontSizeLarge: '18',
+    fontSizeHuge: '24',
     textColor: 'Text color',
     bold: 'Bold',
     italic: 'Italic',

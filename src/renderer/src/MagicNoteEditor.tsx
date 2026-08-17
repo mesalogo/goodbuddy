@@ -454,107 +454,122 @@ export function MagicNoteEditor({
         }
       }}
     >
-      <div ref={toolbarRef} className="magic-note-editor__toolbar">
-        <select
-          aria-label={t('editor.paragraphStyle')}
-          className="ql-header"
-          defaultValue=""
-        >
-          <option value="1">{t('editor.heading1')}</option>
-          <option value="2">{t('editor.heading2')}</option>
-          <option value="3">{t('editor.heading3')}</option>
-          <option value="">{t('editor.body')}</option>
-        </select>
-        <select
-          aria-label={t('editor.fontSize')}
-          className="ql-size"
-          defaultValue=""
-        >
-          <option value="small">{t('editor.fontSizeSmall')}</option>
-          <option value="">{t('editor.fontSizeNormal')}</option>
-          <option value="large">{t('editor.fontSizeLarge')}</option>
-          <option value="huge">{t('editor.fontSizeHuge')}</option>
-        </select>
-        <select
-          aria-label={t('editor.textColor')}
-          className="ql-color"
-          defaultValue=""
-        />
-        <button
-          aria-label={t('editor.bold')}
-          className="ql-bold"
-          type="button"
-        />
-        <button
-          aria-label={t('editor.italic')}
-          className="ql-italic"
-          type="button"
-        />
-        <button
-          aria-label={t('editor.underline')}
-          className="ql-underline"
-          type="button"
-        />
-        <button
-          aria-label={t('editor.strike')}
-          className="ql-strike"
-          type="button"
-        />
-        <button
-          aria-label={t('editor.todoList')}
-          className="ql-list"
-          type="button"
-          value="check"
-        />
-        <button
-          aria-label={t('editor.bulletList')}
-          className="ql-list"
-          type="button"
-          value="bullet"
-        />
-        <button
-          aria-label={t('editor.numberedList')}
-          className="ql-list"
-          type="button"
-          value="ordered"
-        />
-        <button
-          aria-label={t('editor.blockquote')}
-          className="ql-blockquote"
-          type="button"
-        />
-        <button
-          aria-label={t('editor.codeBlock')}
-          className="ql-code-block"
-          type="button"
-        />
-        <button
-          aria-label={t('editor.insertImage')}
-          className="ql-image"
-          type="button"
-        />
-        <button
-          aria-label={t('editor.uploadAttachment')}
-          className="magic-note-editor__attachment-button"
-          type="button"
-          onClick={() => attachmentInputRef.current?.click()}
-        >
-          <Paperclip aria-hidden="true" size={16} />
-        </button>
-        <button
-          aria-label={t('editor.undo')}
-          type="button"
-          onClick={() => quillRef.current?.history.undo()}
-        >
-          ↶
-        </button>
-        <button
-          aria-label={t('editor.redo')}
-          type="button"
-          onClick={() => quillRef.current?.history.redo()}
-        >
-          ↷
-        </button>
+      <div
+        ref={toolbarRef}
+        aria-label={t('editor.toolbarLabel')}
+        className="magic-note-editor__toolbar"
+        role="toolbar"
+      >
+        <span className="ql-formats">
+          <select
+            aria-label={t('editor.paragraphStyle')}
+            className="ql-header"
+            defaultValue=""
+          >
+            <option value="1">{t('editor.heading1')}</option>
+            <option value="2">{t('editor.heading2')}</option>
+            <option value="3">{t('editor.heading3')}</option>
+            <option value="">{t('editor.body')}</option>
+          </select>
+          <select
+            aria-label={t('editor.fontSize')}
+            className="ql-size"
+            defaultValue=""
+          >
+            <option value="small">{t('editor.fontSizeSmall')}</option>
+            <option value="">{t('editor.fontSizeNormal')}</option>
+            <option value="large">{t('editor.fontSizeLarge')}</option>
+            <option value="huge">{t('editor.fontSizeHuge')}</option>
+          </select>
+        </span>
+        <span className="ql-formats">
+          <select
+            aria-label={t('editor.textColor')}
+            className="ql-color"
+            defaultValue=""
+          />
+          <button
+            aria-label={t('editor.bold')}
+            className="ql-bold"
+            type="button"
+          />
+          <button
+            aria-label={t('editor.italic')}
+            className="ql-italic"
+            type="button"
+          />
+          <button
+            aria-label={t('editor.underline')}
+            className="ql-underline"
+            type="button"
+          />
+          <button
+            aria-label={t('editor.strike')}
+            className="ql-strike"
+            type="button"
+          />
+        </span>
+        <span className="ql-formats">
+          <button
+            aria-label={t('editor.todoList')}
+            className="ql-list"
+            type="button"
+            value="check"
+          />
+          <button
+            aria-label={t('editor.bulletList')}
+            className="ql-list"
+            type="button"
+            value="bullet"
+          />
+          <button
+            aria-label={t('editor.numberedList')}
+            className="ql-list"
+            type="button"
+            value="ordered"
+          />
+        </span>
+        <span className="ql-formats">
+          <button
+            aria-label={t('editor.blockquote')}
+            className="ql-blockquote"
+            type="button"
+          />
+          <button
+            aria-label={t('editor.codeBlock')}
+            className="ql-code-block"
+            type="button"
+          />
+          <button
+            aria-label={t('editor.insertImage')}
+            className="ql-image"
+            type="button"
+          />
+          <button
+            aria-label={t('editor.uploadAttachment')}
+            className="magic-note-editor__attachment-button"
+            type="button"
+            onClick={() => attachmentInputRef.current?.click()}
+          >
+            <Paperclip aria-hidden="true" size={16} />
+          </button>
+        </span>
+        <span className="ql-formats">
+          <button
+            aria-label={t('editor.undo')}
+            type="button"
+            onClick={() => quillRef.current?.history.undo()}
+          >
+            ↶
+          </button>
+          <button
+            aria-label={t('editor.redo')}
+            type="button"
+            onClick={() => quillRef.current?.history.redo()}
+          >
+            ↷
+          </button>
+        </span>
       </div>
       <div ref={editorRef} className="magic-note-editor__content" />
       <input

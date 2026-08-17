@@ -79,7 +79,7 @@ export const magicNotes = {
     emptySelectionTitle: '还没有选择笔记',
     emptySelectionDescription: '从左侧选择笔记，或新建一篇笔记开始记录。',
     newEntryLabel: '新记录内容',
-    composerImmediateHint: '按回车并停止输入 5 秒后，AI 评论当前草稿',
+    composerImmediateHint: '停止输入 5 秒后自动评论',
     composerRichTextHint: '支持富文本，可粘贴或拖入本地图片、视频和附件',
     emptyEntries: '还没有记录，在上方写下第一条内容。',
     editEntryLabel: '编辑记录内容',
@@ -113,9 +113,10 @@ export const magicNotes = {
   comments: {
     paneLabel: 'AI 评论',
     closePane: '关闭 AI 评论面板',
+    emptyTitle: '暂无 AI 评论',
     directionLabel: '评论方向',
     directionAriaLabel: 'AI 评论方向',
-    directionHelp: '评论方向更改仅用于下一次评论，不会改动已生成的内容；评论形式可在设置中心修改。',
+    directionHelp: '仅影响下一次评论；评论形式可在设置中心修改。',
     directions: {
       general: '综合点评',
       expand: '扩展写作',
@@ -132,7 +133,7 @@ export const magicNotes = {
     selectTodo: '选择待办后显示 AI 评论。',
     analyzeTodoHint: '点击待办详情中的“AI 分析”，评论会显示在这里。',
     selectNote: '选择笔记后显示 AI 评论。',
-    immediateHint: '写完一句后按回车，停止输入 5 秒，评论会显示在这里。',
+    immediateHint: '写完一句并停止输入 5 秒后，评论会显示在这里。',
     autoHint: '保存记录后，AI 会自动评论。',
     manualHint: '在记录上点击“AI 分析”，评论会显示在这里。'
   },
@@ -141,6 +142,7 @@ export const magicNotes = {
     aiPaneWidth: 'AI 评论栏 {{width}} 像素'
   },
   editor: {
+    toolbarLabel: '笔记格式工具栏',
     imageReadFailed: '图片读取失败',
     fileReadFailed: '文件读取失败',
     maxImages: '每条记录最多包含 {{count}} 张图片',
@@ -158,10 +160,10 @@ export const magicNotes = {
     heading3: '标题 3',
     body: '正文',
     fontSize: '字体大小',
-    fontSizeSmall: '小号',
-    fontSizeNormal: '常规',
-    fontSizeLarge: '大号',
-    fontSizeHuge: '特大',
+    fontSizeSmall: '12',
+    fontSizeNormal: '14',
+    fontSizeLarge: '18',
+    fontSizeHuge: '24',
     textColor: '字体颜色',
     bold: '粗体',
     italic: '斜体',

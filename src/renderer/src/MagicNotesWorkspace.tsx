@@ -62,7 +62,7 @@ type ValidationTarget =
   | 'new-entry'
   | 'edit-entry'
 
-const defaultAiPaneWidth = 300
+const defaultAiPaneWidth = 280
 const minimumAiPaneWidth = 240
 const maximumAiPaneWidth = 520
 const magicNotesListPaneWidth = 220
@@ -1611,12 +1611,12 @@ export function MagicNotesWorkspace({
                   </button>
                   <button
                     aria-label={t('actions.deleteNote')}
-                    className="danger-button danger-button--quiet"
+                    className="icon-button magic-note-detail-header__delete"
+                    title={t('actions.deleteNote')}
                     type="button"
                     onClick={() => setDeletingNote(true)}
                   >
                     <Trash2 aria-hidden="true" size={14} />
-                    {t('actions.deleteNote')}
                   </button>
                 </div>
               </header>
@@ -2128,14 +2128,18 @@ export function MagicNotesWorkspace({
           ) : null}
           {libraryView === 'todos' ? (
             !selectedTodo ? (
-              <p className="magic-notes-muted">
-                {t('comments.selectTodo')}
-              </p>
+              <EmptyState
+                description={t('comments.selectTodo')}
+                icon={<Bot size={20} />}
+                title={t('comments.emptyTitle')}
+              />
             ) : selectedTodo.comments.length === 0 ? (
               !liveAnalysis && (
-                <p className="magic-notes-muted">
-                  {t('comments.analyzeTodoHint')}
-                </p>
+                <EmptyState
+                  description={t('comments.analyzeTodoHint')}
+                  icon={<Bot size={20} />}
+                  title={t('comments.emptyTitle')}
+                />
               )
             ) : (
               <div className="magic-notes-ai-feed">
@@ -2150,20 +2154,26 @@ export function MagicNotesWorkspace({
               </div>
             )
           ) : !detail ? (
-            <p className="magic-notes-muted">
-              {t('comments.selectNote')}
-            </p>
+            <EmptyState
+              description={t('comments.selectNote')}
+              icon={<Bot size={20} />}
+              title={t('comments.emptyTitle')}
+            />
           ) : aiEntries.length === 0 &&
             draftAnalyses.length === 0 &&
             !draftAnalysisRunning &&
             !liveAnalysis ? (
-            <p className="magic-notes-muted">
-              {commentMode === 'immediate'
-                ? t('comments.immediateHint')
-                : commentMode === 'after-save-auto'
-                  ? t('comments.autoHint')
-                  : t('comments.manualHint')}
-            </p>
+            <EmptyState
+              description={
+                commentMode === 'immediate'
+                  ? t('comments.immediateHint')
+                  : commentMode === 'after-save-auto'
+                    ? t('comments.autoHint')
+                    : t('comments.manualHint')
+              }
+              icon={<Bot size={20} />}
+              title={t('comments.emptyTitle')}
+            />
           ) : (
             <div className="magic-notes-ai-feed">
               {draftAnalysisRunning && !liveAnalysis && (

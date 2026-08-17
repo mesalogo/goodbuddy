@@ -4,8 +4,8 @@ import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
 import { MagicNoteEditor } from './MagicNoteEditor'
 
 describe('MagicNoteEditor', () => {
-  it('exposes font size, text color, and attachment controls', () => {
-    render(
+  it('exposes numeric font sizes, text color, and attachment controls', () => {
+    const { container } = render(
       <MagicNoteEditor
         ariaLabel="笔记正文"
         onChange={vi.fn()}
@@ -13,7 +13,17 @@ describe('MagicNoteEditor', () => {
       />
     )
 
+    expect(
+      screen.getByRole('toolbar', { name: '笔记格式工具栏' })
+    ).toBeInTheDocument()
+    expect(container.querySelectorAll('.ql-formats')).toHaveLength(5)
     expect(screen.getByLabelText('字体大小')).toBeInTheDocument()
+    expect(
+      Array.from(
+        container.querySelectorAll('.ql-size .ql-picker-item'),
+        (item) => item.getAttribute('data-label')
+      )
+    ).toEqual(['12', '14', '18', '24'])
     expect(screen.getByLabelText('字体颜色')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: '上传视频或附件' })

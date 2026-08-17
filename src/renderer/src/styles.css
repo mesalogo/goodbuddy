@@ -526,7 +526,7 @@
   container: speech-model-list / inline-size;
   grid-template-columns:
     220px minmax(300px, 1fr) 9px
-    var(--magic-notes-ai-width, 300px);
+    var(--magic-notes-ai-width, 280px);
 }
 
 .magic-notes-layout--ai-hidden {
@@ -544,7 +544,11 @@
   width: 9px;
   min-width: 9px;
   padding: 0;
-  background: var(--surface-subtle);
+  background: linear-gradient(
+    to right,
+    var(--surface-raised) 0 4px,
+    var(--surface-subtle) 4px 100%
+  );
   cursor: col-resize;
   touch-action: none;
 }
@@ -872,7 +876,7 @@
 }
 
 .magic-notes-stream-pane {
-  padding: var(--space-6);
+  padding: var(--space-4) var(--space-6) var(--space-6);
   background: var(--surface-raised);
 }
 
@@ -1030,7 +1034,17 @@
 
 .magic-note-detail-header > div {
   display: flex;
+  align-items: center;
   gap: var(--space-1);
+}
+
+.magic-note-detail-header__delete {
+  color: var(--text-muted);
+}
+
+.magic-note-detail-header__delete:hover {
+  background: var(--danger-subtle);
+  color: var(--danger);
 }
 
 .magic-note-delete-confirmation {
@@ -1088,6 +1102,16 @@
   color: var(--text-muted);
   font-size: var(--font-caption);
   gap: var(--space-3);
+}
+
+.magic-note-composer > footer > span {
+  min-width: 0;
+}
+
+.magic-note-composer > footer > .primary-button {
+  min-width: 80px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .magic-note-entry-stream {
@@ -1151,10 +1175,28 @@
 }
 
 .magic-note-editor__toolbar.ql-toolbar.ql-snow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   padding: var(--space-2);
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-subtle);
+  gap: var(--space-1);
+}
+
+.magic-note-editor__toolbar.ql-toolbar.ql-snow .ql-formats {
+  display: inline-flex;
+  align-items: center;
+  padding-right: var(--space-1);
+  border-right: 1px solid var(--border-subtle);
+  margin: 0;
+}
+
+.magic-note-editor__toolbar.ql-toolbar.ql-snow
+  .ql-formats:last-child {
+  padding-right: 0;
+  border-right: 0;
 }
 
 .magic-note-editor__toolbar.ql-toolbar button,
@@ -1170,16 +1212,33 @@
 }
 
 .magic-note-editor__content.ql-container.ql-snow {
-  min-height: 132px;
+  min-height: 178px;
+  overflow: hidden;
   border: 0;
   color: var(--text-primary);
   font-family: inherit;
   font-size: 14px;
+  resize: vertical;
 }
 
 .magic-note-editor__content .ql-editor {
-  min-height: 132px;
+  min-height: 178px;
   line-height: 1.65;
+}
+
+.magic-note-editor .ql-size-small,
+.magic-note-content .ql-size-small {
+  font-size: 12px;
+}
+
+.magic-note-editor .ql-size-large,
+.magic-note-content .ql-size-large {
+  font-size: 18px;
+}
+
+.magic-note-editor .ql-size-huge,
+.magic-note-content .ql-size-huge {
+  font-size: 24px;
 }
 
 .magic-note-editor .ql-editor img,
