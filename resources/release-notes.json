@@ -24,7 +24,7 @@
             "**DSH 插件与 MCP 稳定性。** 多个 DSH 插件共同运行、MCP 返回大量分页工具，启动、取消和退出依然可靠；单个插件失败会被隔离，循环游标和未释放会话也会得到处理。",
             "**设置界面一致性。** DSH 搜索文字不再被图标遮挡，正常状态不会重复显示说明，导航高亮与页面边距也保持一致。",
             "**跨架构发布包。** Windows、macOS 和 Linux 的 x64、arm64 安装包会校验 Canvas、Koffi 等原生依赖，避免构建成功后加载错误架构的二进制文件。",
-            "**魔法笔记编辑体验。** 更高且可纵向拖动的编辑区域为长笔记留出空间，数字字号选项、工具栏和分栏间距也更加清楚。"
+            "**魔法笔记编辑体验。** 更高且可纵向拖动的编辑区域为长笔记留出空间，数字字号选项、工具栏和分栏间距也更加清楚；AI 评论区会在笔记详情就绪前明确显示加载状态。"
           ],
           "notices": [
             "**DSH 插件市场。** 该功能仍处于预览阶段并默认关闭。第三方插件的安装脚本、初始化代码和 Execute 工具会以当前用户权限运行，请只安装可信的包。关闭市场不会自动停用或卸载已有插件。",
@@ -52,7 +52,7 @@
             "**DSH plugin and MCP reliability.** Startup, cancellation, and shutdown remain reliable with several DSH plugins or large paginated MCP tool sets. Plugin failures are isolated, cursor loops are bounded, and sessions are released.",
             "**Settings consistency.** DSH plugin search text no longer overlaps its icon, healthy status descriptions are no longer duplicated, and navigation highlights and page gutters remain aligned.",
             "**Cross-architecture packages.** Windows, macOS, and Linux packages validate Canvas, Koffi, and related native dependencies for x64 and arm64, preventing successful builds from loading binaries for the wrong architecture.",
-            "**Magic Notes editing.** The editor is taller and vertically resizable, with numeric font-size choices and clearer toolbar and pane spacing."
+            "**Magic Notes editing.** The editor is taller and vertically resizable, with numeric font-size choices and clearer toolbar and pane spacing. The AI comments pane now shows an explicit loading state until note details are ready."
           ],
           "notices": [
             "**DSH plugin marketplace.** This preview feature is disabled by default. Third-party install scripts, initialization code, and Execute tools run with current-user permissions, so install only trusted packages. Disabling the marketplace does not disable or remove installed plugins.",
