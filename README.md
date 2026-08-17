@@ -73,6 +73,14 @@ npm run typecheck
 npm run lint
 ```
 
+## 社区交流
+
+目前采用微信群的方式供大家高效交流，大家可以微信扫码进入社区群：
+
+<img width="1279" height="1306" alt="056bfac87840a95547f9805a8122fc2d" src="https://github.com/user-attachments/assets/b3342635-60a1-484c-959c-f90ba3c39d69" />
+
+
+
 ## 开源许可
 
 GoodBuddy 的原创代码采用 [0BSD License](LICENSE)，可自由使用、修改、分发和商用。第三方组件和资源遵循各自许可证。
