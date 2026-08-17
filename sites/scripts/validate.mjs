@@ -149,7 +149,7 @@ report(
 report(/data-release-status/.test(html), "下载区缺少发布源状态");
 report(
   appJs.includes(
-    "https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/latest.json",
+    "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/latest.json",
   ),
   "官网必须从 GoodBuddy OSS 加载最新发布索引",
 );

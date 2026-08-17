@@ -13,7 +13,7 @@
   const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const releaseManifestUrl =
-    "https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/latest.json";
+    "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/latest.json";
   const releaseFallbackUrl =
     "https://github.com/mesalogo/goodbuddy/releases/latest";
   const releaseStatus = document.querySelector("[data-release-status]");
@@ -44,7 +44,7 @@
       const url = new URL(value);
       return (
         url.protocol === "https:" &&
-        url.hostname === "goodbuddy.oss-cn-hangzhou.aliyuncs.com" &&
+        url.hostname === "goodbuddy.oss-cn-beijing.aliyuncs.com" &&
         url.pathname.startsWith("/releases/")
       );
     } catch {

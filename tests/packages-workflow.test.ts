@@ -28,4 +28,20 @@ describe('packages workflow', () => {
       ])
     )
   })
+
+  it('passes the endpoint-derived region to every OSS upload', () => {
+    expect(workflow).toContain(
+      'https://oss-cn-beijing.aliyuncs.com'
+    )
+    expect(workflow).toContain('goodbuddy) ;;')
+    expect(workflow).toContain(
+      'oss_region="${endpoint_host#oss-}"'
+    )
+    expect(workflow).toContain(
+      'echo "region=$oss_region" >> "$GITHUB_OUTPUT"'
+    )
+    expect(
+      [...workflow.matchAll(/--region "\$OSS_REGION"/gu)]
+    ).toHaveLength(2)
+  })
 })

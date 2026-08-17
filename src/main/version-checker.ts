@@ -13,7 +13,7 @@ export type {
 export const GOODBUDDY_LATEST_RELEASE_API_URL =
   'https://api.github.com/repos/mesalogo/goodbuddy/releases/latest'
 export const GOODBUDDY_MIRROR_RELEASE_INDEX_URL =
-  'https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/latest.json'
+  'https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/latest.json'
 
 const PRODUCT_NAME = 'GoodBuddy'
 const RELEASE_WEB_ROOT =

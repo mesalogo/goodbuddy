@@ -151,7 +151,7 @@ function mirrorIndexPayload(): MirrorTestIndex {
     { platform: 'linux', arch: 'arm64', formats: ['AppImage', 'deb'] }
   ]
   const releaseBase =
-    `https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/` +
+    `https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/` +
     `v${latestVersion}/`
   const targets: Record<string, MirrorTestTarget> = {}
   for (const definition of definitions) {

@@ -198,11 +198,12 @@ jobs:
           test -n "$OIDC_PROVIDER_ARN"
           test -n "$ROLE_ARN"
           case "$OSS_BUCKET" in
-            *[!a-z0-9-]*|'') echo "OSS Bucket 名称无效" >&2; exit 1 ;;
+            goodbuddy) ;;
+            *) echo "OSS Bucket 必须与应用内置镜像地址一致" >&2; exit 1 ;;
           esac
           case "$OSS_ENDPOINT" in
-            https://oss-*.aliyuncs.com) ;;
-            *) echo "OSS Endpoint 必须使用标准 HTTPS 地址" >&2; exit 1 ;;
+            https://oss-cn-beijing.aliyuncs.com) ;;
+            *) echo "OSS Endpoint 必须与应用内置镜像地址一致" >&2; exit 1 ;;
           esac
           case "$OIDC_PROVIDER_ARN" in
             acs:ram::*:oidc-provider/*) ;;
@@ -248,18 +249,25 @@ jobs:
         run: |
           set -euo pipefail
           endpoint_host="${OSS_ENDPOINT#https://}"
+          oss_region="${endpoint_host#oss-}"
+          oss_region="${oss_region%.aliyuncs.com}"
+          case "$oss_region" in
+            *[!a-z0-9-]*|'') echo "无法从 OSS Endpoint 推导 Region" >&2; exit 1 ;;
+          esac
           base_url="https://${OSS_BUCKET}.${endpoint_host}/releases/${GITHUB_REF_NAME}/"
           node build/create-site-release.cjs \
             --manifest dist/release-upload/release-manifest.json \
             --base-url "$base_url" \
             --output dist/site-release.json
           echo "base-url=$base_url" >> "$GITHUB_OUTPUT"
+          echo "region=$oss_region" >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable release assets to OSS
         shell: bash
         env:
           OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
           OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+          OSS_REGION: ${{ steps.oss-release.outputs.region }}
         run: |
           set -euo pipefail
           export OSS_ACCESS_KEY_ID="$ALIBABA_CLOUD_ACCESS_KEY_ID"
@@ -268,11 +276,13 @@ jobs:
           test -n "$OSS_ACCESS_KEY_ID"
           test -n "$OSS_ACCESS_KEY_SECRET"
           test -n "$OSS_SESSION_TOKEN"
+          test -n "$OSS_REGION"
           for file in dist/release-upload/* dist/site-release.json; do
             name="$(basename "$file")"
             ossutil cp "$file" \
               "oss://${OSS_BUCKET}/releases/${GITHUB_REF_NAME}/${name}" \
               --endpoint "$OSS_ENDPOINT" \
+              --region "$OSS_REGION" \
               --update
           done
 
@@ -300,12 +310,15 @@ jobs:
         env:
           OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
           OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+          OSS_REGION: ${{ steps.oss-release.outputs.region }}
         run: |
           set -euo pipefail
           export OSS_ACCESS_KEY_ID="$ALIBABA_CLOUD_ACCESS_KEY_ID"
           export OSS_ACCESS_KEY_SECRET="$ALIBABA_CLOUD_ACCESS_KEY_SECRET"
           export OSS_SESSION_TOKEN="$ALIBABA_CLOUD_SECURITY_TOKEN"
+          test -n "$OSS_REGION"
           ossutil cp dist/site-release.json \
             "oss://${OSS_BUCKET}/releases/latest.json" \
             --endpoint "$OSS_ENDPOINT" \
+            --region "$OSS_REGION" \
             --force

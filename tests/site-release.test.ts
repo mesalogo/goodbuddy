@@ -94,7 +94,7 @@ describe('site release manifest', () => {
   it('creates direct HTTPS download entries for all release targets', () => {
     const result = siteRelease.createSiteRelease(
       createAggregateManifest(),
-      'https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/v1.2.3'
+      'https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/v1.2.3'
     )
 
     expect(result.version).toBe('1.2.3')
@@ -102,7 +102,7 @@ describe('site release manifest', () => {
     expect(
       result.targets['windows-x64']?.files.nsis?.url
     ).toBe(
-      'https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/v1.2.3/GoodBuddy-1.2.3-windows-x64-setup.exe'
+      'https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/v1.2.3/GoodBuddy-1.2.3-windows-x64-setup.exe'
     )
     expect(result.checksumUrl).toMatch(/\/SHA256SUMS$/u)
     expect(result.fallbackUrl).toBe(
@@ -128,7 +128,7 @@ describe('site release manifest', () => {
   it('verifies every public OSS object with HEAD and size checks', async () => {
     const manifest = siteRelease.createSiteRelease(
       createAggregateManifest(),
-      'https://goodbuddy.oss-cn-hangzhou.aliyuncs.com/releases/v1.2.3/'
+      'https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/v1.2.3/'
     )
     const sizes = new Map(
       Object.values(manifest.targets).flatMap((target) =>
