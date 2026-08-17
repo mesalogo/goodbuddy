@@ -16,18 +16,20 @@ const supportedTargets = new Map([
 
 function parseArguments(argv) {
   const options = {}
+  const optionNames = new Map([
+    ['--manifest', 'manifest'],
+    ['--base-url', 'baseUrl'],
+    ['--output', 'output']
+  ])
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
-    if (
-      argument === '--manifest' ||
-      argument === '--base-url' ||
-      argument === '--output'
-    ) {
+    const optionName = optionNames.get(argument)
+    if (optionName) {
       const value = argv[index + 1]
       if (!value) {
         throw new Error(`${argument} 缺少值`)
       }
-      options[argument.slice(2)] = value
+      options[optionName] = value
       index += 1
     } else {
       throw new Error(`未知参数：${argument}`)

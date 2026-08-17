@@ -2,12 +2,12 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.10.2",
+      "version": "0.10.3",
       "releasedAt": "2026-08-17",
       "notes": {
         "zh-CN": {
           "highlights": [
-            "GoodBuddy 0.10.2 新增可选的镜像节点，并改进最近对话的时间显示。"
+            "GoodBuddy 0.10.3 新增可选的镜像节点，并改进最近对话的时间显示。"
           ],
           "features": [
             "**镜像节点与更新源。** 在“关于与更新”中可选择 GitHub（默认）或镜像节点。手动检查、启动时检查和打开下载页会使用同一选择，应用仍只检查版本，不会自动下载安装。"
@@ -21,7 +21,7 @@
         },
         "en-US": {
           "highlights": [
-            "GoodBuddy 0.10.2 adds an optional mirror node and improves how recent conversation times are displayed."
+            "GoodBuddy 0.10.3 adds an optional mirror node and improves how recent conversation times are displayed."
           ],
           "features": [
             "**Mirror node and update source.** About & Updates now lets you choose GitHub (default) or the mirror node. Manual checks, startup checks, and the download page use the same selection. GoodBuddy still checks versions only and never downloads or installs updates automatically."

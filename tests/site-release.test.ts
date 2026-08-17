@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 interface ReleaseFile {
@@ -9,6 +10,11 @@ interface ReleaseFile {
 }
 
 interface SiteReleaseModule {
+  parseArguments: (argv: string[]) => {
+    manifest: string
+    baseUrl: string
+    output: string
+  }
   createSiteRelease: (
     manifest: object,
     baseUrl: string
@@ -68,6 +74,23 @@ function createAggregateManifest() {
 }
 
 describe('site release manifest', () => {
+  it('parses the CLI options used by the release workflow', () => {
+    expect(
+      siteRelease.parseArguments([
+        '--manifest',
+        'dist/release-upload/release-manifest.json',
+        '--base-url',
+        'https://example.com/releases/v1.2.3/',
+        '--output',
+        'dist/site-release.json'
+      ])
+    ).toEqual({
+      manifest: resolve('dist/release-upload/release-manifest.json'),
+      baseUrl: 'https://example.com/releases/v1.2.3/',
+      output: resolve('dist/site-release.json')
+    })
+  })
+
   it('creates direct HTTPS download entries for all release targets', () => {
     const result = siteRelease.createSiteRelease(
       createAggregateManifest(),
