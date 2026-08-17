@@ -181,7 +181,11 @@ import type { ReleaseNotesSnapshot } from '../../shared/release-notes-contracts'
 import { ReleaseNotesDialog } from './ReleaseNotesDialog'
 import { scheduleIdleRoutePreload } from './idle-route-preload'
 import { createPreloadableComponent } from './preloadable-component'
-import { formatTime, type TimeFormatLocale } from './time-format'
+import {
+  formatConversationListTime,
+  type TimeFormatLocale
+} from './time-format'
+import { formatMediumDateTime } from './locale-formatters'
 import { formatCompactTokens } from './token-format'
 import {
   pruneKeepAliveEntries,
@@ -6464,7 +6468,22 @@ function App(): React.JSX.Element {
                       />
                     )}
                   </span>
-                  <small>{formatTime(conversation.updatedAt, locale)}</small>
+                  <small>
+                    <time
+                      dateTime={new Date(
+                        conversation.updatedAt
+                      ).toISOString()}
+                      title={formatMediumDateTime(
+                        conversation.updatedAt,
+                        locale
+                      )}
+                    >
+                      {formatConversationListTime(
+                        conversation.updatedAt,
+                        locale
+                      )}
+                    </time>
+                  </small>
                 </button>
                 {activeConversationIds.has(conversation.id) && (
                   <span

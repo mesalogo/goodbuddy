@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { formatTime } from './time-format'
+import { formatConversationListTime, formatTime } from './time-format'
 
 describe('formatTime', () => {
   afterEach(() => {
@@ -26,5 +26,48 @@ describe('formatTime', () => {
     expect(firstChinese).not.toBe('')
     expect(secondChinese).not.toBe('')
     expect(formatter).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the time for a conversation updated today', () => {
+    const timestamp = new Date(2026, 7, 17, 9, 5).getTime()
+    const referenceTimestamp = new Date(2026, 7, 17, 23, 30).getTime()
+
+    expect(
+      formatConversationListTime(timestamp, 'zh-CN', referenceTimestamp)
+    ).toBe(
+      new Intl.DateTimeFormat('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(timestamp)
+    )
+  })
+
+  it('shows the date after the local calendar day changes', () => {
+    const timestamp = new Date(2026, 7, 16, 23, 30).getTime()
+    const referenceTimestamp = new Date(2026, 7, 17, 0, 15).getTime()
+
+    expect(
+      formatConversationListTime(timestamp, 'zh-CN', referenceTimestamp)
+    ).toBe(
+      new Intl.DateTimeFormat('zh-CN', {
+        month: 'short',
+        day: 'numeric'
+      }).format(timestamp)
+    )
+  })
+
+  it('includes the year for a conversation from another year', () => {
+    const timestamp = new Date(2025, 11, 31, 23, 30).getTime()
+    const referenceTimestamp = new Date(2026, 0, 1, 0, 15).getTime()
+
+    expect(
+      formatConversationListTime(timestamp, 'en-US', referenceTimestamp)
+    ).toBe(
+      new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }).format(timestamp)
+    )
   })
 })
