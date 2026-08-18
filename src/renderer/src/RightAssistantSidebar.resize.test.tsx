@@ -30,11 +30,9 @@ function renderSidebar({
       artifacts={artifacts}
       attachments={[]}
       enabledLibraries={[]}
-      heartbeats={[]}
       memories={[]}
       schedules={[]}
       onClose={vi.fn()}
-      onCreateHeartbeat={vi.fn(async () => undefined)}
       onCreateSchedule={vi.fn(async () => undefined)}
       onImportArtifacts={vi.fn(async () => undefined)}
       onListWorkspaceDirectory={vi.fn(async (path: string) => ({
@@ -48,12 +46,9 @@ function renderSidebar({
       onInteractBrowser={vi.fn(async () => undefined)}
       onRefreshChanges={vi.fn(async () => undefined)}
       onRemoveAttachment={vi.fn()}
-      onRemoveHeartbeat={vi.fn(async () => undefined)}
       onRemoveSchedule={vi.fn(async () => undefined)}
       onRespondApproval={vi.fn()}
-      onRunHeartbeat={vi.fn(async () => undefined)}
       onRunSchedule={vi.fn(async () => undefined)}
-      onSetHeartbeatPaused={vi.fn(async () => undefined)}
       onStopBrowser={vi.fn(async () => undefined)}
       onTabChange={vi.fn()}
       open

@@ -18,8 +18,10 @@ import type {
   AssistantHeartbeatEntry,
   AssistantHeartbeatRun,
   AssistantMemory,
+  AssistantProject,
   AssistantTask,
-  HeartbeatCreateInput
+  HeartbeatCreateInput,
+  HeartbeatUpdateInput
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
 import {
@@ -39,8 +41,13 @@ export type HeartbeatCenterProps = {
   runs: AssistantHeartbeatRun[]
   entries: AssistantHeartbeatEntry[]
   memories: AssistantMemory[]
+  projects: AssistantProject[]
   tasks: AssistantTask[]
   onCreate: (input: HeartbeatCreateInput) => Promise<void>
+  onUpdate: (
+    heartbeatId: string,
+    input: HeartbeatUpdateInput
+  ) => Promise<void>
   onSetPaused: (heartbeatId: string, paused: boolean) => Promise<void>
   onRemove: (heartbeatId: string) => Promise<void>
   onRunNow: (heartbeatId: string) => Promise<void>
@@ -54,7 +61,6 @@ export type HeartbeatCenterProps = {
     status: 'completed' | 'cancelled'
   ) => Promise<void>
   onUseFollowUpTask: (task: AssistantTask) => void
-  currentProjectName?: string
   loading?: boolean
   loadError?: string
   onRetryLoad: () => void | Promise<void>
@@ -79,8 +85,10 @@ export function HeartbeatCenter({
   runs,
   entries,
   memories,
+  projects,
   tasks,
   onCreate,
+  onUpdate,
   onSetPaused,
   onRemove,
   onRunNow,
@@ -88,7 +96,6 @@ export function HeartbeatCenter({
   onSetMemoryStatus,
   onSetTaskStatus,
   onUseFollowUpTask,
-  currentProjectName,
   loading = false,
   loadError,
   onRetryLoad
@@ -102,8 +109,6 @@ export function HeartbeatCenter({
     useState<string>()
   const [visibleEntryCount, setVisibleEntryCount] = useState(20)
   const [visibleRunCount, setVisibleRunCount] = useState(20)
-  const projectName =
-    currentProjectName ?? t('center.scope.currentProject')
   const dateTimeFormatter = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.resolvedLanguage || 'zh-CN', {
@@ -184,6 +189,17 @@ export function HeartbeatCenter({
       : t('center.recurrence.daily', {
           time: config.recurrence.localTime
         })
+  const scopeLabel = (config: AssistantHeartbeatConfig): string => {
+    if (config.scope.kind === 'global') {
+      return t('center.scope.global')
+    }
+    const projectNames = config.scope.projectIds.map(
+      (projectId) =>
+        projects.find((project) => project.id === projectId)?.name ??
+        t('settings.scope.unavailableProject')
+    )
+    return projectNames.join(t('settings.scope.nameSeparator'))
+  }
 
   const orderedEntries = useMemo(
     () => [...entries].sort(byNewest),
@@ -351,7 +367,7 @@ export function HeartbeatCenter({
         eyebrow={t('center.eyebrow')}
         headingId="heartbeat-center-title"
         icon={<HeartPulse size={22} />}
-        scope={{ kind: 'mixed', projectName }}
+        scope={{ kind: 'global' }}
         title={t('center.title')}
       />
 
@@ -485,9 +501,7 @@ export function HeartbeatCenter({
                         <strong>{config.name}</strong>
                         <small>
                           {recurrenceLabel(config)} ·{' '}
-                          {config.projectId
-                            ? projectName
-                            : t('center.scope.global')}
+                          {scopeLabel(config)}
                         </small>
                       </div>
                     </header>
@@ -1233,6 +1247,8 @@ export function HeartbeatCenter({
             onRemove={onRemove}
             onRunNow={onRunNow}
             onSetPaused={onSetPaused}
+            onUpdate={onUpdate}
+            projects={projects}
           />
         </div>
       )}

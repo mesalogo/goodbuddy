@@ -924,8 +924,9 @@ describe('App', () => {
     await act(async () => projects.resolve([project]))
 
     await waitFor(() => {
-      expect(api.memory.list).toHaveBeenCalledOnce()
+      expect(api.memory.list).toHaveBeenCalledTimes(2)
       expect(api.memory.list).toHaveBeenCalledWith(projectId)
+      expect(api.memory.list).toHaveBeenCalledWith()
       expect(api.schedules.list).toHaveBeenCalledOnce()
       expect(api.schedules.list).toHaveBeenCalledWith(projectId)
       expect(api.heartbeats.list).toHaveBeenCalledOnce()
@@ -6795,7 +6796,7 @@ describe('App', () => {
     vi.mocked(api.heartbeats.list).mockResolvedValue([
       {
         id: heartbeatId,
-        projectId,
+        scope: { kind: 'projects', projectIds: [projectId] },
         name: '每日回顾',
         timezone: 'Asia/Shanghai',
         recurrence: { type: 'daily', localTime: '09:00' },
@@ -6977,7 +6978,7 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('does not expose the previous project heartbeat after a switch fails', async () => {
+  it('keeps heartbeat plans independent of the active project', async () => {
     const secondProject = {
       ...project,
       id: '00000000-0000-4000-8000-000000000102',
@@ -6991,7 +6992,7 @@ describe('App', () => {
     vi.mocked(api.heartbeats.list).mockResolvedValue([
       {
         id: '00000000-0000-4000-8000-000000000701',
-        projectId,
+        scope: { kind: 'projects', projectIds: [projectId] },
         name: '旧项目心跳',
         timezone: 'Asia/Shanghai',
         recurrence: { type: 'daily', localTime: '09:00' },
@@ -7012,9 +7013,6 @@ describe('App', () => {
       await screen.findByRole('tab', { name: '心跳计划' })
     )
     expect(await screen.findAllByText('旧项目心跳')).not.toHaveLength(0)
-    vi.mocked(api.heartbeats.list).mockRejectedValue(
-      new Error('第二项目心跳读取失败')
-    )
     fireEvent.change(screen.getByLabelText('当前项目'), {
       target: { value: secondProject.id }
     })
@@ -7022,13 +7020,7 @@ describe('App', () => {
       screen.getByRole('button', { name: '智能心跳' })
     )
 
-    expect(
-      await screen.findByText('智能心跳加载失败')
-    ).toBeInTheDocument()
-    expect(screen.queryAllByText('旧项目心跳')).toHaveLength(0)
-    expect(
-      screen.queryByRole('button', { name: '立即运行旧项目心跳' })
-    ).not.toBeInTheDocument()
+    expect(await screen.findAllByText('旧项目心跳')).not.toHaveLength(0)
   })
 
   it('automatically snapshots the conversation project on new activity', async () => {

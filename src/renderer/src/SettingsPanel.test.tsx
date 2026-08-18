@@ -333,11 +333,6 @@ const renameBrowserProfile = vi.fn(async () => capabilitySnapshot)
 const setDefaultBrowserProfile = vi.fn(async () => capabilitySnapshot)
 const removeBrowserProfile = vi.fn(async () => capabilitySnapshot)
 const heartbeatSettingsProps = {
-  heartbeats: [],
-  onCreateHeartbeat: vi.fn(async () => {}),
-  onSetHeartbeatPaused: vi.fn(async () => {}),
-  onRemoveHeartbeat: vi.fn(async () => {}),
-  onRunHeartbeat: vi.fn(async () => {}),
   onUpdateProject: vi.fn(async () => {
     throw new Error('Project update is not used in this test')
   }),
@@ -1335,7 +1330,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(
-      screen.getByRole('button', { name: '语音模型' })
+      screen.getByRole('button', { name: '语音输入' })
     )
     const speechModelSelector = await screen.findByRole('combobox', {
       name: '当前语音模型'
@@ -1381,7 +1376,7 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(
-      screen.getByRole('button', { name: '语音模型' })
+      screen.getByRole('button', { name: '语音输入' })
     )
     const speechModelSelector = await screen.findByRole('combobox', {
       name: '当前语音模型'
@@ -3368,35 +3363,10 @@ describe('SettingsPanel runtime files', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('manages heartbeat automation from Settings', async () => {
-    const onCreateHeartbeat = vi.fn(async () => {})
-    const onSetHeartbeatPaused = vi.fn(async () => {})
-    const onRemoveHeartbeat = vi.fn(async () => {})
-    const onRunHeartbeat = vi.fn(async () => {})
+  it('keeps Smart Heartbeat configuration out of Settings', () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
-        heartbeats={[
-          {
-            id: 'heartbeat-1',
-            name: '长期记忆回顾',
-            timezone: 'Asia/Shanghai',
-            recurrence: {
-              type: 'daily',
-              localTime: '09:00'
-            },
-            enabled: true,
-            lookbackHours: 48,
-            retentionDays: 90,
-            nextRunAt: '2026-08-02T01:00:00.000Z',
-            createdAt: '2026-08-01T01:00:00.000Z',
-            updatedAt: '2026-08-01T01:00:00.000Z'
-          }
-        ]}
-        onCreateHeartbeat={onCreateHeartbeat}
-        onRemoveHeartbeat={onRemoveHeartbeat}
-        onRunHeartbeat={onRunHeartbeat}
-        onSetHeartbeatPaused={onSetHeartbeatPaused}
         open
         onClearLocalData={vi.fn(async () => {})}
         onClose={vi.fn()}
@@ -3404,97 +3374,10 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '自动化' }))
     expect(
-      await screen.findByRole('heading', { name: '智能心跳' })
-    ).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('心跳时间'), {
-      target: { value: '08:30' }
-    })
-    fireEvent.click(
-      screen.getByRole('button', { name: '启用智能心跳' })
-    )
-    await waitFor(() =>
-      expect(onCreateHeartbeat).toHaveBeenCalledWith(
-        expect.objectContaining({
-          recurrence: {
-            type: 'daily',
-            localTime: '08:30'
-          },
-          enabled: true
-        })
-      )
-    )
-
-    const pauseButton = screen.getByRole('button', {
-      name: '暂停 长期记忆回顾'
-    })
-    fireEvent.click(pauseButton)
-    await waitFor(() =>
-      expect(onSetHeartbeatPaused).toHaveBeenCalledWith(
-        'heartbeat-1',
-        true
-      )
-    )
-    await waitFor(() => expect(pauseButton).toBeEnabled())
-
-    const runButton = screen.getByRole('button', {
-      name: '立即心跳 长期记忆回顾'
-    })
-    fireEvent.click(runButton)
-    await waitFor(() =>
-      expect(onRunHeartbeat).toHaveBeenCalledWith('heartbeat-1')
-    )
-    await waitFor(() => expect(runButton).toBeEnabled())
-
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: '删除 长期记忆回顾'
-      })
-    )
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: '确认删除 长期记忆回顾'
-      })
-    )
-    await waitFor(() =>
-      expect(onRemoveHeartbeat).toHaveBeenCalledWith('heartbeat-1')
-    )
-  })
-
-  it('prevents duplicate heartbeat actions and reports failures', async () => {
-    let rejectCreate: (reason: Error) => void = () => {}
-    const onCreateHeartbeat = vi.fn(
-      () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectCreate = reject
-        })
-    )
-    render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        onCreateHeartbeat={onCreateHeartbeat}
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('tab', { name: '自动化' }))
-    const createButton = screen.getByRole('button', {
-      name: '启用智能心跳'
-    })
-    fireEvent.click(createButton)
-    fireEvent.click(createButton)
-    expect(onCreateHeartbeat).toHaveBeenCalledOnce()
-    expect(createButton).toBeDisabled()
-
-    rejectCreate(new Error('创建心跳失败'))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      '创建心跳失败'
-    )
-    expect(createButton).toBeEnabled()
+      screen.queryByRole('tab', { name: '自动化' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('智能心跳')).not.toBeInTheDocument()
   })
 
   it('shows Skills and MCP as first-class settings tabs', async () => {

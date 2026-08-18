@@ -30,10 +30,6 @@ export const settingsCategoryList = [
     translationKey: 'security'
   },
   {
-    id: 'automation',
-    translationKey: 'automation'
-  },
-  {
     id: 'channels',
     translationKey: 'channels'
   },

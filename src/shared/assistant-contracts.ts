@@ -573,9 +573,30 @@ export const heartbeatRecurrenceSchema = z.discriminatedUnion('type', [
     .strict()
 ])
 
+export const heartbeatScopeSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('global')
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('projects'),
+      projectIds: z
+        .array(assistantIdSchema)
+        .min(1)
+        .max(100)
+        .refine(
+          (projectIds) => new Set(projectIds).size === projectIds.length,
+          'Project IDs must be unique'
+        )
+    })
+    .strict()
+])
+
 export const heartbeatCreateSchema = z
   .object({
-    projectId: assistantIdSchema.optional(),
+    scope: heartbeatScopeSchema,
     name: z.string().trim().min(1).max(120),
     timezone: z.string().trim().min(1).max(100),
     recurrence: heartbeatRecurrenceSchema,
@@ -633,20 +654,37 @@ export const heartbeatSummaryOutputSchema = z
     highlights: z.array(z.string().trim().min(1).max(1_000)).max(20),
     proposedMemories: z
       .array(
-        z
-          .object({
-            scope: z.enum(['global', 'project']),
-            type: z.enum([
-              'preference',
-              'fact',
-              'summary',
-              'procedure'
-            ]),
-            content: z.string().trim().min(1).max(8_000),
-            confidence: z.number().min(0).max(1),
-            salience: z.number().min(0).max(1)
-          })
-          .strict()
+        z.discriminatedUnion('scope', [
+          z
+            .object({
+              scope: z.literal('global'),
+              type: z.enum([
+                'preference',
+                'fact',
+                'summary',
+                'procedure'
+              ]),
+              content: z.string().trim().min(1).max(8_000),
+              confidence: z.number().min(0).max(1),
+              salience: z.number().min(0).max(1)
+            })
+            .strict(),
+          z
+            .object({
+              scope: z.literal('project'),
+              projectId: assistantIdSchema,
+              type: z.enum([
+                'preference',
+                'fact',
+                'summary',
+                'procedure'
+              ]),
+              content: z.string().trim().min(1).max(8_000),
+              confidence: z.number().min(0).max(1),
+              salience: z.number().min(0).max(1)
+            })
+            .strict()
+        ])
       )
       .max(10),
     followUpTasks: z
@@ -654,7 +692,8 @@ export const heartbeatSummaryOutputSchema = z
         z
           .object({
             title: z.string().trim().min(1).max(200),
-            instructions: z.string().trim().min(1).max(8_000)
+            instructions: z.string().trim().min(1).max(8_000),
+            projectId: assistantIdSchema.optional()
           })
           .strict()
       )
@@ -665,6 +704,7 @@ export const heartbeatSummaryOutputSchema = z
 export type HeartbeatRecurrence = z.infer<
   typeof heartbeatRecurrenceSchema
 >
+export type HeartbeatScope = z.infer<typeof heartbeatScopeSchema>
 export type HeartbeatCreateInput = z.infer<
   typeof heartbeatCreateSchema
 >

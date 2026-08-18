@@ -43,11 +43,6 @@ export const settings = {
       navigationDescription: '工具策略与本地隐私',
       description: '工具策略与本地隐私'
     },
-    automation: {
-      label: '自动化',
-      navigationDescription: '智能心跳与周期回顾',
-      description: '智能心跳与周期回顾'
-    },
     channels: {
       label: '消息通道',
       navigationDescription: '微信、企业微信与钉钉',
@@ -606,7 +601,7 @@ export const settings = {
         description: '配置知识检索候选结果的学习型相关性重排模型。'
       },
       speech: {
-        label: '语音模型',
+        label: '语音输入',
         description:
           '选择已安装模型后保存设置生效；模型可按需下载或通过 ZIP 离线迁移。'
       }

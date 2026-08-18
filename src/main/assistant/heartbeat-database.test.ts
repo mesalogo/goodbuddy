@@ -30,6 +30,7 @@ async function createDatabase(): Promise<{
 }
 
 const input = {
+  scope: { kind: 'global' as const },
   name: 'Daily heartbeat',
   timezone: 'UTC',
   recurrence: { type: 'daily' as const, localTime: '18:00' },
@@ -37,6 +38,7 @@ const input = {
   lookbackHours: 24,
   retentionDays: 7
 }
+const now = new Date('2026-08-01T12:00:00.000Z')
 
 const summary = {
   summary: 'A durable summary',
@@ -100,8 +102,105 @@ describe('AssistantDatabase heartbeat persistence', () => {
     ).count
     check.close()
     migrated.close()
-    expect(version).toBe(20)
-    expect(heartbeatTableCount).toBe(3)
+    expect(version).toBe(21)
+    expect(heartbeatTableCount).toBe(4)
+  })
+
+  it('migrates a legacy single-project heartbeat into explicit scope', async () => {
+    const { database, path } = await createDatabase()
+    const project = database.listProjects()[0]!
+    const config = database.createHeartbeatConfig(input)
+    database.close()
+
+    const raw = new DatabaseSync(path)
+    raw
+      .prepare(
+        `UPDATE heartbeat_configs
+         SET project_id = ?, scope_kind = 'global'
+         WHERE id = ?`
+      )
+      .run(project.id, config.id)
+    raw
+      .prepare(
+        'DELETE FROM heartbeat_config_projects WHERE config_id = ?'
+      )
+      .run(config.id)
+    raw.exec('PRAGMA user_version = 20')
+    raw.close()
+
+    const migrated = new AssistantDatabase(path)
+    migrated.initialize('C:\\Workspace')
+    expect(migrated.getHeartbeatConfig(config.id).scope).toEqual({
+      kind: 'projects',
+      projectIds: [project.id]
+    })
+    migrated.close()
+  })
+
+  it('builds one bounded snapshot across only the selected projects', async () => {
+    const { database } = await createDatabase()
+    const first = database.listProjects()[0]!
+    const second = database.createProject({
+      name: 'Second',
+      description: '',
+      rootPath: 'C:\\Second',
+      defaultWorkMode: 'ask'
+    })
+    const excluded = database.createProject({
+      name: 'Excluded',
+      description: '',
+      rootPath: 'C:\\Excluded',
+      defaultWorkMode: 'ask'
+    })
+    database.replaceConversations(
+      [first, second, excluded].map((project, index) => ({
+        id: `00000000-0000-4000-8000-00000000040${index}`,
+        projectId: project.id,
+        title: project.name,
+        updatedAt: now.getTime(),
+        messages: []
+      }))
+    )
+    for (const project of [first, second, excluded]) {
+      database.createTask({
+        id: `task-${project.id}`,
+        projectId: project.id,
+        title: project.name,
+        instructions: '',
+        workMode: 'ask'
+      })
+      database.createMemory({
+        scope: 'project',
+        scopeId: project.id,
+        type: 'fact',
+        content: `${project.name} memory`
+      })
+    }
+    const config = database.createHeartbeatConfig({
+      ...input,
+      scope: {
+        kind: 'projects',
+        projectIds: [first.id, second.id]
+      }
+    })
+
+    const snapshot = database.buildHeartbeatInput(config, now)
+
+    expect(snapshot.scope).toEqual(config.scope)
+    expect(
+      new Set(snapshot.conversations.map((item) => item.projectId))
+    ).toEqual(new Set([first.id, second.id]))
+    expect(
+      new Set(snapshot.tasks.map((item) => item.projectId))
+    ).toEqual(new Set([first.id, second.id]))
+    expect(
+      new Set(
+        snapshot.confirmedMemories
+          .map((item) => item.projectId)
+          .filter(Boolean)
+      )
+    ).toEqual(new Set([first.id, second.id]))
+    database.close()
   })
 
   it('claims one scheduled run durably and advances local recurrence', async () => {
@@ -227,7 +326,10 @@ describe('AssistantDatabase heartbeat persistence', () => {
     const { database } = await createDatabase()
     const project = database.listProjects()[0]!
     const config = database.createHeartbeatConfig(
-      { ...input, projectId: project.id },
+      {
+        ...input,
+        scope: { kind: 'projects', projectIds: [project.id] }
+      },
       new Date('2026-08-01T12:00:00.000Z')
     )
     const claim = database.claimHeartbeatNow(

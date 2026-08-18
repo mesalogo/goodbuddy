@@ -97,6 +97,7 @@ import type {
   AssistantHeartbeatEntry,
   AssistantHeartbeatRun,
   HeartbeatCreateInput,
+  HeartbeatUpdateInput,
   AssistantExpert,
   AssistantTask,
   TokenUsageSummary,
@@ -1760,6 +1761,9 @@ function App(): React.JSX.Element {
   const [heartbeatRuns, setHeartbeatRuns] = useState<
     AssistantHeartbeatRun[]
   >([])
+  const [heartbeatMemories, setHeartbeatMemories] = useState<
+    AssistantMemory[]
+  >([])
   const [heartbeatLoading, setHeartbeatLoading] = useState(true)
   const [heartbeatLoadError, setHeartbeatLoadError] = useState<string>()
   const [assistantExperts, setAssistantExperts] = useState<
@@ -2998,7 +3002,7 @@ function App(): React.JSX.Element {
       heartbeatEntries.flatMap((entry) => entry.followUpTaskIds)
     )
     return (
-      assistantMemories.filter(
+      heartbeatMemories.filter(
         (memory) =>
           memoryIds.has(memory.id) && memory.status === 'proposed'
       ).length +
@@ -3009,7 +3013,7 @@ function App(): React.JSX.Element {
           task.status !== 'cancelled'
       ).length
     )
-  }, [assistantMemories, assistantTasks, heartbeatEntries])
+  }, [assistantTasks, heartbeatEntries, heartbeatMemories])
 
   const updateMessage = useCallback(
     (
@@ -4308,32 +4312,18 @@ function App(): React.JSX.Element {
   }, [activeProjectId])
 
   const loadHeartbeats = useCallback(async () => {
-    const allConfigs = await window.goodbuddy.heartbeats.list()
-    const configs = allConfigs.filter(
-      (config) =>
-        !config.projectId || config.projectId === activeProjectId
-    )
-    const histories = await Promise.all(
-      configs.map((config) =>
-        window.goodbuddy.heartbeats.history(config.id)
-      )
-    )
-    const runs = new Map(
-      histories
-        .flatMap((history) => history.runs)
-        .map((run) => [run.id, run])
-    )
-    const entries = new Map(
-      histories
-        .flatMap((history) => history.entries)
-        .map((entry) => [entry.id, entry])
-    )
+    const [configs, memories] = await Promise.all([
+      window.goodbuddy.heartbeats.list(),
+      window.goodbuddy.memory.list()
+    ])
+    const history = await window.goodbuddy.heartbeats.history()
     return {
       configs,
-      runs: [...runs.values()],
-      entries: [...entries.values()]
+      memories,
+      runs: history.runs,
+      entries: history.entries
     }
-  }, [activeProjectId])
+  }, [])
 
   const refreshHeartbeats = useCallback(async (): Promise<void> => {
     const requestId = ++heartbeatLoadRequestRef.current
@@ -4342,12 +4332,13 @@ function App(): React.JSX.Element {
       return
     }
     setAssistantHeartbeats(result.configs)
+    setHeartbeatMemories(result.memories)
     setHeartbeatRuns(result.runs)
     setHeartbeatEntries(result.entries)
   }, [loadHeartbeats])
 
   useEffect(() => {
-    if (!activeProjectId) {
+    if (projects.length === 0) {
       return
     }
     const requestId = ++heartbeatLoadRequestRef.current
@@ -4366,6 +4357,7 @@ function App(): React.JSX.Element {
             return
           }
           setAssistantHeartbeats(result.configs)
+          setHeartbeatMemories(result.memories)
           setHeartbeatRuns(result.runs)
           setHeartbeatEntries(result.entries)
           setHeartbeatLoadError(undefined)
@@ -4393,25 +4385,17 @@ function App(): React.JSX.Element {
         heartbeatLoadRequestRef.current += 1
       }
     }
-  }, [activeProjectId, loadHeartbeats])
+  }, [loadHeartbeats, projects.length])
 
   const refreshHeartbeatCenter = useCallback(async (): Promise<void> => {
-    const projectId = activeProjectId
-    const [memories, tasks, artifacts] = await Promise.all([
-      window.goodbuddy.memory.list(projectId || undefined),
-      window.goodbuddy.tasks.list(),
-      window.goodbuddy.artifacts.list(projectId || undefined),
+    const [artifacts] = await Promise.all([
+      window.goodbuddy.artifacts.list(),
       refreshHeartbeats()
     ])
-    if (activeProjectIdRef.current !== projectId) {
-      return
-    }
-    setAssistantMemories(memories)
-    setAssistantTasks(tasks)
     setAssistantArtifacts((current) =>
       mergeArtifacts(current, artifacts)
     )
-  }, [activeProjectId, refreshHeartbeats])
+  }, [refreshHeartbeats])
 
   const retryHeartbeatLoad = useCallback(async (): Promise<void> => {
     setHeartbeatLoading(true)
@@ -4433,50 +4417,45 @@ function App(): React.JSX.Element {
 
   const createHeartbeat = useCallback(
     async (input: HeartbeatCreateInput): Promise<void> => {
-      const projectId = activeProjectId
-      await window.goodbuddy.heartbeats.create({
-        ...input,
-        projectId: projectId || undefined
-      })
-      if (activeProjectIdRef.current === projectId) {
-        await refreshHeartbeats()
-      }
+      await window.goodbuddy.heartbeats.create(input)
+      await refreshHeartbeats()
     },
-    [activeProjectId, refreshHeartbeats]
+    [refreshHeartbeats]
+  )
+
+  const updateHeartbeat = useCallback(
+    async (
+      heartbeatId: string,
+      input: HeartbeatUpdateInput
+    ): Promise<void> => {
+      await window.goodbuddy.heartbeats.update(heartbeatId, input)
+      await refreshHeartbeats()
+    },
+    [refreshHeartbeats]
   )
 
   const removeHeartbeat = useCallback(
     async (heartbeatId: string): Promise<void> => {
-      const projectId = activeProjectId
       await window.goodbuddy.heartbeats.remove(heartbeatId)
-      if (activeProjectIdRef.current === projectId) {
-        await refreshHeartbeats()
-      }
+      await refreshHeartbeats()
     },
-    [activeProjectId, refreshHeartbeats]
+    [refreshHeartbeats]
   )
 
   const runHeartbeat = useCallback(
     async (heartbeatId: string): Promise<void> => {
-      const projectId = activeProjectId
       await window.goodbuddy.heartbeats.runNow(heartbeatId)
-      if (activeProjectIdRef.current !== projectId) {
-        return
-      }
       await refreshHeartbeatCenter()
     },
-    [activeProjectId, refreshHeartbeatCenter]
+    [refreshHeartbeatCenter]
   )
 
   const setHeartbeatPaused = useCallback(
     async (heartbeatId: string, paused: boolean): Promise<void> => {
-      const projectId = activeProjectId
       await window.goodbuddy.heartbeats.setPaused(heartbeatId, paused)
-      if (activeProjectIdRef.current === projectId) {
-        await refreshHeartbeats()
-      }
+      await refreshHeartbeats()
     },
-    [activeProjectId, refreshHeartbeats]
+    [refreshHeartbeats]
   )
 
   useEffect(() => {
@@ -4860,7 +4839,17 @@ function App(): React.JSX.Element {
       current.filter((schedule) => schedule.projectId !== projectId)
     )
     setAssistantHeartbeats((current) =>
-      current.filter((heartbeat) => heartbeat.projectId !== projectId)
+      current.flatMap((heartbeat) => {
+        if (heartbeat.scope.kind === 'global') {
+          return heartbeat
+        }
+        const projectIds = heartbeat.scope.projectIds.filter(
+          (id) => id !== projectId
+        )
+        return projectIds.length > 0
+          ? [{ ...heartbeat, scope: { kind: 'projects', projectIds } }]
+          : []
+      })
     )
     const next = remainingProjects[0]
     if (next) {
@@ -4909,10 +4898,24 @@ function App(): React.JSX.Element {
             memory.id === memoryId ? { ...memory, status } : memory
           )
     )
+    setHeartbeatMemories((current) =>
+      status === 'rejected'
+        ? current.filter((memory) => memory.id !== memoryId)
+        : current.map((memory) =>
+            memory.id === memoryId ? { ...memory, status } : memory
+          )
+    )
   }
 
   const useHeartbeatTask = (task: AssistantTask): void => {
-    if (!newConversation()) {
+    if (task.projectId && task.projectId !== activeProjectId) {
+      setActiveProjectId(task.projectId)
+    }
+    if (
+      !startNewConversation(
+        task.projectId ?? (activeProjectId || undefined)
+      )
+    ) {
       return
     }
     setWorkMode('ask')
@@ -6123,6 +6126,7 @@ function App(): React.JSX.Element {
       setAssistantHeartbeats([])
       setHeartbeatEntries([])
       setHeartbeatRuns([])
+      setHeartbeatMemories([])
       setKnowledgeSnapshot({
         libraries: [],
         sources: [],
@@ -8126,11 +8130,10 @@ function App(): React.JSX.Element {
               >
                 <HeartbeatCenter
               configs={assistantHeartbeats}
-              currentProjectName={activeProject?.name}
               entries={heartbeatEntries}
               loadError={heartbeatLoadError}
               loading={heartbeatLoading}
-              memories={assistantMemories}
+              memories={heartbeatMemories}
               onCreate={createHeartbeat}
               onRefresh={retryHeartbeatLoad}
               onRetryLoad={retryHeartbeatLoad}
@@ -8139,7 +8142,9 @@ function App(): React.JSX.Element {
               onSetMemoryStatus={setMemoryStatus}
               onSetPaused={setHeartbeatPaused}
               onSetTaskStatus={setHeartbeatTaskStatus}
+              onUpdate={updateHeartbeat}
               onUseFollowUpTask={useHeartbeatTask}
+              projects={projects}
               runs={heartbeatRuns}
               tasks={assistantTasks}
                 />
@@ -8170,7 +8175,6 @@ function App(): React.JSX.Element {
             >
               <SettingsPanel
             appearanceTheme={appearanceTheme}
-            heartbeats={assistantHeartbeats}
             initialCategory={settingsInitialCategory}
             initialChannel={settingsInitialChannel}
             magicNotesEnabled={magicNotesEnabled}
@@ -8181,7 +8185,6 @@ function App(): React.JSX.Element {
               setSettingsInitialChannel(undefined)
               setView('chat')
             }}
-            onCreateHeartbeat={createHeartbeat}
             onExpertsChanged={(experts) => {
               setAssistantExperts(experts)
               if (
@@ -8198,13 +8201,10 @@ function App(): React.JSX.Element {
             onMagicNotesEnabledChange={(enabled) => {
               setMagicNotesEnabled(enabled)
             }}
-            onRemoveHeartbeat={removeHeartbeat}
-            onRunHeartbeat={runHeartbeat}
             onNotify={notify}
             onSaved={(settings) => {
               setRuntimeSettings(settings)
             }}
-            onSetHeartbeatPaused={setHeartbeatPaused}
             onUpdateProject={updateProject}
             open={view === 'settings'}
             presentation="page"
@@ -8328,7 +8328,6 @@ function App(): React.JSX.Element {
         attachments={attachments}
         browserState={browserStates[activeId]}
         enabledLibraries={enabledSidebarLibraries}
-        heartbeats={assistantHeartbeats}
         memories={assistantMemories}
         schedules={assistantSchedules}
         onClose={() => setAssistantSidebarOpen(false)}
@@ -8367,7 +8366,6 @@ function App(): React.JSX.Element {
             })
           }
         }}
-        onCreateHeartbeat={createHeartbeat}
         onCreateSchedule={async (input) => {
           const schedule = await window.goodbuddy.schedules.create({
             ...input,
@@ -8399,7 +8397,6 @@ function App(): React.JSX.Element {
           )
         }}
         onRemoveAttachment={removeAttachment}
-        onRemoveHeartbeat={removeHeartbeat}
         onRemoveSchedule={async (scheduleId) => {
           await window.goodbuddy.schedules.remove(scheduleId)
           setAssistantSchedules((current) =>
@@ -8414,7 +8411,6 @@ function App(): React.JSX.Element {
             decision
           )
         }}
-        onRunHeartbeat={runHeartbeat}
         onRunSchedule={async (scheduleId) => {
           await window.goodbuddy.schedules.runNow(scheduleId)
           notify({
@@ -8422,7 +8418,6 @@ function App(): React.JSX.Element {
             message: t('notices.scheduleStarted')
           })
         }}
-        onSetHeartbeatPaused={setHeartbeatPaused}
         onListWorkspaceDirectory={listWorkspaceDirectory}
         onLoadWorkspaceFile={loadWorkspaceFile}
         onOpenWorkspaceEntry={openWorkspaceEntry}

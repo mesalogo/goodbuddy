@@ -52,11 +52,6 @@ export const settings = {
       navigationDescription: 'Tool policies and local privacy',
       description: 'Tool policies and local privacy'
     },
-    automation: {
-      label: 'Automation',
-      navigationDescription: 'Smart Heartbeat and periodic reviews',
-      description: 'Smart Heartbeat and periodic reviews'
-    },
     channels: {
       label: 'Message channels',
       navigationDescription: 'WeChat, WeCom, and DingTalk',
@@ -661,7 +656,7 @@ export const settings = {
           'Configure learned relevance reranking for knowledge retrieval candidates.'
       },
       speech: {
-        label: 'Speech model',
+        label: 'Voice input',
         description:
           'Select an installed model and save Settings to apply it; models can be downloaded or moved offline with ZIP archives.'
       }

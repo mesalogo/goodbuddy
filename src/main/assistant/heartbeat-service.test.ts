@@ -30,7 +30,9 @@ const now = new Date('2026-08-01T12:00:00.000Z')
 
 function configInput(projectId?: string) {
   return {
-    projectId,
+    scope: projectId
+      ? ({ kind: 'projects', projectIds: [projectId] } as const)
+      : ({ kind: 'global' } as const),
     name: 'Daily reflection',
     timezone: 'UTC',
     recurrence: { type: 'daily' as const, localTime: '18:00' },
@@ -101,6 +103,7 @@ describe('HeartbeatService', () => {
           proposedMemories: [
             {
               scope: 'project',
+              projectId: project.id,
               type: 'preference',
               content: 'Prefer short daily reviews',
               confidence: 0.8,
@@ -110,7 +113,8 @@ describe('HeartbeatService', () => {
           followUpTasks: [
             {
               title: 'Review release notes',
-              instructions: 'Confirm the final release notes manually.'
+              instructions: 'Confirm the final release notes manually.',
+              projectId: project.id
             }
           ]
         })
@@ -158,10 +162,12 @@ describe('HeartbeatService', () => {
         .find((task) => task.title === 'Review release notes')
     ).toMatchObject({
       origin: 'assistant',
+      projectId: project.id,
       status: 'paused'
     })
-    expect(database.listArtifacts(project.id)[0]).toMatchObject({
+    expect(database.listArtifacts()[0]).toMatchObject({
       kind: 'markdown',
+      projectId: undefined,
       content: expect.stringContaining('Work is progressing.')
     })
     database.close()
@@ -236,6 +242,56 @@ describe('HeartbeatService', () => {
     expect(() =>
       service.history({ configId: config.id, limit: 201 })
     ).toThrow()
+    database.close()
+  })
+
+  it('rejects project outputs outside the configured scope', async () => {
+    const database = await createDatabase()
+    const selected = database.listProjects()[0]!
+    const outside = database.createProject({
+      name: 'Outside',
+      description: '',
+      rootPath: 'C:\\Outside',
+      defaultWorkMode: 'ask'
+    })
+    const service = new HeartbeatService(
+      database,
+      {
+        summarize: async () => ({
+          summary: 'Invalid target.',
+          highlights: [],
+          proposedMemories: [
+            {
+              scope: 'project',
+              projectId: outside.id,
+              type: 'fact',
+              content: 'This must not be persisted.',
+              confidence: 0.8,
+              salience: 0.7
+            }
+          ],
+          followUpTasks: []
+        })
+      },
+      vi.fn()
+    )
+    const config = service.create(configInput(selected.id), now)
+
+    const run = await service.runNow(
+      { id: config.id, idempotencyKey: 'outside-project' },
+      now
+    )
+
+    expect(run).toMatchObject({
+      status: 'failed',
+      error:
+        'Heartbeat output targeted a memory outside its selected projects'
+    })
+    expect(
+      database
+        .listMemories()
+        .some((memory) => memory.content === 'This must not be persisted.')
+    ).toBe(false)
     database.close()
   })
 

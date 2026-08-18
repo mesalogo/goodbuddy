@@ -20,7 +20,10 @@ import i18n from './i18n'
 
 const config: AssistantHeartbeatConfig = {
   id: 'heartbeat-1',
-  projectId: 'project-1',
+  scope: {
+    kind: 'projects',
+    projectIds: ['00000000-0000-4000-8000-000000000101']
+  },
   name: '智能成长回顾',
   timezone: 'Asia/Shanghai',
   recurrence: {
@@ -104,9 +107,22 @@ function createProps(
     runs,
     entries: [entry],
     memories: [memory],
+    projects: [
+      {
+        id: '00000000-0000-4000-8000-000000000101',
+        name: '默认项目',
+        description: '',
+        rootPath: 'C:\\Workspace',
+        defaultWorkMode: 'ask',
+        kind: 'user',
+        status: 'active',
+        createdAt: '2026-07-31T01:00:00.000Z',
+        updatedAt: '2026-07-31T01:00:00.000Z'
+      }
+    ],
     tasks: [task],
-    currentProjectName: '默认项目',
     onCreate: vi.fn(async () => {}),
+    onUpdate: vi.fn(async () => {}),
     onSetPaused: vi.fn(async () => {}),
     onRemove: vi.fn(async () => {}),
     onRunNow: vi.fn(async () => {}),
@@ -163,7 +179,7 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: '智能心跳' })
     ).toBeInTheDocument()
-    expect(screen.getByText('项目：默认项目 + 全局')).toHaveClass(
+    expect(screen.getByText('全局')).toHaveClass(
       'scope-badge'
     )
     expect(screen.getByText(/每天 09:00 · 默认项目/u)).toBeInTheDocument()
@@ -273,6 +289,81 @@ describe('HeartbeatCenter', () => {
     })
     expect(confirmation).toHaveTextContent(
       '将永久删除此计划、运行历史和关联结果，且无法恢复。'
+    )
+  })
+
+  it('creates one heartbeat plan for multiple selected projects', async () => {
+    const onCreate = vi.fn(async () => {})
+    const secondProject = {
+      ...createProps().projects[0]!,
+      id: '00000000-0000-4000-8000-000000000102',
+      name: '第二项目',
+      rootPath: 'C:\\Second'
+    }
+    render(
+      <HeartbeatCenter
+        {...createProps({
+          configs: [],
+          entries: [],
+          runs: [],
+          onCreate,
+          projects: [...createProps().projects, secondProject]
+        })}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '配置智能心跳' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '指定项目' })
+    )
+    fireEvent.click(screen.getByLabelText('默认项目'))
+    fireEvent.click(screen.getByLabelText('第二项目'))
+    fireEvent.click(
+      screen.getByRole('button', { name: '启用智能心跳' })
+    )
+
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: {
+            kind: 'projects',
+            projectIds: [
+              '00000000-0000-4000-8000-000000000101',
+              '00000000-0000-4000-8000-000000000102'
+            ]
+          }
+        })
+      )
+    )
+  })
+
+  it('edits an existing heartbeat plan from Heartbeat Plans', async () => {
+    const onUpdate = vi.fn(async () => {})
+    render(
+      <HeartbeatCenter {...createProps({ onUpdate })} />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '心跳计划' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: `编辑 ${config.name}` })
+    )
+    fireEvent.change(screen.getByLabelText('计划名称'), {
+      target: { value: '更新后的回顾' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存心跳计划' })
+    )
+
+    await waitFor(() =>
+      expect(onUpdate).toHaveBeenCalledWith(
+        config.id,
+        expect.objectContaining({
+          name: '更新后的回顾',
+          scope: config.scope
+        })
+      )
     )
   })
 

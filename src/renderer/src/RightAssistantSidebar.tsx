@@ -16,10 +16,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
-  AssistantHeartbeatConfig,
   AssistantMemory,
   AssistantSchedule,
-  HeartbeatCreateInput,
   ScheduleCreateInput,
   WorkspaceChanges,
   WorkspaceDirectoryListing,
@@ -32,7 +30,6 @@ import type {
   ContextAttachment,
   KnowledgeLibrary
 } from '../../shared/contracts'
-import { HeartbeatSettings } from './HeartbeatSettings'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 
 export type AssistantSidebarTab =
@@ -66,7 +63,6 @@ type RightAssistantSidebarProps = {
   artifacts: SidebarArtifact[]
   attachments: ContextAttachment[]
   enabledLibraries: KnowledgeLibrary[]
-  heartbeats: AssistantHeartbeatConfig[]
   memories: AssistantMemory[]
   schedules: AssistantSchedule[]
   workspaceChanges?: WorkspaceChanges
@@ -75,7 +71,6 @@ type RightAssistantSidebarProps = {
   onClose: () => void
   onInteractBrowser: () => Promise<void>
   onStopBrowser: () => Promise<void>
-  onCreateHeartbeat: (input: HeartbeatCreateInput) => Promise<void>
   onCreateSchedule: (input: ScheduleCreateInput) => Promise<void>
   onImportArtifacts: () => Promise<void>
   onLoadArtifact: (artifactId: string) => Promise<void>
@@ -89,18 +84,12 @@ type RightAssistantSidebarProps = {
     path: string,
     type: 'file' | 'directory'
   ) => Promise<void>
-  onRemoveHeartbeat: (heartbeatId: string) => Promise<void>
   onRemoveSchedule: (scheduleId: string) => Promise<void>
   onRespondApproval: (
     approval: PendingSidebarApproval,
     decision: ApprovalDecision
   ) => void
-  onRunHeartbeat: (heartbeatId: string) => Promise<void>
   onRunSchedule: (scheduleId: string) => Promise<void>
-  onSetHeartbeatPaused: (
-    heartbeatId: string,
-    paused: boolean
-  ) => Promise<void>
   onTabChange: (tab: AssistantSidebarTab) => void
 }
 
@@ -142,7 +131,6 @@ export function RightAssistantSidebar({
   artifacts,
   attachments,
   enabledLibraries,
-  heartbeats,
   memories,
   schedules,
   workspaceChanges,
@@ -151,7 +139,6 @@ export function RightAssistantSidebar({
   onClose,
   onInteractBrowser,
   onStopBrowser,
-  onCreateHeartbeat,
   onCreateSchedule,
   onImportArtifacts,
   onLoadArtifact,
@@ -160,12 +147,9 @@ export function RightAssistantSidebar({
   onListWorkspaceDirectory,
   onLoadWorkspaceFile,
   onOpenWorkspaceEntry,
-  onRemoveHeartbeat,
   onRemoveSchedule,
   onRespondApproval,
-  onRunHeartbeat,
   onRunSchedule,
-  onSetHeartbeatPaused,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
   const { i18n, t } = useTranslation('workspace')
@@ -689,14 +673,6 @@ export function RightAssistantSidebar({
                 </div>
               </article>
             ))}
-            <HeartbeatSettings
-              heartbeats={heartbeats}
-              onCreate={onCreateHeartbeat}
-              onRemove={onRemoveHeartbeat}
-              onRunNow={onRunHeartbeat}
-              onSetPaused={onSetHeartbeatPaused}
-              variant="sidebar"
-            />
           </section>
         )}
 

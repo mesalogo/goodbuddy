@@ -13,9 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantExpert,
-  AssistantHeartbeatConfig,
   AssistantProject,
-  HeartbeatCreateInput,
   ProjectCreateInput,
   ProjectChannel
 } from '../../shared/assistant-contracts'
@@ -38,7 +36,6 @@ import {
 import { McpSettingsSection } from './McpSettingsSection'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 import { SkillsSettingsSection } from './SkillsSettingsSection'
-import { HeartbeatSettings } from './HeartbeatSettings'
 import { ChannelSettingsSection } from './ChannelSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
@@ -174,14 +171,6 @@ type SettingsPanelProps = {
   projects: AssistantProject[]
   onExpertsChanged?: (experts: AssistantExpert[]) => void
   onClearLocalData: () => Promise<void>
-  heartbeats: AssistantHeartbeatConfig[]
-  onCreateHeartbeat: (input: HeartbeatCreateInput) => Promise<void>
-  onSetHeartbeatPaused: (
-    heartbeatId: string,
-    paused: boolean
-  ) => Promise<void>
-  onRemoveHeartbeat: (heartbeatId: string) => Promise<void>
-  onRunHeartbeat: (heartbeatId: string) => Promise<void>
   appearanceTheme?: AppearanceTheme
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
   magicNotesEnabled?: boolean
@@ -532,11 +521,6 @@ export function SettingsPanel({
   onUpdateProject,
   projects,
   onClearLocalData,
-  heartbeats,
-  onCreateHeartbeat,
-  onSetHeartbeatPaused,
-  onRemoveHeartbeat,
-  onRunHeartbeat,
   onExpertsChanged = () => {},
   appearanceTheme = 'system',
   onAppearanceThemeChange = () => {},
@@ -3220,17 +3204,6 @@ export function SettingsPanel({
             )}
           </div>
             </>
-          )}
-          {activeTab === 'automation' && (
-            <div className="settings-section">
-              <HeartbeatSettings
-                heartbeats={heartbeats}
-                onCreate={onCreateHeartbeat}
-                onRemove={onRemoveHeartbeat}
-                onRunNow={onRunHeartbeat}
-                onSetPaused={onSetHeartbeatPaused}
-              />
-            </div>
           )}
           {activeTab === 'channels' && (
             <ChannelSettingsSection

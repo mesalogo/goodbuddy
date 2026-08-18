@@ -127,7 +127,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(20)
+    ).toBe(21)
     expect(
       current
         .prepare(
@@ -231,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(20)
+    ).toBe(21)
     expect(
       current
         .prepare(
@@ -2834,7 +2834,7 @@ describe('AssistantDatabase', () => {
     })
     database.createHeartbeatConfig(
       {
-        projectId: project.id,
+        scope: { kind: 'projects', projectIds: [project.id] },
         name: '待清除心跳',
         timezone: 'Asia/Shanghai',
         recurrence: { type: 'daily', localTime: '09:00' },

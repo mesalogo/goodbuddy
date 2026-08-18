@@ -262,6 +262,7 @@ type ExpertRow = {
 type HeartbeatConfigRow = {
   id: string
   project_id: string | null
+  scope_kind: AssistantHeartbeatConfig['scope']['kind']
   name: string
   timezone: string
   recurrence_json: string
@@ -349,8 +350,10 @@ export type ClaimedHeartbeatRun = {
 }
 
 export type HeartbeatInputSnapshot = {
+  scope: AssistantHeartbeatConfig['scope']
   conversations: Array<{
     id: string
+    projectId: string
     title: string
     updatedAt: string
     messages: Array<{
@@ -361,6 +364,7 @@ export type HeartbeatInputSnapshot = {
   }>
   tasks: Array<{
     id: string
+    projectId?: string
     title: string
     status: AssistantTask['status']
     createdAt: string
@@ -368,6 +372,7 @@ export type HeartbeatInputSnapshot = {
   }>
   confirmedMemories: Array<{
     id: string
+    projectId?: string
     type: AssistantMemory['type']
     content: string
     scope: AssistantMemory['scope']
@@ -570,11 +575,15 @@ function toExpert(row: ExpertRow): AssistantExpert {
 }
 
 function toHeartbeatConfig(
-  row: HeartbeatConfigRow
+  row: HeartbeatConfigRow,
+  projectIds: string[] = []
 ): AssistantHeartbeatConfig {
   return {
     id: row.id,
-    projectId: row.project_id ?? undefined,
+    scope:
+      row.scope_kind === 'projects'
+        ? { kind: 'projects', projectIds }
+        : { kind: 'global' },
     name: row.name,
     timezone: row.timezone,
     recurrence: JSON.parse(
@@ -1350,8 +1359,38 @@ export class AssistantDatabase {
         )
         .run(projectId, projectId)
       database
-        .prepare('DELETE FROM heartbeat_configs WHERE project_id = ?')
-        .run(projectId)
+        .prepare(
+          `DELETE FROM artifacts
+           WHERE id IN (
+             SELECT e.artifact_id
+             FROM heartbeat_entries e
+             JOIN heartbeat_configs c ON c.id = e.config_id
+             JOIN heartbeat_config_projects hp ON hp.config_id = c.id
+             WHERE hp.project_id = ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM heartbeat_config_projects other
+                 WHERE other.config_id = c.id
+                   AND other.project_id <> ?
+               )
+           )`
+        )
+        .run(projectId, projectId)
+      database
+        .prepare(
+          `DELETE FROM heartbeat_configs
+           WHERE scope_kind = 'projects'
+             AND EXISTS (
+               SELECT 1 FROM heartbeat_config_projects hp
+               WHERE hp.config_id = heartbeat_configs.id
+                 AND hp.project_id = ?
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM heartbeat_config_projects other
+               WHERE other.config_id = heartbeat_configs.id
+                 AND other.project_id <> ?
+             )`
+        )
+        .run(projectId, projectId)
       database
         .prepare('DELETE FROM artifacts WHERE project_id = ?')
         .run(projectId)
@@ -3599,34 +3638,105 @@ export class AssistantDatabase {
     return row?.task_id ?? undefined
   }
 
+  private assertHeartbeatProjectIds(projectIds: string[]): void {
+    if (projectIds.length === 0) {
+      return
+    }
+    const placeholders = projectIds.map(() => '?').join(', ')
+    const count = this.requireDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS count FROM projects
+         WHERE id IN (${placeholders}) AND status = 'active'`
+      )
+      .get(...projectIds) as { count: number }
+    if (count.count !== projectIds.length) {
+      throw new Error('Heartbeat projects must exist and be active')
+    }
+  }
+
+  private getHeartbeatProjectBindings(
+    configIds: string[]
+  ): Map<string, string[]> {
+    const bindings = new Map<string, string[]>()
+    for (const configId of configIds) {
+      bindings.set(configId, [])
+    }
+    if (configIds.length === 0) {
+      return bindings
+    }
+    const placeholders = configIds.map(() => '?').join(', ')
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT config_id, project_id
+         FROM heartbeat_config_projects
+         WHERE config_id IN (${placeholders})
+         ORDER BY rowid`
+      )
+      .all(...configIds) as Array<{
+      config_id: string
+      project_id: string
+    }>
+    for (const row of rows) {
+      bindings.get(row.config_id)?.push(row.project_id)
+    }
+    return bindings
+  }
+
+  private insertHeartbeatProjectBindings(
+    configId: string,
+    projectIds: string[]
+  ): void {
+    const insertProject = this.requireDatabase().prepare(
+      `INSERT INTO heartbeat_config_projects (config_id, project_id)
+       VALUES (?, ?)`
+    )
+    for (const projectId of projectIds) {
+      insertProject.run(configId, projectId)
+    }
+  }
+
   listHeartbeatConfigs(projectId?: string): AssistantHeartbeatConfig[] {
+    const database = this.requireDatabase()
     const rows = projectId
-      ? this.requireDatabase()
+      ? database
           .prepare(
-            `SELECT * FROM heartbeat_configs
-             WHERE project_id = ?
+            `SELECT c.* FROM heartbeat_configs c
+             WHERE EXISTS (
+               SELECT 1 FROM heartbeat_config_projects p
+               WHERE p.config_id = c.id AND p.project_id = ?
+             )
              ORDER BY created_at DESC
              LIMIT 100`
           )
           .all(projectId)
-      : this.requireDatabase()
+      : database
           .prepare(
             `SELECT * FROM heartbeat_configs
              ORDER BY created_at DESC
              LIMIT 100`
           )
           .all()
-    return (rows as HeartbeatConfigRow[]).map(toHeartbeatConfig)
+    const typedRows = rows as HeartbeatConfigRow[]
+    const bindings = this.getHeartbeatProjectBindings(
+      typedRows.map((row) => row.id)
+    )
+    return typedRows.map((row) =>
+      toHeartbeatConfig(row, bindings.get(row.id))
+    )
   }
 
   getHeartbeatConfig(configId: string): AssistantHeartbeatConfig {
-    const row = this.requireDatabase()
+    const database = this.requireDatabase()
+    const row = database
       .prepare('SELECT * FROM heartbeat_configs WHERE id = ?')
       .get(configId) as HeartbeatConfigRow | undefined
     if (!row) {
       throw new Error('Heartbeat configuration not found')
     }
-    return toHeartbeatConfig(row)
+    return toHeartbeatConfig(
+      row,
+      this.getHeartbeatProjectBindings([configId]).get(configId)
+    )
   }
 
   createHeartbeatConfig(
@@ -3640,17 +3750,21 @@ export class AssistantDatabase {
       input.timezone,
       now
     ).toISOString()
-    this.requireDatabase()
-      .prepare(
+    const database = this.requireDatabase()
+    const projectIds =
+      input.scope.kind === 'projects' ? input.scope.projectIds : []
+    this.assertHeartbeatProjectIds(projectIds)
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database.prepare(
         `INSERT INTO heartbeat_configs
-          (id, project_id, name, timezone, recurrence_json,
+          (id, project_id, scope_kind, name, timezone, recurrence_json,
            lookback_hours, retention_days, enabled, next_run_at,
            last_run_at, last_status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`
-      )
-      .run(
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`
+      ).run(
         id,
-        input.projectId ?? null,
+        input.scope.kind,
         input.name,
         input.timezone,
         JSON.stringify(input.recurrence),
@@ -3661,6 +3775,12 @@ export class AssistantDatabase {
         timestamp,
         timestamp
       )
+      this.insertHeartbeatProjectBindings(id, projectIds)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
     return this.getHeartbeatConfig(id)
   }
 
@@ -3675,17 +3795,21 @@ export class AssistantDatabase {
       input.timezone,
       now
     ).toISOString()
-    const result = this.requireDatabase()
-      .prepare(
+    const database = this.requireDatabase()
+    const projectIds =
+      input.scope.kind === 'projects' ? input.scope.projectIds : []
+    this.assertHeartbeatProjectIds(projectIds)
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = database.prepare(
         `UPDATE heartbeat_configs
-         SET project_id = ?, name = ?, timezone = ?,
+         SET project_id = NULL, scope_kind = ?, name = ?, timezone = ?,
              recurrence_json = ?, lookback_hours = ?,
              retention_days = ?, enabled = ?, next_run_at = ?,
              updated_at = ?
          WHERE id = ?`
-      )
-      .run(
-        input.projectId ?? null,
+      ).run(
+        input.scope.kind,
         input.name,
         input.timezone,
         JSON.stringify(input.recurrence),
@@ -3696,8 +3820,19 @@ export class AssistantDatabase {
         timestamp,
         configId
       )
-    if (result.changes !== 1) {
-      throw new Error('Heartbeat configuration not found')
+      if (result.changes !== 1) {
+        throw new Error('Heartbeat configuration not found')
+      }
+      database
+        .prepare(
+          'DELETE FROM heartbeat_config_projects WHERE config_id = ?'
+        )
+        .run(configId)
+      this.insertHeartbeatProjectBindings(configId, projectIds)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
     return this.getHeartbeatConfig(configId)
   }
@@ -3862,7 +3997,7 @@ export class AssistantDatabase {
             .get(joined.config_id) as HeartbeatConfigRow
           claimed.push({
             run: toHeartbeatRun(run),
-            config: toHeartbeatConfig(config),
+            config: this.getHeartbeatConfig(config.id),
             leaseOwner,
             acquired: true
           })
@@ -3957,13 +4092,7 @@ export class AssistantDatabase {
             .get(runId) as HeartbeatRunRow
           claimed.push({
             run: toHeartbeatRun(run),
-            config: toHeartbeatConfig({
-              ...row,
-              next_run_at: nextRunAt,
-              last_run_at: nowIso,
-              last_status: 'claimed',
-              updated_at: nowIso
-            }),
+            config: this.getHeartbeatConfig(row.id),
             leaseOwner,
             acquired: true
           })
@@ -4095,24 +4224,37 @@ export class AssistantDatabase {
     const since = new Date(
       now.getTime() - config.lookbackHours * 60 * 60_000
     ).toISOString()
+    const projectIds =
+      config.scope.kind === 'projects' ? config.scope.projectIds : []
+    const projectPlaceholders = projectIds.map(() => '?').join(', ')
     const conversations = (
-      config.projectId
+      config.scope.kind === 'projects'
         ? database
             .prepare(
-              `SELECT id, title, updated_at FROM conversations
-               WHERE status = 'active' AND project_id = ?
+              `SELECT id, project_id, title, updated_at
+               FROM conversations
+               WHERE status = 'active'
+                 AND project_id IN (${projectPlaceholders})
                  AND updated_at >= ?
                ORDER BY updated_at DESC LIMIT 20`
             )
-            .all(config.projectId, since)
+            .all(...projectIds, since)
         : database
             .prepare(
-              `SELECT id, title, updated_at FROM conversations
-               WHERE status = 'active' AND updated_at >= ?
-               ORDER BY updated_at DESC LIMIT 20`
+              `SELECT c.id, c.project_id, c.title, c.updated_at
+               FROM conversations c
+               JOIN projects p ON p.id = c.project_id
+               WHERE c.status = 'active' AND p.status = 'active'
+                 AND c.updated_at >= ?
+               ORDER BY c.updated_at DESC LIMIT 20`
             )
             .all(since)
-    ) as Array<{ id: string; title: string; updated_at: string }>
+    ) as Array<{
+      id: string
+      project_id: string
+      title: string
+      updated_at: string
+    }>
     const messageStatement = database.prepare(
       `SELECT role, content, created_at FROM (
          SELECT role, content, created_at, sequence
@@ -4123,57 +4265,69 @@ export class AssistantDatabase {
        ) ORDER BY sequence`
     )
     const tasks = (
-      config.projectId
+      config.scope.kind === 'projects'
         ? database
             .prepare(
-              `SELECT id, title, status, created_at, completed_at
+              `SELECT id, project_id, title, status, created_at,
+                      completed_at
                FROM tasks
-               WHERE project_id = ? AND visible = 1 AND created_at >= ?
+               WHERE project_id IN (${projectPlaceholders})
+                 AND visible = 1 AND created_at >= ?
                ORDER BY created_at DESC LIMIT 100`
             )
-            .all(config.projectId, since)
+            .all(...projectIds, since)
         : database
             .prepare(
-              `SELECT id, title, status, created_at, completed_at
-               FROM tasks
-               WHERE visible = 1 AND created_at >= ?
-               ORDER BY created_at DESC LIMIT 100`
+              `SELECT t.id, t.project_id, t.title, t.status,
+                      t.created_at, t.completed_at
+               FROM tasks t
+               LEFT JOIN projects p ON p.id = t.project_id
+               WHERE t.visible = 1 AND t.created_at >= ?
+                 AND (t.project_id IS NULL OR p.status = 'active')
+               ORDER BY t.created_at DESC LIMIT 100`
             )
             .all(since)
     ) as Array<{
       id: string
+      project_id: string | null
       title: string
       status: AssistantTask['status']
       created_at: string
       completed_at: string | null
     }>
     const memories = (
-      config.projectId
+      config.scope.kind === 'projects'
         ? database
             .prepare(
-              `SELECT id, type, content, scope FROM memory_items
+              `SELECT id, scope_id, type, content, scope
+               FROM memory_items
                WHERE status = 'confirmed'
                  AND (scope = 'global' OR
-                   (scope = 'project' AND scope_id = ?))
+                   (scope = 'project' AND
+                    scope_id IN (${projectPlaceholders})))
                ORDER BY updated_at DESC LIMIT 100`
             )
-            .all(config.projectId)
+            .all(...projectIds)
         : database
             .prepare(
-              `SELECT id, type, content, scope FROM memory_items
+              `SELECT id, scope_id, type, content, scope
+               FROM memory_items
                WHERE status = 'confirmed' AND scope = 'global'
                ORDER BY updated_at DESC LIMIT 100`
             )
             .all()
     ) as Array<{
       id: string
+      scope_id: string | null
       type: AssistantMemory['type']
       content: string
       scope: AssistantMemory['scope']
     }>
     return {
+      scope: config.scope,
       conversations: conversations.map((conversation) => ({
         id: conversation.id,
+        projectId: conversation.project_id,
         title: conversation.title,
         updatedAt: conversation.updated_at,
         messages: (
@@ -4190,12 +4344,19 @@ export class AssistantDatabase {
       })),
       tasks: tasks.map((task) => ({
         id: task.id,
+        projectId: task.project_id ?? undefined,
         title: task.title,
         status: task.status,
         createdAt: task.created_at,
         completedAt: task.completed_at ?? undefined
       })),
-      confirmedMemories: memories
+      confirmedMemories: memories.map((memory) => ({
+        id: memory.id,
+        projectId: memory.scope_id ?? undefined,
+        type: memory.type,
+        content: memory.content,
+        scope: memory.scope
+      }))
     }
   }
 
@@ -4239,14 +4400,20 @@ export class AssistantDatabase {
              storage_kind, storage_path, inline_content, checksum,
              byte_size, preview_json, created_at, updated_at)
            VALUES (?, ?, NULL, NULL, 'markdown', ?, 'text/markdown',
-             'inline', NULL, ?, NULL, ?, '{}', ?, ?)`
+             'inline', NULL, ?, NULL, ?, ?, ?, ?)`
         )
         .run(
           artifactId,
-          claim.config.projectId ?? null,
+          null,
           `Heartbeat: ${claim.config.name}`.slice(0, 240),
           summaryContent,
           Buffer.byteLength(summaryContent),
+          JSON.stringify({
+            heartbeat: {
+              configId: claim.config.id,
+              scope: claim.config.scope
+            }
+          }),
           timestamp,
           timestamp
         )
@@ -4269,9 +4436,7 @@ export class AssistantDatabase {
       )
       for (const memory of output.proposedMemories) {
         const scopeId =
-          memory.scope === 'project'
-            ? (claim.config.projectId ?? null)
-            : null
+          memory.scope === 'project' ? memory.projectId : null
         const existing = findExistingMemory.get(
           memory.scope,
           scopeId,
@@ -4308,7 +4473,7 @@ export class AssistantDatabase {
         const taskId = randomUUID()
         insertTask.run(
           taskId,
-          claim.config.projectId ?? null,
+          task.projectId ?? null,
           task.title,
           task.instructions,
           timestamp
@@ -4775,12 +4940,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 20) {
+    if (version.user_version > 21) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 20) {
+    if (version.user_version === 21) {
       return
     }
     if (version.user_version < 1) {
@@ -5708,6 +5873,54 @@ export class AssistantDatabase {
           `)
         }
         database.exec('PRAGMA user_version = 20; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 21) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const heartbeatColumns = new Set(
+          (
+            database
+              .prepare('PRAGMA table_info(heartbeat_configs)')
+              .all() as Array<{ name: string }>
+          ).map((column) => column.name)
+        )
+        if (!heartbeatColumns.has('scope_kind')) {
+          database.exec(`
+            ALTER TABLE heartbeat_configs
+              ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'global'
+                CHECK(scope_kind IN ('global', 'projects'));
+          `)
+        }
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS heartbeat_config_projects (
+            config_id TEXT NOT NULL
+              REFERENCES heartbeat_configs(id) ON DELETE CASCADE,
+            project_id TEXT NOT NULL
+              REFERENCES projects(id) ON DELETE CASCADE,
+            PRIMARY KEY(config_id, project_id)
+          );
+          CREATE INDEX IF NOT EXISTS heartbeat_config_projects_project_idx
+            ON heartbeat_config_projects(project_id, config_id);
+          INSERT OR IGNORE INTO heartbeat_config_projects
+            (config_id, project_id)
+          SELECT id, project_id
+          FROM heartbeat_configs
+          WHERE project_id IS NOT NULL;
+          UPDATE heartbeat_configs
+          SET scope_kind = CASE
+            WHEN EXISTS (
+              SELECT 1 FROM heartbeat_config_projects p
+              WHERE p.config_id = heartbeat_configs.id
+            ) THEN 'projects'
+            ELSE 'global'
+          END;
+          PRAGMA user_version = 21;
+          COMMIT;
+        `)
       } catch (error) {
         database.exec('ROLLBACK')
         throw error
