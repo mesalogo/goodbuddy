@@ -132,7 +132,6 @@ export const app = {
   },
   chat: {
     user: '用户',
-    assistantResult: '助手成果 {{index}}',
     welcome: {
       eyebrow: 'GOODBUDDY 工作台',
       title: '今天想一起完成什么？',

@@ -2958,8 +2958,8 @@ function App(): React.JSX.Element {
     [conversations]
   )
   const sidebarArtifacts = useMemo<SidebarArtifact[]>(
-    () => {
-      const persisted = assistantArtifacts
+    () =>
+      assistantArtifacts
         .filter(
           (artifact) =>
             !activeProjectId || artifact.projectId === activeProjectId
@@ -2970,33 +2970,8 @@ function App(): React.JSX.Element {
           content: artifact.content ?? '',
           createdAt: new Date(artifact.createdAt).getTime(),
           mimeType: artifact.mimeType
-        }))
-      if (persisted.length > 0) {
-        return persisted
-      }
-      return (activeConversation?.messages ?? [])
-        .filter(
-          (message) =>
-            message.role === 'assistant' &&
-            message.state === 'complete' &&
-            message.content.trim()
-        )
-        .slice(-20)
-        .reverse()
-        .map((message, index) => ({
-          id: message.id,
-          title:
-            message.content
-              .split(/\r?\n/, 1)[0]
-              ?.replace(/^#+\s*/, '')
-              .slice(0, 48) ||
-            t('chat.assistantResult', { index: index + 1 }),
-          content: message.content,
-          createdAt: message.createdAt,
-          mimeType: 'text/markdown'
-        }))
-    },
-    [activeConversation, activeProjectId, assistantArtifacts, t]
+        })),
+    [activeProjectId, assistantArtifacts]
   )
   const enabledSidebarLibraries = useMemo(
     () =>

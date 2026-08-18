@@ -6640,15 +6640,55 @@ describe('App', () => {
       screen.getByText(/Agent 打开网页后/)
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '成果' }))
-    expect(screen.getByText('对话与导入成果')).toBeInTheDocument()
+    expect(screen.getByText('生成与导入成果')).toBeInTheDocument()
     expect(
-      screen.getByText(/查看并预览由对话生成或手动导入/)
+      screen.getByText(/查看并预览由任务、自动化生成或手动导入/)
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
+  })
+
+  it('keeps completed chat replies out of the results sidebar', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '普通聊天问题' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: '这是一条普通聊天回复'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+    expect(
+      await screen.findByText('这是一条普通聊天回复')
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(screen.getByRole('tab', { name: '成果' }))
+    const sidebar = screen.getByLabelText('助手工作栏')
+    expect(
+      within(sidebar).queryByText('这是一条普通聊天回复')
+    ).not.toBeInTheDocument()
+    expect(
+      within(sidebar).getByText(
+        '生成的文件、图片、报告和手动导入内容会显示在这里。'
+      )
+    ).toBeInTheDocument()
   })
 
   it('opens the live browser tab for the active conversation and can stop it', async () => {

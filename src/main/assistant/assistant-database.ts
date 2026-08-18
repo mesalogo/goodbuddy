@@ -3166,11 +3166,25 @@ export class AssistantDatabase {
                      CASE WHEN kind = 'image' THEN NULL
                           ELSE inline_content END AS inline_content,
                      byte_size, created_at, updated_at`
+    const visibleArtifact = `NOT (
+      kind = 'markdown' AND EXISTS (
+        SELECT 1
+        FROM tasks
+        WHERE tasks.id = artifacts.task_id
+          AND tasks.conversation_id IS NOT NULL
+          AND (
+            tasks.origin = 'user' OR (
+              tasks.origin = 'delegation'
+              AND tasks.conversation_id NOT LIKE 'delegation:%'
+            )
+          )
+      )
+    )`
     const rows = projectId
       ? this.requireDatabase()
           .prepare(
             `SELECT ${columns} FROM artifacts
-             WHERE project_id = ?
+             WHERE project_id = ? AND ${visibleArtifact}
              ORDER BY created_at DESC
              LIMIT ?`
           )
@@ -3178,6 +3192,7 @@ export class AssistantDatabase {
       : this.requireDatabase()
           .prepare(
             `SELECT ${columns} FROM artifacts
+             WHERE ${visibleArtifact}
              ORDER BY created_at DESC
              LIMIT ?`
           )

@@ -3213,12 +3213,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     ).toBe(expectedOutput)
     expect(
       harness.assistantDatabase.createTextArtifact
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: requestId,
-        content: expectedOutput
-      })
-    )
+    ).not.toHaveBeenCalled()
     await harness.dispose()
   })
 
@@ -4663,6 +4658,9 @@ describe('registerIpcHandlers agent terminal state', () => {
         'base64'
       ).toString('utf8')
     ).toBe('# 本周报告\n\n已完成。')
+    expect(
+      harness.assistantDatabase.createTextArtifact
+    ).not.toHaveBeenCalled()
     await harness.dispose()
   })
 

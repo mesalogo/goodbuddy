@@ -83,7 +83,7 @@ export const workspace = {
       },
       results: {
         label: '成果',
-        description: '查看对话生成或手动导入的内容'
+        description: '查看生成或手动导入的独立成果'
       }
     },
     tasks: {
@@ -142,10 +142,10 @@ export const workspace = {
       title: '成果',
       loadingImage: '正在加载图片…',
       description:
-        '查看并预览由对话生成或手动导入的文本、图片、PDF 与网页内容。',
-      sectionTitle: '对话与导入成果',
+        '查看并预览由任务、自动化生成或手动导入的文本、图片、PDF 与网页成果。',
+      sectionTitle: '生成与导入成果',
       import: '导入 PDF、图片或网页',
-      empty: '完成的回复会作为可预览成果显示在这里。'
+      empty: '生成的文件、图片、报告和手动导入内容会显示在这里。'
     },
     browser: {
       title: '实时浏览器',

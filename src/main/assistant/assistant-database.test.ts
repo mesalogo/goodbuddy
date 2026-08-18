@@ -974,19 +974,6 @@ describe('AssistantDatabase', () => {
       status: 'completed',
       completedAt: expect.any(String)
     })
-    const artifact = database.createTextArtifact({
-      projectId: project.id,
-      taskId,
-      title: '发布说明',
-      content: '# 发布说明\n\n内容'
-    })
-    expect(database.listArtifacts(project.id)).toEqual([
-      expect.objectContaining({
-        id: artifact.id,
-        kind: 'markdown',
-        content: '# 发布说明\n\n内容'
-      })
-    ])
     const memory = database.createMemory({
       scope: 'project',
       scopeId: project.id,
@@ -2203,6 +2190,99 @@ describe('AssistantDatabase', () => {
       ).tools?.[0]?.state
     ).toBe('interrupted')
     durable.close()
+  })
+
+  it('keeps duplicate chat replies out of artifact listings', async () => {
+    const database = await createDatabase()
+    const project = database.listProjects()[0]!
+    const chatTaskId = '00000000-0000-4000-8000-000000000231'
+    const channelTaskId = '00000000-0000-4000-8000-000000000232'
+    const scheduleTaskId = '00000000-0000-4000-8000-000000000233'
+    const delegationTaskId = '00000000-0000-4000-8000-000000000234'
+    database.createTask({
+      id: chatTaskId,
+      projectId: project.id,
+      conversationId: 'conversation-chat',
+      title: '普通对话',
+      instructions: '回答问题',
+      workMode: 'ask'
+    })
+    database.createTask({
+      id: channelTaskId,
+      projectId: project.id,
+      conversationId: 'conversation-channel',
+      title: '远程对话',
+      instructions: '回答远程消息',
+      workMode: 'ask',
+      origin: 'delegation'
+    })
+    database.createTask({
+      id: scheduleTaskId,
+      projectId: project.id,
+      conversationId: 'schedule:daily',
+      title: '每日报告',
+      instructions: '生成报告',
+      workMode: 'ask',
+      origin: 'schedule'
+    })
+    database.createTask({
+      id: delegationTaskId,
+      projectId: project.id,
+      conversationId: 'delegation:weekly-report',
+      title: '委派报告',
+      instructions: '生成远程委派报告',
+      workMode: 'ask',
+      origin: 'delegation'
+    })
+    const chatReply = database.createTextArtifact({
+      projectId: project.id,
+      taskId: chatTaskId,
+      title: '普通对话',
+      content: '普通回复'
+    })
+    const channelReply = database.createTextArtifact({
+      projectId: project.id,
+      taskId: channelTaskId,
+      title: '远程对话',
+      content: '远程回复'
+    })
+    const scheduledReport = database.createTextArtifact({
+      projectId: project.id,
+      taskId: scheduleTaskId,
+      title: '每日报告',
+      content: '# 每日报告'
+    })
+    const delegatedReport = database.createTextArtifact({
+      projectId: project.id,
+      taskId: delegationTaskId,
+      title: '委派报告',
+      content: '# 委派报告'
+    })
+    const generatedImage = database.createImageArtifact({
+      projectId: project.id,
+      taskId: chatTaskId,
+      title: '生成图片',
+      mimeType: 'image/png',
+      base64: 'iVBORw0KGgo='
+    })
+
+    const visibleArtifactIds = database
+      .listArtifacts(project.id)
+      .map((artifact) => artifact.id)
+    expect(visibleArtifactIds).toEqual(
+      expect.arrayContaining([
+        scheduledReport.id,
+        delegatedReport.id,
+        generatedImage.id
+      ])
+    )
+    expect(visibleArtifactIds).not.toContain(chatReply.id)
+    expect(visibleArtifactIds).not.toContain(channelReply.id)
+    expect(database.getArtifact(chatReply.id)).toMatchObject({
+      id: chatReply.id,
+      content: '普通回复'
+    })
+    database.close()
   })
 
   it('loads image artifact content only when requested by id', async () => {

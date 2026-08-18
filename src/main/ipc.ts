@@ -1551,7 +1551,7 @@ export function registerIpcHandlers(
           })
         }
       }
-      if (output.trim()) {
+      if (origin !== 'channel' && output.trim()) {
         assistantDatabase.createTextArtifact({
           projectId: schedule.projectId,
           taskId: requestId,
@@ -1568,7 +1568,9 @@ export function registerIpcHandlers(
         body:
           origin === 'channel'
             ? '结果已回复，并保存到远程通道会话。'
-            : '结果已保存到 GoodBuddy 成果工作栏。'
+            : origin === 'schedule'
+              ? '结果已保存到 GoodBuddy 成果工作栏。'
+              : '结果已保存到成果工作栏和委派记录。'
       })
       return {
         status: 'completed',
@@ -2413,7 +2415,6 @@ export function registerIpcHandlers(
     activeRequests.set(request.requestId, controller)
 
     const execution = (async () => {
-      let outputText = ''
       let completed = false
       let runtimeErrorEvent:
         | Extract<AgentEvent, { type: 'error' }>
@@ -2784,15 +2785,6 @@ export function registerIpcHandlers(
                     .slice(0, 120)
                 })
               : agentEvent
-          if (
-            publicEvent.type === 'text' &&
-            outputText.length < 1_000_000
-          ) {
-            outputText += publicEvent.delta.slice(
-              0,
-              1_000_000 - outputText.length
-            )
-          }
           if (publicEvent.type === 'tool') {
             toolStates.set(publicEvent.callId, publicEvent)
           }
@@ -2831,23 +2823,13 @@ export function registerIpcHandlers(
           }
           if (publicEvent.type === 'done') {
             completed = true
-            if (outputText.trim()) {
-              assistantDatabase.createTextArtifact({
-                projectId: request.projectId,
-                taskId: request.requestId,
-                title: parsedRequest.prompt
-                  .split(/\r?\n/, 1)[0]!
-                  .slice(0, 120),
-                content: outputText
-              })
-            }
             assistantDatabase.updateTaskStatus(
               request.requestId,
               'completed'
             )
             showDesktopNotificationWhenUnfocused(window, {
               title: 'GoodBuddy 任务已完成',
-              body: '任务结果已保存到成果工作栏。'
+              body: '回复已生成，可返回会话查看。'
             })
             if (!window.isDestroyed()) {
               window.webContents.send(

@@ -135,7 +135,6 @@ export const app = {
   },
   chat: {
     user: 'You',
-    assistantResult: 'Assistant result {{index}}',
     welcome: {
       eyebrow: 'GOODBUDDY WORKSPACE',
       title: 'What would you like to accomplish today?',
