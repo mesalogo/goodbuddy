@@ -27,7 +27,9 @@ A secure, cross-platform, local-first desktop AI assistant and Agent workspace.
 
 ![GoodBuddy Smart Heartbeat](docs/screenshots/smart-heartbeat.png)
 
-See [FEATURES.md](FEATURES.md) for the detailed feature matrix and roadmap.
+See [FEATURES.md](FEATURES.md) for the detailed feature matrix and roadmap, and
+the [documentation index](docs/README.md) for product, architecture, design,
+and quality documents.
 
 ## Install
 

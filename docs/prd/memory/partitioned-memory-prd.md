@@ -5,9 +5,9 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 设计中 |
-| 版本 | 0.1 |
-| 日期 | 2026-08-13 |
-| 依赖 | [自动化平台总体设计](./automation-platform-architecture.md) |
+| 版本 | 0.3 |
+| 日期 | 2026-08-19 |
+| 依赖 | [自动化平台总体设计](../../architecture/automation-platform-architecture.md)、[智能心跳 PRD](../smart-heartbeat/smart-heartbeat-prd.md)、[Task 与 Job 统一领域模型](../task-and-job/task-and-job-model.md) |
 
 ## 1. 背景
 
@@ -16,13 +16,13 @@ GoodBuddy 当前记忆已经支持：
 - `global`、`project`、`conversation` 三种作用域。
 - `preference`、`fact`、`summary`、`procedure` 四种类型。
 - `proposed`、`confirmed`、`rejected` 三种状态。
-- 智能心跳提出 Global 或 Project 记忆候选，由用户确认。
+- 智能心跳提出 Global 或 Project 记忆候选，由用户确认；其长期“未来分区记忆”方向尚未设计。
 
 但当前能力仍不足以支撑自动化和并行实验：
 
 1. 交互请求会把已加载列表中的最多 20 条已确认记忆直接拼入提示，缺少查询相关度和明确的
    会话级过滤契约。
-2. 数据库有会话作用域，但心跳只提出 Global 和 Project 记忆。
+2. 数据库有会话作用域，但旧版心跳候选与未来唤起需求混在同一产品概念中。
 3. 缺少 Automation、Experiment 和 Run 分区。
 4. 来源字段存在于表结构，但普通创建和心跳候选尚未完整保存来源关系。
 5. 缺少事实的有效时间、冲突、替代、访问记录和衰减。
@@ -64,6 +64,11 @@ SQLite 显式字段、FTS、来源关系和可选本地 Embedding 足以支持�
 - 同一实体跨大量会话的别名消歧。
 - 可解释的关系证据链。
 
+### 2.5 未来分区记忆尚待设计
+
+已确认智能心跳的长期方向是“未来分区记忆”，但当前尚未定义其数据结构、唤起条件、状态、
+生命周期、与长期记忆的关系或迁移方式。本 PRD 不新增 `FutureMemory` 类型、表或检索规则。
+
 ## 3. 目标
 
 - 为会话、自动化和并行 Run 提供严格隔离。
@@ -73,6 +78,7 @@ SQLite 显式字段、FTS、来源关系和可选本地 Embedding 足以支持�
 - 让候选记忆经过确认或评估后再晋升。
 - 支持编辑、移动、合并、拒绝、归档、删除和要求忘记。
 - 记录哪些 Run 实际读取了哪些记忆。
+- 为现有智能心跳配置建立 Global 或指定 Project 范围，并保持当前候选记忆流程。
 
 ## 4. 非目标
 
@@ -134,7 +140,7 @@ agent:{expertId}
 Conversation → Project → Global
 ```
 
-自动化 Run：
+Task/Job Run：
 
 ```text
 Run → Automation → Conversation（可选）→ Project → Global
@@ -224,12 +230,12 @@ type MemorySource =
 
 候选来源：
 
-- 智能心跳。
 - 用户明确“记住这个”。
 - 会话结束总结。
-- 自动化 Run 结束反思。
+- Task/Job Run 结束反思。
 - 实验结论。
 - Supervisor 建议后用户采纳。
+- 智能心跳。
 
 候选生成必须：
 
@@ -424,6 +430,9 @@ Project 记忆与 Global 偏好冲突时：
 
 每条记忆展示内容、类型、范围、来源、状态、时间、置信度、重要性和冲突。
 
+智能心跳的完整配置仍在“智能心跳”菜单中管理；未来分区记忆完成独立设计前，不加入记忆
+中心信息架构。
+
 ## 16. 数据模型建议
 
 建议表：
@@ -459,17 +468,20 @@ Project 记忆与 Global 偏好冲突时：
 
 1. 修正当前交互请求的范围过滤，确保只读 Global、当前 Project 和当前 Conversation。
 2. 增加来源记录和“实际进入上下文”的诊断。
-3. 建立 Automation 和 Run Namespace。
-4. 上线有界相关检索，替换简单列表前 20 条拼接。
-5. 增加冲突、时态、替代和归档。
-6. 增加实验冻结快照与 Run 隔离。
-7. 增加可选本地 Embedding 和混合排序。
-8. 只有明确需求后再评估时间知识图谱。
+3. 为现有智能心跳配置增加 Global 或指定 Project 范围，保持候选记忆行为不变。
+4. 建立 Automation 和 Run Namespace。
+5. 上线有界相关检索，替换简单列表前 20 条拼接。
+6. 增加冲突、时态、替代和归档。
+7. 增加实验冻结快照与 Run 隔离。
+8. 增加可选本地 Embedding 和混合排序。
+9. 未来分区记忆和时间知识图谱都必须在明确需求与独立设计后再实施。
 
 ## 19. 验收标准
 
 - [ ] 普通会话只读取 Global、当前 Project 和当前 Conversation 的允许记忆。
-- [ ] 自动化 Run 只读取运行快照绑定的分区。
+- [ ] 智能心跳配置只能属于 Global 或 Main 已验证的一个、多个 Project。
+- [ ] 未来分区记忆完成独立设计前，不新增相关表、状态或检索行为。
+- [ ] Task/Job Run 只读取运行快照绑定的分区。
 - [ ] 实验 Run 不能读取其他 Run 的消息或记忆。
 - [ ] 每条非手动记忆都有可追溯来源。
 - [ ] 候选和被拒绝记忆不进入普通上下文。

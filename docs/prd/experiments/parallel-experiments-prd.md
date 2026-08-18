@@ -7,7 +7,7 @@
 | 状态 | 设计中 |
 | 版本 | 0.1 |
 | 日期 | 2026-08-13 |
-| 依赖 | [自动化平台总体设计](./automation-platform-architecture.md)、[自动任务与目标 PRD](./automation-goals-and-scheduling-prd.md) |
+| 依赖 | [自动化平台总体设计](../../architecture/automation-platform-architecture.md)、[Task 与 Job 统一领域模型](../task-and-job/task-and-job-model.md) |
 
 ## 1. 背景
 
@@ -158,7 +158,7 @@ Token 和耗时范围，以及最大并发。超过上限时要求缩小变量�
 - `experimentRunId` 和运行会话。
 - 变量快照和临时上下文。
 - Run 记忆分区。
-- 任务、子任务和成果。
+- Task、Job、Subjob 和成果。
 - 指标、证据和 Runtime 会话标识。
 
 禁止：

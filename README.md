@@ -27,7 +27,8 @@
 
 ![GoodBuddy 智能心跳](docs/screenshots/smart-heartbeat.png)
 
-完整功能和路线图见 [FEATURES.md](FEATURES.md)。
+完整功能和路线图见 [FEATURES.md](FEATURES.md)，产品、架构、设计与质量文档见
+[文档导航](docs/README.md)。
 
 ## 安装
 

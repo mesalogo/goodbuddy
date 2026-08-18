@@ -5,39 +5,46 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 设计中 |
-| 版本 | 0.1 |
-| 日期 | 2026-08-13 |
+| 版本 | 0.3 |
+| 日期 | 2026-08-19 |
 | 适用产品 | GoodBuddy 桌面端 |
-| 文档角色 | 自动任务、目标、并行实验、会话监督、分区记忆与持续学习的总纲 |
+| 文档角色 | Task/Job、调度、目标、并行实验、会话监督、分区记忆与持续学习的总纲 |
+| 领域模型 | [Task 与 Job 统一领域模型](../prd/task-and-job/task-and-job-model.md) |
 
 ## 1. 背景
 
 GoodBuddy 当前已经具备若干长期助手能力，但它们仍是彼此分离的功能：
 
-1. 定时任务支持单次、每日和每周触发，创建 Ask 任务并保存任务和成果。
-2. 智能心跳支持全局或项目范围的每日、每周回顾，读取有界会话、任务和已确认记忆，
+1. Scheduled Task 支持单次、每日和每周触发。一个 Task 绑定一条持续 Conversation，
+   每次触发在其中创建 Job/Run 并保存进展和成果。
+2. 当前智能心跳支持全局或项目范围的每日、每周回顾，读取有界会话、任务和已确认记忆，
    生成摘要、记忆建议和后续任务。
-3. 专家子任务支持有限并发和只读综合，但没有实验变量、重复运行、统一指标和结果晋升。
+3. 专家执行的 Job 支持有限并发和只读综合，但没有实验变量、重复运行、统一指标和结果晋升。
 4. 记忆已有全局、项目、会话三种作用域，以及偏好、事实、摘要、流程四种类型，
    但检索、来源、时态、冲突和运行级隔离仍不完整。
 5. 魔法笔记已经提供“内容旁持续出现 AI 评论”的交互，可作为会话监督的体验参考，
    但它只分析笔记或待办，不观察会话和任务运行。
 
-如果继续把更多能力加入“智能心跳”，心跳将同时承担调度、总结、执行、监督、学习和
-记忆管理，最终无法解释一次后台行为为什么发生、读取了什么、是否越权、产生了什么影响。
+智能心跳长期方向是面向未来的分区记忆，但该模型尚未设计。近期只改善现有心跳的权威入口
+与 Global / 多 Project 范围，并保留 Task Center 作为 Task 索引。若继续把 Task、调度、
+监督、学习和执行加入“智能心跳”，将无法解释一次后台行为为什么发生、读取了什么、是否
+越权、产生了什么影响。
 
 本设计将这些能力统一到一个平台模型中，同时保留不同产品的清晰边界。
 
 ## 2. 核心产品判断
 
-### 2.1 不把心跳升级成万能后台 Agent
+### 2.1 智能心跳保持独立，未来分区记忆另行设计
 
-智能心跳应继续承担周期性观察和回顾，不直接成为所有自动化的宿主。
+当前智能心跳继续承担周期回顾、报告和建议，并支持 Global 或指定 Project 范围。它不是
+Task、通用调度器或后台 Agent，也不进入统一 `AutomationPlan.kind`。未来分区记忆的
+数据、状态、唤起和页面需要独立设计，不能从当前方向直接推导。
 
-- 定时任务解决“何时执行一个已知任务”。
-- 目标任务解决“围绕结果持续规划和推进”。
+- Scheduled Task 解决“何时在一个 Task 中执行新的 Job”。
+- Goal Task 解决“围绕结果在同一 Task 中持续规划和推进”。
 - 并行实验解决“隔离多个候选并用相同标准比较”。
 - 会话监督解决“独立观察并在必要时评论、告警或暂停”。
+- 智能心跳当前解决“在什么范围周期回顾并提出报告和建议”。
 - 记忆系统解决“哪些经验可以在什么范围内被未来运行读取”。
 - 持续学习解决“候选经验如何经过评估后改变未来行为”。
 
@@ -85,8 +92,8 @@ SQLite、FTS 和可选本地向量已经足够支撑第一阶段。只有出现�
 
 ### 3.1 用户目标
 
-- 用统一入口创建定时、事件、目标和实验型自动任务。
-- 清楚知道自动任务的触发原因、当前目标、运行状态、预算和停止条件。
+- 在现有 Task Center 中找到 Scheduled、Event 和 Goal Task，并直接打开 Task Conversation。
+- 清楚知道 Task 的触发原因、当前目标、Job 状态、预算和停止条件。
 - 在一个工作台中观察多个候选运行，并追溯结论到原始证据。
 - 为重要会话启用独立监督，及时发现偏题、遗漏、矛盾、证据不足和风险。
 - 知道每条记忆属于哪个范围、从哪里产生、何时有效以及被哪些运行使用。
@@ -95,6 +102,7 @@ SQLite、FTS 和可选本地向量已经足够支撑第一阶段。只有出现�
 ### 3.2 产品目标
 
 - 复用现有 Project、Conversation、Task、Run、Artifact、Approval 和 Notification 能力。
+- 保持一个 Task 只绑定一条 Conversation，不为同一项工作建立第二份内容载体。
 - 为所有后台工作提供统一的幂等、租约、恢复、取消、预算和审计语义。
 - 保持 Ask 只读，Execute 继续经过现有能力和审批控制。
 - 保持本地优先，应用退出后不虚假承诺后台持续执行。
@@ -117,38 +125,46 @@ SQLite、FTS 和可选本地向量已经足够支撑第一阶段。只有出现�
 
 ## 5. 统一领域模型
 
+以下模型是 Scheduled Task、Goal Task 和实验共享的技术基础，不要求新增独立
+Automation Center。`AutomationPlan` 是 Task 的计划配置，`Job` 是 Task 内执行单位，
+`Run` 是执行尝试。用户主要通过 Task Center 和 Task Conversation 理解工作。智能心跳
+不属于此模型。
+
 ### 5.1 核心实体
 
 ```text
-AutomationPlan
-  ├─ TriggerPolicy
-  ├─ ObjectiveSet
-  ├─ ExecutionProtocol
-  ├─ BudgetPolicy
-  ├─ ApprovalPolicy
-  ├─ SupervisorPolicy
-  └─ MemoryBinding
-       │
-       └─ AutomationRun
-            ├─ Task / Child Task
-            ├─ Observation
-            ├─ SupervisorDecision
-            ├─ Artifact
-            ├─ Metric
-            └─ MemoryCandidate
+Task ── Conversation
+  ├─ AutomationPlan（可选）
+  │   ├─ TriggerPolicy
+  │   ├─ ObjectiveSet
+  │   ├─ ExecutionProtocol
+  │   ├─ BudgetPolicy
+  │   ├─ ApprovalPolicy
+  │   ├─ SupervisorPolicy
+  │   └─ MemoryBinding
+  └─ Job
+       ├─ Run
+       ├─ Subjob
+       ├─ Observation
+       ├─ SupervisorDecision
+       ├─ Artifact
+       ├─ Metric
+       └─ MemoryCandidate
 ```
 
 | 实体 | 职责 |
 | --- | --- |
-| `AutomationPlan` | 用户可编辑的长期定义，描述做什么、为何做、何时做和允许做什么 |
+| `Task` | 用户可见工作单位，与唯一 Conversation 一对一绑定 |
+| `Job` | Task 内部一次步骤、触发、并行分支或委派执行 |
+| `Run` | Task/Job 的一次执行尝试和审计记录 |
+| `AutomationPlan` | Task 的可编辑计划配置，描述做什么、为何做、何时做和允许做什么 |
 | `TriggerPolicy` | 手动、时间、事件或条件触发，以及错过执行策略 |
 | `ObjectiveSet` | 成功标准、优化指标、约束和停止条件 |
 | `ExecutionProtocol` | 本次运行冻结的提示、步骤模板、变量、Runtime、工具和数据范围 |
-| `BudgetPolicy` | 最大耗时、模型调用、Token、工具次数、子任务数、成果大小和并发 |
+| `BudgetPolicy` | 最大耗时、模型调用、Token、工具次数、Job/Subjob 数、成果大小和并发 |
 | `ApprovalPolicy` | 哪些动作可自动执行、哪些等待批准、哪些禁止 |
 | `SupervisorPolicy` | 观察维度、触发频率、干预级别和确定性门禁 |
 | `MemoryBinding` | 运行可读取和可写入哪些记忆分区 |
-| `AutomationRun` | 一次触发产生的不可变运行快照和聚合状态 |
 | `Observation` | 对消息、步骤、工具、指标或系统状态的结构化观察 |
 | `SupervisorDecision` | `continue`、`comment`、`warn`、`request_review`、`pause` 或 `stop` |
 | `Metric` | 可复现的运行指标及其计算来源 |
@@ -161,12 +177,11 @@ AutomationPlan
 | 类型 | 说明 |
 | --- | --- |
 | `scheduled_task` | 到点运行一个固定任务 |
-| `heartbeat_review` | 周期性观察会话、任务和记忆，输出回顾和建议 |
 | `goal_loop` | 围绕目标重复执行“观察、计划、行动、评估” |
 | `experiment` | 生成隔离候选 Run，按统一协议评估和比较 |
 
-会话监督不是独立执行任务。它是可附着到 Conversation、Task、AutomationRun 或
-Experiment 的 `SupervisorPolicy` 和监督会话。
+会话监督不是独立 Task。它是可附着到 Conversation、Task、Job/Run 或 Experiment 的
+`SupervisorPolicy` 和监督会话。
 
 ### 5.3 运行快照
 
@@ -237,7 +252,7 @@ inactive → observing → attention_required → paused → resolved
 Trigger
   → AutomationCoordinator 声明 Run
   → RunQueue 按优先级和预算排队
-  → AutomationExecutor 创建 Task
+  → AutomationExecutor 在所属 Task 内创建或恢复 Job
   → Runtime 执行
   → Supervisor 观察
   → Evaluator 计算指标
@@ -245,8 +260,8 @@ Trigger
   → 用户审查或后续 Run
 ```
 
-`AutomationCoordinator` 只负责触发、声明和恢复，不直接调用模型。执行仍通过任务和 Runtime
-边界完成。
+`AutomationCoordinator` 只负责触发、声明和恢复，不直接调用模型。执行仍通过 Job 和
+Runtime 边界完成，Job 的用户可见结果汇入所属 Task Conversation。
 
 ### 7.2 优先级
 
@@ -255,7 +270,7 @@ Trigger
 1. 用户正在等待的前台对话。
 2. 用户手动启动的 Run。
 3. 等待批准后恢复的 Run。
-4. 到期定时任务。
+4. 到期 Scheduled Task 的 Job。
 5. 目标循环和实验 Run。
 6. 心跳回顾、记忆巩固和维护。
 
@@ -372,38 +387,35 @@ Trigger
 
 ## 12. 信息架构
 
-建议将现有“智能心跳”逐步扩展为“自动化中心”，但保留心跳作为一种计划：
+当前阶段保留任务中心并适度完善，不新增独立自动化中心。智能心跳使用自己的菜单入口，
+并已在现有模型上实现 Global / 多 Project 范围与唯一配置入口：
 
 ```text
-自动化中心
-├─ 概览
-│  ├─ 正在运行
-│  ├─ 等待审批
-│  ├─ 需要关注
-│  └─ 最近结果
-├─ 计划
-│  ├─ 定时任务
-│  ├─ 智能心跳
-│  ├─ 目标任务
-│  └─ 实验
-├─ 运行
-│  ├─ 时间线
-│  ├─ 任务与步骤
-│  ├─ 监督记录
-│  ├─ 指标与证据
-│  └─ 成果
-├─ 建议
-│  ├─ 记忆候选
-│  ├─ 后续任务
-│  └─ 学习候选
-└─ 设置
-   ├─ 全局预算
-   ├─ 后台优先级
-   ├─ 通知
-   └─ 数据保留
+任务中心
+├─ 需要关注
+├─ 进行中
+├─ 已暂停
+└─ 已结束
+   └─ 打开任务自身
+
+任务自身
+├─ 消息时间线
+├─ Run、步骤与审批活动
+├─ 监督、指标与证据
+└─ 独立成果
+
+智能心跳
+├─ 成长概览
+├─ 待处理建议
+├─ 心跳轨迹
+└─ 心跳计划
+   └─ Global / 指定 Project
 ```
 
-会话页面增加可折叠“监督”右栏，与任务、上下文和成果并列，或在已有右侧工作栏中新增页签。
+监督统一进入应用级助手工作栏中固定且始终可访问的“监督”栏目，不再保留“独立可折叠右栏”
+和“动态新增页签”两种实现。栏目默认跟随当前上下文，用户可以固定到其他 Conversation、
+Task、Job/Run 或实验 Run；详细范围与交互契约见
+[通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)。
 
 ## 13. 安全与隐私
 
@@ -429,7 +441,7 @@ Trigger
 - 实际读取的知识库与记忆分区。
 - 实际调用的模型、Token、工具、耗时和成果大小。
 - 当前预算和剩余预算。
-- 任务、步骤和子任务状态。
+- Task、Job 和 Subjob 状态。
 - Supervisor 评论、证据、严重度和处理结果。
 - 评估器版本、指标和证据。
 - 产生的候选记忆或学习产物。
@@ -462,15 +474,19 @@ experiment_runs
 ```
 
 现有 `schedules`、`schedule_runs`、`heartbeat_configs`、`heartbeat_runs`、
-`heartbeat_entries`、`tasks` 和 `runs` 不应一次性重写。迁移顺序应先增加统一只读视图和
-关联字段，再逐步让新计划使用统一模型。
+`heartbeat_entries`、`tasks` 和 `runs` 不应一次性重写。Schedule 可渐进绑定一个持续
+Task/Conversation，旧 child-task 字段可兼容映射到 Job/Subjob；心跳数据保持独立，不得
+静默转成 `AutomationPlan` 或顶层 Task。未来分区记忆完成设计前，不新增迁移目标。
 
 ## 16. 分阶段实施
 
 ### 阶段 0：统一术语和可观测性
 
-- 固定 Plan、Run、Goal、Protocol、Supervisor、Observation、Memory Candidate 等概念。
-- 为现有定时任务、心跳和专家子任务建立统一活动视图。
+- 固定 Task、Conversation、Job、Subjob、Run、Plan、Goal、Protocol、Supervisor、
+  Observation、Memory Candidate 等概念。
+- 明确 Task 与 Conversation 一对一，Task Center 只是索引，不复制内容。
+- 为现有 Scheduled Task 和专家 Job 建立统一活动视图。
+- 明确当前心跳保持独立，未来分区记忆尚待设计。
 - 补充触发来源、运行版本、预算和读写范围展示。
 
 ### 阶段 1：调度与运行基础
@@ -483,6 +499,7 @@ experiment_runs
 ### 阶段 2：会话监督与分区记忆
 
 - 上线评论型会话监督。
+- 智能心跳配置支持 Global 或指定一个、多个 Project。
 - 增加 Automation 和 Run 记忆分区。
 - 建立来源、证据、时态、冲突和晋升流程。
 
@@ -506,17 +523,23 @@ experiment_runs
 
 ## 17. 相关文档
 
-- [自动任务、目标与调度 PRD](./automation-goals-and-scheduling-prd.md)
-- [并行实验工作台 PRD](./parallel-experiments-prd.md)
-- [会话监督 PRD](./conversation-supervision-prd.md)
-- [分区记忆 PRD](./partitioned-memory-prd.md)
-- [持续学习与评估门 PRD](./continuous-learning-prd.md)
-- [GoodBuddy 长期助手功能规划](../long-term-assistant-roadmap.md)
+- [Task 与 Job 统一领域模型](../prd/task-and-job/task-and-job-model.md)
+- [Task Center PRD](../prd/task-and-job/task-center-prd.md)
+- [Scheduled Task PRD](../prd/task-and-job/scheduled-task-prd.md)
+- [Job 与 Subjob PRD](../prd/task-and-job/job-and-subjob-prd.md)
+- [智能心跳 PRD](../prd/smart-heartbeat/smart-heartbeat-prd.md)
+- [并行实验工作台 PRD](../prd/experiments/parallel-experiments-prd.md)
+- [会话监督 PRD](../prd/supervision/conversation-supervision-prd.md)
+- [分区记忆 PRD](../prd/memory/partitioned-memory-prd.md)
+- [持续学习与评估门 PRD](../prd/learning/continuous-learning-prd.md)
+- [GoodBuddy 长期助手功能规划](../roadmap/long-term-assistant-roadmap.md)
 - [GoodBuddy 统一界面设计系统](../../UI-DESIGN.md)
 
 ## 18. 总体验收标准
 
-- [ ] 心跳、定时、目标和实验使用统一的 Plan 与 Run 术语。
+- [ ] 智能心跳保持独立，不作为 Task 类型；未来分区记忆尚未设计。
+- [ ] Task Center 只索引 Task；每个 Task 只绑定一条 Conversation。
+- [ ] Scheduled Task 的重复触发和并行 Job 不创建新的顶层 Task。
 - [ ] 每个自动 Run 都能解释触发原因、目标、范围、预算、状态和结果。
 - [ ] Ask 自动化无法调用写工具或产生外部副作用。
 - [ ] Execute 自动化不能绕过现有审批、主机执行策略和能力控制。

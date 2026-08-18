@@ -524,12 +524,16 @@ OpenCode、Continue 和 DeepSeek Harness 的后续能力按操作生命周期放
 | --- | --- | --- |
 | Composer 通用行 | 附件、语音、知识范围、专家、Ask/Execute、Runtime 和发送 | Session 监督、后台进度、历史任务管理 |
 | Composer Runtime 专属行 | 仅对当前消息生效且需要高频选择的 Agent、预设、Prompt/Command 快捷操作 | Subagent 树、后台 Job、Workflow/Hook 生命周期 |
-| 右侧助手工作栏的未来“Runtime”页签 | 当前会话的 Runtime 状态、Subagent 层级与取消、后台 Job 队列/进度/结果、Workflow/Hook 运行、长任务暂停/恢复/终止和会话监督 | 持久模型、程序路径、默认 Agent/预设配置 |
+| 助手工作栏固定“Runtime”栏目 | 用户所选会话或 Run 的 Runtime 状态、Subagent 层级与取消、后台 Job 队列/进度/结果、Workflow/Hook 运行、长任务暂停/恢复/终止和会话监督 | 持久模型、程序路径、默认 Agent/预设配置 |
 | 设置 > Agent Runtime | 持久 Runtime 配置、默认值、插件管理、能力清单和连接诊断 | 某次活动会话的实时控制 |
 
-右侧 Runtime 页签采用统一监督模型，再按当前 Runtime 能力显示 OpenCode、Continue 或 DSH 的具体区块。未支持的能力不渲染空卡片或一排禁用按钮；只有用户需要理解缺口时才显示简短说明。切换 Runtime 或会话时，侧栏必须明确更新归属，不能把上一 Runtime 的 Job/Subagent 状态留在当前会话中。
+Runtime 栏目入口始终存在，并采用统一监督模型；内部再按用户所选目标及其 Runtime 的真实能力
+显示 OpenCode、Continue 或 DSH 的具体区域。未支持能力不渲染空卡片或一排禁用按钮，而是
+在用户需要理解缺口时显示原因和可执行入口。跟随模式切换 Runtime 或会话时必须清理上一归属
+的 Job/Subagent 状态，固定目标则保持不变。完整工作栏契约见
+[通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)。
 
-所有未来的 Subagent、Job、Workflow、Hook 和会话操作仍须经过 Main 的 Runtime 边界，保留取消、超时、权限、父子任务关系、用量和活动审计。高风险动作在侧栏就地确认，运行结果进入活动与成果记录，不以 Composer 按钮代替监督面板。DeepSeek Harness 首版仍不加载这些服务，本节只确定未来跨 Runtime 的产品位置和协议归属。
+所有未来的 Subagent、Job、Workflow、Hook 和会话操作仍须经过 Main 的 Runtime 边界，保留取消、超时、权限、Task/Job/Subjob 层级、用量和活动审计。高风险动作在侧栏就地确认，运行结果进入活动与成果记录，不以 Composer 按钮代替监督面板。DeepSeek Harness 首版仍不加载这些服务，本节只确定未来跨 Runtime 的产品位置和协议归属。
 
 ## 15. IPC 与共享契约
 

@@ -7,7 +7,7 @@
 | 状态 | 实施中 |
 | 版本 | 0.1 |
 | 日期 | 2026-08-11 |
-| 关联 PRD | [知识库检索与分块增强 PRD](knowledge-rag-enhancement-prd.md) |
+| 关联 PRD | [知识库检索与分块增强 PRD](./knowledge-rag-enhancement-prd.md) |
 
 ## 1. 角色
 
