@@ -168,10 +168,16 @@ ZIP，以及 Linux 的 AppImage 与 DEB。Windows portable ZIP 解压后可直�
 
 推送 `v${package.version}` 标签时，工作流运行验证和六平台打包。只有在
 全部目标成功后，才会严格校验并聚合所有平台产物，生成按平台重命名的
-manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流创建或
-更新 draft GitHub Release，上传全部资产成功后才发布，并在全部下载资产
-验证通过后切换官网最新版本索引。任一步失败都不会切换官网最新版本。
-重跑会保留人工编辑的 Release notes 和未知附件。
+manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流通过
+GitHub OIDC 获取短期 STS 凭据，将发布资产和 `site-release.json` 上传到
+北京 OSS 的不可变版本目录，并公开校验 12 个安装包。验证通过后才创建或
+更新 draft GitHub Release、上传 20 个 Release 资产并正式发布，最后原子
+切换官网 `latest.json`。任一步失败都不会提前切换官网最新版本。
+
+同一标签重跑时，工作流会根据 `resources/release-notes.json` 重新生成并
+覆盖 GitHub Release 正文，以 `--clobber` 更新已知发布资产，同时保留未知
+附件。若源码与发布元数据未变化，应修正外部配置后重跑同一不可变标签；
+只有必须修改代码或元数据时才递增版本并创建新标签。
 
 中英文发布说明统一维护在 `resources/release-notes.json`。新版本按“本次
 亮点 / Highlights”“功能更新 / Features”“问题修复 / Bug Fixes”“使用前
@@ -184,7 +190,7 @@ manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流创建
 
 ```bash
 tag="v$(node -p "require('./package.json').version")"
-git tag "$tag"
+git tag -a "$tag" -m "GoodBuddy $(node -p "require('./package.json').version")"
 git push origin "$tag"
 git push github "$tag"
 ```

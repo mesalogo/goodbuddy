@@ -179,20 +179,97 @@ not require release notes.
 4. Show the exact bilingual release-note draft to the user and wait for
    explicit approval. If the release commit or either language version changes
    after approval, inspect the updated tag range and request approval again.
-5. Only after approval, verify that `package.json` and `package-lock.json`
-   contain the same release version, verify the candidate tag does not already
-   point elsewhere, create `v${package.version}` at the exact approved commit,
-   and push the branch and tag according to the synchronized-remote rules.
-6. Keep both approved language versions as the single source for the GitHub
+5. Write the approved notes to the single entry for the release version in
+   `resources/release-notes.json`. A failed unpublished candidate whose content
+   is carried forward must not retain a duplicate packaged entry.
+6. Verify that `package.json`, the root `package-lock.json` version, and
+   `package-lock.json.packages[""].version` all equal the release version. Run
+   `npm run release:notes:verify`, the required source validators, the
+   production build, and any native candidate launch probe available on the
+   current host. The six native CI jobs remain the cross-platform authority.
+7. Fetch both remotes immediately before tagging. Inspect any remote branch
+   movement instead of overwriting or silently merging it. Confirm the working
+   tree is clean, the candidate tag is unused locally and remotely, and the
+   exact approved commit has not changed.
+8. Only after all previous steps pass, create an annotated
+   `v${package.version}` tag at the exact approved commit. Push `main` to
+   `origin` and `github`, verify both branch SHAs, then push the tag to both
+   remotes and verify each peeled tag SHA (`refs/tags/<tag>^{}`) equals the
+   release commit.
+9. Keep both approved language versions as the single source for the GitHub
    Release body and the packaged first-open release-notes modal. The modal
    displays the release notes matching the current interface language and
    contains no button linking to a full release page.
+10. Observe the tag workflow through publication and complete the public
+    verification checklist below. A successful push is not a completed
+    release.
 
-When recovering from a version tag whose workflow never published a GitHub
-Release and its assets:
+### OSS Publication Contract
 
-- If the approved source and release metadata do not need to change, rerun the
-  failed jobs for the same immutable tag instead of creating another tag.
+The tagged release job publishes through the GitHub Environment selected by
+`.github/workflows/packages.yml` (`aliyun-oss-release`) and reads the following
+effective GitHub Actions variables. Before a release or same-tag rerun can
+publish, verify that repository-, organization-, or environment-level
+resolution exposes:
+
+- `ALIYUN_OSS_BUCKET=goodbuddy`
+- `ALIYUN_OSS_ENDPOINT=https://oss-cn-beijing.aliyuncs.com`
+- a non-empty `ALIYUN_OIDC_PROVIDER_ARN` matching
+  `acs:ram::*:oidc-provider/*`
+- a non-empty `ALIYUN_ROLE_ARN` matching `acs:ram::*:role/*`
+
+For environment-scoped values, use the exact Environment name from the
+workflow; do not assume a similarly named UI environment such as `Production`
+contains the active variables.
+
+The Bucket and Endpoint are a deployment contract, not interchangeable
+examples. They must stay aligned with the trusted URL checks in
+`src/main/version-checker.ts`, `sites/app.js`, website validation, and related
+tests. A host, Bucket, Region, or CDN migration must update and validate every
+surface together before a new release.
+
+- Use GitHub OIDC and the RAM Role to obtain short-lived STS credentials.
+  Never add long-lived AccessKeys to repository or environment secrets.
+- Keep `ossutil` pinned. Its V4 signing requires the Region; derive it from the
+  canonical Endpoint, verify that the production value resolves to
+  `cn-beijing`, and pass `--region` to every `ossutil cp`, including the final
+  `latest.json` update.
+- Grant the RAM Role only the actions and prefixes required by the workflow.
+  It must be able to write immutable version objects and the final latest
+  pointer without granting unrelated administration privileges.
+- Upload release assets and `site-release.json` under the immutable
+  `releases/<tag>/` prefix first. Verify all 12 installer URLs publicly before
+  creating or publishing the GitHub Release. Update
+  `releases/latest.json` only after the GitHub Release is public and all prior
+  checks succeeded.
+- The expected GitHub Release contains 20 assets: 12 installers (two formats
+  for each of six platform/architecture targets), six renamed target
+  manifests, one aggregate `release-manifest.json`, and one `SHA256SUMS`.
+  `site-release.json` is an OSS publication artifact, not a GitHub Release
+  asset.
+
+### Failed Tag Recovery
+
+Classify a failed tag by the external side effects that completed before
+choosing a recovery:
+
+- If no source or release metadata must change, correct only the external
+  configuration and use **Re-run failed jobs** for the same immutable tag. Do
+  not change, move, delete, or recreate the tag.
+- If immutable OSS objects were partially uploaded but their source bytes are
+  unchanged, a same-tag rerun may idempotently re-upload or verify them. Never
+  point `latest.json` at a partially verified prefix.
+- If the GitHub Release is already public but the final latest-pointer step
+  failed, it is a published version. Keep its packaged notes and rerun the
+  failed release job for the same tag; do not classify it as an unpublished
+  candidate.
+- If code or release metadata must change, keep the failed tag immutable,
+  increment the patch version, obtain approval for the revised exact release
+  commit and notes, and create a new tag. Do not reuse the failed version.
+
+When recovering from a version tag whose workflow never published a public
+GitHub Release:
+
 - If a code or metadata change requires a higher version and a new tag, carry
   the failed candidate's approved user-facing notes forward into the recovery
   version, then remove the superseded failed version's entry from
@@ -204,6 +281,34 @@ Release and its assets:
 - Never remove the packaged history for a version that successfully published
   a GitHub Release. Verify the failed release state before treating an entry as
   superseded.
+
+### Post-Publication Verification
+
+Do not report a release complete until all of the following are verified:
+
+1. The tag workflow and all six native package jobs succeeded. In the final
+   release job, explicitly verify the OSS configuration, OIDC authentication,
+   release-index generation, immutable upload, public asset check, GitHub
+   Release publication, and latest-pointer steps.
+2. The public GitHub Release is non-draft, non-prerelease, marked Latest, and
+   uses the expected tag and title. Its body must exactly match the Markdown
+   generated from the approved packaged bilingual notes.
+3. The GitHub asset set has exactly the expected 20 names and every asset is
+   uploaded. Compare installer sizes and SHA-256 digests with the aggregate
+   manifest and `SHA256SUMS`.
+4. The Beijing `releases/latest.json` returns HTTP 200, has the expected stable
+   version, exact six targets and 12 installer entries, the trusted Beijing
+   URLs, and the GitHub fallback URL. It must match the immutable
+   `releases/<tag>/site-release.json`.
+5. All 12 public installer URLs accept `HEAD` without redirects and report the
+   declared size. For small JSON/checksum metadata, prefer a `GET` byte and
+   digest comparison; OSS may gzip JSON responses and omit an uncompressed
+   `Content-Length` on `HEAD`.
+6. The live website successfully fetches the index and produces the 12 correct
+   platform/architecture/format links. Exercise the application's actual
+   mirror checker against the public index for all six targets.
+7. Both remote `main` refs and both peeled tag refs still equal the approved
+   release commit, and the local working tree is clean.
 
 Never create or push a release tag, and never push a previously created
 release tag, before the release-note draft has received explicit approval.
@@ -217,9 +322,11 @@ release tag, before the release-note draft has received explicit approval.
 - Never move or reuse an existing release tag. If `v${package.version}` already
   exists locally or on a remote at another commit, increment the package
   version and create a new matching tag before the release push.
-- Verified baseline on 2026-08-04: commit `2f54938`, GitHub Actions run
-  `30893805567` succeeded for validation and all six package targets, producing
-  six release artifacts plus the shared production bundle.
+- Verified release baseline on 2026-08-18: commit
+  `60119a4317118fa3f077db0382664f15266a6682`, annotated tag `v0.10.4`, and
+  GitHub Actions run `32038633609` attempt 2 succeeded through all six native
+  packages, GitHub Release publication, Beijing OSS publication, and the final
+  `latest.json` switch.
 
 ## Validation
 
