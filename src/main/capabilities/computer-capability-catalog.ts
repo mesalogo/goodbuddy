@@ -34,9 +34,9 @@ export const computerCapabilityCatalog: readonly ComputerCapabilityCatalogEntry[
   Object.freeze([
     Object.freeze({
       id: 'host-browser-control',
-      name: '浏览器控制',
+      name: '内置浏览器',
       description:
-        '使用临时隔离会话执行网页操作；命名配置当前仅保存未来托管隔离所需的元数据。',
+        '使用 GoodBuddy 内置的临时隔离浏览器执行网页操作，不会控制客户端已安装的浏览器；命名配置当前仅保存未来托管隔离所需的元数据。',
       enabledByDefault: false,
       implementationKind: 'managed-browser-driver',
       supportedTargets: Object.freeze([
@@ -54,7 +54,7 @@ export const computerCapabilityCatalog: readonly ComputerCapabilityCatalogEntry[
         })
       ]),
       riskSummary:
-        '可读取网页内容并代表用户操作网站；当前执行不会复用命名配置，仍必须保持临时隔离和审批策略。',
+        '总开关关闭时不会向直连模型提供浏览器工具；开启后可在 Execute 模式直接读取网页并操作网站，不再逐次询问。',
       requiredDiagnostics: Object.freeze([
         'browser-executable',
         'managed-profile-root'

@@ -167,6 +167,8 @@ export const integrations = {
       unsupportedProfiles:
         'Managed browser profiles are unavailable in this version',
       test: 'MCP connection test failed',
+      unsupportedBuiltinBrowser:
+        'The built-in browser is unavailable in this version',
       unsupportedComputerControl:
         'Computer control capabilities are unavailable in this version'
     },
@@ -185,17 +187,12 @@ export const integrations = {
       'Built-in tools are provided by GoodBuddy and are not MCP servers. Custom MCP servers and tools run with the current user’s permissions, so add only trusted services. Remote access tokens are encrypted in secure system storage, and tool calls still require GoodBuddy approval.',
     computer: {
       title: 'Computer control capabilities',
-      subtitle: 'Off by default; approval still applies when enabled',
-      browserTitle: 'Browser capabilities',
-      browserSubtitle: 'Managed browser and built-in browser tools',
+      subtitle: 'Only capabilities that control the client computer',
       supported: 'Supported on this device',
       unsupported: 'Not supported on this device',
       enabled: 'Enabled',
       disabled: 'Disabled',
       enableAriaLabel: 'Enable {{name}}',
-      browserProfile: 'Managed browser profile',
-      profileAriaLabel: 'Managed profile used by browser control',
-      defaultProfile: 'Use the default managed profile',
       diagnoseAriaLabel: 'Diagnose {{name}}',
       diagnosing: 'Diagnosing…',
       diagnose: 'Run diagnostics',
@@ -219,7 +216,7 @@ export const integrations = {
       rename: 'Rename',
       deleteAriaLabel: 'Delete profile {{name}}',
       delete: 'Delete',
-      inUse: 'This profile is used by a computer control capability'
+      inUse: 'This profile is used by the built-in browser'
     },
     builtin: {
       title: 'Built-in GoodBuddy MCP',
@@ -258,6 +255,22 @@ export const integrations = {
       collapseGroup: 'Collapse tool group {{name}}',
       expandGroup: 'Expand tool group {{name}}',
       summary: 'Built-in GoodBuddy capability for direct models'
+    },
+    browser: {
+      title: 'Built-in browser',
+      subtitle: 'Direct-model tool · Isolated GoodBuddy browser · Execute',
+      description:
+        'Opens and operates webpages in GoodBuddy’s temporary isolated browser. It does not control Chrome, Edge, or another browser installed on the client computer.',
+      control:
+        'You control this master switch. When off, browser tools are unavailable to direct models. When on, direct models can use them directly in Execute mode without per-action prompts.',
+      enableAriaLabel: 'Enable the direct-model built-in browser',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      profile: 'Built-in browser profile',
+      profileAriaLabel: 'Managed profile used by the built-in browser',
+      defaultProfile: 'Use the default managed profile',
+      diagnoseAriaLabel: 'Diagnose the built-in browser',
+      toolsAriaLabel: 'Direct-model built-in browser tools'
     },
     webSearch: {
       title: 'Web search',

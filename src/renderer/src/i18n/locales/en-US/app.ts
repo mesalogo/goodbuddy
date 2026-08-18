@@ -499,7 +499,7 @@ export const app = {
     stopFailed: 'Failed to stop generating. Try again.',
     projectNotLoaded: 'The current project has not loaded yet.',
     browserControlUnavailable:
-      'Browser controls have not loaded. Restart GoodBuddy.',
+      'The built-in browser has not loaded. Restart GoodBuddy.',
     browserStopFailed: 'Failed to stop the browser. Try again.',
     scheduleStarted: 'Scheduled task started',
     conversationPersistenceFailed:

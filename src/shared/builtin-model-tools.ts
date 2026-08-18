@@ -106,9 +106,9 @@ export const builtinModelToolGroups = [
   },
   {
     id: 'browser',
-    name: '浏览器操作',
+    name: '内置浏览器',
     description:
-      '启用“浏览器控制”后，在 Execute 模式下操作 GoodBuddy 隔离浏览器。',
+      '启用“内置浏览器”后，在 Execute 模式下操作 GoodBuddy 隔离浏览器。',
     tools: builtinModelTools.filter((tool) => tool.group === 'browser')
   },
   {

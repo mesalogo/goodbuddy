@@ -469,7 +469,7 @@ export const app = {
     sendFailed: '发送失败',
     stopFailed: '停止生成失败，请重试',
     projectNotLoaded: '当前项目尚未加载。',
-    browserControlUnavailable: '浏览器控制组件尚未加载，请重启 GoodBuddy',
+    browserControlUnavailable: '内置浏览器组件尚未加载，请重启 GoodBuddy',
     browserStopFailed: '停止浏览器失败，请重试',
     scheduleStarted: '定时任务已开始执行',
     conversationPersistenceFailed: '会话持久化失败，请检查本地存储',

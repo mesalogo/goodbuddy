@@ -7,7 +7,7 @@ export const warnings = {
   'document-parsing-settings-recovered':
     'The document parsing settings file was corrupt. The original file was isolated, and safe defaults are now in use.',
   'capability-settings-recovered':
-    'The capability settings file was corrupt. The original file was isolated. Web search and computer control remain off until you review and enable them.',
+    'The capability settings file was corrupt. The original file was isolated. Web search, the built-in browser, and computer control remain off until you review and enable them.',
   'runtime-settings-recovered':
     'The Runtime settings file was corrupt. The original file was isolated, and defaults are now in use.',
   'runtime-model-credential-unreadable':

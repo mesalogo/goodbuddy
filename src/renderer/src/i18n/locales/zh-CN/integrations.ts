@@ -155,6 +155,7 @@ export const integrations = {
       diagnostics: '能力诊断失败',
       unsupportedProfiles: '当前版本不支持托管浏览器配置',
       test: 'MCP 连接测试失败',
+      unsupportedBuiltinBrowser: '当前版本不支持内置浏览器',
       unsupportedComputerControl: '当前版本不支持电脑控制能力'
     },
     addServer: '添加 Server',
@@ -172,17 +173,12 @@ export const integrations = {
       '内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server 及其工具具有当前用户权限，请仅添加可信服务；远程访问令牌将由系统安全存储加密，工具调用前仍需 GoodBuddy 审批。',
     computer: {
       title: '电脑控制能力',
-      subtitle: '默认停用，启用后仍遵循审批',
-      browserTitle: '浏览器能力',
-      browserSubtitle: '托管浏览器与内置浏览器工具',
+      subtitle: '仅显示实际操作客户端电脑的能力',
       supported: '当前设备支持',
       unsupported: '当前设备不支持',
       enabled: '已启用',
       disabled: '已停用',
       enableAriaLabel: '启用 {{name}}',
-      browserProfile: '托管浏览器配置',
-      profileAriaLabel: '浏览器控制使用的托管配置',
-      defaultProfile: '使用默认托管配置',
       diagnoseAriaLabel: '诊断 {{name}}',
       diagnosing: '诊断中…',
       diagnose: '运行诊断',
@@ -206,7 +202,7 @@ export const integrations = {
       rename: '重命名',
       deleteAriaLabel: '删除配置 {{name}}',
       delete: '删除',
-      inUse: '此配置正被电脑控制能力使用'
+      inUse: '此配置正被内置浏览器使用'
     },
     builtin: {
       title: 'GoodBuddy 内置 MCP',
@@ -241,6 +237,22 @@ export const integrations = {
       collapseGroup: '收起工具组 {{name}}',
       expandGroup: '展开工具组 {{name}}',
       summary: 'GoodBuddy 直连模型内置能力'
+    },
+    browser: {
+      title: '内置浏览器',
+      subtitle: '直连模型工具 · GoodBuddy 隔离浏览器 · Execute',
+      description:
+        '在 GoodBuddy 内置的临时隔离浏览器中打开并操作网页，不会控制客户端已安装的 Chrome、Edge 或其他浏览器。',
+      control:
+        '此总开关完全由你控制：关闭时不向直连模型提供浏览器工具；开启后，直连模型可在 Execute 模式直接使用，不再逐次询问。',
+      enableAriaLabel: '启用直连模型内置浏览器',
+      enabled: '已启用',
+      disabled: '已停用',
+      profile: '内置浏览器配置',
+      profileAriaLabel: '内置浏览器使用的托管配置',
+      defaultProfile: '使用默认托管配置',
+      diagnoseAriaLabel: '诊断内置浏览器',
+      toolsAriaLabel: '直连模型内置浏览器工具'
     },
     webSearch: {
       title: '联网搜索',

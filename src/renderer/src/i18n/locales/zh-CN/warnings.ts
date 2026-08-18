@@ -4,7 +4,7 @@ export const warnings = {
   'document-parsing-settings-recovered':
     '文档解析设置文件已损坏。原文件已隔离，当前使用安全默认设置。',
   'capability-settings-recovered':
-    '能力设置文件已损坏。原文件已隔离，网页搜索和电脑控制已保持关闭，请检查后手动启用。',
+    '能力设置文件已损坏。原文件已隔离，联网搜索、内置浏览器和电脑控制已保持关闭，请检查后手动启用。',
   'runtime-settings-recovered':
     'Runtime 设置文件已损坏。原文件已隔离，当前使用默认设置。',
   'runtime-model-credential-unreadable':

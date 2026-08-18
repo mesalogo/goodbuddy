@@ -539,7 +539,7 @@ GoodBuddy 是可调整窗口大小的桌面应用。响应式设计优先保证�
 - Agent Runtime 页面在低层程序与配置覆盖之外提供“能力与默认配置”区域。能力清单使用共享 `PageTabs`，按 Agents、Tools、Commands、Skills、MCP、Rules、Prompts、Resources、LSP、Formatters 和上下文 11 类单行滚动展示，一次只呈现当前分类的 `tabpanel`；清单只显示 Runtime 自有能力，不混入 GoodBuddy 分配的 Skills、临时 MCP 或 Continue 预设。Tools 必须独立于 Commands、LSP 和 Formatters，显示工具类型、来源及 Ask/Execute 可用性；清单状态必须区分完整、部分、不可用、仅连接和不支持，不能用进程连通性冒充清单可读。
 - “能力与默认配置”只显示一个模块标题，刷新入口位于该标题右侧，能力状态压缩为一行并排在默认 Agent 或 Continue 预设编辑器之前；不得再复制“Runtime 原生能力”等同义标题、说明或状态结论。刷新只更新能力快照，不覆盖未保存的原生定制草稿。
 - OpenCode 的默认 Agent 使用原生下拉选择；Continue 预设编辑器允许管理名称、说明、启用的 Rules 以及 Prompt 名称、说明和正文，并可展开查看原生 Rules 与启用预设 Rules 的最终合并顺序。持久启停仍使用共享 Switch，添加与删除使用明确按钮和可访问名称。
-- MCP 设置按“内置 MCP / 直连模型 / 自定义 MCP / 电脑控制”四个同级 `PageTabs` 组织。直连模型中的联网搜索与其他内置工具组使用一致的折叠卡片，展开后显示开关、测试状态、隐私说明和工具列表。内置 MCP 卡片与 Skills 一样提供持久启停和 Runtime 分配；直连模型、GoodBuddy 管理的 OpenCode 与 Continue 默认选中且可调整，DeepSeek Harness 必须以置灰、未选择和“暂不支持”文案持续显示，不能呈现为可保存的分配。魔法笔记 MCP 的自身启停与平台功能依赖分别显示，依赖未开启时保留用户配置并说明当前不会加载。
+- MCP 设置按“内置 MCP / 直连模型 / 自定义 MCP / 电脑控制”四个同级 `PageTabs` 组织。直连模型中的联网搜索与内置浏览器使用一致的折叠卡片和独立总开关；内置浏览器必须明确说明其操作 GoodBuddy 隔离浏览器，不控制客户端已安装的浏览器，开启后可由 Execute 直接使用，不逐次询问。托管浏览器配置归入直连模型，“电脑控制”只显示实际操作客户端电脑的能力。内置 MCP 卡片与 Skills 一样提供持久启停和 Runtime 分配；直连模型、GoodBuddy 管理的 OpenCode 与 Continue 默认选中且可调整，DeepSeek Harness 必须以置灰、未选择和“暂不支持”文案持续显示，不能呈现为可保存的分配。魔法笔记 MCP 的自身启停与平台功能依赖分别显示，依赖未开启时保留用户配置并说明当前不会加载。
 - MCP Server 测试结果在同一展开卡片中分组显示 Tools、Prompts 和 Resources 的支持状态、数量与有界元数据；Prompt 参数标明必填项，Resource 只显示 URI、名称、类型和说明，不读取或渲染 Resource 内容。
 
 ### 13.8 文档解析设置
