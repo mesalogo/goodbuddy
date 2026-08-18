@@ -519,14 +519,15 @@ describe('ChannelService', () => {
     await service.stop()
   })
 
-  it('bounds output and redacts executor-provided error details', async () => {
+  it('preserves output and redacts executor-provided error details', async () => {
     const driver = new FakeChannelDriver()
     const outbox = new MemoryOutbox()
+    const output = 'x'.repeat(20_000)
     const executor = vi
       .fn()
       .mockResolvedValueOnce({
         status: 'completed',
-        output: 'x'.repeat(100)
+        output
       })
       .mockResolvedValueOnce({
         status: 'failed',
@@ -535,7 +536,6 @@ describe('ChannelService', () => {
       })
     const service = new ChannelService(driver, executor, {
       allowedSenderIds: ['allowed-user'],
-      maximumResultLength: 32,
       outbox
     })
     await service.start()
@@ -544,7 +544,7 @@ describe('ChannelService', () => {
     await driver.emit(inbound({ eventId: 'secret-error' }))
     await waitForSent(driver, 2)
 
-    expect(driver.sent[0]?.output).toHaveLength(32)
+    expect(driver.sent[0]?.output).toBe(output)
     const serialized = JSON.stringify(driver.sent[1])
     expect(serialized).not.toContain('top-secret')
     expect(serialized).not.toContain('abc123')

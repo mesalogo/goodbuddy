@@ -58,7 +58,7 @@ GoodBuddy 已将企业微信、钉钉和微信 ClawBot 远程消息通道纳入�
 ### 3.2 产品目标
 
 - 将远程通道纳入 GoodBuddy 现有 Project、Conversation、Task、Activity 和 Artifact 信息架构。
-- 复用现有 ChannelService 的白名单、去重、并发、取消、输出限制和错误脱敏能力。
+- 复用现有 ChannelService 的白名单、去重、并发、取消和错误脱敏能力；回复长度与分段由各通道适配器按平台能力控制。
 - 保持 Electron Main、Preload、Renderer 和不可信子进程之间的安全边界。
 - 为后续语音、视频、多账号和更多通道提供稳定扩展点。
 

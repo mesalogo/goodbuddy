@@ -15,14 +15,11 @@ import {
   type Outbox
 } from './channel-driver'
 
-const TRUNCATION_MARKER = '\n…（结果已截断）'
-
 export type ChannelServiceOptions = {
   allowedSenderIds?: readonly string[]
   allowGroupMessages?: boolean
   maximumConcurrency?: number
   maximumInputLength?: number
-  maximumResultLength?: number
   dedupStore?: DedupStore
   outbox?: Outbox
   onDeliveryFailure?: (error: unknown) => void
@@ -48,19 +45,6 @@ function boundedInteger(
   return candidate
 }
 
-function truncate(value: string, maximumLength: number): string {
-  if (value.length <= maximumLength) {
-    return value
-  }
-  if (maximumLength <= TRUNCATION_MARKER.length) {
-    return value.slice(0, maximumLength)
-  }
-  return (
-    value.slice(0, maximumLength - TRUNCATION_MARKER.length) +
-    TRUNCATION_MARKER
-  )
-}
-
 export function redactChannelError(value: string): string {
   return value
     .replace(/\bBearer\s+[^\s,;]+/giu, 'Bearer [已隐藏]')
@@ -84,7 +68,6 @@ export class ChannelService {
   private readonly allowGroupMessages: boolean
   private readonly maximumConcurrency: number
   private readonly maximumInputLength: number
-  private readonly maximumResultLength: number
   private readonly dedupStore: DedupStore
   private readonly outbox: Outbox
   private readonly onDeliveryFailure?: (error: unknown) => void
@@ -125,12 +108,6 @@ export class ChannelService {
       8_000,
       CHANNEL_LIMITS.maximumTextLength,
       '通道输入长度限制'
-    )
-    this.maximumResultLength = boundedInteger(
-      options.maximumResultLength,
-      4_000,
-      CHANNEL_LIMITS.maximumResultLength,
-      '通道结果长度限制'
     )
     this.dedupStore = options.dedupStore ?? new MemoryDedupStore()
     this.outbox = options.outbox ?? new MemoryOutbox()
@@ -426,13 +403,13 @@ export class ChannelService {
       ...(result.output === undefined
         ? {}
         : {
-            output: truncate(result.output, this.maximumResultLength)
+            output: result.output
           }),
       ...(result.error === undefined
         ? {}
         : {
-            error: truncate(
-              redactChannelError(result.error),
+            error: redactChannelError(result.error).slice(
+              0,
               CHANNEL_LIMITS.maximumErrorLength
             )
           }),

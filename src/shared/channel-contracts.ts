@@ -5,7 +5,6 @@ export const CHANNEL_LIMITS = {
   maximumEventIdLength: 256,
   maximumIdentityLength: 256,
   maximumTextLength: 32_000,
-  maximumResultLength: 16_000,
   maximumErrorLength: 1_000,
   maximumStatusLength: 64,
   maximumAttachmentCount: 4,
@@ -185,10 +184,7 @@ export const channelResultMessageSchema = z
       .trim()
       .min(1)
       .max(CHANNEL_LIMITS.maximumStatusLength),
-    output: z
-      .string()
-      .max(CHANNEL_LIMITS.maximumResultLength)
-      .optional(),
+    output: z.string().optional(),
     error: z
       .string()
       .max(CHANNEL_LIMITS.maximumErrorLength)
