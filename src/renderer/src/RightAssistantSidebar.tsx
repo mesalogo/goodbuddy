@@ -114,7 +114,6 @@ const tabIds: AssistantSidebarTab[] = [
 const emptyChangedFiles: WorkspaceChanges['files'] = []
 const defaultSidebarWidth = 350
 const minimumSidebarWidth = 300
-const maximumSidebarWidth = 640
 const minimumRemainingAppWidth = 520
 const compactSidebarBreakpoint = 720
 const keyboardResizeStep = 16
@@ -126,10 +125,7 @@ function getSidebarWidthLimits(viewportWidth: number): {
     minimum: minimumSidebarWidth,
     maximum: Math.max(
       minimumSidebarWidth,
-      Math.min(
-        maximumSidebarWidth,
-        viewportWidth - minimumRemainingAppWidth
-      )
+      viewportWidth - minimumRemainingAppWidth
     )
   }
 }

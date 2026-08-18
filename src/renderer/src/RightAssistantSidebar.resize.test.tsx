@@ -67,7 +67,7 @@ function renderSidebar({
 }
 
 describe('RightAssistantSidebar resizing', () => {
-  it('resizes with pointer capture and clamps the resulting width', () => {
+  it('resizes with pointer capture and preserves the minimum app width', () => {
     const sidebar = renderSidebar()
     const separator = screen.getByRole('separator', {
       name: '调整助手工作栏宽度'
@@ -86,7 +86,7 @@ describe('RightAssistantSidebar resizing', () => {
       pointerId: 7
     })
     fireEvent.pointerMove(separator, {
-      clientX: 600,
+      clientX: 100,
       pointerId: 7
     })
 
@@ -94,7 +94,7 @@ describe('RightAssistantSidebar resizing', () => {
     expect(sidebar).toHaveClass('assistant-sidebar--resizing')
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('640px')
+    ).toBe('880px')
 
     fireEvent.pointerUp(separator, { pointerId: 7 })
     expect(releasePointerCapture).toHaveBeenCalledWith(7)
@@ -121,7 +121,7 @@ describe('RightAssistantSidebar resizing', () => {
     fireEvent.keyDown(separator, { key: 'End' })
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('640px')
+    ).toBe('880px')
   })
 
   it('remains resizable when the sidebar overlays a medium window', () => {
