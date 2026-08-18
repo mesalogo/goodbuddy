@@ -3891,15 +3891,34 @@ button > svg {
 }
 
 .subagent-status-card {
-  display: grid;
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
   background: var(--surface-subtle);
   color: var(--text-secondary);
+  overflow: hidden;
+}
+
+.subagent-status-card > summary {
+  display: grid;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
   gap: var(--space-2);
   grid-template-columns: auto minmax(0, 1fr) auto;
+  list-style: none;
+}
+
+.subagent-status-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.subagent-status-card > summary:hover {
+  background: var(--accent-subtle);
+}
+
+.subagent-status-card > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .subagent-status-card--running {
@@ -3912,28 +3931,49 @@ button > svg {
   background: var(--danger-subtle);
 }
 
-.subagent-status-card > div {
+.subagent-status-card__identity {
   display: grid;
   min-width: 0;
   gap: var(--space-1);
 }
 
-.subagent-status-card strong,
-.subagent-status-card span {
+.subagent-status-card summary strong,
+.subagent-status-card summary > span:last-child {
   color: var(--text-primary);
   font-size: var(--font-body);
 }
 
-.subagent-status-card small {
+.subagent-status-card summary small {
   color: var(--text-muted);
   font-size: var(--font-caption);
 }
 
-.subagent-status-card p {
+.subagent-status-card__details {
+  display: grid;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  gap: var(--space-3);
+}
+
+.subagent-status-card__details section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.subagent-status-card__details p {
   margin: 0;
-  color: var(--danger);
-  font-size: var(--font-caption);
   overflow-wrap: anywhere;
+}
+
+.subagent-status-card__details > p {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.subagent-status-card__error,
+.subagent-status-card__error p {
+  color: var(--danger);
 }
 
 .approval-card {

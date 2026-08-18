@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AssistantExpert } from '../../shared/assistant-contracts'
+import type { SubagentEvent } from '../../shared/contracts'
 import type {
   AgentExecutionRequest,
   AgentRuntime
@@ -36,10 +37,15 @@ function database() {
 describe('SubagentService', () => {
   it('creates a linked child task and puts expert instructions in system context', async () => {
     let executionRequest: AgentExecutionRequest | undefined
+    const expertOutput = '结果'.repeat(35_001)
     const runtime = {
       run: async function* (request: AgentExecutionRequest) {
         executionRequest = request
-        yield { requestId: request.requestId, type: 'text', delta: '结果' } as const
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: expertOutput
+        } as const
         yield { requestId: request.requestId, type: 'done' } as const
       },
       releaseConversation: vi.fn(async () => undefined),
@@ -51,16 +57,17 @@ describe('SubagentService', () => {
       db as never,
       new SubagentScheduler({ timeoutMs: 1_000 })
     )
-    const events: string[] = []
+    const events: SubagentEvent[] = []
     const result = await service.run({
       parentRequest,
       expert,
       routingMode: 'smart',
       signal: new AbortController().signal,
-      onEvent: (event) => events.push(event.state)
+      onEvent: (event) => events.push(event)
     })
 
-    expect(result.output).toBe('结果')
+    expect(result.output).toBe(expertOutput)
+    expect(result.output.length).toBeGreaterThan(60_000)
     expect(db.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
         parentTaskId: parentRequest.requestId,
@@ -73,13 +80,27 @@ describe('SubagentService', () => {
     expect(executionRequest?.trustedInstructions).toContain(
       expert.systemInstructions
     )
-    expect(events).toEqual(['queued', 'running', 'completed'])
+    expect(events.map((event) => event.state)).toEqual([
+      'queued',
+      'running',
+      'completed'
+    ])
+    expect(events.at(-1)).toMatchObject({
+      state: 'completed',
+      output: expertOutput
+    })
     await service.dispose()
   })
 
   it('fails tool-producing experts and records bounded failure state', async () => {
+    const events: SubagentEvent[] = []
     const runtime = {
       run: async function* (request: AgentExecutionRequest) {
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: '部分结果'
+        } as const
         yield {
           requestId: request.requestId,
           type: 'tool',
@@ -98,13 +119,18 @@ describe('SubagentService', () => {
       expert,
       routingMode: 'manual',
       signal: new AbortController().signal,
-      onEvent: vi.fn()
+      onEvent: (event) => events.push(event)
     })).rejects.toThrow('不允许工具调用')
     expect(db.updateTaskStatus).toHaveBeenLastCalledWith(
       expect.any(String),
       'failed',
       expect.stringContaining('不允许工具调用')
     )
+    expect(events.at(-1)).toMatchObject({
+      state: 'failed',
+      output: '部分结果',
+      error: expect.stringContaining('不允许工具调用')
+    })
     await service.dispose()
   })
 

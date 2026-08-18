@@ -21,6 +21,7 @@ import type {
   ConversationContextCompressionMarker,
   ConversationMessage,
   ConversationMessageBlock,
+  ConversationSubagentActivity,
   ConversationToolActivity
 } from '../../shared/assistant-contracts'
 import { AgentQuestionCard } from './AgentQuestionCard'
@@ -30,15 +31,7 @@ import { formatCompactTokens } from './token-format'
 
 export type ToolActivity = ConversationToolActivity
 
-export type SubagentActivity = {
-  childTaskId: string
-  expertId: string
-  expertName: string
-  routingMode: 'manual' | 'smart'
-  state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-  reason?: string
-  error?: string
-}
+export type SubagentActivity = ConversationSubagentActivity
 
 export type KnowledgeRetrievalStatus = Omit<
   Extract<AgentEvent, { type: 'knowledge-retrieval' }>,
@@ -219,6 +212,61 @@ function ToolExecutionList({
           )
         })}
       </ol>
+    </section>
+  )
+}
+
+function SubagentStatusList({
+  subagents
+}: {
+  subagents: SubagentActivity[]
+}): React.JSX.Element {
+  const { t } = useTranslation('app')
+
+  return (
+    <section
+      aria-label={t('chat.subagents.region')}
+      className="subagent-status-list"
+    >
+      {subagents.slice(0, 3).map((subagent) => (
+        <details
+          className={`subagent-status-card subagent-status-card--${subagent.state}`}
+          key={subagent.childTaskId}
+        >
+          <summary>
+            <Bot aria-hidden="true" size={15} />
+            <span className="subagent-status-card__identity">
+              <strong>{subagent.expertName}</strong>
+              <small>
+                {subagent.routingMode === 'smart'
+                  ? t('chat.subagents.smart')
+                  : t('chat.subagents.manual')}
+              </small>
+            </span>
+            <span>{t(`chat.subagents.states.${subagent.state}`)}</span>
+          </summary>
+          <div className="subagent-status-card__details">
+            {subagent.output ? (
+              <section>
+                <strong>{t('chat.subagents.output')}</strong>
+                <div className="markdown-content">
+                  <MarkdownRenderer>{subagent.output}</MarkdownRenderer>
+                </div>
+              </section>
+            ) : (
+              <p>{t('chat.subagents.noOutput')}</p>
+            )}
+            {(subagent.error || subagent.reason) &&
+              (subagent.state === 'failed' ||
+                subagent.state === 'cancelled') && (
+                <section className="subagent-status-card__error">
+                  <strong>{t('chat.subagents.error')}</strong>
+                  <p>{subagent.error ?? subagent.reason}</p>
+                </section>
+              )}
+          </div>
+        </details>
+      ))}
     </section>
   )
 }
@@ -405,6 +453,9 @@ function ChatMessageRowView({
               )
             })}
           </div>
+        )}
+        {message.subagents && message.subagents.length > 0 && (
+          <SubagentStatusList subagents={message.subagents} />
         )}
         {message.blocks && message.blocks.length > 0 ? (
           <div className="message-blocks">
@@ -638,37 +689,6 @@ function ChatMessageRowView({
           message.tools.length > 0 && (
             <ToolExecutionList tools={message.tools} />
           )}
-        {message.subagents && message.subagents.length > 0 && (
-          <section
-            aria-label={t('chat.subagents.region')}
-            className="subagent-status-list"
-          >
-            {message.subagents.slice(0, 3).map((subagent) => (
-              <article
-                className={`subagent-status-card subagent-status-card--${subagent.state}`}
-                key={subagent.childTaskId}
-              >
-                <Bot aria-hidden="true" size={15} />
-                <div>
-                  <strong>{subagent.expertName}</strong>
-                  <small>
-                    {subagent.routingMode === 'smart'
-                      ? t('chat.subagents.smart')
-                      : t('chat.subagents.manual')}
-                  </small>
-                  {(subagent.error || subagent.reason) &&
-                    (subagent.state === 'failed' ||
-                      subagent.state === 'cancelled') && (
-                      <p>{subagent.error ?? subagent.reason}</p>
-                    )}
-                </div>
-                <span>
-                  {t(`chat.subagents.states.${subagent.state}`)}
-                </span>
-              </article>
-            ))}
-          </section>
-        )}
         {message.approval && (
           <div className="approval-card">
             <ShieldCheck size={18} />

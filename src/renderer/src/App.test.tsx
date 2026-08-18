@@ -6461,24 +6461,53 @@ describe('App', () => {
         requestId: request.requestId,
         type: 'subagent',
         ...events[0]!,
-        state: 'completed'
+        state: 'completed',
+        output: '研究专家的独立结论'
       })
       agentListener?.({
         requestId: request.requestId,
         type: 'subagent',
         ...events[1]!,
         state: 'cancelled',
-        reason: '父任务已停止'
+        reason: '父任务已停止',
+        output: '代码专家的部分结论'
       })
     })
     expect(within(statusRegion).getByText('已完成')).toBeInTheDocument()
     expect(within(statusRegion).getByText('已取消')).toBeInTheDocument()
     expect(within(statusRegion).getByText('父任务已停止')).toBeInTheDocument()
+    expect(
+      within(statusRegion).getByText('研究专家的独立结论')
+    ).toBeInTheDocument()
+    expect(
+      within(statusRegion).getByText('代码专家的部分结论')
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      const persistedMessages = vi
+        .mocked(api.conversations.saveLocal)
+        .mock.calls.flatMap(([batch]) =>
+          batch.flatMap((conversation) => conversation.messages)
+        )
+      expect(
+        persistedMessages.some(
+          (message) =>
+            message.subagents?.[0]?.output ===
+              '研究专家的独立结论' &&
+            message.subagents?.[1]?.output === '代码专家的部分结论'
+        )
+      ).toBe(true)
+    })
 
     fireEvent.click(screen.getByText('运行记录'))
     expect(await screen.findAllByText('子专家')).toHaveLength(4)
     expect(screen.getAllByText(/智能路由/u).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/手动指定/u).length).toBeGreaterThan(0)
+    expect(
+      screen.getByText(/研究专家的独立结论/u)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/代码专家的部分结论/u)
+    ).toBeInTheDocument()
   })
 
   it('offers once, session, permanent, and deny for a tool call', async () => {

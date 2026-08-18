@@ -276,6 +276,9 @@ export const app = {
       smart: 'Smart routing',
       manual: 'Selected manually',
       fallbackTask: '{{name}} subagent task',
+      output: 'Expert output',
+      error: 'Execution details',
+      noOutput: 'This expert has no output to display yet.',
       states: {
         queued: 'Queued',
         running: 'Running',

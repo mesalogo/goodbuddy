@@ -217,7 +217,7 @@ export class SubagentService {
             throw new Error(event.message)
           }
           if (event.type === 'text') {
-            output = `${output}${event.delta}`.slice(0, 60_000)
+            output = `${output}${event.delta}`
           } else if (event.type === 'done') {
             completed = true
           }
@@ -226,7 +226,11 @@ export class SubagentService {
           throw new Error('专家子任务未报告完成')
         }
         this.database.updateTaskStatus(childTaskId, 'completed')
-        this.emit(input, { childTaskId, state: 'completed' })
+        this.emit(input, {
+          childTaskId,
+          state: 'completed',
+          output
+        })
         return { childTaskId, output }
       } catch (error) {
         const cancelled = scheduledSignal.aborted || input.signal.aborted
@@ -240,6 +244,7 @@ export class SubagentService {
         this.emit(input, {
           childTaskId,
           state: cancelled ? 'cancelled' : 'failed',
+          output: output || undefined,
           error: message
         })
         throw new SubagentRunError(message, output, { cause: error })
@@ -272,6 +277,7 @@ export class SubagentService {
       childTaskId: string
       state: SubagentEvent['state']
       reason?: string
+      output?: string
       error?: string
     }
   ): void {
@@ -285,6 +291,9 @@ export class SubagentService {
       state: event.state,
       ...(event.reason
         ? { reason: event.reason.slice(0, 240) }
+        : {}),
+      ...(event.output !== undefined
+        ? { output: event.output }
         : {}),
       ...(event.error
         ? { error: event.error.slice(0, 1_000) }

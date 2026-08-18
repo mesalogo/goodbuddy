@@ -270,6 +270,9 @@ export const app = {
       smart: '智能路由',
       manual: '手动指定',
       fallbackTask: '{{name}} 子专家任务',
+      output: '专家输出',
+      error: '执行说明',
+      noOutput: '该专家暂时没有可显示的输出。',
       states: {
         queued: '等待中',
         running: '进行中',

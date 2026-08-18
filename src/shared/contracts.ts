@@ -957,6 +957,7 @@ export const subagentEventSchema = z
       'cancelled'
     ]),
     reason: z.string().trim().min(1).max(240).optional(),
+    output: z.string().optional(),
     error: z.string().trim().min(1).max(1_000).optional()
   })
   .strict()

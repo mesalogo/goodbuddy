@@ -117,6 +117,7 @@ import {
   conversationContextCompressionMarkerSchema,
   conversationContextMetricsSchema,
   conversationMessageBlocksSchema,
+  conversationSubagentActivitySchema,
   interactiveWorkModes,
   normalizeInteractiveWorkMode,
   projectChannelLabels
@@ -1090,6 +1091,14 @@ function isConversation(value: unknown): value is Conversation {
                   compression
                 ).success
             ))) &&
+        (entry.subagents === undefined ||
+          (Array.isArray(entry.subagents) &&
+            entry.subagents.length <= 3 &&
+            entry.subagents.every(
+              (subagent) =>
+                conversationSubagentActivitySchema.safeParse(subagent)
+                  .success
+            ))) &&
         (entry.artifactIds === undefined ||
           (Array.isArray(entry.artifactIds) &&
             entry.artifactIds.length <= 8 &&
@@ -1139,6 +1148,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     contextCompression: message.contextCompression,
     contextCompressions: message.contextCompressions,
     tools: message.tools,
+    subagents: message.subagents,
     sources: message.sources,
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
@@ -3629,6 +3639,7 @@ function App(): React.JSX.Element {
             routingMode: event.routingMode,
             state: event.state,
             reason: event.reason,
+            output: event.output,
             error: event.error
           }
           if (index >= 0) {

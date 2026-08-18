@@ -137,6 +137,29 @@ export type ConversationMessageBlock = z.infer<
   typeof conversationMessageBlockSchema
 >
 
+export const conversationSubagentActivitySchema = z
+  .object({
+    childTaskId: assistantIdSchema,
+    expertId: assistantIdSchema,
+    expertName: z.string().trim().min(1).max(80),
+    routingMode: z.enum(['manual', 'smart']),
+    state: z.enum([
+      'queued',
+      'running',
+      'completed',
+      'failed',
+      'cancelled'
+    ]),
+    reason: z.string().trim().min(1).max(240).optional(),
+    output: z.string().optional(),
+    error: z.string().trim().min(1).max(1_000).optional()
+  })
+  .strict()
+
+export type ConversationSubagentActivity = z.infer<
+  typeof conversationSubagentActivitySchema
+>
+
 export const conversationContextCompressionMarkerSchema = z
   .object({
     state: z.enum(['compressing', 'completed', 'failed']),
@@ -168,6 +191,10 @@ export const conversationMessageSchema = z
       .max(2)
       .optional(),
     tools: z.array(conversationToolActivitySchema).max(100).optional(),
+    subagents: z
+      .array(conversationSubagentActivitySchema)
+      .max(3)
+      .optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
     sourceReferences: z
       .array(
