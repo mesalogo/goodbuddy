@@ -164,8 +164,6 @@ export const integrations = {
       unsupportedDiagnostics:
         'Computer control diagnostics are unavailable in this version',
       diagnostics: 'Capability diagnostics failed',
-      unsupportedProfiles:
-        'Managed browser profiles are unavailable in this version',
       test: 'MCP connection test failed',
       unsupportedBuiltinBrowser:
         'The built-in browser is unavailable in this version',
@@ -200,23 +198,7 @@ export const integrations = {
       remedy: ' Suggested action: {{remedy}}'
     },
     profiles: {
-      title: 'Managed browser profiles',
-      count: '{{count}}',
-      notice:
-        'Each profile uses isolated storage managed by GoodBuddy. The interface never receives or displays executable paths, command arguments, or environment variables.',
-      newName: 'New profile name',
-      placeholder: 'For example: Work sites',
-      create: 'Create managed profile',
-      empty: 'No managed browser profiles',
-      name: 'Profile name',
-      nameAriaLabel: 'Profile name {{name}}',
-      setDefaultAriaLabel: 'Set {{name}} as the default profile',
-      default: 'Default',
-      renameAriaLabel: 'Rename profile {{name}}',
-      rename: 'Rename',
-      deleteAriaLabel: 'Delete profile {{name}}',
-      delete: 'Delete',
-      inUse: 'This profile is used by the built-in browser'
+      count: '{{count}}'
     },
     builtin: {
       title: 'Built-in GoodBuddy MCP',
@@ -266,9 +248,6 @@ export const integrations = {
       enableAriaLabel: 'Enable the direct-model built-in browser',
       enabled: 'Enabled',
       disabled: 'Disabled',
-      profile: 'Built-in browser profile',
-      profileAriaLabel: 'Managed profile used by the built-in browser',
-      defaultProfile: 'Use the default managed profile',
       diagnoseAriaLabel: 'Diagnose the built-in browser',
       toolsAriaLabel: 'Direct-model built-in browser tools'
     },

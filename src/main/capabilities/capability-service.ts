@@ -733,7 +733,7 @@ export class CapabilityService {
           await this.browserProfiles.getSnapshot()
           return {
             status: 'available',
-            summary: '隔离的托管浏览器配置存储可用。'
+            summary: '内置浏览器隔离存储可用。'
           }
         }
       }

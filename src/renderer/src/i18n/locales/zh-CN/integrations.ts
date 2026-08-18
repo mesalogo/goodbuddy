@@ -153,7 +153,6 @@ export const integrations = {
       operation: '能力设置操作失败',
       unsupportedDiagnostics: '当前版本不支持电脑控制能力诊断',
       diagnostics: '能力诊断失败',
-      unsupportedProfiles: '当前版本不支持托管浏览器配置',
       test: 'MCP 连接测试失败',
       unsupportedBuiltinBrowser: '当前版本不支持内置浏览器',
       unsupportedComputerControl: '当前版本不支持电脑控制能力'
@@ -186,23 +185,7 @@ export const integrations = {
       remedy: ' 处理建议：{{remedy}}'
     },
     profiles: {
-      title: '托管浏览器配置',
-      count: '{{count}} 个',
-      notice:
-        '每个配置使用 GoodBuddy 管理的隔离存储；界面不会接收或显示可执行路径、命令参数与环境变量。',
-      newName: '新配置名称',
-      placeholder: '例如：工作网站',
-      create: '创建托管配置',
-      empty: '尚未创建托管浏览器配置',
-      name: '配置名称',
-      nameAriaLabel: '配置名称 {{name}}',
-      setDefaultAriaLabel: '设为默认配置 {{name}}',
-      default: '默认',
-      renameAriaLabel: '重命名配置 {{name}}',
-      rename: '重命名',
-      deleteAriaLabel: '删除配置 {{name}}',
-      delete: '删除',
-      inUse: '此配置正被内置浏览器使用'
+      count: '{{count}} 个'
     },
     builtin: {
       title: 'GoodBuddy 内置 MCP',
@@ -248,9 +231,6 @@ export const integrations = {
       enableAriaLabel: '启用直连模型内置浏览器',
       enabled: '已启用',
       disabled: '已停用',
-      profile: '内置浏览器配置',
-      profileAriaLabel: '内置浏览器使用的托管配置',
-      defaultProfile: '使用默认托管配置',
       diagnoseAriaLabel: '诊断内置浏览器',
       toolsAriaLabel: '直连模型内置浏览器工具'
     },

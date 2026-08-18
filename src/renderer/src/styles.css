@@ -7145,10 +7145,6 @@ details.settings-section > :not(summary) + :not(summary) {
   margin-top: 1px;
 }
 
-.computer-capability-profile {
-  max-width: 360px;
-}
-
 .capability-diagnostic {
   display: flex;
   align-items: flex-start;
@@ -7278,64 +7274,8 @@ details.settings-section > :not(summary) + :not(summary) {
   }
 }
 
-.browser-profile-create,
-.browser-profile-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-}
-
-.browser-profile-create .field,
-.browser-profile-row .field {
-  flex: 1;
-  margin: 0;
-}
-
-.browser-profile-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.browser-profile-row {
-  padding: var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-}
-
-.browser-profile-default {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-  color: var(--text-secondary);
-  font-size: var(--font-caption);
-  gap: var(--space-1);
-}
-
-.browser-profile-row .danger-ghost {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--danger-border);
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--danger);
-  cursor: pointer;
-  font-size: var(--font-caption);
-  gap: var(--space-1);
-}
-
-.browser-profile-row .danger-ghost:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 @media (max-width: 720px) {
   .capability-diagnostic,
-  .browser-profile-create,
-  .browser-profile-row,
   .mcp-server-card__header {
     align-items: stretch;
     flex-direction: column;

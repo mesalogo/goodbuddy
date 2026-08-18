@@ -36,7 +36,7 @@ export const computerCapabilityCatalog: readonly ComputerCapabilityCatalogEntry[
       id: 'host-browser-control',
       name: '内置浏览器',
       description:
-        '使用 GoodBuddy 内置的临时隔离浏览器执行网页操作，不会控制客户端已安装的浏览器；命名配置当前仅保存未来托管隔离所需的元数据。',
+        '使用 GoodBuddy 内置的临时隔离浏览器执行网页操作，不会控制客户端已安装的浏览器。',
       enabledByDefault: false,
       implementationKind: 'managed-browser-driver',
       supportedTargets: Object.freeze([

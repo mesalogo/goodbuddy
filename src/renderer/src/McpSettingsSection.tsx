@@ -3,7 +3,6 @@ import {
   CircleAlert,
   Database,
   FlaskConical,
-  Globe2,
   MonitorCog,
   Network,
   Pencil,
@@ -136,10 +135,6 @@ export function McpSettingsSection({
   const [diagnostics, setDiagnostics] = useState<
     Partial<Record<ComputerCapabilityId, CapabilityDiagnosticReport>>
   >({})
-  const [newProfileName, setNewProfileName] = useState('')
-  const [profileNames, setProfileNames] = useState<Record<string, string>>(
-    {}
-  )
   const [activeTab, setActiveTab] =
     useState<McpSettingsTab>('builtin')
   const editorDialogRef = useRef<HTMLDivElement>(null)
@@ -228,21 +223,6 @@ export function McpSettingsSection({
       )
     } finally {
       setBusy(undefined)
-    }
-  }
-
-  const createProfile = async (): Promise<void> => {
-    const name = newProfileName.trim()
-    if (!name) {
-      return
-    }
-    if (
-      await run('profile:create', () =>
-        window.goodbuddy.capabilities.createBrowserProfile?.({ name }) ??
-        Promise.reject(new Error(t('mcp.errors.unsupportedProfiles')))
-      )
-    ) {
-      setNewProfileName('')
     }
   }
 
@@ -405,10 +385,6 @@ export function McpSettingsSection({
   const builtinMcpStates = new Map(
     snapshot?.builtinMcpServers?.map((server) => [server.id, server])
   )
-  const browserProfiles = snapshot?.browserProfiles ?? {
-    profiles: [],
-    defaultProfileId: null
-  }
   const webSearch = snapshot?.webSearch ?? {
     provider: 'exa' as const,
     enabled: true,
@@ -594,154 +570,6 @@ export function McpSettingsSection({
                     </div>
                   )}
                 </div>
-              </article>
-            )
-          })}
-        </div>
-      </section>
-      )}
-
-      {activeTab === 'model-tools' && browserCapability && (
-        <section
-        aria-labelledby="browser-profiles-heading"
-        className="mcp-tool-section"
-      >
-        <div className="mcp-subsection-heading">
-          <div>
-            <Globe2 size={15} />
-            <strong id="browser-profiles-heading">
-              {t('mcp.profiles.title')}
-            </strong>
-          </div>
-          <small>
-            {t('mcp.profiles.count', {
-              count: browserProfiles.profiles.length
-            })}
-          </small>
-        </div>
-        <p className="settings-notice">
-          {t('mcp.profiles.notice')}
-        </p>
-        <div className="browser-profile-create">
-          <label className="field">
-            <span>{t('mcp.profiles.newName')}</span>
-            <input
-              onChange={(event) => setNewProfileName(event.target.value)}
-              placeholder={t('mcp.profiles.placeholder')}
-              value={newProfileName}
-            />
-          </label>
-          <button
-            className="secondary-button"
-            disabled={Boolean(busy) || !newProfileName.trim()}
-            onClick={() => void createProfile()}
-            type="button"
-          >
-            <Plus size={13} />
-            {t('mcp.profiles.create')}
-          </button>
-        </div>
-        <div className="browser-profile-list">
-          {browserProfiles.profiles.length === 0 && (
-            <p className="settings-empty">{t('mcp.profiles.empty')}</p>
-          )}
-          {browserProfiles.profiles.map((profile) => {
-            const referenced = computerCapabilities.some(
-              (capability) =>
-                capability.browserProfileId === profile.id
-            )
-            return (
-              <article className="browser-profile-row" key={profile.id}>
-                <label className="field">
-                  <span>{t('mcp.profiles.name')}</span>
-                  <input
-                    aria-label={t('mcp.profiles.nameAriaLabel', {
-                      name: profile.name
-                    })}
-                    onChange={(event) =>
-                      setProfileNames((current) => ({
-                        ...current,
-                        [profile.id]: event.target.value
-                      }))
-                    }
-                    value={profileNames[profile.id] ?? profile.name}
-                  />
-                </label>
-                <label className="browser-profile-default">
-                  <input
-                    aria-label={t(
-                      'mcp.profiles.setDefaultAriaLabel',
-                      { name: profile.name }
-                    )}
-                    checked={
-                      browserProfiles.defaultProfileId === profile.id
-                    }
-                    disabled={Boolean(busy)}
-                    name="default-browser-profile"
-                    onChange={() =>
-                      void run(`profile:default:${profile.id}`, () =>
-                        window.goodbuddy.capabilities.setDefaultBrowserProfile?.(
-                          profile.id
-                        ) ??
-                        Promise.reject(
-                          new Error(t('mcp.errors.unsupportedProfiles'))
-                        )
-                      )
-                    }
-                    type="radio"
-                  />
-                  {t('mcp.profiles.default')}
-                </label>
-                <button
-                  aria-label={t('mcp.profiles.renameAriaLabel', {
-                    name: profile.name
-                  })}
-                  className="secondary-button"
-                  disabled={
-                    Boolean(busy) ||
-                    !(profileNames[profile.id] ?? '').trim() ||
-                    profileNames[profile.id] === profile.name
-                  }
-                  onClick={() =>
-                    void run(`profile:rename:${profile.id}`, () =>
-                      window.goodbuddy.capabilities.renameBrowserProfile?.({
-                        profileId: profile.id,
-                        name: profileNames[profile.id] ?? profile.name
-                      }) ??
-                      Promise.reject(
-                        new Error(t('mcp.errors.unsupportedProfiles'))
-                      )
-                    )
-                  }
-                  type="button"
-                >
-                  <Pencil size={13} />
-                  {t('mcp.profiles.rename')}
-                </button>
-                <button
-                  aria-label={t('mcp.profiles.deleteAriaLabel', {
-                    name: profile.name
-                  })}
-                  className="danger-ghost"
-                  disabled={Boolean(busy) || referenced}
-                  onClick={() =>
-                    void run(`profile:remove:${profile.id}`, () =>
-                      window.goodbuddy.capabilities.removeBrowserProfile?.(
-                        profile.id
-                      ) ??
-                      Promise.reject(
-                        new Error(t('mcp.errors.unsupportedProfiles'))
-                      )
-                    )
-                  }
-                  title={
-                    referenced ? t('mcp.profiles.inUse') : undefined
-                  }
-                  type="button"
-                >
-                  <Trash2 size={13} />
-                  {t('mcp.profiles.delete')}
-                </button>
               </article>
             )
           })}
@@ -1219,38 +1047,6 @@ export function McpSettingsSection({
                           <CircleAlert aria-hidden="true" size={13} />
                           {t('mcp.browser.control')}
                         </p>
-                        <label className="field computer-capability-profile">
-                          <span>{t('mcp.browser.profile')}</span>
-                          <select
-                            aria-label={t('mcp.browser.profileAriaLabel')}
-                            disabled={Boolean(busy)}
-                            onChange={(event) =>
-                              void run('browser:profile', () =>
-                                window.goodbuddy.capabilities.setComputerCapabilityBrowserProfile?.(
-                                  browserCapability.id,
-                                  event.target.value || null
-                                ) ??
-                                Promise.reject(
-                                  new Error(
-                                    t('mcp.errors.unsupportedProfiles')
-                                  )
-                                )
-                              )
-                            }
-                            value={
-                              browserCapability.browserProfileId ?? ''
-                            }
-                          >
-                            <option value="">
-                              {t('mcp.browser.defaultProfile')}
-                            </option>
-                            {browserProfiles.profiles.map((profile) => (
-                              <option key={profile.id} value={profile.id}>
-                                {profile.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
                         <div className="capability-diagnostic">
                           <button
                             aria-label={t(

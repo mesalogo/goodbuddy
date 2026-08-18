@@ -234,7 +234,7 @@ const capabilitySnapshot = {
     {
       id: 'host-browser-control' as const,
       name: '内置浏览器',
-      description: '使用隔离的托管浏览器配置执行网页操作。',
+      description: '使用 GoodBuddy 内置的临时隔离浏览器执行网页操作。',
       enabled: false,
       supported: true,
       browserProfileId: null,
@@ -321,10 +321,10 @@ const diagnoseComputerCapability = vi.fn(async () => ({
   checkedAt: '2026-08-05T12:00:00.000Z',
   checks: [
     {
-      id: 'managed-profile-root',
+      id: 'browser-executable',
       status: 'degraded' as const,
-      summary: '托管配置可用，但尚未选择默认网站。',
-      remedy: '先创建并选择托管配置。'
+      summary: '内置浏览器核心可用，但当前未启动会话。',
+      remedy: '开始一次浏览器任务后重试。'
     }
   ]
 }))
@@ -3656,35 +3656,9 @@ describe('SettingsPanel runtime files', () => {
     expect(diagnoseComputerCapability).toHaveBeenCalledWith(
       'host-browser-control'
     )
-    fireEvent.change(screen.getByLabelText('新配置名称'), {
-      target: { value: '购物网站' }
-    })
-    fireEvent.click(
-      screen.getByRole('button', { name: '创建托管配置' })
-    )
-    await waitFor(() =>
-      expect(createBrowserProfile).toHaveBeenCalledWith({
-        name: '购物网站'
-      })
-    )
-    fireEvent.change(screen.getByLabelText('配置名称 工作网站'), {
-      target: { value: '工作站点' }
-    })
-    fireEvent.click(
-      screen.getByRole('button', { name: '重命名配置 工作网站' })
-    )
-    await waitFor(() =>
-      expect(renameBrowserProfile).toHaveBeenCalledWith({
-        profileId: browserProfileId,
-        name: '工作站点'
-      })
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '删除配置 工作网站' })
-    )
-    await waitFor(() =>
-      expect(removeBrowserProfile).toHaveBeenCalledWith(browserProfileId)
-    )
+    expect(screen.queryByText('托管浏览器配置')).not.toBeInTheDocument()
+    expect(screen.queryByText('内置浏览器配置')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('新配置名称')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('switch', {
         name: '启用 Linux 桌面控制'
