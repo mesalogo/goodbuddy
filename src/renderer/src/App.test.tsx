@@ -1539,6 +1539,83 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('keeps a newly opened persisted conversation at the bottom while its content settles', async () => {
+    let resizeCallback: ResizeObserverCallback | undefined
+    const disconnect = vi.fn()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback
+        }
+
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {
+          disconnect()
+        }
+      }
+    )
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000417',
+        projectId,
+        title: '已有会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000418',
+            role: 'user',
+            content: '最后一个用户问题',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          },
+          {
+            id: '00000000-0000-4000-8000-000000000419',
+            role: 'assistant',
+            content: '加载后会继续完成布局的回复',
+            createdAt: 1_775_000_000_001,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    const { container } = render(<App />)
+
+    expect(
+      await screen.findByText('加载后会继续完成布局的回复')
+    ).toBeInTheDocument()
+    const chat = container.querySelector<HTMLElement>('.chat')
+    if (!chat || !resizeCallback) {
+      throw new Error('Missing chat resize observer')
+    }
+    let scrollHeight = 1_200
+    Object.defineProperties(chat, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: {
+        configurable: true,
+        get: () => scrollHeight
+      },
+      scrollTop: { configurable: true, writable: true, value: 800 }
+    })
+    const scrollTo = vi.fn()
+    chat.scrollTo = scrollTo
+
+    scrollHeight = 1_800
+    act(() => resizeCallback?.([], {} as ResizeObserver))
+    expect(scrollTo).toHaveBeenLastCalledWith({
+      top: 1_800,
+      behavior: 'auto'
+    })
+
+    chat.scrollTop = 100
+    fireEvent.scroll(chat)
+    scrollTo.mockClear()
+    scrollHeight = 2_200
+    act(() => resizeCallback?.([], {} as ResizeObserver))
+    expect(scrollTo).not.toHaveBeenCalled()
+  })
+
   it('renders the latest 80 messages and preserves scroll when revealing earlier messages', async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {

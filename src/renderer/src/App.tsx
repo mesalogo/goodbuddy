@@ -818,6 +818,32 @@ function ChatHistoryPane({
   ])
 
   useLayoutEffect(() => {
+    if (!active || typeof ResizeObserver !== 'function') {
+      return
+    }
+    const scrollContainer = scrollRef.current
+    const messageList =
+      scrollContainer?.querySelector<HTMLElement>('.message-list')
+    if (!scrollContainer || !messageList) {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      if (
+        restorePendingRef.current ||
+        !pinnedToBottomRef.current
+      ) {
+        return
+      }
+      scrollContainer.scrollTo({
+        top: scrollContainer.scrollHeight,
+        behavior: 'auto'
+      })
+    })
+    observer.observe(messageList)
+    return () => observer.disconnect()
+  }, [active])
+
+  useLayoutEffect(() => {
     const previous = prependScrollPositionRef.current
     if (!previous) {
       return
