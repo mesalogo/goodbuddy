@@ -6,8 +6,12 @@ export const workspace = {
     },
     selector: {
       ariaLabel: '当前项目',
-      userProjects: '普通项目',
+      userProjects: '本地项目',
       channelProjects: '远程通道',
+      empty: '未选择项目',
+      localDetail: '本地目录 · {{path}}',
+      remoteDetail: '{{channel}} · 远程通道 · {{path}}',
+      remoteChannel: '远程通道',
       create: '新建项目',
       settings: '项目设置'
     },

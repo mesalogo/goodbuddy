@@ -150,6 +150,15 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).not.toContain('.conversation-delete')
   })
 
+  it('uses the shared control and menu surfaces for the rich project picker', () => {
+    expect(stylesheet).toMatch(
+      /\.project-switcher__trigger\s*\{[^}]*height:\s*var\(--control-height\);[^}]*border-radius:\s*var\(--radius-control\);[^}]*background:\s*var\(--surface-raised\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.project-switcher__menu\s*\{[^}]*border-radius:\s*var\(--radius-card\);[^}]*background:\s*var\(--surface-raised\);[^}]*box-shadow:\s*var\(--shadow-dialog\);/u
+    )
+  })
+
   it('separates Runtime-specific controls from the main composer toolbar', () => {
     expect(stylesheet).toMatch(
       /\.composer__toolbar--with-runtime-controls\s*\{[^}]*border-radius:\s*0;/u

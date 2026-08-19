@@ -9,8 +9,12 @@ export const workspace = {
     },
     selector: {
       ariaLabel: 'Current project',
-      userProjects: 'Projects',
+      userProjects: 'Local projects',
       channelProjects: 'Remote channels',
+      empty: 'No project selected',
+      localDetail: 'Local folder · {{path}}',
+      remoteDetail: '{{channel}} · Remote channel · {{path}}',
+      remoteChannel: 'Remote channel',
       create: 'New project',
       settings: 'Project settings'
     },

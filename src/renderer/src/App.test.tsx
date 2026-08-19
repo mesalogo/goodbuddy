@@ -4706,6 +4706,52 @@ describe('App', () => {
     )
   })
 
+  it('shows grouped project details and keeps the rich menu keyboard accessible', async () => {
+    const channelProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000201',
+      name: '微信 ClawBot',
+      kind: 'channel' as const,
+      channel: 'weixin' as const
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      channelProject
+    ])
+    render(<App />)
+
+    const trigger = await screen.findByRole('button', {
+      name: '当前项目'
+    })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+
+    const menu = screen.getByRole('menu', { name: '当前项目' })
+    expect(
+      within(menu).getByRole('group', { name: '本地项目' })
+    ).toHaveTextContent('本地目录 · C:\\Users\\test')
+    expect(
+      within(menu).getByRole('group', { name: '远程通道' })
+    ).toHaveTextContent(
+      '微信 ClawBot · 远程通道 · C:\\Users\\test'
+    )
+    const selectedProject = within(menu)
+      .getByText(project.name, { selector: 'b' })
+      .closest<HTMLButtonElement>('[role="menuitemradio"]')
+    const remoteProject = within(menu)
+      .getByText(channelProject.name, { selector: 'b' })
+      .closest<HTMLButtonElement>('[role="menuitemradio"]')
+    expect(selectedProject).toHaveAttribute('aria-checked', 'true')
+    await waitFor(() => expect(selectedProject).toHaveFocus())
+
+    fireEvent.keyDown(selectedProject!, { key: 'End' })
+    expect(remoteProject).toHaveFocus()
+    fireEvent.keyDown(remoteProject!, { key: 'Escape' })
+    expect(trigger).toHaveFocus()
+    expect(
+      screen.queryByRole('menu', { name: '当前项目' })
+    ).not.toBeInTheDocument()
+  })
+
   it('keeps channel projects empty until a client message creates a remote conversation', async () => {
     const channelProject = {
       ...project,

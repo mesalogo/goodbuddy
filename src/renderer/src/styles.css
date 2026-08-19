@@ -2317,15 +2317,120 @@ textarea:focus-visible {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
-.project-switcher select {
-  width: 100%;
+.project-switcher__picker {
   min-width: 0;
-  padding: 8px 9px;
+}
+
+.project-switcher__trigger {
+  display: flex;
+  width: 100%;
+  height: var(--control-height);
+  min-width: 0;
+  align-items: center;
+  padding: 0 var(--space-3);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
   background: var(--surface-raised);
   color: var(--text-primary);
+  cursor: pointer;
   font-size: var(--font-body);
+  font-weight: 600;
+  gap: var(--space-2);
+}
+
+.project-switcher__trigger:hover,
+.project-switcher__trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.project-switcher__trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher__menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(var(--control-height) + var(--space-2));
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: min(420px, calc(100vh - 160px));
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  overflow-y: auto;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-dialog);
+  gap: var(--space-2);
+}
+
+.project-switcher__group {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.project-switcher__group + .project-switcher__group {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.project-switcher__group > strong {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 650;
+}
+
+.project-switcher__group > button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  gap: var(--space-2);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  text-align: left;
+}
+
+.project-switcher__group > button:hover,
+.project-switcher__group > button[aria-checked="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.project-switcher__group > button > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.project-switcher__group > button b,
+.project-switcher__group > button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher__group > button b {
+  font-size: var(--font-body);
+  font-weight: 650;
+}
+
+.project-switcher__group > button small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
 }
 
 .project-create-backdrop {

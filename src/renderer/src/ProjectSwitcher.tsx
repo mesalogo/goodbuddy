@@ -1,7 +1,11 @@
 import {
   Archive,
+  Check,
+  ChevronDown,
+  Folder,
   FolderOpen,
   Plus,
+  RadioTower,
   Settings,
   Trash2,
   X
@@ -15,7 +19,8 @@ import type {
 } from '../../shared/assistant-contracts'
 import {
   interactiveWorkModes,
-  normalizeInteractiveWorkMode
+  normalizeInteractiveWorkMode,
+  projectChannelLabels
 } from '../../shared/assistant-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
 import { trapTabFocus } from './dialog-focus'
@@ -66,10 +71,14 @@ export function ProjectSwitcher({
   const [error, setError] = useState<string>()
   const createButtonRef = useRef<HTMLButtonElement>(null)
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
+  const projectPickerRef = useRef<HTMLDivElement>(null)
+  const projectPickerButtonRef = useRef<HTMLButtonElement>(null)
+  const projectPickerMenuRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusTarget = useRef<
     'create' | 'settings' | undefined
   >(undefined)
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [draft, setDraft] = useState<ProjectCreateInput>({
     name: '',
     description: '',
@@ -86,6 +95,38 @@ export function ProjectSwitcher({
     (project) => project.kind === 'channel'
   )
   const busy = saving || archiving || deleting
+
+  useEffect(() => {
+    if (!projectMenuOpen) {
+      return
+    }
+    const focusFrame = requestAnimationFrame(() => {
+      const items = Array.from(
+        projectPickerMenuRef.current?.querySelectorAll<HTMLButtonElement>(
+          '[role="menuitemradio"]'
+        ) ?? []
+      )
+      const initialItem =
+        items.find((item) => item.getAttribute('aria-checked') === 'true') ??
+        items[0]
+      initialItem?.focus()
+    })
+    const closeOutside = (event: Event): void => {
+      if (
+        event.target instanceof Node &&
+        !projectPickerRef.current?.contains(event.target)
+      ) {
+        setProjectMenuOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    document.addEventListener('focusin', closeOutside)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener('pointerdown', closeOutside)
+      document.removeEventListener('focusin', closeOutside)
+    }
+  }, [projectMenuOpen])
 
   useEffect(() => {
     if (!dialogMode) {
@@ -207,36 +248,150 @@ export function ProjectSwitcher({
   return (
     <div className="project-switcher">
       <div className="project-switcher__row">
-        <select
-          aria-label={t('projectSwitcher.selector.ariaLabel')}
-          onChange={(event) => onSelect(event.target.value)}
-          value={activeProjectId}
+        <div
+          className="project-switcher__picker"
+          ref={projectPickerRef}
         >
-          {userProjects.length > 0 && (
-            <optgroup label={t('projectSwitcher.selector.userProjects')}>
-              {userProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {channelProjects.length > 0 && (
-            <optgroup
-              label={t('projectSwitcher.selector.channelProjects')}
+          <button
+            aria-expanded={projectMenuOpen}
+            aria-haspopup="menu"
+            aria-label={t('projectSwitcher.selector.ariaLabel')}
+            className="project-switcher__trigger"
+            onClick={() => setProjectMenuOpen((open) => !open)}
+            onKeyDown={(event) => {
+              if (
+                !projectMenuOpen &&
+                (event.key === 'ArrowDown' ||
+                  event.key === 'Enter' ||
+                  event.key === ' ')
+              ) {
+                event.preventDefault()
+                setProjectMenuOpen(true)
+              }
+            }}
+            ref={projectPickerButtonRef}
+            title={activeProject?.name}
+            type="button"
+          >
+            <span>{activeProject?.name ?? t('projectSwitcher.selector.empty')}</span>
+            <ChevronDown aria-hidden="true" size={14} />
+          </button>
+          {projectMenuOpen && (
+            <div
+              aria-label={t('projectSwitcher.selector.ariaLabel')}
+              className="project-switcher__menu"
+              onKeyDown={(event) => {
+                const items = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    '[role="menuitemradio"]'
+                  )
+                )
+                const currentIndex = items.indexOf(
+                  document.activeElement as HTMLButtonElement
+                )
+                let nextIndex: number | undefined
+                if (event.key === 'ArrowDown') {
+                  nextIndex = (currentIndex + 1) % items.length
+                } else if (event.key === 'ArrowUp') {
+                  nextIndex =
+                    (currentIndex - 1 + items.length) % items.length
+                } else if (event.key === 'Home') {
+                  nextIndex = 0
+                } else if (event.key === 'End') {
+                  nextIndex = items.length - 1
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setProjectMenuOpen(false)
+                  projectPickerButtonRef.current?.focus()
+                }
+                const nextItem =
+                  nextIndex === undefined ? undefined : items.at(nextIndex)
+                if (nextItem) {
+                  event.preventDefault()
+                  items.forEach((item) => {
+                    item.tabIndex = item === nextItem ? 0 : -1
+                  })
+                  nextItem.focus()
+                }
+              }}
+              ref={projectPickerMenuRef}
+              role="menu"
             >
-              {channelProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </optgroup>
+              {[
+                {
+                  projects: userProjects,
+                  label: t('projectSwitcher.selector.userProjects'),
+                  icon: Folder
+                },
+                {
+                  projects: channelProjects,
+                  label: t('projectSwitcher.selector.channelProjects'),
+                  icon: RadioTower
+                }
+              ].map((group) =>
+                group.projects.length > 0 ? (
+                  <div
+                    aria-label={group.label}
+                    className="project-switcher__group"
+                    key={group.label}
+                    role="group"
+                  >
+                    <strong>{group.label}</strong>
+                    {group.projects.map((project) => {
+                      const selected = project.id === activeProjectId
+                      const ProjectIcon = group.icon
+                      const detail =
+                        project.kind === 'channel'
+                          ? t('projectSwitcher.selector.remoteDetail', {
+                              channel: project.channel
+                                ? projectChannelLabels[project.channel]
+                                : t(
+                                    'projectSwitcher.selector.remoteChannel'
+                                  ),
+                              path: project.rootPath
+                            })
+                          : t('projectSwitcher.selector.localDetail', {
+                              path: project.rootPath
+                            })
+                      return (
+                        <button
+                          aria-checked={selected}
+                          key={project.id}
+                          onClick={() => {
+                            if (!selected) {
+                              onSelect(project.id)
+                            }
+                            setProjectMenuOpen(false)
+                            requestAnimationFrame(() =>
+                              projectPickerButtonRef.current?.focus()
+                            )
+                          }}
+                          role="menuitemradio"
+                          tabIndex={selected ? 0 : -1}
+                          type="button"
+                        >
+                          <ProjectIcon aria-hidden="true" size={16} />
+                          <span>
+                            <b>{project.name}</b>
+                            <small>{detail}</small>
+                          </span>
+                          {selected && (
+                            <Check aria-hidden="true" size={14} />
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : null
+              )}
+            </div>
           )}
-        </select>
+        </div>
         <button
           aria-label={t('projectSwitcher.selector.create')}
           className="icon-button"
           onClick={() => {
+            setProjectMenuOpen(false)
             setError(undefined)
             setConfirmingDelete(false)
             setDeleteConfirmation('')
@@ -265,6 +420,7 @@ export function ProjectSwitcher({
             if (!activeProject) {
               return
             }
+            setProjectMenuOpen(false)
             setError(undefined)
             setConfirmingDelete(false)
             setDeleteConfirmation('')
