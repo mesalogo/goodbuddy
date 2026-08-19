@@ -93,6 +93,11 @@ export const app = {
       copy: 'Copy full conversation',
       export: 'Export Markdown'
     },
+    tasks: {
+      toggle: 'Expand or collapse {{count}} tasks in “{{title}}”',
+      list: 'Tasks in “{{title}}”',
+      viewAll: 'View all {{count}} tasks'
+    },
     delete: {
       cancelAria: 'Cancel deleting conversation {{title}}',
       confirmAria: 'Confirm permanently deleting conversation {{title}}',
@@ -102,6 +107,65 @@ export const app = {
       triggerAria: 'Delete conversation {{title}}',
       trigger: 'Delete conversation'
     }
+  },
+  customTask: {
+    eyebrow: 'CUSTOM TASK',
+    title: 'New custom task',
+    description:
+      'Create a task that runs on schedule and keeps recording results in a conversation.',
+    close: 'Close new custom task',
+    fields: {
+      name: 'Task name',
+      instructions: 'Task instructions',
+      destination: 'Conversation',
+      mode: 'Work mode',
+      recurrence: 'Frequency',
+      time: 'First run'
+    },
+    destination: {
+      current: 'Current conversation',
+      new: 'New conversation',
+      currentHelp:
+        'Associate the task with this conversation without renaming it or changing normal chat.',
+      newHelp:
+        'Create a conversation for this task, using the task name as its initial title.',
+      currentUnavailable:
+        'The current conversation cannot host this task. Choose a new conversation.'
+    },
+    mode: {
+      execute: 'Execute',
+      ask: 'Ask',
+      executeUnavailable:
+        'The current Runtime cannot use tools, so read-only Ask is selected.'
+    },
+    recurrence: {
+      once: 'Once',
+      daily: 'Daily',
+      weekly: 'Weekly'
+    },
+    scope: {
+      title: 'Execution scope',
+      project: 'Project',
+      runtime: 'Runtime',
+      workspace: 'Workspace',
+      tools: 'Tools and approval',
+      executeApproval:
+        'Use authorized tools; high-risk actions still require approval',
+      askReadOnly: 'Read-only run with no changes allowed',
+      noWorkspace: 'No workspace configured'
+    },
+    errors: {
+      title: 'Enter a task name.',
+      instructions: 'Enter task instructions.',
+      destination: 'Choose an available conversation.',
+      time: 'Choose a valid first run time.',
+      futureTime: 'The first run must be in the future.',
+      create: 'Could not create the task. Try again.',
+      projectUnavailable: 'Select an available regular project first.'
+    },
+    cancel: 'Cancel',
+    create: 'Create task',
+    creating: 'Creating…'
   },
   runtime: {
     unavailable: 'Runtime unavailable',
@@ -135,6 +199,7 @@ export const app = {
   },
   chat: {
     user: 'You',
+    taskResult: 'Task result: {{title}}',
     welcome: {
       eyebrow: 'GOODBUDDY WORKSPACE',
       title: 'What would you like to accomplish today?',

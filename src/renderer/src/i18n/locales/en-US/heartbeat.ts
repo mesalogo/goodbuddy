@@ -152,6 +152,7 @@ export const heartbeat = {
     },
     task: {
       queued: 'Queued',
+      idle: 'Idle',
       running: 'Running',
       waitingApproval: 'Waiting for approval',
       paused: 'Pending',

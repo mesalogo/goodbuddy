@@ -90,6 +90,11 @@ export const app = {
       copy: '复制完整会话',
       export: '导出 Markdown'
     },
+    tasks: {
+      toggle: '展开或折叠“{{title}}”中的 {{count}} 个任务',
+      list: '“{{title}}”中的任务',
+      viewAll: '查看全部 {{count}} 个任务'
+    },
     delete: {
       cancelAria: '取消删除对话 {{title}}',
       confirmAria: '确认永久删除对话 {{title}}',
@@ -99,6 +104,59 @@ export const app = {
       triggerAria: '删除对话 {{title}}',
       trigger: '删除对话'
     }
+  },
+  customTask: {
+    eyebrow: '定制任务',
+    title: '新建定制任务',
+    description: '创建一个按计划自动运行，并持续记录在会话中的任务。',
+    close: '关闭新建定制任务',
+    fields: {
+      name: '任务名称',
+      instructions: '任务要求',
+      destination: '关联会话',
+      mode: '执行模式',
+      recurrence: '运行频率',
+      time: '首次运行'
+    },
+    destination: {
+      current: '当前会话',
+      new: '新建会话',
+      currentHelp: '把任务关联到当前会话，不更改会话名称或普通聊天能力。',
+      newHelp: '为任务创建一条新会话，默认使用任务名称作为标题。',
+      currentUnavailable: '当前会话不能关联此任务，请选择新建会话。'
+    },
+    mode: {
+      execute: 'Execute',
+      ask: 'Ask',
+      executeUnavailable: '当前 Runtime 不支持工具执行，已使用只读 Ask。'
+    },
+    recurrence: {
+      once: '单次',
+      daily: '每日',
+      weekly: '每周'
+    },
+    scope: {
+      title: '执行范围',
+      project: '项目',
+      runtime: 'Runtime',
+      workspace: '工作目录',
+      tools: '工具与审批',
+      executeApproval: '使用已授权工具；高风险操作仍需审批',
+      askReadOnly: '只读运行，不允许执行变更',
+      noWorkspace: '未设置工作目录'
+    },
+    errors: {
+      title: '请输入任务名称。',
+      instructions: '请输入任务要求。',
+      destination: '请选择可用的关联会话。',
+      time: '请选择有效的首次运行时间。',
+      futureTime: '首次运行时间必须晚于当前时间。',
+      create: '创建任务失败，请重试。',
+      projectUnavailable: '请先选择一个可用的普通项目。'
+    },
+    cancel: '取消',
+    create: '创建任务',
+    creating: '创建中…'
   },
   runtime: {
     unavailable: 'Runtime 不可用',
@@ -132,6 +190,7 @@ export const app = {
   },
   chat: {
     user: '用户',
+    taskResult: '任务结果：{{title}}',
     welcome: {
       eyebrow: 'GOODBUDDY 工作台',
       title: '今天想一起完成什么？',

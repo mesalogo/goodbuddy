@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   CircleAlert,
   CircleHelp,
   Copy,
@@ -13,6 +14,7 @@ import {
   HeartPulse,
   Info,
   Library,
+  ListTodo,
   LoaderCircle,
   Maximize2,
   MessageSquarePlus,
@@ -158,6 +160,13 @@ import {
   type PendingSidebarApproval,
   type SidebarArtifact
 } from './RightAssistantSidebar'
+import {
+  CustomTaskDialog,
+  type CustomTaskDestination
+} from './CustomTaskDialog'
+import { ConversationTaskStrip } from './ConversationTaskStrip'
+import { OverflowMarquee } from './OverflowMarquee'
+import { findTaskSchedule } from './TaskScheduleActions'
 import type { SettingsCategoryId } from './settings-categories'
 import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
 import goodbuddyLightIcon from './assets/goodbuddy-light.png'
@@ -665,6 +674,7 @@ function ChatHistoryPane({
   onVisibleMessageCountChange,
   quickActions,
   scrollSnapshot,
+  taskStrip,
   visibleMessageCount
 }: {
   active: boolean
@@ -703,6 +713,7 @@ function ChatHistoryPane({
   ) => void
   quickActions: ChatQuickAction[]
   scrollSnapshot?: ChatScrollSnapshot
+  taskStrip?: ReactNode
   visibleMessageCount: number
 }): React.JSX.Element {
   const { t } = useTranslation('app')
@@ -911,6 +922,7 @@ function ChatHistoryPane({
       hidden={!active}
       inert={!active}
     >
+      {taskStrip}
       <section
         className="chat"
         id={active ? 'chat-message-list' : undefined}
@@ -1132,6 +1144,13 @@ function isConversation(value: unknown): value is Conversation {
             entry.artifactIds.every(
               (artifactId) => typeof artifactId === 'string'
             ))) &&
+        (entry.task === undefined ||
+          (typeof entry.task === 'object' &&
+            entry.task !== null &&
+            typeof (entry.task as Record<string, unknown>).id ===
+              'string' &&
+            typeof (entry.task as Record<string, unknown>).title ===
+              'string')) &&
         (entry.attachments === undefined ||
           (Array.isArray(entry.attachments) &&
             entry.attachments.length <= 8 &&
@@ -1180,6 +1199,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
     artifactIds: message.artifactIds,
+    task: message.task,
     attachments: message.attachments
   }
 }
@@ -1254,6 +1274,55 @@ function mergeArtifacts(
   return [...merged.values()].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt)
   )
+}
+
+function mergePersistedConversations(
+  current: readonly Conversation[],
+  incoming: readonly ConversationSnapshot[],
+  persistedLocal: Map<string, Conversation>
+): Conversation[] {
+  const incomingById = new Map(
+    incoming.map((conversation) => [conversation.id, conversation])
+  )
+  const currentById = new Map(
+    current.map((conversation) => [conversation.id, conversation])
+  )
+  const merged = incoming.map((conversation): Conversation => {
+    if (conversation.remote) {
+      return conversation
+    }
+    const local = currentById.get(conversation.id)
+    if (!local || local.remote) {
+      persistedLocal.set(conversation.id, conversation)
+      return conversation
+    }
+    const localMessageById = new Map(
+      local.messages.map((message) => [message.id, message])
+    )
+    const serverMessageIds = new Set(
+      conversation.messages.map((message) => message.id)
+    )
+    const messages = [
+      ...conversation.messages.map(
+        (message) => localMessageById.get(message.id) ?? message
+      ),
+      ...local.messages.filter(
+        (message) => !serverMessageIds.has(message.id)
+      )
+    ].slice(-500)
+    const next =
+      local.updatedAt > conversation.updatedAt
+        ? { ...local, messages }
+        : { ...conversation, messages }
+    persistedLocal.set(conversation.id, conversation)
+    return next
+  })
+  for (const conversation of current) {
+    if (!incomingById.has(conversation.id)) {
+      merged.push(conversation)
+    }
+  }
+  return merged.sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
 function getProjectDefaultRuntimeSelection(
@@ -1722,6 +1791,7 @@ function ComposerMenuSelect<T extends string>({
 
 function App(): React.JSX.Element {
   const { i18n, t } = useTranslation('app')
+  const { t: tWorkspace } = useTranslation('workspace')
   const tRef = useRef(t)
   useEffect(() => {
     tRef.current = t
@@ -1758,6 +1828,7 @@ function App(): React.JSX.Element {
   const [projects, setProjects] = useState<AssistantProject[]>([])
   const projectsRef = useRef(projects)
   const [assistantTasks, setAssistantTasks] = useState<AssistantTask[]>([])
+  const assistantTasksRef = useRef(assistantTasks)
   const [tokenUsage, setTokenUsage] =
     useState<TokenUsageSummary>(emptyTokenUsage)
   const [workspaceChanges, setWorkspaceChanges] =
@@ -1778,6 +1849,13 @@ function App(): React.JSX.Element {
   const [assistantSchedules, setAssistantSchedules] = useState<
     AssistantSchedule[]
   >([])
+  const [selectedAssistantTaskId, setSelectedAssistantTaskId] =
+    useState<string>()
+  const [expandedTaskConversationIds, setExpandedTaskConversationIds] =
+    useState<Set<string>>(() => new Set())
+  const [customTaskDialog, setCustomTaskDialog] = useState<{
+    defaultDestination: CustomTaskDestination
+  }>()
   const [assistantHeartbeats, setAssistantHeartbeats] = useState<
     AssistantHeartbeatConfig[]
   >([])
@@ -2343,6 +2421,10 @@ function App(): React.JSX.Element {
   useEffect(() => {
     projectsRef.current = projects
   }, [projects])
+
+  useEffect(() => {
+    assistantTasksRef.current = assistantTasks
+  }, [assistantTasks])
 
   useEffect(() => {
     resizeComposerTextarea(inputRef.current)
@@ -2977,6 +3059,48 @@ function App(): React.JSX.Element {
     deferredSearchQuery,
     searchConversationSnapshot
   ])
+  const productAssistantTasks = useMemo(
+    () =>
+      assistantTasks.filter(
+        (task) => !task.parentTaskId && task.origin === 'schedule'
+      ),
+    [assistantTasks]
+  )
+  const tasksByConversation = useMemo(() => {
+    const grouped = new Map<string, AssistantTask[]>()
+    for (const task of productAssistantTasks) {
+      if (!task.conversationId) {
+        continue
+      }
+      const existing = grouped.get(task.conversationId) ?? []
+      existing.push(task)
+      grouped.set(task.conversationId, existing)
+    }
+    for (const tasks of grouped.values()) {
+      tasks.sort((left, right) =>
+        right.createdAt.localeCompare(left.createdAt)
+      )
+    }
+    return grouped
+  }, [productAssistantTasks])
+  const conversationTitles = useMemo(
+    () =>
+      new Map(
+        conversations.map((conversation) => [
+          conversation.id,
+          getConversationDisplayTitle(
+            conversation,
+            t('conversation.defaultTitle')
+          )
+        ])
+      ),
+    [conversations, t]
+  )
+  const projectNames = useMemo(
+    () =>
+      new Map(projects.map((project) => [project.id, project.name])),
+    [projects]
+  )
   const pendingSidebarApprovals = useMemo<PendingSidebarApproval[]>(
     () =>
       conversations.flatMap((conversation) =>
@@ -3310,6 +3434,94 @@ function App(): React.JSX.Element {
     (event: AgentEvent): void => {
       const run = activeRuns.current.get(event.requestId)
       if (!run) {
+        if (event.type !== 'approval') {
+          return
+        }
+        const attachScheduledApproval = (
+          task: AssistantTask | undefined
+        ): void => {
+          if (
+            !task?.conversationId ||
+            task.origin !== 'schedule'
+          ) {
+            return
+          }
+          setAssistantTasks((current) =>
+            current.map((candidate) =>
+              candidate.id === task.id
+                ? { ...candidate, status: 'waiting_approval' }
+                : candidate
+            )
+          )
+          if (
+            activeConversationIdRef.current !== task.conversationId
+          ) {
+            setUnreadConversationIds((current) => {
+              const next = new Set(current)
+              next.add(task.conversationId!)
+              return next
+            })
+          }
+          setConversations((current) =>
+            current.map((conversation) => {
+              if (conversation.id !== task.conversationId) {
+                return conversation
+              }
+              const existing = conversation.messages.find(
+                (message) =>
+                  message.approval?.id === event.approvalId
+              )
+              if (existing) {
+                return conversation
+              }
+              return {
+                ...conversation,
+                updatedAt: Date.now(),
+                messages: [
+                  ...conversation.messages,
+                  {
+                    id: crypto.randomUUID(),
+                    role: 'assistant',
+                    content: event.title,
+                    createdAt: Date.now(),
+                    state: 'complete',
+                    task: {
+                      id: task.id,
+                      title: task.title
+                    },
+                    approval: {
+                      id: event.approvalId,
+                      title: event.title,
+                      description: event.description,
+                      toolName: event.toolName,
+                      argumentSummary: event.argumentSummary,
+                      allowPermanent: event.allowPermanent
+                    }
+                  }
+                ]
+              }
+            })
+          )
+        }
+        const task = assistantTasksRef.current.find(
+          (candidate) => candidate.id === event.requestId
+        )
+        if (task) {
+          attachScheduledApproval(task)
+        } else {
+          void window.goodbuddy.tasks
+            .list()
+            .then((tasks) => {
+              setAssistantTasks(tasks)
+              assistantTasksRef.current = tasks
+              attachScheduledApproval(
+                tasks.find(
+                  (candidate) => candidate.id === event.requestId
+                )
+              )
+            })
+            .catch(() => undefined)
+        }
         return
       }
 
@@ -3998,9 +4210,69 @@ function App(): React.JSX.Element {
     }
     let active = true
     let refreshSequence = 0
-    const remove = window.goodbuddy.conversations.onChanged(() => {
-      const sequence = ++refreshSequence
-      void window.goodbuddy.conversations
+    let refreshTimer: number | undefined
+    let refreshInFlight = false
+    let refreshQueued = false
+    const queueRefresh = (): void => {
+      refreshSequence += 1
+      refreshQueued = true
+      if (refreshInFlight || refreshTimer !== undefined) {
+        return
+      }
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined
+        refresh()
+      }, 50)
+    }
+    const refresh = (): void => {
+      if (refreshInFlight) {
+        refreshQueued = true
+        return
+      }
+      refreshInFlight = true
+      refreshQueued = false
+      const sequence = refreshSequence
+      const tasksRefresh = window.goodbuddy.tasks
+        .list()
+        .then((tasks) => {
+          if (!active || sequence !== refreshSequence) {
+            return
+          }
+          setAssistantTasks(tasks)
+          setActivityRecords((current) =>
+            reconcileActivityRecords(
+              current,
+              tasks,
+              new Set(activeRuns.current.keys())
+            )
+          )
+        })
+        .catch(() => {
+          if (active && sequence === refreshSequence) {
+            notify({
+              tone: 'error',
+              message: tRef.current('notices.taskHistoryReadFailed'),
+              dedupeKey: 'task-lifecycle-refresh'
+            })
+          }
+        })
+      const schedulesRefresh = window.goodbuddy.schedules
+        .list()
+        .then((schedules) => {
+          if (active && sequence === refreshSequence) {
+            setAssistantSchedules(schedules)
+          }
+        })
+        .catch(() => {
+          if (active && sequence === refreshSequence) {
+            notify({
+              tone: 'error',
+              message: tRef.current('notices.schedulesReadFailed'),
+              dedupeKey: 'schedule-lifecycle-refresh'
+            })
+          }
+        })
+      const conversationsRefresh = window.goodbuddy.conversations
         .list()
         .then((persisted) => {
           if (!active || sequence !== refreshSequence) {
@@ -4045,17 +4317,16 @@ function App(): React.JSX.Element {
               dedupeKey: 'remote-channel-message'
             })
           }
-          const local = conversationsRef.current.filter(
-            (conversation) => !conversation.remote
-          )
-          setConversations(
-            [...remote, ...local].sort(
-              (left, right) => right.updatedAt - left.updatedAt
+          setConversations((current) =>
+            mergePersistedConversations(
+              current,
+              persisted,
+              persistedLocalConversationsRef.current
             )
           )
         })
         .catch(() => {
-          if (active) {
+          if (active && sequence === refreshSequence) {
             notify({
               tone: 'error',
               message: tRef.current(
@@ -4065,9 +4336,23 @@ function App(): React.JSX.Element {
             })
           }
         })
-    })
+      void Promise.allSettled([
+        tasksRefresh,
+        schedulesRefresh,
+        conversationsRefresh
+      ]).finally(() => {
+        refreshInFlight = false
+        if (active && refreshQueued) {
+          queueRefresh()
+        }
+      })
+    }
+    const remove = window.goodbuddy.conversations.onChanged(queueRefresh)
     return () => {
       active = false
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer)
+      }
       remove()
     }
   }, [conversationStoreReady])
@@ -4327,7 +4612,7 @@ function App(): React.JSX.Element {
       return
     }
     void window.goodbuddy.schedules
-      .list(activeProjectId)
+      .list()
       .then(setAssistantSchedules)
       .catch(() =>
         notify({
@@ -5726,11 +6011,14 @@ function App(): React.JSX.Element {
       updateMessage(conversationId, messageId, (message) => ({
         ...message,
         approval: undefined,
-        status: approved
-          ? tRef.current('chat.approval.executing', {
-              decision: decisionLabel
-            })
-          : tRef.current('chat.approval.denied')
+        status:
+          approved && message.task
+            ? undefined
+            : approved
+              ? tRef.current('chat.approval.executing', {
+                  decision: decisionLabel
+                })
+              : tRef.current('chat.approval.denied')
       }))
     } catch {
       updateMessage(conversationId, messageId, (message) => ({
@@ -6109,6 +6397,163 @@ function App(): React.JSX.Element {
     setView('chat')
   }
 
+  const openAssistantTask = (task: AssistantTask): void => {
+    if (!task.conversationId) {
+      notify({
+        tone: 'info',
+        message: t('notices.conversationDeleted')
+      })
+      return
+    }
+    const conversation = conversations.find(
+      (candidate) => candidate.id === task.conversationId
+    )
+    if (!conversation) {
+      notify({
+        tone: 'info',
+        message: t('notices.conversationDeleted')
+      })
+      return
+    }
+    if (task.projectId) {
+      const project = projects.find(
+        (candidate) => candidate.id === task.projectId
+      )
+      setActiveProjectId(task.projectId)
+      if (project) {
+        setWorkMode(
+          normalizeInteractiveWorkMode(project.defaultWorkMode)
+        )
+      }
+    }
+    setSelectedAssistantTaskId(task.id)
+    setExpandedTaskConversationIds((current) => {
+      const next = new Set(current)
+      next.add(conversation.id)
+      return next
+    })
+    setActiveId(conversation.id)
+    setView('chat')
+  }
+
+  const openCustomTaskDialog = (
+    defaultDestination: CustomTaskDestination
+  ): void => {
+    if (!activeProject || activeProject.kind !== 'user') {
+      notify({
+        tone: 'info',
+        message: t('customTask.errors.projectUnavailable')
+      })
+      return
+    }
+    setCustomTaskDialog({ defaultDestination })
+  }
+
+  const createCustomTask = async (
+    input: Parameters<typeof window.goodbuddy.schedules.create>[0]
+  ): Promise<AssistantSchedule> => {
+    if (input.conversationId) {
+      persistLocalConversationChanges()
+      await conversationPersistenceQueueRef.current
+    }
+    const schedule = await window.goodbuddy.schedules.create(input)
+    setAssistantSchedules((current) => [
+      schedule,
+      ...current.filter((item) => item.id !== schedule.id)
+    ])
+    setSelectedAssistantTaskId(schedule.taskId)
+    setExpandedTaskConversationIds((current) => {
+      const next = new Set(current)
+      next.add(schedule.conversationId)
+      return next
+    })
+
+    const [conversationResult, taskResult, scheduleResult] =
+      await Promise.allSettled([
+        window.goodbuddy.conversations.list(),
+        window.goodbuddy.tasks.list(),
+        window.goodbuddy.schedules.list()
+      ])
+    if (conversationResult.status === 'fulfilled') {
+      setConversations((current) =>
+        mergePersistedConversations(
+          current,
+          conversationResult.value,
+          persistedLocalConversationsRef.current
+        )
+      )
+    } else {
+      notify({
+        tone: 'error',
+        message: t('notices.remoteConversationRefreshFailed'),
+        dedupeKey: 'custom-task-conversation-refresh'
+      })
+    }
+    if (taskResult.status === 'fulfilled') {
+      setAssistantTasks(taskResult.value)
+    }
+    if (scheduleResult.status === 'fulfilled') {
+      setAssistantSchedules(scheduleResult.value)
+    }
+    if (
+      taskResult.status === 'rejected' ||
+      scheduleResult.status === 'rejected'
+    ) {
+      notify({
+        tone: 'error',
+        message: t('notices.taskHistoryReadFailed'),
+        dedupeKey: 'custom-task-discovery-refresh'
+      })
+    }
+    if (schedule.projectId) {
+      const project = projects.find(
+        (candidate) => candidate.id === schedule.projectId
+      )
+      setActiveProjectId(schedule.projectId)
+      if (project) {
+        setWorkMode(
+          normalizeInteractiveWorkMode(project.defaultWorkMode)
+        )
+      }
+    }
+    setActiveId(schedule.conversationId)
+    setView('chat')
+    return schedule
+  }
+
+  const runAssistantSchedule = async (
+    scheduleId: string
+  ): Promise<void> => {
+    await window.goodbuddy.schedules.runNow(scheduleId)
+    notify({
+      tone: 'success',
+      message: t('notices.scheduleStarted')
+    })
+  }
+
+  const setAssistantScheduleEnabled = async (
+    scheduleId: string,
+    enabled: boolean
+  ): Promise<void> => {
+    await window.goodbuddy.schedules.setEnabled(scheduleId, enabled)
+    setAssistantSchedules((current) =>
+      current.map((schedule) =>
+        schedule.id === scheduleId
+          ? { ...schedule, enabled }
+          : schedule
+      )
+    )
+  }
+
+  const removeAssistantSchedule = async (
+    scheduleId: string
+  ): Promise<void> => {
+    await window.goodbuddy.schedules.remove(scheduleId)
+    setAssistantSchedules((current) =>
+      current.filter((schedule) => schedule.id !== scheduleId)
+    )
+  }
+
   const clearLocalData = async (): Promise<void> => {
     conversationPersistencePausedRef.current = true
     try {
@@ -6432,7 +6877,16 @@ function App(): React.JSX.Element {
 
         <div className="conversation-list">
           <p className="section-label">{t('sidebar.recent')}</p>
-          {filteredConversations.map((conversation) => (
+          {filteredConversations.map((conversation) => {
+            const conversationTasks =
+              tasksByConversation.get(conversation.id) ?? []
+            const tasksExpanded =
+              expandedTaskConversationIds.has(conversation.id)
+            const conversationTitle = getConversationDisplayTitle(
+              conversation,
+              t('conversation.defaultTitle')
+            )
+            return (
             <div className="conversation-entry" key={conversation.id}>
               <div
                 className={
@@ -6441,6 +6895,34 @@ function App(): React.JSX.Element {
                     : 'conversation-row'
                 }
               >
+                {conversationTasks.length > 0 && (
+                  <button
+                    aria-expanded={tasksExpanded}
+                    aria-label={t('conversation.tasks.toggle', {
+                      title: conversationTitle,
+                      count: conversationTasks.length
+                    })}
+                    className="conversation-task-toggle"
+                    onClick={() =>
+                      setExpandedTaskConversationIds((current) => {
+                        const next = new Set(current)
+                        if (next.has(conversation.id)) {
+                          next.delete(conversation.id)
+                        } else {
+                          next.add(conversation.id)
+                        }
+                        return next
+                      })
+                    }
+                    type="button"
+                  >
+                    {tasksExpanded ? (
+                      <ChevronDown aria-hidden="true" size={13} />
+                    ) : (
+                      <ChevronRight aria-hidden="true" size={13} />
+                    )}
+                  </button>
+                )}
                 <button
                   className={
                     conversation.id === activeId
@@ -6450,6 +6932,7 @@ function App(): React.JSX.Element {
                   type="button"
                   onClick={() => {
                     setConversationActionsId('')
+                    setSelectedAssistantTaskId(undefined)
                     setActiveId(conversation.id)
                     setUnreadConversationIds((current) => {
                       if (!current.has(conversation.id)) {
@@ -6462,7 +6945,7 @@ function App(): React.JSX.Element {
                     setView('chat')
                   }}
                 >
-                  <span>
+                  <span className="conversation-item__primary">
                     {conversation.remote && (
                       <b className="conversation-source-badge">
                         {
@@ -6472,10 +6955,10 @@ function App(): React.JSX.Element {
                         }
                       </b>
                     )}
-                    {getConversationDisplayTitle(
-                      conversation,
-                      t('conversation.defaultTitle')
-                    )}
+                    <OverflowMarquee
+                      className="conversation-item__title"
+                      text={conversationTitle}
+                    />
                     {unreadConversationIds.has(conversation.id) && (
                       <i
                         aria-label={t('conversation.unread')}
@@ -6515,10 +6998,7 @@ function App(): React.JSX.Element {
                     conversationActionsId === conversation.id
                   }
                   aria-label={t('conversation.actions.more', {
-                    title: getConversationDisplayTitle(
-                      conversation,
-                      t('conversation.defaultTitle')
-                    )
+                    title: conversationTitle
                   })}
                   className="conversation-more"
                   onClick={() => {
@@ -6548,10 +7028,7 @@ function App(): React.JSX.Element {
               {conversationActionsId === conversation.id && (
                 <div
                   aria-label={t('conversation.actions.region', {
-                    title: getConversationDisplayTitle(
-                      conversation,
-                      t('conversation.defaultTitle')
-                    )
+                    title: conversationTitle
                   })}
                   className="conversation-actions"
                   id={`conversation-actions-${conversation.id}`}
@@ -6594,16 +7071,10 @@ function App(): React.JSX.Element {
                   {!conversation.remote && (
                     <DestructiveConfirmActions
                       cancelAriaLabel={t('conversation.delete.cancelAria', {
-                        title: getConversationDisplayTitle(
-                          conversation,
-                          t('conversation.defaultTitle')
-                        )
+                        title: conversationTitle
                       })}
                       confirmAriaLabel={t('conversation.delete.confirmAria', {
-                        title: getConversationDisplayTitle(
-                          conversation,
-                          t('conversation.defaultTitle')
-                        )
+                        title: conversationTitle
                       })}
                       confirmLabel={t('conversation.delete.confirm')}
                       confirming={
@@ -6622,10 +7093,7 @@ function App(): React.JSX.Element {
                         setConfirmingConversationId(conversation.id)
                       }
                       triggerAriaLabel={t('conversation.delete.triggerAria', {
-                        title: getConversationDisplayTitle(
-                          conversation,
-                          t('conversation.defaultTitle')
-                        )
+                        title: conversationTitle
                       })}
                       triggerLabel={t('conversation.delete.trigger')}
                     />
@@ -6647,10 +7115,7 @@ function App(): React.JSX.Element {
                 >
                   <input
                     aria-label={t('conversation.renameAria', {
-                      title: getConversationDisplayTitle(
-                        conversation,
-                        t('conversation.defaultTitle')
-                      )
+                      title: conversationTitle
                     })}
                     autoFocus
                     defaultValue={conversation.title}
@@ -6683,8 +7148,73 @@ function App(): React.JSX.Element {
                   </button>
                 </form>
                 )}
+              {tasksExpanded && conversationTasks.length > 0 && (
+                <ul
+                  aria-label={t('conversation.tasks.list', {
+                    title: conversationTitle
+                  })}
+                  className="conversation-task-children"
+                >
+                  {conversationTasks.slice(0, 3).map((task) => {
+                    const schedule = findTaskSchedule(
+                      task,
+                      assistantSchedules
+                    )
+                    return (
+                      <li key={task.id}>
+                        <button
+                          className={
+                            selectedAssistantTaskId === task.id
+                              ? 'conversation-task-child conversation-task-child--active'
+                              : 'conversation-task-child'
+                          }
+                          onClick={() => openAssistantTask(task)}
+                          type="button"
+                        >
+                          <ListTodo
+                            aria-hidden="true"
+                            className={`conversation-task-child__icon conversation-task-child__icon--${task.status}`}
+                            size={13}
+                          />
+                          <span className="conversation-task-child__title">
+                            {task.title}
+                          </span>
+                          <small className="conversation-task-child__meta">
+                            {schedule
+                              ? `${tWorkspace(`task.mode.${schedule.workMode}`)} · ${tWorkspace(
+                                  `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`
+                                )} · `
+                              : ''}
+                            {tWorkspace(`task.status.${task.status}`)}
+                          </small>
+                        </button>
+                      </li>
+                    )
+                  })}
+                  {conversationTasks.length > 3 && (
+                    <li>
+                      <button
+                        className="conversation-task-view-all"
+                        onClick={() => {
+                          setSelectedAssistantTaskId(
+                            conversationTasks[0]?.id
+                          )
+                          setActiveId(conversation.id)
+                          setView('chat')
+                        }}
+                        type="button"
+                      >
+                        {t('conversation.tasks.viewAll', {
+                          count: conversationTasks.length
+                        })}
+                      </button>
+                    </li>
+                  )}
+                </ul>
+              )}
             </div>
-          ))}
+            )
+          })}
           {filteredConversations.length === 0 && (
             <p className="conversation-empty">
               {activeProject?.kind === 'channel' &&
@@ -6882,6 +7412,35 @@ function App(): React.JSX.Element {
                     quickActions={quickActions}
                     scrollSnapshot={
                       chatScrollSnapshots[conversation.id]
+                    }
+                    taskStrip={
+                      !conversation.remote ? (
+                        <ConversationTaskStrip
+                          locale={locale}
+                          onCreate={() =>
+                            openCustomTaskDialog('current')
+                          }
+                          onRemoveSchedule={removeAssistantSchedule}
+                          onRunSchedule={runAssistantSchedule}
+                          onSelectTask={setSelectedAssistantTaskId}
+                          onSetScheduleEnabled={
+                            setAssistantScheduleEnabled
+                          }
+                          schedules={assistantSchedules}
+                          selectedTaskId={
+                            (tasksByConversation.get(conversation.id) ?? [])
+                              .some(
+                                (task) =>
+                                  task.id === selectedAssistantTaskId
+                              )
+                              ? selectedAssistantTaskId
+                              : undefined
+                          }
+                          tasks={
+                            tasksByConversation.get(conversation.id) ?? []
+                          }
+                        />
+                      ) : undefined
                     }
                     visibleMessageCount={
                       visibleMessageCounts[conversation.id] ??
@@ -8348,14 +8907,41 @@ function App(): React.JSX.Element {
           </section>
         </div>
       )}
+      {customTaskDialog && activeProject?.kind === 'user' && (
+        <CustomTaskDialog
+          currentConversationAvailable={Boolean(
+            activeConversation &&
+              !activeConversation.remote &&
+              activeConversation.projectId === activeProject.id
+          )}
+          currentConversationId={activeConversation?.id}
+          defaultDestination={customTaskDialog.defaultDestination}
+          onClose={() => setCustomTaskDialog(undefined)}
+          onCreate={createCustomTask}
+          projectId={activeProject.id}
+          projectName={activeProject.name}
+          runtimeLabel={activeRuntimeLabel}
+          supportsToolExecution={Boolean(
+            runtime?.supportsToolExecution
+          )}
+          workspaceLabel={
+            activeProject.rootPath || t('customTask.scope.noWorkspace')
+          }
+        />
+      )}
       <RightAssistantSidebar
         approvals={pendingSidebarApprovals}
         artifacts={sidebarArtifacts}
         attachments={attachments}
         browserState={browserStates[activeId]}
+        conversationTitles={conversationTitles}
         enabledLibraries={enabledSidebarLibraries}
         memories={assistantMemories}
+        onCreateCustomTask={() => openCustomTaskDialog('new')}
         schedules={assistantSchedules}
+        selectedTaskId={selectedAssistantTaskId}
+        tasks={productAssistantTasks}
+        projectNames={projectNames}
         onClose={() => setAssistantSidebarOpen(false)}
         onInteractBrowser={async () => {
           if (!activeId) {
@@ -8392,13 +8978,6 @@ function App(): React.JSX.Element {
             })
           }
         }}
-        onCreateSchedule={async (input) => {
-          const schedule = await window.goodbuddy.schedules.create({
-            ...input,
-            projectId: activeProjectId || undefined
-          })
-          setAssistantSchedules((current) => [schedule, ...current])
-        }}
         onImportArtifacts={async () => {
           const imported = await window.goodbuddy.artifacts.importFiles(
             activeProjectId || undefined
@@ -8423,12 +9002,8 @@ function App(): React.JSX.Element {
           )
         }}
         onRemoveAttachment={removeAttachment}
-        onRemoveSchedule={async (scheduleId) => {
-          await window.goodbuddy.schedules.remove(scheduleId)
-          setAssistantSchedules((current) =>
-            current.filter((schedule) => schedule.id !== scheduleId)
-          )
-        }}
+        onOpenTask={openAssistantTask}
+        onRemoveSchedule={removeAssistantSchedule}
         onRespondApproval={(approval, decision) => {
           void respondToApproval(
             approval.conversationId,
@@ -8437,13 +9012,8 @@ function App(): React.JSX.Element {
             decision
           )
         }}
-        onRunSchedule={async (scheduleId) => {
-          await window.goodbuddy.schedules.runNow(scheduleId)
-          notify({
-            tone: 'success',
-            message: t('notices.scheduleStarted')
-          })
-        }}
+        onRunSchedule={runAssistantSchedule}
+        onSetScheduleEnabled={setAssistantScheduleEnabled}
         onListWorkspaceDirectory={listWorkspaceDirectory}
         onLoadWorkspaceFile={loadWorkspaceFile}
         onOpenWorkspaceEntry={openWorkspaceEntry}

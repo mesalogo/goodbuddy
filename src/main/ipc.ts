@@ -156,8 +156,7 @@ import {
   expertCreateSchema,
   type AssistantSchedule,
   type AssistantArtifact,
-  type ConversationAttachment,
-  type WorkMode
+  type ConversationAttachment
 } from '../shared/assistant-contracts'
 import {
   CHANNEL_LIMITS,
@@ -1158,7 +1157,8 @@ export function registerIpcHandlers(
           title: '智能心跳回顾',
           instructions: '根据有界本地输入生成智能心跳报告',
           workMode: 'ask',
-          origin: 'assistant'
+          origin: 'assistant',
+          visible: false
         })
         let output = ''
         let completed = false
@@ -1242,28 +1242,52 @@ export function registerIpcHandlers(
       )
     }
   }
-
-  const executeSchedule = async (
-    schedule: Omit<AssistantSchedule, 'workMode'> & {
-      workMode: WorkMode
-    },
-    origin: 'schedule' | 'delegation' | 'channel' = 'schedule',
-    externalSignal?: AbortSignal,
-    remoteContext?: {
-      channel: keyof typeof projectChannelLabels
-      channelLabel: string
-      senderDisplay: string
-      projectId: string
-      projectName: string
-      rootPath: string
-      conversationId: string
-      runtimeSelection: AgentRuntimeSelection
-      followConfiguredAgentRuntime?: boolean
-      runtime?: AgentRuntime
-      taskId?: string
-      contextIds?: string[]
-      resultFileRequested?: boolean
+  const publishConversationChange = (): void => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(ipcChannels.conversationsChanged)
     }
+  }
+
+  type ExecutionTemplate = Omit<
+    AssistantSchedule,
+    'taskId' | 'conversationId'
+  >
+  type ChannelExecutionContext = {
+    channel: keyof typeof projectChannelLabels
+    channelLabel: string
+    senderDisplay: string
+    projectId: string
+    projectName: string
+    rootPath: string
+    conversationId: string
+    runtimeSelection: AgentRuntimeSelection
+    followConfiguredAgentRuntime?: boolean
+    runtime?: AgentRuntime
+    taskId: string
+    contextIds?: string[]
+    resultFileRequested?: boolean
+  }
+  type TaskWorkExecution =
+    | {
+        origin: 'schedule'
+        schedule: AssistantSchedule
+        scheduleRunId: string
+        externalSignal?: AbortSignal
+      }
+    | {
+        origin: 'delegation'
+        schedule: ExecutionTemplate
+        externalSignal?: AbortSignal
+      }
+    | {
+        origin: 'channel'
+        schedule: ExecutionTemplate
+        externalSignal: AbortSignal
+        remoteContext: ChannelExecutionContext
+      }
+
+  const executeTaskWork = async (
+    input: TaskWorkExecution
   ): Promise<{
     status: 'completed' | 'failed'
     output?: string
@@ -1271,13 +1295,24 @@ export function registerIpcHandlers(
     attachments?: ChannelMediaAttachment[]
     artifactIds?: string[]
   }> => {
+    const { origin, schedule } = input
+    const externalSignal = input.externalSignal
+    const remoteContext =
+      input.origin === 'channel' ? input.remoteContext : undefined
     if (shuttingDown || executionPaused) {
       return { status: 'failed', error: '应用正在退出' }
     }
     if (externalSignal?.aborted) {
       return { status: 'failed', error: '请求已取消' }
     }
-    const requestId = remoteContext?.taskId ?? randomUUID()
+    const taskId =
+      input.origin === 'schedule'
+        ? input.schedule.taskId
+        : input.origin === 'channel'
+          ? input.remoteContext.taskId
+          : randomUUID()
+    const requestId =
+      input.origin === 'schedule' ? input.scheduleRunId : taskId
     const controller = new AbortController()
     const abortFromExternal = (): void => {
       controller.abort(externalSignal?.reason)
@@ -1287,22 +1322,27 @@ export function registerIpcHandlers(
     })
     activeRequests.set(requestId, controller)
     const runtimeConversationId =
-      remoteContext?.conversationId ?? `${origin}:${schedule.id}`
-    if (remoteContext?.taskId) {
-      assistantDatabase.updateTaskStatus(requestId, 'running')
+      remoteContext?.conversationId ??
+      (input.origin === 'schedule'
+        ? input.schedule.conversationId
+        : undefined) ??
+      `${origin}:${schedule.id}`
+    if (input.origin !== 'delegation') {
+      assistantDatabase.updateTaskStatus(taskId, 'running')
     } else {
       assistantDatabase.createTask({
-        id: requestId,
+        id: taskId,
         projectId: schedule.projectId,
         conversationId: runtimeConversationId,
         title: schedule.title,
         instructions: schedule.prompt,
         workMode: schedule.workMode,
-        origin: origin === 'channel' ? 'delegation' : origin
+        origin: 'delegation',
+        visible: false
       })
     }
     if (origin === 'schedule') {
-      assistantDatabase.bindScheduleRunTask(schedule.id, requestId)
+      publishConversationChange()
     }
     let output = ''
     let completed = false
@@ -1313,7 +1353,7 @@ export function registerIpcHandlers(
       onError: (error) => controller.abort(error),
       onEvent: (event) => {
         assistantDatabase.appendTaskEvent(
-          requestId,
+          taskId,
           event.type,
           event
         )
@@ -1324,7 +1364,9 @@ export function registerIpcHandlers(
         remoteContext?.runtime ??
         (await resolveRequestRuntime({
           projectId: schedule.projectId,
-          runtimeSelection: remoteContext?.runtimeSelection,
+          runtimeSelection:
+            remoteContext?.runtimeSelection ??
+            schedule.runtimeSelection,
           workspaceOverride: remoteContext?.rootPath,
           followConfiguredAgentRuntime:
             remoteContext?.followConfiguredAgentRuntime
@@ -1389,9 +1431,12 @@ export function registerIpcHandlers(
           return channelToolPolicy === 'policy' ? 'deny' : 'once'
         }
         assistantDatabase.updateTaskStatus(
-          requestId,
+          taskId,
           'waiting_approval'
         )
+        if (origin === 'schedule') {
+          publishConversationChange()
+        }
         const settings = await settingsStore.getPolicySettings()
         try {
           return await approvalBroker.request(
@@ -1401,7 +1446,8 @@ export function registerIpcHandlers(
                 settings.toolApproval === 'policy'
                   ? 'policy'
                   : undefined,
-              requestId,
+              requestId:
+                origin === 'schedule' ? taskId : requestId,
               conversationId: runtimeConversationId
             },
             controller.signal,
@@ -1417,7 +1463,10 @@ export function registerIpcHandlers(
           )
         } finally {
           if (!controller.signal.aborted) {
-            assistantDatabase.updateTaskStatus(requestId, 'running')
+            assistantDatabase.updateTaskStatus(taskId, 'running')
+            if (origin === 'schedule') {
+              publishConversationChange()
+            }
           }
         }
       }
@@ -1445,14 +1494,21 @@ export function registerIpcHandlers(
         agentRuntimeSelected ? undefined : authorize
       )) {
         if (agentEvent.type === 'model-usage') {
-          persistModelUsage(agentEvent)
+          persistModelUsage({
+            ...agentEvent,
+            requestId: taskId,
+            callId:
+              origin === 'schedule'
+                ? `${requestId}:${agentEvent.callId}`
+                : agentEvent.callId
+          })
           continue
         }
         const taskEvent =
           agentEvent.type === 'generated-image'
             ? persistGeneratedImage(agentEvent, {
                 projectId: schedule.projectId,
-                taskId: requestId,
+              taskId,
                 title: schedule.title
               })
             : agentEvent
@@ -1553,15 +1609,35 @@ export function registerIpcHandlers(
           })
         }
       }
-      if (origin !== 'channel' && output.trim()) {
+      if (
+        input.origin === 'schedule' &&
+        (output.trim() || artifactIds.length > 0)
+      ) {
+        assistantDatabase.appendConversationMessage({
+          conversationId: input.schedule.conversationId,
+          role: 'assistant',
+          content:
+            output.trim() ||
+            '任务已完成，独立成果已保存到成果工作栏。',
+          status: '定时任务',
+          ...(artifactIds.length > 0 ? { artifactIds } : {}),
+          task: {
+            id: taskId,
+            title: schedule.title
+          }
+        })
+        publishConversationChange()
+      } else if (origin === 'delegation' && output.trim()) {
         assistantDatabase.createTextArtifact({
           projectId: schedule.projectId,
-          taskId: requestId,
+          taskId,
           title: schedule.title,
           content: output
         })
       }
-      assistantDatabase.updateTaskStatus(requestId, 'completed')
+      if (origin !== 'schedule') {
+        assistantDatabase.updateTaskStatus(taskId, 'completed')
+      }
       showDesktopNotificationWhenUnfocused(window, {
         title:
           origin === 'channel'
@@ -1571,7 +1647,7 @@ export function registerIpcHandlers(
           origin === 'channel'
             ? '结果已回复，并保存到远程通道会话。'
             : origin === 'schedule'
-              ? '结果已保存到 GoodBuddy 成果工作栏。'
+              ? '结果已写入关联对话。'
               : '结果已保存到成果工作栏和委派记录。'
       })
       return {
@@ -1586,10 +1662,24 @@ export function registerIpcHandlers(
       eventBuffer.flush()
       const message = safeRuntimeError(error, '定时任务执行失败')
       assistantDatabase.updateTaskStatus(
-        requestId,
+        taskId,
         controller.signal.aborted ? 'cancelled' : 'failed',
         message
       )
+      if (input.origin === 'schedule') {
+        assistantDatabase.appendConversationMessage({
+          conversationId: input.schedule.conversationId,
+          role: 'assistant',
+          content: message,
+          state: 'error',
+          status: '定时任务失败',
+          task: {
+            id: taskId,
+            title: schedule.title
+          }
+        })
+        publishConversationChange()
+      }
       showDesktopNotificationWhenUnfocused(window, {
         title:
           origin === 'channel'
@@ -1720,34 +1810,71 @@ export function registerIpcHandlers(
     yield { requestId: request.requestId, type: 'done' }
   }
 
-  let scheduleTickRunning = false
-  const runDueSchedules = async (): Promise<void> => {
-    if (scheduleTickRunning || shuttingDown || executionPaused) {
+  const maximumConcurrentScheduleRuns = 4
+  let scheduleClaimRunning = false
+  let activeScheduleRuns = 0
+  const launchDueSchedules = (): void => {
+    if (
+      scheduleClaimRunning ||
+      shuttingDown ||
+      executionPaused ||
+      activeScheduleRuns >= maximumConcurrentScheduleRuns
+    ) {
       return
     }
-    scheduleTickRunning = true
+    scheduleClaimRunning = true
     try {
-      for (const claim of assistantDatabase.claimDueSchedules()) {
-        const result = await trackExecution(
-          executeSchedule(claim.schedule)
-        )
-        assistantDatabase.completeScheduleRun(
-          claim.runId,
-          result.status,
-          assistantDatabase.getScheduleRunTaskId(claim.runId)
-        )
-      }
-      if (!shuttingDown && !executionPaused) {
-        await trackExecution(heartbeatService.processDue())
+      const claims = assistantDatabase.claimDueSchedules(
+        new Date(),
+        maximumConcurrentScheduleRuns - activeScheduleRuns
+      )
+      activeScheduleRuns += claims.length
+      for (const claim of claims) {
+        const execution = (async () => {
+          const result = await executeTaskWork({
+            origin: 'schedule',
+            schedule: claim.schedule,
+            scheduleRunId: claim.runId
+          })
+          assistantDatabase.completeScheduleRun(
+            claim.runId,
+            result.status
+          )
+          publishConversationChange()
+        })()
+        void trackExecution(execution)
+          .catch(() => undefined)
+          .finally(() => {
+            activeScheduleRuns -= 1
+            launchDueSchedules()
+          })
       }
     } finally {
-      scheduleTickRunning = false
+      scheduleClaimRunning = false
     }
   }
-  const scheduleInterval = setInterval(() => {
-    void trackExecution(runDueSchedules()).catch(() => undefined)
-  }, 30_000)
-  void trackExecution(runDueSchedules()).catch(() => undefined)
+  let heartbeatTickRunning = false
+  const runDueHeartbeats = async (): Promise<void> => {
+    if (
+      heartbeatTickRunning ||
+      shuttingDown ||
+      executionPaused
+    ) {
+      return
+    }
+    heartbeatTickRunning = true
+    try {
+      await heartbeatService.processDue()
+    } finally {
+      heartbeatTickRunning = false
+    }
+  }
+  const runDueWork = (): void => {
+    launchDueSchedules()
+    void trackExecution(runDueHeartbeats()).catch(() => undefined)
+  }
+  const scheduleInterval = setInterval(runDueWork, 30_000)
+  runDueWork()
   const delegationEndpoint =
     process.env.GOODBUDDY_DELEGATION_ENDPOINT?.trim()
   const delegationToken =
@@ -1768,18 +1895,23 @@ export function registerIpcHandlers(
               assistantDatabase.markDelegationDelivered(taskId)
           },
           onTask: (task) =>
-            trackExecution(executeSchedule({
-              id: task.id,
-              projectId: task.projectId,
-              title: task.title,
-              prompt: task.prompt,
-              workMode: task.workMode,
-              recurrence: 'once',
-              nextRunAt: new Date().toISOString(),
-              enabled: true,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            }, 'delegation'))
+            trackExecution(
+              executeTaskWork({
+                origin: 'delegation',
+                schedule: {
+                  id: task.id,
+                  projectId: task.projectId,
+                  title: task.title,
+                  prompt: task.prompt,
+                  workMode: task.workMode,
+                  recurrence: 'once',
+                  nextRunAt: new Date().toISOString(),
+                  enabled: true,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                }
+              })
+            )
         })
       : undefined
   remoteDelegation?.start()
@@ -1927,7 +2059,8 @@ export function registerIpcHandlers(
       title: `${channelLabel}远程请求`,
       instructions: executionPrompt,
       workMode: parsed.workMode,
-      origin: 'delegation'
+      origin: 'delegation',
+      visible: false
     })
     publishRemoteActivity({
       requestId: remoteTaskId,
@@ -2021,8 +2154,9 @@ export function registerIpcHandlers(
 
     const now = new Date().toISOString()
     const result = await trackExecution(
-      executeSchedule(
-        {
+      executeTaskWork({
+        origin: 'channel',
+        schedule: {
           id: randomUUID(),
           projectId: project.id,
           title: `${channelLabel}远程请求`,
@@ -2034,9 +2168,8 @@ export function registerIpcHandlers(
           createdAt: now,
           updatedAt: now
         },
-        'channel',
-        signal,
-        {
+        externalSignal: signal,
+        remoteContext: {
           channel,
           channelLabel,
           senderDisplay,
@@ -2053,7 +2186,7 @@ export function registerIpcHandlers(
             message.text
           )
         }
-      )
+      })
     )
     const responseText =
       result.output?.trim() ||
@@ -2408,7 +2541,8 @@ export function registerIpcHandlers(
         conversationId: request.conversationId,
         title: parsedRequest.prompt.slice(0, 120),
         instructions: parsedRequest.prompt,
-        workMode: request.workMode ?? 'ask'
+        workMode: request.workMode ?? 'ask',
+        visible: false
       })
     } catch (error) {
       knowledgeGateway?.revoke(knowledgeCapabilityToken)
@@ -4255,12 +4389,14 @@ export function registerIpcHandlers(
         value.scheduleId,
         value.enabled
       )
+      publishConversationChange()
     }
   )
 
   registerHandler(ipcChannels.schedulesRemove, (event, input: unknown) => {
     assertTrustedSender(event, window)
     assistantDatabase.removeSchedule(assistantIdSchema.parse(input))
+    publishConversationChange()
   })
 
   registerHandler(ipcChannels.schedulesRunNow, (event, input: unknown) => {
@@ -4271,15 +4407,19 @@ export function registerIpcHandlers(
     const claim = assistantDatabase.claimScheduleNow(
       assistantIdSchema.parse(input)
     )
-    void trackExecution(executeSchedule(claim.schedule))
-      .then((result) => {
-        assistantDatabase.completeScheduleRun(
-          claim.runId,
-          result.status,
-          assistantDatabase.getScheduleRunTaskId(claim.runId)
-        )
+    const execution = (async () => {
+      const result = await executeTaskWork({
+        origin: 'schedule',
+        schedule: claim.schedule,
+        scheduleRunId: claim.runId
       })
-      .catch(() => undefined)
+      assistantDatabase.completeScheduleRun(
+        claim.runId,
+        result.status
+      )
+      publishConversationChange()
+    })()
+    void trackExecution(execution).catch(() => undefined)
   })
 
   registerHandler(ipcChannels.heartbeatsList, (event, input: unknown) => {

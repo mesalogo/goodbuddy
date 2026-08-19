@@ -2,12 +2,14 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
   ExternalLink,
   FileText,
   FolderTree,
-  Hourglass,
+  ListTodo,
   Monitor,
   PanelRightClose,
+  Plus,
   RefreshCw,
   ShieldAlert,
   Upload,
@@ -18,7 +20,7 @@ import { useTranslation } from 'react-i18next'
 import type {
   AssistantMemory,
   AssistantSchedule,
-  ScheduleCreateInput,
+  AssistantTask,
   WorkspaceChanges,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview
@@ -31,6 +33,11 @@ import type {
   KnowledgeLibrary
 } from '../../shared/contracts'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
+import { SegmentedControl } from './WorkspacePrimitives'
+import {
+  findTaskSchedule,
+  TaskScheduleActions
+} from './TaskScheduleActions'
 
 export type AssistantSidebarTab =
   | 'tasks'
@@ -65,13 +72,17 @@ type RightAssistantSidebarProps = {
   enabledLibraries: KnowledgeLibrary[]
   memories: AssistantMemory[]
   schedules: AssistantSchedule[]
+  tasks: AssistantTask[]
+  conversationTitles: ReadonlyMap<string, string>
+  projectNames: ReadonlyMap<string, string>
+  selectedTaskId?: string
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
   browserState?: BrowserLiveState
   onClose: () => void
   onInteractBrowser: () => Promise<void>
   onStopBrowser: () => Promise<void>
-  onCreateSchedule: (input: ScheduleCreateInput) => Promise<void>
+  onCreateCustomTask: () => void
   onImportArtifacts: () => Promise<void>
   onLoadArtifact: (artifactId: string) => Promise<void>
   onRemoveAttachment: (attachmentId: string) => void
@@ -90,6 +101,11 @@ type RightAssistantSidebarProps = {
     decision: ApprovalDecision
   ) => void
   onRunSchedule: (scheduleId: string) => Promise<void>
+  onSetScheduleEnabled: (
+    scheduleId: string,
+    enabled: boolean
+  ) => Promise<void>
+  onOpenTask: (task: AssistantTask) => void
   onTabChange: (tab: AssistantSidebarTab) => void
 }
 
@@ -133,13 +149,17 @@ export function RightAssistantSidebar({
   enabledLibraries,
   memories,
   schedules,
+  tasks,
+  conversationTitles,
+  projectNames,
+  selectedTaskId,
   workspaceChanges,
   workspaceProjectId,
   browserState,
   onClose,
   onInteractBrowser,
   onStopBrowser,
-  onCreateSchedule,
+  onCreateCustomTask,
   onImportArtifacts,
   onLoadArtifact,
   onRemoveAttachment,
@@ -150,6 +170,8 @@ export function RightAssistantSidebar({
   onRemoveSchedule,
   onRespondApproval,
   onRunSchedule,
+  onSetScheduleEnabled,
+  onOpenTask,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
   const { i18n, t } = useTranslation('workspace')
@@ -203,12 +225,9 @@ export function RightAssistantSidebar({
   >()
   const workspacePreviewRequest = useRef(0)
   const [workspaceRefreshVersion, setWorkspaceRefreshVersion] = useState(0)
-  const [scheduleTitle, setScheduleTitle] = useState('')
-  const [schedulePrompt, setSchedulePrompt] = useState('')
-  const [scheduleTime, setScheduleTime] = useState('')
-  const [scheduleRecurrence, setScheduleRecurrence] = useState<
-    ScheduleCreateInput['recurrence']
-  >('once')
+  const [taskFilter, setTaskFilter] = useState<
+    'attention' | 'active' | 'paused' | 'finished'
+  >('active')
   const [actionError, setActionError] = useState('')
   const activeMemories = memories.filter(
     (memory) => memory.status === 'confirmed'
@@ -222,6 +241,34 @@ export function RightAssistantSidebar({
   const sidebarWidthLimits = getSidebarWidthLimits(viewportWidth)
   const canResize =
     open && viewportWidth >= compactSidebarBreakpoint
+  const topLevelTasks = useMemo(
+    () => tasks.filter((task) => !task.parentTaskId),
+    [tasks]
+  )
+  const filteredTasks = useMemo(
+    () =>
+      topLevelTasks.filter((task) => {
+        if (taskFilter === 'attention') {
+          return (
+            task.status === 'waiting_approval' ||
+            task.status === 'failed' ||
+            task.status === 'interrupted'
+          )
+        }
+        if (taskFilter === 'active') {
+          return (
+            task.status === 'idle' ||
+            task.status === 'queued' ||
+            task.status === 'running'
+          )
+        }
+        if (taskFilter === 'paused') {
+          return task.status === 'paused'
+        }
+        return task.status === 'completed' || task.status === 'cancelled'
+      }),
+    [taskFilter, topLevelTasks]
+  )
 
   useEffect(() => {
     const handleViewportResize = (): void => {
@@ -502,9 +549,19 @@ export function RightAssistantSidebar({
         ) : null}
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
-            <p className="assistant-sidebar__section-description">
-              {t('sidebar.tasks.description')}
-            </p>
+            <div className="task-center__heading">
+              <p className="assistant-sidebar__section-description">
+                {t('sidebar.tasks.description')}
+              </p>
+              <button
+                className="primary-button"
+                onClick={onCreateCustomTask}
+                type="button"
+              >
+                <Plus aria-hidden="true" size={13} />
+                {t('sidebar.tasks.createCustom')}
+              </button>
+            </div>
             <h3>
               <ShieldAlert size={15} />
               {t('sidebar.tasks.approvalsTitle')}
@@ -547,132 +604,135 @@ export function RightAssistantSidebar({
             )}
 
             <h3>
-              <Hourglass size={15} />
-              {t('sidebar.tasks.automationTitle')}
+              <ListTodo size={15} />
+              {t('sidebar.tasks.taskIndexTitle')}
             </h3>
-            <div className="assistant-sidebar__schedule-form">
-              <input
-                aria-label={t(
-                  'sidebar.tasks.schedule.titleAriaLabel'
-                )}
-                maxLength={120}
-                onChange={(event) => setScheduleTitle(event.target.value)}
-                placeholder={t(
-                  'sidebar.tasks.schedule.titlePlaceholder'
-                )}
-                value={scheduleTitle}
+            <div className="task-center__filters">
+              <SegmentedControl
+                ariaLabel={t('sidebar.tasks.filters.ariaLabel')}
+                onChange={setTaskFilter}
+                options={[
+                  {
+                    value: 'attention',
+                    label: t('sidebar.tasks.filters.attention')
+                  },
+                  {
+                    value: 'active',
+                    label: t('sidebar.tasks.filters.active')
+                  },
+                  {
+                    value: 'paused',
+                    label: t('sidebar.tasks.filters.paused')
+                  },
+                  {
+                    value: 'finished',
+                    label: t('sidebar.tasks.filters.finished')
+                  }
+                ]}
+                value={taskFilter}
               />
-              <textarea
-                aria-label={t(
-                  'sidebar.tasks.schedule.promptAriaLabel'
-                )}
-                maxLength={100_000}
-                onChange={(event) => setSchedulePrompt(event.target.value)}
-                placeholder={t(
-                  'sidebar.tasks.schedule.promptPlaceholder'
-                )}
-                rows={3}
-                value={schedulePrompt}
-              />
-              <input
-                aria-label={t(
-                  'sidebar.tasks.schedule.timeAriaLabel'
-                )}
-                onChange={(event) => setScheduleTime(event.target.value)}
-                type="datetime-local"
-                value={scheduleTime}
-              />
-              <select
-                aria-label={t(
-                  'sidebar.tasks.schedule.recurrenceAriaLabel'
-                )}
-                onChange={(event) =>
-                  setScheduleRecurrence(
-                    event.target.value as ScheduleCreateInput['recurrence']
-                  )
-                }
-                value={scheduleRecurrence}
-              >
-                <option value="once">
-                  {t('sidebar.tasks.schedule.recurrence.once')}
-                </option>
-                <option value="daily">
-                  {t('sidebar.tasks.schedule.recurrence.daily')}
-                </option>
-                <option value="weekly">
-                  {t('sidebar.tasks.schedule.recurrence.weekly')}
-                </option>
-              </select>
-              <button
-                className="primary-button"
-                disabled={
-                  !scheduleTitle.trim() ||
-                  !schedulePrompt.trim() ||
-                  !scheduleTime
-                }
-                onClick={() => {
-                  runAction(
-                    () =>
-                      onCreateSchedule({
-                        title: scheduleTitle.trim(),
-                        prompt: schedulePrompt.trim(),
-                        workMode: 'ask',
-                        recurrence: scheduleRecurrence,
-                        nextRunAt: new Date(scheduleTime).toISOString()
-                      }),
-                    t('sidebar.errors.addSchedule'),
-                    () => {
-                      setScheduleTitle('')
-                      setSchedulePrompt('')
-                      setScheduleTime('')
-                    }
-                  )
-                }}
-                type="button"
-              >
-                {t('sidebar.tasks.schedule.add')}
-              </button>
             </div>
-            {schedules.map((schedule) => (
-              <article
-                className="assistant-sidebar__schedule"
-                key={schedule.id}
-              >
-                <span>
-                  <strong>{schedule.title}</strong>
-                  <small>
-                    {new Date(schedule.nextRunAt).toLocaleString(locale)} ·{' '}
-                    {t(
-                      `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`
+            {filteredTasks.length === 0 ? (
+              <p className="assistant-sidebar__empty">
+                {topLevelTasks.length === 0
+                  ? t('sidebar.tasks.empty')
+                  : t('sidebar.tasks.noFilterResults')}
+              </p>
+            ) : (
+              filteredTasks.map((task) => {
+                const schedule = findTaskSchedule(task, schedules)
+                const conversationTitle = task.conversationId
+                  ? conversationTitles.get(task.conversationId)
+                  : undefined
+                const projectName = task.projectId
+                  ? projectNames.get(task.projectId)
+                  : undefined
+                return (
+                  <article
+                    className={
+                      selectedTaskId === task.id
+                        ? 'task-center__item task-center__item--selected'
+                        : 'task-center__item'
+                    }
+                    key={task.id}
+                  >
+                    <button
+                      className="task-center__item-main"
+                      onClick={() => onOpenTask(task)}
+                      type="button"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`task-status-dot task-status-dot--${task.status}`}
+                      />
+                      <span>
+                        <strong>{task.title}</strong>
+                        <small>
+                          {conversationTitle ??
+                            t('sidebar.tasks.conversationUnavailable')}
+                        </small>
+                      </span>
+                      {task.status === 'failed' ? (
+                        <CircleAlert aria-hidden="true" size={14} />
+                      ) : (
+                        <ChevronRight aria-hidden="true" size={14} />
+                      )}
+                    </button>
+                    <div className="task-center__metadata">
+                      <span>
+                        {projectName
+                          ? t('sidebar.tasks.projectScope', {
+                              project: projectName
+                            })
+                          : t('sidebar.tasks.globalScope')}
+                      </span>
+                      <span>
+                        {schedule
+                          ? t(`task.mode.${schedule.workMode}`)
+                          : task.workMode
+                            ? t(`task.mode.${task.workMode}`)
+                            : t('task.mode.unavailable')}
+                      </span>
+                      <span>{t(`task.status.${task.status}`)}</span>
+                    </div>
+                    <p>
+                      {task.error ??
+                        (task.completedAt
+                          ? t('task.completedAt', {
+                              time: new Date(
+                                task.completedAt
+                              ).toLocaleString(locale)
+                            })
+                          : task.startedAt
+                            ? t('sidebar.tasks.startedAt', {
+                                time: new Date(
+                                  task.startedAt
+                                ).toLocaleString(locale)
+                              })
+                            : schedule
+                              ? t('sidebar.tasks.nextRunAt', {
+                                  time: new Date(
+                                    schedule.nextRunAt
+                                  ).toLocaleString(locale)
+                                })
+                              : t('sidebar.tasks.notStarted'))}
+                    </p>
+                    {schedule && (
+                      <div className="task-center__actions">
+                        <TaskScheduleActions
+                          onError={setActionError}
+                          onRemoveSchedule={onRemoveSchedule}
+                          onRunSchedule={onRunSchedule}
+                          onSetScheduleEnabled={onSetScheduleEnabled}
+                          schedule={schedule}
+                          taskTitle={task.title}
+                        />
+                      </div>
                     )}
-                  </small>
-                </span>
-                <div>
-                  <button
-                    onClick={() =>
-                      runAction(
-                        () => onRunSchedule(schedule.id),
-                        t('sidebar.errors.runSchedule')
-                      )
-                    }
-                    type="button"
-                  >
-                    {t('sidebar.tasks.schedule.runNow')}
-                  </button>
-                  <button
-                    onClick={() =>
-                      runAction(
-                        () => onRemoveSchedule(schedule.id),
-                        t('sidebar.errors.deleteSchedule')
-                      )
-                    }
-                    type="button"
-                  >
-                    {t('sidebar.tasks.schedule.delete')}
-                  </button>
-                </div>
-              </article>
-            ))}
+                  </article>
+                )
+              })
+            )}
           </section>
         )}
 

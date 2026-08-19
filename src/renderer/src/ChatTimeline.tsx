@@ -3,6 +3,7 @@ import {
   Download,
   FileText,
   Library,
+  ListTodo,
   ShieldCheck,
   TerminalSquare,
   UserRound
@@ -64,6 +65,7 @@ export type Message = {
   sourceReferences?: KnowledgeSearchReference[]
   knowledgeRetrieval?: KnowledgeRetrievalStatus
   artifactIds?: string[]
+  task?: ConversationMessage['task']
   attachments?: ConversationAttachment[]
 }
 
@@ -374,6 +376,17 @@ function ChatMessageRowView({
           <strong>
             {message.role === 'assistant' ? 'GoodBuddy' : t('chat.user')}
           </strong>
+          {message.task && (
+            <span
+              aria-label={t('chat.taskResult', {
+                title: message.task.title
+              })}
+              className="message__task"
+            >
+              <ListTodo aria-hidden="true" size={12} />
+              {message.task.title}
+            </span>
+          )}
           <span>{formatTime(message.createdAt, locale)}</span>
         </div>
         {message.attachments && message.attachments.length > 0 && (

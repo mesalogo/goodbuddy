@@ -3,7 +3,8 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   conversationSnapshotSchema,
   expertCreateSchema,
-  normalizeInteractiveWorkMode
+  normalizeInteractiveWorkMode,
+  scheduleCreateSchema
 } from '../../shared/assistant-contracts'
 import type {
   AssistantArtifact,
@@ -89,6 +90,7 @@ type TaskRow = {
   id: string
   project_id: string | null
   conversation_id: string | null
+  schedule_id: string | null
   parent_task_id: string | null
   expert_id: string | null
   routing_mode: AssistantTask['routingMode'] | null
@@ -96,6 +98,7 @@ type TaskRow = {
   instructions: string
   origin: AssistantTask['origin']
   status: AssistantTask['status']
+  work_mode: LegacyWorkMode
   progress: number | null
   created_at: string
   started_at: string | null
@@ -182,6 +185,7 @@ type MessageMetadata = {
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
   knowledgeRetrieval?: ConversationSnapshot['messages'][number]['knowledgeRetrieval']
   artifactIds?: string[]
+  task?: ConversationSnapshot['messages'][number]['task']
   attachments?: ConversationSnapshot['messages'][number]['attachments']
 }
 
@@ -240,6 +244,11 @@ type ScheduleRow = {
   last_run_at: string | null
   created_at: string
   updated_at: string
+}
+
+type ScheduleWithTaskRow = ScheduleRow & {
+  task_id: string
+  conversation_id: string
 }
 
 export type ClaimedSchedule = {
@@ -407,13 +416,18 @@ function toTask(row: TaskRow): AssistantTask {
     id: row.id,
     projectId: row.project_id ?? undefined,
     conversationId: row.conversation_id ?? undefined,
+    scheduleId: row.schedule_id ?? undefined,
     parentTaskId: row.parent_task_id ?? undefined,
     expertId: row.expert_id ?? undefined,
     routingMode: row.routing_mode ?? undefined,
     title: row.title,
     instructions: row.instructions,
     origin: row.origin,
-    status: row.status,
+    status:
+      row.origin === 'schedule' && row.status === 'queued'
+        ? 'idle'
+        : row.status,
+    workMode: normalizeInteractiveWorkMode(row.work_mode),
     progress: row.progress ?? undefined,
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
@@ -507,21 +521,30 @@ function toMemory(row: MemoryRow): AssistantMemory {
   }
 }
 
-function toSchedule(row: ScheduleRow): AssistantSchedule {
+function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
   const template = JSON.parse(row.task_template_json) as {
     title: string
     prompt: string
     workMode: LegacyWorkMode
+    runtimeSelection?: unknown
   }
+  const runtimeSelection = agentRuntimeSelectionSchema.safeParse(
+    template.runtimeSelection
+  )
   const recurrence = JSON.parse(row.recurrence_json) as {
     type: AssistantSchedule['recurrence']
   }
   return {
     id: row.id,
     projectId: row.project_id ?? undefined,
+    taskId: row.task_id,
+    conversationId: row.conversation_id,
     title: template.title,
     prompt: template.prompt,
-    workMode: 'ask',
+    workMode: normalizeInteractiveWorkMode(template.workMode),
+    runtimeSelection: runtimeSelection.success
+      ? runtimeSelection.data
+      : undefined,
     recurrence: recurrence.type,
     nextRunAt: row.next_run_at,
     enabled: row.enabled === 1,
@@ -858,6 +881,7 @@ function toConversationSnapshot(
         sourceReferences: metadata.sourceReferences,
         knowledgeRetrieval: metadata.knowledgeRetrieval,
         artifactIds: metadata.artifactIds,
+        task: metadata.task,
         attachments: metadata.attachments
       }
     })
@@ -879,6 +903,7 @@ function serializeConversationMessageMetadata(
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
     artifactIds: message.artifactIds,
+    task: message.task,
     attachments: message.attachments
   })
 }
@@ -1324,7 +1349,13 @@ export class AssistantDatabase {
           `SELECT COUNT(*) AS count FROM tasks
            WHERE project_id = ?
              AND visible = 1
-             AND status IN ('queued', 'running', 'waiting_approval', 'paused')`
+             AND (
+               status IN ('running', 'waiting_approval')
+               OR (
+                 origin != 'schedule'
+                 AND status IN ('queued', 'paused')
+               )
+             )`
         )
         .get(projectId) as { count: number }
       if (activeTaskCount.count > 0) {
@@ -1649,7 +1680,8 @@ export class AssistantDatabase {
       `UPDATE conversations
        SET project_id = ?, runtime_selection_json = ?,
            knowledge_retrieval_mode = ?, context_state_json = ?,
-           title = ?, status = 'active', updated_at = ?
+           title = ?, status = 'active',
+           updated_at = MAX(updated_at, ?)
        WHERE id = ? AND channel IS NULL`
     )
     const findMessage = database.prepare(
@@ -1777,24 +1809,68 @@ export class AssistantDatabase {
 
   deleteLocalConversation(conversationId: string): boolean {
     const database = this.requireDatabase()
-    const conversation = database
-      .prepare('SELECT channel FROM conversations WHERE id = ?')
-      .get(conversationId) as
-      | { channel: ProjectChannel | null }
-      | undefined
-    if (!conversation) {
-      return false
-    }
-    if (conversation.channel) {
-      throw new Error('远程对话不能作为本地对话删除')
-    }
-    return (
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const conversation = database
+        .prepare('SELECT channel FROM conversations WHERE id = ?')
+        .get(conversationId) as
+        | { channel: ProjectChannel | null }
+        | undefined
+      if (!conversation) {
+        database.exec('COMMIT')
+        return false
+      }
+      if (conversation.channel) {
+        throw new Error('远程对话不能作为本地对话删除')
+      }
+      const activeTask = database
+        .prepare(
+          `SELECT 1
+           FROM tasks
+           WHERE conversation_id = ?
+             AND status IN ('running', 'waiting_approval')
+           LIMIT 1`
+        )
+        .get(conversationId)
+      if (activeTask) {
+        throw new Error('对话仍有正在运行的任务，请先停止任务')
+      }
       database
+        .prepare(
+          `DELETE FROM notifications
+           WHERE task_id IN (
+             SELECT id FROM tasks WHERE conversation_id = ?
+           ) OR schedule_id IN (
+             SELECT schedule_id
+             FROM tasks
+             WHERE conversation_id = ? AND schedule_id IS NOT NULL
+           )`
+        )
+        .run(conversationId, conversationId)
+      database
+        .prepare(
+          `DELETE FROM schedules
+           WHERE id IN (
+             SELECT schedule_id
+             FROM tasks
+             WHERE conversation_id = ? AND schedule_id IS NOT NULL
+           )`
+        )
+        .run(conversationId)
+      database
+        .prepare('DELETE FROM tasks WHERE conversation_id = ?')
+        .run(conversationId)
+      const deleted = database
         .prepare(
           'DELETE FROM conversations WHERE id = ? AND channel IS NULL'
         )
         .run(conversationId).changes === 1
-    )
+      database.exec('COMMIT')
+      return deleted
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   getOrCreateRemoteConversation(input: {
@@ -1873,37 +1949,50 @@ export class AssistantDatabase {
     return this.getConversation(id)
   }
 
-  appendRemoteConversationMessage(input: {
+  appendConversationMessage(input: {
     conversationId: string
     role: 'user' | 'assistant'
     content: string
+    state?: 'complete' | 'error'
     status?: string
     attachments?: ConversationSnapshot['messages'][number]['attachments']
     artifactIds?: string[]
+    task?: ConversationSnapshot['messages'][number]['task']
   }): void {
     const database = this.requireDatabase()
     const now = Date.now()
-    const sequence = database
-      .prepare(
-        `SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
-         FROM messages
-         WHERE conversation_id = ?`
-      )
-      .get(input.conversationId) as { sequence: number }
     database.exec('BEGIN IMMEDIATE')
     try {
+      const conversation = database
+        .prepare(
+          `SELECT id
+           FROM conversations
+           WHERE id = ? AND status = 'active'`
+        )
+        .get(input.conversationId)
+      if (!conversation) {
+        throw new Error('对话不存在或不可用')
+      }
+      const sequence = database
+        .prepare(
+          `SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
+           FROM messages
+           WHERE conversation_id = ?`
+        )
+        .get(input.conversationId) as { sequence: number }
       database
         .prepare(
           `INSERT INTO messages
             (id, conversation_id, request_id, role, content, state,
              sequence, metadata_json, created_at)
-           VALUES (?, ?, NULL, ?, ?, 'complete', ?, ?, ?)`
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           randomUUID(),
           input.conversationId,
           input.role,
           input.content,
+          input.state ?? 'complete',
           sequence.sequence,
           JSON.stringify({
             createdAt: now,
@@ -1913,10 +2002,23 @@ export class AssistantDatabase {
               : {}),
             ...(input.artifactIds?.length
               ? { artifactIds: input.artifactIds }
-              : {})
+              : {}),
+            ...(input.task ? { task: input.task } : {})
           }),
           new Date(now).toISOString()
         )
+      database
+        .prepare(
+          `DELETE FROM messages
+           WHERE id IN (
+             SELECT id
+             FROM messages
+             WHERE conversation_id = ?
+             ORDER BY sequence DESC
+             LIMIT -1 OFFSET 500
+           )`
+        )
+        .run(input.conversationId)
       database
         .prepare(
           'UPDATE conversations SET updated_at = ? WHERE id = ?'
@@ -1927,6 +2029,17 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+  }
+
+  appendRemoteConversationMessage(input: {
+    conversationId: string
+    role: 'user' | 'assistant'
+    content: string
+    status?: string
+    attachments?: ConversationSnapshot['messages'][number]['attachments']
+    artifactIds?: string[]
+  }): void {
+    this.appendConversationMessage(input)
   }
 
   claimChannelEvent(
@@ -2971,12 +3084,14 @@ export class AssistantDatabase {
     status: AssistantTask['status'],
     error?: string
   ): void {
+    const storedStatus = status === 'idle' ? 'queued' : status
     const terminal = [
       'completed',
       'failed',
       'cancelled',
       'interrupted'
-    ].includes(status)
+    ].includes(storedStatus)
+    const now = new Date().toISOString()
     const result = this.requireDatabase()
       .prepare(
         `UPDATE tasks
@@ -2985,16 +3100,22 @@ export class AssistantDatabase {
                WHEN ? = 'running' AND started_at IS NULL THEN ?
                ELSE started_at
              END,
-             completed_at = CASE WHEN ? THEN ? ELSE completed_at END
+             completed_at = CASE
+               WHEN ? THEN ?
+               WHEN ? IN ('queued', 'running', 'waiting_approval', 'paused')
+               THEN NULL
+               ELSE completed_at
+             END
          WHERE id = ?`
       )
       .run(
-        status,
+        storedStatus,
         error ?? null,
-        status,
-        new Date().toISOString(),
+        storedStatus,
+        now,
         terminal ? 1 : 0,
-        new Date().toISOString(),
+        now,
+        storedStatus,
         taskId
       )
     if (result.changes !== 1) {
@@ -3400,123 +3521,350 @@ export class AssistantDatabase {
     const rows = projectId
       ? this.requireDatabase()
           .prepare(
-            `SELECT * FROM schedules
-             WHERE project_id = ?
-             ORDER BY next_run_at`
+            `SELECT s.*, t.id AS task_id,
+                    t.conversation_id AS conversation_id
+             FROM schedules s
+             INNER JOIN tasks t ON t.schedule_id = s.id
+             WHERE s.project_id = ?
+             ORDER BY s.next_run_at`
           )
           .all(projectId)
       : this.requireDatabase()
-          .prepare('SELECT * FROM schedules ORDER BY next_run_at')
+          .prepare(
+            `SELECT s.*, t.id AS task_id,
+                    t.conversation_id AS conversation_id
+             FROM schedules s
+             INNER JOIN tasks t ON t.schedule_id = s.id
+             ORDER BY s.next_run_at`
+          )
           .all()
-    return (rows as ScheduleRow[]).map(toSchedule)
+    return (rows as ScheduleWithTaskRow[]).map(toSchedule)
   }
 
   createSchedule(input: ScheduleCreateInput): AssistantSchedule {
-    const id = randomUUID()
+    const parsed = scheduleCreateSchema.parse(input)
+    const database = this.requireDatabase()
+    const scheduleId = randomUUID()
+    const taskId = randomUUID()
     const now = new Date().toISOString()
-    this.requireDatabase()
-      .prepare(
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      let projectId = parsed.projectId ?? null
+      let conversationId = parsed.conversationId
+      let runtimeSelectionJson: string | null = null
+      if (conversationId) {
+        const conversation = database
+          .prepare(
+            `SELECT c.id, c.project_id, c.runtime_selection_json
+             FROM conversations c
+             LEFT JOIN projects p ON p.id = c.project_id
+             WHERE c.id = ?
+               AND c.status = 'active'
+               AND c.channel IS NULL
+               AND (p.id IS NULL OR p.status = 'active')`
+          )
+          .get(conversationId) as
+          | {
+              id: string
+              project_id: string | null
+              runtime_selection_json: string | null
+            }
+          | undefined
+        if (!conversation) {
+          throw new Error('所选对话不存在或不可用于任务')
+        }
+        if (
+          projectId &&
+          projectId !== conversation.project_id
+        ) {
+          throw new Error('任务项目与所选对话不一致')
+        }
+        projectId = conversation.project_id
+        runtimeSelectionJson = conversation.runtime_selection_json
+      } else {
+        if (projectId) {
+          const project = database
+            .prepare(
+              `SELECT runtime_selection_json
+               FROM projects
+               WHERE id = ? AND status = 'active' AND kind = 'user'`
+            )
+            .get(projectId) as
+            | { runtime_selection_json: string | null }
+            | undefined
+          if (!project) {
+            throw new Error('任务项目不存在或不可用')
+          }
+          runtimeSelectionJson = project.runtime_selection_json
+        }
+        conversationId = randomUUID()
+        database
+          .prepare(
+            `INSERT INTO conversations
+              (id, project_id, runtime_selection_json, work_mode, title,
+               status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
+          )
+          .run(
+            conversationId,
+            projectId,
+            runtimeSelectionJson,
+            parsed.workMode,
+            parsed.title,
+            now,
+            now
+          )
+      }
+      database
+        .prepare(
         `INSERT INTO schedules
           (id, project_id, task_template_json, timezone, recurrence_json,
            next_run_at, missed_run_policy, enabled, last_run_at,
            created_at, updated_at)
          VALUES (?, ?, ?, 'UTC', ?, ?, 'run_once', 1, NULL, ?, ?)`
-      )
-      .run(
-        id,
-        input.projectId ?? null,
-        JSON.stringify({
-          title: input.title,
-          prompt: input.prompt,
-          workMode: input.workMode
-        }),
-        JSON.stringify({ type: input.recurrence }),
-        input.nextRunAt,
-        now,
-        now
-      )
-    return this.getSchedule(id)
+        )
+        .run(
+          scheduleId,
+          projectId,
+          JSON.stringify({
+            title: parsed.title,
+            prompt: parsed.prompt,
+            workMode: parsed.workMode,
+            runtimeSelection:
+              parseRuntimeSelection(runtimeSelectionJson)
+          }),
+          JSON.stringify({ type: parsed.recurrence }),
+          parsed.nextRunAt,
+          now,
+          now
+        )
+      database
+        .prepare(
+          `INSERT INTO tasks
+            (id, project_id, conversation_id, schedule_id,
+             parent_task_id, expert_id, routing_mode, title,
+             instructions, origin, status, work_mode, progress,
+             created_at, started_at, completed_at, error)
+           VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?,
+                   'schedule', 'queued', ?, NULL, ?, NULL, NULL, NULL)`
+        )
+        .run(
+          taskId,
+          projectId,
+          conversationId,
+          scheduleId,
+          parsed.title,
+          parsed.prompt,
+          parsed.workMode,
+          now
+        )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getSchedule(scheduleId)
   }
 
   setScheduleEnabled(scheduleId: string, enabled: boolean): void {
-    const result = this.requireDatabase()
-      .prepare(
-        `UPDATE schedules
-         SET enabled = ?, updated_at = ?
-         WHERE id = ?`
-      )
-      .run(enabled ? 1 : 0, new Date().toISOString(), scheduleId)
-    if (result.changes !== 1) {
-      throw new Error('定时任务不存在')
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const schedule = database
+        .prepare(
+          `SELECT recurrence_json, last_run_at
+           FROM schedules
+           WHERE id = ?`
+        )
+        .get(scheduleId) as
+        | {
+            recurrence_json: string
+            last_run_at: string | null
+          }
+        | undefined
+      if (!schedule) {
+        throw new Error('定时任务不存在')
+      }
+      const recurrence = JSON.parse(schedule.recurrence_json) as {
+        type?: string
+      }
+      if (
+        enabled &&
+        recurrence.type === 'once' &&
+        schedule.last_run_at
+      ) {
+        throw new Error('已执行的一次性计划不能恢复自动运行')
+      }
+      const result = database
+        .prepare(
+          `UPDATE schedules
+           SET enabled = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(enabled ? 1 : 0, now, scheduleId)
+      if (result.changes !== 1) {
+        throw new Error('定时任务不存在')
+      }
+      database
+        .prepare(
+          `UPDATE tasks
+           SET status = ?, completed_at = NULL,
+               error = CASE WHEN ? = 1 THEN NULL ELSE error END
+           WHERE schedule_id = ?
+             AND status NOT IN ('running', 'waiting_approval')`
+        )
+        .run(
+          enabled ? 'queued' : 'paused',
+          enabled ? 1 : 0,
+          scheduleId
+        )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
   }
 
   removeSchedule(scheduleId: string): void {
-    const result = this.requireDatabase()
-      .prepare('DELETE FROM schedules WHERE id = ?')
-      .run(scheduleId)
-    if (result.changes !== 1) {
-      throw new Error('定时任务不存在')
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const activeRun = database
+        .prepare(
+          `SELECT 1
+           FROM schedule_runs
+           WHERE schedule_id = ? AND status = 'running'
+           LIMIT 1`
+        )
+        .get(scheduleId)
+      if (activeRun) {
+        throw new Error('定时任务正在运行，完成后才能删除计划')
+      }
+      database
+        .prepare(
+          `UPDATE tasks
+           SET schedule_id = NULL,
+               status = CASE
+                 WHEN status IN ('running', 'waiting_approval')
+                 THEN status
+                 ELSE 'completed'
+               END,
+               completed_at = CASE
+                 WHEN status IN ('running', 'waiting_approval')
+                 THEN completed_at
+                 ELSE ?
+               END
+           WHERE schedule_id = ?`
+        )
+        .run(now, scheduleId)
+      const result = database
+        .prepare('DELETE FROM schedules WHERE id = ?')
+        .run(scheduleId)
+      if (result.changes !== 1) {
+        throw new Error('定时任务不存在')
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
   }
 
-  claimDueSchedules(now = new Date()): ClaimedSchedule[] {
+  claimDueSchedules(now = new Date(), limit = 4): ClaimedSchedule[] {
     const database = this.requireDatabase()
     const nowIso = now.toISOString()
+    const safeLimit = Math.max(1, Math.min(16, Math.trunc(limit)))
     database.exec('BEGIN IMMEDIATE')
     try {
+      const claims: ClaimedSchedule[] = []
       const pending = database
         .prepare(
-          `SELECT sr.id AS run_id, s.*
+          `SELECT sr.id AS run_id, s.*, t.id AS task_id,
+                  t.conversation_id AS conversation_id
            FROM schedule_runs sr
            INNER JOIN schedules s ON s.id = sr.schedule_id
+           INNER JOIN tasks t ON t.schedule_id = s.id
            WHERE sr.status = 'pending'
+             AND (
+               s.project_id IS NULL OR EXISTS (
+                 SELECT 1 FROM projects p
+                 WHERE p.id = s.project_id
+                   AND p.status = 'active'
+                   AND p.kind = 'user'
+               )
+             )
            ORDER BY sr.scheduled_for
-           LIMIT 1`
+           LIMIT ?`
         )
-        .get() as (ScheduleRow & { run_id: string }) | undefined
-      if (pending) {
-        database
-          .prepare(
-            `UPDATE schedule_runs
-             SET status = 'running'
-             WHERE id = ? AND status = 'pending'`
-          )
-          .run(pending.run_id)
-        database.exec('COMMIT')
-        return [{
-          schedule: toSchedule(pending),
-          runId: pending.run_id
-        }]
+        .all(safeLimit) as Array<
+          ScheduleWithTaskRow & { run_id: string }
+        >
+      const claimPending = database
+        .prepare(
+          `UPDATE schedule_runs
+           SET status = 'running'
+           WHERE id = ? AND status = 'pending'`
+        )
+      for (const row of pending) {
+        if (claimPending.run(row.run_id).changes === 1) {
+          claims.push({
+            schedule: toSchedule(row),
+            runId: row.run_id
+          })
+        }
       }
 
-      const row = database
-        .prepare(
-          `SELECT * FROM schedules
-           WHERE enabled = 1 AND next_run_at <= ?
-           ORDER BY next_run_at
-           LIMIT 1`
-        )
-        .get(nowIso) as ScheduleRow | undefined
-      if (!row) {
-        database.exec('COMMIT')
-        return []
-      }
-      const schedule = toSchedule(row)
-      const runId = randomUUID()
-      const inserted = database
-        .prepare(
+      const remaining = safeLimit - claims.length
+      if (remaining > 0) {
+        const due = database
+          .prepare(
+            `SELECT s.*, t.id AS task_id,
+                    t.conversation_id AS conversation_id
+             FROM schedules s
+             INNER JOIN tasks t ON t.schedule_id = s.id
+             WHERE s.enabled = 1 AND s.next_run_at <= ?
+               AND (
+                 s.project_id IS NULL OR EXISTS (
+                   SELECT 1 FROM projects p
+                   WHERE p.id = s.project_id
+                     AND p.status = 'active'
+                     AND p.kind = 'user'
+                 )
+               )
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM schedule_runs active
+                 WHERE active.schedule_id = s.id
+                   AND active.status IN ('pending', 'running')
+               )
+             ORDER BY s.next_run_at
+             LIMIT ?`
+          )
+          .all(nowIso, remaining) as ScheduleWithTaskRow[]
+        const insertRun = database.prepare(
           `INSERT OR IGNORE INTO schedule_runs
-            (id, schedule_id, scheduled_for, task_id, status)
-           VALUES (?, ?, ?, NULL, 'running')`
+             (id, schedule_id, scheduled_for, task_id, status)
+           VALUES (?, ?, ?, ?, 'running')`
         )
-        .run(runId, schedule.id, schedule.nextRunAt)
-      if (inserted.changes !== 1) {
-        database.exec('COMMIT')
-        return []
+        for (const row of due) {
+          const schedule = toSchedule(row)
+          const runId = randomUUID()
+          if (
+            insertRun.run(
+              runId,
+              schedule.id,
+              schedule.nextRunAt,
+              schedule.taskId
+            ).changes === 1
+          ) {
+            claims.push({ schedule, runId })
+          }
+        }
       }
       database.exec('COMMIT')
-      return [{ schedule, runId }]
+      return claims
     } catch (error) {
       database.exec('ROLLBACK')
       throw error
@@ -3527,20 +3875,52 @@ export class AssistantDatabase {
     const schedule = this.getSchedule(scheduleId)
     const database = this.requireDatabase()
     const runId = randomUUID()
-    database
-      .prepare(
-        `INSERT INTO schedule_runs
-          (id, schedule_id, scheduled_for, task_id, status)
-         VALUES (?, ?, ?, NULL, 'running')`
-      )
-      .run(runId, scheduleId, new Date().toISOString())
+    const baseTime = Date.now()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const activeRun = database
+        .prepare(
+          `SELECT 1
+           FROM schedule_runs
+           WHERE schedule_id = ?
+             AND status IN ('pending', 'running')
+           LIMIT 1`
+        )
+        .get(scheduleId)
+      if (activeRun) {
+        throw new Error('定时任务已有一次运行正在进行')
+      }
+      let inserted = false
+      for (let offset = 0; offset < 10 && !inserted; offset += 1) {
+        inserted =
+          database
+            .prepare(
+              `INSERT INTO schedule_runs
+                (id, schedule_id, scheduled_for, task_id, status)
+               VALUES (?, ?, ?, ?, 'running')
+               ON CONFLICT(schedule_id, scheduled_for) DO NOTHING`
+            )
+            .run(
+              runId,
+              scheduleId,
+              new Date(baseTime + offset).toISOString(),
+              schedule.taskId
+            ).changes === 1
+      }
+      if (!inserted) {
+        throw new Error('定时任务正在启动，请稍后重试')
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
     return { schedule, runId }
   }
 
   completeScheduleRun(
     runId: string,
     status: 'completed' | 'failed',
-    taskId: string | undefined,
     now = new Date()
   ): void {
     const database = this.requireDatabase()
@@ -3549,13 +3929,16 @@ export class AssistantDatabase {
     try {
       const row = database
         .prepare(
-          `SELECT s.*, sr.scheduled_for
+          `SELECT s.*, sr.scheduled_for,
+                  t.id AS task_id,
+                  t.conversation_id AS conversation_id
            FROM schedule_runs sr
            INNER JOIN schedules s ON s.id = sr.schedule_id
+           INNER JOIN tasks t ON t.schedule_id = s.id
            WHERE sr.id = ? AND sr.status = 'running'`
         )
         .get(runId) as
-        | (ScheduleRow & { scheduled_for: string })
+        | (ScheduleWithTaskRow & { scheduled_for: string })
         | undefined
       if (!row) {
         throw new Error('定时任务运行记录不存在或已完成')
@@ -3563,10 +3946,10 @@ export class AssistantDatabase {
       database
         .prepare(
           `UPDATE schedule_runs
-           SET task_id = ?, status = ?
+           SET status = ?
            WHERE id = ?`
         )
-        .run(taskId ?? null, status, runId)
+        .run(status, runId)
       const schedule = toSchedule(row)
       if (row.scheduled_for === row.next_run_at) {
         const next = new Date(row.scheduled_for)
@@ -3588,11 +3971,12 @@ export class AssistantDatabase {
         database
           .prepare(
             `UPDATE schedules
-             SET enabled = ?, next_run_at = ?, last_run_at = ?, updated_at = ?
+             SET enabled = CASE WHEN ? = 1 THEN 0 ELSE enabled END,
+                 next_run_at = ?, last_run_at = ?, updated_at = ?
              WHERE id = ? AND next_run_at = ?`
           )
           .run(
-            schedule.recurrence === 'once' ? 0 : 1,
+            schedule.recurrence === 'once' ? 1 : 0,
             schedule.recurrence === 'once'
               ? schedule.nextRunAt
               : next.toISOString(),
@@ -3610,32 +3994,54 @@ export class AssistantDatabase {
           )
           .run(nowIso, nowIso, schedule.id)
       }
+      const updatedSchedule = database
+        .prepare('SELECT enabled FROM schedules WHERE id = ?')
+        .get(schedule.id) as { enabled: number }
+      const finalTaskStatus =
+        status === 'failed'
+          ? 'failed'
+          : updatedSchedule.enabled === 1
+              ? 'queued'
+              : schedule.recurrence === 'once'
+                ? 'completed'
+                : 'paused'
+      database
+        .prepare(
+          `UPDATE tasks
+           SET status = ?,
+               completed_at = CASE
+                 WHEN ? IN ('completed', 'failed') THEN ?
+                 ELSE NULL
+               END
+           WHERE id = ?`
+        )
+        .run(
+          finalTaskStatus,
+          finalTaskStatus,
+          nowIso,
+          row.task_id
+        )
+      database
+        .prepare(
+          `INSERT INTO task_events
+            (task_id, run_id, kind, payload_json, created_at)
+           VALUES (?, NULL, 'status', ?, ?)`
+        )
+        .run(
+          row.task_id,
+          JSON.stringify({
+            status:
+              finalTaskStatus === 'queued'
+                ? 'idle'
+                : finalTaskStatus
+          }),
+          nowIso
+        )
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
       throw error
     }
-  }
-
-  bindScheduleRunTask(scheduleId: string, taskId: string): void {
-    this.requireDatabase()
-      .prepare(
-        `UPDATE schedule_runs
-         SET task_id = ?
-         WHERE schedule_id = ? AND status = 'running' AND task_id IS NULL`
-      )
-      .run(taskId, scheduleId)
-  }
-
-  getScheduleRunTaskId(runId: string): string | undefined {
-    const row = this.requireDatabase()
-      .prepare(
-        `SELECT task_id
-         FROM schedule_runs
-         WHERE id = ?`
-      )
-      .get(runId) as { task_id: string | null } | undefined
-    return row?.task_id ?? undefined
   }
 
   private assertHeartbeatProjectIds(projectIds: string[]): void {
@@ -4744,8 +5150,14 @@ export class AssistantDatabase {
 
   private getSchedule(scheduleId: string): AssistantSchedule {
     const row = this.requireDatabase()
-      .prepare('SELECT * FROM schedules WHERE id = ?')
-      .get(scheduleId) as ScheduleRow | undefined
+      .prepare(
+        `SELECT s.*, t.id AS task_id,
+                t.conversation_id AS conversation_id
+         FROM schedules s
+         INNER JOIN tasks t ON t.schedule_id = s.id
+         WHERE s.id = ?`
+      )
+      .get(scheduleId) as ScheduleWithTaskRow | undefined
     if (!row) {
       throw new Error('定时任务不存在')
     }
@@ -4940,12 +5352,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 21) {
+    if (version.user_version > 22) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 21) {
+    if (version.user_version === 22) {
       return
     }
     if (version.user_version < 1) {
@@ -5919,6 +6331,230 @@ export class AssistantDatabase {
             ELSE 'global'
           END;
           PRAGMA user_version = 21;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 22) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const schedules = database
+          .prepare(
+            `SELECT id, project_id, task_template_json, enabled,
+                    created_at, updated_at
+             FROM schedules
+             ORDER BY created_at ASC, id ASC`
+          )
+          .all() as Array<
+          Pick<
+            ScheduleRow,
+            | 'id'
+            | 'project_id'
+            | 'task_template_json'
+            | 'enabled'
+            | 'created_at'
+            | 'updated_at'
+          >
+        >
+        const findTask = database.prepare(
+          `SELECT id, conversation_id
+           FROM tasks
+           WHERE schedule_id = ?
+           ORDER BY created_at ASC, id ASC
+           LIMIT 1`
+        )
+        const findConversation = database.prepare(
+          `SELECT id, runtime_selection_json
+           FROM conversations
+           WHERE id = ?
+             AND project_id IS ?
+             AND status = 'active'
+             AND channel IS NULL`
+        )
+        const projectRuntime = database.prepare(
+          'SELECT runtime_selection_json FROM projects WHERE id = ?'
+        )
+        const insertConversation = database.prepare(
+          `INSERT INTO conversations
+            (id, project_id, runtime_selection_json, work_mode, title,
+             status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
+        )
+        const insertTask = database.prepare(
+          `INSERT INTO tasks
+            (id, project_id, conversation_id, schedule_id,
+             parent_task_id, expert_id, routing_mode, title,
+             instructions, origin, status, progress, created_at,
+             started_at, completed_at, error)
+           VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?,
+                   'schedule', ?, NULL, ?, NULL, NULL, NULL)`
+        )
+        const updateTaskConversation = database.prepare(
+          `UPDATE tasks
+           SET conversation_id = ?, project_id = ?,
+               parent_task_id = NULL, title = ?, instructions = ?,
+               origin = 'schedule', status = ?, work_mode = ?,
+               completed_at = NULL, error = NULL, visible = 1
+           WHERE id = ?`
+        )
+        const attachHistoricalTasks = database.prepare(
+          `UPDATE tasks
+           SET parent_task_id = ?, visible = 0
+           WHERE id IN (
+             SELECT task_id
+             FROM schedule_runs
+             WHERE schedule_id = ? AND task_id IS NOT NULL
+           )
+             AND id != ?
+             AND parent_task_id IS NULL
+             AND schedule_id IS NULL`
+        )
+        const bindUnclaimedRuns = database.prepare(
+          `UPDATE schedule_runs
+           SET task_id = ?
+           WHERE schedule_id = ? AND task_id IS NULL`
+        )
+        const freezeScheduleRuntime = database.prepare(
+          `UPDATE schedules
+           SET task_template_json = ?
+           WHERE id = ?`
+        )
+
+        for (const schedule of schedules) {
+          let template: {
+            title?: unknown
+            prompt?: unknown
+            workMode?: LegacyWorkMode
+          } = {}
+          try {
+            template = JSON.parse(
+              schedule.task_template_json
+            ) as typeof template
+          } catch {
+            // Keep malformed legacy schedules migratable. Normal reads will
+            // continue to reject an invalid template if it is edited or run.
+          }
+          const title =
+            typeof template.title === 'string' &&
+            template.title.trim()
+              ? template.title.trim().slice(0, 120)
+              : '定时任务'
+          const prompt =
+            typeof template.prompt === 'string' &&
+            template.prompt.trim()
+              ? template.prompt.trim().slice(0, 100_000)
+              : title
+          const workMode = normalizeInteractiveWorkMode(
+            template.workMode
+          )
+          const existing = findTask.get(schedule.id) as
+            | { id: string; conversation_id: string | null }
+            | undefined
+          const existingConversation = existing?.conversation_id
+              ? (findConversation.get(
+                  existing.conversation_id,
+                  schedule.project_id
+                ) as
+                | {
+                    id: string
+                    runtime_selection_json: string | null
+                  }
+                | undefined)
+            : undefined
+          const conversationId = existingConversation
+            ? existing!.conversation_id!
+            : randomUUID()
+          let runtimeSelectionJson =
+            existingConversation?.runtime_selection_json ?? null
+          if (!existingConversation) {
+            runtimeSelectionJson = schedule.project_id
+              ? (
+                  projectRuntime.get(schedule.project_id) as
+                    | {
+                        runtime_selection_json: string | null
+                      }
+                    | undefined
+                )?.runtime_selection_json ?? null
+              : null
+            insertConversation.run(
+              conversationId,
+              schedule.project_id,
+              runtimeSelectionJson,
+              workMode,
+              title,
+              schedule.created_at,
+              schedule.updated_at
+            )
+          }
+          const taskId = existing?.id ?? randomUUID()
+          if (existing) {
+            updateTaskConversation.run(
+              conversationId,
+              schedule.project_id,
+              title,
+              prompt,
+              schedule.enabled === 1 ? 'queued' : 'paused',
+              workMode,
+              taskId
+            )
+          } else {
+            insertTask.run(
+              taskId,
+              schedule.project_id,
+              conversationId,
+              schedule.id,
+              title,
+              prompt,
+              schedule.enabled === 1 ? 'queued' : 'paused',
+              schedule.created_at
+            )
+          }
+          freezeScheduleRuntime.run(
+            JSON.stringify({
+              title,
+              prompt,
+              workMode,
+              runtimeSelection:
+                parseRuntimeSelection(runtimeSelectionJson)
+            }),
+            schedule.id
+          )
+          attachHistoricalTasks.run(taskId, schedule.id, taskId)
+          bindUnclaimedRuns.run(taskId, schedule.id)
+        }
+
+        database.exec(`
+          UPDATE tasks AS duplicate
+          SET parent_task_id = (
+                SELECT stable.id
+                FROM tasks stable
+                WHERE stable.schedule_id = duplicate.schedule_id
+                ORDER BY stable.created_at ASC, stable.id ASC
+                LIMIT 1
+              ),
+              schedule_id = NULL,
+              visible = 0
+          WHERE duplicate.schedule_id IS NOT NULL
+            AND duplicate.id <> (
+              SELECT stable.id
+              FROM tasks stable
+              WHERE stable.schedule_id = duplicate.schedule_id
+              ORDER BY stable.created_at ASC, stable.id ASC
+              LIMIT 1
+            );
+          UPDATE tasks
+          SET visible = 0
+          WHERE schedule_id IS NULL
+            AND origin IN ('user', 'schedule', 'delegation', 'subagent');
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_schedule
+            ON tasks(schedule_id)
+            WHERE schedule_id IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS idx_schedule_runs_status
+            ON schedule_runs(status, scheduled_for);
+          PRAGMA user_version = 22;
           COMMIT;
         `)
       } catch (error) {

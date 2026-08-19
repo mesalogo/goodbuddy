@@ -15,8 +15,9 @@
 
 GoodBuddy 当前已经具备若干长期助手能力，但它们仍是彼此分离的功能：
 
-1. Scheduled Task 支持单次、每日和每周触发。一个 Task 绑定一条持续 Conversation，
-   每次触发在其中创建 Job/Run 并保存进展和成果。
+1. 当前 Schedule 已支持单次、每日和每周触发，并在创建时绑定稳定产品级 Task 与真实
+   Conversation；重复触发复用同一身份，文本结果写回 Conversation，独立文件和图片保存为
+   Artifact。IANA 时区、Cron、事件触发、租约、重试和完整 Job/Run 抽象仍待实现。
 2. 当前智能心跳支持全局或项目范围的每日、每周回顾，读取有界会话、任务和已确认记忆，
    生成摘要、记忆建议和后续任务。
 3. 专家执行的 Job 支持有限并发和只读综合，但没有实验变量、重复运行、统一指标和结果晋升。
@@ -92,8 +93,9 @@ SQLite、FTS 和可选本地向量已经足够支撑第一阶段。只有出现�
 
 ### 3.1 用户目标
 
-- 在现有 Task Center 中找到 Scheduled、Event 和 Goal Task，并直接打开 Task Conversation。
-- 清楚知道 Task 的触发原因、当前目标、Job 状态、预算和停止条件。
+- 在现有 Task Center 中找到 Scheduled、Event 和 Goal Task，并直接打开关联 Conversation
+  和对应 Task。
+- 清楚知道 Task 的触发原因、当前目标、聚合执行状态、预算和停止条件。
 - 在一个工作台中观察多个候选运行，并追溯结论到原始证据。
 - 为重要会话启用独立监督，及时发现偏题、遗漏、矛盾、证据不足和风险。
 - 知道每条记忆属于哪个范围、从哪里产生、何时有效以及被哪些运行使用。
@@ -102,7 +104,8 @@ SQLite、FTS 和可选本地向量已经足够支撑第一阶段。只有出现�
 ### 3.2 产品目标
 
 - 复用现有 Project、Conversation、Task、Run、Artifact、Approval 和 Notification 能力。
-- 保持一个 Task 只绑定一条 Conversation，不为同一项工作建立第二份内容载体。
+- 保持每个 Task 只关联一条 Conversation，同时允许一条 Conversation 承载多个 Task，不为
+  同一项工作建立第二份内容载体。
 - 为所有后台工作提供统一的幂等、租约、恢复、取消、预算和审计语义。
 - 保持 Ask 只读，Execute 继续经过现有能力和审批控制。
 - 保持本地优先，应用退出后不虚假承诺后台持续执行。
@@ -127,34 +130,36 @@ SQLite、FTS 和可选本地向量已经足够支撑第一阶段。只有出现�
 
 以下模型是 Scheduled Task、Goal Task 和实验共享的技术基础，不要求新增独立
 Automation Center。`AutomationPlan` 是 Task 的计划配置，`Job` 是 Task 内执行单位，
-`Run` 是执行尝试。用户主要通过 Task Center 和 Task Conversation 理解工作。智能心跳
+`Run` 是执行尝试。用户主要通过 Task Center、左侧会话 Task 列表和关联 Conversation
+理解工作；当前 UI 不展示 Job/Run 层级。智能心跳
 不属于此模型。
 
 ### 5.1 核心实体
 
 ```text
-Task ── Conversation
-  ├─ AutomationPlan（可选）
-  │   ├─ TriggerPolicy
-  │   ├─ ObjectiveSet
-  │   ├─ ExecutionProtocol
-  │   ├─ BudgetPolicy
-  │   ├─ ApprovalPolicy
-  │   ├─ SupervisorPolicy
-  │   └─ MemoryBinding
-  └─ Job
-       ├─ Run
-       ├─ Subjob
-       ├─ Observation
-       ├─ SupervisorDecision
-       ├─ Artifact
-       ├─ Metric
-       └─ MemoryCandidate
+Conversation
+  └─ Task 0..N
+       ├─ AutomationPlan（可选）
+       │   ├─ TriggerPolicy
+       │   ├─ ObjectiveSet
+       │   ├─ ExecutionProtocol
+       │   ├─ BudgetPolicy
+       │   ├─ ApprovalPolicy
+       │   ├─ SupervisorPolicy
+       │   └─ MemoryBinding
+       └─ Job
+            ├─ Run
+            ├─ Subjob
+            ├─ Observation
+            ├─ SupervisorDecision
+            ├─ Artifact
+            ├─ Metric
+            └─ MemoryCandidate
 ```
 
 | 实体 | 职责 |
 | --- | --- |
-| `Task` | 用户可见工作单位，与唯一 Conversation 一对一绑定 |
+| `Task` | 用户可见工作单位，只关联一条 Conversation；Conversation 可以承载多个 Task |
 | `Job` | Task 内部一次步骤、触发、并行分支或委派执行 |
 | `Run` | Task/Job 的一次执行尝试和审计记录 |
 | `AutomationPlan` | Task 的可编辑计划配置，描述做什么、为何做、何时做和允许做什么 |
@@ -180,8 +185,8 @@ Task ── Conversation
 | `goal_loop` | 围绕目标重复执行“观察、计划、行动、评估” |
 | `experiment` | 生成隔离候选 Run，按统一协议评估和比较 |
 
-会话监督不是独立 Task。它是可附着到 Conversation、Task、Job/Run 或 Experiment 的
-`SupervisorPolicy` 和监督会话。
+会话监督不是独立 Task。用户选择 Conversation、Task 或 Experiment 作为监督对象；
+`SupervisorPolicy` 可以在内部观察所属 Job/Run 事件，但当前 UI 不把它们作为独立目标。
 
 ### 5.3 运行快照
 
@@ -198,7 +203,8 @@ Task ── Conversation
 - 预算和并发限制。
 - 审批策略。
 
-运行开始后的设置变化只影响下一次 Run。用户可以查看当前 Run 与最新 Plan 的差异。
+运行开始后的设置变化只影响下一次 Run。用户可以在 Task 执行记录中查看当次快照与最新
+Plan 的差异，但 Run 不作为独立导航对象。
 
 ## 6. 统一状态模型
 
@@ -250,28 +256,28 @@ inactive → observing → attention_required → paused → resolved
 
 ```text
 Trigger
-  → AutomationCoordinator 声明 Run
-  → RunQueue 按优先级和预算排队
-  → AutomationExecutor 在所属 Task 内创建或恢复 Job
+  → AutomationCoordinator 在所属 Task 内声明 Job
+  → ExecutionQueue 按优先级和预算排队
+  → AutomationExecutor 为 Job 创建或恢复 Run
   → Runtime 执行
   → Supervisor 观察
   → Evaluator 计算指标
   → 结果、证据和候选记忆入库
-  → 用户审查或后续 Run
+  → 用户审查或后续执行
 ```
 
 `AutomationCoordinator` 只负责触发、声明和恢复，不直接调用模型。执行仍通过 Job 和
-Runtime 边界完成，Job 的用户可见结果汇入所属 Task Conversation。
+Runtime 边界完成，用户可见结果通过所属 Task 汇入关联 Conversation。
 
 ### 7.2 优先级
 
 默认优先级从高到低：
 
 1. 用户正在等待的前台对话。
-2. 用户手动启动的 Run。
-3. 等待批准后恢复的 Run。
-4. 到期 Scheduled Task 的 Job。
-5. 目标循环和实验 Run。
+2. 用户手动启动的 Task 执行。
+3. 等待批准后恢复的 Task 执行。
+4. 到期 Scheduled Task 的执行。
+5. 目标循环和实验执行。
 6. 心跳回顾、记忆巩固和维护。
 
 后台任务必须可被背压延后。延后记录为 `deferred`，不得丢失，也不得在系统恢复空闲时一次性
@@ -414,7 +420,7 @@ Runtime 边界完成，Job 的用户可见结果汇入所属 Task Conversation�
 
 监督统一进入应用级助手工作栏中固定且始终可访问的“监督”栏目，不再保留“独立可折叠右栏”
 和“动态新增页签”两种实现。栏目默认跟随当前上下文，用户可以固定到其他 Conversation、
-Task、Job/Run 或实验 Run；详细范围与交互契约见
+Task 或实验对象；详细范围与交互契约见
 [通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)。
 
 ## 13. 安全与隐私
@@ -433,7 +439,7 @@ Task、Job/Run 或实验 Run；详细范围与交互契约见
 
 ## 14. 可观测性
 
-每个 Run 至少展示：
+每次 Task 执行的内部 Job/Run 记录至少保存：
 
 - 触发来源和计划版本。
 - 计划目标和当前 `goalStatus`。
@@ -447,7 +453,8 @@ Task、Job/Run 或实验 Run；详细范围与交互契约见
 - 产生的候选记忆或学习产物。
 - 重试、延后、中断和恢复原因。
 
-不得只显示一个模糊的“自动化成功率”而隐藏失败 Run、跳过 Run 或无结论 Run。
+UI 在 Task 下呈现上述信息的有界摘要和活动，不提供 Job/Run 树或独立导航。不得只显示一个
+模糊的“自动化成功率”而隐藏失败、跳过或无结论的 Task 执行。
 
 ## 15. 建议的数据模型增量
 
@@ -474,8 +481,8 @@ experiment_runs
 ```
 
 现有 `schedules`、`schedule_runs`、`heartbeat_configs`、`heartbeat_runs`、
-`heartbeat_entries`、`tasks` 和 `runs` 不应一次性重写。Schedule 可渐进绑定一个持续
-Task/Conversation，旧 child-task 字段可兼容映射到 Job/Subjob；心跳数据保持独立，不得
+`heartbeat_entries`、`tasks` 和 `runs` 不应一次性重写。Schedule 可渐进建立稳定 Task 与
+Conversation 关联，旧 child-task 字段可兼容映射到 Job/Subjob；心跳数据保持独立，不得
 静默转成 `AutomationPlan` 或顶层 Task。未来分区记忆完成设计前，不新增迁移目标。
 
 ## 16. 分阶段实施
@@ -484,8 +491,9 @@ Task/Conversation，旧 child-task 字段可兼容映射到 Job/Subjob；心跳�
 
 - 固定 Task、Conversation、Job、Subjob、Run、Plan、Goal、Protocol、Supervisor、
   Observation、Memory Candidate 等概念。
-- 明确 Task 与 Conversation 一对一，Task Center 只是索引，不复制内容。
-- 为现有 Scheduled Task 和专家 Job 建立统一活动视图。
+- 明确 Task N:1 Conversation 关系、左侧行首展开按钮与 Task 子项图标，以及 Task Center
+  索引边界，不复制内容。
+- 为现有 Scheduled Task 和专家执行建立按 Task 聚合的活动视图。
 - 明确当前心跳保持独立，未来分区记忆尚待设计。
 - 补充触发来源、运行版本、预算和读写范围展示。
 
@@ -538,9 +546,12 @@ Task/Conversation，旧 child-task 字段可兼容映射到 Job/Subjob；心跳�
 ## 18. 总体验收标准
 
 - [ ] 智能心跳保持独立，不作为 Task 类型；未来分区记忆尚未设计。
-- [ ] Task Center 只索引 Task；每个 Task 只绑定一条 Conversation。
+- [ ] Task Center 只索引 Task；每个 Task 只关联一条 Conversation，一条 Conversation 可以
+  关联多个 Task。
+- [ ] 当前 UI 只展示到 Task，不提供 Job/Subjob/Run 树或独立导航。
 - [ ] Scheduled Task 的重复触发和并行 Job 不创建新的顶层 Task。
-- [ ] 每个自动 Run 都能解释触发原因、目标、范围、预算、状态和结果。
+- [ ] 每次自动执行的内部 Run 都记录触发原因、目标、范围、预算、状态和结果，并在所属
+  Task 下提供有界可观测信息。
 - [ ] Ask 自动化无法调用写工具或产生外部副作用。
 - [ ] Execute 自动化不能绕过现有审批、主机执行策略和能力控制。
 - [ ] 会话监督默认只评论，不能替用户发言或批准工具。

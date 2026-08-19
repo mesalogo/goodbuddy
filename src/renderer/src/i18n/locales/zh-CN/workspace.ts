@@ -88,26 +88,39 @@ export const workspace = {
     },
     tasks: {
       description: '处理当前待审批操作，并创建和管理自动化任务。',
+      createCustom: '新建定制任务',
       approvalsTitle: '等待审批',
       noApprovals: '当前没有等待审批的操作。',
       deny: '拒绝',
       allowOnce: '仅此次允许',
-      automationTitle: '自动化',
+      taskIndexTitle: '任务索引',
+      empty: '明确创建的任务会显示在这里。',
+      noFilterResults: '当前筛选条件下没有任务。',
+      conversationUnavailable: '关联会话不可用',
+      projectScope: '项目：{{project}}',
+      globalScope: '全局',
+      startedAt: '{{time}} 开始',
+      nextRunAt: '下次运行：{{time}}',
+      notStarted: '尚未运行',
+      filters: {
+        ariaLabel: '筛选任务',
+        attention: '待关注',
+        active: '进行中',
+        paused: '已暂停',
+        finished: '已完成'
+      },
       schedule: {
-        titleAriaLabel: '定时任务标题',
-        titlePlaceholder: '任务标题',
-        promptAriaLabel: '定时任务内容',
-        promptPlaceholder: '要定时完成的只读任务',
-        timeAriaLabel: '定时任务时间',
-        recurrenceAriaLabel: '定时任务重复规则',
         recurrence: {
           once: '仅一次',
           daily: '每天',
           weekly: '每周'
         },
-        add: '添加定时任务',
         runNow: '立即运行',
-        delete: '删除'
+        delete: '删除计划',
+        cancelDelete: '取消删除计划',
+        confirmDelete: '确认删除“{{title}}”的计划',
+        confirmDeleteAction: '停止后续运行',
+        deleteMessage: '这会停止后续自动运行，但保留任务、会话和既有结果。'
       }
     },
     context: {
@@ -168,15 +181,57 @@ export const workspace = {
     },
     errors: {
       workspacePreview: '工作区文件预览失败',
-      addSchedule: '添加定时任务失败',
       runSchedule: '运行定时任务失败',
       deleteSchedule: '删除定时任务失败',
+      updateSchedule: '更新定时任务失败',
       refreshWorkspace: '刷新工作区文件失败',
       importResult: '导入成果失败',
       loadResult: '加载成果失败',
       interactBrowser: '打开浏览器交互窗口失败',
       stopBrowser: '停止浏览器失败'
     }
+  },
+  task: {
+    status: {
+      queued: '空闲',
+      idle: '空闲',
+      running: '运行中',
+      waiting_approval: '等待审批',
+      paused: '已暂停',
+      completed: '已完成',
+      failed: '失败',
+      cancelled: '已取消',
+      interrupted: '已中断'
+    },
+    mode: {
+      ask: 'Ask',
+      execute: 'Execute',
+      unavailable: '模式不可用'
+    },
+    fields: {
+      mode: '模式',
+      schedule: '计划',
+      nextRun: '下次运行',
+      outcome: '最近结果'
+    },
+    schedule: {
+      none: '无计划'
+    },
+    actions: {
+      pause: '暂停',
+      resume: '恢复'
+    },
+    notAvailable: '不可用',
+    completedAt: '{{time}} 完成',
+    noOutcome: '尚无运行结果'
+  },
+  taskStrip: {
+    ariaLabel: '当前会话的任务',
+    title: '会话任务',
+    count: '{{count}} 个',
+    create: '新建任务',
+    empty: '当前会话还没有任务。',
+    taskList: '任务列表'
   },
   files: {
     statuses: {

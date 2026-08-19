@@ -2668,7 +2668,14 @@ describe('registerIpcHandlers agent terminal state', () => {
         updatedAt: Date.now(),
         messages: []
       })),
+      appendConversationMessage: vi.fn(),
       appendRemoteConversationMessage: vi.fn(),
+      completeScheduleRun: vi.fn(),
+      claimScheduleNow: vi.fn(),
+      listSchedules: vi.fn(() => []),
+      createSchedule: vi.fn(),
+      setScheduleEnabled: vi.fn(),
+      removeSchedule: vi.fn(),
       upsertModelUsageCall: vi.fn(),
       clearAssistantData: vi.fn(),
       listExperts: vi.fn<() => Array<Record<string, unknown>>>(() => []),
@@ -2797,6 +2804,140 @@ describe('registerIpcHandlers agent terminal state', () => {
   }) => ({
     sender: webContents,
     senderFrame: webContents.mainFrame
+  })
+
+  it('defaults custom scheduled Tasks to Execute', async () => {
+    const harness = createHarness({
+      runtimeId: 'continue',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run() {
+        yield { type: 'done', requestId: 'unused' } as const
+      }
+    })
+    const conversationId =
+      '00000000-0000-4000-8000-000000000705'
+    const createInput = {
+      projectId: '00000000-0000-4000-8000-000000000401',
+      conversationId,
+      title: '每周汇总',
+      prompt: '汇总本周进展',
+      recurrence: 'weekly' as const,
+      nextRunAt: '2026-08-21T09:00:00.000Z'
+    }
+
+    await electronMocks.handlers.get(
+      ipcChannels.schedulesCreate
+    )?.(trustedEvent(harness.webContents), createInput)
+
+    expect(
+      harness.assistantDatabase.createSchedule
+    ).toHaveBeenCalledWith({
+      ...createInput,
+      workMode: 'execute'
+    })
+    await harness.dispose()
+  })
+
+  it('reuses a scheduled Task and writes text results to its Conversation', async () => {
+    const taskId = '00000000-0000-4000-8000-000000000701'
+    const conversationId =
+      '00000000-0000-4000-8000-000000000702'
+    const scheduleId =
+      '00000000-0000-4000-8000-000000000703'
+    const runId = '00000000-0000-4000-8000-000000000704'
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(
+        request: { requestId: string },
+        _signal: AbortSignal,
+        authorize: (
+          input: {
+            scopeKey: string
+            title: string
+            description: string
+          }
+        ) => Promise<string>
+      ) {
+        expect(request.requestId).toBe(runId)
+        await authorize({
+          scopeKey: 'workspace.write',
+          title: '写入工作区',
+          description: '更新状态文件'
+        })
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: '每日状态正常'
+        } as const
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const harness = createHarness(runtime)
+    const schedule = {
+      id: scheduleId,
+      projectId: '00000000-0000-4000-8000-000000000401',
+      taskId,
+      conversationId,
+      title: '每日状态',
+      prompt: '汇总状态',
+      workMode: 'execute' as const,
+      recurrence: 'daily' as const,
+      nextRunAt: '2026-08-20T00:00:00.000Z',
+      enabled: true,
+      createdAt: '2026-08-19T00:00:00.000Z',
+      updatedAt: '2026-08-19T00:00:00.000Z'
+    }
+    harness.assistantDatabase.claimScheduleNow.mockReturnValue({
+      schedule,
+      runId
+    })
+    harness.approvalBroker.request.mockResolvedValue('once')
+
+    await electronMocks.handlers.get(
+      ipcChannels.schedulesRunNow
+    )?.(trustedEvent(harness.webContents), scheduleId)
+
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.completeScheduleRun
+      ).toHaveBeenCalledWith(runId, 'completed')
+    )
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).toHaveBeenCalledWith(taskId, 'running')
+    expect(harness.approvalBroker.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: taskId,
+        conversationId
+      }),
+      expect.any(AbortSignal),
+      expect.any(Function)
+    )
+    expect(
+      harness.assistantDatabase.appendConversationMessage
+    ).toHaveBeenCalledWith({
+      conversationId,
+      role: 'assistant',
+      content: '每日状态正常',
+      status: '定时任务',
+      task: {
+        id: taskId,
+        title: '每日状态'
+      }
+    })
+    expect(
+      harness.assistantDatabase.createTextArtifact
+    ).not.toHaveBeenCalled()
+    expect(harness.webContents.send).toHaveBeenCalledWith(
+      ipcChannels.conversationsChanged
+    )
+    await harness.dispose()
   })
 
   it('publishes Runtime usage as context metrics with one settings read', async () => {

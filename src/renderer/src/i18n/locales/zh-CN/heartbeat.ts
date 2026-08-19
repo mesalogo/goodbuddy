@@ -148,6 +148,7 @@ export const heartbeat = {
     },
     task: {
       queued: '等待中',
+      idle: '空闲',
       running: '运行中',
       waitingApproval: '等待审批',
       paused: '待处理',

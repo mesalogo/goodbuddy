@@ -160,6 +160,41 @@ describe('ChatTimeline', () => {
     ).toBeInTheDocument()
   })
 
+  it('labels scheduled result messages with Task provenance', () => {
+    const messages: Message[] = [
+      {
+        id: 'scheduled-result',
+        role: 'assistant',
+        content: '今日状态正常',
+        task: {
+          id: '00000000-0000-4000-8000-000000000831',
+          title: '每日状态'
+        },
+        createdAt: 1_775_000_000_000,
+        state: 'complete'
+      }
+    ]
+
+    render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="zh-CN"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    expect(
+      screen.getByLabelText('任务结果：每日状态')
+    ).toHaveTextContent('每日状态')
+  })
+
   it('shows every parallel expert output in its own expandable card', () => {
     const messages: Message[] = [
       {

@@ -155,6 +155,7 @@ export function HeartbeatCenter({
   }
   const taskStatusLabels: Record<AssistantTask['status'], string> = {
     queued: t('statuses.task.queued'),
+    idle: t('statuses.task.idle'),
     running: t('statuses.task.running'),
     waiting_approval: t('statuses.task.waitingApproval'),
     paused: t('statuses.task.paused'),

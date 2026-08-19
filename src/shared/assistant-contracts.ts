@@ -250,6 +250,13 @@ export const conversationMessageSchema = z
       .strict()
       .optional(),
     artifactIds: z.array(assistantIdSchema).max(8).optional(),
+    task: z
+      .object({
+        id: assistantIdSchema,
+        title: z.string().trim().min(1).max(120)
+      })
+      .strict()
+      .optional(),
     attachments: z
       .array(conversationAttachmentSchema)
       .max(8)
@@ -433,6 +440,7 @@ export type AssistantTaskStatus =
   | 'running'
   | 'waiting_approval'
   | 'paused'
+  | 'idle'
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -442,6 +450,7 @@ export type AssistantTask = {
   id: string
   projectId?: string
   conversationId?: string
+  scheduleId?: string
   parentTaskId?: string
   expertId?: string
   routingMode?: 'manual' | 'smart'
@@ -449,6 +458,7 @@ export type AssistantTask = {
   instructions: string
   origin: 'user' | 'assistant' | 'schedule' | 'delegation' | 'subagent'
   status: AssistantTaskStatus
+  workMode?: WorkMode
   progress?: number
   createdAt: string
   startedAt?: string
@@ -535,9 +545,10 @@ export type AssistantMemory = MemoryCreateInput & {
 export const scheduleCreateSchema = z
   .object({
     projectId: z.string().uuid().optional(),
+    conversationId: z.string().uuid().optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100_000),
-    workMode: z.literal('ask'),
+    workMode: workModeSchema.default('execute'),
     recurrence: z.enum(['once', 'daily', 'weekly']),
     nextRunAt: z.string().datetime({ offset: true })
   })
@@ -547,6 +558,9 @@ export type ScheduleCreateInput = z.infer<typeof scheduleCreateSchema>
 
 export type AssistantSchedule = ScheduleCreateInput & {
   id: string
+  taskId: string
+  conversationId: string
+  runtimeSelection?: ProjectCreateInput['runtimeSelection']
   enabled: boolean
   lastRunAt?: string
   createdAt: string

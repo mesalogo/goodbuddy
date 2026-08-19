@@ -14,10 +14,10 @@
 ## 1. 背景
 
 GoodBuddy 已经在聊天右侧提供上下文、工作区、浏览器和成果面板，也已经具备
-Runtime 事件、Git 变更、文件预览、成果存储、受控浏览器和专家 Job 等基础能力。后续还
+Runtime 事件、Git 变更、文件预览、成果存储、受控浏览器和专家执行等基础能力。后续还
 计划增加：
 
-- Conversation 和 Task/Job Run 的独立监督。
+- Conversation、Task 和实验的独立监督。
 - OpenCode、Continue 和 DeepSeek Harness 的 Runtime 生命周期监督。
 - 用户可直接使用的终端和受管进程。
 - HTML 等成果的即时安全预览。
@@ -87,8 +87,9 @@ Runtime
 
 - 应用不得根据当前项目、会话、Runtime、主机或探测结果无提示地增删能力目录项。
 - 用户主动打开、关闭、排序和停靠面板实例；应用不默认同时挂载全部能力。
-- Task Center 是 Task 的单例应用级索引。每个 Task 与唯一 Conversation 一对一；Task
-  Center 不复制会话内容，也不显示普通 Conversation、Job、Run 或心跳事项。
+- Task Center 是 Task 的单例应用级索引。每个 Task 只关联一条 Conversation，一条
+  Conversation 可以关联多个 Task；Task Center 不复制会话内容，也不显示普通 Conversation、
+  Job、Run 或心跳事项。
 - 当前能力、连接、数据和空状态可以动态变化。
 - 能力不可用时，目录项或已打开面板显示原因、影响和可执行的配置或切换入口，不能只通过隐藏表示。
 - 用户可以在设置中调整目录顺序；恢复默认布局恢复标准目录与默认打开面板，不强制打开全部能力。
@@ -100,8 +101,8 @@ Runtime
 目标的能力使用当前会话、项目、Runtime 和主机帮助新面板实例初始定位，但这些上下文不是
 使用门槛：
 
-- 监督默认选择当前会话，用户可以改选其他 Conversation、Task、Job/Run 或实验 Run。
-- Runtime 默认跟随当前会话，用户可以固定到其他活动或历史 Run。
+- 监督默认选择当前会话，用户可以改选其他 Conversation、Task 或实验对象。
+- Runtime 默认跟随当前会话或 Task；执行事件可以查看，但 Job/Run 不作为独立选择对象。
 - 终端默认使用当前项目执行空间，用户可以新建本机或远程终端。
 - 工作区默认显示当前项目目录，用户可以打开其他本机目录或远程目录。
 - 成果和上下文默认使用当前范围，用户可以切换到项目、全局或其他允许范围。
@@ -210,7 +211,7 @@ Runtime
 
 当前聊天右栏过渡实现保留 Task Center、上下文、工作区、浏览器和成果五个横向页签时，必须
 单行横向滚动，不能自动隐藏或缩写到不可辨认。Task Center 继续作为 Task 的现有入口；
-审批定位到所属 Task、Job 或 Runtime。智能心跳不作为工作栏页签，其报告、建议、历史和完整配置统一归属
+审批定位到所属 Task 或 Runtime。智能心跳不作为工作栏页签，其报告、建议、历史和完整配置统一归属
 “智能心跳”菜单入口。当前阶段不新增独立自动化中心。
 
 ### 6.3 工作栏尺寸
@@ -227,15 +228,21 @@ Runtime
 
 Task Center 保留为工作栏中的稳定入口，并在现有基础上适度完善：
 
-- 只索引 Task；每个 Task 与唯一 Conversation 一对一绑定。
-- 显示名称、Global 或 Project 范围、状态、最近进展、真实活动时间和需要关注信息。
-- 点击 Task 直接打开其 Conversation。
-- 完整消息、Job、Run、工具、Subagent、审批和成果分别留在 Task Conversation、Runtime、活动记录和
-  成果查看器中，不在窄栏复制。
+- 只索引 Task；每个 Task 只关联一条 Conversation，一条 Conversation 可以关联多个 Task。
+- 显示名称、关联 Conversation、Global 或 Project 范围、Ask/Execute、状态、最近进展、
+  真实活动时间和需要关注信息。
+- 点击 Task 打开其关联 Conversation 并定位 Task。
+- 完整消息留在 Conversation；工具、Subagent、审批、错误和成果按 Task 关联到 Runtime、
+  活动记录和成果查看器中，不在窄栏复制，也不呈现 Job/Run 树。
 - 智能心跳的报告、建议、历史和配置不进入任务中心。
 
 任务中心是单例索引，不使用其他能力的“跟随 / 固定目标”多实例模型。后台状态可以更新
 徽标和排序，但不能自动打开面板或抢占用户当前工作。
+
+主侧栏最近会话为关联 Task 提供轻量入口：父会话行只显示行首展开按钮，Task 子项使用
+任务图标和本地化摘要，展开层级只到 Task；点击 Task 子项打开同一 Conversation 并定位。
+新建定制任务使用 Modal 选择当前或新
+Conversation，默认 Execute，并持续显示 Runtime、Project、工作目录、工具和审批摘要。
 
 详细产品边界以 [Task Center PRD](../task-and-job/task-center-prd.md) 和
 [Task 与 Job 统一领域模型](../task-and-job/task-and-job-model.md) 为准。
@@ -248,8 +255,8 @@ Task Center 保留为工作栏中的稳定入口，并在现有基础上适度�
 监督能力在目录中稳定可发现；用户打开面板实例后可以选择：
 
 - 普通会话。
-- Task 或 Job/Run。
-- 实验 Run 或实验整体。
+- Task。
+- 实验或实验结果。
 - 后续支持的文档分析和其他可监督对象。
 
 监督面板包含：
@@ -269,20 +276,21 @@ Runtime 能力统一监督直连模型、OpenCode、Continue、DeepSeek Harness 
 
 共同区域：
 
-- Runtime、模型连接、会话或 Run 身份。
+- Runtime、模型连接、Conversation 或 Task 身份。
 - 活动请求、状态、耗时、用量和取消。
 - 工具、审批、问题、上下文压缩和错误。
 - 跳转完整活动记录和持久设置。
 
 可选区域：
 
-- Subagent 父子关系和取消。
-- 后台 Job 队列、进度、结果和终止。
+- Task 级委派状态和取消。
+- Task 级后台执行进度、结果和终止。
 - Todo、Workflow 和 Hook 运行。
 - 原生会话、暂停、恢复、压缩或释放。
 
 可选区域不可用时，用一段有操作路径的状态说明替代空卡片。用户可以在面板中切换 Runtime
-或目标 Run，不要求先回到聊天 Composer。
+或 Conversation / Task 目标，不要求先回到聊天 Composer。内部 Job/Run 事件按 Task
+聚合，不提供 Job/Run 选择器、树、页面或独立操作菜单。
 
 ### 7.4 终端
 
@@ -353,7 +361,7 @@ Renderer 不接收任意系统 PID 控制能力。控制动作引用 Main 签发
 
 ### 7.8 成果
 
-成果面板统一显示全局、项目、Conversation、Task/Job Run 和监督显式产生的独立成果：
+成果面板统一显示全局、项目、Conversation、Task 执行和监督显式产生的独立成果：
 
 - Markdown、纯文本和 JSON。
 - 图片和图表。
@@ -365,8 +373,9 @@ Artifact、自动化和监督生成的独立输出，以及用户手动导入或
 升级前已经自动保存的普通对话 Markdown 可以从成果列表中隐藏，但不应通过升级迁移物理
 删除用户数据库内容。
 
-用户可以切换范围、搜索、预览、查看来源、导出或打开关联对象。成果必须保留项目、会话、
-Conversation、Run、创建者、MIME、大小、校验值和时间等可用归属。
+用户可以切换范围、搜索、预览、查看来源、导出或打开关联对象。成果必须保留项目、
+Conversation、Task、内部 Run、创建者、MIME、大小、校验值和时间等可用归属；界面按
+Task 呈现来源，不把 Run 作为导航对象。
 
 #### HTML 即时预览
 
@@ -388,8 +397,8 @@ Conversation、Run、创建者、MIME、大小、校验值和时间等可用归�
 - 浏览器、工作区文件和授权目录。
 - Runtime、监督或自动化显式绑定的其他上下文。
 
-每项显示来源、范围、大小、发送状态和用途。用户可以预览、移除或清空。固定到历史 Run
-时，上下文只读展示不可变快照；跟随当前 Composer 时才允许编辑下一次请求的上下文。
+每项显示来源、范围、大小、发送状态和用途。用户可以预览、移除或清空。查看 Task 的历史
+执行上下文时只读展示不可变快照；跟随当前 Composer 时才允许编辑下一次请求的上下文。
 
 ## 8. 范围和选择模型
 
@@ -410,7 +419,8 @@ type WorkbarCapabilityId =
 
 type WorkbarTargetRef =
   | { type: 'conversation'; id: string }
-  | { type: 'run'; id: string }
+  | { type: 'task'; id: string }
+  | { type: 'experiment'; id: string }
   | { type: 'project'; id: string }
   | { type: 'workspace'; id: string }
   | { type: 'runtime-session'; id: string }
@@ -510,7 +520,7 @@ type ManagedLifecycleState =
   | 'interrupted'
 ```
 
-每个 Runtime 会话、Job、终端或受管进程公开：
+每个 Runtime 会话、Task 级执行、终端或受管进程公开：
 
 - GoodBuddy 受管 ID。
 - 类型、来源和父子关系。
@@ -533,7 +543,8 @@ type ManagedControl =
 ```
 
 界面不能因为状态枚举中存在某个动作就假设所有 Runtime 都支持。Main 根据当前受管对象和
-能力重新验证动作。
+能力重新验证动作。内部 Job/Run 快照可以支持聚合与审计，但不能成为
+`WorkbarTargetRef` 或独立 UI 对象。
 
 ## 11. 数据与契约建议
 
@@ -695,7 +706,7 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - 远程租约、事件重放和幂等重连。
 - 更多远程系统和架构。
 - PDF、Office 和数据成果预览。
-- Conversation、Task/Job Run 和实验的完整监督。
+- Conversation、Task 和实验的完整监督。
 - 用户可导入导出工作栏布局和主机非敏感配置。
 
 ## 17. 验收标准
@@ -714,7 +725,7 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 ### 17.2 通用使用
 
 - [ ] 没有项目时仍可创建终端、选择工作区、打开浏览器和查看成果。
-- [ ] 监督可以作用于普通 Conversation、Task、Job/Run 和后续实验对象，不假设编程语境。
+- [ ] 监督可以作用于普通 Conversation、Task 和后续实验对象，不假设编程语境。
 - [ ] 工作区不是 Git 仓库时仍可浏览文件。
 - [ ] Runtime 不支持某项原生能力时仍可从目录打开面板并获得准确说明。
 
@@ -731,7 +742,7 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 
 ### 17.4 生命周期与恢复
 
-- [ ] Runtime、终端、Job 和进程具有权威 Main 快照和有序增量事件。
+- [ ] Runtime、终端、Task 级执行和进程具有权威 Main 快照和有序增量事件。
 - [ ] 取消、终止、失败、断线和应用退出都有确定终态。
 - [ ] 切换跟随目标后不显示上一对象的过期状态。
 - [ ] 固定目标的订阅在页面切换后保持，关闭时正确释放。

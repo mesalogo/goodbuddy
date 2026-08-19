@@ -165,7 +165,8 @@ export class SubagentService {
       instructions: input.parentRequest.prompt,
       workMode: 'ask',
       origin: 'subagent',
-      status: 'queued'
+      status: 'queued',
+      visible: false
     })
     this.emit(input, {
       childTaskId,

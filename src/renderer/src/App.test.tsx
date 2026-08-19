@@ -15,7 +15,12 @@ import type {
   DesktopApi
 } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
-import type { AssistantProject } from '../../shared/assistant-contracts'
+import type {
+  AssistantProject,
+  AssistantSchedule,
+  AssistantTask,
+  ConversationSnapshot
+} from '../../shared/assistant-contracts'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 
 const speechRecognitionMocks = vi.hoisted(() => ({
@@ -397,6 +402,8 @@ const api: DesktopApi = {
     create: vi.fn(async (input) => ({
       ...input,
       id: crypto.randomUUID(),
+      taskId: crypto.randomUUID(),
+      conversationId: input.conversationId ?? crypto.randomUUID(),
       enabled: true,
       createdAt: '2026-07-31T00:00:00.000Z',
       updatedAt: '2026-07-31T00:00:00.000Z'
@@ -778,6 +785,8 @@ describe('App', () => {
     vi.mocked(api.conversations.onChanged)
       .mockReset()
       .mockReturnValue(() => undefined)
+    vi.mocked(api.tasks.list).mockReset().mockResolvedValue([])
+    vi.mocked(api.schedules.list).mockReset().mockResolvedValue([])
     api.channels = undefined
     newConversationListener = undefined
     beforeQuitListener = undefined
@@ -899,6 +908,130 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('discovers product Tasks through their Conversation without exposing Runs', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000821'
+    const taskId = '00000000-0000-4000-8000-000000000822'
+    const scheduleId =
+      '00000000-0000-4000-8000-000000000823'
+    const conversation: ConversationSnapshot = {
+      id: conversationId,
+      projectId,
+      title: '产品发布讨论',
+      updatedAt: Date.now(),
+      messages: []
+    }
+    const task: AssistantTask = {
+      id: taskId,
+      projectId,
+      conversationId,
+      scheduleId,
+      title: '每周发布总结',
+      instructions: '总结本周发布进度',
+      origin: 'schedule',
+      status: 'idle',
+      createdAt: '2026-08-19T00:00:00.000Z'
+    }
+    const schedule: AssistantSchedule = {
+      id: scheduleId,
+      projectId,
+      taskId,
+      conversationId,
+      title: task.title,
+      prompt: task.instructions,
+      workMode: 'execute',
+      recurrence: 'weekly',
+      nextRunAt: '2026-08-21T09:00:00.000Z',
+      enabled: true,
+      createdAt: task.createdAt,
+      updatedAt: task.createdAt
+    }
+    vi.mocked(api.conversations.list).mockResolvedValue([conversation])
+    vi.mocked(api.tasks.list).mockResolvedValue([task])
+    vi.mocked(api.schedules.list).mockResolvedValue([schedule])
+
+    render(<App />)
+
+    const toggle = await screen.findByLabelText(
+      '展开或折叠“产品发布讨论”中的 1 个任务'
+    )
+    const conversationButton =
+      toggle.parentElement?.querySelector('.conversation-item')
+    expect(toggle.nextElementSibling).toBe(conversationButton)
+    expect(
+      conversationButton?.querySelector('.conversation-item__title')
+    ).toHaveAttribute('title', '产品发布讨论')
+    expect(screen.queryByText('任务 1')).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+    const taskTitle = await screen.findByText('每周发布总结', {
+      selector: '.conversation-task-child__title'
+    })
+    const taskChild = taskTitle.closest('button')
+    expect(taskChild).not.toBeNull()
+    expect(
+      taskChild?.querySelector('.conversation-task-child__icon')
+    ).toHaveClass('conversation-task-child__icon--idle')
+    expect(
+      taskChild?.querySelector('.conversation-task-child__meta')
+    ).toHaveTextContent('Execute · 每周 · 空闲')
+    expect(screen.queryByText('Run')).not.toBeInTheDocument()
+    fireEvent.click(taskChild!)
+    const taskRegion = await screen.findByRole('region', {
+      name: '当前会话的任务'
+    })
+    expect(within(taskRegion).getByText('Execute')).toBeInTheDocument()
+  })
+
+  it('routes scheduled Task approvals to the associated Conversation', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000831'
+    const taskId = '00000000-0000-4000-8000-000000000832'
+    vi.mocked(api.conversations.list).mockResolvedValue([
+      {
+        id: conversationId,
+        projectId,
+        title: '发布审批会话',
+        updatedAt: Date.now(),
+        messages: []
+      }
+    ])
+    vi.mocked(api.tasks.list).mockResolvedValue([
+      {
+        id: taskId,
+        projectId,
+        conversationId,
+        scheduleId: '00000000-0000-4000-8000-000000000833',
+        title: '发布任务',
+        instructions: '更新发布文件',
+        origin: 'schedule',
+        status: 'running',
+        createdAt: '2026-08-19T00:00:00.000Z'
+      }
+    ])
+    render(<App />)
+    await screen.findAllByText('发布审批会话')
+    await waitFor(() => expect(api.tasks.list).toHaveBeenCalled())
+
+    act(() => {
+      agentListener?.({
+        requestId: taskId,
+        type: 'approval',
+        approvalId: '00000000-0000-4000-8000-000000000834',
+        title: '请求写入工作区',
+        description: '更新发布文件',
+        toolName: 'write_file',
+        argumentSummary: 'release.md',
+        allowPermanent: false
+      })
+    })
+
+    expect(await screen.findAllByText('请求写入工作区'))
+      .not.toHaveLength(0)
+    expect(screen.getByText('仅此次')).toBeInTheDocument()
+    expect(screen.getByLabelText('任务结果：发布任务'))
+      .toBeInTheDocument()
+  })
+
   it('schedules lazy workspace routes for idle preloading', () => {
     render(<App />)
 
@@ -928,7 +1061,7 @@ describe('App', () => {
       expect(api.memory.list).toHaveBeenCalledWith(projectId)
       expect(api.memory.list).toHaveBeenCalledWith()
       expect(api.schedules.list).toHaveBeenCalledOnce()
-      expect(api.schedules.list).toHaveBeenCalledWith(projectId)
+      expect(api.schedules.list).toHaveBeenCalledWith()
       expect(api.heartbeats.list).toHaveBeenCalledOnce()
     })
   })
@@ -6737,7 +6870,9 @@ describe('App', () => {
     expect(
       screen.getByRole('tab', { name: '任务中心' })
     ).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByText('自动化')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '任务索引' })
+    ).toBeInTheDocument()
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '上下文' }))
     expect(

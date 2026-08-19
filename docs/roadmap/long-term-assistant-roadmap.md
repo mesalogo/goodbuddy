@@ -60,14 +60,18 @@ GoodBuddy 应能够：
 #### 任务中心
 
 - 保留 Task Center 作为工作栏中的稳定入口，不先建设平行的独立任务或自动化平台。
-- 每个 Task 与唯一 Conversation 一对一绑定；打开 Task 就打开该 Conversation。
+- 每个 Task 只关联一条 Conversation，一条 Conversation 可以关联多个 Task；打开 Task
+  就打开关联 Conversation 并定位该 Task。
 - Task Center 只索引 Task，显示范围、状态、最近进展和需要关注信息。
 - 普通 Conversation、Job、Run、工具步骤、Subagent 和智能心跳事项不作为顶层 Task。
+- 左侧最近会话对关联 Task 显示行首展开按钮和带任务图标的子项，父行不重复任务标签，
+  当前 UI 只展开到 Task。
 
 #### 监督、Runtime 与进程
 
-- 监督展示所选会话、任务、自动化或实验的带证据评论和介入请求。
-- Runtime 展示所选会话或 Run 的工具、Subagent、后台 Job、Workflow/Hook 和生命周期。
+- 监督展示所选 Conversation、Task 或实验的带证据评论和介入请求。
+- Runtime 按所选 Conversation 或 Task 聚合工具、委派、后台执行、Workflow/Hook 和生命周期，
+  不提供 Job/Run 树或独立操作对象。
 - 进程只展示并控制 GoodBuddy 创建、托管或明确接管的进程。
 - 待审批和高风险状态在所有栏目中持续可见，但不无条件抢占当前栏目。
 
@@ -132,7 +136,8 @@ GoodBuddy 应能够：
 
 ### 4.3 后台 Task 与 Job
 
-- Task 拥有唯一 Conversation；内部步骤、委派、并行分支和重复触发使用 Job/Subjob。
+- Task 只关联一条 Conversation，Conversation 可以承载多个 Task；内部步骤、委派、并行
+  分支和重复触发使用 Job/Subjob，但当前 UI 不展示这些内部层级。
 - Task 状态：排队、运行、等待审批、暂停、完成、失败、取消、中断。
 - 应用隐藏后 Job 可以继续运行，应用退出后不承诺继续执行。
 - 重启时将未完成 Run 标记为中断，并允许用户恢复。
@@ -280,7 +285,8 @@ GoodBuddy 应能够：
 ### 阶段 2：Task 与 Job
 
 - 持久化 Task、Job、Run 和事件。
-- 在现有 Task Center 补齐范围、状态、最近进展、需要关注和直接打开 Task Conversation。
+- 在现有 Task Center 补齐范围、状态、最近进展、需要关注和直接打开关联 Conversation。
+- 在左侧最近会话增加行首展开按钮和 Task 子项图标，展开层级止于 Task。
 - 取消、重试、恢复和审批收件箱。
 - 托盘状态和桌面通知。
 
@@ -325,9 +331,11 @@ GoodBuddy 应能够：
 
 ### 8.3 Task
 
-- 每个 Task 与唯一 Conversation 一对一绑定，用户无需理解第二层内容载体。
+- 每个 Task 只关联一条 Conversation，一条 Conversation 可以承载多个 Task，关联不改变
+  Conversation 类型或复制内容。
 - Task Center 入口保留，普通 Conversation、Job、Run 和心跳事项不会混入顶层列表。
 - 每个 Task 显示范围、状态、最近进展和需要关注信息，并可直接打开其 Conversation。
+- 左侧会话列表显示行首展开按钮和 Task 子项图标；当前 UI 不展示 Job/Subjob/Run 层级。
 - 事件持久化后再展示。
 - 取消、失败、重试和应用重启均有确定状态。
 - 审批在全局右侧栏可见。

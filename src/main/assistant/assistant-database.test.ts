@@ -98,7 +98,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 20', async () => {
+  it('migrates existing databases to schema version 22', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -127,7 +127,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(21)
+    ).toBe(22)
     expect(
       current
         .prepare(
@@ -231,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(21)
+    ).toBe(22)
     expect(
       current
         .prepare(
@@ -267,6 +267,131 @@ describe('AssistantDatabase', () => {
       ])
     )
     current.close()
+  })
+
+  it('backfills one stable Task and Conversation for each v21 schedule', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-stable-schedule-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const project = initial.listProjects()[0]!
+    const legacySchedule = initial.createSchedule({
+      projectId: project.id,
+      title: '旧版每日报告',
+      prompt: '生成每日报告',
+      workMode: 'ask',
+      recurrence: 'daily',
+      nextRunAt: '2026-08-20T00:00:00.000Z'
+    })
+    initial.close()
+
+    const legacyTaskId =
+      '00000000-0000-4000-8000-000000000221'
+    const legacyRunId =
+      '00000000-0000-4000-8000-000000000222'
+    const raw = new DatabaseSync(databasePath)
+    raw.exec('BEGIN IMMEDIATE')
+    raw
+      .prepare('DELETE FROM tasks WHERE id = ?')
+      .run(legacySchedule.taskId)
+    raw
+      .prepare('DELETE FROM conversations WHERE id = ?')
+      .run(legacySchedule.conversationId)
+    raw
+      .prepare(
+        `INSERT INTO tasks
+          (id, project_id, conversation_id, schedule_id, parent_task_id,
+           expert_id, routing_mode, title, instructions, origin, status,
+           priority, work_mode, progress, created_at, started_at,
+           completed_at, error, visible)
+         VALUES (?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, 'schedule',
+                 'completed', 0, 'ask', NULL, ?, ?, ?, NULL, 1)`
+      )
+      .run(
+        legacyTaskId,
+        project.id,
+        `schedule:${legacySchedule.id}`,
+        legacySchedule.title,
+        legacySchedule.prompt,
+        '2026-08-18T00:00:00.000Z',
+        '2026-08-18T00:00:00.000Z',
+        '2026-08-18T00:01:00.000Z'
+      )
+    raw
+      .prepare(
+        `INSERT INTO schedule_runs
+          (id, schedule_id, scheduled_for, task_id, status)
+         VALUES (?, ?, ?, ?, 'completed')`
+      )
+      .run(
+        legacyRunId,
+        legacySchedule.id,
+        '2026-08-18T00:00:00.000Z',
+        legacyTaskId
+      )
+    raw.exec(`
+      DROP INDEX IF EXISTS idx_tasks_schedule;
+      PRAGMA user_version = 21;
+      COMMIT;
+    `)
+    raw.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    const [schedule] = migrated.listSchedules(project.id)
+    expect(schedule).toMatchObject({
+      id: legacySchedule.id,
+      title: legacySchedule.title,
+      taskId: expect.any(String),
+      conversationId: expect.any(String)
+    })
+    expect(schedule!.taskId).not.toBe(legacyTaskId)
+    expect(
+      migrated.getConversation(schedule!.conversationId)
+    ).toMatchObject({
+      projectId: project.id,
+      title: legacySchedule.title,
+      messages: []
+    })
+    expect(migrated.listTasks()).toEqual([
+      expect.objectContaining({
+        id: schedule!.taskId,
+        conversationId: schedule!.conversationId,
+        scheduleId: schedule!.id,
+        status: 'idle'
+      })
+    ])
+    migrated.close()
+
+    const inspected = new DatabaseSync(databasePath)
+    expect(
+      inspected.prepare('PRAGMA user_version').get()
+    ).toEqual({ user_version: 22 })
+    expect(
+      inspected
+        .prepare(
+          `SELECT parent_task_id, visible
+           FROM tasks
+           WHERE id = ?`
+        )
+        .get(legacyTaskId)
+    ).toEqual({
+      parent_task_id: schedule!.taskId,
+      visible: 0
+    })
+    expect(
+      inspected
+        .prepare(
+          `SELECT name
+           FROM sqlite_master
+           WHERE type = 'index' AND name = 'idx_tasks_schedule'`
+        )
+        .get()
+    ).toEqual({ name: 'idx_tasks_schedule' })
+    inspected.close()
   })
 
   it('backfills checklist todos when migrating existing magic notes', async () => {
@@ -997,6 +1122,26 @@ describe('AssistantDatabase', () => {
       recurrence: 'daily',
       nextRunAt: '2026-07-31T00:00:00.000Z'
     })
+    expect(schedule).toMatchObject({
+      projectId: project.id,
+      workMode: 'ask',
+      taskId: expect.any(String),
+      conversationId: expect.any(String)
+    })
+    expect(
+      database.listTasks().find((task) => task.id === schedule.taskId)
+    ).toMatchObject({
+      conversationId: schedule.conversationId,
+      scheduleId: schedule.id,
+      origin: 'schedule',
+      status: 'idle'
+    })
+    expect(database.getConversation(schedule.conversationId)).toMatchObject({
+      id: schedule.conversationId,
+      projectId: project.id,
+      title: '每日摘要',
+      messages: []
+    })
     const [claim] = database.claimDueSchedules(
       new Date('2026-07-31T00:01:00.000Z')
     )
@@ -1011,7 +1156,6 @@ describe('AssistantDatabase', () => {
     database.completeScheduleRun(
       claim!.runId,
       'completed',
-      undefined,
       new Date('2026-07-31T00:01:00.000Z')
     )
     expect(database.listSchedules(project.id)[0]).toMatchObject({
@@ -1019,6 +1163,89 @@ describe('AssistantDatabase', () => {
       nextRunAt: '2026-08-01T00:00:00.000Z',
       lastRunAt: '2026-07-31T00:01:00.000Z'
     })
+    expect(
+      database.listTasks().find((task) => task.id === schedule.taskId)
+    ).toMatchObject({
+      status: 'idle',
+      completedAt: undefined
+    })
+    const manualClaim = database.claimScheduleNow(schedule.id)
+    expect(manualClaim.schedule).toMatchObject({
+      taskId: schedule.taskId,
+      conversationId: schedule.conversationId
+    })
+    expect(() => database.claimScheduleNow(schedule.id)).toThrow(
+      '已有一次运行正在进行'
+    )
+    database.completeScheduleRun(
+      manualClaim.runId,
+      'completed',
+      new Date('2026-07-31T00:02:00.000Z')
+    )
+    database.appendConversationMessage({
+      conversationId: schedule.conversationId,
+      role: 'assistant',
+      content: '今日任务状态正常',
+      status: '定时任务',
+      task: {
+        id: schedule.taskId,
+        title: schedule.title
+      }
+    })
+    expect(
+      database.getConversation(schedule.conversationId).messages
+    ).toEqual([
+      expect.objectContaining({
+        content: '今日任务状态正常',
+        task: {
+          id: schedule.taskId,
+          title: schedule.title
+        }
+      })
+    ])
+    const sharedConversationSchedule = database.createSchedule({
+      projectId: project.id,
+      conversationId: schedule.conversationId,
+      title: '每周复盘',
+      prompt: '复盘本周任务',
+      workMode: 'execute',
+      recurrence: 'weekly',
+      nextRunAt: '2027-01-01T00:00:00.000Z'
+    })
+    expect(sharedConversationSchedule.conversationId).toBe(
+      schedule.conversationId
+    )
+    expect(
+      database
+        .listTasks()
+        .filter(
+          (task) =>
+            task.conversationId === schedule.conversationId &&
+            task.origin === 'schedule'
+        )
+    ).toHaveLength(2)
+    const countsBeforeFailedCreate = {
+      schedules: database.listSchedules().length,
+      tasks: database.listTasks().length,
+      conversations: database.listConversations().length
+    }
+    expect(() =>
+      database.createSchedule({
+        projectId: project.id,
+        conversationId:
+          '00000000-0000-4000-8000-000000000299',
+        title: '不应创建',
+        prompt: '无效对话',
+        workMode: 'execute',
+        recurrence: 'once',
+        nextRunAt: '2027-01-02T00:00:00.000Z'
+      })
+    ).toThrow('所选对话不存在或不可用于任务')
+    expect({
+      schedules: database.listSchedules().length,
+      tasks: database.listTasks().length,
+      conversations: database.listConversations().length
+    }).toEqual(countsBeforeFailedCreate)
     const overdue = database.createSchedule({
       projectId: project.id,
       title: '过期摘要',
@@ -1033,7 +1260,6 @@ describe('AssistantDatabase', () => {
     database.completeScheduleRun(
       overdueClaim!.runId,
       'completed',
-      undefined,
       new Date('2026-07-31T00:01:00.000Z')
     )
     expect(
@@ -1042,6 +1268,22 @@ describe('AssistantDatabase', () => {
         .find((item) => item.id === overdue.id)
     ).toMatchObject({
       nextRunAt: '2026-08-01T00:00:00.000Z'
+    })
+    database.removeSchedule(sharedConversationSchedule.id)
+    expect(
+      database
+        .listSchedules(project.id)
+        .some((item) => item.id === sharedConversationSchedule.id)
+    ).toBe(false)
+    expect(
+      database
+        .listTasks()
+        .find((task) => task.id === sharedConversationSchedule.taskId)
+    ).toMatchObject({
+      conversationId: schedule.conversationId,
+      scheduleId: undefined,
+      status: 'completed',
+      workMode: 'execute'
     })
     database.close()
   })
@@ -1083,7 +1325,6 @@ describe('AssistantDatabase', () => {
     recovered.completeScheduleRun(
       reclaimed!.runId,
       'completed',
-      undefined,
       new Date('2026-08-13T00:02:00.000Z')
     )
     expect(recovered.listSchedules()[0]).toMatchObject({
@@ -1091,7 +1332,43 @@ describe('AssistantDatabase', () => {
       enabled: false,
       lastRunAt: '2026-08-13T00:02:00.000Z'
     })
+    expect(() =>
+      recovered.setScheduleEnabled(schedule.id, true)
+    ).toThrow('已执行的一次性计划不能恢复自动运行')
     recovered.close()
+  })
+
+  it('claims a bounded batch of independent due schedules', async () => {
+    const database = await createDatabase()
+    const scheduleIds = Array.from({ length: 3 }, (_, index) =>
+      database.createSchedule({
+        title: `批量任务 ${index + 1}`,
+        prompt: `执行批量任务 ${index + 1}`,
+        workMode: 'execute',
+        recurrence: 'once',
+        nextRunAt: '2026-08-13T00:00:00.000Z'
+      }).id
+    )
+
+    const firstBatch = database.claimDueSchedules(
+      new Date('2026-08-13T00:01:00.000Z'),
+      2
+    )
+    expect(firstBatch).toHaveLength(2)
+    expect(
+      new Set(firstBatch.map((claim) => claim.schedule.id)).size
+    ).toBe(2)
+
+    const secondBatch = database.claimDueSchedules(
+      new Date('2026-08-13T00:01:00.000Z'),
+      2
+    )
+    expect(secondBatch).toHaveLength(1)
+    expect(scheduleIds).toContain(secondBatch[0]?.schedule.id)
+    for (const claim of [...firstBatch, ...secondBatch]) {
+      database.completeScheduleRun(claim.runId, 'completed')
+    }
+    database.close()
   })
 
   it('durably interrupts active tasks with completion times and audit events on startup', async () => {
@@ -1847,9 +2124,27 @@ describe('AssistantDatabase', () => {
       role: 'user',
       content: '远程消息'
     })
+    const linkedSchedule = database.createSchedule({
+      conversationId: localId,
+      title: '随会话删除的任务',
+      prompt: '整理会话',
+      workMode: 'execute',
+      recurrence: 'daily',
+      nextRunAt: '2027-01-01T00:00:00.000Z'
+    })
 
     expect(database.deleteLocalConversation(localId)).toBe(true)
     expect(database.deleteLocalConversation(localId)).toBe(false)
+    expect(
+      database
+        .listSchedules()
+        .some((schedule) => schedule.id === linkedSchedule.id)
+    ).toBe(false)
+    expect(
+      database
+        .listTasks()
+        .some((task) => task.id === linkedSchedule.taskId)
+    ).toBe(false)
     expect(() =>
       database.getConversation(localId)
     ).toThrow('对话不存在')

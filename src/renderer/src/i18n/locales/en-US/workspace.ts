@@ -93,26 +93,40 @@ export const workspace = {
     tasks: {
       description:
         'Review pending approvals and create or manage automations.',
+      createCustom: 'New custom task',
       approvalsTitle: 'Awaiting approval',
       noApprovals: 'There are no operations awaiting approval.',
       deny: 'Deny',
       allowOnce: 'Allow once',
-      automationTitle: 'Automation',
+      taskIndexTitle: 'Task index',
+      empty: 'Explicitly created tasks will appear here.',
+      noFilterResults: 'No tasks match this filter.',
+      conversationUnavailable: 'Conversation unavailable',
+      projectScope: 'Project: {{project}}',
+      globalScope: 'Global',
+      startedAt: 'Started {{time}}',
+      nextRunAt: 'Next run: {{time}}',
+      notStarted: 'Not run yet',
+      filters: {
+        ariaLabel: 'Filter tasks',
+        attention: 'Attention',
+        active: 'Active',
+        paused: 'Paused',
+        finished: 'Finished'
+      },
       schedule: {
-        titleAriaLabel: 'Scheduled task title',
-        titlePlaceholder: 'Task title',
-        promptAriaLabel: 'Scheduled task instructions',
-        promptPlaceholder: 'Read-only task to complete on schedule',
-        timeAriaLabel: 'Scheduled task time',
-        recurrenceAriaLabel: 'Scheduled task recurrence',
         recurrence: {
           once: 'Once',
           daily: 'Daily',
           weekly: 'Weekly'
         },
-        add: 'Add scheduled task',
         runNow: 'Run now',
-        delete: 'Delete'
+        delete: 'Delete schedule',
+        cancelDelete: 'Cancel deleting the schedule',
+        confirmDelete: 'Confirm deleting the schedule for “{{title}}”',
+        confirmDeleteAction: 'Stop future runs',
+        deleteMessage:
+          'This stops future automatic runs but keeps the task, conversation, and existing results.'
       }
     },
     context: {
@@ -179,15 +193,57 @@ export const workspace = {
     },
     errors: {
       workspacePreview: 'Could not preview the workspace file',
-      addSchedule: 'Could not add the scheduled task',
       runSchedule: 'Could not run the scheduled task',
       deleteSchedule: 'Could not delete the scheduled task',
+      updateSchedule: 'Could not update the scheduled task',
       refreshWorkspace: 'Could not refresh workspace files',
       importResult: 'Could not import results',
       loadResult: 'Could not load the result',
       interactBrowser: 'Could not open the browser interaction window',
       stopBrowser: 'Could not stop the browser'
     }
+  },
+  task: {
+    status: {
+      queued: 'Idle',
+      idle: 'Idle',
+      running: 'Running',
+      waiting_approval: 'Awaiting approval',
+      paused: 'Paused',
+      completed: 'Completed',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+      interrupted: 'Interrupted'
+    },
+    mode: {
+      ask: 'Ask',
+      execute: 'Execute',
+      unavailable: 'Mode unavailable'
+    },
+    fields: {
+      mode: 'Mode',
+      schedule: 'Schedule',
+      nextRun: 'Next run',
+      outcome: 'Latest result'
+    },
+    schedule: {
+      none: 'No schedule'
+    },
+    actions: {
+      pause: 'Pause',
+      resume: 'Resume'
+    },
+    notAvailable: 'Unavailable',
+    completedAt: 'Completed {{time}}',
+    noOutcome: 'No run result yet'
+  },
+  taskStrip: {
+    ariaLabel: 'Tasks in this conversation',
+    title: 'Conversation tasks',
+    count: '{{count}}',
+    create: 'New task',
+    empty: 'This conversation has no tasks yet.',
+    taskList: 'Task list'
   },
   files: {
     statuses: {

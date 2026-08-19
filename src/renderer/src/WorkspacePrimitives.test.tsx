@@ -106,7 +106,7 @@ describe('WorkspacePrimitives', () => {
       /\.section-label\s*\{[^}]*font-size:\s*var\(--font-caption\);[^}]*font-weight:\s*600;/u
     )
     expect(stylesheet).toMatch(
-      /\.conversation-item span\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+      /\.conversation-item__primary\s*\{[^}]*font-size:\s*var\(--font-body\);/u
     )
     expect(stylesheet).toMatch(
       /\.conversation-item small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
@@ -132,6 +132,22 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).toMatch(
       /\.composer-context-compact\s*\{[^}]*position:\s*absolute;[^}]*bottom:\s*0;[^}]*left:\s*0;/u
     )
+  })
+
+  it('keeps the conversation action close to the sidebar edge', () => {
+    expect(stylesheet).toMatch(
+      /\.conversation-row \.conversation-item\s*\{[^}]*padding-right:\s*36px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-more\s*\{[^}]*right:\s*5px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-row:has\(\.conversation-activity-indicator\)\s+\.conversation-item\s*\{[^}]*padding-right:\s*52px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-activity-indicator\s*\{[^}]*right:\s*38px;/u
+    )
+    expect(stylesheet).not.toContain('.conversation-delete')
   })
 
   it('separates Runtime-specific controls from the main composer toolbar', () => {

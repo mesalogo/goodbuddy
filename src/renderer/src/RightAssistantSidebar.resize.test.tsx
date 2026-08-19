@@ -32,8 +32,11 @@ function renderSidebar({
       enabledLibraries={[]}
       memories={[]}
       schedules={[]}
+      tasks={[]}
+      conversationTitles={new Map()}
+      projectNames={new Map()}
       onClose={vi.fn()}
-      onCreateSchedule={vi.fn(async () => undefined)}
+      onCreateCustomTask={vi.fn()}
       onImportArtifacts={vi.fn(async () => undefined)}
       onListWorkspaceDirectory={vi.fn(async (path: string) => ({
         path,
@@ -49,6 +52,8 @@ function renderSidebar({
       onRemoveSchedule={vi.fn(async () => undefined)}
       onRespondApproval={vi.fn()}
       onRunSchedule={vi.fn(async () => undefined)}
+      onSetScheduleEnabled={vi.fn(async () => undefined)}
+      onOpenTask={vi.fn()}
       onStopBrowser={vi.fn(async () => undefined)}
       onTabChange={vi.fn()}
       open
@@ -161,14 +166,17 @@ describe('RightAssistantSidebar resizing', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('keeps automation in the task center without recent tasks', () => {
+  it('keeps the product Task index in the task center', () => {
     renderSidebar({ tab: 'tasks' })
 
     expect(screen.getByText('等待审批')).toBeInTheDocument()
-    expect(screen.getByText('自动化')).toBeInTheDocument()
     expect(
-      screen.getByLabelText('定时任务标题')
+      screen.getByRole('heading', { name: '任务索引' })
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '新建定制任务' })
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText('定时任务标题')).not.toBeInTheDocument()
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
   })
 
