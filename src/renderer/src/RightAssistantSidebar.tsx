@@ -6,7 +6,7 @@ import {
   ExternalLink,
   FileText,
   FolderTree,
-  ListTodo,
+  ClockFading,
   Monitor,
   PanelRightClose,
   Plus,
@@ -604,7 +604,7 @@ export function RightAssistantSidebar({
             )}
 
             <h3>
-              <ListTodo size={15} />
+              <ClockFading size={15} />
               {t('sidebar.tasks.taskIndexTitle')}
             </h3>
             <div className="task-center__filters">

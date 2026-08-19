@@ -18,6 +18,7 @@ import type {
 } from './capability-contracts'
 import {
   assistantIdSchema,
+  conversationAttachmentSchema,
   conversationHistoryMessageSchema,
   conversationContextCompressionStateSchema,
   legacyWorkModeSchema,
@@ -35,6 +36,7 @@ import {
   type TokenUsageSummary,
   type ConversationSnapshot,
   type ConversationAttachment,
+  type ConversationQueueItem,
   type ConversationContextCompressionState,
   type LocalConversationSaveBatch,
   type WorkspaceChanges,
@@ -248,6 +250,7 @@ export const agentRequestSchema = z
     expertId: z.string().uuid().optional(),
     teamMode: z.boolean().optional(),
     smartRouting: z.boolean().optional(),
+    queueItemId: z.string().uuid().optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
     runtimeControl: runtimeControlSchema.optional(),
     workMode: legacyWorkModeSchema.optional(),
@@ -299,6 +302,36 @@ export const agentRequestSchema = z
   })
 
 export type AgentRequest = z.input<typeof agentRequestSchema>
+
+export const conversationQueueUserInputSchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    projectId: z.string().uuid().optional(),
+    runtimeSelection: agentRuntimeSelectionSchema,
+    runtimeControl: runtimeControlSchema.optional(),
+    expertId: z.string().uuid().optional(),
+    teamMode: z.boolean().optional(),
+    smartRouting: z.boolean().optional(),
+    workMode: legacyWorkModeSchema,
+    includeMemoryContext: z.boolean().default(true),
+    prompt: z.string().trim().min(1).max(100_000),
+    attachments: z.array(conversationAttachmentSchema).max(8).default([]),
+    knowledgeLibraryIds: z
+      .array(z.string().uuid())
+      .max(20)
+      .default([]),
+    knowledgeRetrievalMode: knowledgeRetrievalModeSchema.default('auto')
+  })
+  .strict()
+
+export type ConversationQueueUserInput = z.infer<
+  typeof conversationQueueUserInputSchema
+>
+
+export type ConversationQueueDispatch = {
+  item: ConversationQueueItem
+  input: ConversationQueueUserInput
+}
 
 export const runtimeProviderSchema = z.enum([
   'auto',
@@ -1450,7 +1483,25 @@ export type DesktopApi = {
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
     deleteLocal: (conversationId: string) => Promise<boolean>
-    onChanged: (listener: () => void) => () => void
+    onChanged: (
+      listener: (conversationId?: string) => void
+    ) => () => void
+  }
+  conversationQueue: {
+    list: (conversationId?: string) => Promise<ConversationQueueItem[]>
+    enqueueUser: (
+      input: ConversationQueueUserInput
+    ) => Promise<ConversationQueueItem>
+    remove: (itemId: string) => Promise<void>
+    interruptAndRun: (itemId: string) => Promise<void>
+    releaseUser: (itemId: string) => Promise<void>
+    ready: (conversationId: string) => Promise<void>
+    onChanged: (
+      listener: (conversationId?: string) => void
+    ) => () => void
+    onDispatch: (
+      listener: (dispatch: ConversationQueueDispatch) => void
+    ) => () => void
   }
   workspace: {
     getChanges: (projectId: string) => Promise<WorkspaceChanges>

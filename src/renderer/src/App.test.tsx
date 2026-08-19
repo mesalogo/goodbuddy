@@ -12,6 +12,7 @@ import type {
   AgentEvent,
   BrowserLiveState,
   ContextAttachment,
+  ConversationQueueDispatch,
   DesktopApi
 } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
@@ -74,6 +75,14 @@ let fileSelectionProgressListener:
 let newConversationListener: (() => void) | undefined
 let maximizedChangedListener: ((maximized: boolean) => void) | undefined
 let beforeQuitListener: (() => Promise<void>) | undefined
+let conversationQueueDispatchListener:
+  | ((dispatch: ConversationQueueDispatch) => void)
+  | undefined
+let conversationQueueChangeListener:
+  | Parameters<
+      DesktopApi['conversationQueue']['onChanged']
+    >[0]
+  | undefined
 const removeMaximizedChangedListener = vi.fn()
 const run = vi.fn<DesktopApi['agent']['run']>()
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
@@ -335,6 +344,38 @@ const api: DesktopApi = {
     saveLocal: vi.fn(async () => {}),
     deleteLocal: vi.fn(async () => true),
     onChanged: vi.fn(() => () => undefined)
+  },
+  conversationQueue: {
+    list: vi.fn(async () => []),
+    enqueueUser: vi.fn(async (input) => {
+      const item = {
+        id: crypto.randomUUID(),
+        conversationId: input.conversationId,
+        source: 'user' as const,
+        label: input.prompt,
+        createdAt: '2026-07-31T00:00:00.000Z'
+      }
+      queueMicrotask(() =>
+        conversationQueueDispatchListener?.({ item, input })
+      )
+      return item
+    }),
+    remove: vi.fn(async () => {}),
+    interruptAndRun: vi.fn(async () => {}),
+    releaseUser: vi.fn(async () => {}),
+    ready: vi.fn(async () => {}),
+    onChanged: vi.fn((listener) => {
+      conversationQueueChangeListener = listener
+      return () => {
+        conversationQueueChangeListener = undefined
+      }
+    }),
+    onDispatch: vi.fn((listener) => {
+      conversationQueueDispatchListener = listener
+      return () => {
+        conversationQueueDispatchListener = undefined
+      }
+    })
   },
   workspace: {
     getChanges: vi.fn(async () => ({
@@ -755,6 +796,18 @@ function selectComposerOption(
   fireEvent.click(option)
 }
 
+function selectProjectOption(projectName: string): void {
+  fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+  const menu = screen.getByRole('menu', { name: '当前项目' })
+  const option = within(menu)
+    .getByText(projectName, { selector: 'b' })
+    .closest<HTMLButtonElement>('[role="menuitemradio"]')
+  if (!option) {
+    throw new Error(`Missing project option: ${projectName}`)
+  }
+  fireEvent.click(option)
+}
+
 function deferred<T>(): {
   promise: Promise<T>
   resolve: (value: T) => void
@@ -785,6 +838,54 @@ describe('App', () => {
     vi.mocked(api.conversations.onChanged)
       .mockReset()
       .mockReturnValue(() => undefined)
+    conversationQueueChangeListener = undefined
+    conversationQueueDispatchListener = undefined
+    vi.mocked(api.conversationQueue.list)
+      .mockReset()
+      .mockResolvedValue([])
+    vi.mocked(api.conversationQueue.enqueueUser)
+      .mockReset()
+      .mockImplementation(async (input) => {
+        const item = {
+          id: crypto.randomUUID(),
+          conversationId: input.conversationId,
+          source: 'user' as const,
+          label: input.prompt,
+          createdAt: '2026-07-31T00:00:00.000Z'
+        }
+        queueMicrotask(() =>
+          conversationQueueDispatchListener?.({ item, input })
+        )
+        return item
+      })
+    vi.mocked(api.conversationQueue.remove)
+      .mockReset()
+      .mockResolvedValue()
+    vi.mocked(api.conversationQueue.interruptAndRun)
+      .mockReset()
+      .mockResolvedValue()
+    vi.mocked(api.conversationQueue.releaseUser)
+      .mockReset()
+      .mockResolvedValue()
+    vi.mocked(api.conversationQueue.ready)
+      .mockReset()
+      .mockResolvedValue()
+    vi.mocked(api.conversationQueue.onChanged)
+      .mockReset()
+      .mockImplementation((listener) => {
+        conversationQueueChangeListener = listener
+        return () => {
+          conversationQueueChangeListener = undefined
+        }
+      })
+    vi.mocked(api.conversationQueue.onDispatch)
+      .mockReset()
+      .mockImplementation((listener) => {
+        conversationQueueDispatchListener = listener
+        return () => {
+          conversationQueueDispatchListener = undefined
+        }
+      })
     vi.mocked(api.tasks.list).mockReset().mockResolvedValue([])
     vi.mocked(api.schedules.list).mockReset().mockResolvedValue([])
     api.channels = undefined
@@ -908,6 +1009,143 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('renders the unified user and Scheduled Task queue above the Composer', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000951'
+    vi.mocked(api.conversations.list).mockResolvedValue([
+      {
+        id: conversationId,
+        projectId,
+        title: '排队对话',
+        updatedAt: Date.now(),
+        messages: []
+      }
+    ])
+    vi.mocked(api.conversationQueue.list).mockResolvedValue([
+      {
+        id: '00000000-0000-4000-8000-000000000952',
+        conversationId,
+        source: 'schedule',
+        label: '每日汇总',
+        createdAt: '2026-08-20T09:00:00.000Z'
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000953',
+        conversationId,
+        source: 'user',
+        label: '补充说明',
+        createdAt: '2026-08-20T09:01:00.000Z'
+      }
+    ])
+
+    render(<App />)
+
+    const queue = await screen.findByRole('region', {
+      name: '对话待发送队列'
+    })
+    expect(queue.parentElement).toHaveClass('composer-wrap')
+    expect(queue.closest('.composer')).toBeNull()
+    expect(queue.nextElementSibling).toHaveClass('composer')
+    expect(within(queue).queryByText('待发送（2）')).not.toBeInTheDocument()
+    expect(within(queue).getByText('每日汇总')).toBeInTheDocument()
+    expect(within(queue).getByText('补充说明')).toBeInTheDocument()
+    fireEvent.click(
+      within(queue).getByRole('button', {
+        name: '立即运行“每日汇总”'
+      })
+    )
+    await waitFor(() =>
+      expect(
+        api.conversationQueue.interruptAndRun
+      ).toHaveBeenCalledWith(
+        '00000000-0000-4000-8000-000000000952'
+      )
+    )
+    fireEvent.click(
+      within(queue).getByRole('button', {
+        name: '从待发送队列删除“补充说明”'
+      })
+    )
+    await waitFor(() =>
+      expect(api.conversationQueue.remove).toHaveBeenCalledWith(
+        '00000000-0000-4000-8000-000000000953'
+      )
+    )
+  })
+
+  it('preserves scoped queue updates that arrive during another refresh', async () => {
+    const firstConversationId =
+      '00000000-0000-4000-8000-000000000954'
+    const secondConversationId =
+      '00000000-0000-4000-8000-000000000955'
+    vi.mocked(api.conversations.list).mockResolvedValue([
+      {
+        id: firstConversationId,
+        projectId,
+        title: '第一条排队对话',
+        updatedAt: Date.now(),
+        messages: []
+      },
+      {
+        id: secondConversationId,
+        projectId,
+        title: '第二条排队对话',
+        updatedAt: Date.now() - 1,
+        messages: []
+      }
+    ])
+    const firstRefresh = deferred<
+      Awaited<
+        ReturnType<DesktopApi['conversationQueue']['list']>
+      >
+    >()
+    vi.mocked(api.conversationQueue.list).mockImplementation(
+      async (conversationId) => {
+        if (conversationId === firstConversationId) {
+          return firstRefresh.promise
+        }
+        return []
+      }
+    )
+
+    render(<App />)
+    await waitFor(() =>
+      expect(conversationQueueChangeListener).toBeDefined()
+    )
+    act(() => {
+      conversationQueueChangeListener?.(firstConversationId)
+    })
+    await waitFor(() =>
+      expect(api.conversationQueue.list).toHaveBeenCalledWith(
+        firstConversationId
+      )
+    )
+    await act(async () => {
+      conversationQueueChangeListener?.(secondConversationId)
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    act(() => {
+      firstRefresh.resolve([
+        {
+          id: '00000000-0000-4000-8000-000000000956',
+          conversationId: firstConversationId,
+          source: 'user',
+          label: '不能被后续刷新丢弃',
+          createdAt: '2026-08-20T09:03:00.000Z'
+        }
+      ])
+    })
+
+    expect(
+      await screen.findByText('不能被后续刷新丢弃')
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(api.conversationQueue.list).toHaveBeenCalledWith(
+        secondConversationId
+      )
+    )
+  })
+
   it('discovers product Tasks through their Conversation without exposing Runs', async () => {
     const conversationId =
       '00000000-0000-4000-8000-000000000821'
@@ -969,8 +1207,10 @@ describe('App', () => {
     const taskChild = taskTitle.closest('button')
     expect(taskChild).not.toBeNull()
     expect(
-      taskChild?.querySelector('.conversation-task-child__icon')
-    ).toHaveClass('conversation-task-child__icon--idle')
+      taskChild?.querySelector('.task-status-dot')
+    ).toHaveClass('task-status-dot--idle')
+    expect(taskChild?.querySelector('.lucide-clock-fading'))
+      .not.toBeInTheDocument()
     expect(
       taskChild?.querySelector('.conversation-task-child__meta')
     ).toHaveTextContent('Execute · 每周 · 空闲')
@@ -980,6 +1220,81 @@ describe('App', () => {
       name: '当前会话的任务'
     })
     expect(within(taskRegion).getByText('Execute')).toBeInTheDocument()
+  })
+
+  it('uses shared status dots for Conversation Task children', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000824'
+    const conversation: ConversationSnapshot = {
+      id: conversationId,
+      projectId,
+      title: '任务状态会话',
+      updatedAt: Date.now(),
+      messages: []
+    }
+    const tasks: AssistantTask[] = [
+      {
+        id: '00000000-0000-4000-8000-000000000825',
+        projectId,
+        conversationId,
+        title: '已完成任务',
+        instructions: '检查完成状态',
+        origin: 'schedule',
+        status: 'completed',
+        createdAt: '2026-08-19T03:00:00.000Z'
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000826',
+        projectId,
+        conversationId,
+        title: '运行中任务',
+        instructions: '检查运行状态',
+        origin: 'schedule',
+        status: 'running',
+        createdAt: '2026-08-19T02:00:00.000Z'
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000827',
+        projectId,
+        conversationId,
+        title: '失败任务',
+        instructions: '检查失败状态',
+        origin: 'schedule',
+        status: 'failed',
+        createdAt: '2026-08-19T01:00:00.000Z'
+      }
+    ]
+    vi.mocked(api.conversations.list).mockResolvedValue([
+      conversation
+    ])
+    vi.mocked(api.tasks.list).mockResolvedValue(tasks)
+
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByLabelText(
+        '展开或折叠“任务状态会话”中的 3 个任务'
+      )
+    )
+    for (const [title, status, label] of [
+      ['已完成任务', 'completed', '已完成'],
+      ['运行中任务', 'running', '运行中'],
+      ['失败任务', 'failed', '失败']
+    ] as const) {
+      const taskTitle = await screen.findByText(title, {
+        selector: '.conversation-task-child__title'
+      })
+      const taskChild = taskTitle.closest('button')
+      expect(
+        taskChild?.querySelector('.task-status-dot')
+      ).toHaveClass(`task-status-dot--${status}`)
+      expect(
+        taskChild?.querySelector('.conversation-task-child__meta')
+      ).toHaveTextContent(label)
+    }
+    expect(
+      document.querySelector('.conversation-task-child__icon')
+    ).not.toBeInTheDocument()
   })
 
   it('routes scheduled Task approvals to the associated Conversation', async () => {
@@ -3436,6 +3751,86 @@ describe('App', () => {
     expect(runtimeButton).toBeEnabled()
   })
 
+  it('queues another ordinary message while the Conversation is running', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '第一条长消息' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+    const secondItem = {
+      id: '00000000-0000-4000-8000-000000000941',
+      conversationId: run.mock.calls[0]![0].conversationId,
+      source: 'user' as const,
+      label: '第二条排队消息',
+      createdAt: '2026-08-20T09:01:00.000Z'
+    }
+    vi.mocked(api.conversationQueue.enqueueUser)
+      .mockResolvedValueOnce(secondItem)
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: secondItem.label }
+    })
+    fireEvent.click(
+      await screen.findByLabelText('加入待发送队列')
+    )
+
+    await waitFor(() =>
+      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledTimes(2)
+    )
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(
+      screen.queryByText(/当前对话已有任务正在运行/u)
+    ).not.toBeInTheDocument()
+
+    const firstRequest = run.mock.calls[0]![0]
+    act(() => {
+      agentListener?.({
+        requestId: firstRequest.requestId,
+        type: 'done'
+      })
+    })
+    const secondInput = vi.mocked(
+      api.conversationQueue.enqueueUser
+    ).mock.calls[1]![0]
+    act(() => {
+      conversationQueueDispatchListener?.({
+        item: secondItem,
+        input: secondInput
+      })
+    })
+
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+    expect(run.mock.calls[1]![0]).toMatchObject({
+      queueItemId: secondItem.id,
+      prompt: secondItem.label
+    })
+  })
+
+  it('restores a queued message when Agent preflight rejects it', async () => {
+    run.mockRejectedValueOnce(new Error('Runtime 暂不可用'))
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '需要稍后重试的消息' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+
+    await waitFor(() =>
+      expect(api.conversationQueue.releaseUser).toHaveBeenCalledOnce()
+    )
+    expect(
+      await screen.findByText('Runtime 暂不可用')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('需要稍后重试的消息')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('停止生成')
+    ).not.toBeInTheDocument()
+  })
+
   it('keeps sent documents and images in conversation history', async () => {
     const documentAttachment = {
       id: '00000000-0000-4000-8000-000000000301',
@@ -4007,9 +4402,7 @@ describe('App', () => {
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId)
     )
-    fireEvent.change(screen.getByLabelText('当前项目'), {
-      target: { value: secondProject.id }
-    })
+    selectProjectOption(secondProject.name)
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledWith(
         secondProject.id
@@ -4296,18 +4689,16 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByLabelText('当前项目')).toHaveValue(
-      secondProject.id
-    )
+    expect(
+      await screen.findByRole('button', { name: '当前项目' })
+    ).toHaveTextContent(secondProject.name)
     expect(
       screen.getByRole('button', {
         name: '工作模式：Execute · 受控执行'
       })
     ).toBeEnabled()
 
-    fireEvent.change(screen.getByLabelText('当前项目'), {
-      target: { value: project.id }
-    })
+    selectProjectOption(project.name)
     await waitFor(() =>
       expect(
         localStorage.getItem('goodbuddy.active-project.v1')
@@ -4333,10 +4724,8 @@ describe('App', () => {
     ])
     render(<App />)
 
-    await screen.findByRole('option', { name: '微信 ClawBot' })
-    fireEvent.change(await screen.findByLabelText('当前项目'), {
-      target: { value: channelProject.id }
-    })
+    await screen.findByRole('button', { name: '当前项目' })
+    selectProjectOption(channelProject.name)
 
     expect(
       screen.queryByRole('button', { name: /新建对话/u })
@@ -4482,9 +4871,8 @@ describe('App', () => {
 
     render(<App />)
     const weixinProject = channelProjects[0]!
-    fireEvent.change(await screen.findByLabelText('当前项目'), {
-      target: { value: weixinProject.id }
-    })
+    await screen.findByRole('button', { name: '当前项目' })
+    selectProjectOption(weixinProject.name)
     fireEvent.click(
       await screen.findByRole('button', { name: '打开设置' })
     )
@@ -4646,10 +5034,8 @@ describe('App', () => {
     ])
     render(<App />)
 
-    await screen.findByRole('option', { name: '微信 ClawBot' })
-    fireEvent.change(await screen.findByLabelText('当前项目'), {
-      target: { value: channelProject.id }
-    })
+    await screen.findByRole('button', { name: '当前项目' })
+    selectProjectOption(channelProject.name)
 
     expect(
       screen.getAllByRole('button', {
@@ -4672,9 +5058,9 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByLabelText('当前项目')).toHaveValue(
-      project.id
-    )
+    expect(
+      await screen.findByRole('button', { name: '当前项目' })
+    ).toHaveTextContent(project.name)
     await waitFor(() =>
       expect(
         localStorage.getItem('goodbuddy.active-project.v1')
@@ -6360,8 +6746,8 @@ describe('App', () => {
         project.name
       )
     )
-    expect(screen.getByLabelText('当前项目')).toHaveValue(
-      secondProject.id
+    expect(screen.getByRole('button', { name: '当前项目' })).toHaveTextContent(
+      secondProject.name
     )
   })
 
@@ -7230,9 +7616,7 @@ describe('App', () => {
       await screen.findByRole('tab', { name: '心跳计划' })
     )
     expect(await screen.findAllByText('旧项目心跳')).not.toHaveLength(0)
-    fireEvent.change(screen.getByLabelText('当前项目'), {
-      target: { value: secondProject.id }
-    })
+    selectProjectOption(secondProject.name)
     fireEvent.click(
       screen.getByRole('button', { name: '智能心跳' })
     )

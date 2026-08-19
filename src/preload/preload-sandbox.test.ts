@@ -95,4 +95,18 @@ describe('sandboxed preload', () => {
     expect(source).toContain('ipcChannels.knowledgeTaskCancel')
     expect(source).toContain('ipcChannels.knowledgeTaskRetry')
   })
+
+  it('exposes only explicit Conversation queue operations and listeners', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('conversationQueue: {')
+    expect(source).toContain('ipcChannels.conversationQueueEnqueueUser')
+    expect(source).toContain(
+      'ipcChannels.conversationQueueInterruptAndRun'
+    )
+    expect(source).toContain('ipcChannels.conversationQueueDispatch')
+    expect(source).toContain('listener(conversationId)')
+  })
 })

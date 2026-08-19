@@ -57,7 +57,7 @@
 ### 工作管理、长期协作与工作流
 
 - [x] **任务、活动与成果**：集中管理任务状态、审计活动和独立成果文件；普通聊天回复只保留在会话中，不再自动复制到成果栏，已有重复聊天 Markdown 从成果列表隐藏但不物理删除。Token 用量按 Runtime 与模型归类，并针对 OpenAI 兼容与 Anthropic Messages 的不同上报口径归一化展示缓存命中率；活动按会话分组并默认收起，避免长历史占满页面。
-- [x] **Task 与定制任务体验**：每个产品级 Task 只关联一条 Conversation，一条 Conversation 可承载多个 Task；左侧会话列表通过行首展开按钮显示带任务图标的 Task 子项，父会话行不重复任务标签，UI 只展示到 Task，不暴露 Job/Run 层级。新建定制任务可关联当前或新 Conversation，默认 Execute 并沿用 Runtime、工具和审批边界；重复触发复用同一 Task，文本结果回写 Conversation，独立文件和图片保留为成果。Task Center 继续作为完整索引，不建设独立 Automation Center。当前计划触发支持单次、每日和每周；高级时区、Cron、事件触发与重试治理仍按 PRD 逐步实现。详见 [Task Center PRD](./docs/prd/task-and-job/task-center-prd.md) 和 [Scheduled Task PRD](./docs/prd/task-and-job/scheduled-task-prd.md)。
+- [x] **Task 与定制任务体验**：每个产品级 Task 只关联一条 Conversation，一条 Conversation 可承载多个 Task；左侧会话列表通过行首展开按钮显示带共享状态点的 Task 子项，父会话行不重复任务标签，UI 只展示到 Task，不暴露 Job/Run 层级。新建定制任务可关联当前或新 Conversation，默认 Execute 并沿用 Runtime、工具和审批边界；重复触发复用同一 Task，文本结果回写 Conversation，独立文件和图片保留为成果。普通消息与到期 Scheduled Task 共用 Conversation 级持久发送队列，同一会话一次只执行一项；当前回复期间仍可继续发送，队列按顺序续跑，并允许删除或“立即中断并插入”。Task Center 继续作为完整索引，不建设独立 Automation Center。当前计划触发支持单次、每日和每周；高级时区、Cron、事件触发与重试治理仍按 PRD 逐步实现。详见 [Task Center PRD](./docs/prd/task-and-job/task-center-prd.md) 和 [Scheduled Task PRD](./docs/prd/task-and-job/scheduled-task-prd.md)。
 - [x] **记忆与智能心跳**：当前提供周期回顾、建议记忆、洞察、后续任务和可审计运行轨迹。
 - [x] **智能心跳入口与范围改善**：将“智能心跳 > 心跳计划”作为完整配置的唯一权威入口，支持创建和编辑 Global 或指定一个、多个 Project 的计划；旧单项目配置无损迁移，项目级记忆与行动输出必须显式指定范围内的 Project。Task Center 和设置不再复制心跳表单。“未来分区记忆”仍只是尚待独立设计的长期方向。详见 [智能心跳 PRD](./docs/prd/smart-heartbeat/smart-heartbeat-prd.md)。
 - [ ] **通用监督**（规划中）：通过固定监督栏目观察用户选择的会话、任务、自动化或实验对象，提供带证据的评论与人工介入请求，但不自动发言、批准工具或切换 Execute。详见 [会话监督 PRD](./docs/prd/supervision/conversation-supervision-prd.md)。

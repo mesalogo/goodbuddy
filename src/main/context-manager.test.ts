@@ -121,6 +121,45 @@ describe('ContextManager', () => {
     ])
   })
 
+  it('serializes queued attachments and restores their bounded contents', async () => {
+    const manager = new ContextManager()
+    const content = Buffer.from('persisted queued context', 'utf8')
+    const attachment = await manager.ingestRemoteAttachment({
+      name: 'queued.txt',
+      mimeType: 'text/plain',
+      size: content.byteLength,
+      kind: 'file',
+      dataBase64: content.toString('base64')
+    })
+    const serialized = manager.serializeForQueue([attachment.id])
+
+    manager.clear()
+    manager.restoreFromQueue(serialized)
+
+    expect(
+      manager.enrichRequest({
+        requestId: '1f6a37b6-e0a3-449f-8878-b10d353fbfb4',
+        conversationId: 'conversation-1',
+        prompt: 'summarize',
+        contextIds: [attachment.id]
+      }).prompt
+    ).toContain('persisted queued context')
+    expect(() =>
+      manager.restoreFromQueue(
+        JSON.stringify([
+          {
+            id: 'bad',
+            name: 'bad.txt',
+            preview: '',
+            kind: 'text',
+            size: 99,
+            content: 'short'
+          }
+        ])
+      )
+    ).toThrow('待发送文本附件大小无效')
+  })
+
   it('only enriches prompts with files explicitly selected by the user', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-context-'))
     temporaryDirectories.push(directory)

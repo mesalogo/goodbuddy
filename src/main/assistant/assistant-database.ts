@@ -16,6 +16,7 @@ import type {
   AssistantProject,
   AssistantSchedule,
   AssistantTask,
+  ConversationQueueItem,
   ConversationMessage,
   ConversationSnapshot,
   ExpertCreateInput,
@@ -251,10 +252,31 @@ type ScheduleWithTaskRow = ScheduleRow & {
   conversation_id: string
 }
 
-export type ClaimedSchedule = {
-  schedule: AssistantSchedule
-  runId: string
+type ConversationQueueRow = {
+  id: string
+  conversation_id: string
+  source: ConversationQueueItem['source']
+  label: string
+  payload_json: string
+  schedule_run_id: string | null
+  schedule_id: string | null
+  task_id: string | null
+  status: 'pending' | 'dispatching'
+  created_at: string
 }
+
+export type ClaimedConversationQueueItem =
+  | {
+      source: 'user'
+      item: ConversationQueueItem & { source: 'user' }
+      payloadJson: string
+    }
+  | {
+      source: 'schedule'
+      item: ConversationQueueItem & { source: 'schedule' }
+      schedule: AssistantSchedule
+      runId: string
+    }
 
 type ExpertRow = {
   id: string
@@ -551,6 +573,21 @@ function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
     lastRunAt: row.last_run_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  }
+}
+
+function toConversationQueueItem(
+  row: ConversationQueueRow
+): ConversationQueueItem {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    source: row.source,
+    label: row.label,
+    createdAt: row.created_at,
+    scheduleRunId: row.schedule_run_id ?? undefined,
+    scheduleId: row.schedule_id ?? undefined,
+    taskId: row.task_id ?? undefined
   }
 }
 
@@ -1012,6 +1049,24 @@ export class AssistantDatabase {
              WHERE status = 'running'`
           )
           .run()
+        database
+          .prepare(
+            `UPDATE conversation_queue_items
+             SET status = 'pending'
+             WHERE status = 'dispatching'`
+          )
+          .run()
+        database.exec(`
+          INSERT OR IGNORE INTO conversation_queue_items
+            (id, conversation_id, source, label, payload_json,
+             schedule_run_id, schedule_id, task_id, status, created_at)
+          SELECT sr.id, t.conversation_id, 'schedule', t.title, '{}',
+                 sr.id, sr.schedule_id, t.id, 'pending', sr.scheduled_for
+          FROM schedule_runs sr
+          INNER JOIN tasks t ON t.schedule_id = sr.schedule_id
+          WHERE sr.status = 'pending'
+            AND t.conversation_id IS NOT NULL;
+        `)
         const interruptedTasks = database
           .prepare(
             `SELECT id, error
@@ -1115,6 +1170,7 @@ export class AssistantDatabase {
         'delegation_outbox',
         'delegations',
         'notifications',
+        'conversation_queue_items',
         'schedule_runs',
         'schedules',
         'memory_items',
@@ -3517,6 +3573,317 @@ export class AssistantDatabase {
     }
   }
 
+  listConversationQueueItems(
+    conversationId?: string
+  ): ConversationQueueItem[] {
+    const database = this.requireDatabase()
+    const rows = conversationId
+      ? database
+          .prepare(
+            `SELECT *
+             FROM conversation_queue_items
+             WHERE conversation_id = ? AND status = 'pending'
+             ORDER BY created_at ASC, rowid ASC
+             LIMIT 100`
+          )
+          .all(conversationId)
+      : database
+          .prepare(
+            `SELECT *
+             FROM conversation_queue_items
+             WHERE status = 'pending'
+             ORDER BY created_at ASC, rowid ASC
+             LIMIT 500`
+          )
+          .all()
+    return (rows as ConversationQueueRow[]).map(
+      toConversationQueueItem
+    )
+  }
+
+  listPendingScheduleQueueConversationIds(limit = 4): string[] {
+    const safeLimit = Math.max(1, Math.min(20, Math.trunc(limit)))
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT conversation_id
+         FROM conversation_queue_items
+         WHERE source = 'schedule' AND status = 'pending'
+         GROUP BY conversation_id
+         ORDER BY MIN(created_at) ASC, MIN(rowid) ASC
+         LIMIT ?`
+      )
+      .all(safeLimit) as Array<{ conversation_id: string }>
+    return rows.map((row) => row.conversation_id)
+  }
+
+  listPendingConversationQueueIds(): string[] {
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT conversation_id
+         FROM conversation_queue_items
+         WHERE status = 'pending'
+         GROUP BY conversation_id
+         ORDER BY MIN(created_at) ASC, MIN(rowid) ASC`
+      )
+      .all() as Array<{ conversation_id: string }>
+    return rows.map((row) => row.conversation_id)
+  }
+
+  getConversationQueueItem(
+    itemId: string
+  ): ConversationQueueItem | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT *
+         FROM conversation_queue_items
+         WHERE id = ?`
+      )
+      .get(itemId) as ConversationQueueRow | undefined
+    return row ? toConversationQueueItem(row) : undefined
+  }
+
+  getConversationUserQueuePayloadJson(itemId: string): string | undefined {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT payload_json
+         FROM conversation_queue_items
+         WHERE id = ? AND source = 'user'`
+      )
+      .get(itemId) as { payload_json: string } | undefined
+    return row?.payload_json
+  }
+
+  isConversationUserQueueItemDispatching(itemId: string): boolean {
+    return Boolean(
+      this.requireDatabase()
+        .prepare(
+          `SELECT 1
+           FROM conversation_queue_items
+           WHERE id = ? AND source = 'user' AND status = 'dispatching'`
+        )
+        .get(itemId)
+    )
+  }
+
+  enqueueConversationUserInput(input: {
+    conversationId: string
+    label: string
+    payloadJson: string
+  }): ConversationQueueItem {
+    const database = this.requireDatabase()
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    const label = input.label.trim().slice(0, 200)
+    if (!label) {
+      throw new Error('待发送消息标题不能为空')
+    }
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const conversation = database
+        .prepare(
+          `SELECT 1
+           FROM conversations
+           WHERE id = ? AND status = 'active' AND channel IS NULL`
+        )
+        .get(input.conversationId)
+      if (!conversation) {
+        throw new Error('对话不存在或不能加入发送队列')
+      }
+      const count = database
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM conversation_queue_items
+           WHERE conversation_id = ?
+             AND status IN ('pending', 'dispatching')`
+        )
+        .get(input.conversationId) as { count: number }
+      if (count.count >= 20) {
+        throw new Error('当前对话最多保留 20 条待执行项')
+      }
+      database
+        .prepare(
+          `INSERT INTO conversation_queue_items
+            (id, conversation_id, source, label, payload_json,
+             schedule_run_id, schedule_id, task_id, status, created_at)
+           VALUES (?, ?, 'user', ?, ?, NULL, NULL, NULL, 'pending', ?)`
+        )
+        .run(
+          id,
+          input.conversationId,
+          label,
+          input.payloadJson,
+          now
+        )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getConversationQueueItem(id)!
+  }
+
+  claimConversationQueueItem(
+    conversationId: string,
+    preferredItemId?: string
+  ): ClaimedConversationQueueItem | undefined {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = database
+        .prepare(
+          preferredItemId
+            ? `SELECT *
+               FROM conversation_queue_items
+               WHERE id = ? AND conversation_id = ?
+                 AND status = 'pending'`
+            : `SELECT *
+               FROM conversation_queue_items
+               WHERE conversation_id = ? AND status = 'pending'
+               ORDER BY created_at ASC, rowid ASC
+               LIMIT 1`
+        )
+        .get(
+          ...(preferredItemId
+            ? [preferredItemId, conversationId]
+            : [conversationId])
+        ) as ConversationQueueRow | undefined
+      if (!row) {
+        database.exec('COMMIT')
+        return undefined
+      }
+      const claimed = database
+        .prepare(
+          `UPDATE conversation_queue_items
+           SET status = 'dispatching'
+           WHERE id = ? AND status = 'pending'`
+        )
+        .run(row.id)
+      if (claimed.changes !== 1) {
+        database.exec('COMMIT')
+        return undefined
+      }
+      const item = toConversationQueueItem({
+        ...row,
+        status: 'dispatching'
+      })
+      if (row.source === 'user') {
+        database.exec('COMMIT')
+        return {
+          source: 'user',
+          item: { ...item, source: 'user' },
+          payloadJson: row.payload_json
+        }
+      }
+      if (!row.schedule_run_id) {
+        throw new Error('定时任务队列项缺少运行记录')
+      }
+      const scheduleRow = database
+        .prepare(
+          `SELECT s.*, t.id AS task_id,
+                  t.conversation_id AS conversation_id
+           FROM schedule_runs sr
+           INNER JOIN schedules s ON s.id = sr.schedule_id
+           INNER JOIN tasks t ON t.schedule_id = s.id
+           WHERE sr.id = ? AND sr.status = 'pending'`
+        )
+        .get(row.schedule_run_id) as ScheduleWithTaskRow | undefined
+      if (!scheduleRow) {
+        throw new Error('定时任务队列项已失效')
+      }
+      const scheduleClaim = database
+        .prepare(
+          `UPDATE schedule_runs
+           SET status = 'running'
+           WHERE id = ? AND status = 'pending'`
+        )
+        .run(row.schedule_run_id)
+      if (scheduleClaim.changes !== 1) {
+        throw new Error('定时任务运行记录无法认领')
+      }
+      database.exec('COMMIT')
+      return {
+        source: 'schedule',
+        item: { ...item, source: 'schedule' },
+        schedule: toSchedule(scheduleRow),
+        runId: row.schedule_run_id
+      }
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  completeConversationUserQueueItem(itemId: string): void {
+    const result = this.requireDatabase()
+      .prepare(
+        `DELETE FROM conversation_queue_items
+         WHERE id = ? AND source = 'user' AND status = 'dispatching'`
+      )
+      .run(itemId)
+    if (result.changes !== 1) {
+      throw new Error('待发送消息不存在或状态已变化')
+    }
+  }
+
+  releaseConversationUserQueueItem(itemId: string): void {
+    const result = this.requireDatabase()
+      .prepare(
+        `UPDATE conversation_queue_items
+         SET status = 'pending'
+         WHERE id = ? AND source = 'user' AND status = 'dispatching'`
+      )
+      .run(itemId)
+    if (
+      result.changes !== 1 &&
+      !this.requireDatabase()
+        .prepare(
+          `SELECT 1
+           FROM conversation_queue_items
+           WHERE id = ? AND source = 'user' AND status = 'pending'`
+        )
+        .get(itemId)
+    ) {
+      throw new Error('待发送消息不存在或状态已变化')
+    }
+  }
+
+  removeConversationUserQueueItem(itemId: string): void {
+    const result = this.requireDatabase()
+      .prepare(
+        `DELETE FROM conversation_queue_items
+         WHERE id = ? AND source = 'user' AND status = 'pending'`
+      )
+      .run(itemId)
+    if (result.changes !== 1) {
+      throw new Error('待发送消息不存在或状态已变化')
+    }
+  }
+
+  cancelConversationQueueItem(
+    itemId: string
+  ): ConversationQueueItem {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT *
+         FROM conversation_queue_items
+         WHERE id = ? AND status = 'pending'`
+      )
+      .get(itemId) as ConversationQueueRow | undefined
+    if (!row) {
+      throw new Error('待执行项不存在或状态已变化')
+    }
+    const item = toConversationQueueItem(row)
+    if (row.source === 'user') {
+      this.removeConversationUserQueueItem(itemId)
+      return item
+    }
+    if (!row.schedule_run_id) {
+      throw new Error('定时任务队列项缺少运行记录')
+    }
+    this.completeScheduleRun(row.schedule_run_id, 'cancelled')
+    return item
+  }
+
   listSchedules(projectId?: string): AssistantSchedule[] {
     const rows = projectId
       ? this.requireDatabase()
@@ -3772,21 +4139,22 @@ export class AssistantDatabase {
     }
   }
 
-  claimDueSchedules(now = new Date(), limit = 4): ClaimedSchedule[] {
+  queueDueSchedules(
+    now = new Date(),
+    limit = 100
+  ): ConversationQueueItem[] {
     const database = this.requireDatabase()
     const nowIso = now.toISOString()
-    const safeLimit = Math.max(1, Math.min(16, Math.trunc(limit)))
+    const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)))
     database.exec('BEGIN IMMEDIATE')
     try {
-      const claims: ClaimedSchedule[] = []
-      const pending = database
+      const due = database
         .prepare(
-          `SELECT sr.id AS run_id, s.*, t.id AS task_id,
+          `SELECT s.*, t.id AS task_id,
                   t.conversation_id AS conversation_id
-           FROM schedule_runs sr
-           INNER JOIN schedules s ON s.id = sr.schedule_id
+           FROM schedules s
            INNER JOIN tasks t ON t.schedule_id = s.id
-           WHERE sr.status = 'pending'
+           WHERE s.enabled = 1 AND s.next_run_at <= ?
              AND (
                s.project_id IS NULL OR EXISTS (
                  SELECT 1 FROM projects p
@@ -3795,83 +4163,69 @@ export class AssistantDatabase {
                    AND p.kind = 'user'
                )
              )
-           ORDER BY sr.scheduled_for
+             AND NOT EXISTS (
+               SELECT 1
+               FROM schedule_runs active
+               WHERE active.schedule_id = s.id
+                 AND active.status IN ('pending', 'running')
+             )
+           ORDER BY s.next_run_at
            LIMIT ?`
         )
-        .all(safeLimit) as Array<
-          ScheduleWithTaskRow & { run_id: string }
-        >
-      const claimPending = database
-        .prepare(
-          `UPDATE schedule_runs
-           SET status = 'running'
-           WHERE id = ? AND status = 'pending'`
-        )
-      for (const row of pending) {
-        if (claimPending.run(row.run_id).changes === 1) {
-          claims.push({
-            schedule: toSchedule(row),
-            runId: row.run_id
+        .all(nowIso, safeLimit) as ScheduleWithTaskRow[]
+      const insertRun = database.prepare(
+        `INSERT OR IGNORE INTO schedule_runs
+           (id, schedule_id, scheduled_for, task_id, status)
+         VALUES (?, ?, ?, ?, 'pending')`
+      )
+      const insertQueueItem = database.prepare(
+        `INSERT INTO conversation_queue_items
+          (id, conversation_id, source, label, payload_json,
+           schedule_run_id, schedule_id, task_id, status, created_at)
+         VALUES (?, ?, 'schedule', ?, '{}', ?, ?, ?, 'pending', ?)`
+      )
+      const queued: ConversationQueueItem[] = []
+      for (const row of due) {
+        const schedule = toSchedule(row)
+        const runId = randomUUID()
+        if (
+          insertRun.run(
+            runId,
+            schedule.id,
+            schedule.nextRunAt,
+            schedule.taskId
+          ).changes === 1
+        ) {
+          insertQueueItem.run(
+            runId,
+            schedule.conversationId,
+            schedule.title,
+            runId,
+            schedule.id,
+            schedule.taskId,
+            schedule.nextRunAt
+          )
+          queued.push({
+            id: runId,
+            conversationId: schedule.conversationId,
+            source: 'schedule',
+            label: schedule.title,
+            createdAt: schedule.nextRunAt,
+            scheduleRunId: runId,
+            scheduleId: schedule.id,
+            taskId: schedule.taskId
           })
         }
       }
-
-      const remaining = safeLimit - claims.length
-      if (remaining > 0) {
-        const due = database
-          .prepare(
-            `SELECT s.*, t.id AS task_id,
-                    t.conversation_id AS conversation_id
-             FROM schedules s
-             INNER JOIN tasks t ON t.schedule_id = s.id
-             WHERE s.enabled = 1 AND s.next_run_at <= ?
-               AND (
-                 s.project_id IS NULL OR EXISTS (
-                   SELECT 1 FROM projects p
-                   WHERE p.id = s.project_id
-                     AND p.status = 'active'
-                     AND p.kind = 'user'
-                 )
-               )
-               AND NOT EXISTS (
-                 SELECT 1
-                 FROM schedule_runs active
-                 WHERE active.schedule_id = s.id
-                   AND active.status IN ('pending', 'running')
-               )
-             ORDER BY s.next_run_at
-             LIMIT ?`
-          )
-          .all(nowIso, remaining) as ScheduleWithTaskRow[]
-        const insertRun = database.prepare(
-          `INSERT OR IGNORE INTO schedule_runs
-             (id, schedule_id, scheduled_for, task_id, status)
-           VALUES (?, ?, ?, ?, 'running')`
-        )
-        for (const row of due) {
-          const schedule = toSchedule(row)
-          const runId = randomUUID()
-          if (
-            insertRun.run(
-              runId,
-              schedule.id,
-              schedule.nextRunAt,
-              schedule.taskId
-            ).changes === 1
-          ) {
-            claims.push({ schedule, runId })
-          }
-        }
-      }
       database.exec('COMMIT')
-      return claims
+      return queued
     } catch (error) {
       database.exec('ROLLBACK')
       throw error
     }
   }
 
-  claimScheduleNow(scheduleId: string): ClaimedSchedule {
+  queueScheduleNow(scheduleId: string): ConversationQueueItem {
     const schedule = this.getSchedule(scheduleId)
     const database = this.requireDatabase()
     const runId = randomUUID()
@@ -3897,7 +4251,7 @@ export class AssistantDatabase {
             .prepare(
               `INSERT INTO schedule_runs
                 (id, schedule_id, scheduled_for, task_id, status)
-               VALUES (?, ?, ?, ?, 'running')
+               VALUES (?, ?, ?, ?, 'pending')
                ON CONFLICT(schedule_id, scheduled_for) DO NOTHING`
             )
             .run(
@@ -3910,17 +4264,34 @@ export class AssistantDatabase {
       if (!inserted) {
         throw new Error('定时任务正在启动，请稍后重试')
       }
+      const createdAt = new Date(baseTime).toISOString()
+      database
+        .prepare(
+          `INSERT INTO conversation_queue_items
+            (id, conversation_id, source, label, payload_json,
+             schedule_run_id, schedule_id, task_id, status, created_at)
+           VALUES (?, ?, 'schedule', ?, '{}', ?, ?, ?, 'pending', ?)`
+        )
+        .run(
+          runId,
+          schedule.conversationId,
+          schedule.title,
+          runId,
+          schedule.id,
+          schedule.taskId,
+          createdAt
+        )
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
       throw error
     }
-    return { schedule, runId }
+    return this.getConversationQueueItem(runId)!
   }
 
   completeScheduleRun(
     runId: string,
-    status: 'completed' | 'failed',
+    status: 'completed' | 'failed' | 'cancelled',
     now = new Date()
   ): void {
     const database = this.requireDatabase()
@@ -3935,7 +4306,8 @@ export class AssistantDatabase {
            FROM schedule_runs sr
            INNER JOIN schedules s ON s.id = sr.schedule_id
            INNER JOIN tasks t ON t.schedule_id = s.id
-           WHERE sr.id = ? AND sr.status = 'running'`
+           WHERE sr.id = ?
+             AND sr.status IN ('pending', 'running')`
         )
         .get(runId) as
         | (ScheduleWithTaskRow & { scheduled_for: string })
@@ -3950,6 +4322,12 @@ export class AssistantDatabase {
            WHERE id = ?`
         )
         .run(status, runId)
+      database
+        .prepare(
+          `DELETE FROM conversation_queue_items
+           WHERE schedule_run_id = ?`
+        )
+        .run(runId)
       const schedule = toSchedule(row)
       if (row.scheduled_for === row.next_run_at) {
         const next = new Date(row.scheduled_for)
@@ -3972,7 +4350,12 @@ export class AssistantDatabase {
           .prepare(
             `UPDATE schedules
              SET enabled = CASE WHEN ? = 1 THEN 0 ELSE enabled END,
-                 next_run_at = ?, last_run_at = ?, updated_at = ?
+                 next_run_at = ?,
+                 last_run_at = CASE
+                   WHEN ? = 'cancelled' THEN last_run_at
+                   ELSE ?
+                 END,
+                 updated_at = ?
              WHERE id = ? AND next_run_at = ?`
           )
           .run(
@@ -3980,19 +4363,22 @@ export class AssistantDatabase {
             schedule.recurrence === 'once'
               ? schedule.nextRunAt
               : next.toISOString(),
+            status,
             nowIso,
             nowIso,
             schedule.id,
             row.scheduled_for
           )
       } else {
-        database
-          .prepare(
-            `UPDATE schedules
-             SET last_run_at = ?, updated_at = ?
-             WHERE id = ?`
-          )
-          .run(nowIso, nowIso, schedule.id)
+        if (status !== 'cancelled') {
+          database
+            .prepare(
+              `UPDATE schedules
+               SET last_run_at = ?, updated_at = ?
+               WHERE id = ?`
+            )
+            .run(nowIso, nowIso, schedule.id)
+        }
       }
       const updatedSchedule = database
         .prepare('SELECT enabled FROM schedules WHERE id = ?')
@@ -4000,6 +4386,9 @@ export class AssistantDatabase {
       const finalTaskStatus =
         status === 'failed'
           ? 'failed'
+          : status === 'cancelled' &&
+              schedule.recurrence === 'once'
+            ? 'cancelled'
           : updatedSchedule.enabled === 1
               ? 'queued'
               : schedule.recurrence === 'once'
@@ -4010,7 +4399,7 @@ export class AssistantDatabase {
           `UPDATE tasks
            SET status = ?,
                completed_at = CASE
-                 WHEN ? IN ('completed', 'failed') THEN ?
+                 WHEN ? IN ('completed', 'failed', 'cancelled') THEN ?
                  ELSE NULL
                END
            WHERE id = ?`
@@ -5352,12 +5741,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 22) {
+    if (version.user_version > 23) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 22) {
+    if (version.user_version === 23) {
       return
     }
     if (version.user_version < 1) {
@@ -6555,6 +6944,56 @@ export class AssistantDatabase {
           CREATE INDEX IF NOT EXISTS idx_schedule_runs_status
             ON schedule_runs(status, scheduled_for);
           PRAGMA user_version = 22;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 23) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS conversation_queue_items (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL
+              REFERENCES conversations(id) ON DELETE CASCADE,
+            source TEXT NOT NULL CHECK(source IN ('user', 'schedule')),
+            label TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            schedule_run_id TEXT UNIQUE
+              REFERENCES schedule_runs(id) ON DELETE CASCADE,
+            schedule_id TEXT
+              REFERENCES schedules(id) ON DELETE CASCADE,
+            task_id TEXT
+              REFERENCES tasks(id) ON DELETE SET NULL,
+            status TEXT NOT NULL
+              CHECK(status IN ('pending', 'dispatching')),
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS conversation_queue_pending_idx
+            ON conversation_queue_items(
+              conversation_id, status, created_at, id
+            );
+          CREATE INDEX IF NOT EXISTS conversation_queue_schedule_pending_idx
+            ON conversation_queue_items(
+              source, status, created_at, conversation_id
+            );
+          CREATE INDEX IF NOT EXISTS conversation_queue_status_created_idx
+            ON conversation_queue_items(
+              status, created_at, conversation_id
+            );
+          INSERT OR IGNORE INTO conversation_queue_items
+            (id, conversation_id, source, label, payload_json,
+             schedule_run_id, schedule_id, task_id, status, created_at)
+          SELECT sr.id, t.conversation_id, 'schedule', t.title, '{}',
+                 sr.id, sr.schedule_id, t.id, 'pending', sr.scheduled_for
+          FROM schedule_runs sr
+          INNER JOIN tasks t ON t.schedule_id = sr.schedule_id
+          WHERE sr.status IN ('pending', 'running')
+            AND t.conversation_id IS NOT NULL;
+          PRAGMA user_version = 23;
           COMMIT;
         `)
       } catch (error) {

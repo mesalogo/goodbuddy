@@ -14,7 +14,6 @@ import {
   HeartPulse,
   Info,
   Library,
-  ListTodo,
   LoaderCircle,
   Maximize2,
   MessageSquarePlus,
@@ -64,6 +63,8 @@ import type {
   BrowserLiveState,
   ContextAttachment,
   ContextFileSelectionProgress,
+  ConversationQueueDispatch,
+  ConversationQueueUserInput,
   KnowledgeSearchReference,
   KnowledgeSnapshot,
   RuntimeCustomizationSettings,
@@ -104,6 +105,7 @@ import type {
   AssistantTask,
   TokenUsageSummary,
   ConversationMessage,
+  ConversationQueueItem,
   ConversationSnapshot,
   ConversationAttachment,
   ConversationContextCompressionMarker,
@@ -165,6 +167,7 @@ import {
   type CustomTaskDestination
 } from './CustomTaskDialog'
 import { ConversationTaskStrip } from './ConversationTaskStrip'
+import { ConversationInputQueue } from './ConversationInputQueue'
 import { OverflowMarquee } from './OverflowMarquee'
 import { findTaskSchedule } from './TaskScheduleActions'
 import type { SettingsCategoryId } from './settings-categories'
@@ -241,6 +244,29 @@ const maximumCachedConversations = 12
 const recentCachedConversations = 5
 const maximumCachedWorkspaceViews = 4
 const recentCachedWorkspaceViews = 3
+
+function sameConversationQueueItems(
+  current: ConversationQueueItem[],
+  next: ConversationQueueItem[]
+): boolean {
+  return (
+    current.length === next.length &&
+    current.every((item, index) => {
+      const candidate = next[index]
+      return (
+        candidate !== undefined &&
+        item.id === candidate.id &&
+        item.conversationId === candidate.conversationId &&
+        item.source === candidate.source &&
+        item.label === candidate.label &&
+        item.createdAt === candidate.createdAt &&
+        item.scheduleRunId === candidate.scheduleRunId &&
+        item.scheduleId === candidate.scheduleId &&
+        item.taskId === candidate.taskId
+      )
+    })
+  )
+}
 
 type AppNotification = {
   id: string
@@ -1849,6 +1875,13 @@ function App(): React.JSX.Element {
   const [assistantSchedules, setAssistantSchedules] = useState<
     AssistantSchedule[]
   >([])
+  const [conversationQueueItems, setConversationQueueItems] = useState<
+    ConversationQueueItem[]
+  >([])
+  const dispatchedConversationQueueItems = useRef(new Set<string>())
+  const conversationQueueDispatchRef = useRef<
+    (dispatch: ConversationQueueDispatch) => void
+  >(() => undefined)
   const [selectedAssistantTaskId, setSelectedAssistantTaskId] =
     useState<string>()
   const [expandedTaskConversationIds, setExpandedTaskConversationIds] =
@@ -2306,6 +2339,32 @@ function App(): React.JSX.Element {
     setSidebarOpen(false)
     requestAnimationFrame(() => sidebarToggleRef.current?.focus())
   }, [])
+
+  useEffect(() => {
+    if (!conversationStoreReady) {
+      return
+    }
+    const conversationIds = [
+      ...new Set(
+        conversationsRef.current
+          .filter((conversation) => !conversation.remote)
+          .map((conversation) => conversation.id)
+      )
+    ]
+    void Promise.all(
+      conversationIds.map((conversationId) =>
+        window.goodbuddy.conversationQueue.ready(conversationId)
+      )
+    ).catch(() => {
+      notify({
+        tone: 'error',
+        message: tRef.current(
+          'notices.conversationQueueResumeFailed'
+        ),
+        dedupeKey: 'conversation-queue-resume'
+      })
+    })
+  }, [conversationStoreReady])
 
   useEffect(() => {
     const sweep = (): void => {
@@ -4095,6 +4154,19 @@ function App(): React.JSX.Element {
         })
         activeRuns.current.delete(event.requestId)
         setConversationActivity(run.conversationId, false)
+        requestAnimationFrame(() => {
+          void window.goodbuddy.conversationQueue
+            .ready(run.conversationId)
+            .catch(() => {
+              notify({
+                tone: 'error',
+                message: tRef.current(
+                  'notices.conversationQueueResumeFailed'
+                ),
+                dedupeKey: 'conversation-queue-resume'
+              })
+            })
+        })
         flushConversationPersistenceAfterRenderRef.current = true
       }
     },
@@ -4356,6 +4428,123 @@ function App(): React.JSX.Element {
       remove()
     }
   }, [conversationStoreReady])
+
+  useEffect(() => {
+    let active = true
+    let refreshInFlight = false
+    let refreshQueued = false
+    let refreshTimer: number | undefined
+    let refreshAll = false
+    const pendingConversationIds = new Set<string>()
+    const scheduleRefresh = (): void => {
+      if (refreshTimer !== undefined || refreshInFlight) {
+        refreshQueued = true
+        return
+      }
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined
+        refreshQueued = false
+        const conversationIds = refreshAll
+          ? undefined
+          : [...pendingConversationIds]
+        refreshAll = false
+        pendingConversationIds.clear()
+        refresh(conversationIds)
+      }, 0)
+    }
+    const refresh = (conversationIds?: string[]): void => {
+      refreshInFlight = true
+      const affectedConversationIds = new Set(
+        conversationIds ?? []
+      )
+      const reads = conversationIds
+        ? conversationIds.map(async (conversationId) => ({
+            conversationId,
+            items:
+              await window.goodbuddy.conversationQueue.list(
+                conversationId
+              )
+          }))
+        : [
+            window.goodbuddy.conversationQueue
+              .list()
+              .then((items) => ({
+                conversationId: undefined,
+                items
+              }))
+          ]
+      void Promise.all(reads)
+        .then((results) => {
+          if (!active) {
+            return
+          }
+          setConversationQueueItems((current) => {
+            const allItems = results.find(
+              (result) => result.conversationId === undefined
+            )?.items
+            const next = allItems
+              ? allItems
+              : [
+                  ...current.filter(
+                    (item) =>
+                      !affectedConversationIds.has(
+                        item.conversationId
+                      )
+                  ),
+                  ...results.flatMap((result) => result.items)
+                ].sort(
+                  (left, right) =>
+                    left.createdAt.localeCompare(right.createdAt) ||
+                    left.id.localeCompare(right.id)
+                )
+            return sameConversationQueueItems(current, next)
+              ? current
+              : next
+          })
+        })
+        .catch(() => {
+          if (active) {
+            notify({
+              tone: 'error',
+              message: tRef.current(
+                'notices.conversationQueueReadFailed'
+              ),
+              dedupeKey: 'conversation-queue-read'
+            })
+          }
+        })
+        .finally(() => {
+          refreshInFlight = false
+          if (active && refreshQueued) {
+            refreshQueued = false
+            scheduleRefresh()
+          }
+        })
+    }
+    const queueRefresh = (conversationId?: string): void => {
+      if (conversationId) {
+        pendingConversationIds.add(conversationId)
+      } else {
+        refreshAll = true
+      }
+      scheduleRefresh()
+    }
+    refresh()
+    const remove =
+      window.goodbuddy.conversationQueue.onChanged(queueRefresh)
+    const removeDispatch =
+      window.goodbuddy.conversationQueue.onDispatch((dispatch) =>
+        conversationQueueDispatchRef.current(dispatch)
+      )
+    return () => {
+      active = false
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer)
+      }
+      remove()
+      removeDispatch()
+    }
+  }, [])
 
   useEffect(() => {
     activityRecordsRef.current = activityRecords
@@ -5591,38 +5780,65 @@ function App(): React.JSX.Element {
     })
   }, [])
 
-  const submit = async (): Promise<void> => {
+  const submit = async (
+    queuedDispatch?: ConversationQueueDispatch
+  ): Promise<void> => {
+    const queuedInput = queuedDispatch?.input
+    const releaseQueuedItem = async (): Promise<void> => {
+      if (!queuedDispatch) {
+        return
+      }
+      try {
+        await window.goodbuddy.conversationQueue.releaseUser(
+          queuedDispatch.item.id
+        )
+      } catch {
+        notify({
+          tone: 'error',
+          message: t('notices.conversationQueueReleaseFailed')
+        })
+      }
+    }
+    const conversationSnapshot = queuedInput
+      ? conversationsRef.current.find(
+          (conversation) =>
+            conversation.id === queuedInput.conversationId
+        )
+      : activeConversation
     const command =
+      !queuedInput &&
       activeRuntimeSelection?.provider === 'opencode'
         ? runtimeNativeSnapshot?.commands.find(
             (candidate) =>
               candidate.id === selectedRuntimeCommand
           )
         : undefined
-    const commandArguments = input.trim()
-    const prompt = command
+    const commandArguments = queuedInput ? '' : input.trim()
+    const prompt = queuedInput?.prompt ?? (command
       ? `/${command.name}${
           commandArguments ? ` ${commandArguments}` : ''
         }`
-      : commandArguments
-    if (!prompt || !activeConversation) {
+      : commandArguments)
+    if (!prompt || !conversationSnapshot) {
+      await releaseQueuedItem()
       return
     }
-    if (selectingContextFilesRef.current) {
+    if (!queuedInput && selectingContextFilesRef.current) {
       notify({
         tone: 'info',
         message: t('composer.attachmentProgress.waitBeforeSending')
       })
       return
     }
-    if (activeConversation.remote) {
+    if (conversationSnapshot.remote) {
       notify({
         tone: 'info',
         message: t('notices.remoteConversationReadOnly')
       })
+      await releaseQueuedItem()
       return
     }
-    if (!runtime) {
+    if (!queuedInput && !runtime) {
       notify({
         tone: 'info',
         message: t('runtime.loadingRetry')
@@ -5630,8 +5846,9 @@ function App(): React.JSX.Element {
       return
     }
     if (
-      runtimeSwitching ||
-      runtimeStatusKey !== activeRuntimeSelectionKey
+      !queuedInput &&
+      (runtimeSwitching ||
+        runtimeStatusKey !== activeRuntimeSelectionKey)
     ) {
       notify({
         tone: 'info',
@@ -5639,73 +5856,145 @@ function App(): React.JSX.Element {
       })
       return
     }
-    if (!runtime.available) {
-      return
-    }
-    if (
-      preparingConversations.current.has(activeConversation.id) ||
-      [...activeRuns.current.values()].some(
-        (run) => run.conversationId === activeConversation.id
-      )
-    ) {
-      notify({
-        tone: 'info',
-        message: t('notices.conversationAlreadyRunning')
-      })
+    if (!queuedInput && !runtime?.available) {
       return
     }
 
     const requestId = crypto.randomUUID()
-    const conversationId = activeConversation.id
-    const attachmentSnapshot = attachments.slice(0, 8)
-    const historySnapshot = activeConversation.messages
+    const conversationId = conversationSnapshot.id
+    const attachmentSnapshot = (
+      queuedInput?.attachments ?? attachments
+    ).slice(0, 8)
+    const historySnapshot = conversationSnapshot.messages
     const retainedHistorySnapshot = historySnapshot
       .filter(
         (message) =>
           message.state === 'complete' && message.content.trim()
       )
       .slice(-500)
-    const projectIdSnapshot = activeProjectId || undefined
+    const projectIdSnapshot = queuedInput
+      ? queuedInput.projectId
+      : activeProjectId || undefined
     const knowledgeRetrievalModeSnapshot =
-      activeConversation.knowledgeRetrievalMode ?? 'auto'
-    const runtimeSelectionSnapshot = activeRuntimeSelection
+      queuedInput?.knowledgeRetrievalMode ??
+      conversationSnapshot.knowledgeRetrievalMode ??
+      'auto'
+    const runtimeSelectionSnapshot =
+      queuedInput?.runtimeSelection ?? activeRuntimeSelection
     if (!runtimeSelectionSnapshot) {
       notify({ tone: 'info', message: t('runtime.notSelected') })
+      await releaseQueuedItem()
       return
     }
     const runtimeControlSnapshot: RuntimeControl | undefined =
-      runtimeSelectionSnapshot.provider === 'opencode' &&
-      (selectedRuntimeAgent || command)
-        ? {
-            provider: 'opencode',
-            ...(selectedRuntimeAgent
-              ? { agent: selectedRuntimeAgent }
-              : {}),
-            ...(command
-              ? {
-                  command: {
-                    name: command.name,
-                    arguments: commandArguments
-                  }
-                }
-              : {})
-          }
-        : runtimeSelectionSnapshot.provider === 'continue' &&
-            selectedContinuePreset
+      queuedInput
+        ? queuedInput.runtimeControl
+        : runtimeSelectionSnapshot.provider === 'opencode' &&
+            (selectedRuntimeAgent || command)
           ? {
-              provider: 'continue',
-              presetId: selectedContinuePreset
+              provider: 'opencode',
+              ...(selectedRuntimeAgent
+                ? { agent: selectedRuntimeAgent }
+                : {}),
+              ...(command
+                ? {
+                    command: {
+                      name: command.name,
+                      arguments: commandArguments
+                    }
+                  }
+                : {})
             }
-          : undefined
-    const selectedExpertSnapshot =
-      runtime.capability === 'image-generation' ? '' : selectedExpertId
-    const workModeSnapshot = effectiveWorkMode
+          : runtimeSelectionSnapshot.provider === 'continue' &&
+              selectedContinuePreset
+            ? {
+                provider: 'continue',
+                presetId: selectedContinuePreset
+              }
+            : undefined
+    const selectedExpertSnapshot = queuedInput
+      ? queuedInput.teamMode
+        ? 'team'
+        : queuedInput.expertId ?? ''
+      : runtime?.capability === 'image-generation'
+        ? ''
+        : selectedExpertId
+    const workModeSnapshot =
+      normalizeInteractiveWorkMode(
+        queuedInput?.workMode ?? effectiveWorkMode
+      )
+    const knowledgeLibraryIdsSnapshot =
+      queuedInput?.knowledgeLibraryIds ?? enabledKnowledgeLibraryIds
+    const smartRoutingSnapshot =
+      queuedInput?.smartRouting ??
+      (!queuedInput &&
+      runtime?.capability !== 'image-generation' &&
+      runtimeSettings?.subagentSmartRoutingEnabled === true &&
+      !selectedExpertSnapshot &&
+      supportsSubagentSmartRouting(workModeSnapshot)
+        ? true
+        : undefined)
+
+    if (!queuedInput) {
+      const queueInput: ConversationQueueUserInput = {
+        conversationId,
+        ...(projectIdSnapshot ? { projectId: projectIdSnapshot } : {}),
+        runtimeSelection: runtimeSelectionSnapshot,
+        ...(runtimeControlSnapshot
+          ? { runtimeControl: runtimeControlSnapshot }
+          : {}),
+        ...(selectedExpertSnapshot &&
+        selectedExpertSnapshot !== 'team'
+          ? { expertId: selectedExpertSnapshot }
+          : {}),
+        ...(selectedExpertSnapshot === 'team'
+          ? { teamMode: true }
+          : {}),
+        ...(smartRoutingSnapshot
+          ? { smartRouting: true }
+          : {}),
+        workMode: workModeSnapshot,
+        includeMemoryContext: !command,
+        prompt,
+        attachments: attachmentSnapshot,
+        knowledgeLibraryIds: knowledgeLibraryIdsSnapshot,
+        knowledgeRetrievalMode: knowledgeRetrievalModeSnapshot
+      }
+      try {
+        await window.goodbuddy.conversationQueue.enqueueUser(queueInput)
+        setComposerMenuOpen(undefined)
+        setRuntimeMenuOpen(false)
+        setInput('')
+        updateAttachments([])
+        if (command) {
+          setSelectedRuntimeCommand('')
+        }
+      } catch (reason) {
+        notify({
+          tone: 'error',
+          message:
+            reason instanceof Error
+              ? reason.message
+              : t('notices.sendFailed')
+        })
+      }
+      return
+    }
+
+    if (
+      dispatchedConversationQueueItems.current.has(
+        queuedDispatch.item.id
+      )
+    ) {
+      return
+    }
+    dispatchedConversationQueueItems.current.add(
+      queuedDispatch.item.id
+    )
     setComposerMenuOpen(undefined)
     setRuntimeMenuOpen(false)
     preparingConversations.current.add(conversationId)
     setConversationActivity(conversationId, true)
-    setInput('')
-    updateAttachments([])
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -5733,13 +6022,10 @@ function App(): React.JSX.Element {
           : conversation
       )
     )
-    const memoryContext =
-      runtime.capability === 'image-generation'
-        ? ''
-        : buildMemoryContext(assistantMemories)
-    const executionPrompt = command
-      ? prompt
-      : memoryContext
+    const memoryContext = queuedInput.includeMemoryContext
+      ? buildMemoryContext(assistantMemories)
+      : ''
+    const executionPrompt = memoryContext
       ? `${prompt}\n\n${memoryContext}`
       : prompt
     const assistantMessage: Message = {
@@ -5810,6 +6096,7 @@ function App(): React.JSX.Element {
         requestId,
         conversationId,
         projectId: projectIdSnapshot,
+        queueItemId: queuedDispatch.item.id,
         runtimeSelection: runtimeSelectionSnapshot,
         runtimeControl: runtimeControlSnapshot,
         expertId:
@@ -5817,22 +6104,16 @@ function App(): React.JSX.Element {
             ? selectedExpertSnapshot
             : undefined,
         teamMode: selectedExpertSnapshot === 'team',
-        smartRouting:
-          runtime.capability !== 'image-generation' &&
-          runtimeSettings?.subagentSmartRoutingEnabled === true &&
-          !selectedExpertSnapshot &&
-          supportsSubagentSmartRouting(workModeSnapshot)
-            ? true
-            : undefined,
+        smartRouting: smartRoutingSnapshot,
         workMode: workModeSnapshot,
         prompt: executionPrompt,
-        knowledgeLibraryIds: enabledKnowledgeLibraryIds,
+        knowledgeLibraryIds: knowledgeLibraryIdsSnapshot,
         knowledgeRetrievalMode: knowledgeRetrievalModeSnapshot,
         contextIds: attachmentSnapshot.map(
           (attachment) => attachment.id
         ),
         contextCompressionState:
-          activeConversation.contextCompressionState,
+          conversationSnapshot.contextCompressionState,
         history: retainedHistorySnapshot.map((message) => ({
           role: message.role,
           content: message.content
@@ -5846,23 +6127,57 @@ function App(): React.JSX.Element {
       for (const attachment of attachmentSnapshot) {
         void window.goodbuddy.context.remove(attachment.id)
       }
-      if (command) {
-        setSelectedRuntimeCommand('')
-      }
     } catch (error) {
       preparingConversations.current.delete(conversationId)
+      activeRuns.current.delete(requestId)
+      setConversationActivity(conversationId, false)
       for (const attachment of attachmentSnapshot) {
         void window.goodbuddy.context.remove(attachment.id)
       }
-      handleAgentEvent({
-        requestId,
-        type: 'error',
-        status: 'failed',
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                title:
+                  conversationSnapshot.title === '新对话' &&
+                  conversation.title === prompt.slice(0, 24)
+                    ? conversationSnapshot.title
+                    : conversation.title,
+                updatedAt: Date.now(),
+                messages: conversation.messages.filter(
+                  (message) =>
+                    message.id !== userMessage.id &&
+                    message.id !== assistantMessage.id
+                )
+              }
+            : conversation
+        )
+      )
+      setAssistantTasks((current) =>
+        current.filter((task) => task.id !== requestId)
+      )
+      setActivityRecords((current) =>
+        current.filter((record) => record.requestId !== requestId)
+      )
+      notify({
+        tone: 'error',
         message:
           error instanceof Error ? error.message : t('notices.sendFailed')
       })
+      await releaseQueuedItem()
+    } finally {
+      dispatchedConversationQueueItems.current.delete(
+        queuedDispatch.item.id
+      )
     }
   }
+
+  useLayoutEffect(() => {
+    conversationQueueDispatchRef.current = (dispatch) => {
+      void submit(dispatch)
+    }
+  })
 
   const compactRuntimeContext = async (): Promise<void> => {
     if (
@@ -6624,6 +6939,40 @@ function App(): React.JSX.Element {
     activeConversation?.messages.some(
       (message) => message.state === 'streaming'
     ) ?? false
+  const activeConversationQueueItems = useMemo(
+    () =>
+      conversationQueueItems.filter(
+        (item) => item.conversationId === activeId
+      ),
+    [activeId, conversationQueueItems]
+  )
+  const conversationExecutionRunning =
+    isRunning ||
+    assistantTasks.some(
+      (task) =>
+        task.conversationId === activeId &&
+        (task.status === 'running' ||
+          task.status === 'waiting_approval')
+    )
+  const handleConversationQueueError = useCallback(
+    (message: string): void => {
+      notify({
+        tone: 'error',
+        message
+      })
+    },
+    [notify]
+  )
+  const interruptConversationQueueItem = useCallback(
+    (itemId: string) =>
+      window.goodbuddy.conversationQueue.interruptAndRun(itemId),
+    []
+  )
+  const removeConversationQueueItem = useCallback(
+    (itemId: string) =>
+      window.goodbuddy.conversationQueue.remove(itemId),
+    []
+  )
   const runtimeAgentControlAvailable =
     activeRuntimeSelection?.provider === 'opencode' &&
     runtimeAgentOptions.length > 1
@@ -7171,10 +7520,9 @@ function App(): React.JSX.Element {
                           onClick={() => openAssistantTask(task)}
                           type="button"
                         >
-                          <ListTodo
+                          <span
                             aria-hidden="true"
-                            className={`conversation-task-child__icon conversation-task-child__icon--${task.status}`}
-                            size={13}
+                            className={`task-status-dot task-status-dot--${task.status}`}
                           />
                           <span className="conversation-task-child__title">
                             {task.title}
@@ -7498,6 +7846,13 @@ function App(): React.JSX.Element {
             </div>
           ) : (
           <>
+          <ConversationInputQueue
+            items={activeConversationQueueItems}
+            onError={handleConversationQueueError}
+            onInterruptAndRun={interruptConversationQueueItem}
+            onRemove={removeConversationQueueItem}
+            running={conversationExecutionRunning}
+          />
           <div className="composer">
             {(attachments.length > 0 || selectingContextFiles) && (
               <div
@@ -8087,7 +8442,8 @@ function App(): React.JSX.Element {
                   </div>
                 </div>
               </div>
-              {isRunning ? (
+              <div className="composer__submit-actions">
+                {isRunning && (
                 <button
                   className="send-button send-button--stop"
                   type="button"
@@ -8101,11 +8457,15 @@ function App(): React.JSX.Element {
                     size={15}
                   />
                 </button>
-              ) : (
+                )}
                 <button
                   className="send-button"
                   type="button"
-                  aria-label={t('composer.send')}
+                  aria-label={
+                    conversationExecutionRunning
+                      ? t('composer.queueMessage')
+                      : t('composer.send')
+                  }
                   disabled={
                     (!input.trim() &&
                       !(
@@ -8122,11 +8482,15 @@ function App(): React.JSX.Element {
                     runtimeStatusKey !== activeRuntimeSelectionKey
                   }
                   onClick={() => void submit()}
-                  title={t('composer.sendTitle')}
+                  title={
+                    conversationExecutionRunning
+                      ? t('composer.queueMessageTitle')
+                      : t('composer.sendTitle')
+                  }
                 >
                   <Send aria-hidden="true" size={17} />
                 </button>
-              )}
+              </div>
             </div>
             {runtimeControlsProvider && (
               <div

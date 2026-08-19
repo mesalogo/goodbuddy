@@ -3,7 +3,7 @@ import {
   Download,
   FileText,
   Library,
-  ListTodo,
+  ClockFading,
   ShieldCheck,
   TerminalSquare,
   UserRound
@@ -383,7 +383,7 @@ function ChatMessageRowView({
               })}
               className="message__task"
             >
-              <ListTodo aria-hidden="true" size={12} />
+              <ClockFading aria-hidden="true" size={12} />
               {message.task.title}
             </span>
           )}

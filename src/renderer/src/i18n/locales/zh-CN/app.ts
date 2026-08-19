@@ -397,6 +397,20 @@ export const app = {
     stop: '停止生成',
     send: '发送',
     sendTitle: '发送消息',
+    queueMessage: '加入待发送队列',
+    queueMessageTitle: '当前回复结束后按顺序发送',
+    queue: {
+      ariaLabel: '对话待发送队列',
+      scheduledTask: '定时任务',
+      message: '消息',
+      interrupt: '立即中断并插入',
+      runNow: '立即运行',
+      interruptAria: '中断当前回复并优先执行“{{title}}”',
+      runNowAria: '立即运行“{{title}}”',
+      remove: '删除',
+      removeAria: '从待发送队列删除“{{title}}”',
+      actionFailed: '待发送队列操作失败'
+    },
     shortcut: '快捷唤起：',
     context: {
       confirmedTokenCount: '本次调用 {{used}}',
@@ -525,14 +539,17 @@ export const app = {
     imageUnavailable: '图片内容不可用',
     imageDownloadStarted: '图片下载已开始',
     remoteConversationReadOnly: '远程通道会话只能从对应消息应用继续发起',
-    conversationAlreadyRunning:
-      '当前对话已有任务正在运行，请等待完成或先停止',
     sendFailed: '发送失败',
     stopFailed: '停止生成失败，请重试',
     projectNotLoaded: '当前项目尚未加载。',
     browserControlUnavailable: '内置浏览器组件尚未加载，请重启 GoodBuddy',
     browserStopFailed: '停止浏览器失败，请重试',
-    scheduleStarted: '定时任务已开始执行',
+    scheduleStarted: '定时任务已加入待执行队列',
+    conversationQueueReadFailed: '待发送队列读取失败',
+    conversationQueueReleaseFailed:
+      '消息执行失败，且无法恢复到待发送队列',
+    conversationQueueResumeFailed:
+      '无法继续执行当前对话的待发送队列',
     conversationPersistenceFailed: '会话持久化失败，请检查本地存储',
     remoteConversationRefreshFailed: '远程通道会话刷新失败',
     projectReadFailed: '项目读取失败',

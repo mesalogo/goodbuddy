@@ -82,6 +82,23 @@ export type ConversationAttachment = z.infer<
   typeof conversationAttachmentSchema
 >
 
+export const conversationQueueItemSchema = z
+  .object({
+    id: assistantIdSchema,
+    conversationId: assistantIdSchema,
+    source: z.enum(['user', 'schedule']),
+    label: z.string().trim().min(1).max(200),
+    createdAt: z.string().datetime({ offset: true }),
+    scheduleRunId: assistantIdSchema.optional(),
+    scheduleId: assistantIdSchema.optional(),
+    taskId: assistantIdSchema.optional()
+  })
+  .strict()
+
+export type ConversationQueueItem = z.infer<
+  typeof conversationQueueItemSchema
+>
+
 export const conversationToolActivitySchema = z
   .object({
     callId: z.string().max(256).optional(),

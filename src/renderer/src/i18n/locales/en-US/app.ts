@@ -412,6 +412,21 @@ export const app = {
     stop: 'Stop generating',
     send: 'Send',
     sendTitle: 'Send message',
+    queueMessage: 'Queue message',
+    queueMessageTitle: 'Send after the current response finishes',
+    queue: {
+      ariaLabel: 'Conversation send queue',
+      scheduledTask: 'Scheduled task',
+      message: 'Message',
+      interrupt: 'Interrupt and run',
+      runNow: 'Run now',
+      interruptAria:
+        'Interrupt the current response and run “{{title}}” next',
+      runNowAria: 'Run “{{title}}” now',
+      remove: 'Remove',
+      removeAria: 'Remove “{{title}}” from the send queue',
+      actionFailed: 'Failed to update the send queue'
+    },
     shortcut: 'Quick access: ',
     context: {
       confirmedTokenCount: 'Latest call {{used}}',
@@ -560,15 +575,18 @@ export const app = {
     imageDownloadStarted: 'Image download started',
     remoteConversationReadOnly:
       'Continue a remote conversation from its messaging app',
-    conversationAlreadyRunning:
-      'A task is already running in this conversation. Wait for it to finish or stop it first.',
     sendFailed: 'Failed to send',
     stopFailed: 'Failed to stop generating. Try again.',
     projectNotLoaded: 'The current project has not loaded yet.',
     browserControlUnavailable:
       'The built-in browser has not loaded. Restart GoodBuddy.',
     browserStopFailed: 'Failed to stop the browser. Try again.',
-    scheduleStarted: 'Scheduled task started',
+    scheduleStarted: 'Scheduled task queued',
+    conversationQueueReadFailed: 'Failed to read the send queue',
+    conversationQueueReleaseFailed:
+      'The message failed and could not be restored to the send queue',
+    conversationQueueResumeFailed:
+      'Failed to resume this conversation’s send queue',
     conversationPersistenceFailed:
       'Failed to save conversations. Check local storage.',
     remoteConversationRefreshFailed:

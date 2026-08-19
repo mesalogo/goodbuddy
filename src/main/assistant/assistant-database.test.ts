@@ -26,6 +26,64 @@ async function createDatabase(): Promise<AssistantDatabase> {
   return database
 }
 
+function claimQueuedSchedules(
+  database: AssistantDatabase,
+  now: Date,
+  limit = 4
+): Array<{
+  schedule: ReturnType<AssistantDatabase['listSchedules']>[number]
+  runId: string
+}> {
+  database.queueDueSchedules(now, limit)
+  const claims: Array<{
+    schedule: ReturnType<AssistantDatabase['listSchedules']>[number]
+    runId: string
+  }> = []
+  const seenConversations = new Set<string>()
+  for (const item of database.listConversationQueueItems()) {
+    if (
+      item.source !== 'schedule' ||
+      seenConversations.has(item.conversationId) ||
+      claims.length >= limit
+    ) {
+      continue
+    }
+    const claimed = database.claimConversationQueueItem(
+      item.conversationId,
+      item.id
+    )
+    if (claimed?.source === 'schedule') {
+      claims.push({
+        schedule: claimed.schedule,
+        runId: claimed.runId
+      })
+      seenConversations.add(item.conversationId)
+    }
+  }
+  return claims
+}
+
+function claimManualScheduleQueueItem(
+  database: AssistantDatabase,
+  scheduleId: string
+): {
+  schedule: ReturnType<AssistantDatabase['listSchedules']>[number]
+  runId: string
+} {
+  const item = database.queueScheduleNow(scheduleId)
+  const claimed = database.claimConversationQueueItem(
+    item.conversationId,
+    item.id
+  )
+  if (claimed?.source !== 'schedule') {
+    throw new Error('Expected a claimed schedule queue item')
+  }
+  return {
+    schedule: claimed.schedule,
+    runId: claimed.runId
+  }
+}
+
 describe('AssistantDatabase', () => {
   it('rejects a newer unsupported schema without changing its version', async () => {
     const directory = await mkdtemp(
@@ -98,7 +156,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 22', async () => {
+  it('migrates existing databases to schema version 23', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -127,7 +185,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(22)
+    ).toBe(23)
     expect(
       current
         .prepare(
@@ -198,6 +256,15 @@ describe('AssistantDatabase', () => {
         )
         .get()
     ).toEqual({ name: 'magic_todos' })
+    expect(
+      current
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table'
+             AND name = 'conversation_queue_items'`
+        )
+        .get()
+    ).toEqual({ name: 'conversation_queue_items' })
     current.close()
   })
 
@@ -231,7 +298,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(22)
+    ).toBe(23)
     expect(
       current
         .prepare(
@@ -369,7 +436,7 @@ describe('AssistantDatabase', () => {
     const inspected = new DatabaseSync(databasePath)
     expect(
       inspected.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 22 })
+    ).toEqual({ user_version: 23 })
     expect(
       inspected
         .prepare(
@@ -1142,7 +1209,8 @@ describe('AssistantDatabase', () => {
       title: '每日摘要',
       messages: []
     })
-    const [claim] = database.claimDueSchedules(
+    const [claim] = claimQueuedSchedules(
+      database,
       new Date('2026-07-31T00:01:00.000Z')
     )
     expect(claim?.schedule).toEqual(
@@ -1169,12 +1237,17 @@ describe('AssistantDatabase', () => {
       status: 'idle',
       completedAt: undefined
     })
-    const manualClaim = database.claimScheduleNow(schedule.id)
+    const manualClaim = claimManualScheduleQueueItem(
+      database,
+      schedule.id
+    )
     expect(manualClaim.schedule).toMatchObject({
       taskId: schedule.taskId,
       conversationId: schedule.conversationId
     })
-    expect(() => database.claimScheduleNow(schedule.id)).toThrow(
+    expect(() =>
+      claimManualScheduleQueueItem(database, schedule.id)
+    ).toThrow(
       '已有一次运行正在进行'
     )
     database.completeScheduleRun(
@@ -1254,7 +1327,8 @@ describe('AssistantDatabase', () => {
       recurrence: 'daily',
       nextRunAt: '2025-07-31T00:00:00.000Z'
     })
-    const [overdueClaim] = database.claimDueSchedules(
+    const [overdueClaim] = claimQueuedSchedules(
+      database,
       new Date('2026-07-31T00:01:00.000Z')
     )
     database.completeScheduleRun(
@@ -1288,6 +1362,137 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it('persists and arbitrates a FIFO conversation input queue', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-conversation-queue-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const project = initial.listProjects()[0]!
+    const conversationId =
+      '00000000-0000-4000-8000-000000000901'
+    initial.replaceConversations([
+      {
+        id: conversationId,
+        projectId: project.id,
+        title: '排队对话',
+        updatedAt: Date.now(),
+        messages: []
+      }
+    ])
+
+    const first = initial.enqueueConversationUserInput({
+      conversationId,
+      label: '第一条消息',
+      payloadJson: JSON.stringify({ prompt: '第一条消息' })
+    })
+    const second = initial.enqueueConversationUserInput({
+      conversationId,
+      label: '第二条消息',
+      payloadJson: JSON.stringify({ prompt: '第二条消息' })
+    })
+    expect(
+      initial
+        .listConversationQueueItems(conversationId)
+        .map((item) => item.id)
+    ).toEqual([first.id, second.id])
+
+    const preferred = initial.claimConversationQueueItem(
+      conversationId,
+      second.id
+    )
+    expect(preferred).toMatchObject({
+      source: 'user',
+      item: { id: second.id, source: 'user' },
+      payloadJson: JSON.stringify({ prompt: '第二条消息' })
+    })
+    expect(initial.listConversationQueueItems(conversationId)).toEqual([
+      expect.objectContaining({ id: first.id })
+    ])
+    initial.completeConversationUserQueueItem(second.id)
+
+    const firstClaim =
+      initial.claimConversationQueueItem(conversationId)
+    expect(firstClaim).toMatchObject({
+      source: 'user',
+      item: { id: first.id }
+    })
+    initial.close()
+
+    const recovered = new AssistantDatabase(databasePath)
+    recovered.initialize('C:\\Workspace')
+    expect(
+      recovered.listConversationQueueItems(conversationId)
+    ).toEqual([
+      expect.objectContaining({
+        id: first.id,
+        source: 'user',
+        label: '第一条消息'
+      })
+    ])
+    recovered.cancelConversationQueueItem(first.id)
+    expect(
+      recovered.listConversationQueueItems(conversationId)
+    ).toEqual([])
+    recovered.close()
+  })
+
+  it('materializes due and manual schedule runs in the conversation queue', async () => {
+    const database = await createDatabase()
+    const schedule = database.createSchedule({
+      title: '排队提醒',
+      prompt: '检查排队结果',
+      workMode: 'execute',
+      recurrence: 'daily',
+      nextRunAt: '2026-08-20T09:00:00.000Z'
+    })
+
+    const [dueItem] = database.queueDueSchedules(
+      new Date('2026-08-20T09:01:00.000Z')
+    )
+    expect(dueItem).toMatchObject({
+      conversationId: schedule.conversationId,
+      source: 'schedule',
+      scheduleId: schedule.id,
+      taskId: schedule.taskId
+    })
+    expect(database.listConversationQueueItems()).toEqual([
+      expect.objectContaining({ id: dueItem!.id })
+    ])
+    expect(
+      database.listPendingScheduleQueueConversationIds()
+    ).toEqual([schedule.conversationId])
+    expect(database.listPendingConversationQueueIds()).toEqual([
+      schedule.conversationId
+    ])
+
+    const claimed = database.claimConversationQueueItem(
+      schedule.conversationId
+    )
+    expect(claimed).toMatchObject({
+      source: 'schedule',
+      item: { id: dueItem!.id },
+      schedule: { id: schedule.id },
+      runId: dueItem!.id
+    })
+    database.completeScheduleRun(
+      dueItem!.id,
+      'completed',
+      new Date('2026-08-20T09:02:00.000Z')
+    )
+
+    const manualItem = database.queueScheduleNow(schedule.id)
+    expect(manualItem).toMatchObject({
+      source: 'schedule',
+      scheduleId: schedule.id
+    })
+    database.cancelConversationQueueItem(manualItem.id)
+    expect(database.listConversationQueueItems()).toEqual([])
+    database.close()
+  })
+
   it('recovers a claimed schedule without swallowing its occurrence', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-schedule-recovery-')
@@ -1303,7 +1508,8 @@ describe('AssistantDatabase', () => {
       recurrence: 'once',
       nextRunAt: '2026-08-13T00:00:00.000Z'
     })
-    const [claimed] = initial.claimDueSchedules(
+    const [claimed] = claimQueuedSchedules(
+      initial,
       new Date('2026-08-13T00:01:00.000Z')
     )
     expect(claimed?.schedule.id).toBe(schedule.id)
@@ -1311,7 +1517,8 @@ describe('AssistantDatabase', () => {
 
     const recovered = new AssistantDatabase(databasePath)
     recovered.initialize('C:\\Workspace')
-    const [reclaimed] = recovered.claimDueSchedules(
+    const [reclaimed] = claimQueuedSchedules(
+      recovered,
       new Date('2026-08-13T00:02:00.000Z')
     )
     expect(reclaimed).toMatchObject({
@@ -1350,7 +1557,8 @@ describe('AssistantDatabase', () => {
       }).id
     )
 
-    const firstBatch = database.claimDueSchedules(
+    const firstBatch = claimQueuedSchedules(
+      database,
       new Date('2026-08-13T00:01:00.000Z'),
       2
     )
@@ -1359,7 +1567,8 @@ describe('AssistantDatabase', () => {
       new Set(firstBatch.map((claim) => claim.schedule.id)).size
     ).toBe(2)
 
-    const secondBatch = database.claimDueSchedules(
+    const secondBatch = claimQueuedSchedules(
+      database,
       new Date('2026-08-13T00:01:00.000Z'),
       2
     )

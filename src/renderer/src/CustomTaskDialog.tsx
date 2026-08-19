@@ -1,4 +1,4 @@
-import { CalendarClock, FolderKanban, ShieldCheck, X } from 'lucide-react'
+import { ClockFading, FolderKanban, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -166,7 +166,7 @@ export function CustomTaskDialog({
         <header className="custom-task-dialog__header">
           <div>
             <span className="custom-task-dialog__eyebrow">
-              <CalendarClock aria-hidden="true" size={14} />
+              <ClockFading aria-hidden="true" size={14} />
               {t('customTask.eyebrow')}
             </span>
             <h2 id="custom-task-title">{t('customTask.title')}</h2>

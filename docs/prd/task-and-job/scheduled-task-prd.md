@@ -4,8 +4,8 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 首期稳定 Task 生命周期与创建体验已实现；高级触发和执行治理待实施 |
-| 版本 | 0.6 |
+| 状态 | 首期稳定 Task 生命周期、创建体验与 Conversation 输入仲裁已实现；高级触发和执行治理待实施 |
+| 版本 | 0.7 |
 | 日期 | 2026-08-19 |
 | 依赖 | [Task 与 Job 统一领域模型](./task-and-job-model.md) |
 | 相关架构 | [自动化平台总体设计](../../architecture/automation-platform-architecture.md) |
@@ -36,10 +36,15 @@ GoodBuddy 当前已实现首期统一生命周期：
   为每次触发创建新的顶层 Task。
 - 默认选择 Execute，并允许用户主动切换 Ask；不支持工具执行时明确禁用 Execute。
 - 单次、每日和每周计划支持暂停、恢复、立即运行、应用重启恢复和最多 4 个独立计划并发。
+- 到期和手动运行先进入关联 Conversation 的持久输入队列，与回复期间继续发送的普通消息
+  顺序仲裁；默认不打断当前回复，也不与其并发写入时间线。
+- Composer 上沿显示待发送项和来源。用户可以删除尚未执行的 occurrence，或选择“立即
+  中断并插入”取消当前执行并将该项提升为下一项。
 - 文本结果和失败写回关联 Conversation 并带 Task 来源；独立文件和图片继续保存为 Artifact。
 - 左侧 Conversation 列表、Conversation Task 区和 Task Center 使用同一产品 Task；普通
   模型请求、Subagent、委派和 Smart Heartbeat 内部 Task 不进入产品索引。
-- v22 迁移保留 Schedule 配置和历史运行，并为旧计划补齐稳定 Task 与 Conversation。
+- v22 迁移保留 Schedule 配置和历史运行，并为旧计划补齐稳定 Task 与 Conversation；v23
+  增加可恢复的统一 Conversation 输入队列。
 
 尚未实现的高级能力包括 IANA 时区与 DST 墙上时间、每月/工作日/受限 Cron、事件触发、
 可配置错过执行策略、租约、重试与结果未知治理、完整预算和权限快照，以及面向内部
@@ -222,6 +227,13 @@ type TimeTrigger =
 “立即运行”在当前 Task 内创建独立 Job 和 Run，不改变下一次计划时间，不创建新 Task。
 重复点击使用调用级幂等键去重。
 
+### 7.4 与普通消息的顺序
+
+同一 Conversation 的普通消息和 Scheduled Task occurrence 使用同一 FIFO 队列。Agent
+正在回复时，到期 occurrence 只显示为待执行，不中断当前输出；当前执行结束后才认领下一项。
+用户显式选择“立即中断并插入”时，系统取消当前 Conversation 的活动请求，并让所选项成为
+下一项。删除待执行 occurrence 只取消该次运行，不删除稳定 Task、Conversation 或历史结果。
+
 ## 8. 一次触发的对象关系
 
 ```text
@@ -350,6 +362,9 @@ Task Center 显示 Scheduled Task 的范围、关联 Conversation、状态、模
 - [ ] 夏令时不会造成漂移或双跑。
 - [ ] 错过执行按配置跳过、补一次或有界补跑。
 - [x] 手动运行不改变下次计划时间。
+- [x] Scheduled Task 与普通消息共用 Conversation 级队列，不并发写入同一时间线。
+- [x] 当前回复期间可以继续发送普通消息，并在 Composer 上沿查看、删除或提升待发送项。
+- [x] 应用重启恢复尚未执行的队列项和有界附件上下文。
 - [x] 文本结果只写入 Conversation，独立交付物才进入成果。
 - [ ] Task Center 和桌面通知可以打开正确 Conversation 并定位 Task。
 - [ ] 应用重启不自动重放结果未知的副作用。

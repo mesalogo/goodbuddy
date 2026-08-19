@@ -24,6 +24,7 @@ import {
   agentRequestSchema,
   browserInteractRequestSchema,
   browserStopRequestSchema,
+  conversationQueueUserInputSchema,
   defaultRuntimeSettings,
   knowledgeCreateSchema,
   knowledgeEntityUpdateSchema,
@@ -52,6 +53,8 @@ import {
   type AgentRequest,
   type AppInfo,
   type BrowserLiveState,
+  type ConversationQueueDispatch,
+  type ConversationQueueUserInput,
   type KnowledgeSearchReference,
   type KnowledgeSnapshot,
   type RuntimeSettings
@@ -883,6 +886,7 @@ export function registerIpcHandlers(
   runtimeExtensionStore?: RuntimeExtensionStore
 ): () => Promise<void> {
   const activeRequests = new Map<string, AbortController>()
+  const activeRequestConversations = new Map<string, string>()
   const activeEventBuffers = new Map<string, { flush(): void }>()
   const pendingAgentQuestions = new Map<
     string,
@@ -1247,6 +1251,220 @@ export function registerIpcHandlers(
       window.webContents.send(ipcChannels.conversationsChanged)
     }
   }
+  const publishConversationQueueChange = (
+    conversationId?: string
+  ): void => {
+    if (!window.isDestroyed()) {
+      if (conversationId) {
+        window.webContents.send(
+          ipcChannels.conversationQueueChanged,
+          conversationId
+        )
+      } else {
+        window.webContents.send(
+          ipcChannels.conversationQueueChanged
+        )
+      }
+    }
+  }
+  const readyConversationQueues = new Set<string>()
+  const preferredConversationQueueItems = new Map<string, string>()
+  const reservedConversationQueueItems = new Map<string, string>()
+  const preparingRequestConversations = new Map<string, string>()
+  const rendererReadyConversationQueues = new Set<string>()
+  const queueDispatchTimers = new Map<string, NodeJS.Timeout>()
+  const parseConversationQueueUserPayload = (
+    payloadJson: string,
+    restoreContexts = false
+  ): ConversationQueueUserInput => {
+    const parsed = JSON.parse(payloadJson) as unknown
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'input' in parsed
+    ) {
+      const stored = parsed as {
+        input: unknown
+        serializedContexts?: unknown
+      }
+      const input = conversationQueueUserInputSchema.parse(stored.input)
+      if (
+        stored.serializedContexts !== undefined &&
+        typeof stored.serializedContexts !== 'string'
+      ) {
+        throw new Error('待发送附件数据无效')
+      }
+      if (
+        restoreContexts &&
+        typeof stored.serializedContexts === 'string'
+      ) {
+        contextManager.restoreFromQueue(stored.serializedContexts)
+      }
+      return input
+    }
+    return conversationQueueUserInputSchema.parse(parsed)
+  }
+  const pumpingConversationQueues = new Set<string>()
+  const maximumConcurrentScheduleRuns = 4
+  let activeScheduleRuns = 0
+
+  const isConversationExecuting = (
+    conversationId: string
+  ): boolean =>
+    reservedConversationQueueItems.has(conversationId) ||
+    [...preparingRequestConversations.values()].some(
+      (candidate) => candidate === conversationId
+    ) ||
+    [...activeRequestConversations.values()].some(
+      (candidate) => candidate === conversationId
+    )
+
+  const pumpConversationQueue = async (
+    conversationId: string,
+    preferredItemId?: string
+  ): Promise<void> => {
+    const preferred =
+      preferredItemId ??
+      preferredConversationQueueItems.get(conversationId)
+    if (
+      shuttingDown ||
+      executionPaused ||
+      pumpingConversationQueues.has(conversationId) ||
+      isConversationExecuting(conversationId)
+    ) {
+      return
+    }
+    const pendingItem = preferred
+      ? assistantDatabase.getConversationQueueItem(preferred)
+      : assistantDatabase.listConversationQueueItems(conversationId)[0]
+    if (!pendingItem || pendingItem.conversationId !== conversationId) {
+      preferredConversationQueueItems.delete(conversationId)
+      return
+    }
+    if (
+      pendingItem.source === 'user' &&
+      !rendererReadyConversationQueues.has(conversationId)
+    ) {
+      return
+    }
+    if (
+      pendingItem.source === 'schedule' &&
+      activeScheduleRuns >= maximumConcurrentScheduleRuns
+    ) {
+      return
+    }
+    pumpingConversationQueues.add(conversationId)
+    try {
+      if (isConversationExecuting(conversationId)) {
+        return
+      }
+      const claimed = assistantDatabase.claimConversationQueueItem(
+        conversationId,
+        preferred
+      )
+      if (!claimed) {
+        return
+      }
+      readyConversationQueues.delete(conversationId)
+      preferredConversationQueueItems.delete(conversationId)
+      publishConversationQueueChange(conversationId)
+      if (claimed.source === 'user') {
+        if (window.isDestroyed()) {
+          assistantDatabase.releaseConversationUserQueueItem(
+            claimed.item.id
+          )
+          readyConversationQueues.add(conversationId)
+          return
+        }
+        let input: ConversationQueueUserInput
+        try {
+          input = parseConversationQueueUserPayload(
+            claimed.payloadJson,
+            true
+          )
+        } catch {
+          assistantDatabase.releaseConversationUserQueueItem(
+            claimed.item.id
+          )
+          readyConversationQueues.add(conversationId)
+          publishConversationQueueChange(conversationId)
+          return
+        }
+        reservedConversationQueueItems.set(
+          conversationId,
+          claimed.item.id
+        )
+        const dispatchTimeout = setTimeout(() => {
+          queueDispatchTimers.delete(claimed.item.id)
+          if (
+            reservedConversationQueueItems.get(conversationId) !==
+            claimed.item.id
+          ) {
+            return
+          }
+          reservedConversationQueueItems.delete(conversationId)
+          try {
+            assistantDatabase.releaseConversationUserQueueItem(
+              claimed.item.id
+            )
+          } catch {
+            return
+          }
+          for (const attachment of input.attachments) {
+            contextManager.remove(attachment.id)
+          }
+          readyConversationQueues.add(conversationId)
+          publishConversationQueueChange(conversationId)
+          void pumpConversationQueue(conversationId)
+        }, 30_000)
+        queueDispatchTimers.set(claimed.item.id, dispatchTimeout)
+        const dispatch: ConversationQueueDispatch = {
+          item: claimed.item,
+          input
+        }
+        window.webContents.send(
+          ipcChannels.conversationQueueDispatch,
+          dispatch
+        )
+        return
+      }
+
+      activeScheduleRuns += 1
+      const execution = (async () => {
+        const result = await executeTaskWork({
+          origin: 'schedule',
+          schedule: claimed.schedule,
+          scheduleRunId: claimed.runId
+        })
+        assistantDatabase.completeScheduleRun(
+          claimed.runId,
+          result.status
+        )
+        publishConversationChange()
+      })()
+      publishConversationChange()
+      void trackExecution(execution)
+        .catch(() => undefined)
+        .finally(() => {
+          activeScheduleRuns -= 1
+          readyConversationQueues.add(conversationId)
+          publishConversationQueueChange(conversationId)
+          void pumpConversationQueue(conversationId)
+          for (const pendingConversationId of
+            assistantDatabase.listPendingScheduleQueueConversationIds(
+              maximumConcurrentScheduleRuns
+            )) {
+            if (
+              readyConversationQueues.has(pendingConversationId)
+            ) {
+              void pumpConversationQueue(pendingConversationId)
+            }
+          }
+        })
+    } finally {
+      pumpingConversationQueues.delete(conversationId)
+    }
+  }
 
   type ExecutionTemplate = Omit<
     AssistantSchedule,
@@ -1289,7 +1507,7 @@ export function registerIpcHandlers(
   const executeTaskWork = async (
     input: TaskWorkExecution
   ): Promise<{
-    status: 'completed' | 'failed'
+    status: 'completed' | 'failed' | 'cancelled'
     output?: string
     error?: string
     attachments?: ChannelMediaAttachment[]
@@ -1303,7 +1521,7 @@ export function registerIpcHandlers(
       return { status: 'failed', error: '应用正在退出' }
     }
     if (externalSignal?.aborted) {
-      return { status: 'failed', error: '请求已取消' }
+      return { status: 'cancelled', error: '请求已取消' }
     }
     const taskId =
       input.origin === 'schedule'
@@ -1327,6 +1545,7 @@ export function registerIpcHandlers(
         ? input.schedule.conversationId
         : undefined) ??
       `${origin}:${schedule.id}`
+    activeRequestConversations.set(requestId, runtimeConversationId)
     if (input.origin !== 'delegation') {
       assistantDatabase.updateTaskStatus(taskId, 'running')
     } else {
@@ -1661,9 +1880,10 @@ export function registerIpcHandlers(
     } catch (error) {
       eventBuffer.flush()
       const message = safeRuntimeError(error, '定时任务执行失败')
+      const cancelled = controller.signal.aborted
       assistantDatabase.updateTaskStatus(
         taskId,
-        controller.signal.aborted ? 'cancelled' : 'failed',
+        cancelled ? 'cancelled' : 'failed',
         message
       )
       if (input.origin === 'schedule') {
@@ -1672,7 +1892,7 @@ export function registerIpcHandlers(
           role: 'assistant',
           content: message,
           state: 'error',
-          status: '定时任务失败',
+          status: cancelled ? '定时任务已取消' : '定时任务失败',
           task: {
             id: taskId,
             title: schedule.title
@@ -1684,13 +1904,18 @@ export function registerIpcHandlers(
         title:
           origin === 'channel'
             ? `${remoteContext?.channelLabel ?? '远程通道'}请求失败`
-            : `定时任务失败：${schedule.title}`,
+            : cancelled
+              ? `定时任务已取消：${schedule.title}`
+              : `定时任务失败：${schedule.title}`,
         body:
           origin === 'channel'
             ? '打开 GoodBuddy 查看远程通道会话详情。'
             : '打开 GoodBuddy 任务工作栏查看详情。'
       })
-      return { status: 'failed', error: message }
+      return {
+        status: cancelled ? 'cancelled' : 'failed',
+        error: message
+      }
     } finally {
       eventBuffer.close()
       externalSignal?.removeEventListener(
@@ -1700,6 +1925,7 @@ export function registerIpcHandlers(
       knowledgeGateway?.revoke(knowledgeCapabilityToken)
       goodbuddyConfigService?.revokeRequest(requestId)
       activeRequests.delete(requestId)
+      activeRequestConversations.delete(requestId)
       await flushGoodBuddyConfigReload().catch(() => undefined)
     }
   }
@@ -1810,47 +2036,37 @@ export function registerIpcHandlers(
     yield { requestId: request.requestId, type: 'done' }
   }
 
-  const maximumConcurrentScheduleRuns = 4
-  let scheduleClaimRunning = false
-  let activeScheduleRuns = 0
-  const launchDueSchedules = (): void => {
+  let scheduleQueueTickRunning = false
+  const queueDueSchedules = (): void => {
     if (
-      scheduleClaimRunning ||
+      scheduleQueueTickRunning ||
       shuttingDown ||
-      executionPaused ||
-      activeScheduleRuns >= maximumConcurrentScheduleRuns
+      executionPaused
     ) {
       return
     }
-    scheduleClaimRunning = true
+    scheduleQueueTickRunning = true
     try {
-      const claims = assistantDatabase.claimDueSchedules(
-        new Date(),
-        maximumConcurrentScheduleRuns - activeScheduleRuns
+      const queued = assistantDatabase.queueDueSchedules(new Date())
+      const conversationIds = new Set(
+        queued.map((item) => item.conversationId)
       )
-      activeScheduleRuns += claims.length
-      for (const claim of claims) {
-        const execution = (async () => {
-          const result = await executeTaskWork({
-            origin: 'schedule',
-            schedule: claim.schedule,
-            scheduleRunId: claim.runId
-          })
-          assistantDatabase.completeScheduleRun(
-            claim.runId,
-            result.status
-          )
-          publishConversationChange()
-        })()
-        void trackExecution(execution)
-          .catch(() => undefined)
-          .finally(() => {
-            activeScheduleRuns -= 1
-            launchDueSchedules()
-          })
+      for (const conversationId of conversationIds) {
+        publishConversationQueueChange(conversationId)
+        if (!isConversationExecuting(conversationId)) {
+          readyConversationQueues.add(conversationId)
+          void pumpConversationQueue(conversationId)
+        }
       }
     } finally {
-      scheduleClaimRunning = false
+      scheduleQueueTickRunning = false
+    }
+  }
+  const resumePendingConversationQueues = (): void => {
+    for (const conversationId of
+      assistantDatabase.listPendingConversationQueueIds()) {
+      readyConversationQueues.add(conversationId)
+      void pumpConversationQueue(conversationId)
     }
   }
   let heartbeatTickRunning = false
@@ -1870,10 +2086,11 @@ export function registerIpcHandlers(
     }
   }
   const runDueWork = (): void => {
-    launchDueSchedules()
+    queueDueSchedules()
     void trackExecution(runDueHeartbeats()).catch(() => undefined)
   }
   const scheduleInterval = setInterval(runDueWork, 30_000)
+  resumePendingConversationQueues()
   runDueWork()
   const delegationEndpoint =
     process.env.GOODBUDDY_DELEGATION_ENDPOINT?.trim()
@@ -1911,7 +2128,14 @@ export function registerIpcHandlers(
                   updatedAt: new Date().toISOString()
                 }
               })
-            )
+            ).then((result) => ({
+              status:
+                result.status === 'completed'
+                  ? ('completed' as const)
+                  : ('failed' as const),
+              ...(result.output ? { output: result.output } : {}),
+              ...(result.error ? { error: result.error } : {})
+            }))
         })
       : undefined
   remoteDelegation?.start()
@@ -2355,6 +2579,16 @@ export function registerIpcHandlers(
         await executionTracker.drain()
         await onBeforeClearLocalData?.()
         assistantDatabase.clearAssistantData()
+        readyConversationQueues.clear()
+        preferredConversationQueueItems.clear()
+        reservedConversationQueueItems.clear()
+        preparingRequestConversations.clear()
+        rendererReadyConversationQueues.clear()
+        for (const timeout of queueDispatchTimers.values()) {
+          clearTimeout(timeout)
+        }
+        queueDispatchTimers.clear()
+        publishConversationQueueChange()
       } finally {
         executionPaused = false
       }
@@ -2413,9 +2647,50 @@ export function registerIpcHandlers(
       throw new Error('本地数据维护期间暂不接受新任务')
     }
     const parsedInput = agentRequestSchema.parse(input)
-    if (activeRequests.has(parsedInput.requestId)) {
+    if (
+      activeRequests.has(parsedInput.requestId) ||
+      preparingRequestConversations.has(parsedInput.requestId)
+    ) {
       throw new Error('请求正在执行')
     }
+    const queuedItem = parsedInput.queueItemId
+      ? assistantDatabase.getConversationQueueItem(
+          parsedInput.queueItemId
+        )
+      : undefined
+    if (
+      parsedInput.queueItemId &&
+      (!queuedItem ||
+        queuedItem.source !== 'user' ||
+        queuedItem.conversationId !== parsedInput.conversationId ||
+        !assistantDatabase.isConversationUserQueueItemDispatching(
+          parsedInput.queueItemId
+        ))
+    ) {
+      throw new Error('待发送消息不存在或与当前对话不一致')
+    }
+    const reservationItemId =
+      reservedConversationQueueItems.get(parsedInput.conversationId)
+    if (
+      [...activeRequestConversations.values()].some(
+        (conversationId) =>
+          conversationId === parsedInput.conversationId
+      ) ||
+      [...preparingRequestConversations.values()].some(
+        (conversationId) =>
+          conversationId === parsedInput.conversationId
+      ) ||
+      (parsedInput.queueItemId
+        ? reservationItemId !== parsedInput.queueItemId
+        : reservationItemId !== undefined)
+    ) {
+      throw new Error('当前对话已有执行中的请求')
+    }
+    preparingRequestConversations.set(
+      parsedInput.requestId,
+      parsedInput.conversationId
+    )
+    try {
     const knowledgeLibraryIds = [
       ...new Set(parsedInput.knowledgeLibraryIds)
     ]
@@ -2549,6 +2824,41 @@ export function registerIpcHandlers(
       throw error
     }
     activeRequests.set(request.requestId, controller)
+    activeRequestConversations.set(
+      request.requestId,
+      request.conversationId
+    )
+    if (parsedInput.queueItemId) {
+      const dispatchTimeout = queueDispatchTimers.get(
+        parsedInput.queueItemId
+      )
+      if (dispatchTimeout) {
+        clearTimeout(dispatchTimeout)
+        queueDispatchTimers.delete(parsedInput.queueItemId)
+      }
+      if (
+        reservedConversationQueueItems.get(request.conversationId) ===
+        parsedInput.queueItemId
+      ) {
+        reservedConversationQueueItems.delete(request.conversationId)
+      }
+      try {
+        assistantDatabase.completeConversationUserQueueItem(
+          parsedInput.queueItemId
+        )
+        publishConversationQueueChange(request.conversationId)
+      } catch (error) {
+        activeRequests.delete(request.requestId)
+        activeRequestConversations.delete(request.requestId)
+        assistantDatabase.updateTaskStatus(
+          request.requestId,
+          'cancelled',
+          '待发送消息状态已变化'
+        )
+        knowledgeGateway?.revoke(knowledgeCapabilityToken)
+        throw error
+      }
+    }
 
     const execution = (async () => {
       let completed = false
@@ -3027,6 +3337,7 @@ export function registerIpcHandlers(
         }
         knowledgeGateway?.revoke(request.knowledgeCapabilityToken)
         activeRequests.delete(request.requestId)
+        activeRequestConversations.delete(request.requestId)
         const configReload =
           goodbuddyConfigService?.takePendingReload(request.requestId) ??
           'none'
@@ -3035,9 +3346,15 @@ export function registerIpcHandlers(
           pendingGoodBuddyConfigReload = true
         }
         await flushGoodBuddyConfigReload().catch(() => undefined)
+        if (readyConversationQueues.has(request.conversationId)) {
+          void pumpConversationQueue(request.conversationId)
+        }
       }
     })()
     void trackExecution(execution)
+    } finally {
+      preparingRequestConversations.delete(parsedInput.requestId)
+    }
   })
 
   registerHandler(ipcChannels.agentCancel, (event, input: unknown) => {
@@ -3137,6 +3454,10 @@ export function registerIpcHandlers(
         5 * 60_000
       )
       activeRequests.set(request.requestId, controller)
+      activeRequestConversations.set(
+        request.requestId,
+        request.conversationId
+      )
       assistantDatabase.createTask({
         id: request.requestId,
         projectId: request.projectId,
@@ -3221,6 +3542,9 @@ export function registerIpcHandlers(
       } finally {
         clearTimeout(timeout)
         activeRequests.delete(request.requestId)
+        activeRequestConversations.delete(request.requestId)
+        readyConversationQueues.add(request.conversationId)
+        void pumpConversationQueue(request.conversationId)
       }
     }
   )
@@ -4150,9 +4474,185 @@ export function registerIpcHandlers(
     ipcChannels.conversationsDeleteLocal,
     (event, input: unknown) => {
       assertTrustedSender(event, window)
-      return assistantDatabase.deleteLocalConversation(
-        assistantIdSchema.parse(input)
+      const conversationId = assistantIdSchema.parse(input)
+      const queuedItems =
+        assistantDatabase.listConversationQueueItems(conversationId)
+      for (const item of queuedItems) {
+        if (item.source !== 'user') {
+          continue
+        }
+        const payloadJson =
+          assistantDatabase.getConversationUserQueuePayloadJson(item.id)
+        if (payloadJson) {
+          const queuedInput =
+            parseConversationQueueUserPayload(payloadJson)
+          for (const attachment of queuedInput.attachments) {
+            contextManager.remove(attachment.id)
+          }
+        }
+      }
+      const deleted = assistantDatabase.deleteLocalConversation(
+        conversationId
       )
+      preferredConversationQueueItems.delete(conversationId)
+      readyConversationQueues.delete(conversationId)
+      rendererReadyConversationQueues.delete(conversationId)
+      publishConversationQueueChange(conversationId)
+      return deleted
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationQueueList,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      return assistantDatabase.listConversationQueueItems(
+        assistantIdSchema.optional().parse(input)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationQueueEnqueueUser,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (executionPaused || shuttingDown) {
+        throw new Error('本地数据维护期间暂不接受新消息')
+      }
+      const parsed = conversationQueueUserInputSchema.parse(input)
+      const serializedContexts = contextManager.serializeForQueue(
+        parsed.attachments.map((attachment) => attachment.id)
+      )
+      const item = assistantDatabase.enqueueConversationUserInput({
+        conversationId: parsed.conversationId,
+        label: parsed.prompt,
+        payloadJson: JSON.stringify({
+          input: parsed,
+          serializedContexts
+        })
+      })
+      for (const attachment of parsed.attachments) {
+        contextManager.remove(attachment.id)
+      }
+      rendererReadyConversationQueues.add(item.conversationId)
+      publishConversationQueueChange(item.conversationId)
+      if (!isConversationExecuting(item.conversationId)) {
+        readyConversationQueues.add(item.conversationId)
+        setTimeout(() => {
+          void pumpConversationQueue(item.conversationId)
+        }, 0)
+      }
+      return item
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationQueueRemove,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const itemId = assistantIdSchema.parse(input)
+      const item = assistantDatabase.getConversationQueueItem(itemId)
+      if (!item) {
+        throw new Error('待执行项不存在或状态已变化')
+      }
+      let queuedInput: ConversationQueueUserInput | undefined
+      if (item.source === 'user') {
+        const payloadJson =
+          assistantDatabase.getConversationUserQueuePayloadJson(item.id)
+        if (!payloadJson) {
+          throw new Error('待发送消息不存在或状态已变化')
+        }
+        queuedInput =
+          parseConversationQueueUserPayload(payloadJson)
+      }
+      assistantDatabase.cancelConversationQueueItem(itemId)
+      if (
+        preferredConversationQueueItems.get(item.conversationId) ===
+        itemId
+      ) {
+        preferredConversationQueueItems.delete(item.conversationId)
+      }
+      for (const attachment of queuedInput?.attachments ?? []) {
+        contextManager.remove(attachment.id)
+      }
+      publishConversationQueueChange(item.conversationId)
+      if (item.source === 'schedule') {
+        publishConversationChange()
+      }
+      if (readyConversationQueues.has(item.conversationId)) {
+        void pumpConversationQueue(item.conversationId)
+      }
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationQueueInterruptAndRun,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const itemId = assistantIdSchema.parse(input)
+      const item = assistantDatabase.getConversationQueueItem(itemId)
+      if (!item) {
+        throw new Error('待执行项不存在或状态已变化')
+      }
+      preferredConversationQueueItems.set(item.conversationId, item.id)
+      readyConversationQueues.add(item.conversationId)
+      for (const [requestId, conversationId] of activeRequestConversations) {
+        if (conversationId === item.conversationId) {
+          activeRequests
+            .get(requestId)
+            ?.abort(new Error('用户中断当前回复并插入队列项'))
+        }
+      }
+      if (!isConversationExecuting(item.conversationId)) {
+        void pumpConversationQueue(item.conversationId, item.id)
+      }
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationQueueReleaseUser,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const itemId = assistantIdSchema.parse(input)
+      const item = assistantDatabase.getConversationQueueItem(itemId)
+      const dispatchTimeout = queueDispatchTimers.get(itemId)
+      if (dispatchTimeout) {
+        clearTimeout(dispatchTimeout)
+        queueDispatchTimers.delete(itemId)
+      }
+      if (item) {
+        if (
+          reservedConversationQueueItems.get(item.conversationId) ===
+          itemId
+        ) {
+          reservedConversationQueueItems.delete(item.conversationId)
+        }
+        const payloadJson =
+          assistantDatabase.getConversationUserQueuePayloadJson(itemId)
+        if (payloadJson) {
+          const queuedInput =
+            parseConversationQueueUserPayload(payloadJson)
+          for (const attachment of queuedInput.attachments) {
+            contextManager.remove(attachment.id)
+          }
+        }
+      }
+      assistantDatabase.releaseConversationUserQueueItem(itemId)
+      if (item) {
+        readyConversationQueues.add(item.conversationId)
+      }
+      publishConversationQueueChange(item?.conversationId)
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationQueueReady,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const conversationId = assistantIdSchema.parse(input)
+      rendererReadyConversationQueues.add(conversationId)
+      readyConversationQueues.add(conversationId)
+      void pumpConversationQueue(conversationId)
     }
   )
 
@@ -4397,6 +4897,7 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     assistantDatabase.removeSchedule(assistantIdSchema.parse(input))
     publishConversationChange()
+    publishConversationQueueChange()
   })
 
   registerHandler(ipcChannels.schedulesRunNow, (event, input: unknown) => {
@@ -4404,22 +4905,14 @@ export function registerIpcHandlers(
     if (executionPaused || shuttingDown) {
       throw new Error('本地数据维护期间暂不接受新任务')
     }
-    const claim = assistantDatabase.claimScheduleNow(
+    const item = assistantDatabase.queueScheduleNow(
       assistantIdSchema.parse(input)
     )
-    const execution = (async () => {
-      const result = await executeTaskWork({
-        origin: 'schedule',
-        schedule: claim.schedule,
-        scheduleRunId: claim.runId
-      })
-      assistantDatabase.completeScheduleRun(
-        claim.runId,
-        result.status
-      )
-      publishConversationChange()
-    })()
-    void trackExecution(execution).catch(() => undefined)
+    publishConversationQueueChange(item.conversationId)
+    if (!isConversationExecuting(item.conversationId)) {
+      readyConversationQueues.add(item.conversationId)
+      void pumpConversationQueue(item.conversationId)
+    }
   })
 
   registerHandler(ipcChannels.heartbeatsList, (event, input: unknown) => {
@@ -5649,6 +6142,10 @@ export function registerIpcHandlers(
     shuttingDown = true
     removeBrowserStateListener?.()
     clearInterval(scheduleInterval)
+    for (const timeout of queueDispatchTimers.values()) {
+      clearTimeout(timeout)
+    }
+    queueDispatchTimers.clear()
     window.removeListener('maximize', notifyMaximizedChanged)
     window.removeListener('unmaximize', notifyMaximizedChanged)
     abortActiveRequests('应用正在退出')

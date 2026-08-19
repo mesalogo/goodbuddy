@@ -614,11 +614,74 @@ const desktopApi: DesktopApi = {
         conversationId
       ) as Promise<boolean>,
     onChanged: (listener) => {
-      const handler = (): void => listener()
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        conversationId?: string
+      ): void => listener(conversationId)
       ipcRenderer.on(ipcChannels.conversationsChanged, handler)
       return () =>
         ipcRenderer.removeListener(
           ipcChannels.conversationsChanged,
+          handler
+        )
+    }
+  },
+  conversationQueue: {
+    list: (conversationId?: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.conversationQueueList,
+        conversationId
+      ),
+    enqueueUser: (input) =>
+      ipcRenderer.invoke(
+        ipcChannels.conversationQueueEnqueueUser,
+        input
+      ),
+    remove: async (itemId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.conversationQueueRemove,
+        itemId
+      )
+    },
+    interruptAndRun: async (itemId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.conversationQueueInterruptAndRun,
+        itemId
+      )
+    },
+    releaseUser: async (itemId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.conversationQueueReleaseUser,
+        itemId
+      )
+    },
+    ready: async (conversationId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.conversationQueueReady,
+        conversationId
+      )
+    },
+    onChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        conversationId?: string
+      ): void => listener(conversationId)
+      ipcRenderer.on(ipcChannels.conversationQueueChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.conversationQueueChanged,
+          handler
+        )
+    },
+    onDispatch: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        dispatch: Parameters<typeof listener>[0]
+      ): void => listener(dispatch)
+      ipcRenderer.on(ipcChannels.conversationQueueDispatch, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.conversationQueueDispatch,
           handler
         )
     }

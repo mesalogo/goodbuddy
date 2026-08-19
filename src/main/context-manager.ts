@@ -585,6 +585,138 @@ export class ContextManager {
     }
   }
 
+  serializeForQueue(contextIds: string[]): string {
+    if (contextIds.length > maximumAttachmentsPerMessage) {
+      throw new Error('单次消息最多添加 8 个附件')
+    }
+    const contexts = contextIds.map((contextId) => {
+      const context = this.contexts.get(contextId)
+      if (!context) {
+        throw new Error('附件上下文已失效，请重新添加')
+      }
+      return context
+    })
+    return JSON.stringify(contexts)
+  }
+
+  restoreFromQueue(serialized: string): void {
+    if (
+      Buffer.byteLength(serialized) >
+      maximumContextBytes * 2 + 2_000_000
+    ) {
+      throw new Error('待发送附件数据超过恢复上限')
+    }
+    const parsed = JSON.parse(serialized) as unknown
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length > maximumAttachmentsPerMessage
+    ) {
+      throw new Error('待发送附件数据无效')
+    }
+    const restoredContexts: StoredContext[] = []
+    const restoredIds = new Set<string>()
+    for (const value of parsed) {
+      if (!value || typeof value !== 'object') {
+        throw new Error('待发送附件数据无效')
+      }
+      const candidate = value as Record<string, unknown>
+      if (
+        typeof candidate.id !== 'string' ||
+        candidate.id.length === 0 ||
+        candidate.id.length > 200 ||
+        typeof candidate.name !== 'string' ||
+        candidate.name.length === 0 ||
+        candidate.name.length > 500 ||
+        typeof candidate.preview !== 'string' ||
+        candidate.preview.length > 500 ||
+        (candidate.kind !== 'text' && candidate.kind !== 'image')
+      ) {
+        throw new Error('待发送附件数据无效')
+      }
+      if (this.contexts.has(candidate.id)) {
+        continue
+      }
+      if (restoredIds.has(candidate.id)) {
+        throw new Error('待发送附件数据包含重复项目')
+      }
+      let context: StoredContext
+      if (candidate.kind === 'text') {
+        if (typeof candidate.content !== 'string') {
+          throw new Error('待发送文本附件数据无效')
+        }
+        const size = Buffer.byteLength(candidate.content)
+        if (
+          size === 0 ||
+          size > maximumContextBytes ||
+          candidate.size !== size
+        ) {
+          throw new Error('待发送文本附件大小无效')
+        }
+        context = {
+          id: candidate.id,
+          name: candidate.name,
+          preview: candidate.preview,
+          kind: 'text',
+          size,
+          content: candidate.content
+        }
+      } else {
+        if (
+          candidate.mediaType !== 'image/jpeg' ||
+          typeof candidate.data !== 'string' ||
+          !/^[A-Za-z0-9+/]+={0,2}$/u.test(candidate.data)
+        ) {
+          throw new Error('待发送图片附件数据无效')
+        }
+        const image = Buffer.from(candidate.data, 'base64')
+        if (
+          image.byteLength === 0 ||
+          image.byteLength > maximumContextBytes ||
+          candidate.size !== image.byteLength
+        ) {
+          throw new Error('待发送图片附件大小无效')
+        }
+        const thumbnailUrl =
+          typeof candidate.thumbnailUrl === 'string' &&
+          candidate.thumbnailUrl.length <= 2_000_000 &&
+          candidate.thumbnailUrl.startsWith(
+            'data:image/jpeg;base64,'
+          )
+            ? candidate.thumbnailUrl
+            : undefined
+        context = {
+          id: candidate.id,
+          name: candidate.name,
+          preview: candidate.preview,
+          kind: 'image',
+          size: image.byteLength,
+          mediaType: 'image/jpeg',
+          data: candidate.data,
+          ...(thumbnailUrl ? { thumbnailUrl } : {})
+        }
+      }
+      restoredIds.add(context.id)
+      restoredContexts.push(context)
+    }
+    const restoredBytes = restoredContexts.reduce(
+      (total, context) => total + context.size,
+      0
+    )
+    if (
+      this.contexts.size + restoredContexts.length >
+      maximumContextCount
+    ) {
+      throw new Error('最多可暂存 16 个上下文项目')
+    }
+    if (this.totalBytes + restoredBytes > maximumContextBytes) {
+      throw new Error('上下文总大小不能超过 12MB')
+    }
+    for (const context of restoredContexts) {
+      this.contexts.set(context.id, context)
+      this.totalBytes += context.size
+    }
+  }
+
   clear(): void {
     this.contexts.clear()
     this.totalBytes = 0

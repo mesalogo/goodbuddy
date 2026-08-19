@@ -17,7 +17,9 @@ GoodBuddy 当前已经具备若干长期助手能力，但它们仍是彼此分�
 
 1. 当前 Schedule 已支持单次、每日和每周触发，并在创建时绑定稳定产品级 Task 与真实
    Conversation；重复触发复用同一身份，文本结果写回 Conversation，独立文件和图片保存为
-   Artifact。IANA 时区、Cron、事件触发、租约、重试和完整 Job/Run 抽象仍待实现。
+   Artifact。到期执行与用户在回复期间继续发送的普通消息共用 Conversation 级持久队列，
+   因而不会与当前回复并发写入同一时间线。IANA 时区、Cron、事件触发、租约、重试和完整
+   Job/Run 抽象仍待实现。
 2. 当前智能心跳支持全局或项目范围的每日、每周回顾，读取有界会话、任务和已确认记忆，
    生成摘要、记忆建议和后续任务。
 3. 专家执行的 Job 支持有限并发和只读综合，但没有实验变量、重复运行、统一指标和结果晋升。
@@ -283,7 +285,29 @@ Runtime 边界完成，用户可见结果通过所属 Task 汇入关联 Conversa
 后台任务必须可被背压延后。延后记录为 `deferred`，不得丢失，也不得在系统恢复空闲时一次性
 释放全部积压。
 
-### 7.3 幂等和租约
+### 7.3 Conversation 输入仲裁
+
+当前实现以 Main 和 SQLite 中的 `conversation_queue_items` 作为每条 Conversation 的权威
+输入队列，而不是在 Renderer 分别维护聊天草稿队列和 Scheduled Task 队列：
+
+- 普通消息在发送时冻结 Runtime、工作模式、专家/团队、知识范围和附件上下文，再以
+  `source=user` 入队；附件内容使用有界序列化保存，应用重启后仍可恢复。
+- 到期或手动启动的 Scheduled Task 先建立 `schedule_run`，再以 `source=schedule` 进入同一
+  队列。Scheduler 不再绕过队列直接调用 Runtime。
+- Main 对每条 Conversation 只保留一个活动请求或 Renderer 派发保留位。默认按 FIFO 认领；
+  全局 Scheduled Task 执行仍受最多 4 项并发限制。
+- 用户消息由 Main 派发给 Renderer，由 Renderer 建立用户消息和流式助手消息后调用
+  `agent.run`；Scheduled Task 由 Main 直接执行。两条路径共享同一 Conversation 活动锁。
+- 当前执行到达终态后再认领下一项。删除只移除尚未执行的项；“立即中断并插入”取消当前
+  请求并把所选项设为下一项，不重排其他项。
+- 每条 Conversation 最多保留 20 个用户可提交的待执行项。启动时将未完成的派发恢复为
+  `pending`，但应用退出期间不会实际执行任务。
+
+Renderer 只通过显式 IPC 列出、加入、删除、提升、释放和接收用户队列项；Main 在接受
+`agent.run` 时校验队列项仍处于 `dispatching` 且属于同一 Conversation，防止 Renderer
+绕过顺序仲裁。
+
+### 7.4 幂等和租约
 
 - 每次计划触发使用 `planId + scheduledFor + planVersion` 形成幂等键。
 - 手动触发使用调用方提供的单次幂等键。

@@ -2,7 +2,7 @@ import {
   ChevronDown,
   ChevronUp,
   CircleAlert,
-  ListTodo,
+  ClockFading,
   Plus
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -78,7 +78,7 @@ export function ConversationTaskStrip({
           }}
           type="button"
         >
-          <ListTodo aria-hidden="true" size={15} />
+          <ClockFading aria-hidden="true" size={15} />
           <strong>{t('taskStrip.title')}</strong>
           <span>
             {t('taskStrip.count', {

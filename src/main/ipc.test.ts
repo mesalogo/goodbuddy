@@ -3,7 +3,10 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
-import type { AssistantProject } from '../shared/assistant-contracts'
+import type {
+  AssistantProject,
+  ConversationQueueItem
+} from '../shared/assistant-contracts'
 import type { AgentEvent, BrowserLiveState } from '../shared/contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
@@ -163,7 +166,11 @@ describe('registerIpcHandlers computer capabilities', () => {
       capabilityService as never,
       { clear: vi.fn(), selectFiles } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       onRuntimeSettingsChanged,
@@ -384,7 +391,11 @@ describe('registerIpcHandlers update source routing', () => {
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
@@ -502,7 +513,11 @@ describe('registerIpcHandlers model download source routing', () => {
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
@@ -694,7 +709,11 @@ describe('registerIpcHandlers DSH runtime extensions', () => {
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       onRuntimeSettingsChanged,
@@ -879,7 +898,9 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       { clear: vi.fn() } as never,
       {} as never,
       {
-        claimDueSchedules: vi.fn(() => []),
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => []),
         repairConversationRuntimeSelections: vi.fn()
       } as never,
       { clear: vi.fn() } as never,
@@ -1007,7 +1028,11 @@ describe('registerIpcHandlers knowledge snapshot ontology', () => {
       {} as never,
       { clear: vi.fn() } as never,
       knowledgeService as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined)
@@ -1091,7 +1116,11 @@ describe('registerIpcHandlers knowledge embedding index', () => {
       {} as never,
       { clear: vi.fn() } as never,
       knowledgeService as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined)
@@ -1181,7 +1210,11 @@ describe('registerIpcHandlers knowledge task actions', () => {
       {} as never,
       { clear: vi.fn() } as never,
       knowledgeService as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined)
@@ -1280,7 +1313,11 @@ describe('registerIpcHandlers model ZIP dialogs', () => {
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => undefined),
@@ -1453,7 +1490,9 @@ describe('registerIpcHandlers document parsing', () => {
     }
     const createInlineArtifact = vi.fn((input) => input)
     const assistantDatabase = {
-      claimDueSchedules: vi.fn(() => []),
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
       createInlineArtifact
     }
     const webContents = {
@@ -1622,7 +1661,11 @@ describe('registerIpcHandlers connection tests', () => {
       {} as never,
       contextManager as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       approvalBroker as never,
       {} as never,
       vi.fn(async () => {})
@@ -1739,7 +1782,11 @@ describe('registerIpcHandlers connection tests', () => {
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {}),
@@ -1831,7 +1878,11 @@ describe('registerIpcHandlers Runtime config actions', () => {
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {})
@@ -1968,7 +2019,11 @@ describe('registerIpcHandlers window controls', () => {
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
-      { claimDueSchedules: vi.fn(() => []) } as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
       { clear: vi.fn() } as never,
       {} as never,
       vi.fn(async () => {})
@@ -2028,7 +2083,9 @@ describe('registerIpcHandlers workspace files', () => {
     await writeFile(join(rootPath, 'README.md'), '# GoodBuddy\n')
     const projectId = '00000000-0000-4000-8000-000000000101'
     const assistantDatabase = {
-      claimDueSchedules: vi.fn(() => []),
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
       getProject: vi.fn(() => ({ id: projectId, rootPath }))
     }
     const webContents = {
@@ -2107,14 +2164,17 @@ describe('registerIpcHandlers token usage', () => {
       records: []
     }
     const assistantDatabase = {
-      claimDueSchedules: vi.fn(() => []),
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
       getTokenUsageSummary: vi.fn(() => summary)
     }
     const webContents = {
       mainFrame: {
         url: 'file:///goodbuddy/index.html'
       },
-      getURL: vi.fn(() => 'file:///goodbuddy/index.html')
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
     }
     const window = {
       webContents,
@@ -2159,16 +2219,57 @@ describe('registerIpcHandlers local conversation persistence', () => {
   })
 
   it('validates and forwards incremental saves and explicit deletions', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000301'
+    const queuedAttachmentId =
+      '00000000-0000-4000-8000-000000000303'
+    const queuedItem = {
+      id: '00000000-0000-4000-8000-000000000304',
+      conversationId,
+      source: 'user' as const,
+      label: '待删除消息',
+      createdAt: '2026-08-20T09:01:00.000Z'
+    }
     const assistantDatabase = {
-      claimDueSchedules: vi.fn(() => []),
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => [queuedItem]),
+      listPendingConversationQueueIds: vi.fn(() => [conversationId]),
+      getConversationUserQueuePayloadJson: vi.fn(() =>
+        JSON.stringify({
+          input: {
+            conversationId,
+            runtimeSelection: { provider: 'auto' },
+            workMode: 'ask',
+            includeMemoryContext: true,
+            prompt: queuedItem.label,
+            attachments: [
+              {
+                id: queuedAttachmentId,
+                name: 'queued.txt',
+                size: 6,
+                preview: 'queued',
+                kind: 'text'
+              }
+            ],
+            knowledgeLibraryIds: [],
+            knowledgeRetrievalMode: 'auto'
+          },
+          serializedContexts: '[]'
+        })
+      ),
       saveLocalConversations: vi.fn(),
       deleteLocalConversation: vi.fn(() => true)
+    }
+    const contextManager = {
+      clear: vi.fn(),
+      remove: vi.fn()
     }
     const webContents = {
       mainFrame: {
         url: 'file:///goodbuddy/index.html'
       },
-      getURL: vi.fn(() => 'file:///goodbuddy/index.html')
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
     }
     const window = {
       webContents,
@@ -2182,7 +2283,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
       'CommandOrControl+Shift+Space',
       {} as never,
       {} as never,
-      { clear: vi.fn() } as never,
+      contextManager as never,
       {} as never,
       assistantDatabase as never,
       { clear: vi.fn() } as never,
@@ -2193,8 +2294,6 @@ describe('registerIpcHandlers local conversation persistence', () => {
       sender: webContents,
       senderFrame: webContents.mainFrame
     }
-    const conversationId =
-      '00000000-0000-4000-8000-000000000301'
     const messageId = '00000000-0000-4000-8000-000000000302'
     const batch = [
       {
@@ -2231,6 +2330,9 @@ describe('registerIpcHandlers local conversation persistence', () => {
     expect(
       assistantDatabase.deleteLocalConversation
     ).toHaveBeenCalledWith(conversationId)
+    expect(contextManager.remove).toHaveBeenCalledWith(
+      queuedAttachmentId
+    )
 
     expect(() =>
       electronMocks.handlers.get(
@@ -2260,7 +2362,9 @@ describe('registerIpcHandlers local conversation persistence', () => {
 
   it('waits for the renderer persistence acknowledgement before removing handlers', async () => {
     const assistantDatabase = {
-      claimDueSchedules: vi.fn(() => [])
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => [])
     }
     const webContents = {
       mainFrame: {
@@ -2424,7 +2528,9 @@ describe('registerIpcHandlers Runtime customization', () => {
       | { provider: 'opencode' }
       | undefined = { provider: 'opencode' }
     const assistantDatabase = {
-      claimDueSchedules: vi.fn(() => []),
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
       getProject: vi.fn(() => ({
         id: projectId,
         rootPath: 'C:\\ProjectWorkspace'
@@ -2634,7 +2740,6 @@ describe('registerIpcHandlers agent terminal state', () => {
     capabilityServiceOverride?: Record<string, unknown>
   ) {
     const assistantDatabase = {
-      claimDueSchedules: vi.fn(() => []),
       createTask: vi.fn(),
       appendTaskEvent: vi.fn(),
       updateTaskStatus: vi.fn(),
@@ -2670,8 +2775,22 @@ describe('registerIpcHandlers agent terminal state', () => {
       })),
       appendConversationMessage: vi.fn(),
       appendRemoteConversationMessage: vi.fn(),
+      listConversationQueueItems: vi.fn<
+        () => ConversationQueueItem[]
+      >(() => []),
+      listPendingScheduleQueueConversationIds: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
+      getConversationQueueItem: vi.fn(),
+      getConversationUserQueuePayloadJson: vi.fn(),
+      isConversationUserQueueItemDispatching: vi.fn(() => true),
+      enqueueConversationUserInput: vi.fn(),
+      claimConversationQueueItem: vi.fn(),
+      completeConversationUserQueueItem: vi.fn(),
+      releaseConversationUserQueueItem: vi.fn(),
+      cancelConversationQueueItem: vi.fn(),
+      queueDueSchedules: vi.fn(() => []),
+      queueScheduleNow: vi.fn(),
       completeScheduleRun: vi.fn(),
-      claimScheduleNow: vi.fn(),
       listSchedules: vi.fn(() => []),
       createSchedule: vi.fn(),
       setScheduleEnabled: vi.fn(),
@@ -2711,6 +2830,8 @@ describe('registerIpcHandlers agent terminal state', () => {
         kind: attachment.kind === 'image' ? 'image' : 'text'
       })),
       remove: vi.fn(),
+      serializeForQueue: vi.fn(() => '[]'),
+      restoreFromQueue: vi.fn(),
       clear: vi.fn()
     }
     const approvalBroker = {
@@ -2893,7 +3014,25 @@ describe('registerIpcHandlers agent terminal state', () => {
       createdAt: '2026-08-19T00:00:00.000Z',
       updatedAt: '2026-08-19T00:00:00.000Z'
     }
-    harness.assistantDatabase.claimScheduleNow.mockReturnValue({
+    const queueItem = {
+      id: runId,
+      conversationId,
+      source: 'schedule' as const,
+      label: schedule.title,
+      scheduleRunId: runId,
+      scheduleId,
+      taskId,
+      createdAt: '2026-08-19T00:01:00.000Z'
+    }
+    harness.assistantDatabase.queueScheduleNow.mockReturnValue(
+      queueItem
+    )
+    harness.assistantDatabase.listConversationQueueItems
+      .mockReturnValueOnce([queueItem])
+      .mockReturnValue([])
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValue({
+      source: 'schedule',
+      item: queueItem,
       schedule,
       runId
     })
@@ -2936,6 +3075,298 @@ describe('registerIpcHandlers agent terminal state', () => {
     ).not.toHaveBeenCalled()
     expect(harness.webContents.send).toHaveBeenCalledWith(
       ipcChannels.conversationsChanged
+    )
+    await harness.dispose()
+  })
+
+  it('serializes Agent runs that target the same Conversation', async () => {
+    let finishRun: (() => void) | undefined
+    const runtimeStarted = vi.fn()
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      async *run(request: { requestId: string }) {
+        runtimeStarted(request.requestId)
+        await new Promise<void>((resolve) => {
+          finishRun = resolve
+        })
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const harness = createHarness(runtime)
+    const conversationId =
+      '00000000-0000-4000-8000-000000000721'
+    const firstRun = harness.handler?.(
+      trustedEvent(harness.webContents),
+      {
+        requestId: '00000000-0000-4000-8000-000000000722',
+        conversationId,
+        prompt: '第一条',
+        workMode: 'ask',
+        knowledgeLibraryIds: []
+      }
+    )
+    await vi.waitFor(() => expect(runtimeStarted).toHaveBeenCalled())
+
+    await expect(
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId: '00000000-0000-4000-8000-000000000723',
+        conversationId,
+        prompt: '第二条',
+        workMode: 'ask',
+        knowledgeLibraryIds: []
+      })
+    ).rejects.toThrow('当前对话已有执行中的请求')
+
+    finishRun?.()
+    await firstRun
+    await harness.dispose()
+  })
+
+  it('reserves a Conversation while its Runtime is resolving', async () => {
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    let resolveRuntime:
+      | ((value: typeof runtime) => void)
+      | undefined
+    const runtimeResolution = new Promise<typeof runtime>((resolve) => {
+      resolveRuntime = resolve
+    })
+    const selectedRuntimes = {
+      getRuntime: vi.fn(() => runtimeResolution)
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    const conversationId =
+      '00000000-0000-4000-8000-000000000724'
+    const firstRun = harness.handler?.(
+      trustedEvent(harness.webContents),
+      {
+        requestId: '00000000-0000-4000-8000-000000000728',
+        conversationId,
+        runtimeSelection: { provider: 'auto' },
+        prompt: '等待 Runtime',
+        workMode: 'ask',
+        knowledgeLibraryIds: []
+      }
+    )
+    await vi.waitFor(() =>
+      expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
+    )
+
+    await expect(
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId: '00000000-0000-4000-8000-000000000729',
+        conversationId,
+        runtimeSelection: { provider: 'auto' },
+        prompt: '不能并发',
+        workMode: 'ask',
+        knowledgeLibraryIds: []
+      })
+    ).rejects.toThrow('当前对话已有执行中的请求')
+    expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
+
+    resolveRuntime?.(runtime)
+    await firstRun
+    await harness.dispose()
+  })
+
+  it('interrupts the active response and promotes the selected queue item', async () => {
+    const runtimeStarted = vi.fn()
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      async *run(
+        request: { requestId: string },
+        signal: AbortSignal
+      ) {
+        runtimeStarted(request.requestId)
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), {
+            once: true
+          })
+        })
+        if (signal.aborted) {
+          throw signal.reason
+        }
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const harness = createHarness(runtime)
+    const conversationId =
+      '00000000-0000-4000-8000-000000000725'
+    const item = {
+      id: '00000000-0000-4000-8000-000000000726',
+      conversationId,
+      source: 'user' as const,
+      label: '优先执行',
+      createdAt: '2026-08-20T09:01:00.000Z'
+    }
+    const input = {
+      conversationId,
+      runtimeSelection: { provider: 'auto' as const },
+      workMode: 'ask' as const,
+      includeMemoryContext: true,
+      prompt: item.label,
+      attachments: [],
+      knowledgeLibraryIds: [],
+      knowledgeRetrievalMode: 'auto' as const
+    }
+    harness.assistantDatabase.getConversationQueueItem.mockReturnValue(
+      item
+    )
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValueOnce({
+      source: 'user',
+      item,
+      payloadJson: JSON.stringify(input)
+    })
+    electronMocks.handlers.get(
+      ipcChannels.conversationQueueReady
+    )?.(trustedEvent(harness.webContents), conversationId)
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId: '00000000-0000-4000-8000-000000000727',
+      conversationId,
+      prompt: '当前回复',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() => expect(runtimeStarted).toHaveBeenCalled())
+
+    electronMocks.handlers.get(
+      ipcChannels.conversationQueueInterruptAndRun
+    )?.(trustedEvent(harness.webContents), item.id)
+
+    await vi.waitFor(() =>
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.conversationQueueDispatch,
+        { item, input }
+      )
+    )
+    expect(
+      harness.assistantDatabase.claimConversationQueueItem
+    ).toHaveBeenCalledWith(conversationId, item.id)
+    await harness.dispose()
+  })
+
+  it('dispatches and accepts a queued user message through the renderer', async () => {
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const harness = createHarness(runtime)
+    const conversationId =
+      '00000000-0000-4000-8000-000000000731'
+    const itemId = '00000000-0000-4000-8000-000000000732'
+    const attachmentId =
+      '00000000-0000-4000-8000-000000000734'
+    const input = {
+      conversationId,
+      runtimeSelection: { provider: 'auto' as const },
+      workMode: 'ask' as const,
+      includeMemoryContext: true,
+      prompt: '排队发送',
+      attachments: [
+        {
+          id: attachmentId,
+          name: 'queued.txt',
+          size: 6,
+          preview: 'queued',
+          kind: 'text' as const
+        }
+      ],
+      knowledgeLibraryIds: [],
+      knowledgeRetrievalMode: 'auto' as const
+    }
+    const item = {
+      id: itemId,
+      conversationId,
+      source: 'user' as const,
+      label: input.prompt,
+      createdAt: '2026-08-19T00:01:00.000Z'
+    }
+    harness.assistantDatabase.enqueueConversationUserInput.mockReturnValue(
+      item
+    )
+    harness.assistantDatabase.listConversationQueueItems
+      .mockReturnValueOnce([item])
+      .mockReturnValue([])
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValueOnce({
+      source: 'user',
+      item,
+      payloadJson: JSON.stringify({
+        input,
+        serializedContexts: '[]'
+      })
+    })
+    harness.assistantDatabase.getConversationQueueItem.mockReturnValue(
+      item
+    )
+
+    const enqueueHandler = electronMocks.handlers.get(
+      ipcChannels.conversationQueueEnqueueUser
+    )
+    expect(
+      enqueueHandler?.(trustedEvent(harness.webContents), input)
+    ).toEqual(item)
+    await vi.waitFor(() =>
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.conversationQueueDispatch,
+        { item, input }
+      )
+    )
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId: '00000000-0000-4000-8000-000000000733',
+      conversationId,
+      queueItemId: itemId,
+      runtimeSelection: input.runtimeSelection,
+      prompt: input.prompt,
+      workMode: input.workMode,
+      knowledgeLibraryIds: []
+    })
+
+    expect(
+      harness.assistantDatabase.completeConversationUserQueueItem
+    ).toHaveBeenCalledWith(itemId)
+    expect(harness.contextManager.serializeForQueue).toHaveBeenCalledWith([
+      attachmentId
+    ])
+    expect(harness.contextManager.remove).toHaveBeenCalledWith(
+      attachmentId
+    )
+    expect(harness.contextManager.restoreFromQueue).toHaveBeenCalledWith(
+      '[]'
     )
     await harness.dispose()
   })

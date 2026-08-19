@@ -1,5 +1,5 @@
 import {
-  CalendarClock,
+  ClockFading,
   Pause,
   Play,
   Trash2
@@ -91,7 +91,7 @@ export function TaskScheduleActions({
           {schedule.enabled ? (
             <Pause aria-hidden="true" size={12} />
           ) : (
-            <CalendarClock aria-hidden="true" size={12} />
+            <ClockFading aria-hidden="true" size={12} />
           )}
           {schedule.enabled
             ? t('task.actions.pause')
