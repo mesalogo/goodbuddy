@@ -134,6 +134,7 @@ describe('GoodBuddy configuration contracts', () => {
       application: {
         checkUpdatesOnStartup: true,
         updateSource: 'github',
+        modelDownloadSource: 'modelscope',
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate',
         magicNoteCommentFormat: 'combined'

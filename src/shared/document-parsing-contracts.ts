@@ -1,4 +1,10 @@
 import { z } from 'zod'
+import {
+  MODEL_DOWNLOAD_SOURCES,
+  modelArtifactIdentitySchema,
+  modelDownloadAvailabilitySchema,
+  modelDownloadSourceSchema
+} from './model-download-contracts'
 import { settingsWarningsSchema } from './settings-warning-contracts'
 
 export const maximumDocumentExtractedCharacters = 5_000_000
@@ -36,9 +42,8 @@ export const localOcrModelIdSchema = z
   .max(96)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)
 
-const documentOcrSha256Schema = z
-  .string()
-  .regex(/^[a-f0-9]{64}$/u)
+const documentOcrSha256Schema =
+  modelArtifactIdentitySchema.shape.sha256
 
 export const documentOcrModelFileRoleSchema = z.enum([
   'detection',
@@ -46,13 +51,8 @@ export const documentOcrModelFileRoleSchema = z.enum([
   'dictionary'
 ])
 
-export const documentOcrModelDownloadSchema = z
-  .object({
-    url: z.url().max(2_048),
-    size: z.number().int().positive().safe(),
-    sha256: documentOcrSha256Schema
-  })
-  .strict()
+export const documentOcrModelArtifactSchema =
+  modelArtifactIdentitySchema
 
 export const documentOcrModelFileSchema = z
   .object({
@@ -62,7 +62,9 @@ export const documentOcrModelFileSchema = z
       .max(255)
       .regex(/^[^/\\\0]+$/u),
     role: documentOcrModelFileRoleSchema,
-    download: documentOcrModelDownloadSchema
+    size: documentOcrModelArtifactSchema.shape.size,
+    sha256: documentOcrModelArtifactSchema.shape.sha256,
+    targets: documentOcrModelArtifactSchema.shape.targets
   })
   .strict()
 
@@ -76,7 +78,12 @@ export const documentOcrModelCatalogEntrySchema = z
     quality: z.enum(['basic', 'balanced', 'high']),
     speed: z.enum(['fast', 'balanced', 'slow']),
     recommended: z.boolean(),
-    repositoryUrl: z.url().max(2_048),
+    repositoryUrls: z
+      .object({
+        modelscope: z.url().max(2_048).optional(),
+        'hugging-face': z.url().max(2_048).optional()
+      })
+      .strict(),
     license: z
       .object({
         name: z.string().trim().min(1).max(120),
@@ -108,7 +115,63 @@ export const documentOcrModelCatalogEntrySchema = z
         message: 'OCR 模型文件角色不能重复'
       })
     }
+    for (const source of MODEL_DOWNLOAD_SOURCES) {
+      const targets = entry.files
+        .map((file) => file.targets[source])
+        .filter((target) => target !== undefined)
+      if (
+        targets.length > 0 &&
+        (!entry.repositoryUrls[source] ||
+          !targets.some(
+            (target) =>
+              target.repositoryUrl === entry.repositoryUrls[source]
+          ))
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['repositoryUrls', source],
+          message:
+            'OCR 模型仓库地址必须对应到该下载源的一个文件目标'
+        })
+      }
+    }
+    if (
+      !MODEL_DOWNLOAD_SOURCES.some((source) =>
+        entry.files.every((file) => file.targets[source])
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['files'],
+        message: 'OCR 模型必须至少由一个下载源提供完整文件'
+      })
+    }
   })
+
+export const documentOcrModelCatalogViewEntrySchema =
+  z
+    .object({
+      id: localOcrModelIdSchema,
+      displayName: z.string().trim().min(1).max(120),
+      description: z.string().trim().min(1).max(500),
+      languages: z.array(z.string().trim().min(1).max(32)).min(1).max(32),
+      runtime: z.literal('onnxruntime-web-wasm'),
+      quality: z.enum(['basic', 'balanced', 'high']),
+      speed: z.enum(['fast', 'balanced', 'slow']),
+      recommended: z.boolean(),
+      license: documentOcrModelCatalogEntrySchema.shape.license,
+      files: z
+        .array(
+          documentOcrModelFileSchema.omit({
+            targets: true
+          })
+        )
+        .length(3),
+      downloadAvailability: z
+        .array(modelDownloadAvailabilitySchema)
+        .length(MODEL_DOWNLOAD_SOURCES.length)
+    })
+    .strict()
 
 export const installedDocumentOcrModelSchema = z
   .object({
@@ -138,14 +201,28 @@ export const documentOcrModelOperationSchema = z
     phase: z.enum(['preparing', 'transferring', 'installing']),
     currentFile: z.string().min(1).max(255).nullable(),
     completedBytes: z.number().int().nonnegative().safe(),
-    totalBytes: z.number().int().nonnegative().safe().nullable()
+    totalBytes: z.number().int().nonnegative().safe().nullable(),
+    downloadSource: modelDownloadSourceSchema.optional()
   })
   .strict()
+  .superRefine((operation, context) => {
+    if (
+      (operation.kind === 'download') !==
+      (operation.downloadSource !== undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['downloadSource'],
+        message: 'OCR 下载操作必须且仅能包含下载源'
+      })
+    }
+  })
 
 export const documentOcrModelSnapshotSchema = z
   .object({
     rootDirectory: z.string().min(1).max(32_768),
-    catalog: z.array(documentOcrModelCatalogEntrySchema).max(16),
+    selectedDownloadSource: modelDownloadSourceSchema,
+    catalog: z.array(documentOcrModelCatalogViewEntrySchema).max(16),
     installed: z.array(installedDocumentOcrModelSchema).max(16),
     operations: z.array(documentOcrModelOperationSchema).max(8)
   })
@@ -154,6 +231,13 @@ export const documentOcrModelSnapshotSchema = z
 export const documentOcrModelActionInputSchema = z
   .object({
     modelId: localOcrModelIdSchema
+  })
+  .strict()
+
+export const documentOcrModelInstallInputSchema = z
+  .object({
+    modelId: localOcrModelIdSchema,
+    expectedDownloadSource: modelDownloadSourceSchema
   })
   .strict()
 
@@ -348,6 +432,9 @@ export type DocumentOcrModelFile = z.infer<
 >
 export type DocumentOcrModelCatalogEntry = z.infer<
   typeof documentOcrModelCatalogEntrySchema
+>
+export type DocumentOcrModelCatalogViewEntry = z.infer<
+  typeof documentOcrModelCatalogViewEntrySchema
 >
 export type InstalledDocumentOcrModel = z.infer<
   typeof installedDocumentOcrModelSchema

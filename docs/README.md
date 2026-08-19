@@ -29,6 +29,9 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 ## 跨功能文档
 
 - [自动化平台架构](./architecture/automation-platform-architecture.md)
+- [平台功能页签与模型下载源设计](./architecture/model-download-source-design.md)
+- [本地文本向量模型与连接设计](./architecture/local-text-embedding-model-design.md)
+- [全双工实时语音交互设计](./architecture/full-duplex-voice-design.md)
 - [DeepSeek Harness Runtime 设计](./architecture/deepseek-harness-runtime-design.md)
 - [跨平台助手产品设计](./design/cross-platform-assistant-product-design.md)
 - [长期助手路线图](./roadmap/long-term-assistant-roadmap.md)

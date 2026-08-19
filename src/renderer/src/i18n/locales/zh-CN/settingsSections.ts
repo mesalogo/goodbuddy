@@ -1,4 +1,8 @@
 export const settingsSections = {
+  modelDownloadSources: {
+    modelscope: 'ModelScope',
+    'hugging-face': 'Hugging Face'
+  },
   speech: {
     title: '语音模型',
     description: '应用不内置模型权重，按需下载或通过 ZIP 离线迁移',
@@ -6,6 +10,7 @@ export const settingsSections = {
     storagePrefix: '模型保存在',
     storageSuffix:
       '。自动下载会固定来源版本并校验 SHA-256；外网设备可导出 ZIP，内网设备可直接导入。',
+    downloadSource: '当前模型下载源：{{source}}',
     modelSelector: '当前语音模型',
     modelSelectorDescription:
       '选择已安装模型后，点击“保存设置”切换语音识别模型。',
@@ -37,9 +42,9 @@ export const settingsSections = {
     operations: {
       installing: '正在校验并安装',
       preparingImport: '正在准备导入',
-      preparingDownload: '正在准备下载',
+      preparingDownloadFrom: '正在准备从 {{source}} 下载',
       importing: '正在导入',
-      downloading: '正在下载',
+      downloadingFrom: '正在从 {{source}} 下载',
       processingFile: '正在处理 {{file}}'
     },
     status: {
@@ -48,6 +53,7 @@ export const settingsSections = {
       installed: '已安装',
       manualImport: '手动导入',
       availableToDownload: '可下载',
+      sourceUnavailable: '当前来源不可下载',
       unknownSize: '大小未知'
     },
     tags: {
@@ -58,6 +64,7 @@ export const settingsSections = {
       delete: '删除',
       confirmDelete: '确认删除',
       download: '下载',
+      openDownloadSourceSettings: '前往通用设置',
       importZip: '导入 ZIP',
       exportZip: '导出 ZIP'
     },
@@ -68,7 +75,7 @@ export const settingsSections = {
       importModelZip: '从 ZIP 导入 {{name}}',
       exportModelZip: '将 {{name}} 导出为 ZIP',
       downloadProgress: '{{name}}下载进度',
-      openRepository: '打开 {{name}} 模型仓库'
+      openRepository: '打开 {{name}} 的 {{source}} 模型仓库'
     },
     notifications: {
       installed: '{{name}} 已安装',
@@ -76,6 +83,8 @@ export const settingsSections = {
       exportedZip: '{{name}} 已导出为 ZIP',
       removed: '语音模型已删除'
     },
+    sourceUnavailableDescription:
+      '{{source}} 暂不提供此模型的完整已验证文件。你仍可从 ZIP 导入，或前往通用设置明确更换下载源。',
     languages: {
       中文: '中文',
       粤语: '粤语',
@@ -197,14 +206,36 @@ export const settingsSections = {
     empty: '还没有角色。新建角色后，可以为它配置系统提示词。'
   },
   platformFeatures: {
+    loading: '正在读取平台功能设置…',
     errors: {
       serviceUnavailable: '当前版本未提供应用设置服务',
       readFailed: '读取平台功能设置失败',
       saveMagicNotesFailed: '保存魔法笔记设置失败，请重试',
       saveCommentModeFailed: '保存 AI 评论方式失败，请重试',
-      saveCommentFormatFailed: '保存 AI 评论形式失败，请重试'
+      saveCommentFormatFailed: '保存 AI 评论形式失败，请重试',
+      saveModelDownloadSourceFailed: '保存模型下载源失败，请重试'
     },
     label: '平台功能选项',
+    tabs: {
+      ariaLabel: '平台功能设置',
+      general: '通用设置',
+      magicNotes: '魔法笔记'
+    },
+    modelDownloadSource: {
+      cardTitle: '本地模型',
+      cardDescription: '管理 GoodBuddy 托管本地模型的获取方式',
+      title: '模型下载源',
+      description:
+        '选择 GoodBuddy 托管本地模型后续下载使用的平台。已安装模型、ZIP 导入、Ollama 模型和应用更新不受影响。',
+      options: {
+        modelscope: '默认，适合优先访问 ModelScope 的网络环境。',
+        'hugging-face': '适合可以稳定访问 Hugging Face 的网络环境。'
+      },
+      current: '当前选择：{{source}}',
+      activeDownloadNote:
+        '正在进行的模型下载会继续使用启动时的来源；新的下载使用当前选择。',
+      notification: '模型下载源已切换为 {{source}}。'
+    },
     magicNotes: {
       title: '魔法笔记',
       description: '默认关闭；开启后可记录笔记与待办，并使用 AI 分析内容',

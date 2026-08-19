@@ -22,7 +22,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import type {
   DocumentParsingDiagnostic,
-  DocumentOcrModelCatalogEntry,
+  DocumentOcrModelCatalogViewEntry,
   DocumentOcrModelOperation,
   DocumentParsingSettings,
   DocumentParsingSnapshot,
@@ -36,6 +36,7 @@ import {
 
 type DocumentParsingSettingsSectionProps = {
   onNotify?: (notification: AppNotificationInput) => void
+  onOpenModelDownloadSourceSettings?: () => void
 }
 
 function errorMessage(reason: unknown, fallback: string): string {
@@ -54,9 +55,9 @@ function formatBytes(bytes: number): string {
     : `${(bytes / 1024).toFixed(1)} KB`
 }
 
-function catalogSize(entry: DocumentOcrModelCatalogEntry): number {
+function catalogSize(entry: DocumentOcrModelCatalogViewEntry): number {
   return entry.files.reduce(
-    (total, file) => total + file.download.size,
+    (total, file) => total + file.size,
     0
   )
 }
@@ -207,7 +208,8 @@ function DiagnosticDialog({
 }
 
 export function DocumentParsingSettingsSection({
-  onNotify
+  onNotify,
+  onOpenModelDownloadSourceSettings
 }: DocumentParsingSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settings')
   const [snapshot, setSnapshot] = useState<DocumentParsingSnapshot>()
@@ -439,6 +441,13 @@ export function DocumentParsingSettingsSection({
   const modelProgress = modelOperation
     ? progressPercent(modelOperation)
     : undefined
+  const modelDownloadAvailability = model?.downloadAvailability.find(
+    (availability) =>
+      availability.source ===
+      snapshot.ocrModels.selectedDownloadSource
+  )
+  const modelSourceAvailable =
+    modelDownloadAvailability?.available === true
   const pendingModelSelection =
     draft.localOcrModelId !== snapshot.settings.localOcrModelId
   const settingsDirty =
@@ -701,7 +710,17 @@ export function DocumentParsingSettingsSection({
                   {entryDisplayName} ·{' '}
                   {installed
                     ? t('documentParsing.ocr.installedOption')
-                    : t('documentParsing.ocr.downloadableOption')}
+                    : entry.downloadAvailability.some(
+                          (availability) =>
+                            availability.source ===
+                              snapshot.ocrModels
+                                .selectedDownloadSource &&
+                            availability.available
+                        )
+                      ? t('documentParsing.ocr.downloadableOption')
+                      : t(
+                          'documentParsing.ocr.sourceUnavailableOption'
+                        )}
                 </option>
               )
             })}
@@ -720,6 +739,13 @@ export function DocumentParsingSettingsSection({
           <code>{snapshot.ocrModels.rootDirectory}</code>
           {t('documentParsing.ocr.storageSuffix')}
         </p>
+        <p className="settings-notice">
+          {t('documentParsing.ocr.downloadSource', {
+            source: t(
+              `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
+            )
+          })}
+        </p>
 
         {model ? (
           <article className="document-ocr-model">
@@ -735,7 +761,11 @@ export function DocumentParsingSettingsSection({
                 </div>
                 <p>{modelDescription}</p>
                 <div className="document-ocr-model__tags">
-                  <span className="speech-model-tag">ModelScope</span>
+                  <span className="speech-model-tag">
+                    {t(
+                      `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
+                    )}
+                  </span>
                   <span className="speech-model-tag">
                     {model.languages
                       .map((language) =>
@@ -774,9 +804,15 @@ export function DocumentParsingSettingsSection({
               <button
                 aria-label={t(
                   'documentParsing.ocr.accessibility.openRepository',
-                  { name: modelDisplayName }
+                  {
+                    name: modelDisplayName,
+                    source: t(
+                      `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
+                    )
+                  }
                 )}
                 className="secondary-button document-ocr-model__repository"
+                disabled={!modelSourceAvailable}
                 onClick={() =>
                   void window.goodbuddy.documentParsing
                     ?.openOcrModelRepository(model.id)
@@ -784,7 +820,11 @@ export function DocumentParsingSettingsSection({
                 type="button"
               >
                 <ExternalLink aria-hidden="true" size={13} />
-                {t('documentParsing.ocr.openRepository')}
+                {t('documentParsing.ocr.openRepository', {
+                  source: t(
+                    `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
+                  )
+                })}
               </button>
             </div>
 
@@ -806,7 +846,12 @@ export function DocumentParsingSettingsSection({
                           ? 'documentParsing.ocr.operations.installing'
                           : modelOperation.kind === 'import'
                             ? 'documentParsing.ocr.operations.importing'
-                            : 'documentParsing.ocr.operations.downloading'
+                            : 'documentParsing.ocr.operations.downloading',
+                        {
+                          source: t(
+                            `modelDownloadSources.${modelOperation.downloadSource}`
+                          )
+                        }
                       )
                     : t('documentParsing.ocr.installed')}
                 </span>
@@ -879,41 +924,61 @@ export function DocumentParsingSettingsSection({
                 </>
               ) : (
                 <>
-                  <button
-                    aria-label={t(
-                      'documentParsing.ocr.accessibility.downloadModel',
-                      { name: modelDisplayName }
-                    )}
-                    className="primary-button"
-                    disabled={busyModelId === model.id}
-                    onClick={() =>
-                      void runModelOperation(
-                        model.id,
-                        async () => {
-                          const installed =
-                            await window.goodbuddy.documentParsing!
-                              .installOcrModel(model.id)
-                          if (!pendingModelSelection) {
-                            return installed
-                          }
-                          return window.goodbuddy.documentParsing!
-                            .update(draft)
-                        },
-                        t(
-                          pendingModelSelection
-                            ? 'documentParsing.ocr.notifications.installedAndSelected'
-                            : 'documentParsing.ocr.notifications.installed',
-                          { name: modelDisplayName }
+                  {modelSourceAvailable && (
+                    <button
+                      aria-label={t(
+                        'documentParsing.ocr.accessibility.downloadModel',
+                        { name: modelDisplayName }
+                      )}
+                      className="primary-button"
+                      disabled={busyModelId === model.id}
+                      onClick={() =>
+                        void runModelOperation(
+                          model.id,
+                          async () => {
+                            const installed =
+                              await window.goodbuddy.documentParsing!
+                                .installOcrModel(
+                                  model.id,
+                                  snapshot.ocrModels
+                                    .selectedDownloadSource
+                                )
+                            if (!pendingModelSelection) {
+                              return installed
+                            }
+                            return window.goodbuddy.documentParsing!
+                              .update(draft)
+                          },
+                          t(
+                            pendingModelSelection
+                              ? 'documentParsing.ocr.notifications.installedAndSelected'
+                              : 'documentParsing.ocr.notifications.installed',
+                            { name: modelDisplayName }
+                          )
                         )
-                      )
-                    }
-                    type="button"
-                  >
-                    <Download aria-hidden="true" size={13} />
-                    {pendingModelSelection
-                      ? t('documentParsing.ocr.downloadAndSelect')
-                      : t('documentParsing.ocr.download')}
-                  </button>
+                      }
+                      type="button"
+                    >
+                      <Download aria-hidden="true" size={13} />
+                      {pendingModelSelection
+                        ? t('documentParsing.ocr.downloadAndSelect')
+                        : t('documentParsing.ocr.download')}
+                    </button>
+                  )}
+                  {!modelSourceAvailable &&
+                    onOpenModelDownloadSourceSettings && (
+                      <button
+                        className="secondary-button"
+                        onClick={
+                          onOpenModelDownloadSourceSettings
+                        }
+                        type="button"
+                      >
+                        {t(
+                          'documentParsing.ocr.openDownloadSourceSettings'
+                        )}
+                      </button>
+                    )}
                   <button
                     aria-label={t(
                       'documentParsing.ocr.accessibility.importModelZip',
@@ -950,6 +1015,16 @@ export function DocumentParsingSettingsSection({
                 </>
               )}
             </div>
+
+            {!installedModel && !modelSourceAvailable && (
+              <p className="settings-warning">
+                {t('documentParsing.ocr.sourceUnavailableDescription', {
+                  source: t(
+                    `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
+                  )
+                })}
+              </p>
+            )}
 
             {modelOperation && (
               <div

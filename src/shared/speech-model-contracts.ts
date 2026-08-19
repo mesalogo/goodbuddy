@@ -1,9 +1,14 @@
 import { z } from 'zod'
+import {
+  MODEL_DOWNLOAD_SOURCES,
+  modelArtifactIdentitySchema,
+  modelDownloadAvailabilitySchema,
+  modelDownloadSourceSchema
+} from './model-download-contracts'
 
 const safeIdentifierPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 const safeFileNamePattern =
   /^(?!\.{1,2}$)(?!.*(?:^|[\\/])\.{1,2}(?:[\\/]|$))[^/\\\0]+$/u
-const sha256Pattern = /^[a-f0-9]{64}$/u
 export const SPEECH_TRANSCRIPTION_SAMPLE_RATE = 16_000
 export const SPEECH_TRANSCRIPTION_MAX_SECONDS = 20
 export const SPEECH_TRANSCRIPTION_MAX_SAMPLES =
@@ -29,19 +34,15 @@ export const speechModelFileRoleSchema = z.enum([
   'configuration'
 ])
 
-export const speechModelDownloadSchema = z
-  .object({
-    url: z.url().max(2_048),
-    size: z.number().int().positive().safe(),
-    sha256: z.string().regex(sha256Pattern)
-  })
-  .strict()
+export const speechModelArtifactSchema = modelArtifactIdentitySchema
 
 export const speechModelFileSpecSchema = z
   .object({
     name: speechModelFileNameSchema,
     role: speechModelFileRoleSchema,
-    download: speechModelDownloadSchema.optional()
+    size: speechModelArtifactSchema.shape.size,
+    sha256: speechModelArtifactSchema.shape.sha256,
+    targets: speechModelArtifactSchema.shape.targets
   })
   .strict()
 
@@ -64,7 +65,12 @@ export const speechModelCatalogEntrySchema = z
     quality: z.enum(['basic', 'balanced', 'high']),
     speed: z.enum(['fast', 'balanced', 'slow']),
     recommended: z.boolean(),
-    repositoryUrl: z.url().max(2_048),
+    repositoryUrls: z
+      .object({
+        modelscope: z.url().max(2_048).optional(),
+        'hugging-face': z.url().max(2_048).optional()
+      })
+      .strict(),
     license: speechModelLicenseSchema,
     manualOnly: z.boolean(),
     manualReason: z.string().trim().min(1).max(500).optional(),
@@ -86,24 +92,72 @@ export const speechModelCatalogEntrySchema = z
         message: '仅手动导入的模型必须说明原因'
       })
     }
+    if (entry.manualOnly) {
+      return
+    }
+    for (const source of MODEL_DOWNLOAD_SOURCES) {
+      const targets = entry.files
+        .map((file) => file.targets[source])
+        .filter((target) => target !== undefined)
+      if (
+        targets.length > 0 &&
+        (!entry.repositoryUrls[source] ||
+          targets.some(
+            (target) =>
+              target.repositoryUrl !== entry.repositoryUrls[source]
+          ))
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['repositoryUrls', source],
+          message: '模型仓库地址必须与该下载源的文件目标一致'
+        })
+      }
+    }
     if (
-      !entry.manualOnly &&
-      entry.files.some((file) => file.download === undefined)
+      !MODEL_DOWNLOAD_SOURCES.some((source) =>
+        entry.files.every((file) => file.targets[source])
+      )
     ) {
       context.addIssue({
         code: 'custom',
         path: ['files'],
-        message: '可下载模型的每个文件都必须提供已验证的大小和 SHA-256'
+        message: '可下载模型必须至少由一个下载源提供完整文件'
       })
     }
   })
+
+export const speechModelCatalogViewEntrySchema =
+  z
+    .object({
+      id: speechModelIdSchema,
+      displayName: z.string().trim().min(1).max(120),
+      description: z.string().trim().min(1).max(500),
+      languages: z.array(z.string().trim().min(1).max(32)).min(1).max(32),
+      family: z.enum(['sensevoice', 'whisper', 'paraformer']),
+      quantization: z.enum(['int8', 'fp16', 'fp32']),
+      quality: z.enum(['basic', 'balanced', 'high']),
+      speed: z.enum(['fast', 'balanced', 'slow']),
+      recommended: z.boolean(),
+      license: speechModelLicenseSchema,
+      manualOnly: z.boolean(),
+      manualReason: z.string().trim().min(1).max(500).optional(),
+      files: z
+        .array(speechModelFileSpecSchema.omit({ targets: true }))
+        .min(1)
+        .max(32),
+      downloadAvailability: z
+        .array(modelDownloadAvailabilitySchema)
+        .length(MODEL_DOWNLOAD_SOURCES.length)
+    })
+    .strict()
 
 export const speechModelInstalledFileSchema = z
   .object({
     name: speechModelFileNameSchema,
     role: speechModelFileRoleSchema,
     size: z.number().int().nonnegative().safe(),
-    sha256: z.string().regex(sha256Pattern)
+    sha256: speechModelArtifactSchema.shape.sha256
   })
   .strict()
 
@@ -124,14 +178,28 @@ export const speechModelOperationSchema = z
     phase: z.enum(['preparing', 'transferring', 'installing']),
     currentFile: speechModelFileNameSchema.nullable(),
     completedBytes: z.number().int().nonnegative().safe(),
-    totalBytes: z.number().int().nonnegative().safe().nullable()
+    totalBytes: z.number().int().nonnegative().safe().nullable(),
+    downloadSource: modelDownloadSourceSchema.optional()
   })
   .strict()
+  .superRefine((operation, context) => {
+    if (
+      (operation.kind === 'download') !==
+      (operation.downloadSource !== undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['downloadSource'],
+        message: '下载操作必须且仅能包含下载源'
+      })
+    }
+  })
 
 export const speechModelSnapshotSchema = z
   .object({
     rootDirectory: z.string().min(1).max(32_768),
-    catalog: z.array(speechModelCatalogEntrySchema).max(64),
+    selectedDownloadSource: modelDownloadSourceSchema,
+    catalog: z.array(speechModelCatalogViewEntrySchema).max(64),
     installed: z.array(installedSpeechModelSchema).max(64),
     operations: z.array(speechModelOperationSchema).max(16),
     selectedModelId: speechModelIdSchema.nullable()
@@ -141,6 +209,13 @@ export const speechModelSnapshotSchema = z
 export const speechModelActionInputSchema = z
   .object({
     modelId: speechModelIdSchema
+  })
+  .strict()
+
+export const speechModelInstallInputSchema = z
+  .object({
+    modelId: speechModelIdSchema,
+    expectedDownloadSource: modelDownloadSourceSchema
   })
   .strict()
 
@@ -184,6 +259,9 @@ export type SpeechModelFileSpec = z.infer<
 >
 export type SpeechModelCatalogEntry = z.infer<
   typeof speechModelCatalogEntrySchema
+>
+export type SpeechModelCatalogViewEntry = z.infer<
+  typeof speechModelCatalogViewEntrySchema
 >
 export type InstalledSpeechModel = z.infer<
   typeof installedSpeechModelSchema

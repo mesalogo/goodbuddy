@@ -12,7 +12,7 @@ import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
-  SpeechModelCatalogEntry,
+  SpeechModelCatalogViewEntry,
   SpeechModelOperation,
   SpeechModelSnapshot
 } from '../../shared/speech-model-contracts'
@@ -27,6 +27,7 @@ type SpeechModelSettingsSectionProps = {
     changed: boolean
   ) => void
   onSelectionInvalidated?: (modelId: string | null) => void
+  onOpenModelDownloadSourceSettings?: () => void
 }
 
 function formatBytes(bytes: number): string {
@@ -36,14 +37,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function catalogSize(entry: SpeechModelCatalogEntry): number | undefined {
-  const downloads = entry.files.map((file) => file.download)
-  return downloads.every(Boolean)
-    ? downloads.reduce(
-        (total, download) => total + (download?.size ?? 0),
-        0
-      )
-    : undefined
+function catalogSize(entry: SpeechModelCatalogViewEntry): number {
+  return entry.files.reduce((total, file) => total + file.size, 0)
 }
 
 function progressPercent(operation: SpeechModelOperation): number | undefined {
@@ -65,11 +60,19 @@ function operationLabel(
   if (operation.phase === 'preparing') {
     return operation.kind === 'import'
       ? t('speech.operations.preparingImport')
-      : t('speech.operations.preparingDownload')
+      : t('speech.operations.preparingDownloadFrom', {
+          source: t(
+            `modelDownloadSources.${operation.downloadSource}`
+          )
+        })
   }
   return operation.kind === 'import'
     ? t('speech.operations.importing')
-    : t('speech.operations.downloading')
+    : t('speech.operations.downloadingFrom', {
+        source: t(
+          `modelDownloadSources.${operation.downloadSource}`
+        )
+      })
 }
 
 export function SpeechModelSettingsSection({
@@ -77,7 +80,8 @@ export function SpeechModelSettingsSection({
   persistedSelectedModelId,
   selectedModelId,
   onSelectedModelIdChange,
-  onSelectionInvalidated
+  onSelectionInvalidated,
+  onOpenModelDownloadSourceSettings
 }: SpeechModelSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
   const [snapshot, setSnapshot] = useState<SpeechModelSnapshot>()
@@ -306,6 +310,11 @@ export function SpeechModelSettingsSection({
     ? progressPercent(operation)
     : undefined
   const size = model ? catalogSize(model) : undefined
+  const downloadAvailability = model?.downloadAvailability.find(
+    (availability) =>
+      availability.source === snapshot.selectedDownloadSource
+  )
+  const sourceAvailable = downloadAvailability?.available === true
   const selected = model?.id === effectiveSelectedModelId
   const inUse = model?.id === effectivePersistedModelId
   const pendingSelection =
@@ -322,7 +331,9 @@ export function SpeechModelSettingsSection({
           ? t('speech.status.installed')
           : model?.manualOnly
             ? t('speech.status.manualImport')
-            : t('speech.status.availableToDownload')
+            : sourceAvailable
+              ? t('speech.status.availableToDownload')
+              : t('speech.status.sourceUnavailable')
 
   return (
     <section
@@ -354,6 +365,13 @@ export function SpeechModelSettingsSection({
         <code>{snapshot.rootDirectory}</code>
         {t('speech.storageSuffix')}
       </p>
+      <p className="settings-notice">
+        {t('speech.downloadSource', {
+          source: t(
+            `modelDownloadSources.${snapshot.selectedDownloadSource}`
+          )
+        })}
+      </p>
       {error && <p className="settings-warning" role="alert">{error}</p>}
 
       <label className="field document-ocr-model-selector">
@@ -383,7 +401,14 @@ export function SpeechModelSettingsSection({
                 {optionName} ·{' '}
                 {installedById.has(entry.id)
                   ? t('speech.status.installed')
-                  : t('speech.status.availableToDownload')}
+                  : entry.downloadAvailability.some(
+                        (availability) =>
+                          availability.source ===
+                            snapshot.selectedDownloadSource &&
+                          availability.available
+                      )
+                    ? t('speech.status.availableToDownload')
+                    : t('speech.status.sourceUnavailable')}
               </option>
             )
           })}
@@ -411,9 +436,15 @@ export function SpeechModelSettingsSection({
                 <button
                   aria-label={t(
                     'speech.accessibility.openRepository',
-                    { name: displayName }
+                    {
+                      name: displayName,
+                      source: t(
+                        `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                      )
+                    }
                   )}
                   className="icon-button speech-model-card__repository"
+                  disabled={!sourceAvailable}
                   onClick={() =>
                     void window.goodbuddy.speechModels?.openRepository(
                       model.id
@@ -421,7 +452,12 @@ export function SpeechModelSettingsSection({
                   }
                   title={t(
                     'speech.accessibility.openRepository',
-                    { name: displayName }
+                    {
+                      name: displayName,
+                      source: t(
+                        `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                      )
+                    }
                   )}
                   type="button"
                 >
@@ -430,6 +466,11 @@ export function SpeechModelSettingsSection({
               </div>
               <p>{description}</p>
               <div className="document-ocr-model__tags">
+                <span className="speech-model-tag">
+                  {t(
+                    `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                  )}
+                </span>
                 <span className="speech-model-tag">
                   {t('speech.family.' + model.family)}
                 </span>
@@ -540,7 +581,7 @@ export function SpeechModelSettingsSection({
               </>
             ) : (
               <>
-                {!model.manualOnly && (
+                {!model.manualOnly && sourceAvailable && (
                   <button
                     aria-label={t(
                       'speech.accessibility.downloadModel',
@@ -553,7 +594,8 @@ export function SpeechModelSettingsSection({
                         model.id,
                         () =>
                           window.goodbuddy.speechModels!.install(
-                            model.id
+                            model.id,
+                            snapshot.selectedDownloadSource
                           ),
                         t('speech.notifications.installed', {
                           name: displayName
@@ -567,6 +609,19 @@ export function SpeechModelSettingsSection({
                     {t('speech.actions.download')}
                   </button>
                 )}
+                {!model.manualOnly &&
+                  !sourceAvailable &&
+                  onOpenModelDownloadSourceSettings && (
+                    <button
+                      className="secondary-button"
+                      onClick={onOpenModelDownloadSourceSettings}
+                      type="button"
+                    >
+                      {t(
+                        'speech.actions.openDownloadSourceSettings'
+                      )}
+                    </button>
+                  )}
                 <button
                   aria-label={t(
                     'speech.accessibility.importModelZip',
@@ -595,6 +650,16 @@ export function SpeechModelSettingsSection({
               </>
             )}
           </div>
+
+          {!installed && !sourceAvailable && !model.manualOnly && (
+            <p className="settings-warning">
+              {t('speech.sourceUnavailableDescription', {
+                source: t(
+                  `modelDownloadSources.${snapshot.selectedDownloadSource}`
+                )
+              })}
+            </p>
+          )}
 
           {operation && (
             <div

@@ -21,7 +21,6 @@ const entry = {
   quality: 'high' as const,
   speed: 'fast' as const,
   recommended: true,
-  repositoryUrl: 'https://huggingface.co/example/model',
   license: {
     name: '模型仓库自定义许可',
     notice: '使用前请阅读许可。',
@@ -32,26 +31,33 @@ const entry = {
     {
       name: 'model.int8.onnx',
       role: 'model' as const,
-      download: {
-        url: 'https://huggingface.co/example/model/resolve/revision/model.int8.onnx',
-        size: 1_000,
-        sha256: 'a'.repeat(64)
-      }
+      size: 1_000,
+      sha256: 'a'.repeat(64)
     },
     {
       name: 'tokens.txt',
       role: 'tokens' as const,
-      download: {
-        url: 'https://huggingface.co/example/model/resolve/revision/tokens.txt',
-        size: 100,
-        sha256: 'b'.repeat(64)
-      }
+      size: 100,
+      sha256: 'b'.repeat(64)
+    }
+  ],
+  downloadAvailability: [
+    {
+      source: 'modelscope' as const,
+      available: true,
+      totalBytes: 1_100
+    },
+    {
+      source: 'hugging-face' as const,
+      available: true,
+      totalBytes: 1_100
     }
   ]
 }
 
 const snapshot: SpeechModelSnapshot = {
   rootDirectory: 'C:\\Users\\test\\models\\speech',
+  selectedDownloadSource: 'modelscope',
   catalog: [entry],
   installed: [],
   operations: [],
@@ -105,7 +111,7 @@ describe('SpeechModelSettingsSection', () => {
     expect(screen.queryByText('Model details')).not.toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', {
-        name: 'Open the SenseVoiceSmall INT8 model repository'
+        name: 'Open the ModelScope repository for SenseVoiceSmall INT8'
       })
     )
     expect(openRepository).toHaveBeenCalledWith('sensevoice-small-int8')
@@ -159,7 +165,10 @@ describe('SpeechModelSettingsSection', () => {
     }))
 
     await waitFor(() =>
-      expect(install).toHaveBeenCalledWith('sensevoice-small-int8')
+      expect(install).toHaveBeenCalledWith(
+        'sensevoice-small-int8',
+        'modelscope'
+      )
     )
     expect(onNotify).toHaveBeenCalledWith({
       tone: 'success',
@@ -176,7 +185,7 @@ describe('SpeechModelSettingsSection', () => {
       family: 'whisper' as const,
       files: [
         {
-          ...entry.files[0],
+          ...entry.files[0]!,
           name: 'tiny-encoder.int8.onnx',
           role: 'encoder' as const
         }
@@ -212,8 +221,79 @@ describe('SpeechModelSettingsSection', () => {
     }))
 
     await waitFor(() =>
-      expect(install).toHaveBeenCalledWith('whisper-tiny-multilingual')
+      expect(install).toHaveBeenCalledWith(
+        'whisper-tiny-multilingual',
+        'modelscope'
+      )
     )
+  })
+
+  it('keeps an unavailable source explicit and offers General settings', async () => {
+    await changeUiLocale('zh-CN')
+    const onOpenModelDownloadSourceSettings = vi.fn()
+    const unavailableSnapshot: SpeechModelSnapshot = {
+      ...snapshot,
+      catalog: [
+        {
+          ...entry,
+          downloadAvailability: [
+            {
+              source: 'modelscope',
+              available: false,
+              unavailableReason:
+                '当前下载源暂不提供此模型的完整已验证文件'
+            },
+            {
+              source: 'hugging-face',
+              available: true,
+              totalBytes: 1_100
+            }
+          ]
+        }
+      ]
+    }
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        speechModels: {
+          getSnapshot: vi.fn(async () => unavailableSnapshot),
+          install: vi.fn(),
+          cancel: vi.fn(async () => true),
+          remove: vi.fn(),
+          select: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
+          openRepository: vi.fn(),
+          openModelsDirectory: vi.fn()
+        }
+      } as unknown as DesktopApi
+    })
+
+    render(
+      <SpeechModelSettingsSection
+        onOpenModelDownloadSourceSettings={
+          onOpenModelDownloadSourceSettings
+        }
+      />
+    )
+
+    expect(
+      await screen.findByText('当前来源不可下载')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', {
+        name: '下载 SenseVoiceSmall INT8'
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: '打开 SenseVoiceSmall INT8 的 ModelScope 模型仓库'
+      })
+    ).toBeDisabled()
+    fireEvent.click(
+      screen.getByRole('button', { name: '前往通用设置' })
+    )
+    expect(onOpenModelDownloadSourceSettings).toHaveBeenCalledOnce()
   })
 
   it('imports and exports verified speech model ZIP archives', async () => {
@@ -306,7 +386,8 @@ describe('SpeechModelSettingsSection', () => {
           phase: 'transferring',
           currentFile: 'model.int8.onnx',
           completedBytes: 550,
-          totalBytes: 1_100
+          totalBytes: 1_100,
+          downloadSource: 'modelscope'
         }
       ]
     }
@@ -332,6 +413,7 @@ describe('SpeechModelSettingsSection', () => {
     expect(await screen.findByRole('progressbar', {
       name: 'SenseVoiceSmall INT8下载进度'
     })).toHaveValue(50)
+    expect(screen.getByText('正在从 ModelScope 下载')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', {
       name: '取消 SenseVoiceSmall INT8 操作'
     }))
@@ -350,7 +432,8 @@ describe('SpeechModelSettingsSection', () => {
           phase: 'transferring',
           currentFile: 'model.int8.onnx',
           completedBytes: 550,
-          totalBytes: 1_100
+          totalBytes: 1_100,
+          downloadSource: 'modelscope'
         }
       ]
     }

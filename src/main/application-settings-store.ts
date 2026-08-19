@@ -20,7 +20,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 6
+const CURRENT_SETTINGS_VERSION = 7
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -47,16 +47,24 @@ const versionThreeStoredApplicationSettingsSchema = z
   .strict()
 
 const versionFourStoredApplicationSettingsSchema = applicationSettingsSchema
-  .omit({ updateSource: true })
+  .omit({ updateSource: true, modelDownloadSource: true })
   .extend({
     version: z.literal(4)
   })
   .strict()
 
 const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
-  .omit({ updateSource: true })
+  .omit({ updateSource: true, modelDownloadSource: true })
   .extend({
     version: z.literal(5),
+    lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
+  })
+  .strict()
+
+const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
+  .omit({ modelDownloadSource: true })
+  .extend({
+    version: z.literal(6),
     lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
   })
   .strict()
@@ -75,6 +83,7 @@ type StoredApplicationSettings = z.infer<
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   updateSource: 'github',
+  modelDownloadSource: 'modelscope',
   magicNotesEnabled: false,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
@@ -131,13 +140,24 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionSixResult =
+          versionSixStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionSixResult.success) {
+          this.settings = {
+            ...versionSixResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            modelDownloadSource: 'modelscope'
+          }
+          return this.settings
+        }
         const versionFiveResult =
           versionFiveStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionFiveResult.success) {
           this.settings = {
             ...versionFiveResult.data,
             version: CURRENT_SETTINGS_VERSION,
-            updateSource: 'github'
+            updateSource: 'github',
+            modelDownloadSource: 'modelscope'
           }
           return this.settings
         }
@@ -148,6 +168,7 @@ export class ApplicationSettingsStore {
             ...versionFourResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
+            modelDownloadSource: 'modelscope',
             lastSeenReleaseNotesVersion: null
           }
           return this.settings
@@ -159,6 +180,7 @@ export class ApplicationSettingsStore {
             ...versionThreeResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
+            modelDownloadSource: 'modelscope',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
           }
@@ -171,6 +193,7 @@ export class ApplicationSettingsStore {
             ...versionTwoResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
+            modelDownloadSource: 'modelscope',
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
@@ -185,6 +208,7 @@ export class ApplicationSettingsStore {
             checkUpdatesOnStartup:
               legacyResult.data.checkUpdatesOnStartup,
             updateSource: 'github',
+            modelDownloadSource: 'modelscope',
             magicNotesEnabled: false,
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
@@ -225,6 +249,7 @@ export class ApplicationSettingsStore {
     return {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
       updateSource: stored.updateSource,
+      modelDownloadSource: stored.modelDownloadSource,
       magicNotesEnabled: stored.magicNotesEnabled,
       magicNoteCommentMode: stored.magicNoteCommentMode,
       magicNoteCommentFormat: stored.magicNoteCommentFormat,
@@ -257,6 +282,7 @@ export class ApplicationSettingsStore {
       return {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         updateSource: next.updateSource,
+        modelDownloadSource: next.modelDownloadSource,
         magicNotesEnabled: next.magicNotesEnabled,
         magicNoteCommentMode: next.magicNoteCommentMode,
         magicNoteCommentFormat: next.magicNoteCommentFormat

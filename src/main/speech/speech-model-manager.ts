@@ -16,22 +16,31 @@ import { z } from 'zod'
 import {
   installedSpeechModelSchema,
   speechModelCatalogEntrySchema,
+  speechModelCatalogViewEntrySchema,
   speechModelIdSchema,
   speechModelSnapshotSchema,
   type InstalledSpeechModel,
   type SpeechModelCatalogEntry,
+  type SpeechModelCatalogViewEntry,
   type SpeechModelFileSpec,
   type SpeechModelOperation,
   type SpeechModelSnapshot
 } from '../../shared/speech-model-contracts'
+import {
+  MODEL_DOWNLOAD_SOURCES,
+  getModelDownloadAvailability,
+  resolveModelDownloadPackage,
+  type ModelDownloadSource,
+  type ResolvedModelArtifactFile
+} from '../../shared/model-download-contracts'
 import { SPEECH_MODEL_CATALOG } from './speech-model-catalog'
 import {
   exportModelArchive,
   extractModelArchive
 } from '../model-archive'
+import { fetchModelDownloadResponse } from '../model-download-transport'
 
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
-const MAX_REDIRECTS = 3
 const MANIFEST_FILE_NAME = 'manifest.json'
 const SELECTION_FILE_NAME = '.selection.json'
 const PARTIAL_SUFFIX = '.partial'
@@ -56,6 +65,9 @@ export type SpeechModelManagerOptions = {
   userDataDirectory: string
   fetch: typeof fetch
   catalog?: readonly SpeechModelCatalogEntry[]
+  getDownloadSource?: () =>
+    | ModelDownloadSource
+    | Promise<ModelDownloadSource>
   maxFileBytes?: number
 }
 
@@ -70,6 +82,23 @@ function cloneCatalogEntry(
   entry: SpeechModelCatalogEntry
 ): SpeechModelCatalogEntry {
   return speechModelCatalogEntrySchema.parse(entry)
+}
+
+function toCatalogView(entry: SpeechModelCatalogEntry) {
+  const { repositoryUrls, files, ...metadata } = entry
+  void repositoryUrls
+  return speechModelCatalogViewEntrySchema.parse({
+    ...metadata,
+    files: files.map((file) => ({
+      name: file.name,
+      role: file.role,
+      size: file.size,
+      sha256: file.sha256
+    })),
+    downloadAvailability: MODEL_DOWNLOAD_SOURCES.map((source) =>
+      getModelDownloadAvailability(files, source)
+    )
+  })
 }
 
 function abortError(): DOMException {
@@ -100,17 +129,6 @@ function safeChild(parent: string, name: string): string {
     throw new Error('模型路径超出受管目录')
   }
   return child
-}
-
-function validateDownloadUrl(value: string): URL {
-  const url = new URL(value)
-  if (
-    url.protocol !== 'http:' &&
-    url.protocol !== 'https:'
-  ) {
-    throw new Error('模型下载地址必须使用 HTTP 或 HTTPS')
-  }
-  return url
 }
 
 async function hashFile(
@@ -147,6 +165,10 @@ export class SpeechModelManager {
 
   private readonly transport: typeof fetch
   private readonly catalog: SpeechModelCatalogEntry[]
+  private readonly catalogViews: SpeechModelCatalogViewEntry[]
+  private readonly getDownloadSource: () =>
+    | ModelDownloadSource
+    | Promise<ModelDownloadSource>
   private readonly maxFileBytes: number
   private readonly operations = new Map<string, ActiveOperation>()
 
@@ -160,23 +182,31 @@ export class SpeechModelManager {
       'speech'
     )
     this.transport = options.fetch
+    this.getDownloadSource =
+      options.getDownloadSource ?? (() => 'modelscope')
     this.catalog = (options.catalog ?? SPEECH_MODEL_CATALOG).map(
       cloneCatalogEntry
     )
     if (new Set(this.catalog.map((entry) => entry.id)).size !== this.catalog.length) {
       throw new Error('语音模型目录包含重复 ID')
     }
+    this.catalogViews = this.catalog.map(toCatalogView)
     this.maxFileBytes = validateMaximumBytes(options.maxFileBytes)
   }
 
   async snapshot(): Promise<SpeechModelSnapshot> {
     await this.ensureRoot()
-    const installed = await this.readInstalled()
-    const selected = await this.readSelection()
+    const [installed, selected, selectedDownloadSource] =
+      await Promise.all([
+        this.readInstalled(),
+        this.readSelection(),
+        this.getDownloadSource()
+      ])
     const installedIds = new Set(installed.map((model) => model.id))
     return speechModelSnapshotSchema.parse({
       rootDirectory: this.rootDirectory,
-      catalog: this.catalog.map(cloneCatalogEntry),
+      selectedDownloadSource,
+      catalog: this.catalogViews,
       installed,
       operations: [...this.operations.values()].map((operation) => ({
         ...operation.progress
@@ -188,6 +218,19 @@ export class SpeechModelManager {
 
   async getSnapshot(): Promise<SpeechModelSnapshot> {
     return this.snapshot()
+  }
+
+  getRepositoryUrl(
+    modelId: string,
+    source: ModelDownloadSource
+  ): string {
+    const entry = this.requireCatalogEntry(modelId)
+    resolveModelDownloadPackage(entry.files, source)
+    const repositoryUrl = entry.repositoryUrls[source]
+    if (!repositoryUrl) {
+      throw new Error('当前下载源暂不提供此模型的仓库')
+    }
+    return repositoryUrl
   }
 
   async getSelectedRuntimeModel(): Promise<
@@ -216,6 +259,7 @@ export class SpeechModelManager {
 
   async install(
     modelId: string,
+    downloadSource?: ModelDownloadSource,
     externalSignal?: AbortSignal
   ): Promise<InstalledSpeechModel> {
     const entry = this.requireCatalogEntry(modelId)
@@ -224,27 +268,17 @@ export class SpeechModelManager {
         entry.manualReason ?? '该模型只能从本地目录导入'
       )
     }
-    const downloadableFiles = entry.files.filter(
-      (
-        file
-      ): file is SpeechModelFileSpec & {
-        download: NonNullable<SpeechModelFileSpec['download']>
-      } => file.download !== undefined
+    const selectedDownloadSource =
+      downloadSource ?? (await this.getDownloadSource())
+    const resolvedPackage = resolveModelDownloadPackage(
+      entry.files,
+      selectedDownloadSource
     )
-    if (downloadableFiles.length !== entry.files.length) {
-      throw new Error('模型下载元数据不完整')
-    }
-    const totalBytes = downloadableFiles.reduce(
-      (total, file) => total + file.download.size,
-      0
-    )
-    if (!Number.isSafeInteger(totalBytes)) {
-      throw new RangeError('模型总大小超出安全范围')
-    }
     const operation = this.beginOperation(
       entry.id,
       'download',
-      totalBytes
+      resolvedPackage.totalBytes,
+      resolvedPackage.source
     )
     const detachExternalAbort = this.attachExternalSignal(
       externalSignal,
@@ -255,7 +289,7 @@ export class SpeechModelManager {
       await this.ensureRoot()
       await this.assertNotInstalled(entry.id)
       stagingDirectory = await this.createStagingDirectory(entry.id)
-      for (const file of downloadableFiles) {
+      for (const file of resolvedPackage.files) {
         ensureNotAborted(operation.controller.signal)
         operation.progress.phase = 'transferring'
         operation.progress.currentFile = file.name
@@ -409,9 +443,8 @@ export class SpeechModelManager {
         !recorded ||
         recorded.size <= 0 ||
         recorded.size > this.maxFileBytes ||
-        (expected.download &&
-          (recorded.size !== expected.download.size ||
-            recorded.sha256 !== expected.download.sha256))
+        recorded.size !== expected.size ||
+        recorded.sha256 !== expected.sha256
       ) {
         throw new Error(`语音模型文件不可导出：${expected.name}`)
       }
@@ -440,8 +473,7 @@ export class SpeechModelManager {
   ): Promise<InstalledSpeechModel> {
     const entry = this.requireCatalogEntry(modelId)
     const expectedTotal = entry.files.reduce(
-      (total, file) =>
-        total + (file.download?.size ?? this.maxFileBytes),
+      (total, file) => total + file.size,
       0
     )
     const maximumTotalBytes = Math.min(
@@ -488,9 +520,8 @@ export class SpeechModelManager {
         if (
           !archived ||
           archived.size > this.maxFileBytes ||
-          (expected.download &&
-            (archived.size !== expected.download.size ||
-              archived.sha256 !== expected.download.sha256))
+          archived.size !== expected.size ||
+          archived.sha256 !== expected.sha256
         ) {
           throw new Error(
             `语音模型 ZIP 与当前模型目录不匹配：${expected.name}`
@@ -544,7 +575,8 @@ export class SpeechModelManager {
   private beginOperation(
     modelId: string,
     kind: SpeechModelOperation['kind'],
-    totalBytes: number | null
+    totalBytes: number | null,
+    downloadSource?: ModelDownloadSource
   ): ActiveOperation {
     if (this.operations.has(modelId)) {
       throw new Error('该模型已有进行中的操作')
@@ -557,7 +589,8 @@ export class SpeechModelManager {
         phase: 'preparing',
         currentFile: null,
         completedBytes: 0,
-        totalBytes
+        totalBytes,
+        ...(downloadSource ? { downloadSource } : {})
       }
     }
     this.operations.set(modelId, operation)
@@ -605,55 +638,25 @@ export class SpeechModelManager {
     return directory
   }
 
-  private async fetchFollowingRedirects(
-    initialUrl: string,
-    signal: AbortSignal
-  ): Promise<Response> {
-    let url = validateDownloadUrl(initialUrl)
-    for (let redirectCount = 0; ; redirectCount += 1) {
-      ensureNotAborted(signal)
-      const response = await this.transport(url, {
-        method: 'GET',
-        redirect: 'manual',
-        credentials: 'omit',
-        cache: 'no-store',
-        signal
-      })
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        if (redirectCount >= MAX_REDIRECTS) {
-          await response.body?.cancel().catch(() => undefined)
-          throw new Error('模型下载重定向次数过多')
-        }
-        const location = response.headers.get('location')
-        await response.body?.cancel().catch(() => undefined)
-        if (!location) {
-          throw new Error('模型下载重定向缺少地址')
-        }
-        url = validateDownloadUrl(new URL(location, url).toString())
-        continue
-      }
-      return response
-    }
-  }
-
   private async downloadFile(
-    file: SpeechModelFileSpec & {
-      download: NonNullable<SpeechModelFileSpec['download']>
-    },
+    file: ResolvedModelArtifactFile<SpeechModelFileSpec['role']>,
     destination: string,
     operation: ActiveOperation,
     signal: AbortSignal
   ): Promise<void> {
     if (
-      file.download.size > this.maxFileBytes ||
-      file.download.size <= 0
+      file.size > this.maxFileBytes ||
+      file.size <= 0
     ) {
       throw new RangeError(`模型文件大小超出限制：${file.name}`)
     }
-    const response = await this.fetchFollowingRedirects(
-      file.download.url,
-      signal
-    )
+    const response = await fetchModelDownloadResponse({
+      transport: this.transport,
+      initialUrl: file.target.url,
+      redirectHosts: file.target.redirectHosts,
+      signal,
+      modelLabel: '模型'
+    })
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined)
       throw new Error(`模型下载失败：HTTP ${response.status}`)
@@ -666,7 +669,7 @@ export class SpeechModelManager {
       const parsedLength = Number(declaredLength)
       if (
         !Number.isSafeInteger(parsedLength) ||
-        parsedLength !== file.download.size
+        parsedLength !== file.size
       ) {
         await response.body.cancel().catch(() => undefined)
         throw new Error(`模型文件大小不匹配：${file.name}`)
@@ -687,7 +690,7 @@ export class SpeechModelManager {
         }
         written += result.value.byteLength
         if (
-          written > file.download.size ||
+          written > file.size ||
           written > this.maxFileBytes
         ) {
           await reader.cancel()
@@ -703,10 +706,10 @@ export class SpeechModelManager {
     } finally {
       await handle.close()
     }
-    if (written !== file.download.size) {
+    if (written !== file.size) {
       throw new Error(`模型文件大小不匹配：${file.name}`)
     }
-    if (hash.digest('hex') !== file.download.sha256) {
+    if (hash.digest('hex') !== file.sha256) {
       throw new Error(`模型文件校验失败：${file.name}`)
     }
     await rename(partialPath, destination)
@@ -741,10 +744,9 @@ export class SpeechModelManager {
         throw new RangeError(`模型文件大小无效：${expectedFile.name}`)
       }
       if (
-        expectedFile.download &&
-        (sourceFileInfo.size !== expectedFile.download.size ||
-          (await hashFile(sourceFile, signal)).sha256 !==
-            expectedFile.download.sha256)
+        sourceFileInfo.size !== expectedFile.size ||
+        (await hashFile(sourceFile, signal)).sha256 !==
+          expectedFile.sha256
       ) {
         throw new Error(`本地模型文件校验失败：${expectedFile.name}`)
       }

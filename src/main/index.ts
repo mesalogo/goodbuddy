@@ -440,7 +440,9 @@ if (hasSingleInstanceLock) {
       )
     documentOcrModelManager = new DocumentOcrModelManager({
       userDataDirectory: app.getPath('userData'),
-      fetch: globalThis.fetch
+      fetch: globalThis.fetch,
+      getDownloadSource: async () =>
+        (await applicationSettingsStore.get()).modelDownloadSource
     })
     documentOcrBroker = new DocumentOcrBroker(mainWindow)
     const documentParsingService = new DocumentParsingService(
@@ -456,7 +458,9 @@ if (hasSingleInstanceLock) {
     })
     const speechModelManager = new SpeechModelManager({
       userDataDirectory: app.getPath('userData'),
-      fetch: globalThis.fetch
+      fetch: globalThis.fetch,
+      getDownloadSource: async () =>
+        (await applicationSettingsStore.get()).modelDownloadSource
     })
     const speechTranscriptionService = new SpeechTranscriptionService(
       speechModelManager

@@ -1610,6 +1610,7 @@ export function SettingsPanel({
           {activeTab === 'platform-features' && (
             <PlatformFeaturesSettingsSection
               onMagicNotesEnabledChange={onMagicNotesEnabledChange}
+              onNotify={onNotify}
             />
           )}
           {activeTab === 'runtime' && (
@@ -2924,6 +2925,9 @@ export function SettingsPanel({
           {modelType === 'speech' && (
             <SpeechModelSettingsSection
               onNotify={onNotify}
+              onOpenModelDownloadSourceSettings={() =>
+                setActiveTab('platform-features')
+              }
               onSelectedModelIdChange={(modelId, changed) => {
                 setSpeechModelDraftId(modelId)
                 setSpeechModelSelectionDirty(changed)
@@ -3119,7 +3123,12 @@ export function SettingsPanel({
           )}
 
           {activeTab === 'document-parsing' && (
-            <DocumentParsingSettingsSection onNotify={onNotify} />
+            <DocumentParsingSettingsSection
+              onNotify={onNotify}
+              onOpenModelDownloadSourceSettings={() =>
+                setActiveTab('platform-features')
+              }
+            />
           )}
 
           {activeTab === 'security' && (

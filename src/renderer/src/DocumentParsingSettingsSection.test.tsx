@@ -31,8 +31,6 @@ const modelEntry = {
   quality: 'basic' as const,
   speed: 'fast' as const,
   recommended: false,
-  repositoryUrl:
-    'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_tiny_rec_onnx',
   license: {
     name: 'Apache License 2.0',
     notice: '使用前请阅读模型许可证。',
@@ -42,29 +40,32 @@ const modelEntry = {
     {
       name: 'detection.onnx',
       role: 'detection' as const,
-      download: {
-        url: 'https://modelscope.cn/models/example/detection.onnx',
-        size: 1_000,
-        sha256: 'a'.repeat(64)
-      }
+      size: 1_000,
+      sha256: 'a'.repeat(64)
     },
     {
       name: 'recognition.onnx',
       role: 'recognition' as const,
-      download: {
-        url: 'https://modelscope.cn/models/example/recognition.onnx',
-        size: 2_000,
-        sha256: 'b'.repeat(64)
-      }
+      size: 2_000,
+      sha256: 'b'.repeat(64)
     },
     {
       name: 'dictionary.yml',
       role: 'dictionary' as const,
-      download: {
-        url: 'https://modelscope.cn/models/example/dictionary.yml',
-        size: 500,
-        sha256: 'c'.repeat(64)
-      }
+      size: 500,
+      sha256: 'c'.repeat(64)
+    }
+  ],
+  downloadAvailability: [
+    {
+      source: 'modelscope' as const,
+      available: true,
+      totalBytes: 3_500
+    },
+    {
+      source: 'hugging-face' as const,
+      available: true,
+      totalBytes: 3_500
     }
   ]
 }
@@ -101,6 +102,7 @@ const snapshot: DocumentParsingSnapshot = {
   },
   ocrModels: {
     rootDirectory: 'C:\\Users\\test\\models\\document-ocr',
+    selectedDownloadSource: 'modelscope',
     catalog: [modelEntry, secondModelEntry, thirdModelEntry],
     installed: [
       {
@@ -111,8 +113,8 @@ const snapshot: DocumentParsingSnapshot = {
         files: secondModelEntry.files.map((file) => ({
           name: file.name,
           role: file.role,
-          size: file.download.size,
-          sha256: file.download.sha256
+          size: file.size,
+          sha256: file.sha256
         }))
       }
     ],
@@ -137,7 +139,7 @@ const test = vi.fn(async () => ({
   warnings: []
 }))
 const installOcrModel =
-  vi.fn<() => Promise<DocumentParsingSnapshot>>(async () => ({
+  vi.fn(async (): Promise<DocumentParsingSnapshot> => ({
     ...snapshot,
     status: {
       ...snapshot.status,
@@ -159,8 +161,8 @@ const installOcrModel =
           files: modelEntry.files.map((file) => ({
             name: file.name,
             role: file.role,
-            size: file.download.size,
-            sha256: file.download.sha256
+            size: file.size,
+            sha256: file.sha256
           }))
         }
       ]
@@ -305,7 +307,10 @@ describe('DocumentParsingSettingsSection', () => {
     )
 
     await waitFor(() =>
-      expect(installOcrModel).toHaveBeenCalledWith('pp-ocrv6-tiny')
+      expect(installOcrModel).toHaveBeenCalledWith(
+        'pp-ocrv6-tiny',
+        'modelscope'
+      )
     )
     expect(onNotify).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -336,8 +341,8 @@ describe('DocumentParsingSettingsSection', () => {
             files: thirdModelEntry.files.map((file) => ({
               name: file.name,
               role: file.role,
-              size: file.download.size,
-              sha256: file.download.sha256
+              size: file.size,
+              sha256: file.sha256
             }))
           } satisfies InstalledDocumentOcrModel
         ]

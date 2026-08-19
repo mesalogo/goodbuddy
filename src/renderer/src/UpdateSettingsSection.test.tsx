@@ -20,6 +20,7 @@ describe('UpdateSettingsSection', () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: true,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'immediate' as const,
       magicNoteCommentFormat: 'combined' as const

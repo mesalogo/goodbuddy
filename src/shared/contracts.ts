@@ -74,6 +74,7 @@ import type {
 import type {
   ApplicationSettings,
   ApplicationSettingsUpdate,
+  ModelDownloadSource,
   VersionCheckResult
 } from './application-settings-contracts'
 import type { ReleaseNotesSnapshot } from './release-notes-contracts'
@@ -1373,7 +1374,10 @@ export type DesktopApi = {
   }
   speechModels?: {
     getSnapshot: () => Promise<SpeechModelSnapshot>
-    install: (modelId: string) => Promise<SpeechModelSnapshot>
+    install: (
+      modelId: string,
+      expectedDownloadSource: ModelDownloadSource
+    ) => Promise<SpeechModelSnapshot>
     cancel: (modelId: string) => Promise<boolean>
     remove: (modelId: string) => Promise<SpeechModelSnapshot>
     select: (modelId: string | null) => Promise<SpeechModelSnapshot>
@@ -1405,7 +1409,8 @@ export type DesktopApi = {
       purpose: DocumentParsingTestPurpose
     ) => Promise<DocumentParsingDiagnostic | undefined>
     installOcrModel: (
-      modelId: string
+      modelId: string,
+      expectedDownloadSource: ModelDownloadSource
     ) => Promise<DocumentParsingSnapshot>
     cancelOcrModelOperation: (modelId: string) => Promise<boolean>
     removeOcrModel: (

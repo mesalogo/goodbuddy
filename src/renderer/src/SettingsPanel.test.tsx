@@ -396,6 +396,7 @@ const diagnoseEmbedding = vi.fn(
 let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   updateSource: 'github',
+  modelDownloadSource: 'modelscope',
   magicNotesEnabled: false,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
@@ -423,14 +424,25 @@ const speechCatalog: SpeechModelSnapshot['catalog'] = [
     quality: 'high',
     speed: 'fast',
     recommended: true,
-    repositoryUrl: 'https://example.com/sensevoice',
     license: {
       name: 'Model License',
       notice: 'Review the model license before use.',
       url: 'https://example.com/license'
     },
     manualOnly: false,
-    files: []
+    files: [],
+    downloadAvailability: [
+      {
+        source: 'modelscope',
+        available: true,
+        totalBytes: 1
+      },
+      {
+        source: 'hugging-face',
+        available: true,
+        totalBytes: 1
+      }
+    ]
   },
   {
     id: 'paraformer-bilingual-zh-en-int8',
@@ -442,20 +454,32 @@ const speechCatalog: SpeechModelSnapshot['catalog'] = [
     quality: 'high',
     speed: 'fast',
     recommended: true,
-    repositoryUrl: 'https://example.com/paraformer',
     license: {
       name: 'MIT License',
       notice: 'Review the model license before use.',
       url: 'https://example.com/license'
     },
     manualOnly: false,
-    files: []
+    files: [],
+    downloadAvailability: [
+      {
+        source: 'modelscope',
+        available: true,
+        totalBytes: 1
+      },
+      {
+        source: 'hugging-face',
+        available: true,
+        totalBytes: 1
+      }
+    ]
   }
 ]
 const createSpeechModelSnapshot = (
   selectedModelId: string | null = 'sensevoice-small-int8'
 ): SpeechModelSnapshot => ({
   rootDirectory: 'C:\\Users\\test\\models\\speech',
+  selectedDownloadSource: 'modelscope',
   catalog: speechCatalog,
   installed: speechCatalog.map((model) => ({
     id: model.id,
@@ -562,6 +586,7 @@ describe('SettingsPanel runtime files', () => {
     applicationSettings = {
       checkUpdatesOnStartup: true,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -1033,6 +1058,9 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '魔法笔记' })
+    )
     const toggle = await screen.findByRole('switch', {
       name: '显示魔法笔记入口'
     })
@@ -1066,6 +1094,111 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
+  it('switches the global model download source from General settings', async () => {
+    const onNotify = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onNotify={onNotify}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    expect(
+      await screen.findByRole('tab', { name: '通用设置' })
+    ).toHaveAttribute('aria-selected', 'true')
+    const modelScope = screen.getByRole('radio', {
+      name: /ModelScope/u
+    })
+    const huggingFace = screen.getByRole('radio', {
+      name: /Hugging Face/u
+    })
+    expect(modelScope).toBeChecked()
+    expect(huggingFace).not.toBeChecked()
+    expect(
+      screen.queryByRole('switch', { name: '显示魔法笔记入口' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(huggingFace)
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        modelDownloadSource: 'hugging-face'
+      })
+    )
+    expect(huggingFace).toBeChecked()
+    expect(onNotify).toHaveBeenCalledWith({
+      tone: 'success',
+      message: '模型下载源已切换为 Hugging Face。',
+      dedupeKey: 'model-download-source'
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: '魔法笔记' }))
+    expect(
+      screen.getByRole('switch', { name: '显示魔法笔记入口' })
+    ).toBeInTheDocument()
+  })
+
+  it('does not guess a model download source when settings fail to load', async () => {
+    getApplicationSettings.mockRejectedValueOnce(
+      new Error('read failed')
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+
+    expect(
+      await screen.findByText('读取平台功能设置失败')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('radio', { name: /ModelScope/u })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('当前选择：ModelScope')
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the confirmed model download source when saving fails', async () => {
+    updateApplicationSettings.mockRejectedValueOnce(
+      new Error('save failed')
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const modelScope = await screen.findByRole('radio', {
+      name: /ModelScope/u
+    })
+    const huggingFace = screen.getByRole('radio', {
+      name: /Hugging Face/u
+    })
+    fireEvent.click(huggingFace)
+
+    expect(
+      await screen.findByText('保存模型下载源失败，请重试')
+    ).toBeInTheDocument()
+    expect(modelScope).toBeChecked()
+    expect(huggingFace).not.toBeChecked()
+  })
+
   it('refreshes built-in Notes MCP after enabling Magic Notes', async () => {
     function Harness(): React.JSX.Element {
       const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
@@ -1095,6 +1228,9 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '魔法笔记' })
+    )
     fireEvent.click(
       await screen.findByRole('switch', {
         name: '显示魔法笔记入口'

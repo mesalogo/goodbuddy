@@ -109,6 +109,7 @@ import { applicationSettingsUpdateSchema } from '../shared/application-settings-
 import { releaseNotesAcknowledgeSchema } from '../shared/release-notes-contracts'
 import {
   speechModelActionInputSchema,
+  speechModelInstallInputSchema,
   speechModelSelectionInputSchema
 } from '../shared/speech-model-contracts'
 import {
@@ -119,6 +120,7 @@ import {
 } from '../shared/embedding-contracts'
 import {
   documentOcrModelActionInputSchema,
+  documentOcrModelInstallInputSchema,
   documentOcrFailureSchema,
   documentOcrResultSchema,
   documentParsingSettingsUpdateSchema,
@@ -3513,16 +3515,25 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.documentOcrModelsInstall,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      if (!documentOcrModelManager || !documentParsingService) {
+      if (
+        !documentOcrModelManager ||
+        !documentParsingService ||
+        !applicationSettingsStore
+      ) {
         throw new Error('本地 OCR 模型服务不可用')
       }
-      const { modelId } =
-        documentOcrModelActionInputSchema.parse(input)
+      const { modelId, expectedDownloadSource } =
+        documentOcrModelInstallInputSchema.parse(input)
+      const { modelDownloadSource: selectedDownloadSource } =
+        await applicationSettingsStore.get()
+      if (selectedDownloadSource !== expectedDownloadSource) {
+        throw new Error('模型下载源已变化，请刷新后重试')
+      }
       return trackExecution(
         documentOcrModelManager
-          .install(modelId)
+          .install(modelId, selectedDownloadSource)
           .then(() => documentParsingService.snapshot())
       )
     }
@@ -3611,19 +3622,19 @@ export function registerIpcHandlers(
     ipcChannels.documentOcrModelsOpenRepository,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      if (!documentOcrModelManager) {
+      if (!documentOcrModelManager || !applicationSettingsStore) {
         throw new Error('本地 OCR 模型服务不可用')
       }
       const { modelId } =
         documentOcrModelActionInputSchema.parse(input)
-      const snapshot = await documentOcrModelManager.getSnapshot()
-      const entry = snapshot.catalog.find(
-        (candidate) => candidate.id === modelId
+      const { modelDownloadSource: selectedDownloadSource } =
+        await applicationSettingsStore.get()
+      await shell.openExternal(
+        documentOcrModelManager.getRepositoryUrl(
+          modelId,
+          selectedDownloadSource
+        )
       )
-      if (!entry) {
-        throw new Error('未知的 OCR 模型')
-      }
-      await shell.openExternal(entry.repositoryUrl)
     }
   )
 
@@ -3759,15 +3770,21 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.speechModelsInstall,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      if (!speechModelManager) {
+      if (!speechModelManager || !applicationSettingsStore) {
         throw new Error('语音模型服务不可用')
       }
-      const { modelId } = speechModelActionInputSchema.parse(input)
+      const { modelId, expectedDownloadSource } =
+        speechModelInstallInputSchema.parse(input)
+      const { modelDownloadSource: selectedDownloadSource } =
+        await applicationSettingsStore.get()
+      if (selectedDownloadSource !== expectedDownloadSource) {
+        throw new Error('模型下载源已变化，请刷新后重试')
+      }
       return trackExecution(
         speechModelManager
-          .install(modelId)
+          .install(modelId, selectedDownloadSource)
           .then(() => speechModelManager.getSnapshot())
       )
     }
@@ -3862,16 +3879,18 @@ export function registerIpcHandlers(
     ipcChannels.speechModelsOpenRepository,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      if (!speechModelManager) {
+      if (!speechModelManager || !applicationSettingsStore) {
         throw new Error('语音模型服务不可用')
       }
       const { modelId } = speechModelActionInputSchema.parse(input)
-      const snapshot = await speechModelManager.getSnapshot()
-      const entry = snapshot.catalog.find((item) => item.id === modelId)
-      if (!entry) {
-        throw new Error('未知的语音模型')
-      }
-      await shell.openExternal(entry.repositoryUrl)
+      const { modelDownloadSource: selectedDownloadSource } =
+        await applicationSettingsStore.get()
+      await shell.openExternal(
+        speechModelManager.getRepositoryUrl(
+          modelId,
+          selectedDownloadSource
+        )
+      )
     }
   )
 

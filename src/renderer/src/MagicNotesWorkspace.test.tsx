@@ -169,6 +169,7 @@ const onAnalysisEvent = vi.fn<
 const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async () => ({
   checkUpdatesOnStartup: false,
   updateSource: 'github',
+  modelDownloadSource: 'modelscope',
   magicNotesEnabled: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
@@ -180,6 +181,7 @@ beforeEach(() => {
   getApplicationSettings.mockResolvedValue({
     checkUpdatesOnStartup: false,
     updateSource: 'github',
+    modelDownloadSource: 'modelscope',
     magicNotesEnabled: true,
     magicNoteCommentMode: 'immediate',
     magicNoteCommentFormat: 'combined'
@@ -680,6 +682,7 @@ describe('MagicNotesWorkspace', () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'combined'
@@ -711,6 +714,7 @@ describe('MagicNotesWorkspace', () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'narrative'
@@ -825,6 +829,7 @@ describe('MagicNotesWorkspace', () => {
     getApplicationSettings.mockResolvedValue({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-auto',
       magicNoteCommentFormat: 'combined'

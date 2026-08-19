@@ -15,26 +15,35 @@ import { dirname, resolve } from 'node:path'
 import {
   documentOcrAssetsSchema,
   documentOcrModelCatalogEntrySchema,
+  documentOcrModelCatalogViewEntrySchema,
   documentOcrModelSnapshotSchema,
   documentParsingModelStatusSchema,
   installedDocumentOcrModelSchema,
   localOcrModelIdSchema,
   type DocumentOcrAssets,
   type DocumentOcrModelCatalogEntry,
+  type DocumentOcrModelCatalogViewEntry,
   type DocumentOcrModelFile,
   type DocumentOcrModelOperation,
   type DocumentOcrModelSnapshot,
   type InstalledDocumentOcrModel
 } from '../shared/document-parsing-contracts'
+import {
+  MODEL_DOWNLOAD_SOURCES,
+  getModelDownloadAvailability,
+  resolveModelDownloadPackage,
+  type ModelDownloadSource,
+  type ResolvedModelArtifactFile
+} from '../shared/model-download-contracts'
 import { DOCUMENT_OCR_MODEL_CATALOG } from './document-ocr-model-catalog'
 import {
   exportModelArchive,
   extractModelArchive
 } from './model-archive'
+import { fetchModelDownloadResponse } from './model-download-transport'
 
 const DEFAULT_MAX_FILE_BYTES = 96 * 1024 * 1024
 const MANIFEST_FILE_NAME = 'manifest.json'
-const MAX_REDIRECTS = 3
 const PARTIAL_SUFFIX = '.partial'
 const MAXIMUM_ARCHIVE_BYTES = 512 * 1024 * 1024
 const ARCHIVE_OVERHEAD_BYTES = 1024 * 1024
@@ -50,6 +59,9 @@ export type DocumentOcrModelManagerOptions = {
   userDataDirectory: string
   fetch: typeof fetch
   catalog?: readonly DocumentOcrModelCatalogEntry[]
+  getDownloadSource?: () =>
+    | ModelDownloadSource
+    | Promise<ModelDownloadSource>
   maxFileBytes?: number
 }
 
@@ -69,20 +81,29 @@ function cloneCatalogEntry(
   return documentOcrModelCatalogEntrySchema.parse(entry)
 }
 
+function toCatalogView(entry: DocumentOcrModelCatalogEntry) {
+  const { repositoryUrls, files, ...metadata } = entry
+  void repositoryUrls
+  return documentOcrModelCatalogViewEntrySchema.parse({
+    ...metadata,
+    files: files.map((file) => ({
+      name: file.name,
+      role: file.role,
+      size: file.size,
+      sha256: file.sha256
+    })),
+    downloadAvailability: MODEL_DOWNLOAD_SOURCES.map((source) =>
+      getModelDownloadAvailability(files, source)
+    )
+  })
+}
+
 function safeChild(parent: string, name: string): string {
   const child = resolve(parent, name)
   if (dirname(child) !== resolve(parent)) {
     throw new Error('OCR 模型路径超出受管目录')
   }
   return child
-}
-
-function validateDownloadUrl(value: string): URL {
-  const url = new URL(value)
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('OCR 模型下载地址必须使用 HTTP 或 HTTPS')
-  }
-  return url
 }
 
 function toArrayBuffer(buffer: Buffer): ArrayBuffer {
@@ -157,6 +178,10 @@ export class DocumentOcrModelManager {
 
   private readonly transport: typeof fetch
   private readonly catalog: DocumentOcrModelCatalogEntry[]
+  private readonly catalogViews: DocumentOcrModelCatalogViewEntry[]
+  private readonly getDownloadSource: () =>
+    | ModelDownloadSource
+    | Promise<ModelDownloadSource>
   private readonly maxFileBytes: number
   private readonly operations = new Map<string, ActiveOperation>()
   private readonly verifiedModels = new Map<string, Promise<void>>()
@@ -171,6 +196,8 @@ export class DocumentOcrModelManager {
       'document-ocr'
     )
     this.transport = options.fetch
+    this.getDownloadSource =
+      options.getDownloadSource ?? (() => 'modelscope')
     this.catalog = (options.catalog ?? DOCUMENT_OCR_MODEL_CATALOG).map(
       cloneCatalogEntry
     )
@@ -180,6 +207,7 @@ export class DocumentOcrModelManager {
     ) {
       throw new Error('OCR 模型目录包含重复 ID')
     }
+    this.catalogViews = this.catalog.map(toCatalogView)
     this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
     if (
       !Number.isSafeInteger(this.maxFileBytes) ||
@@ -192,10 +220,15 @@ export class DocumentOcrModelManager {
 
   async getSnapshot(): Promise<DocumentOcrModelSnapshot> {
     await this.ensureRoot()
+    const [selectedDownloadSource, installed] = await Promise.all([
+      this.getDownloadSource(),
+      this.readInstalled()
+    ])
     return documentOcrModelSnapshotSchema.parse({
       rootDirectory: this.rootDirectory,
-      catalog: this.catalog.map(cloneCatalogEntry),
-      installed: await this.readInstalled(),
+      selectedDownloadSource,
+      catalog: this.catalogViews,
+      installed,
       operations: [...this.operations.values()].map((operation) => ({
         ...operation.progress
       }))
@@ -234,7 +267,7 @@ export class DocumentOcrModelManager {
         available: false,
         verified: false,
         runtime: entry.runtime,
-        detail: '模型尚未安装或校验失败，请从 ModelScope 下载'
+        detail: '模型尚未安装或校验失败，请从当前模型下载源获取'
       })
     }
   }
@@ -243,19 +276,37 @@ export class DocumentOcrModelManager {
     return this.loadVerifiedAssets(this.requireCatalogEntry(modelId))
   }
 
+  getRepositoryUrl(
+    modelId: string,
+    source: ModelDownloadSource
+  ): string {
+    const entry = this.requireCatalogEntry(modelId)
+    resolveModelDownloadPackage(entry.files, source)
+    const repositoryUrl = entry.repositoryUrls[source]
+    if (!repositoryUrl) {
+      throw new Error('当前下载源暂不提供此 OCR 模型的仓库')
+    }
+    return repositoryUrl
+  }
+
   async install(
     modelId: string,
+    downloadSource?: ModelDownloadSource,
     externalSignal?: AbortSignal
   ): Promise<InstalledDocumentOcrModel> {
     const entry = this.requireCatalogEntry(modelId)
-    const totalBytes = entry.files.reduce(
-      (total, file) => total + file.download.size,
-      0
+    const selectedDownloadSource =
+      downloadSource ?? (await this.getDownloadSource())
+    const resolvedPackage = resolveModelDownloadPackage(
+      entry.files,
+      selectedDownloadSource
     )
-    if (!Number.isSafeInteger(totalBytes)) {
-      throw new RangeError('OCR 模型总大小超出安全范围')
-    }
-    const operation = this.beginOperation(entry.id, 'download', totalBytes)
+    const operation = this.beginOperation(
+      entry.id,
+      'download',
+      resolvedPackage.totalBytes,
+      resolvedPackage.source
+    )
     const detachAbort = this.attachExternalSignal(
       externalSignal,
       operation.controller
@@ -265,7 +316,7 @@ export class DocumentOcrModelManager {
       await this.ensureRoot()
       await this.assertNotInstalled(entry.id)
       stagingDirectory = await this.createStagingDirectory(entry.id)
-      for (const file of entry.files) {
+      for (const file of resolvedPackage.files) {
         ensureNotAborted(operation.controller.signal)
         operation.progress.phase = 'transferring'
         operation.progress.currentFile = file.name
@@ -376,8 +427,8 @@ export class DocumentOcrModelManager {
       )
       if (
         !recorded ||
-        recorded.size !== expected.download.size ||
-        recorded.sha256 !== expected.download.sha256
+        recorded.size !== expected.size ||
+        recorded.sha256 !== expected.sha256
       ) {
         throw new Error(`OCR 模型文件校验失败：${expected.name}`)
       }
@@ -406,7 +457,7 @@ export class DocumentOcrModelManager {
   ): Promise<InstalledDocumentOcrModel> {
     const entry = this.requireCatalogEntry(modelId)
     const expectedTotal = entry.files.reduce(
-      (total, file) => total + file.download.size,
+      (total, file) => total + file.size,
       0
     )
     const operation = this.beginOperation(
@@ -448,8 +499,8 @@ export class DocumentOcrModelManager {
         )
         if (
           !archived ||
-          archived.size !== expected.download.size ||
-          archived.sha256 !== expected.download.sha256
+          archived.size !== expected.size ||
+          archived.sha256 !== expected.sha256
         ) {
           throw new Error(
             `OCR 模型 ZIP 与当前模型目录不匹配：${expected.name}`
@@ -536,7 +587,8 @@ export class DocumentOcrModelManager {
   private beginOperation(
     modelId: string,
     kind: DocumentOcrModelOperation['kind'],
-    totalBytes: number | null
+    totalBytes: number | null,
+    downloadSource?: ModelDownloadSource
   ): ActiveOperation {
     if (this.operations.has(modelId)) {
       throw new Error('该 OCR 模型已有进行中的操作')
@@ -549,7 +601,8 @@ export class DocumentOcrModelManager {
         phase: 'preparing',
         currentFile: null,
         completedBytes: 0,
-        totalBytes
+        totalBytes,
+        ...(downloadSource ? { downloadSource } : {})
       }
     }
     this.operations.set(modelId, operation)
@@ -597,50 +650,22 @@ export class DocumentOcrModelManager {
     return directory
   }
 
-  private async fetchFollowingRedirects(
-    initialUrl: string,
-    signal: AbortSignal
-  ): Promise<Response> {
-    let url = validateDownloadUrl(initialUrl)
-    for (let redirectCount = 0; ; redirectCount += 1) {
-      ensureNotAborted(signal)
-      const response = await this.transport(url, {
-        method: 'GET',
-        redirect: 'manual',
-        credentials: 'omit',
-        cache: 'no-store',
-        signal
-      })
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        if (redirectCount >= MAX_REDIRECTS) {
-          await response.body?.cancel().catch(() => undefined)
-          throw new Error('OCR 模型下载重定向次数过多')
-        }
-        const location = response.headers.get('location')
-        await response.body?.cancel().catch(() => undefined)
-        if (!location) {
-          throw new Error('OCR 模型下载重定向缺少地址')
-        }
-        url = validateDownloadUrl(new URL(location, url).toString())
-        continue
-      }
-      return response
-    }
-  }
-
   private async downloadFile(
-    file: DocumentOcrModelFile,
+    file: ResolvedModelArtifactFile<DocumentOcrModelFile['role']>,
     destination: string,
     operation: ActiveOperation,
     signal: AbortSignal
   ): Promise<void> {
-    if (file.download.size > this.maxFileBytes) {
+    if (file.size > this.maxFileBytes) {
       throw new RangeError(`OCR 模型文件过大：${file.name}`)
     }
-    const response = await this.fetchFollowingRedirects(
-      file.download.url,
-      signal
-    )
+    const response = await fetchModelDownloadResponse({
+      transport: this.transport,
+      initialUrl: file.target.url,
+      redirectHosts: file.target.redirectHosts,
+      signal,
+      modelLabel: 'OCR 模型'
+    })
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined)
       throw new Error(`OCR 模型下载失败：HTTP ${response.status}`)
@@ -651,7 +676,7 @@ export class DocumentOcrModelManager {
     const declaredLength = response.headers.get('content-length')
     if (
       declaredLength !== null &&
-      Number(declaredLength) !== file.download.size
+      Number(declaredLength) !== file.size
     ) {
       await response.body.cancel().catch(() => undefined)
       throw new Error(`OCR 模型文件大小不匹配：${file.name}`)
@@ -671,7 +696,7 @@ export class DocumentOcrModelManager {
         }
         written += result.value.byteLength
         if (
-          written > file.download.size ||
+          written > file.size ||
           written > this.maxFileBytes
         ) {
           await reader.cancel()
@@ -688,8 +713,8 @@ export class DocumentOcrModelManager {
       await handle.close()
     }
     if (
-      written !== file.download.size ||
-      hash.digest('hex') !== file.download.sha256
+      written !== file.size ||
+      hash.digest('hex') !== file.sha256
     ) {
       throw new Error(`OCR 模型文件校验失败：${file.name}`)
     }
@@ -724,8 +749,8 @@ export class DocumentOcrModelManager {
       }
       const actual = await hashFile(path, signal)
       if (
-        actual.size !== file.download.size ||
-        actual.sha256 !== file.download.sha256
+        actual.size !== file.size ||
+        actual.sha256 !== file.sha256
       ) {
         throw new Error(`本地 OCR 模型文件校验失败：${file.name}`)
       }
@@ -832,8 +857,8 @@ export class DocumentOcrModelManager {
       const actual = await hashFile(safeChild(directory, file.name))
       if (
         !installed ||
-        actual.size !== file.download.size ||
-        actual.sha256 !== file.download.sha256 ||
+        actual.size !== file.size ||
+        actual.sha256 !== file.sha256 ||
         actual.size !== installed.size ||
         actual.sha256 !== installed.sha256
       ) {
@@ -879,8 +904,8 @@ export class DocumentOcrModelManager {
       }
       if (
         !installed ||
-        actual.size !== file.download.size ||
-        actual.sha256 !== file.download.sha256 ||
+        actual.size !== file.size ||
+        actual.sha256 !== file.sha256 ||
         actual.size !== installed.size ||
         actual.sha256 !== installed.sha256
       ) {

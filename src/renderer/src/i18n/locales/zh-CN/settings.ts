@@ -1,4 +1,8 @@
 export const settings = {
+  modelDownloadSources: {
+    modelscope: 'ModelScope',
+    'hugging-face': 'Hugging Face'
+  },
   center: {
     eyebrow: '设置',
     title: '设置中心',
@@ -431,7 +435,7 @@ export const settings = {
       localOcr: '本地 OCR',
       localOcrModel: '当前 OCR：{{name}}',
       ocrReady: '模型已安装并通过 SHA-256 校验，可离线使用',
-      ocrUnavailable: '模型尚未安装或校验失败，请从 ModelScope 下载',
+      ocrUnavailable: '模型尚未安装或校验失败，请从当前模型下载源获取',
       partialNotice:
         '基础文档解析可用。旧版 Office 转换尚未实现；扫描 PDF 可按场景模式使用本地 OCR。'
     },
@@ -477,10 +481,12 @@ export const settings = {
       pendingSelection: '模型选择尚未生效，点击“保存设置”后切换。',
       installedOption: '已安装',
       downloadableOption: '可下载',
+      sourceUnavailableOption: '当前来源不可下载',
       unavailableOption: '当前版本不可用',
       openModelsDirectory: '打开模型目录',
       storagePrefix: '模型按需安装到',
       storageSuffix: '。可导出 ZIP，并在内网设备直接导入。',
+      downloadSource: '当前模型下载源：{{source}}',
       recommended: '推荐',
       quality: {
         label: '质量：{{value}}',
@@ -528,16 +534,20 @@ export const settings = {
       delete: '删除',
       confirmDelete: '确认删除',
       cancel: '取消',
-      openRepository: '打开 ModelScope',
+      openRepository: '打开 {{source}}',
+      openDownloadSourceSettings: '前往通用设置',
       catalogUnavailable: '当前版本没有可用的 OCR 模型目录。',
       selectedModelUnavailable:
         '已保存的 OCR 模型在当前版本不可用，请从上方选择并安装其他模型。',
-      installBeforeSelecting: '请先下载该模型；下载完成后会自动设为当前模型。',
+      installBeforeSelecting:
+        '请先下载或导入该模型；安装完成后会自动设为当前模型。',
+      sourceUnavailableDescription:
+        '{{source}} 暂不提供此模型的完整已验证文件。你仍可从 ZIP 导入，或前往通用设置明确更换下载源。',
       privacyNotice:
         'OCR 只在需要时由上方场景模式启用，并始终在本机通过 ONNX Runtime WebAssembly 运行，不会上传文档。',
       operations: {
         preparing: '正在准备模型文件',
-        downloading: '正在从 ModelScope 下载',
+        downloading: '正在从 {{source}} 下载',
         importing: '正在导入模型 ZIP',
         installing: '正在校验并安装'
       },
@@ -548,7 +558,7 @@ export const settings = {
         deleteModel: '删除 {{name}}',
         cancelOperation: '取消 {{name}} 操作',
         downloadProgress: '{{name}} 下载进度',
-        openRepository: '打开 {{name}} 的 ModelScope 页面'
+        openRepository: '打开 {{name}} 的 {{source}} 页面'
       },
       notifications: {
         installed: '{{name}} 已安装',

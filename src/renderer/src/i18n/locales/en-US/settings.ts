@@ -2,6 +2,10 @@ import type { TranslationShape } from '../../resource-types'
 import type { settings as chineseSettings } from '../zh-CN/settings'
 
 export const settings = {
+  modelDownloadSources: {
+    modelscope: 'ModelScope',
+    'hugging-face': 'Hugging Face'
+  },
   center: {
     eyebrow: 'Settings',
     title: 'Settings',
@@ -472,7 +476,7 @@ export const settings = {
       ocrReady:
         'The model is installed, SHA-256 verified, and available offline',
       ocrUnavailable:
-        'The model is not installed or failed verification. Download it from ModelScope.',
+        'The model is not installed or failed verification. Get it from the current model download source.',
       partialNotice:
         'Basic document parsing is available. Legacy Office conversion is not implemented yet; scenario modes can use local OCR for scanned PDFs.'
     },
@@ -524,11 +528,13 @@ export const settings = {
         'This model selection is not active yet. Save settings to switch.',
       installedOption: 'Installed',
       downloadableOption: 'Available to download',
+      sourceUnavailableOption: 'Unavailable from current source',
       unavailableOption: 'Unavailable in this version',
       openModelsDirectory: 'Open model folder',
       storagePrefix: 'Models are installed on demand in',
       storageSuffix:
         ' and can be exported as ZIP archives for offline devices.',
+      downloadSource: 'Current model download source: {{source}}',
       recommended: 'Recommended',
       quality: {
         label: 'Quality: {{value}}',
@@ -576,18 +582,21 @@ export const settings = {
       delete: 'Delete',
       confirmDelete: 'Confirm delete',
       cancel: 'Cancel',
-      openRepository: 'Open ModelScope',
+      openRepository: 'Open {{source}}',
+      openDownloadSourceSettings: 'Open General settings',
       catalogUnavailable:
         'No OCR model catalog is available in this version.',
       selectedModelUnavailable:
         'The saved OCR model is unavailable in this version. Select and install another model above.',
       installBeforeSelecting:
-        'Download this model first. It will become the current model after installation.',
+        'Download or import this model first. It will become the current model after installation.',
+      sourceUnavailableDescription:
+        '{{source}} does not currently provide the complete verified files for this model. You can still import a ZIP archive or explicitly change the source in General settings.',
       privacyNotice:
         'OCR is enabled only when required by the scenario modes above. It always runs locally through ONNX Runtime WebAssembly and never uploads documents.',
       operations: {
         preparing: 'Preparing model files',
-        downloading: 'Downloading from ModelScope',
+        downloading: 'Downloading from {{source}}',
         importing: 'Importing model ZIP',
         installing: 'Verifying and installing'
       },
@@ -598,7 +607,7 @@ export const settings = {
         deleteModel: 'Delete {{name}}',
         cancelOperation: 'Cancel {{name}} operation',
         downloadProgress: '{{name}} download progress',
-        openRepository: 'Open the ModelScope page for {{name}}'
+        openRepository: 'Open the {{source}} page for {{name}}'
       },
       notifications: {
         installed: '{{name}} installed',

@@ -4,6 +4,10 @@ import type {
 } from '../zh-CN/settingsSections'
 
 export const settingsSections = {
+  modelDownloadSources: {
+    modelscope: 'ModelScope',
+    'hugging-face': 'Hugging Face'
+  },
   speech: {
     title: 'Speech models',
     description:
@@ -12,6 +16,7 @@ export const settingsSections = {
     storagePrefix: 'Models are stored in',
     storageSuffix:
       '. Automatic downloads pin the source revision and verify SHA-256 hashes. Export a ZIP on an online device and import it directly on an offline device.',
+    downloadSource: 'Current model download source: {{source}}',
     modelSelector: 'Current speech model',
     modelSelectorDescription:
       'Choose an installed model, then select Save settings to switch speech recognition models.',
@@ -45,9 +50,9 @@ export const settingsSections = {
     operations: {
       installing: 'Verifying and installing',
       preparingImport: 'Preparing import',
-      preparingDownload: 'Preparing download',
+      preparingDownloadFrom: 'Preparing to download from {{source}}',
       importing: 'Importing',
-      downloading: 'Downloading',
+      downloadingFrom: 'Downloading from {{source}}',
       processingFile: 'Processing {{file}}'
     },
     status: {
@@ -56,6 +61,7 @@ export const settingsSections = {
       installed: 'Installed',
       manualImport: 'Manual import',
       availableToDownload: 'Available to download',
+      sourceUnavailable: 'Unavailable from current source',
       unknownSize: 'Unknown size'
     },
     tags: {
@@ -66,6 +72,7 @@ export const settingsSections = {
       delete: 'Delete',
       confirmDelete: 'Confirm delete',
       download: 'Download',
+      openDownloadSourceSettings: 'Open General settings',
       importZip: 'Import ZIP',
       exportZip: 'Export ZIP'
     },
@@ -76,7 +83,7 @@ export const settingsSections = {
       importModelZip: 'Import {{name}} from a ZIP archive',
       exportModelZip: 'Export {{name}} as a ZIP archive',
       downloadProgress: '{{name}} download progress',
-      openRepository: 'Open the {{name}} model repository'
+      openRepository: 'Open the {{source}} repository for {{name}}'
     },
     notifications: {
       installed: '{{name}} installed',
@@ -84,6 +91,8 @@ export const settingsSections = {
       exportedZip: '{{name}} exported as ZIP',
       removed: 'Speech model deleted'
     },
+    sourceUnavailableDescription:
+      '{{source}} does not currently provide the complete verified files for this model. You can still import a ZIP archive or explicitly change the source in General settings.',
     languages: {
       中文: 'Chinese',
       粤语: 'Cantonese',
@@ -211,6 +220,7 @@ export const settingsSections = {
       'No roles yet. Create a role to configure its system prompt.'
   },
   platformFeatures: {
+    loading: 'Loading platform feature settings…',
     errors: {
       serviceUnavailable:
         'Application settings are not available in this version',
@@ -219,9 +229,34 @@ export const settingsSections = {
       saveCommentModeFailed:
         'Could not save the AI comment mode. Try again.',
       saveCommentFormatFailed:
-        'Could not save the AI comment format. Try again.'
+        'Could not save the AI comment format. Try again.',
+      saveModelDownloadSourceFailed:
+        'Could not save the model download source. Try again.'
     },
     label: 'Platform feature options',
+    tabs: {
+      ariaLabel: 'Platform feature settings',
+      general: 'General',
+      magicNotes: 'Magic Notes'
+    },
+    modelDownloadSource: {
+      cardTitle: 'Local models',
+      cardDescription:
+        'Manage how GoodBuddy-managed local models are downloaded',
+      title: 'Model download source',
+      description:
+        'Choose the platform for future GoodBuddy-managed local model downloads. Installed models, ZIP imports, Ollama models, and app updates are not affected.',
+      options: {
+        modelscope:
+          'Default. Use when your network prioritizes access to ModelScope.',
+        'hugging-face':
+          'Use when your network can access Hugging Face reliably.'
+      },
+      current: 'Current selection: {{source}}',
+      activeDownloadNote:
+        'Downloads already in progress keep the source they started with. New downloads use the current selection.',
+      notification: 'Model download source changed to {{source}}.'
+    },
     magicNotes: {
       title: 'Magic Notes',
       description:

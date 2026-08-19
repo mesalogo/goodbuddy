@@ -70,8 +70,12 @@ function catalog(
       quality: 'balanced',
       speed: 'fast',
       recommended: true,
-      repositoryUrl:
-        'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_tiny_rec_onnx',
+      repositoryUrls: {
+        modelscope:
+          'https://modelscope.cn/models/example/test-model',
+        'hugging-face':
+          'https://huggingface.co/example/test-model'
+      },
       license: {
         name: 'Apache License 2.0',
         notice: 'Test license notice.',
@@ -80,10 +84,27 @@ function catalog(
       files: files.map((file) => ({
         name: file.name,
         role: file.role,
-        download: {
-          url: `https://modelscope.cn/models/example/resolve/revision/${file.name}`,
-          size: file.bytes.byteLength,
-          sha256: sha256(file.bytes)
+        size: file.bytes.byteLength,
+        sha256: sha256(file.bytes),
+        targets: {
+          modelscope: {
+            url:
+              'https://modelscope.cn/models/example/test-model/' +
+              `resolve/${'a'.repeat(40)}/${file.name}`,
+            repositoryUrl:
+              'https://modelscope.cn/models/example/test-model',
+            revision: 'a'.repeat(40),
+            redirectHosts: []
+          },
+          'hugging-face': {
+            url:
+              'https://huggingface.co/example/test-model/' +
+              `resolve/${'b'.repeat(40)}/${file.name}`,
+            repositoryUrl:
+              'https://huggingface.co/example/test-model',
+            revision: 'b'.repeat(40),
+            redirectHosts: []
+          }
         }
       }))
     }
@@ -124,10 +145,12 @@ async function createManager(
     throw new Error('Test OCR catalog is empty')
   }
   const files = new Map(
-    entry.files.map((file) => [
-      file.download.url,
-      modelBytes[file.role]
-    ])
+    entry.files.flatMap((file) =>
+      Object.values(file.targets).map((target) => [
+        target.url,
+        modelBytes[file.role]
+      ] as const)
+    )
   )
   const transport = vi.fn(async (input: string | URL | Request) => {
     const url =
@@ -174,7 +197,7 @@ describe('DocumentOcrModelManager', () => {
     })
   })
 
-  it('uses immutable SHA-256 verified ModelScope catalog files', () => {
+  it('uses immutable byte-identical ModelScope and Hugging Face files', () => {
     expect(DOCUMENT_OCR_MODEL_CATALOG).toHaveLength(3)
     expect(
       new Set(DOCUMENT_OCR_MODEL_CATALOG.map((entry) => entry.id)).size
@@ -186,20 +209,28 @@ describe('DocumentOcrModelManager', () => {
     ).toEqual(['pp-ocrv6-small'])
 
     for (const entry of DOCUMENT_OCR_MODEL_CATALOG) {
+      expect(entry.repositoryUrls.modelscope).toMatch(
+        /^https:\/\/modelscope\.cn\/models\/PaddlePaddle\//u
+      )
+      expect(entry.repositoryUrls['hugging-face']).toMatch(
+        /^https:\/\/huggingface\.co\/PaddlePaddle\//u
+      )
       for (const file of entry.files) {
-        expect(file.download.url).toMatch(
+        expect(file.targets.modelscope?.url).toMatch(
           /^https:\/\/modelscope\.cn\/models\/PaddlePaddle\/[^/]+\/resolve\/[a-f0-9]{40}\/[^/]+$/u
         )
-        expect(file.download.sha256).toMatch(/^[a-f0-9]{64}$/u)
-        expect(file.download.size).toBeGreaterThan(0)
+        expect(file.targets['hugging-face']?.url).toMatch(
+          /^https:\/\/huggingface\.co\/PaddlePaddle\/[^/]+\/resolve\/[a-f0-9]{40}\/[^/]+$/u
+        )
+        expect(file.sha256).toMatch(/^[a-f0-9]{64}$/u)
+        expect(file.size).toBeGreaterThan(0)
       }
     }
 
-    expect(
-      DOCUMENT_OCR_MODEL_CATALOG.find(
-        (entry) => entry.id === 'pp-ocrv6-small'
-      )
-    ).toMatchObject({
+    const small = DOCUMENT_OCR_MODEL_CATALOG.find(
+      (entry) => entry.id === 'pp-ocrv6-small'
+    )
+    expect(small).toMatchObject({
       languages: ['50 种语言'],
       quality: 'balanced',
       speed: 'balanced',
@@ -207,30 +238,29 @@ describe('DocumentOcrModelManager', () => {
       files: [
         {
           role: 'detection',
-          download: {
-            url: 'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/956a0b620a4017cc04056c692be1703b0025d028/inference.onnx',
-            size: 9_880_512,
-            sha256:
-              'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e'
+          size: 9_880_512,
+          sha256:
+            'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e',
+          targets: {
+            modelscope: {
+              revision: '956a0b620a4017cc04056c692be1703b0025d028'
+            },
+            'hugging-face': {
+              revision: '28fe5895c24fd108c19eb3e8479f4ab385fbfc62'
+            }
           }
         },
         {
           role: 'recognition',
-          download: {
-            url: 'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/296d43bc0ebced0fd9c605174aa5962e49810ab6/inference.onnx',
-            size: 21_159_378,
-            sha256:
-              '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634'
-          }
+          size: 21_159_378,
+          sha256:
+            '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634'
         },
         {
           role: 'dictionary',
-          download: {
-            url: 'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/296d43bc0ebced0fd9c605174aa5962e49810ab6/inference.yml',
-            size: 150_579,
-            sha256:
-              'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1'
-          }
+          size: 150_579,
+          sha256:
+            'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1'
         }
       ]
     })
@@ -246,30 +276,21 @@ describe('DocumentOcrModelManager', () => {
       files: [
         {
           role: 'detection',
-          download: {
-            url: 'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_medium_det_onnx/resolve/c317b40325be40bfaaff58c8dcece2a075294f8a/inference.onnx',
-            size: 62_032_837,
-            sha256:
-              'eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1'
-          }
+          size: 62_032_837,
+          sha256:
+            'eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1'
         },
         {
           role: 'recognition',
-          download: {
-            url: 'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/db5d610d492a14e3c34dc1fd4e9339bd369f79e6/inference.onnx',
-            size: 76_554_979,
-            sha256:
-              '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba'
-          }
+          size: 76_554_979,
+          sha256:
+            '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba'
         },
         {
           role: 'dictionary',
-          download: {
-            url: 'https://modelscope.cn/models/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/db5d610d492a14e3c34dc1fd4e9339bd369f79e6/inference.yml',
-            size: 150_580,
-            sha256:
-              '991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129'
-          }
+          size: 150_580,
+          sha256:
+            '991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129'
         }
       ]
     })
@@ -296,6 +317,58 @@ describe('DocumentOcrModelManager', () => {
     expect(new TextDecoder().decode(assets.dictionary)).toContain(
       "!\n\"\n'\n"
     )
+    const snapshot = await manager.getSnapshot()
+    expect(snapshot.selectedDownloadSource).toBe('modelscope')
+    expect(snapshot.catalog[0]?.files[0]).not.toHaveProperty('targets')
+    expect(JSON.stringify(snapshot.catalog)).not.toContain('/resolve/')
+  })
+
+  it('downloads the same canonical package from Hugging Face', async () => {
+    const { manager } = await createManager()
+
+    await expect(
+      manager.install('pp-ocrv6-tiny', 'hugging-face')
+    ).resolves.toMatchObject({
+      id: 'pp-ocrv6-tiny',
+      source: 'download'
+    })
+  })
+
+  it('does not request another source when selected coverage is missing', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-document-ocr-model-')
+    )
+    temporaryDirectories.push(directory)
+    const detection = Buffer.from('detection')
+    const recognition = Buffer.from('recognition')
+    const dictionary = dictionaryYaml()
+    const sourceCatalog = catalog(
+      detection,
+      recognition,
+      dictionary
+    ).map((entry) => ({
+      ...entry,
+      repositoryUrls: {
+        modelscope: entry.repositoryUrls.modelscope
+      },
+      files: entry.files.map((file) => ({
+        ...file,
+        targets: {
+          modelscope: file.targets.modelscope
+        }
+      }))
+    }))
+    const transport = vi.fn<typeof fetch>()
+    const manager = new DocumentOcrModelManager({
+      userDataDirectory: directory,
+      fetch: transport,
+      catalog: sourceCatalog
+    })
+
+    await expect(
+      manager.install('pp-ocrv6-tiny', 'hugging-face')
+    ).rejects.toThrow('当前下载源')
+    expect(transport).not.toHaveBeenCalled()
   })
 
   it('rejects an imported model whose hash does not match', async () => {

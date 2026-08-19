@@ -72,6 +72,7 @@ import type {
 import type {
   ApplicationSettings,
   ApplicationSettingsUpdate,
+  ModelDownloadSource,
   VersionCheckResult
 } from '../shared/application-settings-contracts'
 import type { ReleaseNotesSnapshot } from '../shared/release-notes-contracts'
@@ -404,10 +405,13 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.speechModelsGet
       ) as Promise<SpeechModelSnapshot>,
-    install: (modelId: string) =>
+    install: (
+      modelId: string,
+      expectedDownloadSource: ModelDownloadSource
+    ) =>
       ipcRenderer.invoke(
         ipcChannels.speechModelsInstall,
-        { modelId }
+        { modelId, expectedDownloadSource }
       ) as Promise<SpeechModelSnapshot>,
     cancel: (modelId: string) =>
       ipcRenderer.invoke(
@@ -481,10 +485,13 @@ const desktopApi: DesktopApi = {
         ipcChannels.documentParsingTest,
         { purpose }
       ) as Promise<DocumentParsingDiagnostic | undefined>,
-    installOcrModel: (modelId: string) =>
+    installOcrModel: (
+      modelId: string,
+      expectedDownloadSource: ModelDownloadSource
+    ) =>
       ipcRenderer.invoke(
         ipcChannels.documentOcrModelsInstall,
-        { modelId }
+        { modelId, expectedDownloadSource }
       ) as Promise<DocumentParsingSnapshot>,
     cancelOcrModelOperation: (modelId: string) =>
       ipcRenderer.invoke(

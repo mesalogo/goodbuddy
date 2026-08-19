@@ -1084,6 +1084,7 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -1176,6 +1177,7 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -1183,6 +1185,7 @@ describe('App', () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -1276,6 +1279,7 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -1283,6 +1287,7 @@ describe('App', () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7206,6 +7211,7 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7213,6 +7219,7 @@ describe('App', () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7253,6 +7260,7 @@ describe('App', () => {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7260,6 +7268,7 @@ describe('App', () => {
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
@@ -7292,6 +7301,7 @@ describe('App', () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -7314,6 +7324,9 @@ describe('App', () => {
       fireEvent.click(await screen.findByText('本地工作区'))
       fireEvent.click(
         screen.getByRole('tab', { name: '平台功能' })
+      )
+      fireEvent.click(
+        await screen.findByRole('tab', { name: '魔法笔记' })
       )
       const toggle = await screen.findByRole('switch', {
         name: '显示魔法笔记入口'

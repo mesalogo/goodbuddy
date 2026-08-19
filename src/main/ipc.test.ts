@@ -430,6 +430,179 @@ describe('registerIpcHandlers update source routing', () => {
   })
 })
 
+describe('registerIpcHandlers model download source routing', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('uses the persisted source and rejects stale renderer requests', async () => {
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const speechSnapshot = {
+      rootDirectory: 'C:\\models\\speech',
+      selectedDownloadSource: 'hugging-face',
+      catalog: [],
+      installed: [],
+      operations: [],
+      selectedModelId: null
+    }
+    const ocrSnapshot = {
+      settings: {},
+      status: {},
+      ocrModels: {
+        rootDirectory: 'C:\\models\\ocr',
+        selectedDownloadSource: 'hugging-face',
+        catalog: [],
+        installed: [],
+        operations: []
+      }
+    }
+    const speechModelManager = {
+      install: vi.fn(async () => undefined),
+      getSnapshot: vi.fn(async () => speechSnapshot),
+      getRepositoryUrl: vi.fn(
+        () => 'https://huggingface.co/example/speech'
+      )
+    }
+    const documentOcrModelManager = {
+      install: vi.fn(async () => undefined),
+      getRepositoryUrl: vi.fn(
+        () => 'https://huggingface.co/example/ocr'
+      )
+    }
+    const documentParsingService = {
+      snapshot: vi.fn(async () => ocrSnapshot)
+    }
+    const applicationSettingsStore = {
+      get: vi.fn(async () => ({
+        modelDownloadSource: 'hugging-face'
+      }))
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      { claimDueSchedules: vi.fn(() => []) } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      applicationSettingsStore as never,
+      undefined,
+      speechModelManager as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      documentParsingService as never,
+      documentOcrModelManager as never
+    )
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.speechModelsInstall)?.(
+        event,
+        {
+          modelId: 'speech-model',
+          expectedDownloadSource: 'hugging-face'
+        }
+      )
+    ).resolves.toEqual(speechSnapshot)
+    expect(speechModelManager.install).toHaveBeenCalledWith(
+      'speech-model',
+      'hugging-face'
+    )
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.speechModelsInstall)?.(
+        event,
+        {
+          modelId: 'speech-model',
+          expectedDownloadSource: 'modelscope'
+        }
+      )
+    ).rejects.toThrow('模型下载源已变化')
+    expect(speechModelManager.install).toHaveBeenCalledTimes(1)
+
+    applicationSettingsStore.get.mockRejectedValueOnce(
+      new Error('settings unavailable')
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.speechModelsInstall)?.(
+        event,
+        {
+          modelId: 'speech-model',
+          expectedDownloadSource: 'hugging-face'
+        }
+      )
+    ).rejects.toThrow('settings unavailable')
+    expect(speechModelManager.install).toHaveBeenCalledTimes(1)
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentOcrModelsInstall
+      )?.(event, {
+        modelId: 'ocr-model',
+        expectedDownloadSource: 'hugging-face'
+      })
+    ).resolves.toEqual(ocrSnapshot)
+    expect(documentOcrModelManager.install).toHaveBeenCalledWith(
+      'ocr-model',
+      'hugging-face'
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.speechModelsOpenRepository
+      )?.(event, { modelId: 'speech-model' })
+    ).resolves.toBeUndefined()
+    expect(speechModelManager.getRepositoryUrl).toHaveBeenCalledWith(
+      'speech-model',
+      'hugging-face'
+    )
+    expect(electronMocks.openExternal).toHaveBeenLastCalledWith(
+      'https://huggingface.co/example/speech'
+    )
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentOcrModelsOpenRepository
+      )?.(event, { modelId: 'ocr-model' })
+    ).resolves.toBeUndefined()
+    expect(
+      documentOcrModelManager.getRepositoryUrl
+    ).toHaveBeenCalledWith('ocr-model', 'hugging-face')
+    expect(electronMocks.openExternal).toHaveBeenLastCalledWith(
+      'https://huggingface.co/example/ocr'
+    )
+
+    await dispose()
+  })
+})
+
 vi.mock('electron', () => ({
   app: {
     getName: vi.fn(() => 'GoodBuddy'),

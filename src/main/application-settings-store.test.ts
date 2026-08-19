@@ -63,6 +63,7 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -70,14 +71,16 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 6,
+      version: 7,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined',
@@ -102,6 +105,7 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -124,6 +128,7 @@ describe('ApplicationSettingsStore', () => {
       await expect(store.get()).resolves.toEqual({
         checkUpdatesOnStartup: false,
         updateSource: 'github',
+        modelDownloadSource: 'modelscope',
         magicNotesEnabled: false,
         magicNoteCommentMode: 'immediate',
         magicNoteCommentFormat: 'combined'
@@ -146,6 +151,7 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -168,6 +174,7 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'combined'
@@ -194,9 +201,10 @@ describe('ApplicationSettingsStore', () => {
       new ApplicationSettingsStore(filePath).getLastSeenReleaseNotesVersion()
     ).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 6,
+      version: 7,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'narrative',
@@ -222,6 +230,7 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'after-save-auto',
       magicNoteCommentFormat: 'structured'
@@ -229,6 +238,39 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.getLastSeenReleaseNotesVersion()).resolves.toBe(
       '0.8.18'
     )
+  })
+
+  it('lazily migrates version 6 to the default ModelScope source', async () => {
+    const { filePath, store } = await createStore()
+    const versionSix = {
+      version: 6,
+      checkUpdatesOnStartup: false,
+      updateSource: 'mirror',
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-auto',
+      magicNoteCommentFormat: 'structured',
+      lastSeenReleaseNotesVersion: '0.8.18'
+    }
+    await writeFile(filePath, JSON.stringify(versionSix), 'utf8')
+
+    await expect(store.get()).resolves.toEqual({
+      checkUpdatesOnStartup: false,
+      updateSource: 'mirror',
+      modelDownloadSource: 'modelscope',
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'after-save-auto',
+      magicNoteCommentFormat: 'structured'
+    })
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual(
+      versionSix
+    )
+
+    await store.update({ modelDownloadSource: 'hugging-face' })
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...versionSix,
+      version: 7,
+      modelDownloadSource: 'hugging-face'
+    })
   })
 
   it('strictly rejects incomplete full settings', () => {
@@ -254,6 +296,7 @@ describe('ApplicationSettingsStore', () => {
     for (const input of [
       {},
       { checkUpdatesOnStartup: 'true' },
+      { modelDownloadSource: 'automatic' },
       { anotherSetting: true },
       null
     ]) {
@@ -274,6 +317,7 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
@@ -387,14 +431,16 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 6,
+      version: 7,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined',
@@ -419,6 +465,7 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
+      modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'

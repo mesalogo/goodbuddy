@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import { magicNoteCommentFormatSchema } from './magic-notes-contracts'
+import { modelDownloadSourceSchema } from './model-download-contracts'
 import { settingsWarningsSchema } from './settings-warning-contracts'
+
+export {
+  modelDownloadSourceSchema,
+  type ModelDownloadSource
+} from './model-download-contracts'
 
 export const magicNoteCommentModeSchema = z.enum([
   'immediate',
@@ -22,6 +28,7 @@ const applicationPreferencesSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
     updateSource: updateSourceSchema,
+    modelDownloadSource: modelDownloadSourceSchema,
     magicNotesEnabled: z.boolean(),
     magicNoteCommentMode: magicNoteCommentModeSchema,
     magicNoteCommentFormat: magicNoteCommentFormatSchema
@@ -47,6 +54,7 @@ export type ApplicationSettings = z.infer<
 export type ApplicationSettingsUpdate = z.infer<
   typeof applicationSettingsUpdateSchema
 >
+
 
 export type VersionCheckFile = {
   name: string
