@@ -2257,11 +2257,36 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+.app-frame {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  grid-template-rows: 30px minmax(0, 1fr);
+}
+
+.window-titlebar {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  justify-content: flex-end;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
 .app-shell {
   position: relative;
   display: flex;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   background: var(--surface-canvas);
   color: var(--text-primary);
 }
@@ -2952,7 +2977,7 @@ textarea:focus-visible {
   flex: 1;
   overflow: hidden;
   background: var(--surface-raised);
-  grid-template-rows: 58px minmax(0, 1fr) auto;
+  grid-template-rows: 46px minmax(0, 1fr);
 }
 
 .workspace-route-cache {
@@ -2978,6 +3003,10 @@ textarea:focus-visible {
   user-select: none;
 }
 
+.topbar--with-assistant-toggle {
+  padding-right: 46px;
+}
+
 .topbar :is(button, input, select),
 .topbar__actions,
 .window-controls {
@@ -2989,7 +3018,7 @@ textarea:focus-visible {
   height: 100%;
   flex: 0 0 auto;
   align-self: stretch;
-  margin-left: 8px;
+  -webkit-app-region: no-drag;
 }
 
 .window-control {
@@ -3074,8 +3103,8 @@ button > svg {
 }
 
 .assistant-sidebar--open {
-  width: var(--assistant-sidebar-width, 350px);
-  flex-basis: var(--assistant-sidebar-width, 350px);
+  width: var(--assistant-sidebar-width, 30%);
+  flex-basis: var(--assistant-sidebar-width, 30%);
   border-left-width: 1px;
   opacity: 1;
 }
@@ -3123,30 +3152,28 @@ button > svg {
   outline-offset: -2px;
 }
 
-.assistant-sidebar__header {
-  display: flex;
-  height: 58px;
-  flex: 0 0 58px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px 0 18px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.assistant-sidebar__header strong {
-  font-size: 13px;
-}
-
 .assistant-sidebar__tabs {
   display: grid;
-  padding: 8px;
+  min-height: 46px;
+  padding: 6px 46px 6px 8px;
   border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 46px;
+  align-items: center;
   gap: 3px;
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.assistant-sidebar-toggle {
+  position: absolute;
+  z-index: 3;
+  top: 6px;
+  right: 6px;
+  -webkit-app-region: no-drag;
+}
+
 .assistant-sidebar__tab {
   position: relative;
+  min-height: 32px;
   padding: 7px 2px;
   border-radius: 7px;
   background: transparent;
@@ -5111,6 +5138,9 @@ button > svg {
 }
 
 .composer-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding:
     var(--space-3)
     max(var(--page-gutter), calc((100% - var(--content-reading)) / 2))
@@ -5119,6 +5149,9 @@ button > svg {
 }
 
 .composer {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 0;
   border: 1px solid var(--border-control);
   border-radius: var(--radius-card);
@@ -5563,6 +5596,8 @@ button > svg {
 
 .composer__toolbar {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   min-height: 56px;
   padding: 10px var(--space-3);
@@ -12527,7 +12562,7 @@ details.settings-section > :not(summary) + :not(summary) {
   --shadow-dialog: 0 18px 48px rgb(0 4 10 / 48%);
 }
 
-:root[data-theme='dark'] .app-shell {
+:root[data-theme='dark'] :where(.app-frame, .app-shell) {
   background: var(--surface-canvas);
   color: var(--text-primary);
 }
@@ -12544,6 +12579,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 :root[data-theme='dark'] :where(
   .sidebar,
+  .window-titlebar,
   .topbar,
   .assistant-sidebar,
   .project-create-card,
@@ -12566,6 +12602,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 :root[data-theme='dark'] :where(
   .sidebar,
+  .window-titlebar,
   .topbar
 ) {
   background: var(--surface-subtle);
@@ -12623,9 +12660,9 @@ details.settings-section > :not(summary) + :not(summary) {
 :root[data-theme='dark'] :where(
   .primary-nav,
   .sidebar-footer,
+  .window-titlebar,
   .topbar,
   .assistant-sidebar,
-  .assistant-sidebar__header,
   .assistant-sidebar__tabs,
   .assistant-sidebar__context,
   .assistant-sidebar__preview > header,
@@ -12944,38 +12981,6 @@ details.settings-section > :not(summary) + :not(summary) {
   }
 }
 
-@media (max-width: 1279px) {
-  .assistant-sidebar-backdrop {
-    position: absolute;
-    z-index: 25;
-    display: block;
-    padding: 0;
-    border: 0;
-    background: var(--overlay-backdrop);
-    inset: 58px 0 0;
-  }
-
-  .assistant-sidebar {
-    position: absolute;
-    z-index: 30;
-    top: 58px;
-    right: 0;
-    bottom: 0;
-    box-shadow: -12px 0 30px rgb(0 0 0 / 10%);
-  }
-
-  .assistant-sidebar--open {
-    width: min(
-      var(--assistant-sidebar-width, 350px),
-      calc(100vw - 36px)
-    );
-    flex-basis: min(
-      var(--assistant-sidebar-width, 350px),
-      calc(100vw - 36px)
-    );
-  }
-}
-
 @media (max-width: 1020px) {
   .sidebar {
     flex-basis: 236px;
@@ -12989,17 +12994,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .conversation-list,
   .sidebar-footer {
     min-width: 206px;
-  }
-
-  .assistant-sidebar--open {
-    width: min(
-      var(--assistant-sidebar-width, 350px),
-      calc(100vw - 36px)
-    );
-    flex-basis: min(
-      var(--assistant-sidebar-width, 350px),
-      calc(100vw - 36px)
-    );
   }
 
   .settings-page .settings-panel__body {
@@ -13059,27 +13053,6 @@ details.settings-section > :not(summary) + :not(summary) {
     border: 0;
     background: var(--overlay-backdrop);
     inset: 0;
-  }
-}
-
-@media (max-width: 719px) {
-  .assistant-sidebar {
-    top: 0;
-    z-index: 45;
-  }
-
-  .assistant-sidebar--open {
-    width: calc(100vw - 16px);
-    flex-basis: calc(100vw - 16px);
-  }
-
-  .assistant-sidebar-backdrop {
-    z-index: 40;
-    inset: 0;
-  }
-
-  .assistant-sidebar__resize-handle {
-    display: none;
   }
 }
 

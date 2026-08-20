@@ -158,7 +158,7 @@ describe('WorkspacePrimitives', () => {
     expect(screen.getByLabelText('项目 + 全局')).toBeInTheDocument()
   })
 
-  it('keeps forced-color and narrow assistant overrides authoritative', () => {
+  it('keeps forced-color and docked split contracts authoritative', () => {
     const forcedColorsStart = stylesheet.indexOf(
       '@media (forced-colors: active)'
     )
@@ -185,15 +185,12 @@ describe('WorkspacePrimitives', () => {
       /\.heartbeat-center__meter\s*\{[^}]*forced-color-adjust:\s*none;/u
     )
 
-    const narrowAssistant = stylesheet.slice(
-      stylesheet.indexOf('@media (max-width: 719px)'),
-      stylesheet.indexOf(
-        '@media (max-width: 720px)',
-        stylesheet.indexOf('@media (max-width: 719px)')
-      )
+    expect(stylesheet).toMatch(
+      /\.assistant-sidebar--open\s*\{[^}]*width:\s*var\(--assistant-sidebar-width,\s*30%\);[^}]*flex-basis:\s*var\(--assistant-sidebar-width,\s*30%\);/u
     )
-    expect(narrowAssistant).toMatch(
-      /\.assistant-sidebar--open\s*\{[^}]*width:\s*calc\(100vw - 16px\);[^}]*flex-basis:\s*calc\(100vw - 16px\);/u
+    expect(stylesheet).not.toContain('@media (max-width: 719px)')
+    expect(stylesheet).toMatch(
+      /\.composer-wrap\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*padding:\s*var\(--space-3\)\s*max\(var\(--page-gutter\),\s*calc\(\(100% - var\(--content-reading\)\) \/ 2\)\)\s*var\(--space-2\);/u
     )
   })
 

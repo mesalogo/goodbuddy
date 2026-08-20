@@ -1138,9 +1138,7 @@ describe('App', () => {
         })
       )
       fireEvent.click(
-        within(assistantSidebar).getByRole('button', {
-          name: 'Close assistant workspace'
-        })
+        screen.getByLabelText('Toggle assistant workspace')
       )
 
       fireEvent.click(screen.getByLabelText('Project settings'))
@@ -5119,7 +5117,7 @@ describe('App', () => {
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId)
     )
-    fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
     selectProjectOption(secondProject.name)
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledWith(
@@ -8011,23 +8009,52 @@ describe('App', () => {
   })
 
   it('opens the global assistant sidebar and switches work tabs', async () => {
-    render(<App />)
+    const { container } = render(<App />)
 
     const sidebar = screen.getByLabelText('助手工作栏')
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
     const assistantTrigger =
       screen.getByLabelText('切换助手工作栏')
+    expect(
+      container.querySelector('.topbar')
+    ).toContainElement(assistantTrigger)
+    expect(assistantTrigger).toHaveClass('assistant-sidebar-toggle')
+    expect(assistantTrigger).not.toHaveClass('icon-button--active')
+    expect(assistantTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(assistantTrigger).toHaveAttribute(
+      'aria-controls',
+      'assistant-sidebar'
+    )
+    expect(
+      assistantTrigger.querySelector('.lucide-panel-right-open')
+    ).toBeInTheDocument()
+    expect(
+      assistantTrigger.querySelector('.lucide-panel-right-close')
+    ).not.toBeInTheDocument()
+    expect(
+      container.querySelector('.window-titlebar')
+    ).toContainElement(screen.getByLabelText('关闭窗口'))
+    expect(
+      screen.queryByLabelText('关闭助手工作栏')
+    ).not.toBeInTheDocument()
     fireEvent.click(assistantTrigger)
     expect(sidebar).toHaveClass('assistant-sidebar--open')
-    expect(sidebar).toHaveAttribute('role', 'dialog')
-    expect(sidebar).toHaveAttribute('aria-modal', 'true')
+    expect(sidebar).toHaveAttribute('id', 'assistant-sidebar')
+    expect(sidebar).toHaveAttribute('role', 'complementary')
+    expect(sidebar).not.toHaveAttribute('aria-modal')
+    expect(assistantTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(assistantTrigger).not.toHaveClass('icon-button--active')
+    expect(
+      assistantTrigger.querySelector('.lucide-panel-right-close')
+    ).toBeInTheDocument()
+    expect(
+      assistantTrigger.querySelector('.lucide-panel-right-open')
+    ).not.toBeInTheDocument()
     const main = document.querySelector('main')
-    expect(main).toHaveAttribute('inert')
-    await waitFor(() =>
-      expect(
-        screen.getByRole('tab', { name: '任务中心' })
-      ).toHaveFocus()
-    )
+    expect(main).not.toHaveAttribute('inert')
+    expect(
+      container.querySelector('.assistant-sidebar-backdrop')
+    ).not.toBeInTheDocument()
 
     expect(
       screen.getByRole('tab', { name: '任务中心' })
@@ -8056,14 +8083,14 @@ describe('App', () => {
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
+    fireEvent.click(assistantTrigger)
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
+    expect(assistantTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      assistantTrigger.querySelector('.lucide-panel-right-open')
+    ).toBeInTheDocument()
     expect(main).not.toHaveAttribute('inert')
     await waitFor(() => expect(assistantTrigger).toHaveFocus())
-
-    fireEvent.click(assistantTrigger)
-    fireEvent.keyDown(sidebar, { key: 'Escape' })
-    expect(sidebar).not.toHaveClass('assistant-sidebar--open')
   })
 
   it('keeps completed chat replies out of the results sidebar', async () => {
@@ -8499,6 +8526,46 @@ describe('App', () => {
       expect(sidebar).toHaveClass('sidebar--closed')
       expect(workspace).not.toHaveAttribute('aria-hidden')
       expect(workspace).not.toHaveAttribute('inert')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth
+      })
+    }
+  })
+
+  it('docks the assistant workbar without obscuring a narrow workspace', async () => {
+    const originalWidth = window.innerWidth
+    const { container } = render(<App />)
+
+    try {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: 680
+      })
+      window.dispatchEvent(new Event('resize'))
+
+      await waitFor(() =>
+        expect(container.querySelector('.sidebar'))
+          .toHaveClass('sidebar--closed')
+      )
+      fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+
+      const workbar = screen.getByRole('complementary', {
+        name: '助手工作栏'
+      })
+      expect(workbar).toHaveClass('assistant-sidebar--open')
+      expect(workbar.parentElement).toHaveClass('app-shell')
+      expect(
+        workbar.parentElement?.querySelector('main.workspace')
+      ).toBeInTheDocument()
+      expect(workbar).not.toHaveAttribute('aria-modal')
+      expect(container.querySelector('main')).not.toHaveAttribute(
+        'inert'
+      )
+      expect(
+        container.querySelector('.assistant-sidebar-backdrop')
+      ).not.toBeInTheDocument()
     } finally {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,

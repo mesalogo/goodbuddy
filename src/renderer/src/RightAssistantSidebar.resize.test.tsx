@@ -25,63 +25,60 @@ function renderSidebar({
   tab = 'context',
   artifacts = [],
   onLoadArtifact = vi.fn(async () => undefined),
-  onClose = vi.fn(),
-  overlay = false,
   restoreFocusRef
 }: {
   tab?: AssistantSidebarTab
   artifacts?: SidebarArtifact[]
   onLoadArtifact?: (artifactId: string) => Promise<void>
-  onClose?: () => void
-  overlay?: boolean
   restoreFocusRef?: { current: HTMLElement | null }
 } = {}): HTMLElement {
   render(
-    <RightAssistantSidebar
-      approvals={[]}
-      artifacts={artifacts}
-      attachments={[]}
-      enabledLibraries={[]}
-      memories={[]}
-      schedules={[]}
-      tasks={[]}
-      conversationTitles={new Map()}
-      projectNames={new Map()}
-      onClose={onClose}
-      onCreateCustomTask={vi.fn()}
-      onImportArtifacts={vi.fn(async () => undefined)}
-      onListWorkspaceDirectory={vi.fn(async (path: string) => ({
-        path,
-        entries: [],
-        truncated: false
-      }))}
-      onLoadArtifact={onLoadArtifact}
-      onLoadWorkspaceFile={vi.fn()}
-      onOpenWorkspaceEntry={vi.fn(async () => undefined)}
-      onInteractBrowser={vi.fn(async () => undefined)}
-      onRefreshChanges={vi.fn(async () => undefined)}
-      onRemoveAttachment={vi.fn()}
-      onRemoveSchedule={vi.fn(async () => undefined)}
-      onRespondApproval={vi.fn()}
-      onRunSchedule={vi.fn(async () => undefined)}
-      onSetScheduleEnabled={vi.fn(async () => undefined)}
-      onOpenTask={vi.fn()}
-      onStopBrowser={vi.fn(async () => undefined)}
-      onTabChange={vi.fn()}
-      open
-      overlay={overlay}
-      restoreFocusRef={restoreFocusRef}
-      tab={tab}
-    />
+    <div>
+      <main className="workspace" />
+      <RightAssistantSidebar
+        approvals={[]}
+        artifacts={artifacts}
+        attachments={[]}
+        enabledLibraries={[]}
+        memories={[]}
+        schedules={[]}
+        tasks={[]}
+        conversationTitles={new Map()}
+        projectNames={new Map()}
+        onCreateCustomTask={vi.fn()}
+        onImportArtifacts={vi.fn(async () => undefined)}
+        onListWorkspaceDirectory={vi.fn(async (path: string) => ({
+          path,
+          entries: [],
+          truncated: false
+        }))}
+        onLoadArtifact={onLoadArtifact}
+        onLoadWorkspaceFile={vi.fn()}
+        onOpenWorkspaceEntry={vi.fn(async () => undefined)}
+        onInteractBrowser={vi.fn(async () => undefined)}
+        onRefreshChanges={vi.fn(async () => undefined)}
+        onRemoveAttachment={vi.fn()}
+        onRemoveSchedule={vi.fn(async () => undefined)}
+        onRespondApproval={vi.fn()}
+        onRunSchedule={vi.fn(async () => undefined)}
+        onSetScheduleEnabled={vi.fn(async () => undefined)}
+        onOpenTask={vi.fn()}
+        onStopBrowser={vi.fn(async () => undefined)}
+        onTabChange={vi.fn()}
+        open
+        restoreFocusRef={restoreFocusRef}
+        tab={tab}
+      />
+    </div>
   )
 
-  return screen.getByRole(overlay ? 'dialog' : 'complementary', {
+  return screen.getByRole('complementary', {
     name: '助手工作栏'
   })
 }
 
 describe('RightAssistantSidebar resizing', () => {
-  it('resizes with pointer capture and preserves the minimum app width', () => {
+  it('resizes with pointer capture and preserves equal pane minima', () => {
     const sidebar = renderSidebar()
     const separator = screen.getByRole('separator', {
       name: '调整助手工作栏宽度'
@@ -108,7 +105,9 @@ describe('RightAssistantSidebar resizing', () => {
     expect(sidebar).toHaveClass('assistant-sidebar--resizing')
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('880px')
+    ).toBe('1100px')
+    expect(separator).toHaveAttribute('aria-valuemin', '300')
+    expect(separator).toHaveAttribute('aria-valuemax', '1100')
 
     fireEvent.pointerUp(separator, { pointerId: 7 })
     expect(releasePointerCapture).toHaveBeenCalledWith(7)
@@ -124,8 +123,8 @@ describe('RightAssistantSidebar resizing', () => {
     fireEvent.keyDown(separator, { key: 'ArrowLeft' })
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('366px')
-    expect(separator).toHaveAttribute('aria-valuenow', '366')
+    ).toBe('436px')
+    expect(separator).toHaveAttribute('aria-valuenow', '436')
 
     fireEvent.keyDown(separator, { key: 'Home' })
     expect(
@@ -135,10 +134,10 @@ describe('RightAssistantSidebar resizing', () => {
     fireEvent.keyDown(separator, { key: 'End' })
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('880px')
+    ).toBe('1100px')
   })
 
-  it('remains resizable when the sidebar overlays a medium window', () => {
+  it('remains resizable when the sidebar docks in a medium window', () => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1024
@@ -169,6 +168,69 @@ describe('RightAssistantSidebar resizing', () => {
     ).toBe('424px')
   })
 
+  it('keeps the equal minimum dock resizable in a narrow window', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 680
+    })
+    const sidebar = renderSidebar()
+    const separator = screen.getByRole('separator', {
+      name: '调整助手工作栏宽度'
+    })
+
+    expect(
+      sidebar.style.getPropertyValue('--assistant-sidebar-width')
+    ).toBe('300px')
+    expect(sidebar).not.toHaveAttribute('aria-modal')
+    expect(separator).toHaveAttribute('tabindex', '0')
+    expect(separator).toHaveAttribute('aria-valuemin', '300')
+    expect(separator).toHaveAttribute('aria-valuemax', '380')
+
+    fireEvent.keyDown(separator, { key: 'End' })
+    expect(
+      sidebar.style.getPropertyValue('--assistant-sidebar-width')
+    ).toBe('380px')
+  })
+
+  it('excludes the primary sidebar from the equal pane limits', async () => {
+    const getBoundingClientRect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        const [left, width] = this.classList.contains('workspace')
+          ? [278, 630]
+          : this.classList.contains('assistant-sidebar')
+            ? [908, 270]
+            : [0, 0]
+        return {
+          bottom: 700,
+          height: 700,
+          left,
+          right: left + width,
+          top: 0,
+          width,
+          x: left,
+          y: 0,
+          toJSON: () => ({})
+        }
+      })
+    try {
+      const sidebar = renderSidebar()
+      const separator = screen.getByRole('separator', {
+        name: '调整助手工作栏宽度'
+      })
+      await waitFor(() =>
+        expect(separator).toHaveAttribute('aria-valuemax', '600')
+      )
+
+      fireEvent.keyDown(separator, { key: 'End' })
+      expect(
+        sidebar.style.getPropertyValue('--assistant-sidebar-width')
+      ).toBe('600px')
+    } finally {
+      getBoundingClientRect.mockRestore()
+    }
+  })
+
   it('exposes the task center and four reusable work surfaces', () => {
     renderSidebar()
 
@@ -180,25 +242,11 @@ describe('RightAssistantSidebar resizing', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('treats overlay mode as a focus-trapped dismissible dialog', async () => {
-    const onClose = vi.fn()
-    const trigger = document.createElement('button')
-    document.body.append(trigger)
-    const sidebar = renderSidebar({
-      onClose,
-      overlay: true,
-      restoreFocusRef: { current: trigger }
-    })
+  it('keeps the docked sidebar non-modal', () => {
+    const sidebar = renderSidebar()
 
-    expect(sidebar).toHaveAttribute('aria-modal', 'true')
-    await waitFor(() =>
-      expect(
-        screen.getByRole('tab', { name: '上下文' })
-      ).toHaveFocus()
-    )
-    fireEvent.keyDown(sidebar, { key: 'Escape' })
-    expect(onClose).toHaveBeenCalledOnce()
-    trigger.remove()
+    expect(sidebar).not.toHaveAttribute('aria-modal')
+    expect(sidebar).toHaveAttribute('role', 'complementary')
   })
 
   it('keeps the product Task index in the task center', () => {

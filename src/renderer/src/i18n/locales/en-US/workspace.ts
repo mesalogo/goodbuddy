@@ -72,9 +72,6 @@ export const workspace = {
     ariaLabel: 'Assistant workspace',
     resizeAriaLabel: 'Resize assistant workspace',
     resizeValue: '{{width}} pixels',
-    title: 'Workspace',
-    close: 'Close assistant workspace',
-    dismissOverlay: 'Dismiss assistant workspace overlay',
     categoriesAriaLabel: 'Workspace categories',
     tabs: {
       tasks: {

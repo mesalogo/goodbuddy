@@ -69,9 +69,6 @@ export const workspace = {
     ariaLabel: '助手工作栏',
     resizeAriaLabel: '调整助手工作栏宽度',
     resizeValue: '{{width}} 像素',
-    title: '工作栏',
-    close: '关闭助手工作栏',
-    dismissOverlay: '关闭助手工作栏背景',
     categoriesAriaLabel: '工作栏分类',
     tabs: {
       tasks: {

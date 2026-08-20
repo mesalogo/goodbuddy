@@ -8,7 +8,6 @@ import {
   FolderTree,
   ClockFading,
   Monitor,
-  PanelRightClose,
   Plus,
   RefreshCw,
   ShieldAlert,
@@ -33,7 +32,6 @@ import type {
   KnowledgeLibrary
 } from '../../shared/contracts'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
-import { trapTabFocus } from './dialog-focus'
 import { SegmentedControl } from './WorkspacePrimitives'
 import {
   findTaskSchedule,
@@ -80,9 +78,7 @@ type RightAssistantSidebarProps = {
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
   browserState?: BrowserLiveState
-  overlay?: boolean
   restoreFocusRef?: { current: HTMLElement | null }
-  onClose: () => void
   onInteractBrowser: () => Promise<void>
   onStopBrowser: () => Promise<void>
   onCreateCustomTask: () => void
@@ -120,27 +116,56 @@ const tabIds: AssistantSidebarTab[] = [
   'results'
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
-const defaultSidebarWidth = 350
-const minimumSidebarWidth = 300
-const minimumRemainingAppWidth = 520
-const compactSidebarBreakpoint = 720
+const defaultSidebarRatio = 0.3
+const minimumPaneWidth = 300
 const keyboardResizeStep = 16
-function getSidebarWidthLimits(viewportWidth: number): {
+
+function getSidebarWidthLimits(layoutWidth: number): {
   minimum: number
   maximum: number
 } {
+  const boundedLayoutWidth = Math.max(0, Math.floor(layoutWidth))
+  const minimum = Math.min(
+    minimumPaneWidth,
+    Math.floor(boundedLayoutWidth / 2)
+  )
   return {
-    minimum: minimumSidebarWidth,
-    maximum: Math.max(
-      minimumSidebarWidth,
-      viewportWidth - minimumRemainingAppWidth
-    )
+    minimum,
+    maximum: Math.max(minimum, boundedLayoutWidth - minimum)
   }
 }
 
-function clampSidebarWidth(width: number, viewportWidth: number): number {
-  const limits = getSidebarWidthLimits(viewportWidth)
+function clampSidebarWidth(width: number, layoutWidth: number): number {
+  const limits = getSidebarWidthLimits(layoutWidth)
   return Math.min(limits.maximum, Math.max(limits.minimum, width))
+}
+
+function findWorkspaceSibling(
+  sidebar: HTMLElement | null
+): HTMLElement | undefined {
+  const parent = sidebar?.parentElement
+  if (!parent) {
+    return undefined
+  }
+  return Array.from(parent.children).find(
+    (element): element is HTMLElement =>
+      element instanceof HTMLElement &&
+      element.classList.contains('workspace')
+  )
+}
+
+function measureSplitLayoutWidth(
+  sidebar: HTMLElement | null,
+  fallbackWidth: number
+): number {
+  const workspace = findWorkspaceSibling(sidebar)
+  if (!sidebar || !workspace) {
+    return fallbackWidth
+  }
+  const measuredWidth =
+    workspace.getBoundingClientRect().width +
+    sidebar.getBoundingClientRect().width
+  return measuredWidth > 0 ? measuredWidth : fallbackWidth
 }
 
 export function RightAssistantSidebar({
@@ -159,9 +184,7 @@ export function RightAssistantSidebar({
   workspaceChanges,
   workspaceProjectId,
   browserState,
-  overlay = false,
   restoreFocusRef,
-  onClose,
   onInteractBrowser,
   onStopBrowser,
   onCreateCustomTask,
@@ -198,13 +221,18 @@ export function RightAssistantSidebar({
       })),
     [t]
   )
-  const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
-  const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth)
+  const [splitLayoutWidth, setSplitLayoutWidth] = useState(
+    window.innerWidth
+  )
+  const [sidebarRatio, setSidebarRatio] = useState(defaultSidebarRatio)
   const [isResizing, setIsResizing] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
   const wasOpen = useRef(false)
-  const wasOverlayOpen = useRef(false)
-  const liveSidebarWidth = useRef(defaultSidebarWidth)
+  const sidebarWidth = clampSidebarWidth(
+    splitLayoutWidth * sidebarRatio,
+    splitLayoutWidth
+  )
+  const liveSidebarWidth = useRef(sidebarWidth)
   const resizePointerId = useRef<number | undefined>(undefined)
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [workspacePreview, setWorkspacePreview] = useState<
@@ -245,9 +273,10 @@ export function RightAssistantSidebar({
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
       : undefined
-  const sidebarWidthLimits = getSidebarWidthLimits(viewportWidth)
+  const sidebarWidthLimits = getSidebarWidthLimits(splitLayoutWidth)
   const canResize =
-    open && viewportWidth >= compactSidebarBreakpoint
+    open &&
+    sidebarWidthLimits.maximum > sidebarWidthLimits.minimum
   const topLevelTasks = useMemo(
     () => tasks.filter((task) => !task.parentTaskId),
     [tasks]
@@ -278,51 +307,74 @@ export function RightAssistantSidebar({
   )
 
   useEffect(() => {
-    const handleViewportResize = (): void => {
-      setViewportWidth(window.innerWidth)
-      setSidebarWidth((currentWidth) => {
-        const width = clampSidebarWidth(
-          currentWidth,
-          window.innerWidth
-        )
-        liveSidebarWidth.current = width
-        return width
-      })
+    const sidebar = sidebarRef.current
+    const workspace = findWorkspaceSibling(sidebar)
+    const handleLayoutResize = (): void => {
+      const width = measureSplitLayoutWidth(
+        sidebar,
+        window.innerWidth
+      )
+      setSplitLayoutWidth((currentWidth) =>
+        Math.abs(currentWidth - width) >= 0.5
+          ? width
+          : currentWidth
+      )
     }
 
-    window.addEventListener('resize', handleViewportResize)
-    return () => window.removeEventListener('resize', handleViewportResize)
+    handleLayoutResize()
+    window.addEventListener('resize', handleLayoutResize)
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? undefined
+        : new ResizeObserver(handleLayoutResize)
+    if (resizeObserver && workspace && sidebar) {
+      resizeObserver.observe(workspace)
+      resizeObserver.observe(sidebar)
+    }
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', handleLayoutResize)
+    }
   }, [])
 
   useEffect(() => {
-    if (open && overlay && !wasOverlayOpen.current) {
-      const focusFrame = requestAnimationFrame(() => {
-        document
-          .getElementById(`assistant-sidebar-tab-${tab}`)
-          ?.focus()
-      })
-      wasOpen.current = open
-      wasOverlayOpen.current = true
-      return () => cancelAnimationFrame(focusFrame)
+    if (!isResizing) {
+      liveSidebarWidth.current = sidebarWidth
     }
+  }, [isResizing, sidebarWidth])
+
+  useEffect(() => {
     if (!open && wasOpen.current) {
       requestAnimationFrame(() => restoreFocusRef?.current?.focus())
     }
     wasOpen.current = open
-    wasOverlayOpen.current = open && overlay
-  }, [open, overlay, restoreFocusRef, tab])
+  }, [open, restoreFocusRef])
 
   const resizeFromClientX = (
     clientX: number,
     commit: boolean
   ): void => {
+    const layoutWidth = measureSplitLayoutWidth(
+      sidebarRef.current,
+      splitLayoutWidth
+    )
+    if (Math.abs(splitLayoutWidth - layoutWidth) >= 0.5) {
+      setSplitLayoutWidth(layoutWidth)
+    }
+    const sidebarBounds = sidebarRef.current?.getBoundingClientRect()
+    const layoutRight =
+      sidebarBounds && sidebarBounds.width > 0
+        ? sidebarBounds.right
+        : window.innerWidth
     const width = clampSidebarWidth(
-      window.innerWidth - clientX,
-      window.innerWidth
+      layoutRight - clientX,
+      layoutWidth
     )
     liveSidebarWidth.current = width
     if (commit) {
-      setSidebarWidth(width)
+      setSidebarRatio(
+        layoutWidth > 0 ? width / layoutWidth : defaultSidebarRatio
+      )
       return
     }
     sidebarRef.current?.style.setProperty(
@@ -341,7 +393,15 @@ export function RightAssistantSidebar({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
-    setSidebarWidth(liveSidebarWidth.current)
+    const layoutWidth = measureSplitLayoutWidth(
+      sidebarRef.current,
+      splitLayoutWidth
+    )
+    setSidebarRatio(
+      layoutWidth > 0
+        ? liveSidebarWidth.current / layoutWidth
+        : defaultSidebarRatio
+    )
     setIsResizing(false)
   }
 
@@ -351,7 +411,14 @@ export function RightAssistantSidebar({
     if (!canResize) {
       return
     }
-    const limits = getSidebarWidthLimits(window.innerWidth)
+    const layoutWidth = measureSplitLayoutWidth(
+      sidebarRef.current,
+      splitLayoutWidth
+    )
+    if (Math.abs(splitLayoutWidth - layoutWidth) >= 0.5) {
+      setSplitLayoutWidth(layoutWidth)
+    }
+    const limits = getSidebarWidthLimits(layoutWidth)
     const nextWidth =
       event.key === 'Home'
         ? limits.minimum
@@ -367,8 +434,9 @@ export function RightAssistantSidebar({
       return
     }
     event.preventDefault()
-    setSidebarWidth(
-      clampSidebarWidth(nextWidth, window.innerWidth)
+    const width = clampSidebarWidth(nextWidth, layoutWidth)
+    setSidebarRatio(
+      layoutWidth > 0 ? width / layoutWidth : defaultSidebarRatio
     )
   }
 
@@ -455,28 +523,17 @@ export function RightAssistantSidebar({
       ref={sidebarRef}
       aria-label={t('sidebar.ariaLabel')}
       aria-hidden={!open}
-      aria-modal={open && overlay ? 'true' : undefined}
       className={
         open
           ? `assistant-sidebar assistant-sidebar--open${isResizing && canResize ? ' assistant-sidebar--resizing' : ''}`
           : 'assistant-sidebar'
       }
+      id="assistant-sidebar"
       inert={!open}
-      onKeyDown={(event) => {
-        if (!open || !overlay) {
-          return
-        }
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          onClose()
-          return
-        }
-        trapTabFocus(event, sidebarRef.current)
-      }}
-      role={open && overlay ? 'dialog' : undefined}
+      role="complementary"
       style={
         {
-          '--assistant-sidebar-width': `${sidebarWidth}px`
+          '--assistant-sidebar-width': `${Math.round(sidebarWidth)}px`
         } as React.CSSProperties
       }
     >
@@ -484,11 +541,11 @@ export function RightAssistantSidebar({
         aria-controls="assistant-sidebar-panel"
         aria-label={t('sidebar.resizeAriaLabel')}
         aria-orientation="vertical"
-        aria-valuemax={sidebarWidthLimits.maximum}
-        aria-valuemin={sidebarWidthLimits.minimum}
-        aria-valuenow={sidebarWidth}
+        aria-valuemax={Math.round(sidebarWidthLimits.maximum)}
+        aria-valuemin={Math.round(sidebarWidthLimits.minimum)}
+        aria-valuenow={Math.round(sidebarWidth)}
         aria-valuetext={t('sidebar.resizeValue', {
-          width: sidebarWidth
+          width: Math.round(sidebarWidth)
         })}
         aria-disabled={!canResize}
         className="assistant-sidebar__resize-handle"
@@ -496,7 +553,15 @@ export function RightAssistantSidebar({
         onLostPointerCapture={(event) => {
           if (resizePointerId.current === event.pointerId) {
             resizePointerId.current = undefined
-            setSidebarWidth(liveSidebarWidth.current)
+            const layoutWidth = measureSplitLayoutWidth(
+              sidebarRef.current,
+              splitLayoutWidth
+            )
+            setSidebarRatio(
+              layoutWidth > 0
+                ? liveSidebarWidth.current / layoutWidth
+                : defaultSidebarRatio
+            )
             setIsResizing(false)
           }
         }}
@@ -526,18 +591,6 @@ export function RightAssistantSidebar({
         role="separator"
         tabIndex={canResize ? 0 : -1}
       />
-      <header className="assistant-sidebar__header">
-        <strong>{t('sidebar.title')}</strong>
-        <button
-          aria-label={t('sidebar.close')}
-          className="icon-button"
-          onClick={onClose}
-          type="button"
-        >
-          <PanelRightClose size={17} />
-        </button>
-      </header>
-
       <nav
         aria-label={t('sidebar.categoriesAriaLabel')}
         className="assistant-sidebar__tabs"

@@ -31,6 +31,7 @@ import {
   Settings,
   RefreshCw,
   ShieldCheck,
+  PanelRightClose,
   PanelRightOpen,
   Sparkles,
   Square,
@@ -2180,8 +2181,6 @@ function App(): React.JSX.Element {
   const [assistantSidebarOpen, setAssistantSidebarOpen] = useState(
     () => window.innerWidth >= 1280
   )
-  const [assistantSidebarOverlay, setAssistantSidebarOverlay] =
-    useState(() => window.innerWidth < 1280)
   const [assistantSidebarTab, setAssistantSidebarTab] =
     useState<AssistantSidebarTab>('tasks')
   const [browserStates, setBrowserStates] = useState<
@@ -2605,7 +2604,6 @@ function App(): React.JSX.Element {
     const collapseSidebarAtNarrowWidth = (): void => {
       const narrow = window.innerWidth < 900
       setNarrowWindow(narrow)
-      setAssistantSidebarOverlay(window.innerWidth < 1280)
       if (narrow) {
         setSidebarOpen(false)
       }
@@ -7387,23 +7385,23 @@ function App(): React.JSX.Element {
     runtimeSettings
   ])
 
-  const assistantOverlayOpen =
-    assistantSidebarOverlay &&
-    assistantSidebarOpen &&
-    view === 'chat'
   const mainSidebarOpen = narrowWindow && sidebarOpen
-  const backgroundIsolated = mainSidebarOpen || assistantOverlayOpen
+  const backgroundIsolated = mainSidebarOpen
 
   return (
-    <div className="app-shell">
+    <div className="app-frame">
+      <header className="window-titlebar">
+        <WindowControls onError={handleWindowControlError} />
+      </header>
+      <div className="app-shell">
       <aside
         aria-label={
           narrowWindow && sidebarOpen ? t('sidebar.label') : undefined
         }
-        aria-hidden={!sidebarOpen || assistantOverlayOpen}
+        aria-hidden={!sidebarOpen}
         aria-modal={narrowWindow && sidebarOpen ? 'true' : undefined}
         className={sidebarOpen ? 'sidebar' : 'sidebar sidebar--closed'}
-        inert={!sidebarOpen || assistantOverlayOpen}
+        inert={!sidebarOpen}
         onKeyDown={(event) => {
           if (mainSidebarOpen) {
             trapTabFocus(event, sidebarRef.current)
@@ -8052,7 +8050,13 @@ function App(): React.JSX.Element {
         className="workspace"
         inert={backgroundIsolated}
       >
-        <header className="topbar">
+        <header
+          className={
+            view === 'chat'
+              ? 'topbar topbar--with-assistant-toggle'
+              : 'topbar'
+          }
+        >
           <button
             className="icon-button sidebar-toggle"
             type="button"
@@ -8133,24 +8137,6 @@ function App(): React.JSX.Element {
                 </span>
               )}
             </span>
-            {view === 'chat' && (
-              <button
-                aria-label={t('topbar.toggleAssistantSidebar')}
-                aria-pressed={assistantSidebarOpen}
-                className={
-                  assistantSidebarOpen
-                    ? 'icon-button icon-button--active'
-                    : 'icon-button'
-                }
-                onClick={() =>
-                  setAssistantSidebarOpen((current) => !current)
-                }
-                ref={assistantSidebarToggleRef}
-                type="button"
-              >
-                <PanelRightOpen size={18} />
-              </button>
-            )}
             <button
               aria-label={
                 resolvedAppearanceTheme === 'dark'
@@ -8174,9 +8160,26 @@ function App(): React.JSX.Element {
               )}
             </button>
           </div>
-          <WindowControls
-            onError={handleWindowControlError}
-          />
+          {view === 'chat' && (
+            <button
+              aria-controls="assistant-sidebar"
+              aria-expanded={assistantSidebarOpen}
+              aria-label={t('topbar.toggleAssistantSidebar')}
+              className="icon-button assistant-sidebar-toggle"
+              onClick={() =>
+                setAssistantSidebarOpen((current) => !current)
+              }
+              ref={assistantSidebarToggleRef}
+              title={t('topbar.toggleAssistantSidebar')}
+              type="button"
+            >
+              {assistantSidebarOpen ? (
+                <PanelRightClose aria-hidden="true" size={18} />
+              ) : (
+                <PanelRightOpen aria-hidden="true" size={18} />
+              )}
+            </button>
+          )}
         </header>
 
         {(view === 'chat' || cachedWorkspaceViewKeys.has('chat')) && (
@@ -9794,14 +9797,6 @@ function App(): React.JSX.Element {
           }
         />
       )}
-      {assistantOverlayOpen && (
-        <button
-          aria-label={tWorkspace('sidebar.dismissOverlay')}
-          className="assistant-sidebar-backdrop"
-          onClick={() => setAssistantSidebarOpen(false)}
-          type="button"
-        />
-      )}
       <RightAssistantSidebar
         approvals={pendingSidebarApprovals}
         artifacts={sidebarArtifacts}
@@ -9815,7 +9810,6 @@ function App(): React.JSX.Element {
         selectedTaskId={selectedAssistantTaskId}
         tasks={productAssistantTasks}
         projectNames={projectNames}
-        onClose={() => setAssistantSidebarOpen(false)}
         onInteractBrowser={async () => {
           if (!activeId) {
             return
@@ -9895,12 +9889,12 @@ function App(): React.JSX.Element {
         open={
           assistantSidebarOpen && view === 'chat'
         }
-        overlay={assistantSidebarOverlay}
         restoreFocusRef={assistantSidebarToggleRef}
         tab={assistantSidebarTab}
         workspaceChanges={workspaceChanges}
         workspaceProjectId={activeProjectId || undefined}
       />
+      </div>
     </div>
   )
 }
