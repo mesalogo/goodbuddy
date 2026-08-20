@@ -11,6 +11,7 @@ import {
   Download,
   Edit3,
   FileText,
+  GitFork,
   HeartPulse,
   Info,
   Library,
@@ -119,6 +120,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import {
   conversationAttachmentSchema,
+  conversationBranchSchema,
   conversationContextCompressionMarkerSchema,
   conversationContextMetricsSchema,
   conversationMessageBlocksSchema,
@@ -679,6 +681,39 @@ function displayErrorMessage(reason: unknown, fallback: string): string {
   return fallback
 }
 
+function createConversationBranchTitle(
+  sourceTitle: string,
+  suffix: string
+): string {
+  const trailing = ` · ${suffix}`
+  if (trailing.length >= 200) {
+    return suffix.slice(0, 200)
+  }
+  return `${sourceTitle
+    .slice(0, 200 - trailing.length)
+    .trimEnd()}${trailing}`
+}
+
+function ConversationBranchBadge({
+  sourceTitle
+}: {
+  sourceTitle: string
+}): React.JSX.Element {
+  const { t } = useTranslation('app')
+  const label = t('conversation.branch.badge', {
+    title: sourceTitle
+  })
+  return (
+    <span
+      aria-label={label}
+      className="conversation-branch-badge"
+      title={label}
+    >
+      <GitFork aria-hidden="true" size={13} />
+    </span>
+  )
+}
+
 function isUnusedConversation(conversation: Conversation): boolean {
   return (
     conversation.title === '新对话' &&
@@ -1143,6 +1178,8 @@ function isConversation(value: unknown): value is Conversation {
     (item.knowledgeRetrievalMode === undefined ||
       item.knowledgeRetrievalMode === 'auto' ||
       item.knowledgeRetrievalMode === 'always') &&
+    (item.branch === undefined ||
+      conversationBranchSchema.safeParse(item.branch).success) &&
     (item.remote === undefined ||
       (typeof item.remote === 'object' &&
         item.remote !== null &&
@@ -1228,6 +1265,7 @@ function toConversationSnapshots(
       knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
       contextMetrics: conversation.contextMetrics,
       contextCompressionState: conversation.contextCompressionState,
+      ...(conversation.branch ? { branch: conversation.branch } : {}),
       title: conversation.title,
       updatedAt: conversation.updatedAt,
       messages: conversation.messages
@@ -1269,6 +1307,7 @@ function toLocalConversationHeader(
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
     contextMetrics: conversation.contextMetrics,
     contextCompressionState: conversation.contextCompressionState,
+    ...(conversation.branch ? { branch: conversation.branch } : {}),
     title: conversation.title,
     updatedAt: conversation.updatedAt
   }
@@ -2284,6 +2323,8 @@ function App(): React.JSX.Element {
     useState('')
   const [deletingConversationId, setDeletingConversationId] =
     useState('')
+  const [branchingConversationId, setBranchingConversationId] =
+    useState('')
   const [renamingConversationId, setRenamingConversationId] = useState('')
   const [notifications, notify] = useReducer(
     appNotificationReducer,
@@ -3268,6 +3309,13 @@ function App(): React.JSX.Element {
   const activeProjectDisplayName = activeProject
     ? getProjectDisplayText(activeProject, tWorkspace).name
     : undefined
+  const queuedConversationIds = useMemo(
+    () =>
+      new Set(
+        conversationQueueItems.map((item) => item.conversationId)
+      ),
+    [conversationQueueItems]
+  )
   const filteredConversations = useMemo(() => {
     const query = deferredSearchQuery.trim().toLocaleLowerCase()
     const candidates = query
@@ -5757,6 +5805,80 @@ function App(): React.JSX.Element {
     setActiveId(replacement.id)
   }
 
+  const branchConversation = async (
+    sourceConversation: Conversation
+  ): Promise<void> => {
+    if (
+      branchingConversationId ||
+      sourceConversation.remote ||
+      !conversationStoreReady ||
+      activeConversationIds.has(sourceConversation.id) ||
+      queuedConversationIds.has(sourceConversation.id)
+    ) {
+      return
+    }
+    setBranchingConversationId(sourceConversation.id)
+    try {
+      persistLocalConversationChanges()
+      await conversationPersistenceQueueRef.current
+      if (
+        persistedLocalConversationsRef.current.get(
+          sourceConversation.id
+        ) !== sourceConversation ||
+        conversationsRef.current.find(
+          (conversation) =>
+            conversation.id === sourceConversation.id
+        ) !== sourceConversation
+      ) {
+        throw new Error(t('notices.conversationPersistenceFailed'))
+      }
+      const sourceTitle = getConversationDisplayTitle(
+        sourceConversation,
+        t('conversation.defaultTitle')
+      )
+      const branch = await window.goodbuddy.conversations.branchLocal({
+        sourceConversationId: sourceConversation.id,
+        title: createConversationBranchTitle(
+          sourceTitle,
+          t('conversation.branch.suffix')
+        )
+      })
+      const nextBranch: Conversation = branch
+      persistedLocalConversationsRef.current.set(
+        nextBranch.id,
+        nextBranch
+      )
+      setConversations((current) => [
+        nextBranch,
+        ...current.filter(
+          (conversation) => conversation.id !== nextBranch.id
+        )
+      ])
+      setSelectedAssistantTaskId(undefined)
+      setActiveId(nextBranch.id)
+      setView('chat')
+      if (narrowWindow) {
+        closeNarrowSidebar()
+      }
+      notify({
+        tone: 'success',
+        message: t('notices.conversationBranched')
+      })
+      requestAnimationFrame(() => inputRef.current?.focus())
+    } catch (error) {
+      notify({
+        tone: 'error',
+        message: displayErrorMessage(
+          error,
+          t('notices.conversationBranchFailed')
+        )
+      })
+      focusConversationActions(sourceConversation.id)
+    } finally {
+      setBranchingConversationId('')
+    }
+  }
+
   const focusConversationActions = (conversationId: string): void => {
     requestAnimationFrame(() =>
       conversationActionTriggerRefs.current.get(conversationId)?.focus()
@@ -7445,6 +7567,25 @@ function App(): React.JSX.Element {
               conversation,
               t('conversation.defaultTitle')
             )
+            const branchSourceTitle = conversation.branch
+              ? conversationTitles.get(
+                  conversation.branch.sourceConversationId
+                ) ?? conversation.branch.sourceTitle
+              : undefined
+            const branchUnavailable =
+              activeConversationIds.has(conversation.id) ||
+              queuedConversationIds.has(conversation.id)
+            const branchDisabledReason = !conversationStoreReady
+              ? t('conversation.branch.storageUnavailable')
+              : branchingConversationId
+                ? branchingConversationId === conversation.id
+                  ? t('conversation.branch.creating')
+                  : t('conversation.branch.anotherCreating')
+                : branchUnavailable
+                  ? t('conversation.branch.unavailable')
+                  : undefined
+            const branchDisabledReasonId =
+              `conversation-branch-disabled-${conversation.id}`
             return (
             <div className="conversation-entry" key={conversation.id}>
               <div
@@ -7508,6 +7649,11 @@ function App(): React.JSX.Element {
                   }}
                 >
                   <span className="conversation-item__primary">
+                    {branchSourceTitle && (
+                      <ConversationBranchBadge
+                        sourceTitle={branchSourceTitle}
+                      />
+                    )}
                     {conversation.remote && (
                       <b className="conversation-source-badge">
                         {
@@ -7595,6 +7741,50 @@ function App(): React.JSX.Element {
                   className="conversation-actions"
                   id={`conversation-actions-${conversation.id}`}
                 >
+                  {!conversation.remote && (
+                    <>
+                      <button
+                        aria-describedby={
+                          branchDisabledReason
+                            ? branchDisabledReasonId
+                            : undefined
+                        }
+                        aria-disabled={
+                          branchDisabledReason ? true : undefined
+                        }
+                        onClick={() => {
+                          if (branchDisabledReason) {
+                            notify({
+                              tone: 'info',
+                              message: branchDisabledReason
+                            })
+                            return
+                          }
+                          setConversationActionsId('')
+                          void branchConversation(conversation)
+                        }}
+                        title={branchDisabledReason}
+                        type="button"
+                      >
+                        <GitFork
+                          aria-hidden="true"
+                          className="conversation-branch-icon"
+                          size={14}
+                        />
+                        {branchingConversationId === conversation.id
+                          ? t('conversation.branch.creating')
+                          : t('conversation.actions.branch')}
+                      </button>
+                      {branchDisabledReason && (
+                        <span
+                          className="sr-only"
+                          id={branchDisabledReasonId}
+                        >
+                          {branchDisabledReason}
+                        </span>
+                      )}
+                    </>
+                  )}
                   {!conversation.remote && (
                     <button
                       onClick={() => {
@@ -7722,6 +7912,24 @@ function App(): React.JSX.Element {
                       task,
                       assistantSchedules
                     )
+                    const statusLabel = tWorkspace(
+                      `task.status.${task.status}`
+                    )
+                    const metadata = schedule
+                      ? [
+                          tWorkspace(`task.mode.${schedule.workMode}`),
+                          tWorkspace(
+                            `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`
+                          ),
+                          task.status === 'completed'
+                            ? undefined
+                            : statusLabel
+                        ]
+                          .filter((value) => value !== undefined)
+                          .join(' · ')
+                      : task.status === 'completed'
+                        ? ''
+                        : statusLabel
                     return (
                       <li key={task.id}>
                         <button
@@ -7738,21 +7946,34 @@ function App(): React.JSX.Element {
                           }}
                           type="button"
                         >
-                          <span
-                            aria-hidden="true"
-                            className={`task-status-dot task-status-dot--${task.status}`}
-                          />
                           <span className="conversation-task-child__title">
                             {task.title}
                           </span>
-                          <small className="conversation-task-child__meta">
-                            {schedule
-                              ? `${tWorkspace(`task.mode.${schedule.workMode}`)} · ${tWorkspace(
-                                  `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`
-                                )} · `
-                              : ''}
-                            {tWorkspace(`task.status.${task.status}`)}
-                          </small>
+                          {metadata && (
+                            <small className="conversation-task-child__meta">
+                              {metadata}
+                            </small>
+                          )}
+                          {task.status === 'completed' ? (
+                            <span
+                              className="task-status-dot task-status-dot--completed conversation-task-child__completed-status"
+                              title={statusLabel}
+                            >
+                              <Check
+                                aria-hidden="true"
+                                size={7}
+                                strokeWidth={3}
+                              />
+                              <span className="sr-only">
+                                {statusLabel}
+                              </span>
+                            </span>
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className={`task-status-dot task-status-dot--${task.status}`}
+                            />
+                          )}
                         </button>
                       </li>
                     )
@@ -7847,7 +8068,7 @@ function App(): React.JSX.Element {
                 className="conversation-title"
                 title={activeConversation?.title}
               >
-                <span>
+                <span className="conversation-title__text">
                   {activeConversation
                     ? getConversationDisplayTitle(
                         activeConversation,
@@ -7858,6 +8079,15 @@ function App(): React.JSX.Element {
                       ? t('conversation.remoteTitle')
                       : t('conversation.defaultTitle'))}
                 </span>
+                {activeConversation?.branch && (
+                  <ConversationBranchBadge
+                    sourceTitle={
+                      conversationTitles.get(
+                        activeConversation.branch.sourceConversationId
+                      ) ?? activeConversation.branch.sourceTitle
+                    }
+                  />
+                )}
                 {activeConversation?.remote && (
                   <b className="conversation-source-badge">
                     {

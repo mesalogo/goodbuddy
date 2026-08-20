@@ -3,6 +3,8 @@ import type { AssistantProject } from './assistant-contracts'
 import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
+  conversationBranchInputSchema,
+  conversationSnapshotSchema,
   isUntouchedBuiltInDefaultProject,
   projectCreateSchema,
   projectUpdateSchema
@@ -70,5 +72,40 @@ describe('isUntouchedBuiltInDefaultProject', () => {
     }
     expect(projectCreateSchema.safeParse(input).success).toBe(false)
     expect(projectUpdateSchema.safeParse(input).success).toBe(false)
+  })
+})
+
+describe('conversation branch contracts', () => {
+  it('accepts bounded branch provenance and rejects renderer extras', () => {
+    const sourceConversationId =
+      '00000000-0000-4000-8000-000000000201'
+    expect(
+      conversationBranchInputSchema.parse({
+        sourceConversationId,
+        title: '方案讨论 · 分支'
+      })
+    ).toEqual({
+      sourceConversationId,
+      title: '方案讨论 · 分支'
+    })
+    expect(
+      conversationBranchInputSchema.safeParse({
+        sourceConversationId,
+        title: '方案讨论 · 分支',
+        copyTasks: true
+      }).success
+    ).toBe(false)
+    expect(
+      conversationSnapshotSchema.safeParse({
+        id: '00000000-0000-4000-8000-000000000202',
+        branch: {
+          sourceConversationId,
+          sourceTitle: '方案讨论'
+        },
+        title: '方案讨论 · 分支',
+        updatedAt: 1,
+        messages: []
+      }).success
+    ).toBe(true)
   })
 })

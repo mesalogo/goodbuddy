@@ -129,4 +129,15 @@ describe('sandboxed preload', () => {
     expect(source).toContain('ipcChannels.conversationQueueDispatch')
     expect(source).toContain('listener(conversationId)')
   })
+
+  it('exposes a narrow local conversation branch operation', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain(
+      'branchLocal: (input: ConversationBranchInput)'
+    )
+    expect(source).toContain('ipcChannels.conversationsBranchLocal')
+  })
 })

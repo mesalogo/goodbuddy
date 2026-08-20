@@ -346,6 +346,24 @@ export type ConversationContextCompressionState = z.infer<
   typeof conversationContextCompressionStateSchema
 >
 
+export const conversationBranchInputSchema = z
+  .object({
+    sourceConversationId: assistantIdSchema,
+    title: z.string().trim().min(1).max(200)
+  })
+  .strict()
+
+export type ConversationBranchInput = z.infer<
+  typeof conversationBranchInputSchema
+>
+
+export const conversationBranchSchema = z
+  .object({
+    sourceConversationId: assistantIdSchema,
+    sourceTitle: z.string().trim().min(1).max(200)
+  })
+  .strict()
+
 export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
@@ -363,6 +381,7 @@ export const conversationSnapshotSchema = z
       })
       .strict()
       .optional(),
+    branch: conversationBranchSchema.optional(),
     title: z.string().trim().min(1).max(200),
     updatedAt: z.number().int().nonnegative(),
     messages: z

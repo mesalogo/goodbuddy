@@ -377,6 +377,16 @@ const api: DesktopApi = {
     list: vi.fn(async () => []),
     replace: vi.fn(async () => {}),
     saveLocal: vi.fn(async () => {}),
+    branchLocal: vi.fn(async (input) => ({
+      id: crypto.randomUUID(),
+      branch: {
+        sourceConversationId: input.sourceConversationId,
+        sourceTitle: '新对话'
+      },
+      title: input.title,
+      updatedAt: Date.now(),
+      messages: []
+    })),
     deleteLocal: vi.fn(async () => true),
     onChanged: vi.fn(() => () => undefined)
   },
@@ -867,6 +877,18 @@ describe('App', () => {
     vi.mocked(api.conversations.saveLocal)
       .mockReset()
       .mockResolvedValue()
+    vi.mocked(api.conversations.branchLocal)
+      .mockReset()
+      .mockImplementation(async (input) => ({
+        id: crypto.randomUUID(),
+        branch: {
+          sourceConversationId: input.sourceConversationId,
+          sourceTitle: '新对话'
+        },
+        title: input.title,
+        updatedAt: Date.now(),
+        messages: []
+      }))
     vi.mocked(api.conversations.deleteLocal)
       .mockReset()
       .mockResolvedValue(true)
@@ -1404,9 +1426,11 @@ describe('App', () => {
     expect(within(taskRegion).getByText('Execute')).toBeInTheDocument()
   })
 
-  it('uses shared status dots for Conversation Task children', async () => {
+  it('keeps completed Conversation Task metadata compact and accessible', async () => {
     const conversationId =
       '00000000-0000-4000-8000-000000000824'
+    const scheduleId =
+      '00000000-0000-4000-8000-000000000828'
     const conversation: ConversationSnapshot = {
       id: conversationId,
       projectId,
@@ -1419,7 +1443,8 @@ describe('App', () => {
         id: '00000000-0000-4000-8000-000000000825',
         projectId,
         conversationId,
-        title: '已完成任务',
+        scheduleId,
+        title: '归档任务',
         instructions: '检查完成状态',
         origin: 'schedule',
         status: 'completed',
@@ -1446,10 +1471,25 @@ describe('App', () => {
         createdAt: '2026-08-19T01:00:00.000Z'
       }
     ]
+    const schedule: AssistantSchedule = {
+      id: scheduleId,
+      projectId,
+      taskId: tasks[0]!.id,
+      conversationId,
+      title: tasks[0]!.title,
+      prompt: tasks[0]!.instructions,
+      workMode: 'ask',
+      recurrence: 'once',
+      nextRunAt: '2026-08-19T03:00:00.000Z',
+      enabled: false,
+      createdAt: tasks[0]!.createdAt,
+      updatedAt: tasks[0]!.createdAt
+    }
     vi.mocked(api.conversations.list).mockResolvedValue([
       conversation
     ])
     vi.mocked(api.tasks.list).mockResolvedValue(tasks)
+    vi.mocked(api.schedules.list).mockResolvedValue([schedule])
 
     render(<App />)
 
@@ -1458,8 +1498,32 @@ describe('App', () => {
         '展开或折叠“任务状态会话”中的 3 个任务'
       )
     )
+    const completedTitle = await screen.findByText('归档任务', {
+      selector: '.conversation-task-child__title'
+    })
+    const completedTask = completedTitle.closest('button')
+    const completedStatus = completedTask?.querySelector(
+      '.conversation-task-child__completed-status'
+    )
+    expect(completedStatus).toHaveClass(
+      'task-status-dot',
+      'task-status-dot--completed'
+    )
+    expect(completedStatus).toHaveAttribute('title', '已完成')
+    expect(
+      completedStatus?.querySelector('.lucide-check')
+    ).toBeInTheDocument()
+    expect(completedTask?.firstElementChild).toBe(completedTitle)
+    expect(completedTask?.lastElementChild).toBe(completedStatus)
+    expect(completedTask).toHaveAccessibleName(/已完成/u)
+    expect(
+      completedTask?.querySelector('.conversation-task-child__meta')
+    ).toHaveTextContent('Ask · 仅一次')
+    expect(
+      completedTask?.querySelector('.conversation-task-child__meta')
+    ).not.toHaveTextContent('已完成')
+
     for (const [title, status, label] of [
-      ['已完成任务', 'completed', '已完成'],
       ['运行中任务', 'running', '运行中'],
       ['失败任务', 'failed', '失败']
     ] as const) {
@@ -1470,6 +1534,10 @@ describe('App', () => {
       expect(
         taskChild?.querySelector('.task-status-dot')
       ).toHaveClass(`task-status-dot--${status}`)
+      expect(taskChild?.firstElementChild).toBe(taskTitle)
+      expect(taskChild?.lastElementChild).toBe(
+        taskChild?.querySelector('.task-status-dot')
+      )
       expect(
         taskChild?.querySelector('.conversation-task-child__meta')
       ).toHaveTextContent(label)
@@ -2170,6 +2238,242 @@ describe('App', () => {
     )
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce())
     expect(await screen.findByRole('status')).toBeVisible()
+  })
+
+  it('flushes and opens an independent conversation branch with provenance badges', async () => {
+    const sourceConversationId =
+      '00000000-0000-4000-8000-000000000421'
+    const branchConversationId =
+      '00000000-0000-4000-8000-000000000422'
+    const sourceConversation: ConversationSnapshot = {
+      id: sourceConversationId,
+      projectId,
+      title: '方案讨论',
+      updatedAt: 1_775_000_000_000,
+      messages: [
+        {
+          id: '00000000-0000-4000-8000-000000000423',
+          role: 'user',
+          content: '探索不同发布方案',
+          createdAt: 1_775_000_000_000,
+          state: 'complete'
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000424',
+          role: 'assistant',
+          content: '可以比较风险、成本和回滚路径。',
+          createdAt: 1_775_000_001_000,
+          state: 'complete'
+        }
+      ]
+    }
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      sourceConversation
+    ])
+    vi.mocked(api.conversations.branchLocal).mockImplementationOnce(
+      async (input) => ({
+        ...sourceConversation,
+        id: branchConversationId,
+        branch: {
+          sourceConversationId,
+          sourceTitle: '方案讨论更新'
+        },
+        contextMetrics: undefined,
+        contextCompressionState: undefined,
+        title: input.title,
+        updatedAt: 1_775_000_002_000,
+        messages: sourceConversation.messages.map((message, index) => ({
+          ...message,
+          id: `00000000-0000-4000-8000-${String(
+            430 + index
+          ).padStart(12, '0')}`
+        }))
+      })
+    )
+    const { container } = render(<App />)
+    expect(
+      await screen.findByText('探索不同发布方案')
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      await screen.findByLabelText('更多会话操作 方案讨论')
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '重命名会话' })
+    )
+    const renameInput = screen.getByLabelText('重命名会话 方案讨论')
+    fireEvent.change(renameInput, {
+      target: { value: '方案讨论更新' }
+    })
+    fireEvent.submit(renameInput.closest('form')!)
+    expect(
+      await screen.findAllByText('方案讨论更新')
+    ).toHaveLength(2)
+    vi.mocked(api.conversations.saveLocal).mockClear()
+
+    fireEvent.click(
+      screen.getByLabelText('更多会话操作 方案讨论更新')
+    )
+    const branchButton = screen.getByRole('button', {
+      name: '在新会话中继续'
+    })
+    await waitFor(() => expect(branchButton).toBeEnabled())
+    fireEvent.click(branchButton)
+
+    await waitFor(() =>
+      expect(api.conversations.saveLocal).toHaveBeenCalledWith([
+        expect.objectContaining({
+          header: expect.objectContaining({
+            id: sourceConversationId,
+            title: '方案讨论更新'
+          })
+        })
+      ])
+    )
+    await waitFor(() =>
+      expect(api.conversations.branchLocal).toHaveBeenCalledWith({
+        sourceConversationId,
+        title: '方案讨论更新 · 分支'
+      })
+    )
+    expect(
+      vi.mocked(api.conversations.saveLocal).mock.invocationCallOrder.at(-1)
+    ).toBeLessThan(
+      vi.mocked(api.conversations.branchLocal).mock.invocationCallOrder[0]!
+    )
+    expect(
+      await screen.findAllByLabelText(
+        '分支会话，来源：方案讨论更新'
+      )
+    ).toHaveLength(2)
+    const sidebar = container.querySelector('.conversation-list')
+    const badge = within(sidebar as HTMLElement).getByLabelText(
+      '分支会话，来源：方案讨论更新'
+    )
+    expect(badge).toHaveClass('conversation-branch-badge')
+    expect(badge.querySelector('.lucide-git-fork')).toBeInTheDocument()
+    expect(
+      container.querySelector('.conversation-title')
+    ).toHaveTextContent('方案讨论更新 · 分支')
+    await waitFor(() =>
+      expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveFocus()
+    )
+    expect(
+      screen.getAllByText('可以比较风险、成本和回滚路径。').length
+    ).toBeGreaterThan(0)
+    expect(
+      await screen.findByText('已创建并打开分支会话')
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the source conversation open when branch persistence fails', async () => {
+    const sourceConversationId =
+      '00000000-0000-4000-8000-000000000441'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: sourceConversationId,
+        projectId,
+        title: '保留的来源会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000442',
+            role: 'user',
+            content: '不能丢失的来源内容',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    vi.mocked(api.conversations.branchLocal).mockRejectedValueOnce(
+      new Error('分支数据写入失败')
+    )
+    const { container } = render(<App />)
+    expect(
+      await screen.findByText('不能丢失的来源内容')
+    ).toBeInTheDocument()
+
+    const actionTrigger = await screen.findByLabelText(
+      '更多会话操作 保留的来源会话'
+    )
+    fireEvent.click(actionTrigger)
+    const branchButton = screen.getByRole('button', {
+      name: '在新会话中继续'
+    })
+    await waitFor(() => expect(branchButton).toBeEnabled())
+    fireEvent.click(branchButton)
+
+    expect(
+      await screen.findByText('分支数据写入失败')
+    ).toBeInTheDocument()
+    expect(
+      container.querySelector('.conversation-title')
+    ).toHaveTextContent('保留的来源会话')
+    expect(
+      screen.getByText('不能丢失的来源内容')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(/^分支会话，来源：/u)
+    ).not.toBeInTheDocument()
+    await waitFor(() => expect(actionTrigger).toHaveFocus())
+  })
+
+  it('explains why a queued conversation cannot be branched', async () => {
+    const sourceConversationId =
+      '00000000-0000-4000-8000-000000000451'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: sourceConversationId,
+        projectId,
+        title: '等待队列的会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000452',
+            role: 'user',
+            content: '还有待发送内容',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    vi.mocked(api.conversationQueue.list).mockResolvedValue([
+      {
+        id: '00000000-0000-4000-8000-000000000453',
+        conversationId: sourceConversationId,
+        source: 'user',
+        label: '待发送',
+        createdAt: '2026-08-20T08:00:00.000Z'
+      }
+    ])
+    render(<App />)
+    expect(
+      await screen.findByText('还有待发送内容')
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      await screen.findByLabelText('更多会话操作 等待队列的会话')
+    )
+    const branchButton = screen.getByRole('button', {
+      name: '在新会话中继续'
+    })
+    await waitFor(() =>
+      expect(branchButton).toHaveAttribute('aria-disabled', 'true')
+    )
+    expect(branchButton).toHaveAccessibleDescription(
+      '会话运行或待发送内容处理完后才能创建分支'
+    )
+    fireEvent.click(branchButton)
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(
+          '会话运行或待发送内容处理完后才能创建分支'
+        )
+      ).toHaveLength(2)
+    )
+    expect(api.conversations.branchLocal).not.toHaveBeenCalled()
   })
 
   it('offers a floating control when more messages remain below', async () => {

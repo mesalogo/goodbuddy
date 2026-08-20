@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
+  conversationSnapshotSchema,
   isUntouchedBuiltInDefaultProject
 } from '../../shared/assistant-contracts'
 import { AssistantDatabase } from './assistant-database'
@@ -161,7 +162,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 25', async () => {
+  it('migrates existing databases to schema version 26', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -190,7 +191,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(25)
+    ).toBe(26)
     expect(
       current
         .prepare(
@@ -211,6 +212,18 @@ describe('AssistantDatabase', () => {
           notnull: 1,
           dflt_value: '0'
         })
+      ])
+    )
+    expect(
+      current
+        .prepare('PRAGMA table_info(conversations)')
+        .all()
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'branch_source_conversation_id'
+        }),
+        expect.objectContaining({ name: 'branch_source_title' })
       ])
     )
     const foreignKeys = current
@@ -275,6 +288,15 @@ describe('AssistantDatabase', () => {
         )
         .get()
     ).toEqual({ name: 'conversation_queue_items' })
+    expect(
+      current
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'index'
+             AND name = 'conversations_branch_source_idx'`
+        )
+        .get()
+    ).toEqual({ name: 'conversations_branch_source_idx' })
     current.close()
   })
 
@@ -476,7 +498,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(25)
+    ).toBe(26)
     expect(
       current
         .prepare(
@@ -614,7 +636,7 @@ describe('AssistantDatabase', () => {
     const inspected = new DatabaseSync(databasePath)
     expect(
       inspected.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 25 })
+    ).toEqual({ user_version: 26 })
     expect(
       inspected
         .prepare(
@@ -2500,6 +2522,341 @@ describe('AssistantDatabase', () => {
       basis: 'conversation'
     })
     durable.close()
+    database.close()
+  })
+
+  it('atomically branches a stable local conversation without cloning owned work', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-branched-conversation-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const project = database.listProjects()[0]!
+    const sourceConversationId =
+      '00000000-0000-4000-8000-000000000541'
+    const sourceMessageIds = [
+      '00000000-0000-4000-8000-000000000542',
+      '00000000-0000-4000-8000-000000000543'
+    ]
+    database.replaceConversations([
+      {
+        id: sourceConversationId,
+        projectId: project.id,
+        runtimeSelection: {
+          provider: 'model',
+          profileId: channelDefaultProfileId
+        },
+        knowledgeRetrievalMode: 'always',
+        contextMetrics: {
+          runtimeSelectionKey: `model:${channelDefaultProfileId}`,
+          contextTokens: 4_096,
+          source: 'estimated',
+          basis: 'conversation'
+        },
+        contextCompressionState: {
+          coveredHistoryDigest: 'b'.repeat(64),
+          coveredMessageCount: 2,
+          coveredFromMessageId: sourceMessageIds[0],
+          coveredThroughMessageId: sourceMessageIds[1],
+          summary: '来源会话摘要'
+        },
+        title: '发布方案讨论',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: sourceMessageIds[0]!,
+            role: 'user',
+            content: '比较两个发布方案',
+            createdAt: 1_775_000_000_000,
+            state: 'complete',
+            attachments: [
+              {
+                id: '00000000-0000-4000-8000-000000000544',
+                name: '发布清单.md',
+                size: 128,
+                preview: '发布步骤',
+                kind: 'text'
+              }
+            ]
+          },
+          {
+            id: sourceMessageIds[1]!,
+            role: 'assistant',
+            content: '可以从风险和成本两个方向比较。',
+            createdAt: 1_775_000_001_000,
+            state: 'complete',
+            task: {
+              id: '00000000-0000-4000-8000-000000000545',
+              title: '来源任务'
+            },
+            artifactIds: [
+              '00000000-0000-4000-8000-000000000546'
+            ]
+          }
+        ]
+      }
+    ])
+    const raw = new DatabaseSync(databasePath)
+    raw
+      .prepare(
+        `UPDATE messages
+         SET request_id = ?
+         WHERE id = ?`
+      )
+      .run(
+        '00000000-0000-4000-8000-000000000547',
+        sourceMessageIds[1]!
+      )
+    const sourceMetadataRow = raw
+      .prepare(
+        `SELECT metadata_json
+         FROM messages
+         WHERE id = ?`
+      )
+      .get(sourceMessageIds[1]!) as { metadata_json: string }
+    raw
+      .prepare(
+        `UPDATE messages
+         SET metadata_json = ?
+         WHERE id = ?`
+      )
+      .run(
+        JSON.stringify({
+          ...(JSON.parse(sourceMetadataRow.metadata_json) as object),
+          subagents: [
+            {
+              childTaskId:
+                '00000000-0000-4000-8000-000000000549',
+              expertId:
+                '00000000-0000-4000-8000-000000000550',
+              expertName: '来源专家',
+              routingMode: 'manual',
+              state: 'completed'
+            }
+          ]
+        }),
+        sourceMessageIds[1]!
+      )
+    raw.close()
+
+    const sourceBefore = database.getConversation(sourceConversationId)
+    const branch = database.branchLocalConversation({
+      sourceConversationId,
+      title: '发布方案讨论 · 分支'
+    })
+
+    expect(conversationSnapshotSchema.safeParse(branch).success).toBe(true)
+    expect(branch).toMatchObject({
+      projectId: project.id,
+      runtimeSelection: {
+        provider: 'model',
+        profileId: channelDefaultProfileId
+      },
+      knowledgeRetrievalMode: 'always',
+      branch: {
+        sourceConversationId,
+        sourceTitle: '发布方案讨论'
+      },
+      title: '发布方案讨论 · 分支'
+    })
+    expect(branch).not.toHaveProperty('contextMetrics')
+    expect(branch).not.toHaveProperty('contextCompressionState')
+    expect(branch.id).not.toBe(sourceConversationId)
+    expect(branch.messages.map((message) => message.content)).toEqual(
+      sourceBefore.messages.map((message) => message.content)
+    )
+    expect(
+      branch.messages.every(
+        (message) => !sourceMessageIds.includes(message.id)
+      )
+    ).toBe(true)
+    expect(branch.messages[0]?.attachments).toEqual(
+      sourceBefore.messages[0]?.attachments
+    )
+    expect(branch.messages[1]?.task).toBeUndefined()
+    expect(branch.messages[1]?.artifactIds).toBeUndefined()
+    expect(database.getConversation(sourceConversationId)).toEqual(
+      sourceBefore
+    )
+
+    const durable = new DatabaseSync(databasePath)
+    expect(
+      durable
+        .prepare(
+          `SELECT sequence, request_id
+           FROM messages
+           WHERE conversation_id = ?
+           ORDER BY sequence`
+        )
+        .all(branch.id)
+    ).toEqual([
+      { sequence: 0, request_id: null },
+      { sequence: 1, request_id: null }
+    ])
+    const branchMetadataRow = durable
+      .prepare(
+        `SELECT metadata_json
+         FROM messages
+         WHERE conversation_id = ? AND sequence = 1`
+      )
+      .get(branch.id) as { metadata_json: string }
+    const branchMetadata = JSON.parse(
+      branchMetadataRow.metadata_json
+    ) as Record<string, unknown>
+    expect(branchMetadata).not.toHaveProperty('artifactIds')
+    expect(branchMetadata).not.toHaveProperty('subagents')
+    expect(branchMetadata).not.toHaveProperty('task')
+    durable.close()
+
+    database.saveLocalConversations([
+      {
+        header: {
+          id: branch.id,
+          projectId: branch.projectId,
+          runtimeSelection: branch.runtimeSelection,
+          knowledgeRetrievalMode: branch.knowledgeRetrievalMode,
+          branch: branch.branch,
+          title: '发布方案讨论 · 分支（独立更新）',
+          updatedAt: 1_775_000_003_000
+        },
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000548',
+            role: 'user',
+            content: '只在分支中继续',
+            createdAt: 1_775_000_003_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    expect(database.getConversation(sourceConversationId)).toEqual(
+      sourceBefore
+    )
+    expect(database.getConversation(branch.id)).toMatchObject({
+      title: '发布方案讨论 · 分支（独立更新）',
+      messages: [
+        { content: '比较两个发布方案' },
+        { content: '可以从风险和成本两个方向比较。' },
+        { content: '只在分支中继续' }
+      ]
+    })
+
+    expect(database.deleteLocalConversation(sourceConversationId)).toBe(
+      true
+    )
+    expect(database.getConversation(branch.id)).toMatchObject({
+      branch: {
+        sourceConversationId,
+        sourceTitle: '发布方案讨论'
+      },
+      messages: [
+        { content: '比较两个发布方案' },
+        { content: '可以从风险和成本两个方向比较。' },
+        { content: '只在分支中继续' }
+      ]
+    })
+    database.close()
+  })
+
+  it('rejects unstable or remote branch sources and rolls back copy failures', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-conversation-branch-guards-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const sourceConversationId =
+      '00000000-0000-4000-8000-000000000551'
+    const sourceMessageId =
+      '00000000-0000-4000-8000-000000000552'
+    database.replaceConversations([
+      {
+        id: sourceConversationId,
+        title: '必须稳定后分支',
+        updatedAt: 1,
+        messages: [
+          {
+            id: sourceMessageId,
+            role: 'user',
+            content: '稳定内容',
+            createdAt: 1,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    const queued = database.enqueueConversationUserInput({
+      conversationId: sourceConversationId,
+      label: '待发送内容',
+      payloadJson: '{}'
+    })
+    expect(() =>
+      database.branchLocalConversation({
+        sourceConversationId,
+        title: '不应创建的队列分支'
+      })
+    ).toThrow('仍有待发送内容')
+    database.removeConversationUserQueueItem(queued.id)
+
+    const taskId = '00000000-0000-4000-8000-000000000553'
+    database.createTask({
+      id: taskId,
+      conversationId: sourceConversationId,
+      title: '运行中的任务',
+      instructions: '保持运行',
+      workMode: 'ask'
+    })
+    database.updateTaskStatus(taskId, 'running')
+    expect(() =>
+      database.branchLocalConversation({
+        sourceConversationId,
+        title: '不应创建的运行分支'
+      })
+    ).toThrow('仍有正在运行的任务')
+    database.updateTaskStatus(taskId, 'completed')
+
+    const channelProject = database.ensureChannelProjects(
+      'C:\\Users\\test',
+      channelDefaultProfileId
+    )[0]!
+    const remote = database.getOrCreateRemoteConversation({
+      projectId: channelProject.id,
+      channel: 'weixin',
+      accountId: 'default',
+      externalConversationId: 'branch-protected',
+      conversationType: 'direct',
+      title: '远程来源',
+      accountDisplay: '发送者 ****0551'
+    })
+    expect(() =>
+      database.branchLocalConversation({
+        sourceConversationId: remote.id,
+        title: '不应创建的远程分支'
+      })
+    ).toThrow('只能从现有的本地会话创建分支')
+
+    const countBeforeFailure = database.listConversations().length
+    const raw = new DatabaseSync(databasePath)
+    raw.exec(`
+      CREATE TRIGGER reject_branched_message
+      BEFORE INSERT ON messages
+      WHEN NEW.conversation_id != '${sourceConversationId}'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced branch copy failure');
+      END;
+    `)
+    raw.close()
+    expect(() =>
+      database.branchLocalConversation({
+        sourceConversationId,
+        title: '必须完整回滚'
+      })
+    ).toThrow('forced branch copy failure')
+    expect(database.listConversations()).toHaveLength(countBeforeFailure)
     database.close()
   })
 

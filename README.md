@@ -13,7 +13,7 @@
 - **多 Runtime**：支持直连模型、OpenCode、Continue 和预览版 DeepSeek Harness，统一处理取消、超时、输出限制和进程退出；原生能力清单将 Tools 与 Commands、LSP、Formatters 分开，并显示来源及 Ask/Execute 可用性。内置 OpenCode 提供 Agent、Tool、Command 与原生 Compact，Continue 提供 Rules、Prompt 预设、结构化提问与 GoodBuddy 手动摘要压缩，并明确标记当前版本无法静态发现原生 Tools。
 - **开放连接**：支持 OpenAI Responses、OpenAI 兼容 Chat Completions、Anthropic Messages、OpenAI Images、Embeddings、跨 Runtime Skills 与自定义 MCP，以及默认关闭、由用户显式开启的 DeepSeek Harness npm 插件市场。MCP 测试可读取有界 Prompt/Resource 元数据，但不会读取 Resource 内容。
 - **知识工作区**：支持文件、目录和网页导入，以及全文、词组、向量和图谱混合检索。
-- **工作管理**：集中管理 Projects、对话、任务、活动、成果、记忆、魔法笔记和智能心跳。
+- **工作管理**：集中管理 Projects、对话、任务、活动、成果、记忆、魔法笔记和智能心跳；可从稳定的本地会话复制当前聊天内容并创建互不影响的会话分支。
 - **远程通道**：支持微信 ClawBot、企业微信和钉钉，每个发送者使用独立远程会话。
 - **桌面上下文**：可选择文件、截图、应用窗口、剪贴板和语音作为上下文。
 - **离线语音**：支持 SenseVoice、Paraformer 和 Whisper 本地模型。

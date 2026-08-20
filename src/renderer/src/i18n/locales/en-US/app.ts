@@ -86,9 +86,20 @@ export const app = {
     saveName: 'Save conversation name',
     cancelRename: 'Cancel rename',
     exportFallbackName: 'GoodBuddy conversation',
+    branch: {
+      badge: 'Branched conversation, source: {{title}}',
+      suffix: 'Branch',
+      creating: 'Creating branch',
+      anotherCreating: 'Another branch is being created. Please wait.',
+      storageUnavailable:
+        'Conversation storage is not ready yet. Please wait.',
+      unavailable:
+        'Finish the active run or pending items before creating a branch'
+    },
     actions: {
       more: 'More conversation actions for {{title}}',
       region: 'Conversation actions for {{title}}',
+      branch: 'Continue in a new conversation',
       rename: 'Rename conversation',
       copy: 'Copy full conversation',
       export: 'Export Markdown'
@@ -572,6 +583,9 @@ export const app = {
     clipboardUnavailable:
       'Cannot access the clipboard. Check your system permissions.',
     conversationExported: 'Conversation exported',
+    conversationBranched: 'Branch created and opened',
+    conversationBranchFailed:
+      'Failed to create a conversation branch. Try again.',
     imageUnavailable: 'Image content is unavailable',
     imageDownloadStarted: 'Image download started',
     remoteConversationReadOnly:

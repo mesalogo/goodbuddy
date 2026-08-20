@@ -179,6 +179,9 @@ describe('WorkspacePrimitives', () => {
       /\.task-status-dot--failed,[\s\S]*?forced-color-adjust:\s*none;/u
     )
     expect(forcedColors).toMatch(
+      /:root \.conversation-task-child__completed-status\s*\{[^}]*color:\s*Canvas;/u
+    )
+    expect(forcedColors).toMatch(
       /\.heartbeat-center__meter\s*\{[^}]*forced-color-adjust:\s*none;/u
     )
 
@@ -211,6 +214,12 @@ describe('WorkspacePrimitives', () => {
 
   it('keeps the conversation action close to the sidebar edge', () => {
     expect(stylesheet).toMatch(
+      /\.conversation-row:has\(\.conversation-task-toggle\) \.conversation-item\s*\{[^}]*padding-left:\s*34px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-task-toggle\s*\{[^}]*left:\s*3px;[^}]*width:\s*28px;[^}]*height:\s*28px;/u
+    )
+    expect(stylesheet).toMatch(
       /\.conversation-row \.conversation-item\s*\{[^}]*padding-right:\s*36px;/u
     )
     expect(stylesheet).toMatch(
@@ -223,6 +232,15 @@ describe('WorkspacePrimitives', () => {
       /\.conversation-activity-indicator\s*\{[^}]*right:\s*38px;/u
     )
     expect(stylesheet).not.toContain('.conversation-delete')
+  })
+
+  it('shows conversation provenance with a horizontal fork badge', () => {
+    expect(stylesheet).toMatch(
+      /\.conversation-branch-badge\s*\{[^}]*width:\s*20px;[^}]*height:\s*18px;[^}]*background:\s*var\(--accent-subtle\);[^}]*color:\s*var\(--accent\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-branch-badge svg,\s*\.conversation-branch-icon\s*\{[^}]*transform:\s*rotate\(90deg\);/u
+    )
   })
 
   it('uses the shared control and menu surfaces for the rich project picker', () => {

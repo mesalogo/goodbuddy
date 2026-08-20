@@ -95,6 +95,7 @@ export const ipcChannels = {
   conversationsList: 'conversations:list',
   conversationsReplace: 'conversations:replace',
   conversationsSaveLocal: 'conversations:save-local',
+  conversationsBranchLocal: 'conversations:branch-local',
   conversationsDeleteLocal: 'conversations:delete-local',
   conversationsChanged: 'conversations:changed',
   conversationQueueList: 'conversation-queue:list',

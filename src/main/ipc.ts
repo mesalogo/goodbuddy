@@ -152,6 +152,7 @@ import {
 } from '../shared/magic-notes-contracts'
 import {
   assistantIdSchema,
+  conversationBranchInputSchema,
   conversationSnapshotsSchema,
   localConversationSaveBatchSchema,
   memoryCreateSchema,
@@ -4619,6 +4620,20 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       assistantDatabase.saveLocalConversations(
         localConversationSaveBatchSchema.parse(input)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationsBranchLocal,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const parsed = conversationBranchInputSchema.parse(input)
+      if (isConversationExecuting(parsed.sourceConversationId)) {
+        throw new Error('当前会话仍有正在执行的请求，请等待完成后再创建分支')
+      }
+      return assistantDatabase.branchLocalConversation(
+        parsed
       )
     }
   )

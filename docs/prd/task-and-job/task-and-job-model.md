@@ -37,8 +37,11 @@ Conversation 是用户消息、助手消息和面向用户结果的内容容器�
 - 多个 Task 可以共享同一 Conversation 的可见上下文，但各自拥有独立配置、计划、权限
   快照、状态、Job、Run 和成果引用。
 - Conversation 标题与 Task 名称相互独立。创建或重命名 Task 不静默修改现有会话标题。
+- 从稳定的本地 Conversation 创建分支会生成新的 Conversation 和消息 ID，并保存直接来源
+  标识；它只复制可见聊天内容与会话级 Runtime/知识检索选择，不复制 Task、发送队列、Job、
+  Run、记忆或 Artifact 归属。来源与分支后续独立更新，删除来源不删除已创建的分支。
 - 左侧会话列表根据显式 Task 关联显示行首展开按钮；父会话行不重复任务标签，展开后的
-  Task 子项使用任务图标，并只展开到 Task 层。
+  Task 子项左侧显示名称，右侧显示状态标记，并只展开到 Task 层。
 - 并行 Job 不直接无序写入消息流；进度留在各自 Task/Job 状态中，最终文本以带来源元数据
   的完整消息写入 Conversation。
 - 删除 Conversation 前必须说明关联 Task 数量，并先停止或结算仍活动的 Job。
@@ -193,10 +196,10 @@ waiting_approval > failed > running > paused > idle
 
 - 无 Task 的 Conversation 保持现有单行样式。
 - 有 Task 的 Conversation 显示行首展开按钮，父会话行不重复任务标签或数量。
-- 展开后只显示带任务图标和本地化摘要的 Task，不继续显示 Job、Subjob 或 Run。
+- 展开后只显示名称、本地化摘要和右侧状态标记，不继续显示 Job、Subjob 或 Run。
 - 新建 Task 成功后首次自动展开；用户手动折叠后保持选择，后台状态变化不强制展开。
 - 默认最多直接显示 3 个 Task；“查看全部 N 个任务”打开该 Conversation 的完整 Task 区。
-- Task 子项的任务图标表示身份；运行、审批、失败和暂停同时使用本地化状态文字。
+- Task 子项的状态标记固定在右侧；运行、审批、失败和暂停同时使用本地化状态文字。
 - 删除最后一个关联 Task 后，Conversation 的展开按钮自动消失。
 
 ## 9. 兼容映射

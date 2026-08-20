@@ -2734,7 +2734,7 @@ describe('registerIpcHandlers local conversation persistence', () => {
     vi.clearAllMocks()
   })
 
-  it('validates and forwards incremental saves and explicit deletions', async () => {
+  it('validates and forwards incremental saves, branches, and explicit deletions', async () => {
     const conversationId =
       '00000000-0000-4000-8000-000000000301'
     const queuedAttachmentId =
@@ -2774,6 +2774,16 @@ describe('registerIpcHandlers local conversation persistence', () => {
         })
       ),
       saveLocalConversations: vi.fn(),
+      branchLocalConversation: vi.fn((input) => ({
+        id: '00000000-0000-4000-8000-000000000305',
+        branch: {
+          sourceConversationId: input.sourceConversationId,
+          sourceTitle: '增量会话'
+        },
+        title: input.title,
+        updatedAt: 2,
+        messages: []
+      })),
       deleteLocalConversation: vi.fn(() => true)
     }
     const contextManager = {
@@ -2838,6 +2848,21 @@ describe('registerIpcHandlers local conversation persistence', () => {
     expect(
       assistantDatabase.saveLocalConversations
     ).toHaveBeenCalledWith(batch)
+    const branchInput = {
+      sourceConversationId: conversationId,
+      title: '增量会话 · 分支'
+    }
+    expect(
+      electronMocks.handlers.get(
+        ipcChannels.conversationsBranchLocal
+      )?.(event, branchInput)
+    ).toMatchObject({
+      branch: { sourceConversationId: conversationId },
+      title: branchInput.title
+    })
+    expect(
+      assistantDatabase.branchLocalConversation
+    ).toHaveBeenCalledWith(branchInput)
     expect(
       electronMocks.handlers.get(
         ipcChannels.conversationsDeleteLocal
@@ -2866,6 +2891,14 @@ describe('registerIpcHandlers local conversation persistence', () => {
           }
         }
       ])
+    ).toThrow()
+    expect(() =>
+      electronMocks.handlers.get(
+        ipcChannels.conversationsBranchLocal
+      )?.(event, {
+        sourceConversationId: 'not-a-uuid',
+        title: '无效分支'
+      })
     ).toThrow()
     expect(() =>
       electronMocks.handlers.get(
@@ -3348,6 +3381,17 @@ describe('registerIpcHandlers agent terminal state', () => {
       queueDueSchedules: vi.fn(() => []),
       queueScheduleNow: vi.fn(),
       completeScheduleRun: vi.fn(),
+      branchLocalConversation: vi.fn(() => ({
+        id: '00000000-0000-4000-8000-000000000403',
+        branch: {
+          sourceConversationId:
+            '00000000-0000-4000-8000-000000000402',
+          sourceTitle: '来源会话'
+        },
+        title: '来源会话 · 分支',
+        updatedAt: Date.now(),
+        messages: []
+      })),
       listSchedules: vi.fn(() => []),
       createSchedule: vi.fn(),
       setScheduleEnabled: vi.fn(),
@@ -3471,6 +3515,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       handler: electronMocks.handlers.get(ipcChannels.agentRun),
       statusHandler: electronMocks.handlers.get(ipcChannels.agentStatus),
       cancelHandler: electronMocks.handlers.get(ipcChannels.agentCancel),
+      branchHandler: electronMocks.handlers.get(
+        ipcChannels.conversationsBranchLocal
+      ),
       knowledgeSearchHandler: electronMocks.handlers.get(
         ipcChannels.knowledgeSearch
       ),
@@ -4016,6 +4063,15 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
     ).rejects.toThrow('当前对话已有执行中的请求')
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
+    expect(() =>
+      harness.branchHandler?.(trustedEvent(harness.webContents), {
+        sourceConversationId: conversationId,
+        title: '等待 Runtime · 分支'
+      })
+    ).toThrow('当前会话仍有正在执行的请求')
+    expect(
+      harness.assistantDatabase.branchLocalConversation
+    ).not.toHaveBeenCalled()
 
     resolveRuntime?.(runtime)
     await firstRun

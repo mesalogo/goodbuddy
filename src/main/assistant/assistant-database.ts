@@ -19,6 +19,7 @@ import type {
   AssistantSchedule,
   AssistantTask,
   ConversationQueueItem,
+  ConversationBranchInput,
   ConversationMessage,
   ConversationSnapshot,
   ExpertCreateInput,
@@ -122,6 +123,8 @@ type ConversationRow = {
   external_conversation_id: string | null
   conversation_type: 'direct' | 'group' | null
   account_display: string | null
+  branch_source_conversation_id: string | null
+  branch_source_title: string | null
   updated_at: string
 }
 
@@ -892,6 +895,16 @@ function toConversationSnapshot(
           }
         }
       : {}),
+    ...(conversation.branch_source_conversation_id &&
+    conversation.branch_source_title
+      ? {
+          branch: {
+            sourceConversationId:
+              conversation.branch_source_conversation_id,
+            sourceTitle: conversation.branch_source_title
+          }
+        }
+      : {}),
     title: conversation.title,
     updatedAt: Date.parse(conversation.updated_at),
     messages: messages.map((message) => {
@@ -1525,7 +1538,9 @@ export class AssistantDatabase {
         `SELECT id, project_id, runtime_selection_json,
                 knowledge_retrieval_mode, context_state_json, title, channel,
                 external_account_id, external_conversation_id,
-                conversation_type, account_display, updated_at
+                conversation_type, account_display,
+                branch_source_conversation_id, branch_source_title,
+                updated_at
          FROM conversations
          WHERE status = 'active'
          ORDER BY updated_at DESC
@@ -1560,7 +1575,9 @@ export class AssistantDatabase {
         `SELECT id, project_id, runtime_selection_json,
                 knowledge_retrieval_mode, context_state_json, title, channel,
                 external_account_id, external_conversation_id,
-                conversation_type, account_display, updated_at
+                conversation_type, account_display,
+                branch_source_conversation_id, branch_source_title,
+                updated_at
          FROM conversations
          WHERE id = ? AND status = 'active'`
       )
@@ -1686,9 +1703,10 @@ export class AssistantDatabase {
       const insertConversation = database.prepare(
         `INSERT INTO conversations
           (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
-           context_state_json, work_mode, title, status, created_at,
-           updated_at)
-         VALUES (?, ?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
+           context_state_json, work_mode, title,
+           branch_source_conversation_id, branch_source_title, status,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'ask', ?, ?, ?, 'active', ?, ?)`
       )
       const insertMessage = database.prepare(
         `INSERT INTO messages
@@ -1710,6 +1728,8 @@ export class AssistantDatabase {
           conversation.knowledgeRetrievalMode ?? null,
           serializeConversationContextState(conversation),
           conversation.title,
+          conversation.branch?.sourceConversationId ?? null,
+          conversation.branch?.sourceTitle ?? null,
           updatedAt,
           updatedAt
         )
@@ -1743,15 +1763,17 @@ export class AssistantDatabase {
     const insertConversation = database.prepare(
       `INSERT INTO conversations
         (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
-         context_state_json, work_mode, title, status, created_at,
-         updated_at)
-       VALUES (?, ?, ?, ?, ?, 'ask', ?, 'active', ?, ?)`
+         context_state_json, work_mode, title,
+         branch_source_conversation_id, branch_source_title, status,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'ask', ?, ?, ?, 'active', ?, ?)`
     )
     const updateConversation = database.prepare(
       `UPDATE conversations
        SET project_id = ?, runtime_selection_json = ?,
            knowledge_retrieval_mode = ?, context_state_json = ?,
-           title = ?, status = 'active',
+           title = ?, branch_source_conversation_id = ?,
+           branch_source_title = ?, status = 'active',
            updated_at = MAX(updated_at, ?)
        WHERE id = ? AND channel IS NULL`
     )
@@ -1807,6 +1829,8 @@ export class AssistantDatabase {
             header.knowledgeRetrievalMode ?? null,
             serializeConversationContextState(header),
             header.title,
+            header.branch?.sourceConversationId ?? null,
+            header.branch?.sourceTitle ?? null,
             updatedAt,
             header.id
           )
@@ -1823,6 +1847,8 @@ export class AssistantDatabase {
             header.knowledgeRetrievalMode ?? null,
             serializeConversationContextState(header),
             header.title,
+            header.branch?.sourceConversationId ?? null,
+            header.branch?.sourceTitle ?? null,
             updatedAt,
             updatedAt
           )
@@ -1876,6 +1902,128 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+  }
+
+  branchLocalConversation(
+    input: ConversationBranchInput
+  ): ConversationSnapshot {
+    const database = this.requireDatabase()
+    const destinationConversationId = randomUUID()
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const source = database
+        .prepare(
+          `SELECT id, project_id, runtime_selection_json,
+                  knowledge_retrieval_mode, title
+           FROM conversations
+           WHERE id = ? AND status = 'active' AND channel IS NULL`
+        )
+        .get(input.sourceConversationId) as
+        | {
+            id: string
+            project_id: string | null
+            runtime_selection_json: string | null
+            knowledge_retrieval_mode: 'auto' | 'always' | null
+            title: string
+          }
+        | undefined
+      if (!source) {
+        throw new Error('只能从现有的本地会话创建分支')
+      }
+      const activeTask = database
+        .prepare(
+          `SELECT 1
+           FROM tasks
+           WHERE conversation_id = ?
+             AND status IN ('running', 'waiting_approval')
+           LIMIT 1`
+        )
+        .get(source.id)
+      if (activeTask) {
+        throw new Error('当前会话仍有正在运行的任务，请等待完成后再创建分支')
+      }
+      const queuedItem = database
+        .prepare(
+          `SELECT 1
+           FROM conversation_queue_items
+           WHERE conversation_id = ?
+             AND status IN ('pending', 'dispatching')
+           LIMIT 1`
+        )
+        .get(source.id)
+      if (queuedItem) {
+        throw new Error('当前会话仍有待发送内容，请处理后再创建分支')
+      }
+      const messageStates = database
+        .prepare(
+          `SELECT state
+           FROM messages
+           WHERE conversation_id = ?
+           ORDER BY sequence ASC`
+        )
+        .all(source.id) as Array<{ state: MessageRow['state'] }>
+      if (
+        messageStates.some((message) => message.state === 'streaming')
+      ) {
+        throw new Error('当前会话仍在生成内容，请等待完成后再创建分支')
+      }
+      database
+        .prepare(
+          `INSERT INTO conversations
+            (id, project_id, runtime_selection_json,
+             knowledge_retrieval_mode, context_state_json, work_mode,
+             title, branch_source_conversation_id, branch_source_title,
+             status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, NULL, 'ask', ?, ?, ?, 'active', ?, ?)`
+        )
+        .run(
+          destinationConversationId,
+          source.project_id,
+          source.runtime_selection_json,
+          source.knowledge_retrieval_mode,
+          input.title,
+          source.id,
+          source.title,
+          now,
+          now
+        )
+      const copiedMessages = database
+        .prepare(
+          `INSERT INTO messages
+            (id, conversation_id, request_id, role, content, state,
+             sequence, metadata_json, created_at)
+           SELECT lower(
+                    hex(randomblob(4)) || '-' ||
+                    hex(randomblob(2)) || '-4' ||
+                    substr(hex(randomblob(2)), 2) || '-' ||
+                    substr('89ab', (random() & 3) + 1, 1) ||
+                    substr(hex(randomblob(2)), 2) || '-' ||
+                    hex(randomblob(6))
+                  ),
+                  ?, NULL, role, content, state,
+                  ROW_NUMBER() OVER (ORDER BY sequence) - 1,
+                  json_remove(
+                    metadata_json,
+                    '$.artifactIds',
+                    '$.subagents',
+                    '$.task'
+                  ),
+                  created_at
+           FROM messages
+           WHERE conversation_id = ?
+           ORDER BY sequence`
+        )
+        .run(destinationConversationId, source.id)
+      if (copiedMessages.changes !== messageStates.length) {
+        throw new Error('分支消息复制不完整')
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getConversation(destinationConversationId)
   }
 
   deleteLocalConversation(conversationId: string): boolean {
@@ -5799,12 +5947,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 25) {
+    if (version.user_version > 26) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 25) {
+    if (version.user_version === 26) {
       return
     }
     if (version.user_version < 1) {
@@ -5837,6 +5985,8 @@ export class AssistantDatabase {
         work_mode TEXT NOT NULL DEFAULT 'ask'
           CHECK(work_mode IN ('ask', 'execute')),
         title TEXT NOT NULL,
+        branch_source_conversation_id TEXT,
+        branch_source_title TEXT,
         status TEXT NOT NULL DEFAULT 'active'
           CHECK(status IN ('active', 'archived')),
         created_at TEXT NOT NULL,
@@ -5855,6 +6005,9 @@ export class AssistantDatabase {
         created_at TEXT NOT NULL,
         UNIQUE(conversation_id, sequence)
       );
+      CREATE INDEX conversations_branch_source_idx
+        ON conversations(branch_source_conversation_id)
+        WHERE branch_source_conversation_id IS NOT NULL;
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
         project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
@@ -7170,6 +7323,40 @@ export class AssistantDatabase {
             ON projects(built_in_default)
             WHERE built_in_default = 1;
           PRAGMA user_version = 25;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 26) {
+      const conversationColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(conversations)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!conversationColumns.has('branch_source_conversation_id')) {
+          database.exec(`
+            ALTER TABLE conversations
+              ADD COLUMN branch_source_conversation_id TEXT;
+          `)
+        }
+        if (!conversationColumns.has('branch_source_title')) {
+          database.exec(`
+            ALTER TABLE conversations
+              ADD COLUMN branch_source_title TEXT;
+          `)
+        }
+        database.exec(`
+          CREATE INDEX IF NOT EXISTS conversations_branch_source_idx
+            ON conversations(branch_source_conversation_id)
+            WHERE branch_source_conversation_id IS NOT NULL;
+          PRAGMA user_version = 26;
           COMMIT;
         `)
       } catch (error) {

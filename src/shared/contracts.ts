@@ -36,6 +36,7 @@ import {
   type TokenUsageSummary,
   type ConversationSnapshot,
   type ConversationAttachment,
+  type ConversationBranchInput,
   type ConversationQueueItem,
   type ConversationContextCompressionState,
   type LocalConversationSaveBatch,
@@ -1497,6 +1498,9 @@ export type DesktopApi = {
     list: () => Promise<ConversationSnapshot[]>
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
+    branchLocal: (
+      input: ConversationBranchInput
+    ) => Promise<ConversationSnapshot>
     deleteLocal: (conversationId: string) => Promise<boolean>
     onChanged: (
       listener: (conversationId?: string) => void

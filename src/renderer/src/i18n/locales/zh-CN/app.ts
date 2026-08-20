@@ -83,9 +83,18 @@ export const app = {
     saveName: '保存会话名称',
     cancelRename: '取消重命名',
     exportFallbackName: 'GoodBuddy 对话',
+    branch: {
+      badge: '分支会话，来源：{{title}}',
+      suffix: '分支',
+      creating: '正在创建分支',
+      anotherCreating: '另一条分支正在创建，请稍候',
+      storageUnavailable: '会话存储尚未就绪，请稍候',
+      unavailable: '会话运行或待发送内容处理完后才能创建分支'
+    },
     actions: {
       more: '更多会话操作 {{title}}',
       region: '{{title}} 的会话操作',
+      branch: '在新会话中继续',
       rename: '重命名会话',
       copy: '复制完整会话',
       export: '导出 Markdown'
@@ -537,6 +546,8 @@ export const app = {
     conversationCopied: '对话已复制到剪贴板',
     clipboardUnavailable: '无法访问剪贴板，请检查系统权限',
     conversationExported: '对话已导出',
+    conversationBranched: '已创建并打开分支会话',
+    conversationBranchFailed: '创建分支会话失败，请重试',
     imageUnavailable: '图片内容不可用',
     imageDownloadStarted: '图片下载已开始',
     remoteConversationReadOnly: '远程通道会话只能从对应消息应用继续发起',

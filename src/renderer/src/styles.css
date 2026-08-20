@@ -95,16 +95,16 @@
 }
 
 .conversation-row:has(.conversation-task-toggle) .conversation-item {
-  padding-left: 42px;
+  padding-left: 34px;
 }
 
 .conversation-task-toggle {
   position: absolute;
   z-index: 1;
-  left: 7px;
+  left: 3px;
   display: grid;
-  width: 25px;
-  height: 25px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -178,6 +178,14 @@
   font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-task-child__completed-status {
+  display: grid;
+  width: 10px;
+  height: 10px;
+  color: var(--text-on-accent);
+  place-items: center;
 }
 
 .conversation-task-view-all {
@@ -2792,6 +2800,7 @@ textarea:focus-visible {
 
 .conversation-item__primary
   > :where(
+    .conversation-branch-badge,
     .conversation-source-badge,
     .conversation-unread
   ) {
@@ -2839,6 +2848,25 @@ textarea:focus-visible {
   transition-delay: 300ms;
   transition-duration: var(--overflow-marquee-duration);
   transition-timing-function: linear;
+}
+
+.conversation-branch-badge {
+  display: inline-flex;
+  width: 20px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  margin-right: var(--space-1);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.conversation-branch-badge svg,
+.conversation-branch-icon {
+  transform: rotate(90deg);
 }
 
 .conversation-source-badge {
@@ -3926,10 +3954,15 @@ button > svg {
   font-weight: 600;
 }
 
-.conversation-title span {
+.conversation-title__text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-title .conversation-branch-badge {
+  margin-right: 0;
 }
 
 .topbar__actions {
@@ -8910,6 +8943,13 @@ details.settings-section > :not(summary) + :not(summary) {
   color: var(--accent);
 }
 
+.conversation-actions button[aria-disabled='true'] {
+  background: transparent;
+  color: var(--text-muted);
+  cursor: help;
+  opacity: 0.65;
+}
+
 .conversation-rename {
   display: grid;
   padding: var(--space-1);
@@ -13251,6 +13291,10 @@ details.settings-section > :not(summary) + :not(summary) {
     border: 2px solid CanvasText;
     background: CanvasText;
     forced-color-adjust: none;
+  }
+
+  :root .conversation-task-child__completed-status {
+    color: Canvas;
   }
 
   :root :is(

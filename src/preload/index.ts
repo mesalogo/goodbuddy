@@ -48,6 +48,7 @@ import type {
   AssistantExpert,
   AssistantTask,
   TokenUsageSummary,
+  ConversationBranchInput,
   ConversationSnapshot,
   LocalConversationSaveBatch,
   WorkspaceChanges,
@@ -629,6 +630,11 @@ const desktopApi: DesktopApi = {
         batch
       )
     },
+    branchLocal: (input: ConversationBranchInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.conversationsBranchLocal,
+        input
+      ) as Promise<ConversationSnapshot>,
     deleteLocal: (conversationId: string) =>
       ipcRenderer.invoke(
         ipcChannels.conversationsDeleteLocal,
