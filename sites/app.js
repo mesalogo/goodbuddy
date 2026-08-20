@@ -5,6 +5,7 @@
   const header = document.querySelector("[data-site-header]");
   const menuToggle = document.querySelector("[data-menu-toggle]");
   const navigation = document.querySelector("[data-navigation]");
+  const menuBackdrop = document.querySelector("[data-menu-backdrop]");
   const themeToggle = document.querySelector("[data-theme-toggle]");
   const themeColor = document.querySelector('meta[name="theme-color"]');
   const tiltStage = document.querySelector("[data-tilt-stage]");
@@ -12,14 +13,30 @@
   const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
   const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const mobileMenu = window.matchMedia("(max-width: 719px)");
+  const isEnglish = root.lang.toLowerCase().startsWith("en");
   const releaseManifestUrl =
     "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/latest.json";
   const releaseFallbackUrl =
     "https://github.com/mesalogo/goodbuddy/releases/latest";
-  const releaseStatus = document.querySelector("[data-release-status]");
+  const releaseRequestTimeoutMs = 10_000;
+  const releaseIndexApi = window.GoodBuddyReleaseIndex;
   const downloadCards = [
     ...document.querySelectorAll("[data-download-card]"),
   ];
+  const interfaceCopy = isEnglish
+    ? {
+        themeDark: "Switch to dark theme",
+        themeLight: "Switch to light theme",
+        menuOpen: "Open navigation",
+        menuClose: "Close navigation",
+      }
+    : {
+        themeDark: "切换为深色主题",
+        themeLight: "切换为浅色主题",
+        menuOpen: "打开导航",
+        menuClose: "关闭导航",
+      };
   const platformNames = {
     windows: "Windows",
     macos: "macOS",
@@ -39,28 +56,92 @@
     return `${megabytes >= 100 ? megabytes.toFixed(0) : megabytes.toFixed(1)} MB`;
   };
 
-  const isTrustedReleaseUrl = (value) => {
-    try {
-      const url = new URL(value);
-      return (
-        url.protocol === "https:" &&
-        url.hostname === "goodbuddy.oss-cn-beijing.aliyuncs.com" &&
-        url.pathname.startsWith("/releases/")
-      );
-    } catch {
-      return false;
+  const listenMediaQuery = (query, listener) => {
+    if (typeof query.addEventListener === "function") {
+      query.addEventListener("change", listener);
+    } else if (typeof query.addListener === "function") {
+      query.addListener(listener);
     }
   };
 
-  const configureDownloads = (release) => {
-    if (
-      release?.formatVersion !== 1 ||
-      release?.productName !== "GoodBuddy" ||
-      typeof release?.version !== "string" ||
-      !release?.targets
-    ) {
-      throw new Error("发布索引格式无效");
+  const readBoundedJson = async (response) => {
+    const maximumBytes = releaseIndexApi?.maximumIndexBytes;
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+      throw new Error("发布索引大小上限无效");
     }
+
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null) {
+      const parsedLength = Number(declaredLength);
+      if (
+        !Number.isSafeInteger(parsedLength) ||
+        parsedLength < 0 ||
+        parsedLength > maximumBytes
+      ) {
+        throw new Error("发布索引响应大小无效");
+      }
+    }
+    if (!response.body) {
+      throw new Error("发布索引响应没有正文");
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let length = 0;
+    while (true) {
+      const result = await reader.read();
+      if (result.done) {
+        break;
+      }
+      length += result.value.byteLength;
+      if (length > maximumBytes) {
+        await reader.cancel();
+        throw new Error("发布索引响应过大");
+      }
+      chunks.push(result.value);
+    }
+
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  };
+
+  const setReleaseLink = (link, url, visibleText) => {
+    const newWindowNotice = link.querySelector(".sr-only");
+    link.href = url;
+    link.replaceChildren(document.createTextNode(visibleText));
+    if (newWindowNotice) {
+      link.append(newWindowNotice);
+    }
+  };
+
+  const setFallbackDownloads = () => {
+    for (const card of downloadCards) {
+      const platform = card.dataset.downloadCard;
+      const link = card.closest(".download-card")?.querySelector("[data-release-link]");
+      const meta = card.closest(".download-card")?.querySelector("[data-download-meta]");
+      if (link instanceof HTMLAnchorElement) {
+        setReleaseLink(
+          link,
+          releaseFallbackUrl,
+          `前往 GitHub 下载 ${platformNames[platform] ?? platform ?? ""} →`,
+        );
+      }
+      if (meta instanceof HTMLElement) {
+        meta.textContent = "请在 GitHub Release 中选择对应的安装文件。";
+      }
+    }
+  };
+
+  const configureDownloads = (payload) => {
+    if (!releaseIndexApi?.validateReleaseIndex) {
+      throw new Error("发布索引校验器不可用");
+    }
+    const release = releaseIndexApi.validateReleaseIndex(payload);
 
     const updateCard = (card) => {
       const platform = card.dataset.downloadCard;
@@ -75,26 +156,15 @@
         !(link instanceof HTMLAnchorElement) ||
         !(meta instanceof HTMLElement)
       ) {
-        return;
+        throw new Error("下载卡片结构无效");
       }
 
       const target = release.targets[`${platform}-${archSelect.value}`];
       const file = target?.files?.[formatSelect.value];
-      if (
-        !file ||
-        typeof file.name !== "string" ||
-        !Number.isSafeInteger(file.size) ||
-        file.size < 1 ||
-        !isTrustedReleaseUrl(file.url)
-      ) {
-        link.href = releaseFallbackUrl;
-        link.textContent =
-          `前往 GitHub 下载 ${platformNames[platform] ?? platform} →`;
-        meta.textContent = "当前选项暂不可用，请在 GitHub Release 中选择文件。";
-        return;
+      if (!file) {
+        throw new Error("下载选项不在已校验的发布索引中");
       }
 
-      link.href = file.url;
       const platformName = platformNames[platform] ?? platform;
       const archName =
         platform === "macos" && archSelect.value === "arm64"
@@ -103,7 +173,11 @@
             ? "ARM64"
             : "x64";
       const formatName = formatNames[formatSelect.value] ?? formatSelect.value;
-      link.textContent = `下载 ${platformName} ${archName} ${formatName} →`;
+      setReleaseLink(
+        link,
+        file.url,
+        `下载 ${platformName} ${archName} ${formatName} →`,
+      );
       meta.textContent =
         `GoodBuddy ${release.version} · ${formatFileSize(file.size)} · ` +
         `${archSelect.options[archSelect.selectedIndex]?.text ?? archSelect.value}`;
@@ -112,35 +186,40 @@
     for (const card of downloadCards) {
       const selects = card.querySelectorAll("select");
       for (const select of selects) {
-        select.addEventListener("change", () => updateCard(card));
+        select.addEventListener("change", () => {
+          try {
+            updateCard(card);
+          } catch {
+            setFallbackDownloads();
+          }
+        });
       }
       updateCard(card);
-    }
-
-    if (releaseStatus instanceof HTMLElement) {
-      releaseStatus.textContent =
-        `官方下载源已就绪：GoodBuddy ${release.version}。` +
-        "请选择处理器和安装包类型。";
-      releaseStatus.classList.add("is-ready");
     }
   };
 
   const loadRelease = async () => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      releaseRequestTimeoutMs,
+    );
     try {
       const response = await fetch(releaseManifestUrl, {
         cache: "no-store",
         credentials: "omit",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`发布索引请求失败：${response.status}`);
       }
-      configureDownloads(await response.json());
+      configureDownloads(await readBoundedJson(response));
     } catch {
-      if (releaseStatus instanceof HTMLElement) {
-        releaseStatus.textContent =
-          "官方下载源暂不可用，下载按钮已切换到 GitHub Release。";
-        releaseStatus.classList.add("is-fallback");
-      }
+      setFallbackDownloads();
+    } finally {
+      window.clearTimeout(timeout);
     }
   };
 
@@ -157,7 +236,7 @@
     root.dataset.theme = theme;
     themeToggle?.setAttribute(
       "aria-label",
-      theme === "dark" ? "切换为浅色主题" : "切换为深色主题",
+      theme === "dark" ? interfaceCopy.themeLight : interfaceCopy.themeDark,
     );
     themeColor?.setAttribute("content", theme === "dark" ? "#07101f" : "#f6f8fb");
 
@@ -170,10 +249,59 @@
     }
   };
 
-  const closeMenu = () => {
+  let isolatedMenuContent = null;
+
+  const isolateMenuContent = () => {
+    if (isolatedMenuContent) {
+      return;
+    }
+    isolatedMenuContent = new Map();
+    for (const element of document.body.children) {
+      if (
+        element === header ||
+        element === menuBackdrop ||
+        element instanceof HTMLScriptElement
+      ) {
+        continue;
+      }
+      isolatedMenuContent.set(element, element.inert);
+      element.inert = true;
+    }
+  };
+
+  const restoreMenuContent = () => {
+    if (!isolatedMenuContent) {
+      return;
+    }
+    for (const [element, wasInert] of isolatedMenuContent) {
+      element.inert = wasInert;
+    }
+    isolatedMenuContent = null;
+  };
+
+  const closeMenu = ({ restoreFocus = true } = {}) => {
+    const wasOpen = header?.classList.contains("is-menu-open") ?? false;
     header?.classList.remove("is-menu-open");
     menuToggle?.setAttribute("aria-expanded", "false");
-    menuToggle?.setAttribute("aria-label", "打开导航");
+    menuToggle?.setAttribute("aria-label", interfaceCopy.menuOpen);
+    menuBackdrop?.classList.remove("is-active");
+    restoreMenuContent();
+    if (wasOpen && restoreFocus) {
+      menuToggle?.focus();
+    }
+  };
+
+  const openMenu = () => {
+    if (!mobileMenu.matches) {
+      closeMenu({ restoreFocus: false });
+      return;
+    }
+    header?.classList.add("is-menu-open");
+    menuToggle?.setAttribute("aria-expanded", "true");
+    menuToggle?.setAttribute("aria-label", interfaceCopy.menuClose);
+    menuBackdrop?.classList.add("is-active");
+    isolateMenuContent();
+    navigation?.querySelector("a")?.focus();
   };
 
   const setHeaderState = () => {
@@ -182,35 +310,37 @@
 
   applyTheme(getSavedTheme() ?? (systemTheme.matches ? "dark" : "light"));
   setHeaderState();
-  void loadRelease();
+  if (!isEnglish) {
+    void loadRelease();
+  }
 
   themeToggle?.addEventListener("click", () => {
     applyTheme(root.dataset.theme === "dark" ? "light" : "dark", true);
   });
 
-  systemTheme.addEventListener("change", (event) => {
-    if (!getSavedTheme()) {
-      applyTheme(event.matches ? "dark" : "light");
-    }
-  });
-
   menuToggle?.addEventListener("click", () => {
-    const willOpen = !header?.classList.contains("is-menu-open");
-    header?.classList.toggle("is-menu-open", willOpen);
-    menuToggle.setAttribute("aria-expanded", String(willOpen));
-    menuToggle.setAttribute("aria-label", willOpen ? "关闭导航" : "打开导航");
+    if (header?.classList.contains("is-menu-open")) {
+      closeMenu();
+    } else {
+      openMenu();
+    }
   });
 
   navigation?.addEventListener("click", (event) => {
     if (event.target instanceof HTMLAnchorElement) {
-      closeMenu();
+      closeMenu({ restoreFocus: false });
+      window.setTimeout(() => {
+        if (!header?.classList.contains("is-menu-open")) {
+          menuToggle?.focus();
+        }
+      }, 0);
     }
   });
+  menuBackdrop?.addEventListener("click", () => closeMenu());
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && header?.classList.contains("is-menu-open")) {
       closeMenu();
-      menuToggle?.focus();
     }
   });
 
@@ -221,6 +351,17 @@
       !header.contains(event.target)
     ) {
       closeMenu();
+    }
+  });
+
+  listenMediaQuery(systemTheme, (event) => {
+    if (!getSavedTheme()) {
+      applyTheme(event.matches ? "dark" : "light");
+    }
+  });
+  listenMediaQuery(mobileMenu, (event) => {
+    if (!event.matches) {
+      closeMenu({ restoreFocus: false });
     }
   });
 
@@ -266,8 +407,8 @@
 
     tiltStage.addEventListener("pointermove", updateTilt, { passive: true });
     tiltStage.addEventListener("pointerleave", resetTilt);
-    finePointer.addEventListener("change", resetTilt);
-    reducedMotion.addEventListener("change", resetTilt);
+    listenMediaQuery(finePointer, resetTilt);
+    listenMediaQuery(reducedMotion, resetTilt);
   }
 
   const sections = [...document.querySelectorAll("main section[id]")];

@@ -151,8 +151,10 @@ const summaryFromDetail = (
 const list = vi.fn<() => Promise<MagicNotesSnapshot>>()
 const get = vi.fn<(noteId: string) => Promise<MagicNoteDetail>>()
 const listTodos = vi.fn<() => Promise<MagicTodosSnapshot>>()
+const create = vi.fn<DesktopApi['magicNotes']['create']>()
 const remove = vi.fn<DesktopApi['magicNotes']['remove']>()
 const createEntry = vi.fn<DesktopApi['magicNotes']['createEntry']>()
+const updateEntry = vi.fn<DesktopApi['magicNotes']['updateEntry']>()
 const analyze = vi.fn<DesktopApi['magicNotes']['analyze']>()
 const updateTodo = vi.fn<DesktopApi['magicNotes']['updateTodo']>()
 const analyzeTodo = vi.fn<DesktopApi['magicNotes']['analyzeTodo']>()
@@ -189,6 +191,7 @@ beforeEach(() => {
   list.mockResolvedValue({ notes: [detail] })
   get.mockResolvedValue(detail)
   listTodos.mockResolvedValue({ todos: [noteTodo, manualTodo] })
+  create.mockResolvedValue(alternateDetail(thirdNoteId, '新笔记'))
   remove.mockResolvedValue()
   const createdDetail: MagicNoteDetail = {
     ...detail,
@@ -213,6 +216,19 @@ beforeEach(() => {
     ]
   }
   createEntry.mockResolvedValue(createdDetail)
+  updateEntry.mockResolvedValue({
+    ...detail,
+    revision: detail.revision + 1,
+    entries: detail.entries.map((entry) => ({
+      ...entry,
+      content: {
+        version: 1,
+        ops: [{ insert: '新的句子\n' }]
+      },
+      plainText: '新的句子',
+      revision: entry.revision + 1
+    }))
+  })
   updateTodo.mockImplementation(async (input) => ({
     ...noteTodo,
     completed: input.completed,
@@ -267,8 +283,10 @@ beforeEach(() => {
         list,
         get,
         listTodos,
+        create,
         remove,
         createEntry,
+        updateEntry,
         analyze,
         updateTodo,
         analyzeTodo,
@@ -583,6 +601,298 @@ describe('MagicNotesWorkspace', () => {
     resolveSecond(second)
     await waitFor(() =>
       expect(screen.getByLabelText('笔记标题')).toHaveValue(third.title)
+    )
+  })
+
+  it('keeps a non-empty composer draft until note switching is confirmed', async () => {
+    const second = alternateDetail(secondNoteId, '第二篇笔记')
+    list.mockResolvedValue({
+      notes: [summaryFromDetail(detail), summaryFromDetail(second)]
+    })
+    get.mockImplementation((requestedId) =>
+      Promise.resolve(requestedId === second.id ? second : detail)
+    )
+
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    const callsBeforeSwitch = get.mock.calls.length
+    fireEvent.click(screen.getByText(second.title).closest('button')!)
+
+    const confirmation = screen.getByRole('alertdialog', {
+      name: '放弃当前未保存草稿？'
+    })
+    const continueEditing = screen.getByRole('button', {
+      name: '继续编辑'
+    })
+    const discardAndSwitch = screen.getByRole('button', {
+      name: '放弃草稿并切换'
+    })
+    expect(confirmation).toHaveAccessibleDescription(
+      '切换后，当前记录草稿中的文字和附件将被丢弃。'
+    )
+    expect(continueEditing).toHaveFocus()
+    expect(get).toHaveBeenCalledTimes(callsBeforeSwitch)
+    expect(
+      screen.getByRole('button', { name: /发布笔记/ })
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    discardAndSwitch.focus()
+    fireEvent.keyDown(discardAndSwitch, { key: 'Tab' })
+    expect(continueEditing).toHaveFocus()
+    fireEvent.keyDown(continueEditing, { key: 'Tab', shiftKey: true })
+    expect(discardAndSwitch).toHaveFocus()
+    fireEvent.keyDown(confirmation, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('magic-note-editor')).toHaveFocus()
+    )
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+    await waitFor(() =>
+      expect(createEntry).toHaveBeenCalledWith({
+        noteId,
+        content: {
+          version: 1,
+          ops: [{ insert: '新的句子\n' }]
+        }
+      })
+    )
+
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    fireEvent.click(screen.getByText(second.title).closest('button')!)
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃草稿并切换' })
+    )
+
+    expect(await screen.findByDisplayValue(second.title)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /第二篇笔记/ })
+    ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('guards dirty existing-entry edits and keeps the first pending target', async () => {
+    const second = alternateDetail(secondNoteId, '第二篇笔记')
+    const third = alternateDetail(thirdNoteId, '第三篇笔记')
+    list.mockResolvedValue({
+      notes: [
+        summaryFromDetail(detail),
+        summaryFromDetail(second),
+        summaryFromDetail(third)
+      ]
+    })
+    get.mockImplementation((requestedId) =>
+      Promise.resolve(
+        requestedId === second.id
+          ? second
+          : requestedId === third.id
+            ? third
+            : detail
+      )
+    )
+    const { container } = render(
+      <MagicNotesWorkspace onNotify={onNotify} />
+    )
+
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    const editEditor = container.querySelector<HTMLButtonElement>(
+      '.magic-note-entry__editor [data-testid="magic-note-editor"]'
+    )!
+    fireEvent.click(editEditor)
+    const secondButton = screen.getByText(second.title).closest('button')!
+    const thirdButton = screen.getByText(third.title).closest('button')!
+    fireEvent.click(secondButton)
+
+    const dialog = screen.getByRole('alertdialog', {
+      name: '放弃当前未保存草稿？'
+    })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(
+      container.querySelector<HTMLElement>('.magic-notes-list-pane')?.inert
+    ).toBe(true)
+    fireEvent.click(thirdButton)
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(
+      container.querySelector<HTMLElement>('.magic-notes-list-pane')?.inert
+    ).toBe(false)
+    await waitFor(() => expect(editEditor).toHaveFocus())
+
+    fireEvent.click(secondButton)
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃草稿并切换' })
+    )
+
+    expect(await screen.findByDisplayValue(second.title)).toBeInTheDocument()
+    await waitFor(() => expect(secondButton).toHaveFocus())
+    expect(get).not.toHaveBeenCalledWith(third.id)
+  })
+
+  it('guards keyboard tab selection and switches only after discard', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    const notesTab = screen.getByRole('tab', { name: '笔记' })
+    const todosTab = screen.getByRole('tab', { name: '待办' })
+    notesTab.focus()
+    fireEvent.keyDown(notesTab, { key: 'ArrowRight' })
+
+    expect(todosTab).toHaveAttribute('aria-selected', 'false')
+    expect(notesTab).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByRole('alertdialog', {
+        name: '放弃当前未保存草稿？'
+      })
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃草稿并切换' })
+    )
+
+    expect(todosTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('准备演示')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('does not create and select another note before the draft is discarded', async () => {
+    const { container } = render(
+      <MagicNotesWorkspace onNotify={onNotify} />
+    )
+
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    fireEvent.click(screen.getByRole('button', { name: '新建笔记' }))
+    fireEvent.change(
+      container.querySelector<HTMLInputElement>(
+        '.magic-notes-create input'
+      )!,
+      {
+        target: { value: '新笔记' }
+      }
+    )
+    fireEvent.click(screen.getByRole('button', { name: '创建笔记' }))
+
+    expect(create).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('button', { name: /发布笔记/ })
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃草稿并切换' })
+    )
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith({ title: '新笔记' })
+    )
+    expect(await screen.findByDisplayValue('新笔记')).toBeInTheDocument()
+  })
+
+  it('preserves the composer draft across save errors and unrelated rerenders', async () => {
+    createEntry.mockRejectedValueOnce(new Error('暂时无法保存'))
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    await i18n.changeLanguage('en-US')
+    fireEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+
+    await waitFor(() =>
+      expect(onNotify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tone: 'error',
+          message: '暂时无法保存'
+        })
+      )
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+
+    await waitFor(() => expect(createEntry).toHaveBeenCalledTimes(2))
+    expect(createEntry).toHaveBeenNthCalledWith(1, {
+      noteId,
+      content: {
+        version: 1,
+        ops: [{ insert: '新的句子\n' }]
+      }
+    })
+    expect(createEntry).toHaveBeenNthCalledWith(2, {
+      noteId,
+      content: {
+        version: 1,
+        ops: [{ insert: '新的句子\n' }]
+      }
+    })
+    await i18n.changeLanguage('zh-CN')
+  })
+
+  it('finalizes a created entry before a to-do refresh failure', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    await screen.findByText('记录正文')
+    listTodos.mockRejectedValueOnce(new Error('待办刷新失败'))
+    fireEvent.click(screen.getByText('模拟输入并回车'))
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+
+    await waitFor(() => expect(createEntry).toHaveBeenCalledOnce())
+    expect(onNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tone: 'success',
+        message: '记录已保存'
+      })
+    )
+    expect(onNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tone: 'error',
+        message: '待办刷新失败'
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+
+    expect(createEntry).toHaveBeenCalledOnce()
+    expect(screen.getByText('请先输入记录内容')).toBeInTheDocument()
+  })
+
+  it('finalizes an edited entry before a to-do refresh failure', async () => {
+    const { container } = render(
+      <MagicNotesWorkspace onNotify={onNotify} />
+    )
+
+    await screen.findByText('记录正文')
+    listTodos.mockRejectedValueOnce(new Error('待办刷新失败'))
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>(
+        '.magic-note-entry__editor [data-testid="magic-note-editor"]'
+      )!
+    )
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+
+    await waitFor(() => expect(updateEntry).toHaveBeenCalledOnce())
+    expect(updateEntry).toHaveBeenCalledWith({
+      entryId,
+      content: {
+        version: 1,
+        ops: [{ insert: '新的句子\n' }]
+      },
+      expectedRevision: detail.entries[0]!.revision
+    })
+    expect(
+      screen.queryByRole('button', { name: '保存修改' })
+    ).not.toBeInTheDocument()
+    expect(onNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tone: 'success',
+        message: '记录已更新，原 AI 评论已清除'
+      })
+    )
+    expect(onNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tone: 'error',
+        message: '待办刷新失败'
+      })
     )
   })
 

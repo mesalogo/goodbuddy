@@ -198,6 +198,7 @@ export const app = {
     }
   },
   chat: {
+    heading: 'Conversation',
     user: 'You',
     taskResult: 'Task result: {{title}}',
     welcome: {

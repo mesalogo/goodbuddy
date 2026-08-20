@@ -56,6 +56,10 @@ import type {
   RuntimeSkillPackage
 } from '../capabilities/capability-service'
 import { stageRuntimeSkillPackages } from './runtime-skill-packages'
+import {
+  requestProcessTreeTermination,
+  waitForProcessExit
+} from './child-process-termination'
 
 const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
 const STARTUP_TIMEOUT_MS = 10_000
@@ -65,6 +69,8 @@ const MAX_PERMISSION_PATTERN_LENGTH = 1_024
 const MAX_PERMISSION_PATTERNS_BYTES = 8 * 1_024
 const MAX_PERMISSION_METADATA_BYTES = 8 * 1_024
 const MAX_TOOL_CALLS_PER_RUN = 100
+const MAX_EXECUTION_OUTPUT_BYTES = 1024 * 1024
+const MAX_EXECUTION_MILLISECONDS = 10 * 60_000
 const MAX_QUESTION_REQUEST_BYTES = 32 * 1_024
 const MAX_QUESTIONS_PER_REQUEST = 4
 const MAX_QUESTION_OPTIONS = 20
@@ -243,6 +249,44 @@ function byteLengthWithin(value: string, maximum: number): boolean {
   return Buffer.byteLength(value) <= maximum
 }
 
+function createPublicQuestionId(
+  requestId: string,
+  sessionId: string,
+  upstreamQuestionId: string
+): string {
+  return `opencode-${createHash('sha256')
+    .update(`${requestId}\0${sessionId}\0${upstreamQuestionId}`)
+    .digest('hex')
+    .slice(0, 48)}`
+}
+
+function executionDeadlineLabel(milliseconds: number): string {
+  return milliseconds % 60_000 === 0
+    ? `${milliseconds / 60_000} 分钟`
+    : `${milliseconds} 毫秒`
+}
+
+function awaitWithAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal
+): Promise<T> {
+  signal.throwIfAborted()
+  return new Promise<T>((resolveOperation, rejectOperation) => {
+    const abort = (): void => rejectOperation(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    operation.then(
+      (value) => {
+        signal.removeEventListener('abort', abort)
+        resolveOperation(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', abort)
+        rejectOperation(error)
+      }
+    )
+  })
+}
+
 function areBoundedPatterns(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
@@ -416,6 +460,7 @@ export type OpenCodeRuntimeDependencies = {
   createClient: typeof createOpencodeClient
   platform: NodeJS.Platform
   startupTimeoutMs: number
+  executionTimeoutMs: number
 }
 
 export type OpenCodeRuntimeOptions = {
@@ -678,6 +723,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       client: OpencodeClient
       directory: string
       questionCount: number
+      upstreamQuestionId: string
     }
   >()
   private embeddedRunTail: Promise<void> = Promise.resolve()
@@ -694,6 +740,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       createClient: createOpencodeClient,
       platform: process.platform,
       startupTimeoutMs: STARTUP_TIMEOUT_MS,
+      executionTimeoutMs: MAX_EXECUTION_MILLISECONDS,
       ...dependencies
     }
   }
@@ -782,36 +829,14 @@ export class OpenCodeRuntime implements AgentRuntime {
   }
 
   private terminate(child: SpawnedProcess): void {
-    if (child.exitCode !== null) {
-      return
-    }
-    if (this.dependencies.platform === 'win32' && child.pid) {
-      const killer = this.dependencies.spawn(
-        'taskkill.exe',
-        ['/PID', String(child.pid), '/T', '/F'],
-        {
-          shell: false,
-          stdio: 'ignore',
-          windowsHide: true
-        }
-      )
-      killer.unref()
-    } else {
-      child.kill('SIGTERM')
-    }
+    requestProcessTreeTermination(child, {
+      platform: this.dependencies.platform,
+      spawn: this.dependencies.spawn
+    })
   }
 
   private waitForExit(child: SpawnedProcess): Promise<void> {
-    if (child.exitCode !== null) {
-      return Promise.resolve()
-    }
-    return new Promise((resolveExit) => {
-      const timeout = setTimeout(resolveExit, 2_000)
-      child.once('close', () => {
-        clearTimeout(timeout)
-        resolveExit()
-      })
-    })
+    return waitForProcessExit(child)
   }
 
   private getNativeSkillIds(): string[] {
@@ -1083,9 +1108,12 @@ export class OpenCodeRuntime implements AgentRuntime {
     if (this.client) {
       return this.client
     }
+    const existingInitialization = this.clientInitialization
     this.clientInitialization ??= this.initializeClient(signal)
     try {
-      return await this.clientInitialization
+      return signal && existingInitialization
+        ? await awaitWithAbort(this.clientInitialization, signal)
+        : await this.clientInitialization
     } catch (error) {
       this.clientInitialization = undefined
       throw error
@@ -1154,7 +1182,8 @@ export class OpenCodeRuntime implements AgentRuntime {
   }
 
   private async discoverAgents(
-    client: OpencodeClient
+    client: OpencodeClient,
+    signal?: AbortSignal
   ): Promise<
     Array<{
       id: string
@@ -1165,9 +1194,15 @@ export class OpenCodeRuntime implements AgentRuntime {
       hidden: boolean
     }>
   > {
-    const response = await client.app.agents({
-      directory: this.options.defaultWorkspace
-    })
+    const operation = client.app.agents(
+      {
+        directory: this.options.defaultWorkspace
+      },
+      signal ? { signal } : undefined
+    )
+    const response = signal
+      ? await awaitWithAbort(operation, signal)
+      : await operation
     if (response.error || !response.data) {
       throw new Error('OpenCode Agent 清单不可用')
     }
@@ -1197,7 +1232,8 @@ export class OpenCodeRuntime implements AgentRuntime {
 
   private async resolveSelectedAgent(
     client: OpencodeClient,
-    request: AgentExecutionRequest
+    request: AgentExecutionRequest,
+    signal: AbortSignal
   ): Promise<string | undefined> {
     const control =
       request.runtimeControl?.provider === 'opencode'
@@ -1213,7 +1249,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         '外部 OpenCode Server 不支持由 GoodBuddy 选择 Agent'
       )
     }
-    const agents = await this.discoverAgents(client)
+    const agents = await this.discoverAgents(client, signal)
     if (
       !agents.some(
         (agent) =>
@@ -1592,6 +1628,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     client: OpencodeClient,
     request: AgentExecutionRequest,
     directory: string,
+    signal: AbortSignal,
     agent?: string,
     permission?: PermissionRuleset
   ): Promise<{ id: string; created: boolean }> {
@@ -1603,27 +1640,62 @@ export class OpenCodeRuntime implements AgentRuntime {
       request.conversationId
     )
     if (pending) {
-      return { id: await pending, created: false }
+      return {
+        id: await awaitWithAbort(pending, signal),
+        created: false
+      }
     }
-    const creation = client.session
-      .create({
-        title: 'GoodBuddy 对话',
-        directory,
-        ...(agent ? { agent } : {}),
-        ...(permission ? { permission } : {})
-      })
+    const creation: Promise<string> = client.session
+      .create(
+        {
+          title: 'GoodBuddy 对话',
+          directory,
+          ...(agent ? { agent } : {}),
+          ...(permission ? { permission } : {})
+        },
+        { signal }
+      )
       .then((response) => {
         if (!response.data) {
           throw new Error('OpenCode 会话创建失败')
         }
-        this.sessions.set(request.conversationId, response.data.id)
-        return response.data.id
+        const sessionId = response.data.id
+        const stillCurrent =
+          this.sessionInitializations.get(request.conversationId) ===
+          creation
+        if (signal.aborted || !stillCurrent) {
+          if (this.sessions.get(request.conversationId) !== sessionId) {
+            void client.session
+              .delete(
+                {
+                  sessionID: sessionId,
+                  directory
+                },
+                { signal: AbortSignal.timeout(1_000) }
+              )
+              .catch(() => undefined)
+          }
+          if (signal.aborted) {
+            throw signal.reason
+          }
+          throw new Error('OpenCode 会话初始化已失效')
+        }
+        this.sessions.set(request.conversationId, sessionId)
+        return sessionId
       })
     this.sessionInitializations.set(request.conversationId, creation)
     try {
-      return { id: await creation, created: true }
+      return {
+        id: await awaitWithAbort(creation, signal),
+        created: true
+      }
     } finally {
-      this.sessionInitializations.delete(request.conversationId)
+      if (
+        this.sessionInitializations.get(request.conversationId) ===
+        creation
+      ) {
+        this.sessionInitializations.delete(request.conversationId)
+      }
     }
   }
 
@@ -1631,17 +1703,42 @@ export class OpenCodeRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
-    const releaseEmbedded = this.usesEmbeddedPermissionMediation()
-      ? await this.acquireEmbeddedRun(signal)
-      : undefined
-    const releaseConversation = await this.acquireConversationRun(
-      request.conversationId,
-      signal
+    const deadline = new AbortController()
+    const deadlineTimer = setTimeout(
+      () =>
+        deadline.abort(
+          new Error(
+            `OpenCode 执行超过 ${executionDeadlineLabel(
+              this.dependencies.executionTimeoutMs
+            )}总时限`
+          )
+        ),
+      this.dependencies.executionTimeoutMs
     )
+    deadlineTimer.unref?.()
+    const executionSignal = AbortSignal.any([
+      signal,
+      deadline.signal
+    ])
+    let releaseEmbedded: (() => void) | undefined
+    let releaseConversation: (() => void) | undefined
     try {
-      yield* this.runUnlocked(request, signal)
+      releaseEmbedded = this.usesEmbeddedPermissionMediation()
+        ? await this.acquireEmbeddedRun(executionSignal)
+        : undefined
+      releaseConversation = await this.acquireConversationRun(
+        request.conversationId,
+        executionSignal
+      )
+      yield* this.runUnlocked(request, executionSignal)
+    } catch (error) {
+      if (deadline.signal.aborted && !signal.aborted) {
+        throw deadline.signal.reason
+      }
+      throw error
     } finally {
-      releaseConversation()
+      clearTimeout(deadlineTimer)
+      releaseConversation?.()
       releaseEmbedded?.()
     }
   }
@@ -1674,7 +1771,8 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
     const selectedAgent = await this.resolveSelectedAgent(
       client,
-      request
+      request,
+      signal
     )
     let selectedCommand:
       | {
@@ -1683,7 +1781,10 @@ export class OpenCodeRuntime implements AgentRuntime {
         }
       | undefined
     if (runtimeControl?.command) {
-      const commandResponse = await client.command.list({ directory })
+      const commandResponse = await awaitWithAbort(
+        client.command.list({ directory }, { signal }),
+        signal
+      )
       if (commandResponse.error || !commandResponse.data) {
         throw new Error('OpenCode 无法验证原生命令')
       }
@@ -1725,19 +1826,25 @@ export class OpenCodeRuntime implements AgentRuntime {
           .update(`${request.conversationId}\0${request.requestId}`)
           .digest('hex')
           .slice(0, 20)}`
-        const added = await client.mcp.add({
-          directory,
-          name: knowledgeMcpName,
-          config: {
-            type: 'remote',
-            url: this.options.knowledgeGateway.getEndpoint()!,
-            enabled: true,
-            headers: {
-              Authorization: `Bearer ${request.knowledgeCapabilityToken}`
+        const added = await awaitWithAbort(
+          client.mcp.add(
+            {
+              directory,
+              name: knowledgeMcpName,
+              config: {
+                type: 'remote',
+                url: this.options.knowledgeGateway.getEndpoint()!,
+                enabled: true,
+                headers: {
+                  Authorization: `Bearer ${request.knowledgeCapabilityToken}`
+                },
+                oauth: false
+              }
             },
-            oauth: false
-          }
-        })
+            { signal }
+          ),
+          signal
+        )
         if (added.error || !added.data) {
           throw new Error('OpenCode 内置只读工具连接失败')
         }
@@ -1776,19 +1883,25 @@ export class OpenCodeRuntime implements AgentRuntime {
             .update(`${request.conversationId}\0${request.requestId}`)
             .digest('hex')
             .slice(0, 20)}`
-          const added = await client.mcp.add({
-            directory,
-            name: customMcpName,
-            config: {
-              type: 'remote',
-              url: this.options.knowledgeGateway.getEndpoint()!,
-              enabled: true,
-              headers: {
-                Authorization: `Bearer ${customMcpToken}`
+          const added = await awaitWithAbort(
+            client.mcp.add(
+              {
+                directory,
+                name: customMcpName,
+                config: {
+                  type: 'remote',
+                  url: this.options.knowledgeGateway.getEndpoint()!,
+                  enabled: true,
+                  headers: {
+                    Authorization: `Bearer ${customMcpToken}`
+                  },
+                  oauth: false
+                }
               },
-              oauth: false
-            }
-          })
+              { signal }
+            ),
+            signal
+          )
           const addedStatus = added.data?.[customMcpName]
           if (
             added.error ||
@@ -1834,9 +1947,10 @@ export class OpenCodeRuntime implements AgentRuntime {
               ]
       let disabledTools: Record<string, boolean> | undefined
       if (request.workMode !== 'execute') {
-        const tools = await client.tool.ids({
-          directory
-        })
+        const tools = await awaitWithAbort(
+          client.tool.ids({ directory }, { signal }),
+          signal
+        )
         if (tools.error || !tools.data) {
           throw new Error('OpenCode 无法确认工具已禁用，已阻止只读请求')
         }
@@ -1854,16 +1968,23 @@ export class OpenCodeRuntime implements AgentRuntime {
         client,
         request,
         directory,
+        signal,
         selectedAgent,
         permission
       )
       const sessionId = session.id
       if (!session.created) {
-        const update = await client.session.update({
-          sessionID: sessionId,
-          directory,
-          permission
-        })
+        const update = await awaitWithAbort(
+          client.session.update(
+            {
+              sessionID: sessionId,
+              directory,
+              permission
+            },
+            { signal }
+          ),
+          signal
+        )
         if (update.error || !update.data) {
           throw new Error('OpenCode 会话权限配置失败')
         }
@@ -1875,9 +1996,10 @@ export class OpenCodeRuntime implements AgentRuntime {
       message: 'OpenCode 正在处理请求'
     }
 
-    const subscription = await client.event.subscribe({
-      directory
-    }, { signal })
+    const subscription = await awaitWithAbort(
+      client.event.subscribe({ directory }, { signal }),
+      signal
+    )
 
     const abortSession = (): void => {
       void client.session.abort({
@@ -1898,7 +2020,16 @@ export class OpenCodeRuntime implements AgentRuntime {
       }
     >()
     const reasoningPartIds = new Set<string>()
-    const reportedQuestionIds = new Set<string>()
+    const reportedQuestionIds = new Map<string, string>()
+    let aggregateOutputBytes = 0
+    const consumeOutputBudget = (delta: string): void => {
+      aggregateOutputBytes += Buffer.byteLength(delta)
+      if (aggregateOutputBytes > MAX_EXECUTION_OUTPUT_BYTES) {
+        throw new Error(
+          'OpenCode 单次运行的文本与推理输出超过 1 MB 安全限制'
+        )
+      }
+    }
     let hasResponseTextAfterFailure = false
     try {
       const promptText =
@@ -1998,6 +2129,7 @@ export class OpenCodeRuntime implements AgentRuntime {
               'thinking'
             ].includes(event.properties.field)
           if (reasoning || event.properties.field === 'text') {
+            consumeOutputBudget(event.properties.delta)
             if (
               !reasoning &&
               /\S/u.test(event.properties.delta) &&
@@ -2077,6 +2209,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           event.properties.sessionID === sessionId &&
           event.properties.delta
         ) {
+          consumeOutputBudget(event.properties.delta)
           yield {
             requestId: request.requestId,
             type: 'reasoning',
@@ -2096,16 +2229,28 @@ export class OpenCodeRuntime implements AgentRuntime {
             questionRequest &&
             !reportedQuestionIds.has(questionRequest.id)
           ) {
-            reportedQuestionIds.add(questionRequest.id)
-            this.pendingQuestions.set(questionRequest.id, {
+            const publicQuestionId = createPublicQuestionId(
+              request.requestId,
+              sessionId,
+              questionRequest.id
+            )
+            if (this.pendingQuestions.has(publicQuestionId)) {
+              throw new Error('OpenCode 提问公开 ID 与另一活动请求冲突')
+            }
+            reportedQuestionIds.set(
+              questionRequest.id,
+              publicQuestionId
+            )
+            this.pendingQuestions.set(publicQuestionId, {
               client,
               directory,
-              questionCount: questionRequest.questions.length
+              questionCount: questionRequest.questions.length,
+              upstreamQuestionId: questionRequest.id
             })
             yield {
               requestId: request.requestId,
               type: 'question',
-              questionId: questionRequest.id,
+              questionId: publicQuestionId,
               questions: questionRequest.questions.map((question) => ({
                 header: question.header,
                 question: question.question,
@@ -2125,7 +2270,12 @@ export class OpenCodeRuntime implements AgentRuntime {
             event.type === 'question.rejected') &&
           event.properties.sessionID === sessionId
         ) {
-          this.pendingQuestions.delete(event.properties.requestID)
+          const publicQuestionId = reportedQuestionIds.get(
+            event.properties.requestID
+          )
+          if (publicQuestionId) {
+            this.pendingQuestions.delete(publicQuestionId)
+          }
         }
 
         if (
@@ -2320,20 +2470,29 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw error
     } finally {
       signal.removeEventListener('abort', abortSession)
-      for (const questionId of reportedQuestionIds) {
+      for (const questionId of reportedQuestionIds.values()) {
         this.pendingQuestions.delete(questionId)
       }
     }
     } finally {
+      const cleanupSignal = AbortSignal.timeout(1_000)
       if (knowledgeMcpName) {
-        await client.mcp
-          .disconnect({ name: knowledgeMcpName, directory })
-          .catch(() => undefined)
+        await awaitWithAbort(
+          client.mcp.disconnect(
+            { name: knowledgeMcpName, directory },
+            { signal: cleanupSignal }
+          ),
+          cleanupSignal
+        ).catch(() => undefined)
       }
       if (customMcpName) {
-        await client.mcp
-          .disconnect({ name: customMcpName, directory })
-          .catch(() => undefined)
+        await awaitWithAbort(
+          client.mcp.disconnect(
+            { name: customMcpName, directory },
+            { signal: cleanupSignal }
+          ),
+          cleanupSignal
+        ).catch(() => undefined)
       }
       if (customMcpToken) {
         this.options.knowledgeGateway?.revoke(customMcpToken)
@@ -2352,13 +2511,13 @@ export class OpenCodeRuntime implements AgentRuntime {
     const response = answers
       ? answers.length === pending.questionCount
         ? await pending.client.question.reply({
-            requestID: questionId,
+            requestID: pending.upstreamQuestionId,
             directory: pending.directory,
             answers
           })
         : undefined
       : await pending.client.question.reject({
-          requestID: questionId,
+          requestID: pending.upstreamQuestionId,
           directory: pending.directory
         })
     if (!response) {
@@ -2382,12 +2541,24 @@ export class OpenCodeRuntime implements AgentRuntime {
         '外部 OpenCode Server 不支持由 GoodBuddy 执行原生 Compact'
       )
     }
-    const releaseEmbedded = await this.acquireEmbeddedRun(signal)
+    const deadline = new AbortController()
+    const deadlineTimer = setTimeout(
+      () =>
+        deadline.abort(new Error('OpenCode 原生 Compact 执行超时')),
+      this.dependencies.executionTimeoutMs
+    )
+    deadlineTimer.unref?.()
+    const executionSignal = AbortSignal.any([
+      signal,
+      deadline.signal
+    ])
+    let releaseEmbedded: (() => void) | undefined
     let releaseConversation: (() => void) | undefined
     try {
+      releaseEmbedded = await this.acquireEmbeddedRun(executionSignal)
       releaseConversation = await this.acquireConversationRun(
         request.conversationId,
-        signal
+        executionSignal
       )
       const sessionId = this.sessions.get(request.conversationId)
       if (!sessionId) {
@@ -2400,10 +2571,10 @@ export class OpenCodeRuntime implements AgentRuntime {
           }
         }
       }
-      const client = await this.getClient(signal)
+      const client = await this.getClient(executionSignal)
       const context = await client.v2.session.context(
         { sessionID: sessionId },
-        { signal }
+        { signal: executionSignal }
       )
       if (context.error || !context.data) {
         throw new Error('OpenCode 原生上下文不可用，无法执行 Compact')
@@ -2434,13 +2605,13 @@ export class OpenCodeRuntime implements AgentRuntime {
           }
         }
       }
-      signal.throwIfAborted()
+      executionSignal.throwIfAborted()
       const subscriptionController = new AbortController()
       const subscription = await client.event.subscribe(
         { directory: this.options.defaultWorkspace },
         {
           signal: AbortSignal.any([
-            signal,
+            executionSignal,
             subscriptionController.signal
           ])
         }
@@ -2482,7 +2653,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             modelID: configuredModel.modelID,
             auto: false
           },
-          { signal }
+          { signal: executionSignal }
         )
         if (compact.error || compact.data !== true) {
           throw new Error(
@@ -2522,9 +2693,15 @@ export class OpenCodeRuntime implements AgentRuntime {
         subscriptionController.abort()
         await usageCapture.catch(() => undefined)
       }
+    } catch (error) {
+      if (deadline.signal.aborted && !signal.aborted) {
+        throw deadline.signal.reason
+      }
+      throw error
     } finally {
+      clearTimeout(deadlineTimer)
       releaseConversation?.()
-      releaseEmbedded()
+      releaseEmbedded?.()
     }
   }
 

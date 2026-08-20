@@ -228,6 +228,12 @@ export const documentOcrModelSnapshotSchema = z
   })
   .strict()
 
+export const documentOcrModelProgressSnapshotSchema = z
+  .object({
+    operations: z.array(documentOcrModelOperationSchema).max(8)
+  })
+  .strict()
+
 export const documentOcrModelActionInputSchema = z
   .object({
     modelId: localOcrModelIdSchema
@@ -444,6 +450,9 @@ export type DocumentOcrModelOperation = z.infer<
 >
 export type DocumentOcrModelSnapshot = z.infer<
   typeof documentOcrModelSnapshotSchema
+>
+export type DocumentOcrModelProgressSnapshot = z.infer<
+  typeof documentOcrModelProgressSnapshotSchema
 >
 export type DocumentParsingDiagnostic = z.infer<
   typeof documentParsingDiagnosticSchema

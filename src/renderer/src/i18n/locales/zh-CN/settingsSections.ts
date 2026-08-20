@@ -221,6 +221,33 @@ export const settingsSections = {
       general: '通用设置',
       magicNotes: '魔法笔记'
     },
+    shortcut: {
+      title: '全局快捷唤起',
+      description: '在其他应用前台时，也可以显示或隐藏 GoodBuddy。',
+      enabled: '启用全局快捷键',
+      accelerator: '快捷键',
+      recorderHelp:
+        '聚焦输入框后直接按下组合键，或填写 Electron accelerator（例如 CommandOrControl+Shift+Space）。',
+      reset: '恢复默认',
+      save: '保存快捷键',
+      saving: '保存中…',
+      saved: '全局快捷键已更新',
+      loading: '正在读取快捷键状态…',
+      status: {
+        registered: '已注册：{{shortcut}}',
+        disabled: '全局快捷键已停用。',
+        conflict: '当前快捷键被其他应用占用，请录制其他组合键后保存。',
+        failed: '系统未能注册当前快捷键，请录制其他组合键或检查系统快捷键设置。'
+      },
+      errors: {
+        serviceUnavailable: '当前版本未提供快捷键设置服务',
+        readFailed: '读取快捷键设置失败，请重试',
+        invalidAccelerator: '快捷键无效，请按下包含修饰键的组合键后重试',
+        conflict: '该快捷键已被其他应用占用，请录制其他组合键后重试',
+        registrationFailed: '系统未能注册该快捷键，请更换组合键或检查系统快捷键设置',
+        saveFailed: '快捷键未能保存，原有可用快捷键已保留，请重试'
+      }
+    },
     modelDownloadSource: {
       cardTitle: '本地模型',
       cardDescription: '管理 GoodBuddy 托管本地模型的获取方式',

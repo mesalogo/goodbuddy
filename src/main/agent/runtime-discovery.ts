@@ -8,6 +8,10 @@ import {
   normalize
 } from 'node:path'
 import spawn from 'cross-spawn'
+import {
+  terminateProcessTreeAndWait,
+  type WaitableProcessTreeChild
+} from './child-process-termination'
 import { buildRuntimeEnvironment } from './process-environment'
 import type {
   AgentRuntimeDetection,
@@ -16,6 +20,7 @@ import type {
 
 const VERSION_TIMEOUT_MS = 3_000
 const VERSION_OUTPUT_LIMIT = 8 * 1024
+const VERSION_TERMINATION_WAIT_MS = 500
 
 export type RuntimeBinaryDiscoveryInput = {
   binaryPath: string
@@ -30,6 +35,39 @@ export type RuntimeBinaryDiscoveryInput = {
 type VersionValidation =
   | { valid: true; version?: string }
   | { valid: false }
+
+type RuntimeVersionOutput = {
+  on(
+    event: 'data',
+    listener: (chunk: Buffer | string) => void
+  ): unknown
+}
+
+export type RuntimeVersionProcess = WaitableProcessTreeChild & {
+  stdout?: RuntimeVersionOutput | null
+  stderr?: RuntimeVersionOutput | null
+}
+
+export type RuntimeVersionSpawn = (
+  command: string,
+  args: string[],
+  options: {
+    detached: boolean
+    env: NodeJS.ProcessEnv
+    shell: false
+    stdio: ['ignore', 'pipe', 'pipe']
+    windowsHide: true
+  }
+) => RuntimeVersionProcess
+
+export type RuntimeVersionValidationDependencies = {
+  platform?: NodeJS.Platform
+  spawnProcess?: RuntimeVersionSpawn
+  terminateProcessTree?: typeof terminateProcessTreeAndWait
+  timeoutMs?: number
+  outputLimit?: number
+  terminationWaitMs?: number
+}
 
 function stripUnsafeCharacters(value: string): string {
   let result = ''
@@ -66,45 +104,36 @@ function safeVersion(output: string): string | undefined {
   return (semanticVersion?.[1] ?? firstLine).slice(0, 160)
 }
 
-function terminate(child: ReturnType<typeof spawn>): void {
-  if (child.exitCode !== null || child.killed) {
-    return
-  }
-
-  if (process.platform === 'win32' && child.pid) {
-    const killer = spawn(
-      'taskkill.exe',
-      ['/PID', String(child.pid), '/T', '/F'],
-      {
-        shell: false,
-        stdio: 'ignore',
-        windowsHide: true
-      }
-    )
-    killer.unref()
-    return
-  }
-
-  child.kill('SIGKILL')
-}
-
-function validateVersion(binaryPath: string): Promise<VersionValidation> {
+export function validateRuntimeVersion(
+  binaryPath: string,
+  dependencies: RuntimeVersionValidationDependencies = {}
+): Promise<VersionValidation> {
   return new Promise((resolve) => {
     let settled = false
+    let cleanupStarted = false
     let stdout = ''
     let stderr = ''
     let stdoutBytes = 0
     let stderrBytes = 0
+    const platform = dependencies.platform ?? process.platform
+    const timeoutMs = dependencies.timeoutMs ?? VERSION_TIMEOUT_MS
+    const outputLimit =
+      dependencies.outputLimit ?? VERSION_OUTPUT_LIMIT
 
-    const child = spawn(binaryPath, ['--version'], {
-      env: buildRuntimeEnvironment({}),
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
-    })
+    const child = (dependencies.spawnProcess ?? spawn)(
+      binaryPath,
+      ['--version'],
+      {
+        detached: platform !== 'win32',
+        env: buildRuntimeEnvironment({}),
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+      }
+    )
 
     const finish = (result: VersionValidation): void => {
-      if (settled) {
+      if (settled || cleanupStarted) {
         return
       }
       settled = true
@@ -112,21 +141,43 @@ function validateVersion(binaryPath: string): Promise<VersionValidation> {
       resolve(result)
     }
 
-    const exceedLimit = (): void => {
-      terminate(child)
-      finish({ valid: false })
+    const failAfterCleanup = (): void => {
+      if (settled || cleanupStarted) {
+        return
+      }
+      cleanupStarted = true
+      clearTimeout(timeout)
+      void (
+        dependencies.terminateProcessTree ??
+        terminateProcessTreeAndWait
+      )(child, {
+        platform,
+        processGroup: platform !== 'win32',
+        signal: 'SIGKILL',
+        waitMs:
+          dependencies.terminationWaitMs ??
+          VERSION_TERMINATION_WAIT_MS
+      }).then(
+        () => {
+          settled = true
+          resolve({ valid: false })
+        },
+        () => {
+          settled = true
+          resolve({ valid: false })
+        }
+      )
     }
 
     const timeout = setTimeout(() => {
-      terminate(child)
-      finish({ valid: false })
-    }, VERSION_TIMEOUT_MS)
+      failAfterCleanup()
+    }, timeoutMs)
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
       const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       stdoutBytes += value.byteLength
-      if (stdoutBytes > VERSION_OUTPUT_LIMIT) {
-        exceedLimit()
+      if (stdoutBytes > outputLimit) {
+        failAfterCleanup()
         return
       }
       stdout += value.toString('utf8')
@@ -134,14 +185,22 @@ function validateVersion(binaryPath: string): Promise<VersionValidation> {
     child.stderr?.on('data', (chunk: Buffer | string) => {
       const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       stderrBytes += value.byteLength
-      if (stderrBytes > VERSION_OUTPUT_LIMIT) {
-        exceedLimit()
+      if (stderrBytes > outputLimit) {
+        failAfterCleanup()
         return
       }
       stderr += value.toString('utf8')
     })
-    child.once('error', () => finish({ valid: false }))
+    child.once('error', () => {
+      if (cleanupStarted) {
+        return
+      }
+      finish({ valid: false })
+    })
     child.once('close', (code) => {
+      if (cleanupStarted) {
+        return
+      }
       if (code !== 0) {
         finish({ valid: false })
         return
@@ -286,7 +345,7 @@ export async function detectRuntimeBinary(
         'bundled'
       )
     }
-    const validation = await validateVersion(canonicalPath)
+    const validation = await validateRuntimeVersion(canonicalPath)
     return validation.valid
       ? availableDetection(
           input.label,
@@ -305,7 +364,7 @@ export async function detectRuntimeBinary(
       if (!canonicalPath) {
         configuredPathProblem = 'invalid'
       } else {
-        const validation = await validateVersion(canonicalPath)
+        const validation = await validateRuntimeVersion(canonicalPath)
         if (validation.valid) {
           return availableDetection(
             input.label,
@@ -332,7 +391,7 @@ export async function detectRuntimeBinary(
         continue
       }
       foundAutomaticCandidate = true
-      const validation = await validateVersion(canonicalPath)
+      const validation = await validateRuntimeVersion(canonicalPath)
       if (validation.valid) {
         return availableDetection(
           input.label,

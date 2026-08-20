@@ -7,8 +7,11 @@ import {
   waitFor,
   within
 } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  KnowledgeGraphChartLoader,
   KnowledgeWorkspace,
   type KnowledgeWorkspaceProps
 } from './KnowledgeWorkspace'
@@ -16,6 +19,17 @@ import i18n from './i18n'
 import {
   defaultKnowledgeOntologySettings
 } from '../../shared/knowledge-ontology'
+
+const knowledgeWorkspaceSource = readFileSync(
+  join(
+    process.cwd(),
+    'src',
+    'renderer',
+    'src',
+    'KnowledgeWorkspace.tsx'
+  ),
+  'utf8'
+)
 
 const g6Mock = vi.hoisted(() => {
   const handlers = new Map<string, (event: unknown) => void>()
@@ -460,11 +474,13 @@ describe('KnowledgeWorkspace', () => {
     expect(screen.getByText('第二份文档内容')).toBeInTheDocument()
   })
 
-  it('switches to the graph and opens entity details', () => {
+  it('switches to the graph and opens entity details', async () => {
     render(<KnowledgeWorkspace {...createProps()} />)
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
-    expect(screen.getByLabelText('实体关系图')).toBeInTheDocument()
+    expect(
+      await screen.findByLabelText('实体关系图')
+    ).toBeInTheDocument()
     expect(
       screen.getByRole('tab', { name: /拓扑/u })
     ).toHaveAttribute('aria-selected', 'true')
@@ -1217,6 +1233,9 @@ describe('KnowledgeWorkspace', () => {
     render(<KnowledgeWorkspace {...createProps()} />)
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    await waitFor(() =>
+      expect(g6Mock.graph.setOptions).toHaveBeenCalled()
+    )
     expect(
       screen.getByRole('option', { name: 'GoodBuddy · 概念 (CONCEPT)' })
     ).toBeInTheDocument()
@@ -1265,9 +1284,7 @@ describe('KnowledgeWorkspace', () => {
 
     const workspace = screen.getByLabelText('知识工作区')
     expect(workspace).toHaveClass('knowledge-workspace')
-    expect(workspace).toHaveStyle({
-      background: 'var(--surface-canvas)'
-    })
+    expect(workspace).not.toHaveAttribute('style')
     expect(workspace.querySelector('aside')).toHaveClass(
       'knowledge-workspace__sidebar'
     )
@@ -1276,9 +1293,7 @@ describe('KnowledgeWorkspace', () => {
       name: '知识库详情'
     })
     expect(detailRegion).toHaveClass('knowledge-workspace__main')
-    expect(detailRegion).toHaveStyle({
-      background: 'var(--surface-raised)'
-    })
+    expect(detailRegion).not.toHaveAttribute('style')
     expect(screen.getByText('全局')).toHaveClass('scope-badge')
     const mobileBack = screen.getByRole('button', {
       name: '返回知识库列表'
@@ -1286,11 +1301,14 @@ describe('KnowledgeWorkspace', () => {
     expect(mobileBack).toHaveClass('knowledge-workspace__mobile-back')
     fireEvent.click(mobileBack)
     expect(workspace).toHaveClass('knowledge-workspace--mobile-list')
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: /^产品知识 1 个文档/u
-      })
+    const selectedLibraryButton = screen.getByRole('button', {
+      name: /^产品知识 1 个文档/u
+    })
+    expect(selectedLibraryButton).toHaveClass(
+      'knowledge-workspace__library-button--selected'
     )
+    expect(selectedLibraryButton).not.toHaveAttribute('style')
+    fireEvent.click(selectedLibraryButton)
     expect(workspace).not.toHaveClass('knowledge-workspace--mobile-list')
     expect(screen.getByRole('tablist', { name: '知识库视图' })).toHaveClass(
       'page-tabs'
@@ -1324,11 +1342,17 @@ describe('KnowledgeWorkspace', () => {
       target: { value: 'entity-1' }
     })
     expect(screen.getByLabelText('知识图谱画布').parentElement).toHaveClass(
-      'knowledge-graph--with-details'
+      'knowledge-graph'
     )
+    expect(screen.getByLabelText('知识图谱画布').parentElement)
+      .not.toHaveClass('knowledge-graph--with-details')
     expect(screen.getByLabelText('实体详情')).toHaveClass(
       'knowledge-graph__detail'
     )
+  })
+
+  it('keeps Knowledge workspace presentation in semantic classes', () => {
+    expect(knowledgeWorkspaceSource).not.toMatch(/\bstyle\s*=/u)
   })
 
   it('manages the G6 graph, zoom, selection, movement, and cleanup', async () => {
@@ -1338,7 +1362,7 @@ describe('KnowledgeWorkspace', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
-    const graph = screen.getByLabelText('实体关系图')
+    const graph = await screen.findByLabelText('实体关系图')
     expect(graph).toHaveClass('knowledge-graph__chart')
     expect(g6Mock.Graph).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1491,6 +1515,7 @@ describe('KnowledgeWorkspace', () => {
   it('preserves the G6 instance and refreshes theme colors', async () => {
     render(<KnowledgeWorkspace {...createProps()} />)
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    await screen.findByLabelText('实体关系图')
 
     g6Mock.graph.getZoom.mockReturnValueOnce(1.3)
     act(() => {
@@ -1523,7 +1548,7 @@ describe('KnowledgeWorkspace', () => {
     delete document.documentElement.dataset.theme
   })
 
-  it('sizes dense nodes by degree and labels key entities', () => {
+  it('sizes dense nodes by degree and labels key entities', async () => {
     const graphNodes = Array.from({ length: 30 }, (_, index) => ({
       id: `entity-${index}`,
       label: `实体 ${index}`,
@@ -1553,6 +1578,7 @@ describe('KnowledgeWorkspace', () => {
       />
     )
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    await screen.findByLabelText('实体关系图')
 
     expect(g6Mock.graph.setOptions).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -1596,6 +1622,50 @@ describe('KnowledgeWorkspace', () => {
         ])
       })
     )
+  })
+
+  it('shows a graph-local loading state and retries a failed chart chunk', async () => {
+    let attempts = 0
+    const loadModule = vi.fn(async () => {
+      attempts += 1
+      if (attempts <= 2) {
+        throw new Error('chunk unavailable')
+      }
+      return {
+        KnowledgeGraphChart: () => (
+          <div aria-label="已加载的图谱测试组件" />
+        )
+      } as unknown as typeof import('./KnowledgeGraphChart')
+    })
+    const props = createProps()
+
+    render(
+      <KnowledgeGraphChartLoader
+        fitViewRequest={0}
+        loadModule={loadModule}
+        nodes={props.graphNodes}
+        onMoveNode={props.onMoveNode}
+        onSelectNode={vi.fn()}
+        onZoomChange={vi.fn()}
+        relations={props.graphRelations}
+        zoom={1}
+      />
+    )
+
+    expect(
+      screen.getByRole('status')
+    ).toHaveTextContent('正在加载知识图谱…')
+    expect(
+      await screen.findByRole('alert')
+    ).toHaveTextContent('知识图谱未能加载，请重试。')
+    expect(loadModule).toHaveBeenCalledTimes(2)
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    expect(
+      await screen.findByLabelText('已加载的图谱测试组件')
+    ).toBeInTheDocument()
+    expect(loadModule).toHaveBeenCalledTimes(3)
   })
 
   it('creates relationships, merges entities, and opens graph evidence', async () => {
@@ -1644,7 +1714,118 @@ describe('KnowledgeWorkspace', () => {
       target: { value: 'entity-2' }
     })
     fireEvent.click(screen.getByRole('button', { name: '合并到目标实体' }))
-    expect(onMergeEntities).toHaveBeenCalledWith('entity-1', 'entity-2')
+    expect(
+      screen.getByRole('alertdialog', {
+        name: '将“GoodBuddy”合并到“Electron”？'
+      })
+    ).toHaveAccessibleDescription(
+      '“GoodBuddy”的关系、别名和证据将并入“Electron”，随后删除源实体。此操作无法恢复。'
+    )
+    expect(onMergeEntities).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', { name: '合并实体' })
+    )
+    await waitFor(() =>
+      expect(onMergeEntities).toHaveBeenCalledWith(
+        'entity-1',
+        'entity-2'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('选择图谱实体')).toHaveFocus()
+    )
+  })
+
+  it('confirms graph entity and relation deletion with concrete impact', async () => {
+    const onDeleteEntity = vi.fn(async () => {})
+    const onDeleteRelation = vi.fn(async () => {})
+    render(
+      <KnowledgeWorkspace
+        {...createProps({ onDeleteEntity, onDeleteRelation })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    fireEvent.change(screen.getByLabelText('选择图谱实体'), {
+      target: { value: 'entity-1' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除实体 GoodBuddy' })
+    )
+    expect(
+      screen.getByRole('alertdialog', {
+        name: '删除实体“GoodBuddy”？'
+      })
+    ).toHaveAccessibleDescription(
+      '将永久删除实体“GoodBuddy”及其 1 条关联关系；相关证据引用也会从图谱中移除，且无法恢复。'
+    )
+    expect(onDeleteEntity).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除关系 使用' })
+    )
+    expect(
+      screen.getByRole('alertdialog', {
+        name: '删除关系“使用 (USES)”？'
+      })
+    ).toHaveAccessibleDescription(
+      '将永久删除“GoodBuddy”到“Electron”的“使用 (USES)”关系及其图谱证据引用，且无法恢复。两个实体本身会保留。'
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除关系' })
+    )
+    await waitFor(() =>
+      expect(onDeleteRelation).toHaveBeenCalledWith('relation-1')
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('选择图谱实体')).toHaveFocus()
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除实体 GoodBuddy' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除实体' })
+    )
+    await waitFor(() =>
+      expect(onDeleteEntity).toHaveBeenCalledWith('entity-1')
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('选择图谱实体')).toHaveFocus()
+    )
+  })
+
+  it('keeps a failed graph confirmation open and focused', async () => {
+    const onDeleteEntity = vi.fn(async () => {
+      throw new Error('删除实体失败')
+    })
+    render(
+      <KnowledgeWorkspace
+        {...createProps({ onDeleteEntity })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
+    fireEvent.change(screen.getByLabelText('选择图谱实体'), {
+      target: { value: 'entity-1' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '删除实体 GoodBuddy' })
+    )
+    const confirm = screen.getByRole('button', {
+      name: '删除实体'
+    })
+    confirm.focus()
+    fireEvent.click(confirm)
+
+    expect(await screen.findByText('删除实体失败')).toBeInTheDocument()
+    expect(
+      screen.getByRole('alertdialog', {
+        name: '删除实体“GoodBuddy”？'
+      })
+    ).toBeInTheDocument()
+    expect(confirm).toHaveFocus()
   })
 
   it('renders an explicit empty graph state', () => {
@@ -1658,6 +1839,25 @@ describe('KnowledgeWorkspace', () => {
     expect(
       screen.getByText('当前知识库尚未生成实体关系。')
     ).toBeInTheDocument()
+  })
+
+  it('keeps one primary creation action in the empty library state', () => {
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          libraries: [],
+          selectedLibraryId: undefined
+        })}
+      />
+    )
+
+    expect(screen.getByText('建立第一个知识库')).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('button', { name: '新建知识库' })
+    ).toHaveLength(1)
+    expect(
+      screen.queryByRole('button', { name: '创建知识库' })
+    ).not.toBeInTheDocument()
   })
 
   it('keeps loading distinct from the first-library empty state', () => {
@@ -1718,6 +1918,37 @@ describe('KnowledgeWorkspace', () => {
     ).toHaveAttribute('aria-current', 'page')
   })
 
+  it('isolates and traps focus in the library edit dialog', async () => {
+    render(<KnowledgeWorkspace {...createProps()} />)
+
+    const trigger = screen.getByRole('button', { name: '编辑' })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = screen.getByRole('dialog', {
+      name: '编辑知识库'
+    })
+    const nameInput = screen.getByLabelText('名称')
+    expect(nameInput).toHaveFocus()
+    expect(
+      document.querySelector<HTMLElement>(
+        '.knowledge-workspace__main'
+      )?.inert
+    ).toBe(true)
+    fireEvent.keyDown(nameInput, { key: 'Tab', shiftKey: true })
+    expect(
+      screen.getByRole('button', { name: '保存修改' })
+    ).toHaveFocus()
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(
+      document.querySelector<HTMLElement>(
+        '.knowledge-workspace__main'
+      )?.inert
+    ).toBe(false)
+  })
+
   it('confirms that deleting a managed library removes managed copies', async () => {
     const onDeleteLibrary = vi.fn()
     render(
@@ -1734,8 +1965,18 @@ describe('KnowledgeWorkspace', () => {
       name: '删除知识库确认'
     })
     expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+    expect(
+      document.querySelector<HTMLElement>(
+        '.knowledge-workspace__main'
+      )?.inert
+    ).toBe(true)
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(trigger).toHaveFocus())
+    expect(
+      document.querySelector<HTMLElement>(
+        '.knowledge-workspace__main'
+      )?.inert
+    ).toBe(false)
     fireEvent.click(trigger)
     expect(
       screen.getByText(

@@ -432,6 +432,49 @@ describe('ChannelService', () => {
     await service.stop()
   })
 
+  it('reports terminal outbox entries without retrying them', async () => {
+    const driver = new FakeChannelDriver()
+    const outbox = new MemoryOutbox()
+    const entry = outbox.enqueue({
+      channel: driver.channel,
+      eventId: 'terminal-delivery',
+      conversationId: 'conversation-1',
+      recipientId: 'allowed-user',
+      status: 'completed',
+      output: '完成'
+    })
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      outbox.markFailed(entry.id)
+    }
+    const deliveryFailure = vi.fn()
+    const service = new ChannelService(
+      driver,
+      async () => ({ status: 'completed' }),
+      {
+        allowedSenderIds: ['allowed-user'],
+        outbox,
+        onDeliveryFailure: deliveryFailure
+      }
+    )
+
+    await service.start()
+
+    expect(driver.sent).toEqual([])
+    expect(deliveryFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('已达到重试上限')
+      })
+    )
+    expect(await outbox.listUndelivered()).toEqual([
+      expect.objectContaining({
+        id: entry.id,
+        state: 'terminal',
+        attempts: 5
+      })
+    ])
+    await service.stop()
+  })
+
   it('releases the event claim when no durable result can be queued', async () => {
     const driver = new FakeChannelDriver()
     const store = new MemoryDedupStore()

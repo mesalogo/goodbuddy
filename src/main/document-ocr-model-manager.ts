@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import {
   copyFile,
   lstat,
@@ -11,11 +11,12 @@ import {
   stat,
   writeFile
 } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import {
   documentOcrAssetsSchema,
   documentOcrModelCatalogEntrySchema,
   documentOcrModelCatalogViewEntrySchema,
+  documentOcrModelProgressSnapshotSchema,
   documentOcrModelSnapshotSchema,
   documentParsingModelStatusSchema,
   installedDocumentOcrModelSchema,
@@ -25,6 +26,7 @@ import {
   type DocumentOcrModelCatalogViewEntry,
   type DocumentOcrModelFile,
   type DocumentOcrModelOperation,
+  type DocumentOcrModelProgressSnapshot,
   type DocumentOcrModelSnapshot,
   type InstalledDocumentOcrModel
 } from '../shared/document-parsing-contracts'
@@ -41,10 +43,20 @@ import {
   extractModelArchive
 } from './model-archive'
 import { fetchModelDownloadResponse } from './model-download-transport'
+import {
+  MODEL_PARTIAL_SUFFIX,
+  attachModelAbortSignal,
+  cleanupStaleModelInstallArtifacts,
+  createModelStagingDirectory,
+  ensureModelOperationNotAborted,
+  hashModelFile,
+  managedModelChild,
+  writeModelBuffer
+} from './model-package-utils'
+import { isMissingFileError } from './settings-file-utils'
 
 const DEFAULT_MAX_FILE_BYTES = 96 * 1024 * 1024
 const MANIFEST_FILE_NAME = 'manifest.json'
-const PARTIAL_SUFFIX = '.partial'
 const MAXIMUM_ARCHIVE_BYTES = 512 * 1024 * 1024
 const ARCHIVE_OVERHEAD_BYTES = 1024 * 1024
 const executableExtensionPattern =
@@ -55,6 +67,11 @@ type ActiveOperation = {
   progress: DocumentOcrModelOperation
 }
 
+type ActiveVerification = {
+  generation: number
+  promise: Promise<void>
+}
+
 export type DocumentOcrModelManagerOptions = {
   userDataDirectory: string
   fetch: typeof fetch
@@ -63,16 +80,6 @@ export type DocumentOcrModelManagerOptions = {
     | ModelDownloadSource
     | Promise<ModelDownloadSource>
   maxFileBytes?: number
-}
-
-function abortError(): DOMException {
-  return new DOMException('The operation was aborted', 'AbortError')
-}
-
-function ensureNotAborted(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw abortError()
-  }
 }
 
 function cloneCatalogEntry(
@@ -99,41 +106,15 @@ function toCatalogView(entry: DocumentOcrModelCatalogEntry) {
 }
 
 function safeChild(parent: string, name: string): string {
-  const child = resolve(parent, name)
-  if (dirname(child) !== resolve(parent)) {
-    throw new Error('OCR 模型路径超出受管目录')
-  }
-  return child
+  return managedModelChild(
+    parent,
+    name,
+    'OCR 模型路径超出受管目录'
+  )
 }
 
 function toArrayBuffer(buffer: Buffer): ArrayBuffer {
   return Uint8Array.from(buffer).buffer
-}
-
-async function hashFile(
-  path: string,
-  signal?: AbortSignal
-): Promise<{ size: number; sha256: string }> {
-  const handle = await open(path, 'r')
-  const hash = createHash('sha256')
-  const buffer = Buffer.allocUnsafe(64 * 1024)
-  let size = 0
-  try {
-    while (true) {
-      if (signal) {
-        ensureNotAborted(signal)
-      }
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length)
-      if (bytesRead === 0) {
-        break
-      }
-      hash.update(buffer.subarray(0, bytesRead))
-      size += bytesRead
-    }
-  } finally {
-    await handle.close()
-  }
-  return { size, sha256: hash.digest('hex') }
 }
 
 function parseYamlScalar(value: string): string {
@@ -184,7 +165,8 @@ export class DocumentOcrModelManager {
     | Promise<ModelDownloadSource>
   private readonly maxFileBytes: number
   private readonly operations = new Map<string, ActiveOperation>()
-  private readonly verifiedModels = new Map<string, Promise<void>>()
+  private readonly verifiedModels = new Map<string, ActiveVerification>()
+  private readonly verificationGenerations = new Map<string, number>()
 
   constructor(options: DocumentOcrModelManagerOptions) {
     if (!options.userDataDirectory.trim()) {
@@ -220,6 +202,7 @@ export class DocumentOcrModelManager {
 
   async getSnapshot(): Promise<DocumentOcrModelSnapshot> {
     await this.ensureRoot()
+    await this.cleanupStaleArtifacts()
     const [selectedDownloadSource, installed] = await Promise.all([
       this.getDownloadSource(),
       this.readInstalled()
@@ -229,6 +212,14 @@ export class DocumentOcrModelManager {
       selectedDownloadSource,
       catalog: this.catalogViews,
       installed,
+      operations: [...this.operations.values()].map((operation) => ({
+        ...operation.progress
+      }))
+    })
+  }
+
+  getProgressSnapshot(): DocumentOcrModelProgressSnapshot {
+    return documentOcrModelProgressSnapshotSchema.parse({
       operations: [...this.operations.values()].map((operation) => ({
         ...operation.progress
       }))
@@ -317,7 +308,7 @@ export class DocumentOcrModelManager {
       await this.assertNotInstalled(entry.id)
       stagingDirectory = await this.createStagingDirectory(entry.id)
       for (const file of resolvedPackage.files) {
-        ensureNotAborted(operation.controller.signal)
+        ensureModelOperationNotAborted(operation.controller.signal)
         operation.progress.phase = 'transferring'
         operation.progress.currentFile = file.name
         await this.downloadFile(
@@ -335,10 +326,10 @@ export class DocumentOcrModelManager {
         stagingDirectory,
         operation.controller.signal
       )
-      ensureNotAborted(operation.controller.signal)
+      ensureModelOperationNotAborted(operation.controller.signal)
       await rename(stagingDirectory, this.modelDirectory(entry.id))
       stagingDirectory = undefined
-      this.verifiedModels.delete(entry.id)
+      this.invalidateVerification(entry.id)
       return installed
     } finally {
       detachAbort()
@@ -373,7 +364,7 @@ export class DocumentOcrModelManager {
       stagingDirectory = await this.createStagingDirectory(entry.id)
       operation.progress.phase = 'transferring'
       for (const file of entry.files) {
-        ensureNotAborted(operation.controller.signal)
+        ensureModelOperationNotAborted(operation.controller.signal)
         operation.progress.currentFile = file.name
         const sourceFile = safeChild(source, file.name)
         const destination = safeChild(stagingDirectory, file.name)
@@ -391,10 +382,10 @@ export class DocumentOcrModelManager {
         stagingDirectory,
         operation.controller.signal
       )
-      ensureNotAborted(operation.controller.signal)
+      ensureModelOperationNotAborted(operation.controller.signal)
       await rename(stagingDirectory, this.modelDirectory(entry.id))
       stagingDirectory = undefined
-      this.verifiedModels.delete(entry.id)
+      this.invalidateVerification(entry.id)
       return installed
     } finally {
       detachAbort()
@@ -521,10 +512,10 @@ export class DocumentOcrModelManager {
         `${JSON.stringify(installed, null, 2)}\n`,
         { encoding: 'utf8', flag: 'wx' }
       )
-      ensureNotAborted(operation.controller.signal)
+      ensureModelOperationNotAborted(operation.controller.signal)
       await rename(stagingDirectory, this.modelDirectory(entry.id))
       stagingDirectory = undefined
-      this.verifiedModels.delete(entry.id)
+      this.invalidateVerification(entry.id)
       return installed
     } finally {
       this.operations.delete(entry.id)
@@ -547,7 +538,7 @@ export class DocumentOcrModelManager {
   async remove(modelId: string): Promise<void> {
     const id = localOcrModelIdSchema.parse(modelId)
     this.cancel(id)
-    this.verifiedModels.delete(id)
+    this.invalidateVerification(id)
     await rm(this.modelDirectory(id), {
       recursive: true,
       force: true
@@ -560,6 +551,7 @@ export class DocumentOcrModelManager {
     }
     this.operations.clear()
     this.verifiedModels.clear()
+    this.verificationGenerations.clear()
   }
 
   private async ensureRoot(): Promise<void> {
@@ -613,16 +605,7 @@ export class DocumentOcrModelManager {
     signal: AbortSignal | undefined,
     controller: AbortController
   ): () => void {
-    if (!signal) {
-      return () => undefined
-    }
-    const abort = (): void => controller.abort()
-    if (signal.aborted) {
-      controller.abort()
-    } else {
-      signal.addEventListener('abort', abort, { once: true })
-    }
-    return () => signal.removeEventListener('abort', abort)
+    return attachModelAbortSignal(signal, controller)
   }
 
   private async assertNotInstalled(modelId: string): Promise<void> {
@@ -630,11 +613,7 @@ export class DocumentOcrModelManager {
       await lstat(this.modelDirectory(modelId))
       throw new Error('OCR 模型已安装')
     } catch (error) {
-      if (
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
+      if (isMissingFileError(error)) {
         return
       }
       throw error
@@ -642,12 +621,11 @@ export class DocumentOcrModelManager {
   }
 
   private async createStagingDirectory(modelId: string): Promise<string> {
-    const directory = safeChild(
+    return createModelStagingDirectory(
       this.rootDirectory,
-      `.install-${modelId}-${randomUUID()}`
+      modelId,
+      'OCR 模型路径超出受管目录'
     )
-    await mkdir(directory, { recursive: false })
-    return directory
   }
 
   private async downloadFile(
@@ -682,29 +660,34 @@ export class DocumentOcrModelManager {
       throw new Error(`OCR 模型文件大小不匹配：${file.name}`)
     }
 
-    const partialPath = `${destination}${PARTIAL_SUFFIX}`
+    const partialPath = `${destination}${MODEL_PARTIAL_SUFFIX}`
     const handle = await open(partialPath, 'wx')
     const reader = response.body.getReader()
     const hash = createHash('sha256')
     let written = 0
     try {
       while (true) {
-        ensureNotAborted(signal)
+        ensureModelOperationNotAborted(signal)
         const result = await reader.read()
         if (result.done) {
           break
         }
-        written += result.value.byteLength
         if (
-          written > file.size ||
-          written > this.maxFileBytes
+          written + result.value.byteLength > file.size ||
+          written + result.value.byteLength > this.maxFileBytes
         ) {
           await reader.cancel()
           throw new RangeError(`OCR 模型文件过大：${file.name}`)
         }
-        await handle.write(result.value)
-        hash.update(result.value)
-        operation.progress.completedBytes += result.value.byteLength
+        const persistedBytes = await writeModelBuffer(
+          handle,
+          result.value,
+          (persisted) => {
+            hash.update(persisted)
+            operation.progress.completedBytes += persisted.byteLength
+          }
+        )
+        written += persistedBytes
       }
     } catch (error) {
       await reader.cancel().catch(() => undefined)
@@ -732,7 +715,7 @@ export class DocumentOcrModelManager {
     }
     const entries = await readdir(sourceDirectory, { withFileTypes: true })
     for (const localEntry of entries) {
-      ensureNotAborted(signal)
+      ensureModelOperationNotAborted(signal)
       if (
         localEntry.isSymbolicLink() ||
         executableExtensionPattern.test(localEntry.name)
@@ -741,13 +724,13 @@ export class DocumentOcrModelManager {
       }
     }
     for (const file of entry.files) {
-      ensureNotAborted(signal)
+      ensureModelOperationNotAborted(signal)
       const path = safeChild(sourceDirectory, file.name)
       const info = await lstat(path)
       if (!info.isFile() || info.isSymbolicLink()) {
         throw new Error(`OCR 模型文件必须是普通文件：${file.name}`)
       }
-      const actual = await hashFile(path, signal)
+      const actual = await hashModelFile(path, signal)
       if (
         actual.size !== file.size ||
         actual.sha256 !== file.sha256
@@ -765,11 +748,11 @@ export class DocumentOcrModelManager {
   ): Promise<InstalledDocumentOcrModel> {
     const files = []
     for (const file of entry.files) {
-      ensureNotAborted(signal)
+      ensureModelOperationNotAborted(signal)
       files.push({
         name: file.name,
         role: file.role,
-        ...(await hashFile(
+        ...(await hashModelFile(
           safeChild(stagingDirectory, file.name),
           signal
         ))
@@ -854,7 +837,9 @@ export class DocumentOcrModelManager {
           candidate.name === file.name &&
           candidate.role === file.role
       )
-      const actual = await hashFile(safeChild(directory, file.name))
+      const actual = await hashModelFile(
+        safeChild(directory, file.name)
+      )
       if (
         !installed ||
         actual.size !== file.size ||
@@ -870,15 +855,37 @@ export class DocumentOcrModelManager {
   private getVerifiedStatus(
     entry: DocumentOcrModelCatalogEntry
   ): Promise<void> {
-    let verification = this.verifiedModels.get(entry.id)
-    if (!verification) {
-      verification = this.verifyInstalledModel(entry).catch((error) => {
-        this.verifiedModels.delete(entry.id)
-        throw error
-      })
-      this.verifiedModels.set(entry.id, verification)
+    const generation = this.verificationGenerations.get(entry.id) ?? 0
+    const active = this.verifiedModels.get(entry.id)
+    if (active?.generation === generation) {
+      return active.promise
     }
-    return verification
+    const verification = this.verifyInstalledModel(entry).then(() => {
+      if (
+        (this.verificationGenerations.get(entry.id) ?? 0) !==
+        generation
+      ) {
+        throw new Error('OCR 模型在校验期间已发生变化')
+      }
+    })
+    const tracked = verification.finally(() => {
+      if (this.verifiedModels.get(entry.id)?.promise === tracked) {
+        this.verifiedModels.delete(entry.id)
+      }
+    })
+    this.verifiedModels.set(entry.id, {
+      generation,
+      promise: tracked
+    })
+    return tracked
+  }
+
+  private invalidateVerification(modelId: string): void {
+    this.verificationGenerations.set(
+      modelId,
+      (this.verificationGenerations.get(modelId) ?? 0) + 1
+    )
+    this.verifiedModels.delete(modelId)
   }
 
   private async loadVerifiedAssets(
@@ -930,6 +937,21 @@ export class DocumentOcrModelManager {
       detection: loaded.get('detection'),
       recognition: loaded.get('recognition'),
       dictionary: loaded.get('dictionary')
+    })
+  }
+
+  private cleanupStaleArtifacts(): Promise<void> {
+    return cleanupStaleModelInstallArtifacts({
+      rootDirectory: this.rootDirectory,
+      isModelId: (value) =>
+        localOcrModelIdSchema.safeParse(value).success,
+      activeModelIds: new Set(this.operations.keys()),
+      partialFileNames: new Set(
+        this.catalog.flatMap((entry) =>
+          entry.files.map((file) => file.name)
+        )
+      ),
+      escapeMessage: 'OCR 模型路径超出受管目录'
     })
   }
 }

@@ -9,7 +9,13 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantExpert,
@@ -63,6 +69,8 @@ import type {
   EmbeddingConfigurationSummary
 } from '../../shared/embedding-contracts'
 import { useUiLocale } from './i18n/UiLocaleProvider'
+import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
+import { findPreferredCompatibleModelProfile } from './model-profile-selection'
 
 type ModelType = 'llm' | 'embedding' | 'rerank' | 'speech'
 type AgentRuntimeType =
@@ -156,6 +164,8 @@ function normalizeContextCompressionTokenDrafts(
   }
 }
 
+export type SettingsLeaveRequester = (proceed: () => void) => void
+
 type SettingsPanelProps = {
   open: boolean
   presentation?: 'modal' | 'page'
@@ -175,6 +185,12 @@ type SettingsPanelProps = {
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
   magicNotesEnabled?: boolean
   onMagicNotesEnabledChange?: (enabled: boolean) => void
+  onShortcutSettingsChanged?: (
+    snapshot: GlobalShortcutSettingsSnapshot
+  ) => void
+  onLeaveRequestReady?: (
+    requester: SettingsLeaveRequester | undefined
+  ) => void
 }
 
 function settingsErrorMessage(reason: unknown, fallback: string): string {
@@ -525,7 +541,9 @@ export function SettingsPanel({
   appearanceTheme = 'system',
   onAppearanceThemeChange = () => {},
   magicNotesEnabled = false,
-  onMagicNotesEnabledChange = () => {}
+  onMagicNotesEnabledChange = () => {},
+  onShortcutSettingsChanged = () => {},
+  onLeaveRequestReady = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
   const { i18n, t } = useTranslation('settings')
   const {
@@ -647,6 +665,15 @@ export function SettingsPanel({
     useState<AgentRuntimeType>('opencode')
   const [runtimeCustomizationDirty, setRuntimeCustomizationDirty] =
     useState(false)
+  const [platformFeaturesDirty, setPlatformFeaturesDirty] =
+    useState(false)
+  const [documentParsingDirty, setDocumentParsingDirty] =
+    useState(false)
+  const [pendingLeave, setPendingLeave] = useState<
+    | { kind: 'close' }
+    | { kind: 'navigate'; category: SettingsCategoryId }
+    | { kind: 'external'; proceed: () => void }
+  >()
   const runtimeCustomizationRef =
     useRef<RuntimeCustomizationSectionHandle>(null)
   const handleRuntimeCustomizationDirtyChange = useCallback(
@@ -725,6 +752,141 @@ export function SettingsPanel({
     activeTab === 'mcp' ||
     activeTab === 'about'
 
+  const savedConfiguredSettings = settings
+    ? configuredRuntimeSettings(settings)
+    : undefined
+  const runtimeDraftDirty =
+    settings !== undefined &&
+    JSON.stringify({
+      provider,
+      modelProfiles,
+      defaultModelProfileId,
+      opencodeModelSource,
+      continueModelSource,
+      deepseekHarnessModelSource,
+      opencodeBaseUrl,
+      opencodeBinaryPath,
+      opencodeConfigPath,
+      continueBinaryPath,
+      continueConfigPath,
+      continueMode,
+      knowledgeEmbeddingEnabled,
+      knowledgeEmbeddingBaseUrl,
+      knowledgeEmbeddingModel,
+      knowledgeEmbeddingApiKey,
+      clearKnowledgeEmbeddingApiKey,
+      knowledgeRerankEnabled,
+      knowledgeRerankEndpoint,
+      knowledgeRerankModel,
+      knowledgeRerankApiKey,
+      clearKnowledgeRerankApiKey,
+      workspacePath,
+      toolApproval,
+      subagentSmartRoutingEnabled,
+      contextCompression,
+      contextCompressionTokenInput
+    }) !==
+      JSON.stringify({
+        provider: settings.provider,
+        modelProfiles: toModelProfileDrafts(settings),
+        defaultModelProfileId: settings.defaultModelProfileId,
+        opencodeModelSource:
+          savedConfiguredSettings?.opencodeModelSource,
+        continueModelSource:
+          savedConfiguredSettings?.continueModelSource,
+        deepseekHarnessModelSource:
+          savedConfiguredSettings?.deepseekHarnessModelSource ?? {
+            kind: 'platform'
+          },
+        opencodeBaseUrl: savedConfiguredSettings?.opencodeBaseUrl,
+        opencodeBinaryPath:
+          savedConfiguredSettings?.opencodeBinaryPath,
+        opencodeConfigPath:
+          savedConfiguredSettings?.opencodeConfigPath,
+        continueBinaryPath:
+          savedConfiguredSettings?.continueBinaryPath,
+        continueConfigPath:
+          savedConfiguredSettings?.continueConfigPath,
+        continueMode: settings.continueMode,
+        knowledgeEmbeddingEnabled:
+          settings.knowledgeEmbeddingEnabled,
+        knowledgeEmbeddingBaseUrl:
+          settings.knowledgeEmbeddingBaseUrl,
+        knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
+        knowledgeEmbeddingApiKey: '',
+        clearKnowledgeEmbeddingApiKey: false,
+        knowledgeRerankEnabled:
+          settings.knowledgeRerankEnabled ??
+          defaultRuntimeSettings.knowledgeRerankEnabled,
+        knowledgeRerankEndpoint:
+          settings.knowledgeRerankEndpoint ??
+          defaultRuntimeSettings.knowledgeRerankEndpoint,
+        knowledgeRerankModel:
+          settings.knowledgeRerankModel ??
+          defaultRuntimeSettings.knowledgeRerankModel,
+        knowledgeRerankApiKey: '',
+        clearKnowledgeRerankApiKey: false,
+        workspacePath: savedConfiguredSettings?.workspacePath,
+        toolApproval:
+          settings.toolApproval === 'policy' ? 'policy' : 'always',
+        subagentSmartRoutingEnabled:
+          settings.subagentSmartRoutingEnabled,
+        contextCompression:
+          settings.contextCompression ??
+          defaultContextCompressionSettings,
+        contextCompressionTokenInput: contextCompressionTokenDrafts(
+          settings.contextCompression ??
+            defaultContextCompressionSettings
+        )
+      })
+  const hasUnsavedDrafts =
+    runtimeDraftDirty ||
+    speechModelSelectionDirty ||
+    runtimeCustomizationDirty ||
+    platformFeaturesDirty ||
+    documentParsingDirty
+  const navigationWouldLoseDraft =
+    runtimeCustomizationDirty ||
+    platformFeaturesDirty ||
+    documentParsingDirty
+  const unsavedCloseMessage =
+    runtimeCustomizationDirty &&
+    !runtimeDraftDirty &&
+    !speechModelSelectionDirty &&
+    !platformFeaturesDirty &&
+    !documentParsingDirty
+      ? t('runtime.customization.unsavedClose')
+      : t('unsaved.close')
+
+  useEffect(() => {
+    if (!open || !hasUnsavedDrafts) {
+      return
+    }
+    const preventUnload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', preventUnload)
+    return () =>
+      window.removeEventListener('beforeunload', preventUnload)
+  }, [hasUnsavedDrafts, open])
+
+  const requestTabChange = (
+    category: SettingsCategoryId
+  ): boolean => {
+    if (category === activeTab) {
+      return true
+    }
+    if (navigationWouldLoseDraft) {
+      setPendingLeave({ kind: 'navigate', category })
+      return false
+    }
+    setPendingLeave(undefined)
+    setError(undefined)
+    setActiveTab(category)
+    return true
+  }
+
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
     tab: SettingsCategoryId
@@ -747,8 +909,9 @@ export function SettingsPanel({
     }
     event.preventDefault()
     const nextTab = settingsTabs[nextIndex]!
-    setError(undefined)
-    setActiveTab(nextTab)
+    if (!requestTabChange(nextTab)) {
+      return
+    }
     event.currentTarget.parentElement
       ?.querySelector<HTMLButtonElement>(
         `#settings-tab-${nextTab}`
@@ -770,6 +933,9 @@ export function SettingsPanel({
         setSpeechModelDraftId(undefined)
         setPersistedSpeechModelId(undefined)
         setSpeechModelSelectionDirty(false)
+        setPlatformFeaturesDirty(false)
+        setDocumentParsingDirty(false)
+        setPendingLeave(undefined)
         setAgentRuntimeType('opencode')
         hydrateSettings(value)
       })
@@ -831,10 +997,6 @@ export function SettingsPanel({
     }
   }, [i18n, open])
 
-  if (!open) {
-    return null
-  }
-
   const normalizedContextCompression =
     normalizeContextCompressionTokenDrafts(
       contextCompression,
@@ -852,11 +1014,14 @@ export function SettingsPanel({
     }
 
   const close = (): void => {
-    if (runtimeCustomizationDirty) {
-      setActiveTab('runtime')
-      setError(t('runtime.customization.unsavedClose'))
+    if (hasUnsavedDrafts) {
+      setPendingLeave({ kind: 'close' })
       return
     }
+    closeImmediately()
+  }
+
+  const resetSensitiveDrafts = (): void => {
     setModelProfiles((profiles) =>
       profiles.map((profile) => ({
         ...profile,
@@ -871,8 +1036,64 @@ export function SettingsPanel({
     setSpeechModelDraftId(undefined)
     setPersistedSpeechModelId(undefined)
     setSpeechModelSelectionDirty(false)
+    setPlatformFeaturesDirty(false)
+    setDocumentParsingDirty(false)
+    setPendingLeave(undefined)
     setError(undefined)
+  }
+
+  const closeImmediately = (): void => {
+    resetSensitiveDrafts()
     onClose()
+  }
+
+  const leaveSettings = (proceed: () => void): void => {
+    resetSensitiveDrafts()
+    proceed()
+  }
+
+  const discardAndLeave = (): void => {
+    if (settings) {
+      hydrateSettings(settings)
+    }
+    setSpeechModelDraftId(persistedSpeechModelId)
+    setSpeechModelSelectionDirty(false)
+    runtimeCustomizationRef.current?.discard()
+    setRuntimeCustomizationDirty(false)
+    setPlatformFeaturesDirty(false)
+    setDocumentParsingDirty(false)
+    const leave = pendingLeave
+    setPendingLeave(undefined)
+    setError(undefined)
+    if (leave?.kind === 'navigate') {
+      setActiveTab(leave.category)
+      return
+    }
+    if (leave?.kind === 'external') {
+      setActiveTab('runtime')
+      leaveSettings(leave.proceed)
+      return
+    }
+    if (leave?.kind === 'close') {
+      closeImmediately()
+    }
+  }
+
+  useLayoutEffect(() => {
+    const requestLeave: SettingsLeaveRequester = (proceed) => {
+      if (hasUnsavedDrafts) {
+        setPendingLeave({ kind: 'external', proceed })
+        return
+      }
+      resetSensitiveDrafts()
+      proceed()
+    }
+    onLeaveRequestReady(requestLeave)
+    return () => onLeaveRequestReady(undefined)
+  }, [hasUnsavedDrafts, onLeaveRequestReady])
+
+  if (!open) {
+    return null
   }
 
   const save = async (
@@ -996,6 +1217,7 @@ export function SettingsPanel({
         selectedSpeechModelId = speechSnapshot.selectedModelId
       }
       hydrateSettings(value, true)
+      setPendingLeave(undefined)
       if (speechModelSelectionDirty) {
         setSpeechModelDraftId(selectedSpeechModelId)
         setPersistedSpeechModelId(selectedSpeechModelId)
@@ -1215,15 +1437,12 @@ export function SettingsPanel({
       (profile) => profile.id === id
     )
     const remaining = modelProfiles.filter((profile) => profile.id !== id)
-    const compatibleFallback =
-      remaining.find(
-        (profile) =>
-          profile.id === defaultModelProfileId &&
-          isAgentRuntimeModelProtocol(profile.protocol)
-      ) ??
-      remaining.find((profile) =>
+    const compatibleFallback = findPreferredCompatibleModelProfile(
+      remaining,
+      defaultModelProfileId,
+      (profile) =>
         isAgentRuntimeModelProtocol(profile.protocol)
-      )
+    )
     const runtimeFallback: RuntimeModelSource = compatibleFallback
       ? { kind: 'profile', profileId: compatibleFallback.id }
       : { kind: 'platform' }
@@ -1255,13 +1474,10 @@ export function SettingsPanel({
       deepseekHarnessModelSource.kind === 'profile' &&
       deepseekHarnessModelSource.profileId === id
     ) {
-      const harnessFallback = remaining.find(
-        (profile) =>
-          profile.id === defaultModelProfileId &&
-          profile.protocol === 'openai-chat-completions'
-      ) ?? remaining.find(
-        (profile) =>
-          profile.protocol === 'openai-chat-completions'
+      const harnessFallback = findPreferredCompatibleModelProfile(
+        remaining,
+        defaultModelProfileId,
+        (profile) => profile.protocol === 'openai-chat-completions'
       )
       setDeepseekHarnessModelSource(
         harnessFallback
@@ -1284,13 +1500,12 @@ export function SettingsPanel({
     profile: ModelProfileDraft
   ): void => {
     const previousDefaultProfileId = defaultModelProfileId
-    const compatibleProfile = isAgentRuntimeModelProtocol(
-      profile.protocol
+    const compatibleProfile = findPreferredCompatibleModelProfile(
+      modelProfiles,
+      profile.id,
+      (candidate) =>
+        isAgentRuntimeModelProtocol(candidate.protocol)
     )
-      ? profile
-      : modelProfiles.find((candidate) =>
-          isAgentRuntimeModelProtocol(candidate.protocol)
-        )
     const nextRuntimeSource: RuntimeModelSource = compatibleProfile
       ? { kind: 'profile', profileId: compatibleProfile.id }
       : { kind: 'platform' }
@@ -1341,21 +1556,18 @@ export function SettingsPanel({
       (profile) => profile.id === selectedModelProfileId
     ) ?? modelProfiles[0]
   const defaultTextModelProfile =
-    modelProfiles.find(
+    findPreferredCompatibleModelProfile(
+      modelProfiles,
+      defaultModelProfileId,
       (profile) =>
-        profile.id === defaultModelProfileId &&
         isAgentRuntimeModelProtocol(profile.protocol)
-    ) ??
-    modelProfiles.find((profile) =>
-      isAgentRuntimeModelProtocol(profile.protocol)
     )
   const defaultDeepseekHarnessModelProfile =
-    modelProfiles.find(
-      (profile) =>
-        profile.id === defaultModelProfileId &&
-        isDeepseekHarnessCompatible(profile)
-    ) ??
-    modelProfiles.find(isDeepseekHarnessCompatible)
+    findPreferredCompatibleModelProfile(
+      modelProfiles,
+      defaultModelProfileId,
+      isDeepseekHarnessCompatible
+    )
   const activeRuntimeModelSource =
     agentRuntimeType === 'opencode'
       ? opencodeModelSource
@@ -1440,8 +1652,7 @@ export function SettingsPanel({
                 id={`settings-tab-${category.id}`}
                 key={category.id}
                 onClick={() => {
-                  setError(undefined)
-                  setActiveTab(category.id)
+                  requestTabChange(category.id)
                 }}
                 onKeyDown={(event) =>
                   handleTabKeyDown(event, category.id)
@@ -1469,6 +1680,39 @@ export function SettingsPanel({
             ref={settingsBodyRef}
             role="tabpanel"
           >
+          {pendingLeave && (
+            <div
+              className="settings-warning"
+              role="alert"
+            >
+              <p>
+                {pendingLeave.kind !== 'navigate'
+                  ? unsavedCloseMessage
+                  : t('unsaved.navigation')}
+              </p>
+              <div className="update-settings__actions">
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setPendingLeave(undefined)
+                    setError(undefined)
+                  }}
+                  type="button"
+                >
+                  {t('unsaved.keepEditing')}
+                </button>
+                <button
+                  className="danger-button"
+                  onClick={discardAndLeave}
+                  type="button"
+                >
+                  {pendingLeave.kind !== 'navigate'
+                    ? t('unsaved.discardAndClose')
+                    : t('unsaved.discardAndNavigate')}
+                </button>
+              </div>
+            </div>
+          )}
           {!categoryRendersOwnHeader && (
             <SettingsCategoryHeader
               actions={
@@ -1609,8 +1853,10 @@ export function SettingsPanel({
           )}
           {activeTab === 'platform-features' && (
             <PlatformFeaturesSettingsSection
+              onDirtyChange={setPlatformFeaturesDirty}
               onMagicNotesEnabledChange={onMagicNotesEnabledChange}
               onNotify={onNotify}
+              onShortcutSettingsChanged={onShortcutSettingsChanged}
             />
           )}
           {activeTab === 'runtime' && (
@@ -2423,17 +2669,13 @@ export function SettingsPanel({
                             .value as ModelProfileDraft['protocol']
                           updateModelProfile(profile.id, { protocol })
                           const compatibleFallback =
-                            modelProfiles.find(
+                            findPreferredCompatibleModelProfile(
+                              modelProfiles.filter(
+                                (candidate) =>
+                                  candidate.id !== profile.id
+                              ),
+                              defaultModelProfileId,
                               (candidate) =>
-                                candidate.id !== profile.id &&
-                                candidate.id === defaultModelProfileId &&
-                                isAgentRuntimeModelProtocol(
-                                  candidate.protocol
-                                )
-                            ) ??
-                            modelProfiles.find(
-                              (candidate) =>
-                                candidate.id !== profile.id &&
                                 isAgentRuntimeModelProtocol(
                                   candidate.protocol
                                 )
@@ -2926,7 +3168,7 @@ export function SettingsPanel({
             <SpeechModelSettingsSection
               onNotify={onNotify}
               onOpenModelDownloadSourceSettings={() =>
-                setActiveTab('platform-features')
+                requestTabChange('platform-features')
               }
               onSelectedModelIdChange={(modelId, changed) => {
                 setSpeechModelDraftId(modelId)
@@ -3074,7 +3316,7 @@ export function SettingsPanel({
                   className="secondary-button"
                   onClick={() => {
                     setModelType('llm')
-                    setActiveTab('model')
+                    requestTabChange('model')
                   }}
                   type="button"
                 >
@@ -3124,9 +3366,10 @@ export function SettingsPanel({
 
           {activeTab === 'document-parsing' && (
             <DocumentParsingSettingsSection
+              onDirtyChange={setDocumentParsingDirty}
               onNotify={onNotify}
               onOpenModelDownloadSourceSettings={() =>
-                setActiveTab('platform-features')
+                requestTabChange('platform-features')
               }
             />
           )}

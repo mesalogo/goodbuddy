@@ -1124,6 +1124,263 @@ describe('ContinueHostAdapter', () => {
     ).rejects.toThrow('流式事件超过安全限制')
   })
 
+  it.each([
+    {
+      label: 'event count',
+      limits: {
+        maximumStreamEvents: 1,
+        maximumStreamEventBytes: 10_000
+      }
+    },
+    {
+      label: 'event bytes',
+      limits: {
+        maximumStreamEvents: 10,
+        maximumStreamEventBytes: 60
+      }
+    }
+  ])(
+    'enforces cumulative streamed $label across state polls',
+    async ({ limits }) => {
+      const distribution = await createDistribution()
+      let stateRequests = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request) => {
+          if (String(input).endsWith('/state')) {
+            stateRequests += 1
+            return Response.json({
+              session: { history: [] },
+              isProcessing: stateRequests > 1,
+              messageQueueLength: 0,
+              pendingPermission: null,
+              goodbuddyEvents:
+                stateRequests > 1
+                  ? [{ type: 'text', delta: '1234567890' }]
+                  : []
+            })
+          }
+          return Response.json({})
+        })
+      )
+      const forwarded: unknown[] = []
+      const adapter = new ContinueHostAdapter(
+        {
+          binaryPath: distribution.entryPath,
+          configPath: '',
+          workspace: process.cwd(),
+          cacheRoot: distribution.cacheRoot,
+          trustedBundleHashes: [distribution.sourceHash],
+          launchHost: () => ({
+            exitCode: null,
+            killed: false,
+            stderr: null,
+            once: () => undefined,
+            kill: () => true
+          }),
+          modelProfile: {
+            id: randomUUID(),
+            name: 'Local model',
+            baseUrl: 'http://127.0.0.1:11434/v1',
+            modelName: 'qwen3',
+            protocol: 'openai-chat-completions',
+            authentication: 'none'
+          }
+        },
+        {
+          ...limits,
+          maximumToolCalls: 100,
+          terminateProcessTree: vi.fn().mockResolvedValue(undefined)
+        }
+      )
+
+      await expect(
+        adapter.run(
+          'hello',
+          new AbortController().signal,
+          async () => 'deny',
+          {
+            onEvent: (event) => {
+              forwarded.push(event)
+            }
+          }
+        )
+      ).rejects.toThrow('流式事件超过安全限制')
+      expect(forwarded).toEqual([
+        { type: 'text', delta: '1234567890' }
+      ])
+    }
+  )
+
+  it('enforces cumulative unique tool calls before forwarding a later batch', async () => {
+    const distribution = await createDistribution()
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/state')) {
+          stateRequests += 1
+          return Response.json({
+            session: { history: [] },
+            isProcessing: stateRequests > 1,
+            messageQueueLength: 0,
+            pendingPermission: null,
+            goodbuddyEvents:
+              stateRequests > 1
+                ? [
+                    {
+                      type: 'tool',
+                      callId: `call-${stateRequests}`,
+                      name: 'Bash',
+                      state: 'running'
+                    }
+                  ]
+                : []
+          })
+        }
+        return Response.json({})
+      })
+    )
+    const forwarded: unknown[] = []
+    const adapter = new ContinueHostAdapter(
+      {
+        binaryPath: distribution.entryPath,
+        configPath: '',
+        workspace: process.cwd(),
+        cacheRoot: distribution.cacheRoot,
+        trustedBundleHashes: [distribution.sourceHash],
+        launchHost: () => ({
+          exitCode: null,
+          killed: false,
+          stderr: null,
+          once: () => undefined,
+          kill: () => true
+        }),
+        modelProfile: {
+          id: randomUUID(),
+          name: 'Local model',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          protocol: 'openai-chat-completions',
+          authentication: 'none'
+        }
+      },
+      {
+        maximumStreamEvents: 10,
+        maximumStreamEventBytes: 10_000,
+        maximumToolCalls: 1,
+        terminateProcessTree: vi.fn().mockResolvedValue(undefined)
+      }
+    )
+
+    await expect(
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        async () => 'deny',
+        {
+          onEvent: (event) => {
+            forwarded.push(event)
+          }
+        }
+      )
+    ).rejects.toThrow('工具调用超过 100 个')
+    expect(forwarded).toHaveLength(1)
+    expect(forwarded[0]).toMatchObject({
+      type: 'tool',
+      tool: { callId: 'call-2' }
+    })
+  })
+
+  it('awaits bounded process cleanup before deleting the run directory', async () => {
+    const distribution = await createDistribution()
+    let globalDirectory = ''
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/state')) {
+          stateRequests += 1
+          return Response.json({
+            session: {
+              history:
+                stateRequests === 1
+                  ? []
+                  : [
+                      {
+                        message: {
+                          role: 'assistant',
+                          content: 'CLEANUP_OK'
+                        }
+                      }
+                    ]
+            },
+            isProcessing: false,
+            messageQueueLength: 0,
+            pendingPermission: null
+          })
+        }
+        return Response.json({})
+      })
+    )
+    let releaseTermination!: () => void
+    const terminateProcessTree = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseTermination = resolve
+        })
+    )
+    const adapter = new ContinueHostAdapter(
+      {
+        binaryPath: distribution.entryPath,
+        configPath: '',
+        workspace: process.cwd(),
+        cacheRoot: distribution.cacheRoot,
+        trustedBundleHashes: [distribution.sourceHash],
+        launchHost: (_entry, _args, options) => {
+          globalDirectory =
+            options.env.CONTINUE_GLOBAL_DIR ?? ''
+          return {
+            exitCode: null,
+            killed: false,
+            stderr: null,
+            once: () => undefined,
+            kill: () => true
+          }
+        },
+        modelProfile: {
+          id: randomUUID(),
+          name: 'Local model',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          protocol: 'openai-chat-completions',
+          authentication: 'none'
+        }
+      },
+      {
+        maximumStreamEvents: 10,
+        maximumStreamEventBytes: 10_000,
+        maximumToolCalls: 10,
+        terminateProcessTree
+      }
+    )
+
+    const run = adapter.run(
+      'hello',
+      new AbortController().signal,
+      async () => 'deny'
+    )
+    await vi.waitFor(() =>
+      expect(terminateProcessTree).toHaveBeenCalledOnce()
+    )
+    expect(globalDirectory).toBeTruthy()
+    expect(existsSync(globalDirectory)).toBe(true)
+
+    releaseTermination()
+    await expect(run).resolves.toEqual({ text: 'CLEANUP_OK' })
+    expect(existsSync(globalDirectory)).toBe(false)
+  })
+
   it('uses auto mode and returns audit metadata for agent tools', async () => {
     const distribution = await createDistribution()
     let launchArgs: string[] = []

@@ -15,7 +15,8 @@ import {
   PageHeader,
   PageShell,
   PageTabs,
-  SegmentedControl
+  SegmentedControl,
+  ScopeBadge
 } from './WorkspacePrimitives'
 
 const stylesheet = readFileSync(
@@ -92,6 +93,10 @@ describe('WorkspacePrimitives', () => {
     )
     expect(stylesheet).toMatch(/--font-body:\s*13px/u)
     expect(stylesheet).toMatch(/--font-caption:\s*11px/u)
+    expect(stylesheet).toMatch(
+      /--text-disabled:\s*#[\da-f]{6};/iu
+    )
+    expect(stylesheet).toMatch(/--z-dialog:\s*130;/u)
     expect(stylesheet).toMatch(/font-synthesis:\s*style/u)
     expect(stylesheet).toContain(
       '"Inter Variable", "Segoe UI Variable", "SF Pro Text", "PingFang SC"'
@@ -116,6 +121,76 @@ describe('WorkspacePrimitives', () => {
     )
     expect(stylesheet).toMatch(
       /\.composer__input textarea\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.6;/u
+    )
+  })
+
+  it('exposes an unavailable scope explanation to assistive technology', () => {
+    render(
+      <ScopeBadge
+        scope={{
+          kind: 'unavailable',
+          explanation: '项目已归档，请选择其他项目。'
+        }}
+      />
+    )
+
+    expect(
+      screen.getByText('范围不可用')
+    ).toHaveAccessibleDescription('项目已归档，请选择其他项目。')
+  })
+
+  it('labels multi-project scope distinctly from mixed global scope', () => {
+    const { rerender } = render(
+      <ScopeBadge
+        scope={{
+          kind: 'projects',
+          projectCount: 2
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText('2 个项目')).toHaveTextContent(
+      '2 个项目'
+    )
+    expect(screen.queryByText(/全局/u)).not.toBeInTheDocument()
+
+    rerender(<ScopeBadge scope={{ kind: 'mixed' }} />)
+    expect(screen.getByLabelText('项目 + 全局')).toBeInTheDocument()
+  })
+
+  it('keeps forced-color and narrow assistant overrides authoritative', () => {
+    const forcedColorsStart = stylesheet.indexOf(
+      '@media (forced-colors: active)'
+    )
+    const forcedColorsEnd = stylesheet.indexOf(
+      '@media (prefers-reduced-motion: reduce)',
+      forcedColorsStart
+    )
+    const forcedColors = stylesheet.slice(
+      forcedColorsStart,
+      forcedColorsEnd
+    )
+    expect(forcedColors).toContain(':root :is(')
+    expect(forcedColors).not.toContain(':where(')
+    expect(forcedColors).toMatch(
+      /html:root\s+:is\(\s*\.assistant-sidebar__tab--active,\s*\.page-tabs__tab--active\s*\),\s*html:root\[data-theme='dark'\]\s+:is\(\s*\.assistant-sidebar__tab--active,\s*\.page-tabs__tab--active\s*\)\s*\{[^}]*border:\s*2px solid Highlight;[^}]*background:\s*Highlight;[^}]*color:\s*HighlightText;[^}]*forced-color-adjust:\s*none;/u
+    )
+    expect(forcedColors).toMatch(
+      /\.task-status-dot--failed,[\s\S]*?forced-color-adjust:\s*none;/u
+    )
+    expect(forcedColors).toMatch(
+      /\.heartbeat-center__meter\s*\{[^}]*forced-color-adjust:\s*none;/u
+    )
+
+    const narrowAssistant = stylesheet.slice(
+      stylesheet.indexOf('@media (max-width: 719px)'),
+      stylesheet.indexOf(
+        '@media (max-width: 720px)',
+        stylesheet.indexOf('@media (max-width: 719px)')
+      )
+    )
+    expect(narrowAssistant).toMatch(
+      /\.assistant-sidebar--open\s*\{[^}]*width:\s*calc\(100vw - 16px\);[^}]*flex-basis:\s*calc\(100vw - 16px\);/u
     )
   })
 
@@ -156,6 +231,48 @@ describe('WorkspacePrimitives', () => {
     )
     expect(stylesheet).toMatch(
       /\.project-switcher__menu\s*\{[^}]*border-radius:\s*var\(--radius-card\);[^}]*background:\s*var\(--surface-raised\);[^}]*box-shadow:\s*var\(--shadow-dialog\);/u
+    )
+  })
+
+  it('keeps project forms and disabled actions visually consistent', () => {
+    expect(stylesheet).toMatch(
+      /\.project-create-card label > span\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.project-create-card input,\s*\.project-create-card textarea,\s*\.project-create-card select\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.project-create-card label > small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.project-create-card__error\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.field > span\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.field input,\s*\.field textarea,\s*\.field select\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.field small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.primary-button:disabled\s*\{[^}]*cursor:\s*not-allowed;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.secondary-button:disabled\s*\{[^}]*cursor:\s*not-allowed;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.danger-button:disabled\s*\{[^}]*cursor:\s*not-allowed;/u
+    )
+    expect(stylesheet).toContain(
+      '.primary-button:hover:not(:disabled)'
+    )
+    expect(stylesheet).toContain(
+      '.danger-button:hover:not(:disabled)'
+    )
+    expect(stylesheet).not.toMatch(
+      /\.primary-button:disabled\s*\{[^}]*cursor:\s*wait;/u
     )
   })
 
@@ -434,13 +551,13 @@ describe('WorkspacePrimitives', () => {
     const confirmButton = screen.getByRole('button', {
       name: '永久删除对象'
     })
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).not.toHaveAttribute('aria-modal')
     expect(dialog).toHaveAccessibleDescription('删除此对象？')
     expect(cancelButton).toHaveFocus()
 
-    fireEvent.keyDown(cancelButton, { key: 'Tab', shiftKey: true })
-    expect(confirmButton).toHaveFocus()
-    fireEvent.keyDown(confirmButton, { key: 'Tab' })
+    expect(
+      fireEvent.keyDown(cancelButton, { key: 'Tab', shiftKey: true })
+    ).toBe(true)
     expect(cancelButton).toHaveFocus()
 
     fireEvent.keyDown(cancelButton, { key: 'Escape' })
@@ -462,7 +579,7 @@ describe('WorkspacePrimitives', () => {
     expect(screen.getByRole('button', { name: '删除' })).toHaveFocus()
   })
 
-  it('keeps focus on the dialog while destructive actions are disabled', () => {
+  it('keeps focus on the inline confirmation while actions are disabled', () => {
     const onCancel = vi.fn()
     const { rerender } = render(
       <DestructiveConfirmActions
@@ -491,7 +608,7 @@ describe('WorkspacePrimitives', () => {
       name: '正在删除'
     })
     expect(dialog).toHaveFocus()
-    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(fireEvent.keyDown(dialog, { key: 'Tab' })).toBe(true)
     expect(dialog).toHaveFocus()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(onCancel).not.toHaveBeenCalled()

@@ -27,7 +27,9 @@ export const magicNotes = {
     hideAiComments: '隐藏 AI 评论',
     showAiComments: '显示 AI 评论',
     pinNote: '置顶笔记',
-    unpinNote: '取消置顶'
+    unpinNote: '取消置顶',
+    continueEditing: '继续编辑',
+    discardAndSwitch: '放弃草稿并切换'
   },
   status: {
     loading: '正在加载',
@@ -108,7 +110,9 @@ export const magicNotes = {
   },
   confirmations: {
     deleteNote: '删除“{{title}}”及其中全部记录？',
-    deleteEntry: '删除这条记录？此操作不可撤销。'
+    deleteEntry: '删除这条记录？此操作不可撤销。',
+    discardDraftTitle: '放弃当前未保存草稿？',
+    discardDraftDescription: '切换后，当前记录草稿中的文字和附件将被丢弃。'
   },
   comments: {
     paneLabel: 'AI 评论',

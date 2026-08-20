@@ -79,6 +79,12 @@ import type {
   ModelDownloadSource,
   VersionCheckResult
 } from './application-settings-contracts'
+import type {
+  GlobalShortcutRegistrationStatus,
+  GlobalShortcutSettings,
+  GlobalShortcutSettingsSnapshot,
+  GlobalShortcutSettingsUpdateResult
+} from './shortcut'
 import type { ReleaseNotesSnapshot } from './release-notes-contracts'
 import type {
   SpeechModelSnapshot,
@@ -93,6 +99,7 @@ import type {
 import type {
   DocumentOcrAssets,
   DocumentOcrFailure,
+  DocumentOcrModelProgressSnapshot,
   DocumentOcrRequest,
   DocumentOcrResult,
   DocumentParsingDiagnostic,
@@ -1128,6 +1135,7 @@ export type AppInfo = {
   platform: string
   arch: string
   shortcut: string
+  shortcutStatus?: GlobalShortcutRegistrationStatus
 }
 
 export const browserLiveStateSchema = z
@@ -1401,6 +1409,12 @@ export type DesktopApi = {
       listener: (result: VersionCheckResult) => void
     ) => () => void
   }
+  shortcuts?: {
+    getSettings: () => Promise<GlobalShortcutSettingsSnapshot>
+    updateSettings: (
+      input: GlobalShortcutSettings
+    ) => Promise<GlobalShortcutSettingsUpdateResult>
+  }
   releaseNotes?: {
     getPending: () => Promise<ReleaseNotesSnapshot>
     acknowledge: (version: string) => Promise<void>
@@ -1435,6 +1449,7 @@ export type DesktopApi = {
   }
   documentParsing?: {
     getSnapshot: () => Promise<DocumentParsingSnapshot>
+    getOcrModelProgress: () => Promise<DocumentOcrModelProgressSnapshot>
     update: (
       input: DocumentParsingSettings
     ) => Promise<DocumentParsingSnapshot>

@@ -63,6 +63,15 @@ describe('sandboxed preload', () => {
     )
   })
 
+  it('exposes a narrow OCR operation progress snapshot', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('getOcrModelProgress:')
+    expect(source).toContain('ipcChannels.documentOcrModelsProgress')
+  })
+
   it('exposes a removable attachment parsing progress listener', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),
@@ -83,6 +92,17 @@ describe('sandboxed preload', () => {
     expect(source).toContain('acknowledge: async (version: string)')
     expect(source).toContain('ipcChannels.releaseNotesGetPending')
     expect(source).toContain('ipcChannels.releaseNotesAcknowledge')
+  })
+
+  it('exposes only get and validated-update shortcut settings methods', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('shortcuts: {')
+    expect(source).toContain('ipcChannels.shortcutSettingsGet')
+    expect(source).toContain('ipcChannels.shortcutSettingsUpdate')
+    expect(source).not.toContain('globalShortcut.')
   })
 
   it('exposes bounded knowledge task actions', () => {

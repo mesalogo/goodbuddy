@@ -29,6 +29,7 @@ import type {
   DocumentParsingTestPurpose
 } from '../../shared/document-parsing-contracts'
 import type { AppNotificationInput } from './notifications'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
@@ -37,6 +38,7 @@ import {
 type DocumentParsingSettingsSectionProps = {
   onNotify?: (notification: AppNotificationInput) => void
   onOpenModelDownloadSourceSettings?: () => void
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 function errorMessage(reason: unknown, fallback: string): string {
@@ -117,9 +119,10 @@ function DiagnosticDialog({
   onClose: () => void
 }): React.JSX.Element {
   const { t } = useTranslation('settings')
+  const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    closeRef.current?.focus()
+    return activateModalFocus(() => closeRef.current)
   }, [])
   return (
     <div
@@ -136,9 +139,13 @@ function DiagnosticDialog({
         className="document-parsing-diagnostic"
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
+            event.preventDefault()
             onClose()
+            return
           }
+          trapTabFocus(event, dialogRef.current)
         }}
+        ref={dialogRef}
         role="dialog"
       >
         <header>
@@ -209,7 +216,8 @@ function DiagnosticDialog({
 
 export function DocumentParsingSettingsSection({
   onNotify,
-  onOpenModelDownloadSourceSettings
+  onOpenModelDownloadSourceSettings,
+  onDirtyChange
 }: DocumentParsingSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settings')
   const [snapshot, setSnapshot] = useState<DocumentParsingSnapshot>()
@@ -223,6 +231,14 @@ export function DocumentParsingSettingsSection({
   const [diagnostic, setDiagnostic] =
     useState<DocumentParsingDiagnostic>()
   const mountedRef = useRef(false)
+  const settingsDirty =
+    snapshot !== undefined &&
+    draft !== undefined &&
+    JSON.stringify(draft) !== JSON.stringify(snapshot.settings)
+
+  useEffect(() => {
+    onDirtyChange?.(settingsDirty)
+  }, [onDirtyChange, settingsDirty])
 
   const refresh = useCallback(async (): Promise<void> => {
     const api = window.goodbuddy.documentParsing
@@ -234,6 +250,27 @@ export function DocumentParsingSettingsSection({
       setSnapshot(next)
     }
   }, [t])
+
+  const refreshProgress = useCallback(async (): Promise<void> => {
+    const api = window.goodbuddy.documentParsing
+    if (!api) {
+      return
+    }
+    const progress = await api.getOcrModelProgress()
+    if (mountedRef.current) {
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              ocrModels: {
+                ...current.ocrModels,
+                operations: progress.operations
+              }
+            }
+          : current
+      )
+    }
+  }, [])
 
   useEffect(() => {
     const api = window.goodbuddy.documentParsing
@@ -274,11 +311,27 @@ export function DocumentParsingSettingsSection({
     if (!shouldPoll) {
       return
     }
-    const timer = window.setInterval(() => {
-      void refresh().catch(() => undefined)
-    }, 300)
-    return () => window.clearInterval(timer)
-  }, [refresh, shouldPoll])
+    let active = true
+    let timer: number | undefined
+    const poll = async (): Promise<void> => {
+      try {
+        await refreshProgress()
+      } catch {
+        // The final full refresh reports actionable operation errors.
+      } finally {
+        if (active) {
+          timer = window.setTimeout(() => void poll(), 300)
+        }
+      }
+    }
+    timer = window.setTimeout(() => void poll(), 300)
+    return () => {
+      active = false
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [refreshProgress, shouldPoll])
 
   const updateDraft = <Key extends keyof DocumentParsingSettings>(
     key: Key,
@@ -450,8 +503,6 @@ export function DocumentParsingSettingsSection({
     modelDownloadAvailability?.available === true
   const pendingModelSelection =
     draft.localOcrModelId !== snapshot.settings.localOcrModelId
-  const settingsDirty =
-    JSON.stringify(draft) !== JSON.stringify(snapshot.settings)
   const selectedModelReady = installedModel !== undefined
   const invalidPendingModel =
     pendingModelSelection && !selectedModelReady

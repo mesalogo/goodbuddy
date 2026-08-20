@@ -33,6 +33,7 @@ import type {
   KnowledgeLibrary
 } from '../../shared/contracts'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
+import { trapTabFocus } from './dialog-focus'
 import { SegmentedControl } from './WorkspacePrimitives'
 import {
   findTaskSchedule,
@@ -79,6 +80,8 @@ type RightAssistantSidebarProps = {
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
   browserState?: BrowserLiveState
+  overlay?: boolean
+  restoreFocusRef?: { current: HTMLElement | null }
   onClose: () => void
   onInteractBrowser: () => Promise<void>
   onStopBrowser: () => Promise<void>
@@ -156,6 +159,8 @@ export function RightAssistantSidebar({
   workspaceChanges,
   workspaceProjectId,
   browserState,
+  overlay = false,
+  restoreFocusRef,
   onClose,
   onInteractBrowser,
   onStopBrowser,
@@ -197,6 +202,8 @@ export function RightAssistantSidebar({
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth)
   const [isResizing, setIsResizing] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
+  const wasOpen = useRef(false)
+  const wasOverlayOpen = useRef(false)
   const liveSidebarWidth = useRef(defaultSidebarWidth)
   const resizePointerId = useRef<number | undefined>(undefined)
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
@@ -286,6 +293,24 @@ export function RightAssistantSidebar({
     window.addEventListener('resize', handleViewportResize)
     return () => window.removeEventListener('resize', handleViewportResize)
   }, [])
+
+  useEffect(() => {
+    if (open && overlay && !wasOverlayOpen.current) {
+      const focusFrame = requestAnimationFrame(() => {
+        document
+          .getElementById(`assistant-sidebar-tab-${tab}`)
+          ?.focus()
+      })
+      wasOpen.current = open
+      wasOverlayOpen.current = true
+      return () => cancelAnimationFrame(focusFrame)
+    }
+    if (!open && wasOpen.current) {
+      requestAnimationFrame(() => restoreFocusRef?.current?.focus())
+    }
+    wasOpen.current = open
+    wasOverlayOpen.current = open && overlay
+  }, [open, overlay, restoreFocusRef, tab])
 
   const resizeFromClientX = (
     clientX: number,
@@ -430,12 +455,25 @@ export function RightAssistantSidebar({
       ref={sidebarRef}
       aria-label={t('sidebar.ariaLabel')}
       aria-hidden={!open}
+      aria-modal={open && overlay ? 'true' : undefined}
       className={
         open
           ? `assistant-sidebar assistant-sidebar--open${isResizing && canResize ? ' assistant-sidebar--resizing' : ''}`
           : 'assistant-sidebar'
       }
       inert={!open}
+      onKeyDown={(event) => {
+        if (!open || !overlay) {
+          return
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          onClose()
+          return
+        }
+        trapTabFocus(event, sidebarRef.current)
+      }}
+      role={open && overlay ? 'dialog' : undefined}
       style={
         {
           '--assistant-sidebar-width': `${sidebarWidth}px`

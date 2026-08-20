@@ -31,7 +31,9 @@ export const magicNotes = {
     hideAiComments: 'Hide AI comments',
     showAiComments: 'Show AI comments',
     pinNote: 'Pin note',
-    unpinNote: 'Unpin note'
+    unpinNote: 'Unpin note',
+    continueEditing: 'Continue editing',
+    discardAndSwitch: 'Discard and switch'
   },
   status: {
     loading: 'Loading',
@@ -116,7 +118,10 @@ export const magicNotes = {
   },
   confirmations: {
     deleteNote: 'Delete “{{title}}” and all of its entries?',
-    deleteEntry: 'Delete this entry? This action cannot be undone.'
+    deleteEntry: 'Delete this entry? This action cannot be undone.',
+    discardDraftTitle: 'Discard this unsaved draft?',
+    discardDraftDescription:
+      'Switching will discard the text and attachments in the current entry draft.'
   },
   comments: {
     paneLabel: 'AI comments',

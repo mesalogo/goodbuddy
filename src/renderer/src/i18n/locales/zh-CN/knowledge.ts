@@ -404,6 +404,10 @@ export const knowledge = {
     fitView: '显示全部',
     interactionHint: '拖动节点调整位置；拖动画布平移，滚轮缩放。',
     empty: '当前知识库尚未生成实体关系。',
+    chunk: {
+      loading: '正在加载知识图谱…',
+      loadFailed: '知识图谱未能加载，请重试。'
+    },
     topologyAriaLabel: '图谱拓扑',
     visibleRelations: {
       title: '可见关系',
@@ -414,6 +418,7 @@ export const knowledge = {
     },
     addEntityPanelAriaLabel: '新增实体面板',
     entityDetailsAriaLabel: '实体详情',
+    deleteEntityAriaLabel: '删除实体 {{name}}',
     closeEntityDetailsAriaLabel: '关闭实体详情',
     noEntityDescription: '该实体没有附加描述。',
     aliases: '别名：{{aliases}}',
@@ -425,6 +430,27 @@ export const knowledge = {
       targetAriaLabel: '选择合并目标',
       targetPlaceholder: '选择保留的实体',
       actionAriaLabel: '合并到目标实体'
+    },
+    confirm: {
+      processing: '处理中…',
+      deleteEntity: {
+        title: '删除实体“{{name}}”？',
+        description:
+          '将永久删除实体“{{name}}”及其 {{count}} 条关联关系；相关证据引用也会从图谱中移除，且无法恢复。',
+        action: '删除实体'
+      },
+      deleteRelation: {
+        title: '删除关系“{{type}}”？',
+        description:
+          '将永久删除“{{source}}”到“{{target}}”的“{{type}}”关系及其图谱证据引用，且无法恢复。两个实体本身会保留。',
+        action: '删除关系'
+      },
+      merge: {
+        title: '将“{{source}}”合并到“{{target}}”？',
+        description:
+          '“{{source}}”的关系、别名和证据将并入“{{target}}”，随后删除源实体。此操作无法恢复。',
+        action: '合并实体'
+      }
     },
     evidence: {
       title: '证据 ({{count}})',

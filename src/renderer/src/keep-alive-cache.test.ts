@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  filterKeepAliveEntries,
   pruneKeepAliveEntries,
-  touchKeepAliveEntry
+  touchAndPruneKeepAliveEntries,
+  touchKeepAliveEntry,
+  type KeepAliveCacheEntry
 } from './keep-alive-cache'
 
 describe('keep-alive cache', () => {
@@ -19,6 +22,44 @@ describe('keep-alive cache', () => {
       { key: 'knowledge', lastVisitedAt: 20 },
       { key: 'chat', lastVisitedAt: 30 }
     ])
+  })
+
+  it('preserves reference equality for no-op touches and filtering', () => {
+    const entries = [
+      { key: 'knowledge', lastVisitedAt: 20 },
+      { key: 'chat', lastVisitedAt: 10 }
+    ]
+
+    expect(touchKeepAliveEntry(entries, 'chat', 10)).toBe(entries)
+    expect(
+      filterKeepAliveEntries(entries, () => true)
+    ).toBe(entries)
+    expect(
+      touchAndPruneKeepAliveEntries(entries, 'knowledge', 20, {
+        expiresAfterMs: 100,
+        maximumEntries: 2,
+        protectedKeys: new Set<string>(),
+        recentEntries: 1
+      })
+    ).toBe(entries)
+  })
+
+  it('preserves reference equality for a no-op sweep', () => {
+    const entries = [
+      { key: 'knowledge', lastVisitedAt: 20 },
+      { key: 'chat', lastVisitedAt: 30 }
+    ]
+
+    expect(
+      pruneKeepAliveEntries(entries, {
+        currentKey: 'chat',
+        expiresAfterMs: 100,
+        maximumEntries: 2,
+        now: 40,
+        protectedKeys: new Set(['knowledge']),
+        recentEntries: 1
+      })
+    ).toBe(entries)
   })
 
   it('keeps recent and protected entries while expiring inactive ones', () => {
@@ -65,11 +106,71 @@ describe('keep-alive cache', () => {
     ).toEqual([
       'conversation-7',
       'conversation-6',
+      'conversation-0',
       'conversation-5',
-      'conversation-4',
-      'conversation-0'
+      'conversation-4'
     ])
   })
+
+  it('applies the documented priority when protected entries exceed capacity', () => {
+    const entries = [
+      { key: 'newest', lastVisitedAt: 60 },
+      { key: 'recent', lastVisitedAt: 50 },
+      { key: 'protected-newest', lastVisitedAt: 40 },
+      { key: 'protected-older', lastVisitedAt: 30 },
+      { key: 'current', lastVisitedAt: 10 }
+    ]
+
+    expect(
+      pruneKeepAliveEntries(entries, {
+        currentKey: 'current',
+        expiresAfterMs: 1_000,
+        maximumEntries: 4,
+        now: 100,
+        protectedKeys: new Set([
+          'protected-newest',
+          'protected-older',
+          'current'
+        ]),
+        recentEntries: 2
+      }).map((entry) => entry.key)
+    ).toEqual([
+      'current',
+      'newest',
+      'recent',
+      'protected-newest'
+    ])
+  })
+
+  it.each([
+    ['conversation', 12, 5, 20],
+    ['workspace', 4, 3, 8]
+  ])(
+    'enforces the %s cap on every rapid touch',
+    (_kind, maximumEntries, recentEntries, visitCount) => {
+      const entries = Array.from(
+        { length: visitCount },
+        (_, index) => `entry-${index}`
+      ).reduce<KeepAliveCacheEntry<string>[]>(
+        (current, key, index) =>
+          touchAndPruneKeepAliveEntries(current, key, index + 1, {
+            expiresAfterMs: 60 * 60 * 1_000,
+            maximumEntries,
+            protectedKeys: new Set<string>(),
+            recentEntries
+          }),
+        []
+      )
+
+      expect(entries).toHaveLength(maximumEntries)
+      expect(entries.map((entry) => entry.key)).toEqual(
+        Array.from(
+          { length: maximumEntries },
+          (_, index) => `entry-${visitCount - index - 1}`
+        )
+      )
+    }
+  )
 
   it('expires an unprotected entry after one hour', () => {
     const entries = [{ key: 'knowledge', lastVisitedAt: 1_000 }]

@@ -24,10 +24,12 @@ import type {
   HeartbeatUpdateInput
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import { getProjectDisplayText } from './project-display'
 import {
   EmptyState,
   PageHeader,
-  PageTabs
+  PageTabs,
+  type WorkspaceScope
 } from './WorkspacePrimitives'
 
 type HeartbeatCenterTab =
@@ -101,6 +103,7 @@ export function HeartbeatCenter({
   onRetryLoad
 }: HeartbeatCenterProps): React.JSX.Element {
   const { t, i18n } = useTranslation('heartbeat')
+  const { t: tWorkspace } = useTranslation('workspace')
   const [tab, setTab] = useState<HeartbeatCenterTab>('overview')
   const [pendingAction, setPendingAction] = useState<string>()
   const [error, setError] = useState<string>()
@@ -194,11 +197,14 @@ export function HeartbeatCenter({
     if (config.scope.kind === 'global') {
       return t('center.scope.global')
     }
-    const projectNames = config.scope.projectIds.map(
-      (projectId) =>
-        projects.find((project) => project.id === projectId)?.name ??
-        t('settings.scope.unavailableProject')
-    )
+    const projectNames = config.scope.projectIds.map((projectId) => {
+      const project = projects.find(
+        (candidate) => candidate.id === projectId
+      )
+      return project
+        ? getProjectDisplayText(project, tWorkspace).name
+        : t('settings.scope.unavailableProject')
+    })
     return projectNames.join(t('settings.scope.nameSeparator'))
   }
 
@@ -276,6 +282,50 @@ export function HeartbeatCenter({
   )
   const hasHeartbeatData =
     configs.length > 0 || runs.length > 0 || entries.length > 0
+  const heartbeatScope = useMemo<WorkspaceScope>(() => {
+    if (
+      configs.length === 0 ||
+      configs.every((config) => config.scope.kind === 'global')
+    ) {
+      return { kind: 'global' }
+    }
+    const includesGlobal = configs.some(
+      (config) => config.scope.kind === 'global'
+    )
+    const projectIds = [
+      ...new Set(
+        configs.flatMap((config) =>
+          config.scope.kind === 'projects'
+            ? config.scope.projectIds
+            : []
+        )
+      )
+    ]
+    if (!includesGlobal && projectIds.length === 1) {
+      const project = projects.find(
+        (candidate) => candidate.id === projectIds[0]
+      )
+      return project
+        ? {
+            kind: 'project',
+            projectName: getProjectDisplayText(
+              project,
+              tWorkspace
+            ).name
+          }
+        : {
+            kind: 'unavailable',
+            explanation: t('settings.scope.unavailableProject')
+          }
+    }
+    if (!includesGlobal && projectIds.length > 1) {
+      return {
+        kind: 'projects',
+        projectCount: projectIds.length
+      }
+    }
+    return { kind: 'mixed' }
+  }, [configs, projects, t, tWorkspace])
   const initialLoadBlocked =
     !hasHeartbeatData && (loading || loadError !== undefined)
 
@@ -368,7 +418,7 @@ export function HeartbeatCenter({
         eyebrow={t('center.eyebrow')}
         headingId="heartbeat-center-title"
         icon={<HeartPulse size={22} />}
-        scope={{ kind: 'global' }}
+        scope={heartbeatScope}
         title={t('center.title')}
       />
 
@@ -445,9 +495,9 @@ export function HeartbeatCenter({
                 <p className="eyebrow">
                   {t('center.currentStatus.eyebrow')}
                 </p>
-                <h3 id="heartbeat-status-title">
+                <h2 id="heartbeat-status-title">
                   {t('center.currentStatus.title')}
-                </h3>
+                </h2>
               </div>
               <span
                 className={
@@ -666,9 +716,9 @@ export function HeartbeatCenter({
                   <p className="eyebrow">
                     {t('center.trend.eyebrow')}
                   </p>
-                  <h3 id="heartbeat-trend-title">
+                  <h2 id="heartbeat-trend-title">
                     {t('center.trend.title')}
-                  </h3>
+                  </h2>
                 </div>
               </div>
               {recentTrend.length === 0 ? (
@@ -760,9 +810,9 @@ export function HeartbeatCenter({
                   <p className="eyebrow">
                     {t('center.latest.eyebrow')}
                   </p>
-                  <h3 id="latest-heartbeat-title">
+                  <h2 id="latest-heartbeat-title">
                     {t('center.latest.title')}
-                  </h3>
+                  </h2>
                 </div>
                 {latestEntry && (
                   <time dateTime={latestEntry.createdAt}>
@@ -829,9 +879,9 @@ export function HeartbeatCenter({
                 <p className="eyebrow">
                   {t('center.suggestions.memoryEyebrow')}
                 </p>
-                <h3 id="heartbeat-memory-title">
+                <h2 id="heartbeat-memory-title">
                   {t('center.suggestions.memoryTitle')}
-                </h3>
+                </h2>
               </div>
               <span>
                 {t('center.suggestions.memoryCount', {
@@ -943,9 +993,9 @@ export function HeartbeatCenter({
                 <p className="eyebrow">
                   {t('center.suggestions.taskEyebrow')}
                 </p>
-                <h3 id="heartbeat-task-title">
+                <h2 id="heartbeat-task-title">
                   {t('center.suggestions.taskTitle')}
-                </h3>
+                </h2>
               </div>
               <span>
                 {t('center.suggestions.taskCount', {
@@ -1065,10 +1115,10 @@ export function HeartbeatCenter({
                 <p className="eyebrow">
                   {t('center.history.timelineEyebrow')}
                 </p>
-                <h3 id="heartbeat-reports-title">
+                <h2 id="heartbeat-reports-title">
                   <History aria-hidden="true" size={16} />
                   {t('center.history.timelineTitle')}
-                </h3>
+                </h2>
               </div>
               <span>
                 {t('center.history.reportCount', {
@@ -1168,9 +1218,9 @@ export function HeartbeatCenter({
                 <p className="eyebrow">
                   {t('center.history.auditEyebrow')}
                 </p>
-                <h3 id="heartbeat-runs-title">
+                <h2 id="heartbeat-runs-title">
                   {t('center.history.auditTitle')}
-                </h3>
+                </h2>
               </div>
               <span>
                 {t('center.history.runCount', {

@@ -437,6 +437,10 @@ export const knowledge = {
     interactionHint:
       'Drag nodes to arrange them. Drag the canvas to pan, and use the wheel to zoom.',
     empty: 'This library does not have any generated entity relations yet.',
+    chunk: {
+      loading: 'Loading knowledge graph…',
+      loadFailed: 'The knowledge graph could not load. Try again.'
+    },
     topologyAriaLabel: 'Graph topology',
     visibleRelations: {
       title: 'Visible relations',
@@ -447,6 +451,7 @@ export const knowledge = {
     },
     addEntityPanelAriaLabel: 'Add entity panel',
     entityDetailsAriaLabel: 'Entity details',
+    deleteEntityAriaLabel: 'Delete entity {{name}}',
     closeEntityDetailsAriaLabel: 'Close entity details',
     noEntityDescription: 'This entity has no additional description.',
     aliases: 'Aliases: {{aliases}}',
@@ -458,6 +463,27 @@ export const knowledge = {
       targetAriaLabel: 'Select merge target',
       targetPlaceholder: 'Select the entity to keep',
       actionAriaLabel: 'Merge into target entity'
+    },
+    confirm: {
+      processing: 'Working…',
+      deleteEntity: {
+        title: 'Delete entity “{{name}}”?',
+        description:
+          'This permanently deletes “{{name}}”, its {{count}} connected relations, and their graph evidence references. It cannot be undone.',
+        action: 'Delete entity'
+      },
+      deleteRelation: {
+        title: 'Delete relation “{{type}}”?',
+        description:
+          'This permanently deletes the “{{type}}” relation from “{{source}}” to “{{target}}” and its graph evidence references. Both entities remain. It cannot be undone.',
+        action: 'Delete relation'
+      },
+      merge: {
+        title: 'Merge “{{source}}” into “{{target}}”?',
+        description:
+          'Relations, aliases, and evidence from “{{source}}” are moved into “{{target}}”, then the source entity is deleted. This cannot be undone.',
+        action: 'Merge entities'
+      }
     },
     evidence: {
       title: 'Evidence ({{count}})',

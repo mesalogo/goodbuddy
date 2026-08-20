@@ -16,7 +16,10 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { formatShortcutForDisplay } from '../shared/shortcut'
+import {
+  formatShortcutForDisplay,
+  globalShortcutSettingsUpdateSchema
+} from '../shared/shortcut'
 import { readBoundedFile } from './workspace-file-access'
 import {
   approvalDecisionSchema,
@@ -203,6 +206,7 @@ import {
   type RuntimeExtensionMarketplaceSnapshot
 } from '../shared/runtime-extension-contracts'
 import type { RuntimeExtensionStore } from './agent/runtime-extension-store'
+import type { ShortcutSettingsService } from './shortcut-settings-service'
 import type { ContextManager } from './context-manager'
 import type { KnowledgeService } from './knowledge/knowledge-service'
 import {
@@ -274,6 +278,7 @@ import {
 import { AgentEventBuffer } from './agent-event-buffer'
 
 const requestIdSchema = z.string().uuid()
+const BACKGROUND_QUESTION_REJECTION_TIMEOUT_MS = 1_000
 const runtimeConfigFileMetadata = {
   opencode: {
     filterName: 'OpenCode 配置',
@@ -413,6 +418,31 @@ function grantScopedDataCapability(input: {
 
 function safeRuntimeError(error: unknown, fallback: string): string {
   return safeToolErrorDetail(error, 2_000) ?? fallback
+}
+
+async function activateOrRollback<T>(input: {
+  previous: T
+  persistCandidate(): Promise<T>
+  activate(): Promise<void>
+  persistPrevious(previous: T): Promise<unknown>
+}): Promise<T> {
+  const saved = await input.persistCandidate()
+  try {
+    await input.activate()
+    return saved
+  } catch (activationError) {
+    try {
+      await input.persistPrevious(input.previous)
+      await input.activate()
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [activationError, rollbackError],
+        'Runtime 配置激活失败，且回滚未能完成',
+        { cause: rollbackError }
+      )
+    }
+    throw activationError
+  }
 }
 
 function createPromiseTracker(): {
@@ -883,10 +913,35 @@ export function registerIpcHandlers(
   documentOcrBroker?: DocumentOcrBroker,
   releaseNotesService?: ReleaseNotesService,
   goodbuddyConfigService?: GoodBuddyConfigService,
-  runtimeExtensionStore?: RuntimeExtensionStore
+  runtimeExtensionStore?: RuntimeExtensionStore,
+  shortcutSettingsService?: ShortcutSettingsService
 ): () => Promise<void> {
-  const activeRequests = new Map<string, AbortController>()
-  const activeRequestConversations = new Map<string, string>()
+  type ActiveRequestLease = {
+    controller: AbortController
+    conversationId: string
+  }
+  const activeRequests = new Map<string, ActiveRequestLease>()
+  const activeRequestConversations = new Map<
+    string,
+    ActiveRequestLease
+  >()
+  const leaseActiveRequest = (
+    requestId: string,
+    conversationId: string,
+    controller: AbortController
+  ): (() => void) => {
+    const lease = { controller, conversationId }
+    activeRequests.set(requestId, lease)
+    activeRequestConversations.set(requestId, lease)
+    return (): void => {
+      if (activeRequests.get(requestId) === lease) {
+        activeRequests.delete(requestId)
+      }
+      if (activeRequestConversations.get(requestId) === lease) {
+        activeRequestConversations.delete(requestId)
+      }
+    }
+  }
   const activeEventBuffers = new Map<string, { flush(): void }>()
   const pendingAgentQuestions = new Map<
     string,
@@ -900,6 +955,17 @@ export function registerIpcHandlers(
   const pendingRendererPersistence = new Map<string, () => void>()
   let pendingGoodBuddyConfigReload = false
   let goodBuddyConfigReloadQueue: Promise<void> = Promise.resolve()
+  let runtimeSettingsUpdateQueue: Promise<void> = Promise.resolve()
+  const enqueueRuntimeSettingsUpdate = <T>(
+    transaction: () => Promise<T>
+  ): Promise<T> => {
+    const result = runtimeSettingsUpdateQueue.then(transaction)
+    runtimeSettingsUpdateQueue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
   const executionTracker = createPromiseTracker()
   const maintenanceTracker = createPromiseTracker()
   const trackExecution = executionTracker.track
@@ -1010,8 +1076,8 @@ export function registerIpcHandlers(
     }
   })
   const abortActiveRequests = (reason: string): void => {
-    for (const controller of activeRequests.values()) {
-      controller.abort(new Error(reason))
+    for (const lease of activeRequests.values()) {
+      lease.controller.abort(new Error(reason))
     }
     activeRequests.clear()
   }
@@ -1316,7 +1382,7 @@ export function registerIpcHandlers(
       (candidate) => candidate === conversationId
     ) ||
     [...activeRequestConversations.values()].some(
-      (candidate) => candidate === conversationId
+      (candidate) => candidate.conversationId === conversationId
     )
 
   const pumpConversationQueue = async (
@@ -1538,14 +1604,17 @@ export function registerIpcHandlers(
     externalSignal?.addEventListener('abort', abortFromExternal, {
       once: true
     })
-    activeRequests.set(requestId, controller)
     const runtimeConversationId =
       remoteContext?.conversationId ??
       (input.origin === 'schedule'
         ? input.schedule.conversationId
         : undefined) ??
       `${origin}:${schedule.id}`
-    activeRequestConversations.set(requestId, runtimeConversationId)
+    const releaseActiveRequest = leaseActiveRequest(
+      requestId,
+      runtimeConversationId,
+      controller
+    )
     if (input.origin !== 'delegation') {
       assistantDatabase.updateTaskStatus(taskId, 'running')
     } else {
@@ -1565,6 +1634,7 @@ export function registerIpcHandlers(
     }
     let output = ''
     let completed = false
+    let backgroundQuestionError: Error | undefined
     let knowledgeCapabilityToken: string | undefined
     const resultAttachments: ChannelMediaAttachment[] = []
     const artifactIds: string[] = []
@@ -1766,6 +1836,37 @@ export function registerIpcHandlers(
         if (taskEvent.type === 'artifact') {
           artifactIds.push(taskEvent.artifactId)
         }
+        if (taskEvent.type === 'question') {
+          const error = new Error(
+            '后台任务无法回答 Runtime 交互提问。请改为在 GoodBuddy 对话中运行，或调整提示词和工具配置以避免交互提问。'
+          )
+          backgroundQuestionError = error
+          const rejection =
+            requestRuntime
+              .respondToQuestion?.(taskEvent.questionId)
+              .catch(() => undefined) ?? Promise.resolve()
+          let rejectionTimeout:
+            | ReturnType<typeof setTimeout>
+            | undefined
+          try {
+            await Promise.race([
+              rejection,
+              new Promise<void>((resolveTimeout) => {
+                rejectionTimeout = setTimeout(
+                  resolveTimeout,
+                  BACKGROUND_QUESTION_REJECTION_TIMEOUT_MS
+                )
+                rejectionTimeout.unref?.()
+              })
+            ])
+          } finally {
+            if (rejectionTimeout) {
+              clearTimeout(rejectionTimeout)
+            }
+          }
+          controller.abort(error)
+          throw error
+        }
         eventBuffer.push(taskEvent)
         if (taskEvent.type === 'tool' && remoteContext) {
           publishRemoteActivity({
@@ -1879,8 +1980,11 @@ export function registerIpcHandlers(
       }
     } catch (error) {
       eventBuffer.flush()
-      const message = safeRuntimeError(error, '定时任务执行失败')
-      const cancelled = controller.signal.aborted
+      const message = backgroundQuestionError
+        ? backgroundQuestionError.message
+        : safeRuntimeError(error, '定时任务执行失败')
+      const cancelled =
+        controller.signal.aborted && !backgroundQuestionError
       assistantDatabase.updateTaskStatus(
         taskId,
         cancelled ? 'cancelled' : 'failed',
@@ -1924,8 +2028,7 @@ export function registerIpcHandlers(
       )
       knowledgeGateway?.revoke(knowledgeCapabilityToken)
       goodbuddyConfigService?.revokeRequest(requestId)
-      activeRequests.delete(requestId)
-      activeRequestConversations.delete(requestId)
+      releaseActiveRequest()
       await flushGoodBuddyConfigReload().catch(() => undefined)
     }
   }
@@ -2297,6 +2400,34 @@ export function registerIpcHandlers(
       detail: parsed.prompt,
       status: 'running'
     })
+    const finalizeExecutePreflightFailure = (
+      unavailable: string
+    ): { status: 'failed'; error: string } => {
+      assistantDatabase.updateTaskStatus(
+        remoteTaskId,
+        'failed',
+        unavailable
+      )
+      assistantDatabase.appendRemoteConversationMessage({
+        conversationId: remoteConversation.id,
+        role: 'assistant',
+        content: unavailable,
+        status: '执行不可用'
+      })
+      publishRemoteConversationChange()
+      publishRemoteActivity({
+        requestId: remoteTaskId,
+        conversationId: remoteConversation.id,
+        projectId: project.id,
+        projectName: project.name,
+        channel,
+        kind: 'result',
+        title: `${channelLabel}远程执行不可用`,
+        detail: unavailable,
+        status: 'failed'
+      })
+      return { status: 'failed', error: unavailable }
+    }
 
     let executionRuntime: AgentRuntime | undefined
     if (parsed.workMode === 'execute') {
@@ -2316,30 +2447,7 @@ export function registerIpcHandlers(
           error,
           '远程 Execute Runtime 不可用'
         )
-        assistantDatabase.updateTaskStatus(
-          remoteTaskId,
-          'failed',
-          unavailable
-        )
-        assistantDatabase.appendRemoteConversationMessage({
-          conversationId: remoteConversation.id,
-          role: 'assistant',
-          content: unavailable,
-          status: '执行不可用'
-        })
-        publishRemoteConversationChange()
-        publishRemoteActivity({
-          requestId: remoteTaskId,
-          conversationId: remoteConversation.id,
-          projectId: project.id,
-          projectName: project.name,
-          channel,
-          kind: 'result',
-          title: `${channelLabel}远程执行不可用`,
-          detail: unavailable,
-          status: 'failed'
-        })
-        return { status: 'failed', error: unavailable }
+        return finalizeExecutePreflightFailure(unavailable)
       }
       if (
         !executionStatus.available ||
@@ -2349,30 +2457,7 @@ export function registerIpcHandlers(
           ? '所选处理后端不支持工具执行，请在消息通道设置中选择 OpenCode、Continue 或支持工具的直连模型'
           : executionStatus.detail?.trim() ||
             '所选处理后端当前不可用，请在消息通道设置中检查 Runtime 或模型连接'
-        assistantDatabase.updateTaskStatus(
-          remoteTaskId,
-          'failed',
-          unavailable
-        )
-        assistantDatabase.appendRemoteConversationMessage({
-          conversationId: remoteConversation.id,
-          role: 'assistant',
-          content: unavailable,
-          status: '执行不可用'
-        })
-        publishRemoteConversationChange()
-        publishRemoteActivity({
-          requestId: remoteTaskId,
-          conversationId: remoteConversation.id,
-          projectId: project.id,
-          projectName: project.name,
-          channel,
-          kind: 'result',
-          title: `${channelLabel}远程执行不可用`,
-          detail: unavailable,
-          status: 'failed'
-        })
-        return { status: 'failed', error: unavailable }
+        return finalizeExecutePreflightFailure(unavailable)
       }
     }
 
@@ -2499,12 +2584,20 @@ export function registerIpcHandlers(
 
   registerHandler(ipcChannels.appInfo, (event): AppInfo => {
     assertTrustedSender(event, window)
+    const shortcutSnapshot = shortcutSettingsService?.getSnapshot()
     return {
       name: app.getName(),
       version: app.getVersion(),
       platform: process.platform,
       arch: process.arch,
-      shortcut: formatShortcutForDisplay(shortcut, process.platform)
+      shortcut: shortcutSnapshot?.registered
+        ? shortcutSnapshot.displayAccelerator
+        : shortcutSnapshot
+          ? ''
+          : formatShortcutForDisplay(shortcut, process.platform),
+      ...(shortcutSnapshot
+        ? { shortcutStatus: shortcutSnapshot.status }
+        : {})
     }
   })
 
@@ -2673,8 +2766,8 @@ export function registerIpcHandlers(
       reservedConversationQueueItems.get(parsedInput.conversationId)
     if (
       [...activeRequestConversations.values()].some(
-        (conversationId) =>
-          conversationId === parsedInput.conversationId
+        (lease) =>
+          lease.conversationId === parsedInput.conversationId
       ) ||
       [...preparingRequestConversations.values()].some(
         (conversationId) =>
@@ -2730,39 +2823,49 @@ export function registerIpcHandlers(
     const enrichedRequest = contextManager.enrichRequest(
       parsedRequest
     )
-    const hasKnowledgeScope = knowledgeLibraryIds.length > 0
-    const magicNotesToolEnabled =
-      (await applicationSettingsStore?.get())?.magicNotesEnabled ?? false
-    const webSearchEnabled =
-      !agentRuntimeSelected &&
-      (
-        await capabilityService.getWebSearchCapabilityStatus?.()
-      )?.enabled === true
     if (activeRequests.has(enrichedRequest.requestId)) {
       throw new Error('请求正在执行')
     }
-
-    const controller = new AbortController()
+    const hasKnowledgeScope = knowledgeLibraryIds.length > 0
     const configAccess =
       goodbuddyConfigService && !imageGeneration
         ? enrichedRequest.workMode === 'execute'
           ? 'write'
           : 'read'
         : 'none'
+    const selectedRuntimeTarget = runtimeTargetFor(selectedRuntime)
+    const [
+      applicationSettings,
+      webSearchCapability,
+      resolvedRuntimeSettings,
+      enabledBuiltinMcpServers
+    ] = await Promise.all([
+      applicationSettingsStore?.get(),
+      !agentRuntimeSelected
+        ? capabilityService.getWebSearchCapabilityStatus?.()
+        : undefined,
+      configAccess !== 'none' && !enrichedRequest.projectId
+        ? settingsStore.getResolvedSettings()
+        : undefined,
+      selectedRuntimeTarget
+        ? capabilityService.getEnabledBuiltinMcpServerIds
+          ? capabilityService.getEnabledBuiltinMcpServerIds(
+              selectedRuntimeTarget
+            )
+          : [...builtinMcpServerIdSchema.options]
+        : []
+    ])
+    const magicNotesToolEnabled =
+      applicationSettings?.magicNotesEnabled ?? false
+    const webSearchEnabled =
+      webSearchCapability?.enabled === true
     const configWorkspacePath =
       configAccess === 'none'
         ? undefined
         : enrichedRequest.projectId
           ? assistantDatabase.getProject(enrichedRequest.projectId).rootPath
-          : (await settingsStore.getResolvedSettings()).workspacePath
-    const selectedRuntimeTarget = runtimeTargetFor(selectedRuntime)
-    const enabledBuiltinMcpServers = selectedRuntimeTarget
-      ? capabilityService.getEnabledBuiltinMcpServerIds
-        ? await capabilityService.getEnabledBuiltinMcpServerIds(
-            selectedRuntimeTarget
-          )
-        : [...builtinMcpServerIdSchema.options]
-      : []
+          : resolvedRuntimeSettings?.workspacePath
+    const controller = new AbortController()
     const scopedCapability = grantScopedDataCapability({
       gateway: knowledgeGateway,
       runtime: selectedRuntime,
@@ -2823,10 +2926,10 @@ export function registerIpcHandlers(
       knowledgeGateway?.revoke(knowledgeCapabilityToken)
       throw error
     }
-    activeRequests.set(request.requestId, controller)
-    activeRequestConversations.set(
+    const releaseActiveRequest = leaseActiveRequest(
       request.requestId,
-      request.conversationId
+      request.conversationId,
+      controller
     )
     if (parsedInput.queueItemId) {
       const dispatchTimeout = queueDispatchTimers.get(
@@ -2848,8 +2951,7 @@ export function registerIpcHandlers(
         )
         publishConversationQueueChange(request.conversationId)
       } catch (error) {
-        activeRequests.delete(request.requestId)
-        activeRequestConversations.delete(request.requestId)
+        releaseActiveRequest()
         assistantDatabase.updateTaskStatus(
           request.requestId,
           'cancelled',
@@ -3336,8 +3438,7 @@ export function registerIpcHandlers(
           }
         }
         knowledgeGateway?.revoke(request.knowledgeCapabilityToken)
-        activeRequests.delete(request.requestId)
-        activeRequestConversations.delete(request.requestId)
+        releaseActiveRequest()
         const configReload =
           goodbuddyConfigService?.takePendingReload(request.requestId) ??
           'none'
@@ -3360,7 +3461,9 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.agentCancel, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const requestId = requestIdSchema.parse(input)
-    activeRequests.get(requestId)?.abort(new Error('用户取消了请求'))
+    activeRequests
+      .get(requestId)
+      ?.controller.abort(new Error('用户取消了请求'))
   })
 
   registerHandler(ipcChannels.agentApprovalRespond, (event, input: unknown) => {
@@ -3453,10 +3556,10 @@ export function registerIpcHandlers(
           ),
         5 * 60_000
       )
-      activeRequests.set(request.requestId, controller)
-      activeRequestConversations.set(
+      const releaseActiveRequest = leaseActiveRequest(
         request.requestId,
-        request.conversationId
+        request.conversationId,
+        controller
       )
       assistantDatabase.createTask({
         id: request.requestId,
@@ -3541,8 +3644,7 @@ export function registerIpcHandlers(
         throw error
       } finally {
         clearTimeout(timeout)
-        activeRequests.delete(request.requestId)
-        activeRequestConversations.delete(request.requestId)
+        releaseActiveRequest()
         readyConversationQueues.add(request.conversationId)
         void pumpConversationQueue(request.conversationId)
       }
@@ -3571,12 +3673,23 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const settings =
         runtimeCustomizationSettingsSchema.parse(input)
-      const saved =
-        await settingsStore.updateRuntimeCustomization(settings)
-      abortActiveRequests('Runtime 定制设置已更改')
-      approvalBroker.clear()
-      await onRuntimeSettingsChanged()
-      return saved
+      return enqueueRuntimeSettingsUpdate(async () => {
+        const previous =
+          await settingsStore.getRuntimeCustomization()
+        return activateOrRollback({
+          previous,
+          persistCandidate: async () => {
+            const saved =
+              await settingsStore.updateRuntimeCustomization(settings)
+            abortActiveRequests('Runtime 定制设置已更改')
+            approvalBroker.clear()
+            return saved
+          },
+          activate: onRuntimeSettingsChanged,
+          persistPrevious: (previousSettings) =>
+            settingsStore.updateRuntimeCustomization(previousSettings)
+        })
+      })
     }
   )
 
@@ -3611,28 +3724,39 @@ export function registerIpcHandlers(
     async (event, input: unknown): Promise<RuntimeSettings> => {
       assertTrustedSender(event, window)
       const settings = runtimeSettingsInputSchema.parse(input)
-      let workspacePath: string
-      try {
-        workspacePath = await realpath(settings.workspacePath)
-        if (!(await stat(workspacePath)).isDirectory()) {
-          throw new Error('Not a directory')
+      return enqueueRuntimeSettingsUpdate(async () => {
+        let workspacePath: string
+        try {
+          workspacePath = await realpath(settings.workspacePath)
+          if (!(await stat(workspacePath)).isDirectory()) {
+            throw new Error('Not a directory')
+          }
+        } catch {
+          throw new Error('所选工作区不存在、不可访问或不是文件夹')
         }
-      } catch {
-        throw new Error('所选工作区不存在、不可访问或不是文件夹')
-      }
-      const savedSettings = await settingsStore.update({
-        ...settings,
-        workspacePath
-      })
-      channelSettingsStore?.reportRuntimeSelectionRepairs(
-        assistantDatabase.repairConversationRuntimeSelections(
-          savedSettings
+        const rollback = await settingsStore.captureRollback()
+        const previousSettings = rollback.publicSettings
+        const savedSettings = await activateOrRollback({
+          previous: previousSettings,
+          persistCandidate: async () => {
+            const saved = await settingsStore.update({
+              ...settings,
+              workspacePath
+            })
+            abortActiveRequests('运行时设置已更改')
+            approvalBroker.clear()
+            return saved
+          },
+          activate: onRuntimeSettingsChanged,
+          persistPrevious: () => rollback.restore()
+        })
+        channelSettingsStore?.reportRuntimeSelectionRepairs(
+          assistantDatabase.repairConversationRuntimeSelections(
+            savedSettings
+          )
         )
-      )
-      abortActiveRequests('运行时设置已更改')
-      approvalBroker.clear()
-      await onRuntimeSettingsChanged()
-      return savedSettings
+        return savedSettings
+      })
     }
   )
 
@@ -3903,12 +4027,41 @@ export function registerIpcHandlers(
     }
   )
 
+  registerHandler(ipcChannels.shortcutSettingsGet, (event) => {
+    assertTrustedSender(event, window)
+    if (!shortcutSettingsService) {
+      throw new Error('快捷键设置服务不可用')
+    }
+    return shortcutSettingsService.getSnapshot()
+  })
+
+  registerHandler(
+    ipcChannels.shortcutSettingsUpdate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!shortcutSettingsService) {
+        throw new Error('快捷键设置服务不可用')
+      }
+      return shortcutSettingsService.update(
+        globalShortcutSettingsUpdateSchema.parse(input)
+      )
+    }
+  )
+
   registerHandler(ipcChannels.documentParsingGet, (event) => {
     assertTrustedSender(event, window)
     if (!documentParsingService) {
       throw new Error('文档解析设置服务不可用')
     }
     return documentParsingService.snapshot()
+  })
+
+  registerHandler(ipcChannels.documentOcrModelsProgress, (event) => {
+    assertTrustedSender(event, window)
+    if (!documentOcrModelManager) {
+      throw new Error('本地 OCR 模型服务不可用')
+    }
+    return documentOcrModelManager.getProgressSnapshot()
   })
 
   registerHandler(
@@ -4596,11 +4749,13 @@ export function registerIpcHandlers(
       }
       preferredConversationQueueItems.set(item.conversationId, item.id)
       readyConversationQueues.add(item.conversationId)
-      for (const [requestId, conversationId] of activeRequestConversations) {
-        if (conversationId === item.conversationId) {
+      for (const [requestId, lease] of activeRequestConversations) {
+        if (lease.conversationId === item.conversationId) {
           activeRequests
             .get(requestId)
-            ?.abort(new Error('用户中断当前回复并插入队列项'))
+            ?.controller.abort(
+              new Error('用户中断当前回复并插入队列项')
+            )
         }
       }
       if (!isConversationExecuting(item.conversationId)) {

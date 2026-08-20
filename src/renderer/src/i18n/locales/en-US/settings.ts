@@ -109,6 +109,15 @@ export const settings = {
     clearing: 'Clearing…',
     clearLocalData: 'Clear local data'
   },
+  unsaved: {
+    close:
+      'These settings have unsaved changes. Save them first, or confirm that you want to discard them before closing Settings.',
+    navigation:
+      'These settings have unsaved changes. Save them first, or confirm that you want to discard them before changing categories.',
+    keepEditing: 'Keep editing',
+    discardAndClose: 'Discard changes and close',
+    discardAndNavigate: 'Discard changes and continue'
+  },
   errors: {
     readSettings: 'Could not load settings',
     detectRuntimes: 'Could not detect Agent Runtimes',

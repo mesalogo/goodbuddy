@@ -42,15 +42,49 @@ export function activateModalFocus(
     document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null
-  const appShell = document.querySelector<HTMLElement>('.app-shell')
-  const wasInert = appShell?.inert ?? false
-  if (appShell) {
-    appShell.inert = true
+  const focusTarget = initialFocus()
+  const modalRoot = focusTarget?.closest<HTMLElement>('[aria-modal="true"]')
+  const isolatedElements: Array<{
+    element: HTMLElement
+    wasInert: boolean
+  }> = []
+  const isolate = (element: HTMLElement): void => {
+    if (isolatedElements.some((entry) => entry.element === element)) {
+      return
+    }
+    isolatedElements.push({
+      element,
+      wasInert: element.inert ?? false
+    })
+    element.inert = true
   }
-  initialFocus()?.focus()
-  return () => {
+  if (modalRoot) {
+    const appShell = document.querySelector<HTMLElement>('.app-shell')
+    if (appShell && !appShell.contains(modalRoot)) {
+      isolate(appShell)
+    }
+    let activeBranch: HTMLElement = modalRoot
+    while (activeBranch.parentElement) {
+      for (const sibling of activeBranch.parentElement.children) {
+        if (sibling !== activeBranch && sibling instanceof HTMLElement) {
+          isolate(sibling)
+        }
+      }
+      activeBranch = activeBranch.parentElement
+      if (activeBranch === document.body) {
+        break
+      }
+    }
+  } else {
+    const appShell = document.querySelector<HTMLElement>('.app-shell')
     if (appShell) {
-      appShell.inert = wasInert
+      isolate(appShell)
+    }
+  }
+  focusTarget?.focus()
+  return () => {
+    for (const { element, wasInert } of isolatedElements) {
+      element.inert = wasInert
     }
     restoreFocus?.focus()
   }

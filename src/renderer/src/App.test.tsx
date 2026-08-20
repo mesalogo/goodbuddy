@@ -16,11 +16,16 @@ import type {
   DesktopApi
 } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
+import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
 import type {
   AssistantProject,
   AssistantSchedule,
   AssistantTask,
   ConversationSnapshot
+} from '../../shared/assistant-contracts'
+import {
+  builtInDefaultProjectSeedDescription,
+  builtInDefaultProjectSeedName
 } from '../../shared/assistant-contracts'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 
@@ -48,6 +53,14 @@ const lazyRouteMocks = vi.hoisted(() => {
   }
 })
 
+const routeModuleLoads = vi.hoisted(() => ({
+  activity: 0,
+  heartbeat: 0,
+  knowledge: 0,
+  magicNotes: 0,
+  settings: 0
+}))
+
 vi.mock('./speech-recognition', async (importOriginal) => ({
   ...(await importOriginal<
     typeof import('./speech-recognition')
@@ -57,7 +70,28 @@ vi.mock('./speech-recognition', async (importOriginal) => ({
 
 vi.mock('./KnowledgeWorkspace', async (importOriginal) => {
   await lazyRouteMocks.waitForKnowledgeRoute()
+  routeModuleLoads.knowledge += 1
   return importOriginal<typeof import('./KnowledgeWorkspace')>()
+})
+
+vi.mock('./HeartbeatCenter', async (importOriginal) => {
+  routeModuleLoads.heartbeat += 1
+  return importOriginal<typeof import('./HeartbeatCenter')>()
+})
+
+vi.mock('./MagicNotesWorkspace', async (importOriginal) => {
+  routeModuleLoads.magicNotes += 1
+  return importOriginal<typeof import('./MagicNotesWorkspace')>()
+})
+
+vi.mock('./SettingsPanel', async (importOriginal) => {
+  routeModuleLoads.settings += 1
+  return importOriginal<typeof import('./SettingsPanel')>()
+})
+
+vi.mock('./ActivityPanel', async (importOriginal) => {
+  routeModuleLoads.activity += 1
+  return importOriginal<typeof import('./ActivityPanel')>()
 })
 
 import App from './App'
@@ -89,11 +123,12 @@ const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const projectId = '00000000-0000-4000-8000-000000000101'
 const project = {
   id: projectId,
-  name: '默认项目',
-  description: '测试项目',
+  name: builtInDefaultProjectSeedName,
+  description: builtInDefaultProjectSeedDescription,
   rootPath: 'C:\\Users\\test',
   defaultWorkMode: 'ask' as const,
   kind: 'user' as const,
+  builtInDefault: true,
   status: 'active' as const,
   createdAt: '2026-07-31T00:00:00.000Z',
   updatedAt: '2026-07-31T00:00:00.000Z'
@@ -981,9 +1016,22 @@ describe('App', () => {
       expect(screen.getByText('GOODBUDDY WORKSPACE')).toBeInTheDocument()
       expect(
         screen.getByRole('heading', {
+          level: 1,
+          name: 'Conversation'
+        })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('heading', {
+          level: 2,
           name: 'What would you like to accomplish today?'
         })
       ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Current project' })
+      ).toHaveTextContent('Default project')
+      expect(screen.getByText('Project: Default project')).toHaveClass(
+        'scope-badge'
+      )
       expect(
         screen.getByText(/Hi, I’m GoodBuddy/u)
       ).toBeInTheDocument()
@@ -993,6 +1041,140 @@ describe('App', () => {
         'placeholder',
         'Message GoodBuddy…\nEnter to send · Shift+Enter for a new line · Ctrl+V to paste an image or text'
       )
+    } finally {
+      cleanup()
+      await changeUiLocale('zh-CN')
+    }
+  })
+
+  it('localizes untouched project labels but keeps settings and destructive values raw', async () => {
+    const secondProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000102',
+      name: 'Second project',
+      description: 'Another workspace',
+      rootPath: 'C:\\Second'
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      secondProject
+    ])
+    vi.mocked(api.tasks.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000901',
+        projectId,
+        title: 'Seed project task',
+        instructions: 'Verify the project label',
+        origin: 'schedule',
+        status: 'queued',
+        workMode: 'ask',
+        createdAt: '2026-07-31T01:00:00.000Z'
+      }
+    ])
+    await changeUiLocale('en-US')
+    try {
+      render(<App />)
+
+      const projectTrigger = await screen.findByRole('button', {
+        name: 'Current project'
+      })
+      expect(projectTrigger).toHaveTextContent('Default project')
+      fireEvent.click(projectTrigger)
+      expect(
+        within(
+          screen.getByRole('menu', { name: 'Current project' })
+        ).getByText('Default project', { selector: 'b' })
+      ).toBeInTheDocument()
+      fireEvent.click(projectTrigger)
+
+      fireEvent.click(
+        screen.getByLabelText('Toggle assistant workspace')
+      )
+      fireEvent.click(
+        await screen.findByRole('tab', { name: 'Task center' })
+      )
+      const assistantSidebar = screen.getByLabelText(
+        'Assistant workspace'
+      )
+      expect(
+        within(assistantSidebar).getByText('Project: Default project')
+      ).toBeInTheDocument()
+      fireEvent.click(
+        within(assistantSidebar).getByRole('button', {
+          name: 'New custom task'
+        })
+      )
+      const taskDialog = screen.getByRole('dialog', {
+        name: 'New custom task'
+      })
+      expect(
+        within(taskDialog).getByText('Default project')
+      ).toBeInTheDocument()
+      fireEvent.click(
+        within(taskDialog).getByRole('button', {
+          name: 'Close new custom task'
+        })
+      )
+      fireEvent.click(
+        within(assistantSidebar).getByRole('button', {
+          name: 'Close assistant workspace'
+        })
+      )
+
+      fireEvent.click(screen.getByLabelText('Project settings'))
+      const settingsDialog = screen.getByRole('dialog', {
+        name: 'Project settings'
+      })
+      expect(
+        within(settingsDialog).getByLabelText('Name')
+      ).toHaveValue(builtInDefaultProjectSeedName)
+      expect(
+        within(settingsDialog).getByLabelText('Description')
+      ).toHaveValue(builtInDefaultProjectSeedDescription)
+
+      fireEvent.click(
+        within(settingsDialog).getByRole('button', {
+          name: 'Delete project'
+        })
+      )
+      const confirmation = within(settingsDialog).getByLabelText(
+        `Enter “${builtInDefaultProjectSeedName}” to confirm deletion`
+      )
+      const deleteButton = within(settingsDialog).getByRole('button', {
+        name: 'Permanently delete project'
+      })
+      fireEvent.change(confirmation, {
+        target: { value: 'Default project' }
+      })
+      expect(deleteButton).toBeDisabled()
+      fireEvent.change(confirmation, {
+        target: { value: builtInDefaultProjectSeedName }
+      })
+      expect(deleteButton).toBeEnabled()
+      fireEvent.click(
+        within(settingsDialog).getByRole('button', {
+          name: 'Cancel deletion'
+        })
+      )
+      fireEvent.click(
+        within(settingsDialog).getByRole('button', {
+          name: 'Save project'
+        })
+      )
+
+      await waitFor(() =>
+        expect(api.projects.update).toHaveBeenCalledWith(
+          projectId,
+          expect.objectContaining({
+            name: builtInDefaultProjectSeedName,
+            description: builtInDefaultProjectSeedDescription
+          })
+        )
+      )
+      expect(
+        screen.getByRole('button', { name: 'Current project' })
+      ).toHaveTextContent('Default project')
+      expect(api.projects.delete).not.toHaveBeenCalled()
     } finally {
       cleanup()
       await changeUiLocale('zh-CN')
@@ -1347,13 +1529,41 @@ describe('App', () => {
       .toBeInTheDocument()
   })
 
-  it('schedules lazy workspace routes for idle preloading', () => {
+  it('idle-preloads only the small Heartbeat route at startup', async () => {
     render(<App />)
 
     expect(window.requestIdleCallback).toHaveBeenCalledWith(
       expect.any(Function),
       { timeout: 2000 }
     )
+    const idleCallback = vi.mocked(window.requestIdleCallback)
+      .mock.calls[0]?.[0]
+    await act(async () => {
+      idleCallback?.({
+        didTimeout: false,
+        timeRemaining: () => 50
+      })
+    })
+    await waitFor(() => expect(routeModuleLoads.heartbeat).toBe(1))
+    expect(routeModuleLoads).toMatchObject({
+      activity: 0,
+      knowledge: 0,
+      magicNotes: 0,
+      settings: 0
+    })
+  })
+
+  it('preloads a heavy route once across repeated pointer and focus intent', async () => {
+    render(<App />)
+    const activity = await screen.findByRole('button', {
+      name: '运行记录'
+    })
+
+    fireEvent.pointerEnter(activity)
+    fireEvent.focus(activity)
+    fireEvent.pointerEnter(activity)
+
+    await waitFor(() => expect(routeModuleLoads.activity).toBe(1))
   })
 
   it('waits for project bootstrap before project-scoped startup loads', async () => {
@@ -1438,6 +1648,33 @@ describe('App', () => {
       })
     ).toBe(heading)
     expect(route).not.toHaveAttribute('hidden')
+  })
+
+  it('enforces the workspace KeepAlive cap during rapid visits', async () => {
+    let now = 2_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => ++now)
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '知识库' })
+    )
+    await screen.findByRole('heading', { name: '知识库' })
+    fireEvent.click(screen.getByRole('button', { name: '智能心跳' }))
+    await screen.findByRole('heading', { name: '智能心跳' })
+    fireEvent.click(screen.getByRole('button', { name: '运行记录' }))
+    await screen.findByRole('heading', { name: '运行记录' })
+    fireEvent.click(screen.getByRole('button', { name: '对话' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: /本地工作区/u })
+    )
+    await screen.findByRole('heading', { name: '设置中心' })
+
+    expect(
+      document.querySelectorAll('.workspace-route-cache')
+    ).toHaveLength(4)
+    expect(
+      document.querySelector('[data-route="knowledge"]')
+    ).not.toBeInTheDocument()
   })
 
   it('preserves title, message, and project filtering with deferred search', async () => {
@@ -2403,14 +2640,9 @@ describe('App', () => {
     const cancel = screen.getByRole('button', {
       name: '取消删除对话 新对话'
     })
-    const confirm = screen.getByRole('button', {
-      name: '确认永久删除对话 新对话'
-    })
     expect(cancel).toHaveFocus()
 
-    fireEvent.keyDown(dialog, { key: 'Tab' })
-    expect(confirm).toHaveFocus()
-    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(fireEvent.keyDown(dialog, { key: 'Tab' })).toBe(true)
     expect(cancel).toHaveFocus()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() =>
@@ -3309,6 +3541,136 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('guards sidebar navigation away from dirty Settings drafts', async () => {
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('本地工作区'))
+    await screen.findByRole('heading', { name: '设置中心' })
+    fireEvent.change(await screen.findByLabelText('默认工作区目录'), {
+      target: { value: 'C:\\Unsaved from App' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '知识库' })
+    )
+
+    expect(
+      screen.getByRole('heading', { name: '设置中心' })
+    ).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '当前设置有未保存更改'
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃更改并关闭' })
+    )
+    expect(
+      await screen.findByRole('heading', { name: '知识库' })
+    ).toBeVisible()
+  })
+
+  it('updates and removes the composer shortcut hint immediately after saving Settings', async () => {
+    let applicationSettings: ApplicationSettings = {
+      checkUpdatesOnStartup: false,
+      updateSource: 'github',
+      modelDownloadSource: 'modelscope',
+      magicNotesEnabled: false,
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
+    }
+    let shortcutSnapshot: GlobalShortcutSettingsSnapshot = {
+      settings: {
+        enabled: true,
+        accelerator: 'CommandOrControl+Shift+Space'
+      },
+      defaultSettings: {
+        enabled: true,
+        accelerator: 'CommandOrControl+Shift+Space'
+      },
+      platform: 'win32',
+      displayAccelerator: 'Ctrl+Shift+Space',
+      registered: true,
+      registeredAccelerator: 'CommandOrControl+Shift+Space',
+      status: 'registered'
+    }
+    api.updates = {
+      getSettings: vi.fn(async () => ({ ...applicationSettings })),
+      updateSettings: vi.fn(async (input) => {
+        applicationSettings = { ...applicationSettings, ...input }
+        return { ...applicationSettings }
+      }),
+      check: vi.fn(),
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    api.shortcuts = {
+      getSettings: vi.fn(async () => shortcutSnapshot),
+      updateSettings: vi.fn(async (input) => {
+        shortcutSnapshot = {
+          ...shortcutSnapshot,
+          settings: input,
+          displayAccelerator:
+            input.accelerator === 'Control+Alt+K'
+              ? 'Ctrl+Alt+K'
+              : 'Ctrl+Shift+Space',
+          registered: input.enabled,
+          registeredAccelerator: input.enabled
+            ? input.accelerator
+            : undefined,
+          status: input.enabled ? 'registered' : 'disabled'
+        }
+        return { ok: true as const, snapshot: shortcutSnapshot }
+      })
+    }
+    try {
+      render(<App />)
+      expect(
+        await screen.findByText('Ctrl+Shift+Space')
+      ).toBeInTheDocument()
+      fireEvent.click(await screen.findByText('本地工作区'))
+      await screen.findByRole('heading', { name: '设置中心' })
+      fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+      const shortcutInput = await screen.findByLabelText('快捷键')
+      fireEvent.change(shortcutInput, {
+        target: { value: 'Control+Alt+K' }
+      })
+      fireEvent.click(
+        screen.getByRole('button', { name: '保存快捷键' })
+      )
+      await waitFor(() =>
+        expect(api.shortcuts?.updateSettings).toHaveBeenCalledWith({
+          enabled: true,
+          accelerator: 'Control+Alt+K'
+        })
+      )
+      fireEvent.click(screen.getByRole('button', { name: '对话' }))
+      expect(await screen.findByText('Ctrl+Alt+K')).toBeInTheDocument()
+
+      fireEvent.click(await screen.findByText('本地工作区'))
+      await screen.findByRole('heading', { name: '设置中心' })
+      fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+      const shortcutSwitch = await screen.findByRole('switch', {
+        name: '启用全局快捷键'
+      })
+      fireEvent.click(shortcutSwitch)
+      fireEvent.click(
+        screen.getByRole('button', { name: '保存快捷键' })
+      )
+      await waitFor(() =>
+        expect(api.shortcuts?.updateSettings).toHaveBeenCalledWith({
+          enabled: false,
+          accelerator: 'Control+Alt+K'
+        })
+      )
+      fireEvent.click(screen.getByRole('button', { name: '对话' }))
+      await screen.findByLabelText('向 GoodBuddy 提问')
+      expect(
+        screen.queryByText('Ctrl+Alt+K')
+      ).not.toBeInTheDocument()
+    } finally {
+      delete api.shortcuts
+      delete api.updates
+    }
+  })
+
   it('restores persisted context usage and compression state after restart', async () => {
     const settings = await api.settings.getRuntime()
     const profile = settings.modelProfiles[0]!
@@ -3486,11 +3848,52 @@ describe('App', () => {
       evidence: []
     })
     render(<App />)
-    await screen.findByRole('button', {
+    const knowledgeScopeTrigger = await screen.findByRole('button', {
       name: '选择知识库，本次已启用 1 个'
     })
+    expect(knowledgeScopeTrigger).toHaveAttribute(
+      'aria-haspopup',
+      'dialog'
+    )
+    fireEvent.click(knowledgeScopeTrigger)
+    expect(knowledgeScopeTrigger).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(
+      screen.getByRole('dialog', {
+        name: '本次对话检索范围'
+      })
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('checkbox', { name: /产品知识/u })
+      ).toHaveFocus()
+    )
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(knowledgeScopeTrigger).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(knowledgeScopeTrigger).toHaveFocus()
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+    fireEvent.click(knowledgeScopeTrigger)
+    const scopeCheckbox = screen.getByRole('checkbox', {
+      name: /产品知识/u
+    })
+    await waitFor(() => expect(scopeCheckbox).toHaveFocus())
+    const composerInput = screen.getByLabelText('向 GoodBuddy 提问')
+    fireEvent.focusOut(scopeCheckbox, {
+      relatedTarget: composerInput
+    })
+    composerInput.focus()
+    expect(knowledgeScopeTrigger).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(composerInput).toHaveFocus()
+
+    fireEvent.change(composerInput, {
       target: { value: '发布流程是什么？' }
     })
     fireEvent.click(await screen.findByLabelText('发送'))
@@ -3896,25 +4299,35 @@ describe('App', () => {
     expect(
       within(userArticle).getByRole('img', { name: '页面截图.png' })
     ).toHaveAttribute('src', imageAttachment.contentUrl)
-    fireEvent.click(
-      within(userArticle).getByRole('button', {
-        name: '查看图片 页面截图.png'
-      })
-    )
+    const viewerTrigger = within(userArticle).getByRole('button', {
+      name: '查看图片 页面截图.png'
+    })
+    fireEvent.click(viewerTrigger)
     const imageDialog = await screen.findByRole('dialog', {
       name: '页面截图.png'
     })
     expect(
       within(imageDialog).getByRole('img', { name: '页面截图.png' })
     ).toHaveAttribute('src', imageAttachment.contentUrl)
-    fireEvent.click(
+    const closeViewer = within(imageDialog).getByRole('button', {
+      name: '关闭图片查看器'
+    })
+    expect(closeViewer).toHaveFocus()
+    expect(document.querySelector('main')?.inert).toBe(true)
+    fireEvent.keyDown(closeViewer, { key: 'Tab' })
+    expect(
       within(imageDialog).getByRole('button', {
-        name: '关闭图片查看器'
+        name: '下载图片'
       })
+    ).toHaveFocus()
+    fireEvent.keyDown(imageDialog, { key: 'Escape' })
+    await waitFor(() =>
+      expect(viewerTrigger).toHaveFocus()
     )
     expect(
       screen.queryByRole('dialog', { name: '页面截图.png' })
     ).not.toBeInTheDocument()
+    expect(document.querySelector('main')?.inert).toBe(false)
     fireEvent.click(
       within(userArticle).getByRole('button', {
         name: '下载图片 页面截图.png'
@@ -4402,6 +4815,7 @@ describe('App', () => {
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId)
     )
+    fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
     selectProjectOption(secondProject.name)
     await waitFor(() =>
       expect(api.workspace.getChanges).toHaveBeenCalledWith(
@@ -4417,6 +4831,7 @@ describe('App', () => {
       files: [{ path: 'second.md', status: '??' }],
       truncated: false
     })
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
     expect(await screen.findByText('second.md')).toBeInTheDocument()
     resolveFirst?.({
       rootPath: project.rootPath,
@@ -7296,8 +7711,19 @@ describe('App', () => {
 
     const sidebar = screen.getByLabelText('助手工作栏')
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    const assistantTrigger =
+      screen.getByLabelText('切换助手工作栏')
+    fireEvent.click(assistantTrigger)
     expect(sidebar).toHaveClass('assistant-sidebar--open')
+    expect(sidebar).toHaveAttribute('role', 'dialog')
+    expect(sidebar).toHaveAttribute('aria-modal', 'true')
+    const main = document.querySelector('main')
+    expect(main).toHaveAttribute('inert')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('tab', { name: '任务中心' })
+      ).toHaveFocus()
+    )
 
     expect(
       screen.getByRole('tab', { name: '任务中心' })
@@ -7327,6 +7753,12 @@ describe('App', () => {
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('关闭助手工作栏'))
+    expect(sidebar).not.toHaveClass('assistant-sidebar--open')
+    expect(main).not.toHaveAttribute('inert')
+    await waitFor(() => expect(assistantTrigger).toHaveFocus())
+
+    fireEvent.click(assistantTrigger)
+    fireEvent.keyDown(sidebar, { key: 'Escape' })
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
   })
 
@@ -7757,7 +8189,7 @@ describe('App', () => {
       )
 
       fireEvent.click(
-        screen.getByRole('button', { name: '关闭侧栏' })
+        within(sidebar).getByRole('button', { name: '知识库' })
       )
       await waitFor(() => expect(toggle).toHaveFocus())
       expect(sidebar).toHaveClass('sidebar--closed')

@@ -1,3 +1,4 @@
+import { RotateCcw, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -6,6 +7,12 @@ import type {
   ModelDownloadSource
 } from '../../shared/application-settings-contracts'
 import type { MagicNoteCommentFormat } from '../../shared/magic-notes-contracts'
+import {
+  canonicalizeShortcutAccelerator,
+  type GlobalShortcutSettings,
+  type GlobalShortcutSettingsSnapshot,
+  type GlobalShortcutUpdateErrorCode
+} from '../../shared/shortcut'
 import type { AppNotificationInput } from './notifications'
 import {
   PageTabs,
@@ -19,18 +26,47 @@ import {
 type PlatformFeaturesSettingsSectionProps = {
   onMagicNotesEnabledChange: (enabled: boolean) => void
   onNotify?: (notification: AppNotificationInput) => void
+  onDirtyChange?: (dirty: boolean) => void
+  onShortcutSettingsChanged?: (
+    snapshot: GlobalShortcutSettingsSnapshot
+  ) => void
 }
 
 type PlatformFeaturesTab = 'general' | 'magic-notes'
 
+const shortcutErrorTranslationKeys: Record<
+  GlobalShortcutUpdateErrorCode,
+  | 'platformFeatures.shortcut.errors.conflict'
+  | 'platformFeatures.shortcut.errors.registrationFailed'
+  | 'platformFeatures.shortcut.errors.saveFailed'
+> = {
+  conflict: 'platformFeatures.shortcut.errors.conflict',
+  'registration-failed':
+    'platformFeatures.shortcut.errors.registrationFailed',
+  'save-failed': 'platformFeatures.shortcut.errors.saveFailed'
+}
+
 export function PlatformFeaturesSettingsSection({
   onMagicNotesEnabledChange,
-  onNotify
+  onNotify,
+  onDirtyChange,
+  onShortcutSettingsChanged
 }: PlatformFeaturesSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
   const [activeSection, setActiveSection] =
     useState<PlatformFeaturesTab>('general')
   const [settings, setSettings] = useState<ApplicationSettings>()
+  const [shortcutSnapshot, setShortcutSnapshot] =
+    useState<GlobalShortcutSettingsSnapshot>()
+  const [shortcutDraft, setShortcutDraft] =
+    useState<GlobalShortcutSettings>()
+  const [shortcutSaving, setShortcutSaving] = useState(false)
+  const [shortcutError, setShortcutError] = useState<string | undefined>(
+    () =>
+      window.goodbuddy.shortcuts
+        ? undefined
+        : t('platformFeatures.shortcut.errors.serviceUnavailable')
+  )
   const [saving, setSaving] = useState(false)
   const [sourceError, setSourceError] = useState<string>()
   const [error, setError] = useState<string | undefined>(() =>
@@ -63,6 +99,139 @@ export function PlatformFeaturesSettingsSection({
       active = false
     }
   }, [t])
+
+  useEffect(() => {
+    const shortcuts = window.goodbuddy.shortcuts
+    let active = true
+    if (!shortcuts) {
+      return () => {
+        active = false
+      }
+    }
+    void shortcuts
+      .getSettings()
+      .then((snapshot) => {
+        if (active) {
+          setShortcutSnapshot(snapshot)
+          setShortcutDraft(snapshot.settings)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setShortcutError(
+            t('platformFeatures.shortcut.errors.readFailed')
+          )
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [t])
+
+  const shortcutDirty =
+    shortcutSnapshot !== undefined &&
+    shortcutDraft !== undefined &&
+    (shortcutSnapshot.settings.enabled !== shortcutDraft.enabled ||
+      shortcutSnapshot.settings.accelerator !==
+        shortcutDraft.accelerator)
+
+  useEffect(() => {
+    onDirtyChange?.(shortcutDirty)
+  }, [onDirtyChange, shortcutDirty])
+
+  const saveShortcut = async (): Promise<void> => {
+    const shortcuts = window.goodbuddy.shortcuts
+    if (!shortcuts || !shortcutDraft) {
+      return
+    }
+    let input: GlobalShortcutSettings
+    try {
+      input = {
+        ...shortcutDraft,
+        accelerator: canonicalizeShortcutAccelerator(
+          shortcutDraft.accelerator
+        )
+      }
+    } catch {
+      setShortcutError(
+        t('platformFeatures.shortcut.errors.invalidAccelerator')
+      )
+      return
+    }
+    setShortcutSaving(true)
+    setShortcutError(undefined)
+    try {
+      setShortcutDraft(input)
+      const result = await shortcuts.updateSettings(input)
+      setShortcutSnapshot(result.snapshot)
+      if (!result.ok) {
+        setShortcutError(t(shortcutErrorTranslationKeys[result.error]))
+        return
+      }
+      setShortcutDraft(result.snapshot.settings)
+      onShortcutSettingsChanged?.(result.snapshot)
+      onNotify?.({
+        tone: 'success',
+        message: t('platformFeatures.shortcut.saved'),
+        dedupeKey: 'global-shortcut-saved'
+      })
+    } catch {
+      setShortcutError(
+        t('platformFeatures.shortcut.errors.saveFailed')
+      )
+    } finally {
+      setShortcutSaving(false)
+    }
+  }
+
+  const recordShortcut = (
+    event: React.KeyboardEvent<HTMLInputElement>
+  ): void => {
+    if (
+      ['Control', 'Shift', 'Alt', 'Meta'].includes(event.key) ||
+      event.key === 'Escape' ||
+      event.key === 'Tab'
+    ) {
+      return
+    }
+    if (
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      return
+    }
+    event.preventDefault()
+    const isMac = shortcutSnapshot?.platform === 'darwin'
+    const parts = [
+      event.ctrlKey
+        ? isMac
+          ? 'Control'
+          : 'CommandOrControl'
+        : undefined,
+      event.metaKey
+        ? isMac
+          ? 'Command'
+          : 'Super'
+        : undefined,
+      event.altKey ? 'Alt' : undefined,
+      event.shiftKey ? 'Shift' : undefined,
+      event.key === ' ' ? 'Space' : event.key
+    ].filter((part): part is string => Boolean(part))
+    try {
+      const accelerator = canonicalizeShortcutAccelerator(
+        parts.join('+')
+      )
+      setShortcutDraft((current) =>
+        current ? { ...current, accelerator } : current
+      )
+      setShortcutError(undefined)
+    } catch {
+      setShortcutError(
+        t('platformFeatures.shortcut.errors.invalidAccelerator')
+      )
+    }
+  }
 
   const changeModelDownloadSource = async (
     modelDownloadSource: ModelDownloadSource
@@ -198,6 +367,112 @@ export function PlatformFeaturesSettingsSection({
         id="platform-features-panel-general"
         role="tabpanel"
       >
+        <article className="capability-card">
+          <div className="capability-card__header">
+            <div>
+              <strong>{t('platformFeatures.shortcut.title')}</strong>
+              <small>
+                {t('platformFeatures.shortcut.description')}
+              </small>
+            </div>
+          </div>
+          {shortcutDraft && shortcutSnapshot ? (
+            <>
+              <label className="toggle-row">
+                <input
+                  checked={shortcutDraft.enabled}
+                  disabled={shortcutSaving}
+                  onChange={(event) =>
+                    setShortcutDraft({
+                      ...shortcutDraft,
+                      enabled: event.target.checked
+                    })
+                  }
+                  role="switch"
+                  type="checkbox"
+                />
+                <span>{t('platformFeatures.shortcut.enabled')}</span>
+              </label>
+              <label className="field">
+                <span>{t('platformFeatures.shortcut.accelerator')}</span>
+                <input
+                  aria-label={t(
+                    'platformFeatures.shortcut.accelerator'
+                  )}
+                  aria-describedby="global-shortcut-recorder-help"
+                  disabled={!shortcutDraft.enabled || shortcutSaving}
+                  onChange={(event) =>
+                    setShortcutDraft({
+                      ...shortcutDraft,
+                      accelerator: event.target.value
+                    })
+                  }
+                  onKeyDown={recordShortcut}
+                  value={shortcutDraft.accelerator}
+                />
+                <small id="global-shortcut-recorder-help">
+                  {t('platformFeatures.shortcut.recorderHelp')}
+                </small>
+              </label>
+              <div className="update-settings__actions">
+                <button
+                  className="secondary-button"
+                  disabled={shortcutSaving}
+                  onClick={() => {
+                    setShortcutDraft({
+                      ...shortcutSnapshot.defaultSettings
+                    })
+                    setShortcutError(undefined)
+                  }}
+                  type="button"
+                >
+                  <RotateCcw aria-hidden="true" size={13} />
+                  {t('platformFeatures.shortcut.reset')}
+                </button>
+                <button
+                  className="primary-button"
+                  disabled={!shortcutDirty || shortcutSaving}
+                  onClick={() => void saveShortcut()}
+                  type="button"
+                >
+                  <Save aria-hidden="true" size={13} />
+                  {shortcutSaving
+                    ? t('platformFeatures.shortcut.saving')
+                    : t('platformFeatures.shortcut.save')}
+                </button>
+              </div>
+              <p
+                className={
+                  shortcutError
+                    ? 'settings-warning'
+                    : 'settings-notice'
+                }
+                role={shortcutError ? 'alert' : 'status'}
+              >
+                {shortcutError ??
+                  t(
+                    `platformFeatures.shortcut.status.${shortcutSnapshot.status}`,
+                    {
+                      shortcut:
+                        shortcutSnapshot.displayAccelerator
+                    }
+                  )}
+              </p>
+            </>
+          ) : (
+            <p
+              className={
+                shortcutError
+                  ? 'settings-warning'
+                  : 'settings-notice'
+              }
+              role={shortcutError ? 'alert' : 'status'}
+            >
+              {shortcutError ??
+                t('platformFeatures.shortcut.loading')}
+            </p>
+          )}
+        </article>
         {settings ? (
         <article className="capability-card">
           <div className="capability-card__header">

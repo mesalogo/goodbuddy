@@ -77,6 +77,7 @@ describe('model archive', () => {
       }
     })
 
+    const progress: number[] = []
     await expect(
       extractModelArchive({
         archivePath: archive,
@@ -89,7 +90,10 @@ describe('model archive', () => {
         ],
         maximumArchiveBytes: 1024 * 1024,
         maximumFileBytes: 1024,
-        maximumTotalBytes: 2048
+        maximumTotalBytes: 2048,
+        onProgress: (completedBytes) => {
+          progress.push(completedBytes)
+        }
       })
     ).resolves.toMatchObject({
       kind: 'speech',
@@ -101,6 +105,7 @@ describe('model archive', () => {
     await expect(readFile(join(extracted, 'tokens.txt'))).resolves.toEqual(
       tokens
     )
+    expect(progress.at(-1)).toBe(model.byteLength + tokens.byteLength)
   })
 
   it('preserves an existing archive when source verification fails', async () => {
@@ -207,5 +212,40 @@ describe('model archive', () => {
         maximumTotalBytes: 1024
       })
     ).rejects.toThrow('模型 ID 不匹配')
+  })
+
+  it('handles malformed entry rejection without an unhandled promise', async () => {
+    const directory = await temporaryDirectory()
+    const archive = join(directory, 'truncated.zip')
+    const extracted = join(directory, 'extracted')
+    await mkdir(extracted)
+    const complete = zipSync({
+      'goodbuddy-model.json': Buffer.from('{}'),
+      'model.onnx': Buffer.alloc(128 * 1024, 7)
+    })
+    await writeFile(archive, complete.subarray(0, complete.length - 17))
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      await expect(
+        extractModelArchive({
+          archivePath: archive,
+          destinationDirectory: extracted,
+          expectedKind: 'speech',
+          expectedModelId: 'test-model',
+          expectedFiles: [{ name: 'model.onnx', role: 'model' }],
+          maximumArchiveBytes: 1024 * 1024,
+          maximumFileBytes: 1024 * 1024,
+          maximumTotalBytes: 1024 * 1024
+        })
+      ).rejects.toThrow()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled)
+    }
   })
 })

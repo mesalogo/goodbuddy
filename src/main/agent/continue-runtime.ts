@@ -784,9 +784,9 @@ export class ContinueAgentRuntime implements AgentRuntime {
 
   async dispose(): Promise<void> {
     this.pendingQuestions.clear()
-    for (const host of this.hostAdapters.values()) {
-      host.dispose()
-    }
+    await Promise.all(
+      [...this.hostAdapters.values()].map((host) => host.dispose())
+    )
     this.hostAdapters.clear()
   }
 }

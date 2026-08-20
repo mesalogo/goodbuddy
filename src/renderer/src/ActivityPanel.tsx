@@ -1,7 +1,11 @@
 import { Activity, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { TokenUsageSummary } from '../../shared/assistant-contracts'
+import type {
+  AssistantProject,
+  TokenUsageSummary
+} from '../../shared/assistant-contracts'
+import { isUntouchedBuiltInDefaultProject } from '../../shared/assistant-contracts'
 import {
   MAX_ACTIVITY_RECORDS,
   type ActivityRecord
@@ -20,6 +24,7 @@ import {
   SegmentedControl,
   type WorkspaceScope
 } from './WorkspacePrimitives'
+import { getProjectDisplayText } from './project-display'
 
 type ActivityFilter = 'all' | 'active' | 'failed'
 type ActivityView = 'tasks' | 'timeline' | 'usage'
@@ -31,6 +36,7 @@ type ActivityActorKind =
   | 'approval'
 
 export type ActivityPanelProps = {
+  projects?: readonly AssistantProject[]
   records: readonly ActivityRecord[]
   tokenUsage: TokenUsageSummary
   onClear: () => void
@@ -234,12 +240,14 @@ function groupActivityRecordsByProject(
 }
 
 export function ActivityPanel({
+  projects = [],
   records,
   tokenUsage,
   onClear,
   onOpenConversation
 }: ActivityPanelProps): React.JSX.Element {
   const { t, i18n } = useTranslation('activity')
+  const { t: tWorkspace } = useTranslation('workspace')
   const [activeView, setActiveView] =
     useState<ActivityView>('tasks')
   const [filter, setFilter] = useState<ActivityFilter>('all')
@@ -329,17 +337,66 @@ export function ActivityPanel({
     }
   ]
 
+  const projectDisplayNames = useMemo(
+    () =>
+      new Map(
+        projects.flatMap((project) => {
+          const displayName = getProjectDisplayText(
+            project,
+            tWorkspace
+          ).name
+          return isUntouchedBuiltInDefaultProject(project) &&
+            displayName !== project.name
+            ? [[project.id, displayName] as const]
+            : []
+        })
+      ),
+    [projects, tWorkspace]
+  )
+  const displayRecords = useMemo(
+    () =>
+      records.map((record) => {
+        if (record.scope.kind !== 'project') {
+          return record
+        }
+        const projectName = projectDisplayNames.get(
+          record.scope.projectId
+        )
+        return projectName
+          ? {
+              ...record,
+              scope: {
+                ...record.scope,
+                projectName
+              }
+            }
+          : record
+      }),
+    [projectDisplayNames, records]
+  )
+  const displayTokenUsage = useMemo(
+    () => ({
+      ...tokenUsage,
+      records: tokenUsage.records.map((record) => {
+        const projectName = record.projectId
+          ? projectDisplayNames.get(record.projectId)
+          : undefined
+        return projectName ? { ...record, projectName } : record
+      })
+    }),
+    [projectDisplayNames, tokenUsage]
+  )
   const visibleRecords = useMemo(
-    () => records.slice(0, MAX_ACTIVITY_RECORDS),
-    [records]
+    () => displayRecords.slice(0, MAX_ACTIVITY_RECORDS),
+    [displayRecords]
   )
   const filteredRecords = useMemo(
     () => visibleRecords.filter((record) => matchesFilter(record, filter)),
     [filter, visibleRecords]
   )
   const projectGroups = useMemo(
-    () => groupActivityRecordsByProject(filteredRecords, records),
-    [filteredRecords, records]
+    () => groupActivityRecordsByProject(filteredRecords, displayRecords),
+    [displayRecords, filteredRecords]
   )
   const timelineBounds = useMemo(() => {
     const timestamps = filteredRecords.map((record) => record.createdAt)
@@ -366,8 +423,8 @@ export function ActivityPanel({
     (record) => record.id === selectedTimelineRecordId
   )
   const conversationTitles = useMemo(
-    () => getConversationTitles(records),
-    [records]
+    () => getConversationTitles(displayRecords),
+    [displayRecords]
   )
   const activeCount = visibleRecords.filter(isActive).length
   const failedCount = visibleRecords.filter(isFailed).length
@@ -376,8 +433,8 @@ export function ActivityPanel({
     [tokenUsage]
   )
   const tokenRows = useMemo(
-    () => groupTokenUsage(tokenUsage, tokenGroup),
-    [tokenGroup, tokenUsage]
+    () => groupTokenUsage(displayTokenUsage, tokenGroup),
+    [displayTokenUsage, tokenGroup]
   )
   const tokenGroupLabel =
     tokenGroups.find((item) => item.value === tokenGroup)?.columnLabel ??

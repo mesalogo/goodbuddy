@@ -17,6 +17,7 @@ export type WorkspaceScope =
   | { kind: 'global' }
   | { kind: 'all-projects' }
   | { kind: 'project'; projectName: string }
+  | { kind: 'projects'; projectCount: number }
   | { kind: 'mixed'; projectName?: string }
   | { kind: 'unavailable'; explanation: string }
 
@@ -75,6 +76,7 @@ export function ScopeBadge({
   scope: WorkspaceScope
 }): React.JSX.Element {
   const { t } = useTranslation('workspace')
+  const explanationId = useId()
   const content =
     scope.kind === 'global'
       ? {
@@ -93,7 +95,14 @@ export function ScopeBadge({
                 projectName: scope.projectName
               })
             }
-          : scope.kind === 'mixed'
+          : scope.kind === 'projects'
+            ? {
+                icon: <Layers3 size={12} />,
+                label: t('primitives.scope.projects', {
+                  count: scope.projectCount
+                })
+              }
+            : scope.kind === 'mixed'
             ? {
                 icon: <Layers3 size={12} />,
                 label: scope.projectName
@@ -109,11 +118,20 @@ export function ScopeBadge({
 
   return (
     <span
+      aria-label={content.label}
+      aria-describedby={
+        scope.kind === 'unavailable' ? explanationId : undefined
+      }
       className="scope-badge"
       title={scope.kind === 'unavailable' ? scope.explanation : undefined}
     >
       <span aria-hidden="true">{content.icon}</span>
       {content.label}
+      {scope.kind === 'unavailable' && (
+        <span className="sr-only" id={explanationId}>
+          {scope.explanation}
+        </span>
+      )}
     </span>
   )
 }
@@ -363,7 +381,6 @@ export function DestructiveConfirmActions({
 }): React.JSX.Element {
   const { t } = useTranslation('workspace')
   const cancelRef = useRef<HTMLButtonElement>(null)
-  const confirmRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const wasConfirming = useRef(confirming)
@@ -406,43 +423,12 @@ export function DestructiveConfirmActions({
       aria-describedby={descriptionId}
       aria-labelledby={titleId}
       aria-live="assertive"
-      aria-modal="true"
       className="danger-confirm"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !disabled) {
           event.preventDefault()
           onCancel()
-          return
         }
-        if (event.key !== 'Tab') {
-          return
-        }
-        if (disabled) {
-          event.preventDefault()
-          dialogRef.current?.focus()
-          return
-        }
-
-        const cancelButton = cancelRef.current
-        const confirmButton = confirmRef.current
-        if (
-          !cancelButton ||
-          !confirmButton ||
-          cancelButton.disabled ||
-          confirmButton.disabled
-        ) {
-          return
-        }
-
-        event.preventDefault()
-        const nextButton = event.shiftKey
-          ? document.activeElement === cancelButton
-            ? confirmButton
-            : cancelButton
-          : document.activeElement === confirmButton
-            ? cancelButton
-            : confirmButton
-        nextButton.focus()
       }}
       ref={dialogRef}
       role="alertdialog"
@@ -472,7 +458,6 @@ export function DestructiveConfirmActions({
         className="danger-button"
         disabled={disabled}
         onClick={onConfirm}
-        ref={confirmRef}
         type="button"
       >
         {confirmLabel}

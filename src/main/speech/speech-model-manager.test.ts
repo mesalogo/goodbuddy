@@ -5,6 +5,8 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -249,6 +251,147 @@ describe('speech model catalog', () => {
 })
 
 describe('SpeechModelManager downloads', () => {
+  it('rebuilds a stale selected runtime after valid files are restored', async () => {
+    const userData = await temporaryDirectory()
+    const modelBytes = new TextEncoder().encode('verified model bytes')
+    const tokenBytes = new TextEncoder().encode('verified tokens')
+    const root = join(userData, 'models', 'speech')
+    const staleStaging =
+      '.install-download-test-model-00000000-0000-4000-8000-000000000001'
+    await mkdir(root, { recursive: true })
+    await Promise.all([
+      mkdir(join(root, staleStaging)),
+      writeFile(
+        join(root, '.selection.json'),
+        `${JSON.stringify({
+          selectedModelId: 'download-test-model'
+        })}\n`
+      )
+    ])
+    const getDownloadSource = vi.fn(() => 'modelscope' as const)
+    const manager = new SpeechModelManager({
+      userDataDirectory: userData,
+      fetch: vi.fn<typeof fetch>(async (input) => {
+        const bytes = String(input).endsWith('model.onnx')
+          ? modelBytes
+          : tokenBytes
+        return new Response(bytes, {
+          headers: { 'content-length': String(bytes.byteLength) }
+        })
+      }),
+      catalog: downloadableCatalog(modelBytes, tokenBytes),
+      getDownloadSource
+    })
+
+    await expect(manager.getSelectedRuntimeModel()).resolves.toBeUndefined()
+    await manager.install('download-test-model', 'modelscope')
+    const selected = await manager.getSelectedRuntimeModel()
+    expect(selected).toMatchObject({ id: 'download-test-model' })
+    const modelPath = join(
+      root,
+      'download-test-model',
+      'model.onnx'
+    )
+    const originalModelStat = await stat(modelPath)
+    await writeFile(
+      modelPath,
+      Buffer.alloc(modelBytes.byteLength, 0x7f)
+    )
+    await utimes(
+      modelPath,
+      originalModelStat.atime,
+      originalModelStat.mtime
+    )
+    await expect(manager.getSelectedRuntimeModel()).resolves.toBeUndefined()
+    await writeFile(modelPath, modelBytes)
+    await utimes(
+      modelPath,
+      originalModelStat.atime,
+      originalModelStat.mtime
+    )
+    const rebuilt = await Promise.all([
+      manager.getSelectedRuntimeModel(),
+      manager.getSelectedRuntimeModel()
+    ])
+    expect(rebuilt).toEqual([
+      expect.objectContaining({ id: 'download-test-model' }),
+      expect.objectContaining({ id: 'download-test-model' })
+    ])
+    const manifestPath = join(
+      root,
+      'download-test-model',
+      'manifest.json'
+    )
+    const manifest = await readFile(manifestPath)
+    await rm(manifestPath)
+    await expect(manager.getSelectedRuntimeModel()).resolves.toBeUndefined()
+    await writeFile(manifestPath, manifest)
+    await expect(manager.getSelectedRuntimeModel()).resolves.toMatchObject({
+      id: 'download-test-model'
+    })
+    expect(await readdir(root)).toContain(staleStaging)
+    expect(getDownloadSource).not.toHaveBeenCalled()
+
+    await writeFile(
+      join(root, '.selection.json'),
+      '{"selectedModelId":null}\n'
+    )
+    await expect(manager.getSelectedRuntimeModel()).resolves.toBeUndefined()
+  })
+
+  it('preserves an active selection partial during concurrent snapshot cleanup', async () => {
+    const userData = await temporaryDirectory()
+    const modelBytes = new TextEncoder().encode('verified model bytes')
+    const tokenBytes = new TextEncoder().encode('verified tokens')
+    let markWriteStarted: (() => void) | undefined
+    let releaseWrite: (() => void) | undefined
+    const writeStarted = new Promise<void>((resolveStarted) => {
+      markWriteStarted = resolveStarted
+    })
+    const writeGate = new Promise<void>((resolveWrite) => {
+      releaseWrite = resolveWrite
+    })
+    const manager = new SpeechModelManager({
+      userDataDirectory: userData,
+      fetch: vi.fn<typeof fetch>(async (input) => {
+        const bytes = String(input).endsWith('model.onnx')
+          ? modelBytes
+          : tokenBytes
+        return new Response(bytes, {
+          headers: { 'content-length': String(bytes.byteLength) }
+        })
+      }),
+      catalog: downloadableCatalog(modelBytes, tokenBytes),
+      selectionFileOperations: {
+        writeFile: async (path, data, options) => {
+          await writeFile(path, data, options)
+          markWriteStarted?.()
+          await writeGate
+        }
+      }
+    })
+    await manager.install('download-test-model')
+    const selecting = manager.select('download-test-model')
+    await writeStarted
+    const root = join(userData, 'models', 'speech')
+    const activePartial = (await readdir(root)).find(
+      (name) =>
+        name.startsWith('.selection.json.') &&
+        name.endsWith('.partial')
+    )
+    expect(activePartial).toBeDefined()
+
+    await manager.snapshot()
+    expect(await readdir(root)).toContain(activePartial)
+
+    releaseWrite?.()
+    await selecting
+    await expect(manager.snapshot()).resolves.toMatchObject({
+      selectedModelId: 'download-test-model'
+    })
+    expect(await readdir(root)).not.toContain(activePartial)
+  })
+
   it('downloads to partial files, verifies hashes, and atomically installs', async () => {
     const userData = await temporaryDirectory()
     const modelBytes = new TextEncoder().encode('verified model bytes')
@@ -328,6 +471,75 @@ describe('SpeechModelManager downloads', () => {
       selectedModelId: null,
       installed: []
     })
+  })
+
+  it('cleans only manager-owned stale staging and partial artifacts', async () => {
+    const userData = await temporaryDirectory()
+    const modelBytes = new TextEncoder().encode('verified model bytes')
+    const tokenBytes = new TextEncoder().encode('verified tokens')
+    const manager = new SpeechModelManager({
+      userDataDirectory: userData,
+      fetch: vi.fn<typeof fetch>(async (input) => {
+        const bytes = String(input).endsWith('model.onnx')
+          ? modelBytes
+          : tokenBytes
+        return new Response(bytes, {
+          headers: { 'content-length': String(bytes.byteLength) }
+        })
+      }),
+      catalog: downloadableCatalog(modelBytes, tokenBytes)
+    })
+    await manager.install('download-test-model')
+    const root = join(userData, 'models', 'speech')
+    const modelDirectory = join(root, 'download-test-model')
+    const staleStaging =
+      '.install-download-test-model-00000000-0000-4000-8000-000000000001'
+    const unrelatedStaging = '.install-download-test-model-user-backup'
+    const selectionPartial =
+      '.selection.json.00000000-0000-4000-8000-000000000002.partial'
+    await mkdir(join(root, staleStaging))
+    await writeFile(join(root, staleStaging, 'model.onnx.partial'), 'stale')
+    await mkdir(join(root, unrelatedStaging))
+    await writeFile(join(root, unrelatedStaging, 'keep.txt'), 'keep')
+    await writeFile(
+      join(modelDirectory, 'model.onnx.partial'),
+      'interrupted'
+    )
+    await writeFile(join(modelDirectory, 'notes.partial'), 'keep')
+    await writeFile(join(root, selectionPartial), 'interrupted')
+    await writeFile(join(root, 'user.partial'), 'keep')
+
+    await expect(manager.snapshot()).resolves.toMatchObject({
+      installed: [expect.objectContaining({ id: 'download-test-model' })]
+    })
+
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        'download-test-model',
+        unrelatedStaging,
+        'user.partial'
+      ])
+    )
+    expect(await readdir(root)).not.toEqual(
+      expect.arrayContaining([staleStaging, selectionPartial])
+    )
+    expect(await readdir(modelDirectory)).toEqual(
+      expect.arrayContaining([
+        'manifest.json',
+        'model.onnx',
+        'tokens.txt',
+        'notes.partial'
+      ])
+    )
+    expect(await readdir(modelDirectory)).not.toContain(
+      'model.onnx.partial'
+    )
+    await expect(
+      readFile(join(modelDirectory, 'model.onnx'))
+    ).resolves.toEqual(Buffer.from(modelBytes))
+    await expect(
+      readFile(join(root, unrelatedStaging, 'keep.txt'), 'utf8')
+    ).resolves.toBe('keep')
   })
 
   it('freezes the operation source when the global setting changes', async () => {

@@ -3,7 +3,9 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
+  symlink,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -300,6 +302,177 @@ describe('RuntimeExtensionStore', () => {
       enabled: true,
       configuration: { nested: { value: 1 } }
     })
+  })
+
+  it('rolls back an interrupted upgrade whose state was not committed', async () => {
+    const first = catalogEntry('1.0.0')
+    const second = catalogEntry('2.0.0')
+    const { userDataPath, store, dependencies } = await fixture({
+      entries: [first],
+      temporaryIds: ['install-one']
+    })
+    await store.apply({
+      type: 'install',
+      extensionId: first.id,
+      package: first.package
+    })
+    const root = join(userDataPath, 'runtime-extensions')
+    const statePath = join(root, 'store.json')
+    const before = JSON.parse(await readFile(statePath, 'utf8')) as {
+      version: 2
+      marketplaceEnabled: boolean
+      installed: Array<Record<string, unknown>>
+    }
+    const after = structuredClone(before)
+    after.installed[0] = {
+      ...after.installed[0],
+      package: second.package,
+      installedAt: '2026-08-17T00:00:00.000Z',
+      integrity: `sha512-${Buffer.from('new').toString('base64')}`
+    }
+    const extensionDirectory = join(
+      root,
+      'extensions',
+      first.id
+    )
+    const backupDirectory = join(
+      root,
+      '.staging',
+      'upgrade-crash-previous'
+    )
+    await rename(extensionDirectory, backupDirectory)
+    await mkdir(join(extensionDirectory, 'dist'), { recursive: true })
+    await writeFile(
+      join(extensionDirectory, 'dist', 'index.js'),
+      'export default "new"'
+    )
+    await writeFile(
+      join(root, '.mutation-journal.json'),
+      JSON.stringify({
+        version: 1,
+        kind: 'install',
+        extensionId: first.id,
+        temporaryId: 'upgrade-crash',
+        before,
+        after
+      })
+    )
+
+    const recovered = new RuntimeExtensionStore(
+      userDataPath,
+      dependencies
+    )
+    await expect(recovered.getSnapshot()).resolves.toMatchObject({
+      installed: [
+        expect.objectContaining({ package: first.package })
+      ]
+    })
+    await expect(
+      readFile(join(extensionDirectory, 'dist', 'index.js'), 'utf8')
+    ).resolves.toBe('export default {}')
+    await expect(readdir(join(root, '.staging'))).resolves.toEqual([])
+    await expect(readdir(root)).resolves.not.toContain(
+      '.mutation-journal.json'
+    )
+  })
+
+  it('finishes an interrupted committed removal on initialization', async () => {
+    const { userDataPath, store, dependencies } = await fixture({
+      temporaryIds: ['install-one']
+    })
+    const entry = catalogEntry()
+    await store.apply({
+      type: 'install',
+      extensionId: entry.id,
+      package: entry.package
+    })
+    const root = join(userDataPath, 'runtime-extensions')
+    const statePath = join(root, 'store.json')
+    const before = JSON.parse(await readFile(statePath, 'utf8')) as {
+      version: 2
+      marketplaceEnabled: boolean
+      installed: Array<Record<string, unknown>>
+    }
+    const after = { ...before, installed: [] }
+    const trashDirectory = join(
+      root,
+      '.staging',
+      'remove-crash-removed'
+    )
+    await rename(
+      join(root, 'extensions', entry.id),
+      trashDirectory
+    )
+    await writeFile(statePath, JSON.stringify(after))
+    await writeFile(
+      join(root, '.mutation-journal.json'),
+      JSON.stringify({
+        version: 1,
+        kind: 'remove',
+        extensionId: entry.id,
+        temporaryId: 'remove-crash',
+        before,
+        after
+      })
+    )
+
+    const recovered = new RuntimeExtensionStore(
+      userDataPath,
+      dependencies
+    )
+    await expect(recovered.getSnapshot()).resolves.toMatchObject({
+      installed: []
+    })
+    await expect(readdir(join(root, '.staging'))).resolves.toEqual([])
+    await expect(readdir(join(root, 'extensions'))).resolves.toEqual([])
+    await expect(readdir(root)).resolves.not.toContain(
+      '.mutation-journal.json'
+    )
+  })
+
+  it('cleans only safe unjournaled managed staging directories', async () => {
+    const { userDataPath, dependencies } = await fixture({
+      marketplaceEnabled: false
+    })
+    const root = join(userDataPath, 'runtime-extensions')
+    const staging = join(root, '.staging')
+    const abandoned =
+      '00000000-0000-4000-8000-000000000101'
+    const abandonedBackup =
+      '00000000-0000-4000-8000-000000000102-previous'
+    const unrelated = 'user-staging-backup'
+    const outside = join(userDataPath, 'outside-staging')
+    const linked =
+      '00000000-0000-4000-8000-000000000103-removed'
+    await mkdir(staging, { recursive: true })
+    await Promise.all([
+      mkdir(join(staging, abandoned)),
+      mkdir(join(staging, abandonedBackup)),
+      mkdir(join(staging, unrelated)),
+      mkdir(outside)
+    ])
+    await writeFile(join(staging, abandoned, 'partial.js'), 'stale')
+    await writeFile(join(staging, unrelated, 'keep.txt'), 'keep')
+    await writeFile(join(outside, 'keep.txt'), 'outside')
+    await symlink(outside, join(staging, linked), 'junction')
+
+    const recovered = new RuntimeExtensionStore(
+      userDataPath,
+      dependencies
+    )
+    await recovered.getSnapshot()
+
+    expect(await readdir(staging)).toEqual(
+      expect.arrayContaining([unrelated, linked])
+    )
+    expect(await readdir(staging)).not.toContain(abandoned)
+    expect(await readdir(staging)).not.toContain(abandonedBackup)
+    await expect(
+      readFile(join(staging, unrelated, 'keep.txt'), 'utf8')
+    ).resolves.toBe('keep')
+    await expect(
+      readFile(join(outside, 'keep.txt'), 'utf8')
+    ).resolves.toBe('outside')
   })
 
   it('rejects installer entrypoints outside the managed package', async () => {

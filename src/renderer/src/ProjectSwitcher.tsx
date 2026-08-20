@@ -32,6 +32,7 @@ import {
   channelProjectDraft,
   ChannelProjectSettingsFields
 } from './ChannelProjectSettingsFields'
+import { getProjectDisplayText } from './project-display'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
@@ -88,6 +89,9 @@ export function ProjectSwitcher({
   const activeProject = projects.find(
     (project) => project.id === activeProjectId
   )
+  const activeProjectDisplay = activeProject
+    ? getProjectDisplayText(activeProject, t)
+    : undefined
   const userProjects = projects.filter(
     (project) => project.kind === 'user'
   )
@@ -270,10 +274,13 @@ export function ProjectSwitcher({
               }
             }}
             ref={projectPickerButtonRef}
-            title={activeProject?.name}
+            title={activeProjectDisplay?.name}
             type="button"
           >
-            <span>{activeProject?.name ?? t('projectSwitcher.selector.empty')}</span>
+            <span>
+              {activeProjectDisplay?.name ??
+                t('projectSwitcher.selector.empty')}
+            </span>
             <ChevronDown aria-hidden="true" size={14} />
           </button>
           {projectMenuOpen && (
@@ -340,6 +347,10 @@ export function ProjectSwitcher({
                     {group.projects.map((project) => {
                       const selected = project.id === activeProjectId
                       const ProjectIcon = group.icon
+                      const projectDisplay = getProjectDisplayText(
+                        project,
+                        t
+                      )
                       const detail =
                         project.kind === 'channel'
                           ? t('projectSwitcher.selector.remoteDetail', {
@@ -372,7 +383,7 @@ export function ProjectSwitcher({
                         >
                           <ProjectIcon aria-hidden="true" size={16} />
                           <span>
-                            <b>{project.name}</b>
+                            <b>{projectDisplay.name}</b>
                             <small>{detail}</small>
                           </span>
                           {selected && (

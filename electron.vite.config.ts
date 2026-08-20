@@ -58,6 +58,81 @@ function deepSeekHarnessBundleManifestPlugin(): Plugin {
   }
 }
 
+export function sanitizeRendererModuleId(
+  id: string,
+  projectRoot = resolve('.')
+): string {
+  const normalized = id.replaceAll('\\', '/')
+  const normalizedRoot = resolve(projectRoot).replaceAll('\\', '/')
+  if (normalized.startsWith('\0')) {
+    const virtualId = normalized.slice(1)
+    if (virtualId.startsWith(`${normalizedRoot}/`)) {
+      return `virtual:${virtualId.slice(normalizedRoot.length + 1)}`
+    }
+    const virtualNodeModulesIndex =
+      virtualId.lastIndexOf('/node_modules/')
+    if (virtualNodeModulesIndex >= 0) {
+      return `virtual:node_modules/${virtualId.slice(
+        virtualNodeModulesIndex + '/node_modules/'.length
+      )}`
+    }
+    if (
+      virtualId.startsWith('/') ||
+      /[A-Za-z]:\//u.test(virtualId) ||
+      /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(virtualId) ||
+      virtualId.includes('/Users/') ||
+      virtualId.includes('/home/')
+    ) {
+      throw new Error(`Renderer virtual module leaks a path: ${id}`)
+    }
+    return `virtual:${virtualId}`
+  }
+  if (
+    normalized === normalizedRoot ||
+    normalized.startsWith(`${normalizedRoot}/`)
+  ) {
+    return normalized.slice(normalizedRoot.length + 1)
+  }
+  const nodeModulesMarker = '/node_modules/'
+  const nodeModulesIndex = normalized.lastIndexOf(nodeModulesMarker)
+  if (nodeModulesIndex >= 0) {
+    return `node_modules/${normalized.slice(
+      nodeModulesIndex + nodeModulesMarker.length
+    )}`
+  }
+  if (
+    !normalized.startsWith('/') &&
+    !/^[A-Za-z]:\//u.test(normalized) &&
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(normalized) &&
+    !normalized.startsWith('../')
+  ) {
+    return normalized
+  }
+  throw new Error(`Renderer module is outside the project: ${id}`)
+}
+
+function rendererBundleModuleManifestPlugin(): Plugin {
+  const projectRoot = resolve('.')
+  return {
+    name: 'renderer-bundle-module-manifest',
+    generateBundle(_options, bundle) {
+      const chunks = Object.values(bundle)
+        .filter((item) => item.type === 'chunk')
+        .map((chunk) => [
+          chunk.fileName,
+          Object.keys(chunk.modules).map((id) =>
+            sanitizeRendererModuleId(id, projectRoot)
+          )
+        ])
+      this.emitFile({
+        type: 'asset',
+        fileName: '.vite/module-manifest.json',
+        source: `${JSON.stringify(Object.fromEntries(chunks), null, 2)}\n`
+      })
+    }
+  }
+}
+
 export default defineConfig({
   main: {
     plugins: [
@@ -161,6 +236,9 @@ export default defineConfig({
     worker: {
       format: 'es'
     },
-    plugins: [react()]
+    build: {
+      manifest: true
+    },
+    plugins: [react(), rendererBundleModuleManifestPlugin()]
   }
 })

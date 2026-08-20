@@ -29,7 +29,7 @@
 ## 3. 并行模型
 
 ```text
-Task Conversation
+关联 Conversation
   └─ Coordinating Job
        ├─ Parallel Job A
        ├─ Parallel Job B
@@ -41,7 +41,8 @@ Task Conversation
 - 每个 Job 有独立输入快照、状态、Run、预算和输出缓冲。
 - 并行 Job 不直接同时追加助手消息。
 - Aggregation Job 或 Task 协调器按确定顺序生成一条进展或结果消息。
-- 用户可以查看每个 Job 的详细活动，但主 Conversation 保持可读。
+- 用户可以按 Task 查看有界活动和聚合状态，但不选择或展开单个 Job；主 Conversation
+  保持可读。
 
 ## 4. Subjob
 
@@ -78,21 +79,24 @@ queued → running → waiting_approval → completed
 
 ## 7. 界面
 
-Task Conversation 显示：
+当前产品 UI 的对象层级止于 Task，不提供 Job/Subjob 树、独立页面或导航入口。
+
+关联 Conversation 和 Task Center 只显示：
 
 - 当前总体进展。
-- 并行 Job 数量和聚合状态。
-- 需要审批或用户输入的 Job。
+- 并行执行数量和聚合状态。
+- 需要审批或用户输入的 Task 状态。
 - 完成后的统一结果。
 
-详细活动视图显示 Job 树、执行者、Runtime、耗时、预算、Run、错误和成果。Task Center 只显示
-Task 聚合状态，不展开 Job 树。
+活动与 Runtime 可以按 Task 显示执行者、工具、耗时、预算、错误、审批和成果事件，但不把
+Job、Subjob 或 Run 暴露为可选择、可展开或可操作的产品对象。内部标识只用于关联与审计。
 
 ## 8. 验收标准
 
-- [ ] 并行 Job 共享所属 Task 的 Conversation。
+- [ ] 并行 Job 通过所属 Task 写入同一关联 Conversation。
 - [ ] Job 不创建顶层 Task。
 - [ ] 并行输出不会无序污染消息时间线。
 - [ ] Subjob 深度、并发、预算和输出有界。
 - [ ] Subagent 失败能够返回部分输出和明确状态。
 - [ ] 父级取消传播到所有活动子级。
+- [ ] 当前 UI 只展示到 Task，不显示 Job/Subjob/Run 层级。

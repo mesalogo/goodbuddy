@@ -9,7 +9,7 @@
 | 版本 | 0.3 |
 | 日期 | 2026-08-19 |
 | 适用产品 | GoodBuddy 桌面端 |
-| 相关设计 | [通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)、[Task 与 Job 统一领域模型](../prd/task-and-job/task-and-job-model.md)、[智能心跳 PRD](../prd/smart-heartbeat/smart-heartbeat-prd.md) |
+| 相关设计 | [通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)、[Task 与 Job 统一领域模型](../prd/task-and-job/task-and-job-model.md)、[智能心跳 PRD](../prd/smart-heartbeat/smart-heartbeat-prd.md)、[全双工实时语音交互设计](../architecture/full-duplex-voice-design.md) |
 
 ## 1. 文档目标
 
@@ -202,9 +202,12 @@ GoodBuddy 应能够：
 
 ### 4.10 语音
 
-- 首期提供按住说话和语音转文字。
+- 当前已提供点击开始、再次点击停止或到达 20 秒上限后停止的本地一次性语音听写。
 - 转写结果先进入可编辑输入框，不自动发送。
-- 后续增加流式语音对话和文本转语音。
+- 后续按[全双工实时语音交互设计](../architecture/full-duplex-voice-design.md)增加持续听说、
+  Barge-in、流式文本转语音、本地与云端显式语音引擎。
+- 活动会话冻结引擎、Provider、模型、地域、数据位置和能力；引擎失败时明确停止或重试
+  当前选择，不在本地/云端、原生/模块化、语音/文本之间静默降级。
 - 麦克风权限仅在可信主窗口、显式语音会话和用户操作后开启。
 - 音频转写完成后默认删除。
 
@@ -304,8 +307,9 @@ GoodBuddy 应能够：
 
 ### 阶段 5：语音
 
-- 按住说话、转写适配器和可编辑转写。
-- 后续扩展实时语音与 TTS。
+- 以现有点击式一次性听写、本地转写适配器和可编辑转写作为实施基线。
+- 实现全双工会话契约、AudioWorklet 音频平面、Barge-in 和播放提交语义。
+- 接入本地模块化、本地原生和云端原生语音引擎；所有引擎均由用户显式选择，不静默降级。
 
 ### 阶段 6：专家与远程委派
 

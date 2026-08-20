@@ -1351,19 +1351,22 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       expect.any(Array),
       expect.any(AbortSignal)
     )
-    expect(setup.client.mcp.add).toHaveBeenCalledWith({
-      directory: process.cwd(),
-      name: expect.stringMatching(/^goodbuddy-custom-[a-f0-9]{20}$/u),
-      config: {
-        type: 'remote',
-        url: 'http://127.0.0.1:4567/mcp',
-        enabled: true,
-        headers: {
-          Authorization: 'Bearer custom-capability'
-        },
-        oauth: false
-      }
-    })
+    expect(setup.client.mcp.add).toHaveBeenCalledWith(
+      {
+        directory: process.cwd(),
+        name: expect.stringMatching(/^goodbuddy-custom-[a-f0-9]{20}$/u),
+        config: {
+          type: 'remote',
+          url: 'http://127.0.0.1:4567/mcp',
+          enabled: true,
+          headers: {
+            Authorization: 'Bearer custom-capability'
+          },
+          oauth: false
+        }
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     expect(JSON.stringify(
       (setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>)
         .mock.calls
@@ -1500,21 +1503,24 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await expect(stream.next()).resolves.toMatchObject({
       value: { type: 'status' }
     })
-    await expect(stream.next()).resolves.toMatchObject({
-      value: {
-        type: 'question',
-        questionId: 'question-1',
-        questions: [
-          {
-            header: '实现方式',
-            question: '请选择实现方式',
-            multiple: false,
-            custom: true
-          }
-        ]
-      }
+    const questionEvent = await stream.next()
+    expect(questionEvent.value).toMatchObject({
+      type: 'question',
+      questionId: expect.stringMatching(/^opencode-[a-f0-9]{48}$/u),
+      questions: [
+        {
+          header: '实现方式',
+          question: '请选择实现方式',
+          multiple: false,
+          custom: true
+        }
+      ]
     })
-    await runtime.respondToQuestion('question-1', [['先写测试']])
+    const questionId =
+      questionEvent.value?.type === 'question'
+        ? questionEvent.value.questionId
+        : ''
+    await runtime.respondToQuestion(questionId, [['先写测试']])
     expect(setup.questionReply).toHaveBeenCalledWith({
       requestID: 'question-1',
       directory: process.cwd(),
@@ -1523,6 +1529,318 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await expect(stream.next()).resolves.toMatchObject({
       value: { type: 'done' }
     })
+    await runtime.dispose()
+  })
+
+  it('namespaces identical upstream question IDs across concurrent external conversations', async () => {
+    const setup = runClient([])
+    ;(
+      setup.event.subscribe as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation(async () => ({
+      stream: (async function* () {
+        yield {
+          id: 'question-event',
+          type: 'question.asked',
+          properties: {
+            id: 'shared-question',
+            sessionID: 'session-1',
+            questions: [
+              {
+                header: 'Choice',
+                question: 'Choose',
+                options: [],
+                multiple: false,
+                custom: true
+              }
+            ]
+          }
+        }
+        yield {
+          id: 'idle',
+          type: 'session.idle',
+          properties: { sessionID: 'session-1' }
+        }
+      })()
+    }))
+    const runtime = new OpenCodeRuntime(
+      options({
+        baseUrl: 'http://127.0.0.1:4096',
+        embedded: false
+      }),
+      dependencies(fakeChild(), {
+        createClient: vi.fn(
+          () => setup.client
+        ) as unknown as typeof createOpencodeClient
+      }).deps
+    )
+    const first = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'first',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+    const second = runtime.run(
+      {
+        requestId: '4f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-2',
+        prompt: 'second',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await Promise.all([first.next(), second.next()])
+    const [firstQuestion, secondQuestion] = await Promise.all([
+      first.next(),
+      second.next()
+    ])
+    const firstId =
+      firstQuestion.value?.type === 'question'
+        ? firstQuestion.value.questionId
+        : ''
+    const secondId =
+      secondQuestion.value?.type === 'question'
+        ? secondQuestion.value.questionId
+        : ''
+    expect(firstId).toMatch(/^opencode-[a-f0-9]{48}$/u)
+    expect(secondId).toMatch(/^opencode-[a-f0-9]{48}$/u)
+    expect(firstId).not.toBe(secondId)
+
+    await Promise.all([
+      runtime.respondToQuestion(firstId, [['first answer']]),
+      runtime.respondToQuestion(secondId, [['second answer']])
+    ])
+    expect(setup.questionReply).toHaveBeenCalledTimes(2)
+    expect(setup.questionReply).toHaveBeenNthCalledWith(1, {
+      requestID: 'shared-question',
+      directory: process.cwd(),
+      answers: [['first answer']]
+    })
+    expect(setup.questionReply).toHaveBeenNthCalledWith(2, {
+      requestID: 'shared-question',
+      directory: process.cwd(),
+      answers: [['second answer']]
+    })
+    await Promise.all([first.next(), second.next()])
+    await runtime.dispose()
+  })
+
+  it('aborts an OpenCode run at its total execution deadline', async () => {
+    const setup = runClient([])
+    ;(
+      setup.event.subscribe as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation(
+      async (
+        _input: unknown,
+        options: { signal: AbortSignal }
+      ) => ({
+        stream: (async function* () {
+          await new Promise<void>((_resolve, reject) => {
+            options.signal.addEventListener(
+              'abort',
+              () => reject(options.signal.reason),
+              { once: true }
+            )
+          })
+          yield {
+            id: 'unreachable',
+            type: 'session.idle',
+            properties: { sessionID: 'session-1' }
+          }
+        })()
+      })
+    )
+    const runtime = new OpenCodeRuntime(
+      options({
+        baseUrl: 'http://127.0.0.1:4096',
+        embedded: false
+      }),
+      dependencies(fakeChild(), {
+        createClient: vi.fn(
+          () => setup.client
+        ) as unknown as typeof createOpencodeClient,
+        executionTimeoutMs: 20
+      }).deps
+    )
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'never finish',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await expect(stream.next()).rejects.toThrow(
+      'OpenCode 执行超过 20 毫秒总时限'
+    )
+    expect(setup.session.abort).toHaveBeenCalled()
+    await runtime.dispose()
+  })
+
+  it('applies the total deadline while agent discovery is stalled', async () => {
+    const setup = runClient([])
+    const agents = vi.fn(
+      () => new Promise<never>(() => undefined)
+    )
+    Object.assign(setup.client, {
+      app: { agents }
+    })
+    const child = fakeChild()
+    const runtime = new OpenCodeRuntime(
+      options({
+        customization: { defaultAgent: 'build' }
+      }),
+      dependencies(child, {
+        createClient: vi.fn(
+          () => setup.client
+        ) as unknown as typeof createOpencodeClient,
+        executionTimeoutMs: 20
+      }).deps
+    )
+    setTimeout(() => {
+      stdoutOf(child).write(
+        'opencode server listening on http://127.0.0.1:4010\n'
+      )
+    }, 0)
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'never reach the stream',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).rejects.toThrow(
+      'OpenCode 执行超过 20 毫秒总时限'
+    )
+    expect(agents).toHaveBeenCalledWith(
+      { directory: process.cwd() },
+      { signal: expect.any(AbortSignal) }
+    )
+    expect(setup.event.subscribe).not.toHaveBeenCalled()
+    await runtime.dispose()
+  })
+
+  it('deletes a session created after timeout and does not reuse it', async () => {
+    const setup = runClient([
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    let resolveStalledCreation!: (value: {
+      data: { id: string }
+      error: undefined
+    }) => void
+    ;(
+      setup.session.create as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStalledCreation = resolve
+        })
+    )
+    const runtime = new OpenCodeRuntime(
+      options({
+        baseUrl: 'http://127.0.0.1:4096',
+        embedded: false
+      }),
+      dependencies(fakeChild(), {
+        createClient: vi.fn(
+          () => setup.client
+        ) as unknown as typeof createOpencodeClient,
+        executionTimeoutMs: 20
+      }).deps
+    )
+    const first = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'stalled creation',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await expect(first.next()).rejects.toThrow(
+      'OpenCode 执行超过 20 毫秒总时限'
+    )
+    resolveStalledCreation({
+      data: { id: 'stale-session' },
+      error: undefined
+    })
+    await vi.waitFor(() =>
+      expect(setup.session.delete).toHaveBeenCalledWith(
+        {
+          sessionID: 'stale-session',
+          directory: process.cwd()
+        },
+        { signal: expect.any(AbortSignal) }
+      )
+    )
+
+    const secondEvents = await collectRun(runtime)
+    expect(secondEvents.at(-1)).toMatchObject({ type: 'done' })
+    expect(setup.session.create).toHaveBeenCalledTimes(2)
+    expect(setup.session.update).not.toHaveBeenCalled()
+    await runtime.dispose()
+  })
+
+  it('fails before emitting text that exceeds the aggregate output budget', async () => {
+    const setup = runClient([
+      {
+        id: 'first-text',
+        type: 'message.part.delta',
+        properties: {
+          sessionID: 'session-1',
+          partID: 'part-1',
+          field: 'text',
+          delta: 'a'.repeat(600_000)
+        }
+      },
+      {
+        id: 'second-text',
+        type: 'message.part.delta',
+        properties: {
+          sessionID: 'session-1',
+          partID: 'part-1',
+          field: 'text',
+          delta: 'b'.repeat(600_000)
+        }
+      }
+    ])
+    const runtime = embeddedRuntime(setup.client)
+    const stream = runtime.run(
+      {
+        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+        conversationId: 'conversation-1',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+
+    await stream.next()
+    const firstText = await stream.next()
+    expect(firstText.value).toMatchObject({
+      type: 'text',
+      delta: expect.stringMatching(/^a+$/u)
+    })
+    await expect(stream.next()).rejects.toThrow(
+      '文本与推理输出超过 1 MB 安全限制'
+    )
+    expect(setup.session.abort).toHaveBeenCalled()
     await runtime.dispose()
   })
 
@@ -1592,19 +1910,22 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       events.push(event)
     }
 
-    expect(setup.client.mcp.add).toHaveBeenCalledWith({
-      directory: process.cwd(),
-      name: expect.stringMatching(/^goodbuddy-data-[a-f0-9]{20}$/u),
-      config: {
-        type: 'remote',
-        url: 'http://127.0.0.1:4567/mcp',
-        enabled: true,
-        headers: {
-          Authorization: 'Bearer secret-capability'
-        },
-        oauth: false
-      }
-    })
+    expect(setup.client.mcp.add).toHaveBeenCalledWith(
+      {
+        directory: process.cwd(),
+        name: expect.stringMatching(/^goodbuddy-data-[a-f0-9]{20}$/u),
+        config: {
+          type: 'remote',
+          url: 'http://127.0.0.1:4567/mcp',
+          enabled: true,
+          headers: {
+            Authorization: 'Bearer secret-capability'
+          },
+          oauth: false
+        }
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     const knowledgeMcpName = (
       (
         setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>
@@ -1621,7 +1942,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
             action: 'allow'
           }
         ]
-      })
+      }),
+      { signal: expect.any(AbortSignal) }
     )
     expect(setup.session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1634,10 +1956,13 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       }),
       expect.anything()
     )
-    expect(setup.client.mcp.disconnect).toHaveBeenCalledWith({
-      name: expect.stringMatching(/^goodbuddy-data-/u),
-      directory: process.cwd()
-    })
+    expect(setup.client.mcp.disconnect).toHaveBeenCalledWith(
+      {
+        name: expect.stringMatching(/^goodbuddy-data-/u),
+        directory: process.cwd()
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
   })
@@ -1911,19 +2236,22 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     try {
       await collectRun(runtime, 'ask')
 
-      expect(setup.session.create).toHaveBeenCalledWith({
-        title: 'GoodBuddy 对话',
-        directory: process.cwd(),
-        permission: [
-          { permission: '*', pattern: '*', action: 'deny' },
-          { permission: 'skill', pattern: '*', action: 'deny' },
-          {
-            permission: 'skill',
-            pattern: 'longdoc-docx',
-            action: 'allow'
-          }
-        ]
-      })
+      expect(setup.session.create).toHaveBeenCalledWith(
+        {
+          title: 'GoodBuddy 对话',
+          directory: process.cwd(),
+          permission: [
+            { permission: '*', pattern: '*', action: 'deny' },
+            { permission: 'skill', pattern: '*', action: 'deny' },
+            {
+              permission: 'skill',
+              pattern: 'longdoc-docx',
+              action: 'allow'
+            }
+          ]
+        },
+        { signal: expect.any(AbortSignal) }
+      )
       expect(setup.session.promptAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           system: undefined,
@@ -2001,13 +2329,16 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     const events = await collectRun(runtime, 'execute')
 
     expect(callOrder).toEqual(['subscribe', 'prompt'])
-    expect(session.create).toHaveBeenCalledWith({
-      title: 'GoodBuddy 对话',
-      directory: process.cwd(),
-      permission: [
-        { permission: '*', pattern: '*', action: 'allow' }
-      ]
-    })
+    expect(session.create).toHaveBeenCalledWith(
+      {
+        title: 'GoodBuddy 对话',
+        directory: process.cwd(),
+        permission: [
+          { permission: '*', pattern: '*', action: 'allow' }
+        ]
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     expect(permissionReply).toHaveBeenCalledOnce()
     expect(permissionReply).toHaveBeenCalledWith({
       requestID: 'permission-1',
@@ -2341,16 +2672,20 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
 
       await collectRun(runtime, 'ask')
 
-      expect(session.create).toHaveBeenCalledWith({
-        title: 'GoodBuddy 对话',
-        directory: process.cwd(),
-        permission: [
-          { permission: '*', pattern: '*', action: 'deny' }
-        ]
-      })
-      expect(tool.ids).toHaveBeenCalledWith({
-        directory: process.cwd()
-      })
+      expect(session.create).toHaveBeenCalledWith(
+        {
+          title: 'GoodBuddy 对话',
+          directory: process.cwd(),
+          permission: [
+            { permission: '*', pattern: '*', action: 'deny' }
+          ]
+        },
+        { signal: expect.any(AbortSignal) }
+      )
+      expect(tool.ids).toHaveBeenCalledWith(
+        { directory: process.cwd() },
+        { signal: expect.any(AbortSignal) }
+      )
       expect(session.promptAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           tools: {
@@ -2378,13 +2713,16 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await collectRun(runtime, 'execute')
     await collectRun(runtime, 'ask')
 
-    expect(session.update).toHaveBeenCalledWith({
-      sessionID: 'session-1',
-      directory: process.cwd(),
-      permission: [
-        { permission: '*', pattern: '*', action: 'deny' }
-      ]
-    })
+    expect(session.update).toHaveBeenCalledWith(
+      {
+        sessionID: 'session-1',
+        directory: process.cwd(),
+        permission: [
+          { permission: '*', pattern: '*', action: 'deny' }
+        ]
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     await runtime.dispose()
   })
 
@@ -2411,13 +2749,16 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await collectRun(runtime, 'execute')
 
     expect(runtime.requiresToolApproval).toBe(false)
-    expect(session.create).toHaveBeenCalledWith({
-      title: 'GoodBuddy 对话',
-      directory: process.cwd(),
-      permission: [
-        { permission: '*', pattern: '*', action: 'allow' }
-      ]
-    })
+    expect(session.create).toHaveBeenCalledWith(
+      {
+        title: 'GoodBuddy 对话',
+        directory: process.cwd(),
+        permission: [
+          { permission: '*', pattern: '*', action: 'allow' }
+        ]
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     expect(permissionReply).not.toHaveBeenCalled()
     await runtime.dispose()
   })
@@ -2814,7 +3155,8 @@ describe('OpenCodeRuntime native customization', () => {
     }
 
     expect(setup.session.create).toHaveBeenCalledWith(
-      expect.objectContaining({ agent: 'plan' })
+      expect.objectContaining({ agent: 'plan' }),
+      { signal: expect.any(AbortSignal) }
     )
     expect(setup.session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({ agent: 'plan' }),
@@ -2853,7 +3195,8 @@ describe('OpenCodeRuntime native customization', () => {
     await collectRun(runtime)
 
     expect(setup.session.create).toHaveBeenCalledWith(
-      expect.objectContaining({ agent: 'build' })
+      expect.objectContaining({ agent: 'build' }),
+      { signal: expect.any(AbortSignal) }
     )
     expect(setup.session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({ agent: 'build' }),
@@ -3099,7 +3442,7 @@ describe('OpenCodeRuntime native customization', () => {
     })
     expect(context).toHaveBeenCalledWith(
       { sessionID: 'session-1' },
-      { signal }
+      { signal: expect.any(AbortSignal) }
     )
     expect(summarize).toHaveBeenCalledWith(
       {
@@ -3109,7 +3452,7 @@ describe('OpenCodeRuntime native customization', () => {
         modelID: 'claude-sonnet',
         auto: false
       },
-      { signal }
+      { signal: expect.any(AbortSignal) }
     )
     await runtime.dispose()
   })

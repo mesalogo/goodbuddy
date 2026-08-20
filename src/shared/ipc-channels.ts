@@ -47,6 +47,8 @@ export const ipcChannels = {
   remoteChannelActivity: 'channels:remote-activity',
   applicationSettingsGet: 'settings:application:get',
   applicationSettingsUpdate: 'settings:application:update',
+  shortcutSettingsGet: 'settings:shortcut:get',
+  shortcutSettingsUpdate: 'settings:shortcut:update',
   versionCheck: 'application:update:check',
   versionOpenReleasePage: 'application:update:open-release-page',
   versionCheckResult: 'application:update:result',
@@ -66,6 +68,8 @@ export const ipcChannels = {
   embeddingSettingsGet: 'settings:embedding:get',
   embeddingDiagnose: 'settings:embedding:diagnose',
   documentParsingGet: 'settings:document-parsing:get',
+  documentOcrModelsProgress:
+    'settings:document-ocr-models:progress',
   documentParsingUpdate: 'settings:document-parsing:update',
   documentParsingTest: 'settings:document-parsing:test',
   documentOcrModelsInstall: 'settings:document-ocr-models:install',

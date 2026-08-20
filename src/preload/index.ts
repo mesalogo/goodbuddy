@@ -89,6 +89,7 @@ import type {
 import type {
   DocumentOcrAssets,
   DocumentOcrFailure,
+  DocumentOcrModelProgressSnapshot,
   DocumentOcrRequest,
   DocumentOcrResult,
   DocumentParsingDiagnostic,
@@ -125,6 +126,11 @@ import type {
   RuntimeExtensionAction,
   RuntimeExtensionMarketplaceSnapshot
 } from '../shared/runtime-extension-contracts'
+import type {
+  GlobalShortcutSettings,
+  GlobalShortcutSettingsSnapshot,
+  GlobalShortcutSettingsUpdateResult
+} from '../shared/shortcut'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -388,6 +394,17 @@ const desktopApi: DesktopApi = {
         ipcRenderer.removeListener(ipcChannels.versionCheckResult, handler)
     }
   },
+  shortcuts: {
+    getSettings: () =>
+      ipcRenderer.invoke(
+        ipcChannels.shortcutSettingsGet
+      ) as Promise<GlobalShortcutSettingsSnapshot>,
+    updateSettings: (input: GlobalShortcutSettings) =>
+      ipcRenderer.invoke(
+        ipcChannels.shortcutSettingsUpdate,
+        input
+      ) as Promise<GlobalShortcutSettingsUpdateResult>
+  },
   releaseNotes: {
     getPending: () =>
       ipcRenderer.invoke(
@@ -475,6 +492,10 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.documentParsingGet
       ) as Promise<DocumentParsingSnapshot>,
+    getOcrModelProgress: () =>
+      ipcRenderer.invoke(
+        ipcChannels.documentOcrModelsProgress
+      ) as Promise<DocumentOcrModelProgressSnapshot>,
     update: (input: DocumentParsingSettings) =>
       ipcRenderer.invoke(
         ipcChannels.documentParsingUpdate,

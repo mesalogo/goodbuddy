@@ -33,6 +33,7 @@ type RuntimeCustomizationSectionProps = {
 
 export type RuntimeCustomizationSectionHandle = {
   save: () => Promise<boolean>
+  discard: () => void
 }
 
 type RuntimeCustomizationError = {
@@ -534,9 +535,7 @@ export const RuntimeCustomizationSection = forwardRef<
     }
   }, [settings, settingsDirty, t])
 
-  useImperativeHandle(ref, () => ({ save }), [save])
-
-  const discardChanges = (): void => {
+  const discardChanges = useCallback((): void => {
     if (!persistedSettings) {
       return
     }
@@ -547,7 +546,13 @@ export const RuntimeCustomizationSection = forwardRef<
         ''
     )
     setError(undefined)
-  }
+  }, [persistedSettings])
+
+  useImperativeHandle(
+    ref,
+    () => ({ save, discard: discardChanges }),
+    [discardChanges, save]
+  )
 
   const addPreset = (): void => {
     if (

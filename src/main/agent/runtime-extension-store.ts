@@ -33,6 +33,9 @@ import {
 
 const managedDirectoryName = 'runtime-extensions'
 const stateFileName = 'store.json'
+const journalFileName = '.mutation-journal.json'
+const unjournaledStagingDirectoryPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:-previous|-removed)?$/iu
 
 const version1StoredStateSchema = z
   .object({
@@ -55,6 +58,19 @@ const storedStateFileSchema = z.union([
 ])
 
 type StoredState = z.infer<typeof storedStateSchema>
+
+const mutationJournalSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.enum(['install', 'remove']),
+    extensionId: runtimeExtensionIdSchema,
+    temporaryId: runtimeExtensionIdSchema,
+    before: storedStateSchema,
+    after: storedStateSchema
+  })
+  .strict()
+
+type MutationJournal = z.infer<typeof mutationJournalSchema>
 
 export interface RuntimeExtensionCatalog {
   list(): Promise<readonly RuntimeExtensionCatalogEntry[]>
@@ -128,6 +144,7 @@ export class RuntimeExtensionStore {
   readonly managedRoot: string
 
   private readonly statePath: string
+  private readonly journalPath: string
   private state?: StoredState
   private stateLoad?: Promise<StoredState>
   private canonicalRoot?: string
@@ -144,6 +161,7 @@ export class RuntimeExtensionStore {
     }
     this.managedRoot = resolve(userDataPath, managedDirectoryName)
     this.statePath = join(this.managedRoot, stateFileName)
+    this.journalPath = join(this.managedRoot, journalFileName)
   }
 
   async getSnapshot(): Promise<RuntimeExtensionMarketplaceSnapshot> {
@@ -176,6 +194,7 @@ export class RuntimeExtensionStore {
   ): Promise<RuntimeExtensionApplyResult> {
     const parsed = runtimeExtensionActionSchema.parse(action)
     const changed = await this.serialize(async () => {
+      await this.reconcileMutationJournal()
       switch (parsed.type) {
         case 'set-marketplace-enabled':
           return this.setMarketplaceEnabled(parsed.enabled)
@@ -306,6 +325,8 @@ export class RuntimeExtensionStore {
     this.canonicalRoot = await realpath(this.managedRoot)
     await this.createManagedDirectory('extensions')
     await this.createManagedDirectory('.staging')
+    await this.reconcileMutationJournal()
+    await this.cleanupUnjournaledStagingDirectories()
   }
 
   private async loadCatalog(): Promise<RuntimeExtensionCatalogEntry[]> {
@@ -354,9 +375,12 @@ export class RuntimeExtensionStore {
       `${temporaryId}-previous`
     )
     const finalDirectory = this.extensionDirectory(extensionId)
-    let previousMoved = false
-    let stagedMoved = false
     try {
+      if (await this.pathExists(backupDirectory)) {
+        throw new Error(
+          'Extension upgrade backup path already exists'
+        )
+      }
       const installedPackage = await this.dependencies.install({
         entry,
         destinationDirectory: stagedDirectory
@@ -366,12 +390,6 @@ export class RuntimeExtensionStore {
         installedPackage.entrypoint
       )
 
-      if (await this.pathExists(finalDirectory)) {
-        await rename(finalDirectory, backupDirectory)
-        previousMoved = true
-      }
-      await rename(stagedDirectory, finalDirectory)
-      stagedMoved = true
       const entrypoint = resolve(
         finalDirectory,
         installedPackage.entrypoint
@@ -392,19 +410,29 @@ export class RuntimeExtensionStore {
           ? { integrity: installedPackage.integrity }
           : {})
       }
-      await this.persistAndSet(
-        this.replaceInstalled(state, installed)
-      )
-      if (previousMoved) {
-        await this.removeManagedTree(backupDirectory).catch(() => undefined)
+      const nextState = this.replaceInstalled(state, installed)
+      const journal: MutationJournal = {
+        version: 1,
+        kind: 'install',
+        extensionId,
+        temporaryId,
+        before: state,
+        after: nextState
       }
+      await this.writeMutationJournal(journal)
+      if (await this.pathExists(finalDirectory)) {
+        await this.assertRealManagedDirectory(finalDirectory)
+      }
+      if (await this.pathExists(finalDirectory)) {
+        await rename(finalDirectory, backupDirectory)
+      }
+      await rename(stagedDirectory, finalDirectory)
+      await this.persistAndSet(nextState)
+      await this.removeManagedTree(backupDirectory)
+      await this.clearMutationJournal()
     } catch (error) {
-      if (stagedMoved) {
-        await this.removeManagedTree(finalDirectory)
-      }
-      if (previousMoved) {
-        await rename(backupDirectory, finalDirectory)
-      }
+      this.state = undefined
+      await this.reconcileMutationJournal().catch(() => undefined)
       throw error
     } finally {
       await this.removeManagedTree(stagedDirectory).catch(() => undefined)
@@ -488,27 +516,40 @@ export class RuntimeExtensionStore {
       '.staging',
       `${randomUUID()}-removed`
     )
-    let moved = false
+    const temporaryId = trashDirectory
+      .slice(trashDirectory.lastIndexOf(sep) + 1)
+      .replace(/-removed$/u, '')
+    runtimeExtensionIdSchema.parse(temporaryId)
+    if (await this.pathExists(trashDirectory)) {
+      throw new Error('Extension removal staging path already exists')
+    }
+    const nextState: StoredState = {
+      ...state,
+      installed: state.installed.filter(
+        (extension) => extension.id !== extensionId
+      )
+    }
+    await this.writeMutationJournal({
+      version: 1,
+      kind: 'remove',
+      extensionId,
+      temporaryId,
+      before: state,
+      after: nextState
+    })
     if (await this.pathExists(finalDirectory)) {
+      await this.assertRealManagedDirectory(finalDirectory)
       await rename(finalDirectory, trashDirectory)
-      moved = true
     }
     try {
-      await this.persistAndSet({
-        ...state,
-        installed: state.installed.filter(
-          (extension) => extension.id !== extensionId
-        )
-      })
+      await this.persistAndSet(nextState)
     } catch (error) {
-      if (moved) {
-        await rename(trashDirectory, finalDirectory)
-      }
+      this.state = undefined
+      await this.reconcileMutationJournal().catch(() => undefined)
       throw error
     }
-    if (moved) {
-      await this.removeManagedTree(trashDirectory).catch(() => undefined)
-    }
+    await this.removeManagedTree(trashDirectory)
+    await this.clearMutationJournal()
   }
 
   private requireInstalled(
@@ -547,6 +588,171 @@ export class RuntimeExtensionStore {
       this.statePath,
       storedStateSchema.parse(state)
     )
+  }
+
+  private writeMutationJournal(journal: MutationJournal): Promise<void> {
+    return writeJsonFileAtomically(
+      this.journalPath,
+      mutationJournalSchema.parse(journal)
+    )
+  }
+
+  private async clearMutationJournal(): Promise<void> {
+    await unlink(this.journalPath).catch((error: unknown) => {
+      if (!isMissingFileError(error)) {
+        throw error
+      }
+    })
+  }
+
+  private async reconcileMutationJournal(): Promise<void> {
+    let journal: MutationJournal
+    try {
+      const status = await lstat(this.journalPath)
+      if (
+        !status.isFile() ||
+        status.isSymbolicLink() ||
+        status.nlink > 1
+      ) {
+        throw new Error(
+          'Extension mutation journal must be a regular file'
+        )
+      }
+      await this.assertExistingPathContained(this.journalPath)
+      journal = mutationJournalSchema.parse(
+        JSON.parse(await readFile(this.journalPath, 'utf8')) as unknown
+      )
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return
+      }
+      throw error
+    }
+
+    const stateStatus = await lstat(this.statePath)
+    if (
+      !stateStatus.isFile() ||
+      stateStatus.isSymbolicLink() ||
+      stateStatus.nlink > 1
+    ) {
+      throw new Error('Extension store state must be a regular file')
+    }
+    await this.assertExistingPathContained(this.statePath)
+    const stored = storedStateFileSchema.parse(
+      JSON.parse(await readFile(this.statePath, 'utf8')) as unknown
+    )
+    if (stored.version !== 2) {
+      throw new Error(
+        'Extension mutation journal requires current store state'
+      )
+    }
+    const committed = isDeepStrictEqual(stored, journal.after)
+    const rolledBack = isDeepStrictEqual(stored, journal.before)
+    if (!committed && !rolledBack) {
+      throw new Error(
+        'Extension mutation journal does not match store state'
+      )
+    }
+
+    const finalDirectory = this.extensionDirectory(journal.extensionId)
+    const stagedDirectory = this.managedPath(
+      '.staging',
+      journal.temporaryId
+    )
+    const auxiliaryDirectory = this.managedPath(
+      '.staging',
+      journal.kind === 'install'
+        ? `${journal.temporaryId}-previous`
+        : `${journal.temporaryId}-removed`
+    )
+
+    if (journal.kind === 'install') {
+      if (committed) {
+        await this.assertInstalledStateOnDisk(
+          this.requireInstalled(journal.after, journal.extensionId)
+        )
+        await this.removeManagedTree(auxiliaryDirectory)
+        await this.removeManagedTree(stagedDirectory)
+      } else {
+        const hadPrevious = journal.before.installed.some(
+          (extension) => extension.id === journal.extensionId
+        )
+        if (await this.pathExists(auxiliaryDirectory)) {
+          await this.assertRealManagedDirectory(auxiliaryDirectory)
+          await this.removeManagedTree(finalDirectory)
+          await rename(auxiliaryDirectory, finalDirectory)
+        } else if (!hadPrevious) {
+          await this.removeManagedTree(finalDirectory)
+        }
+        if (hadPrevious) {
+          await this.assertInstalledStateOnDisk(
+            this.requireInstalled(
+              journal.before,
+              journal.extensionId
+            )
+          )
+        }
+        await this.removeManagedTree(stagedDirectory)
+      }
+    } else if (committed) {
+      await this.removeManagedTree(finalDirectory)
+      await this.removeManagedTree(auxiliaryDirectory)
+    } else {
+      if (await this.pathExists(auxiliaryDirectory)) {
+        await this.assertRealManagedDirectory(auxiliaryDirectory)
+        await this.removeManagedTree(finalDirectory)
+        await rename(auxiliaryDirectory, finalDirectory)
+      }
+      await this.assertInstalledStateOnDisk(
+        this.requireInstalled(journal.before, journal.extensionId)
+      )
+    }
+    await this.clearMutationJournal()
+    this.state = stored
+  }
+
+  private async assertRealManagedDirectory(path: string): Promise<void> {
+    this.assertContained(this.managedRoot, path)
+    const status = await lstat(path)
+    if (!status.isDirectory() || status.isSymbolicLink()) {
+      throw new Error(
+        'Extension package path must be a real directory'
+      )
+    }
+    await this.assertExistingPathContained(path)
+  }
+
+  private async cleanupUnjournaledStagingDirectories(): Promise<void> {
+    const stagingDirectory = this.managedPath('.staging')
+    await this.assertRealManagedDirectory(stagingDirectory)
+    const entries = await readdir(stagingDirectory, {
+      withFileTypes: true
+    })
+    for (const entry of entries) {
+      if (
+        !entry.isDirectory() ||
+        entry.isSymbolicLink() ||
+        !unjournaledStagingDirectoryPattern.test(entry.name)
+      ) {
+        continue
+      }
+      const directory = this.managedPath('.staging', entry.name)
+      await this.assertRealManagedDirectory(directory)
+      await this.removeManagedTree(directory)
+    }
+  }
+
+  private async assertInstalledStateOnDisk(
+    extension: RuntimeExtensionInstalledState
+  ): Promise<void> {
+    this.assertExtensionEntrypoint(extension)
+    const directory = this.extensionDirectory(extension.id)
+    await this.assertRealManagedDirectory(directory)
+    const relativeEntrypoint = relative(
+      directory,
+      extension.entrypoint
+    ).split(sep).join('/')
+    await this.resolveEntrypoint(directory, relativeEntrypoint)
   }
 
   private assertExtensionEntrypoint(

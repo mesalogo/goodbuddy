@@ -235,6 +235,10 @@ const storedSettingsSchema = version17StoredSettingsSchema
   })
 
 type StoredSettings = z.infer<typeof storedSettingsSchema>
+export type RuntimeSettingsRollback = {
+  publicSettings: RuntimeSettings
+  restore(): Promise<RuntimeSettings>
+}
 type Version17StoredSettings = z.infer<
   typeof version17StoredSettingsSchema
 >
@@ -1479,6 +1483,39 @@ export class RuntimeSettingsStore {
 
   async getPublicSettings(): Promise<RuntimeSettings> {
     return this.toPublicSettings(await this.load())
+  }
+
+  captureRollback(): Promise<RuntimeSettingsRollback> {
+    let result: RuntimeSettingsRollback | undefined
+    const operation = this.updateQueue.then(async () => {
+      const snapshot = structuredClone(await this.load())
+      result = {
+        publicSettings: this.toPublicSettings(snapshot),
+        restore: () => this.restoreSnapshot(snapshot)
+      }
+    })
+    this.updateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation.then(() => result!)
+  }
+
+  private restoreSnapshot(
+    snapshot: StoredSettings
+  ): Promise<RuntimeSettings> {
+    const operation = this.updateQueue.then(async () => {
+      const restored = structuredClone(snapshot)
+      await writeJsonFileAtomically(this.filePath, restored)
+      this.settings = restored
+      this.loadWarnings = []
+      return this.toPublicSettings(restored)
+    })
+    this.updateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
   }
 
   async getPolicySettings(): Promise<RuntimePolicySettings> {

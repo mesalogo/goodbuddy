@@ -12,6 +12,7 @@
 ### 桌面基础、工作空间与上下文
 
 - [x] **跨平台桌面应用**：支持 Windows、macOS、Linux，以及 `x64`、`arm64` 发布目标。
+- [x] **可配置全局快捷唤起**：在“平台功能 / 通用设置”中启停或录制 Electron accelerator；默认保留 `CommandOrControl+Shift+Space`，冲突或保存失败时继续使用上一组已注册快捷键，并显示可处理的状态。
 - [x] **Projects 与独立对话**：按项目隔离上下文，管理会话、附件和 Git 工作区变更；项目选择器区分本地项目与远程通道，并在展开后显示本地目录或通道来源等辨认信息。
 - [x] **文件、截图、窗口、剪贴板上下文**：用户明确选择后才加入模型上下文。
 - [x] **富文本回答**：支持 GitHub Flavored Markdown、LaTeX 数学公式和受控 Mermaid 图表；大图可缩放、拖动或查看源码，失败时保留原始图表代码。
@@ -21,7 +22,7 @@
 ### Agent Runtime 与模型连接
 
 - [x] **直连模型 Runtime**：支持问答、知识总结、受控工具执行和图像生成。
-- [x] **OpenCode 与 Continue**：使用隔离子进程、环境变量白名单、统一配置、取消、超时和活动记录。
+- [x] **OpenCode 与 Continue**：使用隔离子进程、环境变量白名单、统一配置、取消、总执行时限、有界流式输出和活动记录；共享进程回收逻辑保留 Windows 完整进程树终止，并对采用独立进程组的 POSIX 子进程执行组回收。交互提问只由前台对话回答，定时任务、远程通道和委派等后台执行遇到提问时会立即失败并提示改为前台运行，避免无限等待。
 - [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。图像输入跟随所选模型连接的能力声明，文本模型在 Host 或模型调用前拒绝图片，图片模型通过有界内联内容和临时 Attachment Store 接收 JPEG/PNG。
 - [x] **DSH npm 插件市场**：市场默认关闭，由用户显式开启后搜索公共 npm 的 `dsh-plugin` 包，使用捆绑 npm 执行精确版本安装和普通 lifecycle scripts，并支持启停、JSON 配置、移除、失败启动自动停用和离线管理已安装插件；关闭市场只隐藏目录与管理界面，不改变已有插件的启停状态，第三方代码不受 Ask 初始化隔离。
 - [x] **Ask 与 Execute 工作模式**：Ask 保持只读；Execute 运行已启用且受边界约束的工具。
@@ -30,7 +31,7 @@
 - [x] **多协议模型配置**：支持 Anthropic Messages、OpenAI Chat Completions、OpenAI Images 和无认证本机模型。
 - [x] **上下文用量与自动压缩**：直连模型按每次成功调用更新供应商用量，图片与工具轮次使用同一口径，供应商缺失 usage 时才回退估算；界面明确区分“本次模型调用”和“压缩后对话估算”，压缩线始终根据当前设置与所选模型窗口即时计算，不在每个对话中保存旧配置；压缩标识的前后值使用同一估算口径，运行记录仍保留各次模型调用的供应商 usage。对话与多轮工具 Agent 可在已完成调用越过阈值后自动重复压缩，规划时先为固定提示、工具定义和摘要预留预算；同一回复会分别保留 Agent 工具上下文与对话历史的压缩标识，并在应用重启或较早消息滚出本地历史窗口后继续复用摘要。
 - [x] **Main-only 凭据保护**：API Key 使用系统安全存储加密，不暴露给 Renderer。
-- [x] **OpenCode Runtime 定制**：GoodBuddy 管理的内置 OpenCode 可发现原生 Agents、Tools、Commands、LSP、Formatters、MCP、Skills、Prompts 与 Resources；Tools 单独显示读取、文件修改、命令、网络、Agent 编排等类型、来源及 Ask/Execute 可用性，并隐藏 OpenCode 内部 `invalid` 与 GoodBuddy 临时 MCP 工具。支持保存默认 Agent、每次请求覆盖 Agent、通过原生 SDK 执行 Command、显示上下文用量并调用原生 Compact；外部 OpenCode Server 只报告连接状态，不宣称原生清单可读。任意插件安装、Session Share、自动 Worktree 和 OpenCode 原生会话持久化仍不开放。
+- [x] **OpenCode Runtime 定制**：GoodBuddy 管理的内置 OpenCode 可发现原生 Agents、Tools、Commands、LSP、Formatters、MCP、Skills、Prompts 与 Resources；Tools 单独显示读取、文件修改、命令、网络、Agent 编排等类型、来源及 Ask/Execute 可用性，并隐藏 OpenCode 内部 `invalid` 与 GoodBuddy 临时 MCP 工具。支持保存默认 Agent、每次请求覆盖 Agent、通过原生 SDK 执行 Command、显示上下文用量并调用有总时限的原生 Compact；并发外部 Server 对话的提问使用请求级公开 ID 映射，回答不会串到其他会话。外部 OpenCode Server 只报告连接状态，不宣称原生清单可读。任意插件安装、Session Share、自动 Worktree 和 OpenCode 原生会话持久化仍不开放。
 - [x] **Continue Runtime 定制**：提供静态配置中的原生 Rules、Prompt 模板与 MCP 清单，以及可编辑的 GoodBuddy Rules/Prompt 配置预设；聊天可按请求选择预设和填入可继续编辑的 Prompt。当前 Continue Host 没有可信的静态原生 Tool 发现接口，且使用隔离的 `CONTINUE_GLOBAL_DIR`，因此界面明确标记 Tools 不支持静态发现，也不把 Host 实际不会加载的工作区或用户 Skills 冒充原生能力；GoodBuddy 分配的 Skills 仍按请求暂存执行。Continue 临时 Host 不复用原生会话压缩，手动压缩由 GoodBuddy 摘要模型完成并验证持久化摘要覆盖范围；Agent 交互提问转换为统一问答卡片。Resources、Hooks、后台 Job 和 Continue 原生会话管理继续暂缓。
 - [x] **Runtime 原生清单语义**：原生能力以 Agents、Tools、Commands、Skills、MCP、Rules、Prompts、Resources、LSP、Formatters 和上下文 11 个页签展示；清单状态独立于 Runtime 连通性，区分完整、部分、不可用、仅连接和不支持。DeepSeek Harness 通过 Host Registry 枚举有界的内置/插件 Tools 与 Skills，显示真实 Ask/Execute 边界，并排除 GoodBuddy 按请求分配的 Skills、Web/MCP 代理。
 - [ ] **Runtime 监督栏目**（规划中）：在应用级助手工作栏的固定 Runtime 栏目统一承载 OpenCode、Continue 和 DeepSeek Harness 的 Task 级委派、后台执行、Workflow/Hook、长任务与原生会话监督；用户只选择 Conversation 或 Task，Job/Run 保持内部，不形成树或独立操作对象。

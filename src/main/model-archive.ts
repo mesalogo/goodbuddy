@@ -7,7 +7,7 @@ import {
   rm,
   type FileHandle
 } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import {
   Unzip,
   UnzipInflate,
@@ -16,6 +16,13 @@ import {
   ZipPassThrough
 } from 'fflate'
 import { z } from 'zod'
+import {
+  ensureModelOperationNotAborted,
+  hashModelFile,
+  managedModelChild,
+  writeModelBuffer
+} from './model-package-utils'
+import { isMissingFileError } from './settings-file-utils'
 
 const ARCHIVE_MANIFEST_NAME = 'goodbuddy-model.json'
 const ARCHIVE_FORMAT = 'goodbuddy-model-archive'
@@ -108,14 +115,6 @@ type ExtractModelArchiveOptions = {
   onProgress?: (completedBytes: number) => void
 }
 
-function safeChild(parent: string, name: string): string {
-  const child = resolve(parent, name)
-  if (dirname(child) !== resolve(parent)) {
-    throw new Error('模型 ZIP 路径超出临时目录')
-  }
-  return child
-}
-
 function ensureArchiveName(name: string): string {
   return archiveFileNameSchema.parse(name)
 }
@@ -127,37 +126,11 @@ function ensureUniqueFiles(files: ModelArchiveExpectedFile[]): void {
   }
 }
 
-async function hashFile(path: string): Promise<ModelArchiveFile['sha256']> {
-  const handle = await open(path, 'r')
-  const hash = createHash('sha256')
-  const buffer = Buffer.allocUnsafe(64 * 1024)
-  try {
-    while (true) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length)
-      if (bytesRead === 0) {
-        break
-      }
-      hash.update(buffer.subarray(0, bytesRead))
-    }
-  } finally {
-    await handle.close()
-  }
-  return hash.digest('hex')
-}
-
 function checkedLimit(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new RangeError(`${label}无效`)
   }
   return value
-}
-
-function ensureNotAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw signal.reason instanceof Error
-      ? signal.reason
-      : new Error('模型 ZIP 导入已取消')
-  }
 }
 
 async function pushFileIntoArchive(
@@ -233,7 +206,7 @@ async function replaceArchiveFile(
         throw new Error('模型 ZIP 导出目标必须是普通文件')
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (!isMissingFileError(error)) {
         throw error
       }
     }
@@ -277,7 +250,7 @@ export async function exportModelArchive(
     }
     writeChain = writeChain.then(async () => {
       if (data.byteLength > 0) {
-        await output.write(data)
+        await writeModelBuffer(output, data)
       }
     })
     if (final) {
@@ -310,7 +283,11 @@ export async function exportModelArchive(
       await pushFileIntoArchive(
         archive,
         file,
-        safeChild(sourceDirectory, file.name),
+        managedModelChild(
+          sourceDirectory,
+          file.name,
+          '模型 ZIP 路径超出临时目录'
+        ),
         waitForOutput
       )
     }
@@ -334,7 +311,7 @@ function closeHandle(handle: FileHandle): Promise<void> {
 export async function extractModelArchive(
   options: ExtractModelArchiveOptions
 ): Promise<ModelArchiveDescriptor> {
-  ensureNotAborted(options.signal)
+  ensureModelOperationNotAborted(options.signal)
   const maximumArchiveBytes = checkedLimit(
     options.maximumArchiveBytes,
     '模型 ZIP 大小限制'
@@ -399,7 +376,9 @@ export async function extractModelArchive(
   const destination = resolve(options.destinationDirectory)
   const seenNames = new Set<string>()
   const openHandles = new Set<FileHandle>()
-  const completions: Promise<void>[] = []
+  const completions: Promise<
+    { ok: true } | { ok: false; error: Error }
+  >[] = []
   const pendingWrites = new Set<Promise<void>>()
   let entryCount = 0
   let totalBytes = 0
@@ -442,7 +421,11 @@ export async function extractModelArchive(
         throw new Error(`模型 ZIP 条目大小超出限制：${name}`)
       }
       const handlePromise = open(
-        safeChild(destination, name),
+        managedModelChild(
+          destination,
+          name,
+          '模型 ZIP 路径超出临时目录'
+        ),
         'wx'
       ).then((handle) => {
         openHandles.add(handle)
@@ -456,7 +439,12 @@ export async function extractModelArchive(
         resolveEntry = resolveEntryPromise
         rejectEntry = rejectEntryPromise
       })
-      completions.push(completion)
+      completions.push(
+        completion.then(
+          () => ({ ok: true as const }),
+          (error: Error) => ({ ok: false as const, error })
+        )
+      )
       file.ondata = (error, data, final) => {
         if (error) {
           rejectEntry?.(fail(error))
@@ -480,10 +468,6 @@ export async function extractModelArchive(
         }
         written += data.byteLength
         totalBytes += data.byteLength
-        if (name !== ARCHIVE_MANIFEST_NAME) {
-          completedModelBytes += data.byteLength
-          options.onProgress?.(completedModelBytes)
-        }
         if (
           written > entryMaximum ||
           totalBytes > maximumTotalBytes
@@ -497,7 +481,12 @@ export async function extractModelArchive(
         writeChain = writeChain.then(async () => {
           const handle = await handlePromise
           if (data.byteLength > 0) {
-            await handle.write(data)
+            await writeModelBuffer(handle, data, (persisted) => {
+              if (name !== ARCHIVE_MANIFEST_NAME) {
+                completedModelBytes += persisted.byteLength
+                options.onProgress?.(completedModelBytes)
+              }
+            })
           }
         })
         const pendingWrite = writeChain
@@ -529,7 +518,7 @@ export async function extractModelArchive(
   const buffer = Buffer.allocUnsafe(16 * 1024)
   try {
     while (true) {
-      ensureNotAborted(options.signal)
+      ensureModelOperationNotAborted(options.signal)
       if (fatalError) {
         throw fatalError
       }
@@ -544,7 +533,13 @@ export async function extractModelArchive(
       )
       await Promise.all([...pendingWrites])
     }
-    await Promise.all(completions)
+    const completionResults = await Promise.all(completions)
+    const failedCompletion = completionResults.find(
+      (result) => !result.ok
+    )
+    if (failedCompletion && !failedCompletion.ok) {
+      throw failedCompletion.error
+    }
     if (fatalError) {
       throw fatalError
     }
@@ -571,7 +566,11 @@ export async function extractModelArchive(
     manifest = modelArchiveManifestSchema.parse(
       JSON.parse(
         await readFile(
-          safeChild(destination, ARCHIVE_MANIFEST_NAME),
+          managedModelChild(
+            destination,
+            ARCHIVE_MANIFEST_NAME,
+            '模型 ZIP 路径超出临时目录'
+          ),
           'utf8'
         )
       ) as unknown
@@ -597,13 +596,19 @@ export async function extractModelArchive(
     throw new Error('模型 ZIP 清单与当前模型目录不匹配')
   }
   for (const archived of manifest.files) {
-    const path = safeChild(destination, archived.name)
+    const path = managedModelChild(
+      destination,
+      archived.name,
+      '模型 ZIP 路径超出临时目录'
+    )
     const metadata = await lstat(path)
+    const hash = await hashModelFile(path)
     if (
       !metadata.isFile() ||
       metadata.isSymbolicLink() ||
       metadata.size !== archived.size ||
-      (await hashFile(path)) !== archived.sha256
+      hash.size !== archived.size ||
+      hash.sha256 !== archived.sha256
     ) {
       throw new Error(`模型 ZIP 文件校验失败：${archived.name}`)
     }

@@ -49,10 +49,7 @@ import {
 } from './window'
 import { createTrayIcon } from './tray-icon'
 import { resolveBundledRuntimePaths } from './agent/bundled-runtimes'
-import type {
-  ContinueHostChild,
-  ContinueHostLauncher
-} from './agent/continue-host-adapter'
+import type { ContinueHostLauncher } from './agent/continue-host-adapter'
 import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
 import { SubagentService } from './assistant/subagent-service'
@@ -83,7 +80,11 @@ import {
   type DeepSeekHarnessFork
 } from './agent/deepseek-harness-utility-launcher'
 import { buildControlledHarnessEnvironment } from './agent/process-environment'
-import { runStartupPrerequisites } from './startup-prerequisites'
+import {
+  createStartupFailureDiagnostic,
+  formatStartupFailureMessage,
+  runStartupPrerequisites
+} from './startup-prerequisites'
 import { RuntimeExtensionStore } from './agent/runtime-extension-store'
 import {
   DshNpmExtensionInstaller,
@@ -95,8 +96,14 @@ import {
   repairStaleWindowsNotificationShortcuts,
   resolveWindowsAppUserModelId
 } from './windows-notification-identity'
+import { ShortcutSettingsStore } from './shortcut-settings-store'
+import { ShortcutSettingsService } from './shortcut-settings-service'
+import { defaultGlobalShortcutSettings } from '../shared/shortcut'
+import { requestProcessTreeTermination } from './agent/child-process-termination'
+import { createContinueUtilityProcessChild } from './agent/continue-utility-process-adapter'
 
-const shortcut = 'CommandOrControl+Shift+Space'
+const legacyDefaultShortcut =
+  defaultGlobalShortcutSettings.accelerator
 const mainModuleDirectory = dirname(fileURLToPath(import.meta.url))
 const portableUserDataPath = resolvePortableUserDataPath({
   packaged: app.isPackaged,
@@ -205,39 +212,28 @@ const launchContinueHost: ContinueHostLauncher = (
       stdio: 'pipe'
     }
   )
-  let exitCode: number | null = null
-  let killed = false
-  utilityChild.on('exit', (code) => {
-    exitCode = code
-  })
-
-  const child: ContinueHostChild = {
-    get exitCode() {
-      return exitCode
-    },
-    get killed() {
-      return killed
-    },
+  return createContinueUtilityProcessChild({
     get pid() {
       return utilityChild.pid
     },
     stderr: utilityChild.stderr,
-    once: (_event, listener) => {
-      utilityChild.once('error', (_type, location, report) => {
-        listener(
-          new Error(
-            `Continue 宿主进程异常（${location}）：${report.slice(0, 500)}`
-          )
-        )
-      })
-      return child
+    kill: () => utilityChild.kill(),
+    onExit: (listener) => {
+      utilityChild.on('exit', listener)
     },
-    kill: () => {
-      killed = true
-      return utilityChild.kill()
+    onceExit: (listener) => {
+      utilityChild.once('exit', listener)
+    },
+    onceError: (listener) => {
+      utilityChild.once('error', listener)
+    },
+    removeExitListener: (listener) => {
+      utilityChild.removeListener('exit', listener)
+    },
+    removeErrorListener: (listener) => {
+      utilityChild.removeListener('error', listener)
     }
-  }
-  return child
+  })
 }
 
 const forkDeepSeekHarness: DeepSeekHarnessFork = (
@@ -254,20 +250,7 @@ const forkDeepSeekHarness: DeepSeekHarnessFork = (
 function terminateHarnessUtilityProcess(
   child: ReturnType<DeepSeekHarnessFork>
 ): void {
-  if (process.platform === 'win32' && child.pid) {
-    const killer = spawn(
-      'taskkill.exe',
-      ['/PID', String(child.pid), '/T', '/F'],
-      {
-        shell: false,
-        stdio: 'ignore',
-        windowsHide: true
-      }
-    )
-    killer.unref()
-    return
-  }
-  child.kill()
+  requestProcessTreeTermination(child, { spawn })
 }
 
 const launchWechatSidecar: WechatSidecarLauncher = () => {
@@ -521,6 +504,12 @@ if (hasSingleInstanceLock) {
       parseDocument: documentParsingService.parse
     })
     knowledgeService = startupKnowledgeService
+    let activeEmbeddingProvider:
+      | ReturnType<typeof createEmbeddingProvider>
+      | undefined
+    let activeRerankProvider:
+      | ReturnType<typeof createRerankProvider>
+      | undefined
     const startupAssistantDatabase = new AssistantDatabase(
       join(app.getPath('userData'), 'assistant.sqlite')
     )
@@ -617,13 +606,29 @@ if (hasSingleInstanceLock) {
       },
       initializeKnowledgeAndGateway: async () => {
         await startupKnowledgeService.initialize()
+        const embeddingProvider = createEmbeddingProvider(
+          initialResolvedSettings
+        )
+        const rerankProvider = createRerankProvider(
+          initialResolvedSettings
+        )
         await Promise.all([
           startupKnowledgeService.setEmbeddingProvider(
-            createEmbeddingProvider(initialResolvedSettings)
-          ).catch(() => undefined),
+            embeddingProvider
+          ).then(
+            () => {
+              activeEmbeddingProvider = embeddingProvider
+            },
+            () => undefined
+          ),
           startupKnowledgeService.setRerankProvider(
-            createRerankProvider(initialResolvedSettings)
-          ).catch(() => undefined)
+            rerankProvider
+          ).then(
+            () => {
+              activeRerankProvider = rerankProvider
+            },
+            () => undefined
+          )
         ])
         await startupKnowledgeGateway.start()
       },
@@ -663,11 +668,19 @@ if (hasSingleInstanceLock) {
     })
     const approvalBroker = new ToolApprovalBroker()
 
-    const shortcutRegistered = globalShortcut.register(shortcut, () => {
-      if (mainWindow) {
-        toggleWindow(mainWindow)
-      }
-    })
+    const shortcutSettingsService = new ShortcutSettingsService(
+      new ShortcutSettingsStore(
+        join(app.getPath('userData'), 'shortcut-settings.json')
+      ),
+      globalShortcut,
+      () => {
+        if (mainWindow) {
+          toggleWindow(mainWindow)
+        }
+      },
+      process.platform
+    )
+    await shortcutSettingsService.initialize()
 
     let runtimeReconfigurationQueue: Promise<void> = Promise.resolve()
     let runtimeReconfigurationClosing = false
@@ -677,24 +690,97 @@ if (hasSingleInstanceLock) {
           throw new Error('Runtime 配置正在关闭')
         }
         const settings = await settingsStore.getResolvedSettings()
-        if (knowledgeService) {
-          await knowledgeService.setEmbeddingProvider(
-            createEmbeddingProvider(settings)
+        const nextEmbeddingProvider =
+          createEmbeddingProvider(settings)
+        const nextRerankProvider = createRerankProvider(settings)
+        let nextRuntime: AgentRuntime | undefined
+        let nextSubagentRuntime: AgentRuntime | undefined
+        let nextSubagentProfileRuntimes:
+          | ReadonlyMap<string, AgentRuntime>
+          | undefined
+        try {
+          nextSubagentRuntime = createDefaultModelRuntime(
+            defaultWorkspace,
+            settings
           )
-          await knowledgeService.setRerankProvider(
-            createRerankProvider(settings)
-          )
+          nextSubagentProfileRuntimes =
+            createSubagentProfileRuntimes(
+              defaultWorkspace,
+              settings
+            )
+          if (runtime) {
+            nextRuntime = await createConfiguredRuntime(settings)
+          }
+        } catch (error) {
+          await Promise.allSettled([
+            nextRuntime?.dispose(),
+            nextSubagentRuntime?.dispose(),
+            ...[
+              ...(nextSubagentProfileRuntimes?.values() ?? [])
+            ].map((candidate) => candidate.dispose())
+          ])
+          throw error
         }
-        if (runtime) {
-          await runtime.replace(
-            await createConfiguredRuntime(settings)
+
+        let runtimeConsumed = false
+        let subagentRuntimesConsumed = false
+        try {
+          if (knowledgeService) {
+            await Promise.all([
+              knowledgeService.setEmbeddingProvider(
+                nextEmbeddingProvider
+              ),
+              knowledgeService.setRerankProvider(
+                nextRerankProvider
+              )
+            ])
+          }
+          if (runtime && nextRuntime) {
+            runtimeConsumed = true
+            await runtime.replace(nextRuntime)
+          }
+          subagentRuntimesConsumed = true
+          await subagentService.replaceRuntimes(
+            nextSubagentRuntime,
+            nextSubagentProfileRuntimes
           )
+          await selectedRuntimeManager?.reset()
+          activeEmbeddingProvider = nextEmbeddingProvider
+          activeRerankProvider = nextRerankProvider
+        } catch (activationError) {
+          const rollbackResults = knowledgeService
+            ? await Promise.allSettled([
+                knowledgeService.setEmbeddingProvider(
+                  activeEmbeddingProvider
+                ),
+                knowledgeService.setRerankProvider(
+                  activeRerankProvider
+                )
+              ])
+            : []
+          await Promise.allSettled([
+            runtimeConsumed ? undefined : nextRuntime?.dispose(),
+            subagentRuntimesConsumed
+              ? undefined
+              : nextSubagentRuntime.dispose(),
+            ...(subagentRuntimesConsumed
+              ? []
+              : [...nextSubagentProfileRuntimes.values()].map(
+                  (candidate) => candidate.dispose()
+                ))
+          ])
+          const rollbackErrors = rollbackResults.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : []
+          )
+          if (rollbackErrors.length > 0) {
+            throw new AggregateError(
+              [activationError, ...rollbackErrors],
+              'Runtime 激活失败，且模型服务回滚未能完成',
+              { cause: activationError }
+            )
+          }
+          throw activationError
         }
-        await selectedRuntimeManager?.reset()
-        await subagentService.replaceRuntimes(
-          createDefaultModelRuntime(defaultWorkspace, settings),
-          createSubagentProfileRuntimes(defaultWorkspace, settings)
-        )
       })
       runtimeReconfigurationQueue = operation.catch(() => undefined)
       return operation
@@ -707,7 +793,7 @@ if (hasSingleInstanceLock) {
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
-      shortcutRegistered ? shortcut : '未注册',
+      legacyDefaultShortcut,
       settingsStore,
       capabilityService,
       contextManager,
@@ -735,7 +821,8 @@ if (hasSingleInstanceLock) {
       documentOcrBroker,
       releaseNotesService,
       goodbuddyConfigService,
-      runtimeExtensionStore
+      runtimeExtensionStore,
+      shortcutSettingsService
     )
     loadMainWindow(mainWindow)
     setImmediate(() => {
@@ -786,10 +873,14 @@ if (hasSingleInstanceLock) {
         showWindow(mainWindow)
       }
     })
-  }).catch(() => {
+  }).catch((error: unknown) => {
+    console.error(
+      'GoodBuddy startup failed',
+      createStartupFailureDiagnostic(error)
+    )
     dialog.showErrorBox(
       'GoodBuddy 启动失败',
-      '本地数据或 Runtime 服务初始化失败。请重启应用；若问题持续，请备份后清理应用数据。'
+      formatStartupFailureMessage(error)
     )
     app.quit()
   })

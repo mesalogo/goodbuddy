@@ -21,13 +21,19 @@ import type {
 } from '../../shared/capability-contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type {
+  GlobalShortcutSettingsSnapshot
+} from '../../shared/shortcut'
+import type {
   EmbeddingDiagnosticResult,
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
 import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
 import { builtinModelToolGroups } from '../../shared/builtin-model-tools'
-import { SettingsPanel } from './SettingsPanel'
+import {
+  SettingsPanel,
+  type SettingsLeaveRequester
+} from './SettingsPanel'
 import {
   RuntimeCustomizationSection,
   type RuntimeCustomizationSectionHandle
@@ -413,6 +419,37 @@ const updateApplicationSettings = vi.fn<
   }
   return { ...applicationSettings }
 })
+let shortcutSettingsSnapshot: GlobalShortcutSettingsSnapshot = {
+  settings: {
+    enabled: true,
+    accelerator: 'CommandOrControl+Shift+Space'
+  },
+  defaultSettings: {
+    enabled: true,
+    accelerator: 'CommandOrControl+Shift+Space'
+  },
+  platform: 'win32',
+  displayAccelerator: 'Ctrl+Shift+Space',
+  registered: true,
+  registeredAccelerator: 'CommandOrControl+Shift+Space',
+  status: 'registered'
+}
+const getShortcutSettings = vi.fn(async () => shortcutSettingsSnapshot)
+const updateShortcutSettings = vi.fn<
+  NonNullable<DesktopApi['shortcuts']>['updateSettings']
+>(async (input) => {
+  shortcutSettingsSnapshot = {
+    ...shortcutSettingsSnapshot,
+    settings: input,
+    displayAccelerator: input.accelerator,
+    registered: input.enabled,
+    registeredAccelerator: input.enabled
+      ? input.accelerator
+      : undefined,
+    status: input.enabled ? 'registered' : 'disabled'
+  }
+  return { ok: true, snapshot: shortcutSettingsSnapshot }
+})
 const speechCatalog: SpeechModelSnapshot['catalog'] = [
   {
     id: 'sensevoice-small-int8',
@@ -592,6 +629,37 @@ describe('SettingsPanel runtime files', () => {
       magicNoteCommentFormat: 'combined'
     }
     speechModelSnapshot = createSpeechModelSnapshot()
+    shortcutSettingsSnapshot = {
+      settings: {
+        enabled: true,
+        accelerator: 'CommandOrControl+Shift+Space'
+      },
+      defaultSettings: {
+        enabled: true,
+        accelerator: 'CommandOrControl+Shift+Space'
+      },
+      platform: 'win32',
+      displayAccelerator: 'Ctrl+Shift+Space',
+      registered: true,
+      registeredAccelerator: 'CommandOrControl+Shift+Space',
+      status: 'registered'
+    }
+    getShortcutSettings.mockImplementation(
+      async () => shortcutSettingsSnapshot
+    )
+    updateShortcutSettings.mockImplementation(async (input) => {
+      shortcutSettingsSnapshot = {
+        ...shortcutSettingsSnapshot,
+        settings: input,
+        displayAccelerator: input.accelerator,
+        registered: input.enabled,
+        registeredAccelerator: input.enabled
+          ? input.accelerator
+          : undefined,
+        status: input.enabled ? 'registered' : 'disabled'
+      }
+      return { ok: true, snapshot: shortcutSettingsSnapshot }
+    })
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
@@ -668,6 +736,10 @@ describe('SettingsPanel runtime files', () => {
           check: vi.fn(),
           openReleasePage: vi.fn(),
           onResult: vi.fn(() => () => {})
+        },
+        shortcuts: {
+          getSettings: getShortcutSettings,
+          updateSettings: updateShortcutSettings
         }
       } as unknown as DesktopApi
     })
@@ -1167,6 +1239,12 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByText('当前选择：ModelScope')
     ).not.toBeInTheDocument()
+    expect(
+      await screen.findByText('全局快捷唤起')
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('快捷键')).toHaveValue(
+      'CommandOrControl+Shift+Space'
+    )
   })
 
   it('keeps the confirmed model download source when saving fails', async () => {
@@ -1493,6 +1571,213 @@ describe('SettingsPanel runtime files', () => {
     expect(speechModelSelector).toHaveValue(
       'paraformer-bilingual-zh-en-int8'
     )
+  })
+
+  it('records and saves the global shortcut in General settings', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    expect(
+      screen.getByRole('tab', { name: '平台功能' })
+    ).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() =>
+      expect(getShortcutSettings).toHaveBeenCalled()
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByText('正在读取快捷键状态…')
+      ).not.toBeInTheDocument()
+    )
+    expect(
+      await screen.findByText('全局快捷唤起')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('读取快捷键设置失败，请重试')
+    ).not.toBeInTheDocument()
+    const accelerator = await screen.findByLabelText('快捷键')
+    expect(accelerator).toHaveValue(
+      'CommandOrControl+Shift+Space'
+    )
+    fireEvent.keyDown(accelerator, {
+      key: 'k',
+      ctrlKey: true,
+      altKey: true
+    })
+    expect(accelerator).toHaveValue('CommandOrControl+Alt+K')
+    const platformTab = screen.getByRole('tab', {
+      name: '平台功能'
+    })
+    fireEvent.keyDown(platformTab, { key: 'ArrowRight' })
+    expect(platformTab).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存快捷键' })
+    )
+    await waitFor(() =>
+      expect(updateShortcutSettings).toHaveBeenCalledWith({
+        enabled: true,
+        accelerator: 'CommandOrControl+Alt+K'
+      })
+    )
+    expect(
+      await screen.findByText('已注册：CommandOrControl+Alt+K')
+    ).toBeInTheDocument()
+  })
+
+  it('records physical Control separately from Command on macOS', async () => {
+    shortcutSettingsSnapshot = {
+      ...shortcutSettingsSnapshot,
+      platform: 'darwin',
+      displayAccelerator: 'Command+Shift+Space'
+    }
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const accelerator = await screen.findByLabelText('快捷键')
+    fireEvent.keyDown(accelerator, {
+      key: 'k',
+      ctrlKey: true
+    })
+    expect(accelerator).toHaveValue('Control+K')
+    fireEvent.keyDown(accelerator, {
+      key: 'k',
+      ctrlKey: true,
+      metaKey: true
+    })
+    expect(accelerator).toHaveValue('Control+Command+K')
+  })
+
+  it('preserves runtime drafts across navigation and protects them on close', async () => {
+    const onClose = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={onClose}
+        onSaved={vi.fn()}
+      />
+    )
+
+    const workspace = await screen.findByLabelText('默认工作区目录')
+    fireEvent.change(workspace, {
+      target: { value: 'C:\\Unsaved workspace' }
+    })
+    const runtimeTab = screen.getByRole('tab', {
+      name: 'Agent Runtime'
+    })
+    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+    expect(
+      screen.getByRole('tab', { name: '外观' })
+    ).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('alert')
+    ).toHaveTextContent('当前设置有未保存更改')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '继续编辑' })
+    )
+    fireEvent.click(runtimeTab)
+    expect(await screen.findByLabelText('默认工作区目录')).toHaveValue(
+      'C:\\Unsaved workspace'
+    )
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    expect(
+      screen.getByRole('button', { name: '放弃更改并关闭' })
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃更改并关闭' })
+    )
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('routes external leave requests through the existing dirty confirmation', async () => {
+    let requestLeave: SettingsLeaveRequester | undefined
+    const proceed = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onLeaveRequestReady={(requester) => {
+          requestLeave = requester
+        }}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={onClose}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.change(await screen.findByLabelText('默认工作区目录'), {
+      target: { value: 'C:\\Pending external navigation' }
+    })
+    act(() => requestLeave?.(proceed))
+
+    expect(proceed).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '当前设置有未保存更改'
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃更改并关闭' })
+    )
+    expect(proceed).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps shortcut input after a registration conflict', async () => {
+    updateShortcutSettings.mockResolvedValueOnce({
+      ok: false,
+      error: 'conflict',
+      snapshot: shortcutSettingsSnapshot
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    await waitFor(() =>
+      expect(getShortcutSettings).toHaveBeenCalled()
+    )
+    const accelerator = await screen.findByLabelText('快捷键')
+    fireEvent.change(accelerator, {
+      target: { value: 'Control+Alt+K' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存快捷键' })
+    )
+
+    expect(
+      await screen.findByText(/已被其他应用占用/u)
+    ).toBeInTheDocument()
+    expect(accelerator).toHaveValue('Control+Alt+K')
   })
 
   it('keeps a speech model draft when saving the selection fails', async () => {

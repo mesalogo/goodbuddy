@@ -29,8 +29,12 @@ import {
   ZoomOut
 } from 'lucide-react'
 import {
+  Component,
+  Suspense,
+  type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState
@@ -75,7 +79,10 @@ import {
   SegmentedControl,
   type PageTab
 } from './WorkspacePrimitives'
-import { KnowledgeGraphChart } from './KnowledgeGraphChart'
+import { createPreloadableComponent } from './preloadable-component'
+import type {
+  KnowledgeGraphChartProps
+} from './KnowledgeGraphChart'
 import {
   KnowledgeChunkManager
 } from './KnowledgeChunkManager'
@@ -84,8 +91,102 @@ import {
   type KnowledgeRetrievalWorkbenchResponse,
   type KnowledgeRetrievalWorkbenchSettings
 } from './KnowledgeRetrievalWorkbench'
-import { trapTabFocus } from './dialog-focus'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { KnowledgeEmbeddingIndexSection } from './KnowledgeEmbeddingIndexSection'
+
+type KnowledgeGraphChartModule = typeof import('./KnowledgeGraphChart')
+
+type KnowledgeGraphChartModuleLoader = (
+) => Promise<KnowledgeGraphChartModule>
+
+function createKnowledgeGraphChartRoute(
+  loadModule: KnowledgeGraphChartModuleLoader
+) {
+  return createPreloadableComponent(
+    loadModule,
+    (module) => module.KnowledgeGraphChart
+  )
+}
+
+const loadKnowledgeGraphChartModule: KnowledgeGraphChartModuleLoader =
+  () => import('./KnowledgeGraphChart')
+
+class KnowledgeGraphChunkErrorBoundary extends Component<
+  {
+    children: ReactNode
+    onRetry: () => void
+    retryLabel: string
+    errorMessage: string
+  },
+  { failed: boolean }
+> {
+  state = { failed: false }
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+
+  render(): ReactNode {
+    if (!this.state.failed) {
+      return this.props.children
+    }
+    return (
+      <div className="route-load-error" role="alert">
+        <AlertCircle aria-hidden="true" size={20} />
+        <strong>{this.props.errorMessage}</strong>
+        <button onClick={this.props.onRetry} type="button">
+          {this.props.retryLabel}
+        </button>
+      </div>
+    )
+  }
+}
+
+export function KnowledgeGraphChartLoader({
+  loadModule = loadKnowledgeGraphChartModule,
+  ...props
+}: KnowledgeGraphChartProps & {
+  loadModule?: KnowledgeGraphChartModuleLoader
+}
+): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
+  const [loaderState, setLoaderState] = useState(() => ({
+    generation: 0,
+    route: createKnowledgeGraphChartRoute(loadModule)
+  }))
+  const route = loaderState.route
+  const Chart = route.Component
+
+  return (
+    <KnowledgeGraphChunkErrorBoundary
+      errorMessage={t('graph.chunk.loadFailed')}
+      key={loaderState.generation}
+      onRetry={() =>
+        setLoaderState((current) => ({
+          generation: current.generation + 1,
+          route: createKnowledgeGraphChartRoute(loadModule)
+        }))
+      }
+      retryLabel={t('actions.retry')}
+    >
+      <Suspense
+        fallback={
+          <div
+            aria-busy="true"
+            aria-live="polite"
+            className="route-loading-status"
+            role="status"
+          >
+            <LoaderCircle aria-hidden="true" size={20} />
+            <span>{t('graph.chunk.loading')}</span>
+          </div>
+        }
+      >
+        <Chart {...props} />
+      </Suspense>
+    </KnowledgeGraphChunkErrorBoundary>
+  )
+}
 
 export type KnowledgeLibrary = SharedKnowledgeLibrary
 export type KnowledgeStorageMode = KnowledgeLibrary['storageMode']
@@ -453,51 +554,6 @@ function formatPercent(value: number, locale: string): string {
   return getLocaleFormatters(locale).percent.format(value)
 }
 
-const styles = {
-  workspace: {
-    display: 'grid',
-    overflow: 'hidden',
-    border: '1px solid var(--border-default)',
-    borderRadius: 'var(--radius-card)',
-    background: 'var(--surface-canvas)',
-    color: 'var(--text-primary)'
-  },
-  surface: {
-    border: '1px solid var(--border-default)',
-    borderRadius: 'var(--radius-control)',
-    background: 'var(--surface-raised)'
-  },
-  button: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 'var(--space-2)'
-  },
-  input: {
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    minHeight: 'var(--control-height)',
-    padding: 'var(--space-2) var(--space-3)',
-    border: '1px solid var(--border-control)',
-    borderRadius: 'var(--radius-control)',
-    background: 'var(--surface-raised)',
-    color: 'var(--text-primary)',
-    font: 'inherit'
-  },
-  label: {
-    display: 'grid',
-    gap: 'var(--space-2)',
-    color: 'var(--text-secondary)',
-    fontSize: 'var(--font-body)',
-    fontWeight: 650
-  },
-  muted: {
-    color: 'var(--text-muted)',
-    fontSize: 'var(--font-body)',
-    lineHeight: 1.55
-  }
-} as const
-
 function clampProgress(progress: number | undefined): number {
   if (!Number.isFinite(progress)) {
     return 0
@@ -624,53 +680,37 @@ function CreateLibraryWizard({
   return (
     <form
       aria-label={t('create.ariaLabel')}
+      className="knowledge-create"
       onSubmit={(event) => void submit(event)}
-      style={{
-        ...styles.surface,
-        display: 'grid',
-        gap: 14,
-        padding: 16,
-        margin: 20
-      }}
     >
       <div>
-        <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800 }}>
+        <span className="knowledge-create__eyebrow">
           {t('create.eyebrow')}
         </span>
-        <h2 style={{ margin: '5px 0 0', fontSize: 22 }}>
+        <h2 className="knowledge-create__title">
           {t('create.title')}
         </h2>
       </div>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.name')}
         <input
           autoFocus
           onChange={(event) => setName(event.currentTarget.value)}
-          style={styles.input}
           value={name}
         />
       </label>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.description')}
         <textarea
           onChange={(event) =>
             setDescription(event.currentTarget.value)
           }
           rows={3}
-          style={{ ...styles.input, resize: 'vertical' }}
           value={description}
         />
       </label>
-      <fieldset
-        style={{
-          display: 'grid',
-          gap: 8,
-          margin: 0,
-          padding: 0,
-          border: 0
-        }}
-      >
-        <legend style={{ ...styles.label, marginBottom: 8 }}>
+      <fieldset className="knowledge-create__storage">
+        <legend>
           {t('fields.storageMode')}
         </legend>
         {(
@@ -688,14 +728,8 @@ function CreateLibraryWizard({
           ] as const
         ).map(([value, title, detail]) => (
           <label
+            className="knowledge-create__storage-option"
             key={value}
-            style={{
-              ...styles.surface,
-              display: 'flex',
-              gap: 10,
-              padding: 11,
-              cursor: 'pointer'
-            }}
           >
             <input
               checked={storageMode === value}
@@ -704,22 +738,14 @@ function CreateLibraryWizard({
               type="radio"
             />
             <span>
-              <strong style={{ display: 'block' }}>{title}</strong>
-              <span style={styles.muted}>{detail}</span>
+              <strong>{title}</strong>
+              <span className="knowledge-muted">{detail}</span>
             </span>
           </label>
         ))}
       </fieldset>
       <label
-        className="toggle-row"
-        style={{
-          ...styles.surface,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: 12,
-          cursor: 'pointer'
-        }}
+        className="knowledge-create__graph-toggle toggle-row"
       >
         <input
           checked={graphEnabled}
@@ -728,14 +754,14 @@ function CreateLibraryWizard({
           type="checkbox"
         />
         <span>
-          <strong style={{ display: 'block' }}>
+          <strong>
             {t('graph.enable')}
           </strong>
-          <span style={styles.muted}>{t('graph.enableDescription')}</span>
+          <span className="knowledge-muted">{t('graph.enableDescription')}</span>
         </span>
       </label>
       {graphEnabled && (
-        <label style={styles.label}>
+        <label className="knowledge-field">
           {t('fields.graphGenerationStrategy')}
           <select
             onChange={(event) =>
@@ -743,7 +769,6 @@ function CreateLibraryWizard({
                 event.currentTarget.value as KnowledgeGraphStrategy
               )
             }
-            style={styles.input}
             value={graphStrategy}
           >
             {Object.entries(strategyLabelKeys).map(([value, key]) => (
@@ -757,17 +782,16 @@ function CreateLibraryWizard({
       {error && (
         <p
           aria-live="polite"
+          className="knowledge-create__error"
           role="alert"
-          style={{ color: 'var(--danger)', margin: 0 }}
         >
           {error}
         </p>
       )}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+      <div className="knowledge-create__actions">
         <button
           className="secondary-button"
           onClick={onCancel}
-          style={styles.button}
           type="button"
         >
           {t('actions.cancel')}
@@ -775,7 +799,6 @@ function CreateLibraryWizard({
         <button
           className="primary-button"
           disabled={saving}
-          style={styles.button}
           type="submit"
         >
           {saving ? (
@@ -810,9 +833,10 @@ function EditLibraryDialog({
   const dialogRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    nameRef.current?.focus()
-  }, [])
+  useEffect(
+    () => activateModalFocus(() => nameRef.current),
+    []
+  )
 
   const submit = async (
     event: React.FormEvent<HTMLFormElement>
@@ -842,6 +866,7 @@ function EditLibraryDialog({
     <div
       aria-label={t('edit.ariaLabel')}
       aria-modal="true"
+      className="knowledge-library-dialog-backdrop"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !saving) {
           event.preventDefault()
@@ -852,63 +877,44 @@ function EditLibraryDialog({
       }}
       ref={dialogRef}
       role="dialog"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 50,
-        display: 'grid',
-        placeItems: 'center',
-        padding: 20,
-        background: 'var(--overlay-backdrop)'
-      }}
     >
       <form
         aria-label={t('edit.formAriaLabel')}
+        className="knowledge-library-dialog"
         onSubmit={(event) => void submit(event)}
-        style={{
-          ...styles.surface,
-          display: 'grid',
-          width: 'min(480px, 100%)',
-          padding: 20,
-          boxShadow: 'var(--shadow-dialog)',
-          gap: 14
-        }}
       >
         <div>
-          <h2 style={{ margin: 0 }}>{t('edit.title')}</h2>
-          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+          <h2>{t('edit.title')}</h2>
+          <p className="knowledge-library-dialog__description">
             {t('edit.description')}
           </p>
         </div>
-        <label style={styles.label}>
+        <label className="knowledge-field">
           {t('fields.name')}
           <input
             onChange={(event) => setName(event.currentTarget.value)}
             ref={nameRef}
-            style={styles.input}
             value={name}
           />
         </label>
-        <label style={styles.label}>
+        <label className="knowledge-field">
           {t('fields.description')}
           <textarea
             onChange={(event) => setDescription(event.currentTarget.value)}
             rows={4}
-            style={{ ...styles.input, resize: 'vertical' }}
             value={description}
           />
         </label>
         {error && (
-          <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>
+          <p className="knowledge-inline-error" role="alert">
             {error}
           </p>
         )}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <div className="knowledge-library-dialog__actions">
           <button
             className="secondary-button"
             disabled={saving}
             onClick={onCancel}
-            style={styles.button}
             type="button"
           >
             {t('actions.cancel')}
@@ -916,7 +922,6 @@ function EditLibraryDialog({
           <button
             className="primary-button"
             disabled={saving}
-            style={styles.button}
             type="submit"
           >
             {saving ? (
@@ -947,9 +952,10 @@ function DeleteLibraryDialog({
   const dialogRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
-    cancelRef.current?.focus()
-  }, [])
+  useEffect(
+    () => activateModalFocus(() => cancelRef.current),
+    []
+  )
 
   const confirm = async (): Promise<void> => {
     setDeleting(true)
@@ -968,6 +974,7 @@ function DeleteLibraryDialog({
     <div
       aria-label={t('delete.ariaLabel')}
       aria-modal="true"
+      className="knowledge-library-dialog-backdrop"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !deleting) {
           event.preventDefault()
@@ -978,29 +985,15 @@ function DeleteLibraryDialog({
       }}
       ref={dialogRef}
       role="dialog"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 50,
-        display: 'grid',
-        placeItems: 'center',
-        padding: 20,
-        background: 'var(--overlay-backdrop)'
-      }}
     >
       <div
-        style={{
-          ...styles.surface,
-          width: 'min(440px, 100%)',
-          padding: 20,
-          boxShadow: 'var(--shadow-dialog)'
-        }}
+        className="knowledge-library-dialog knowledge-library-dialog--delete"
       >
         <AlertCircle color="var(--danger)" aria-hidden="true" size={26} />
-        <h2 style={{ margin: '12px 0 8px' }}>
+        <h2>
           {t('delete.title', { name: library.name })}
         </h2>
-        <p style={{ ...styles.muted, margin: 0 }}>
+        <p className="knowledge-library-dialog__description">
           {library.storageMode === 'managed'
             ? t('delete.managedDescription')
             : t('delete.referenceDescription')}
@@ -1008,26 +1001,18 @@ function DeleteLibraryDialog({
         {error && (
           <p
             aria-live="polite"
+            className="knowledge-inline-error"
             role="alert"
-            style={{ color: 'var(--danger)' }}
           >
             {error}
           </p>
         )}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            gap: 8,
-            marginTop: 18
-          }}
-        >
+        <div className="knowledge-library-dialog__actions">
           <button
             className="secondary-button"
             disabled={deleting}
             onClick={onCancel}
             ref={cancelRef}
-            style={styles.button}
             type="button"
           >
             {t('actions.cancel')}
@@ -1036,7 +1021,6 @@ function DeleteLibraryDialog({
             className="danger-button"
             disabled={deleting}
             onClick={() => void confirm()}
-            style={styles.button}
             type="button"
           >
             <Trash2 aria-hidden="true" size={15} />
@@ -1044,6 +1028,147 @@ function DeleteLibraryDialog({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+type GraphDestructiveAction =
+  | {
+      kind: 'delete-entity'
+      node: KnowledgeGraphNode
+      relationCount: number
+    }
+  | {
+      kind: 'delete-relation'
+      relation: KnowledgeGraphRelation
+      sourceLabel: string
+      targetLabel: string
+      typeLabel: string
+    }
+  | {
+      kind: 'merge-entities'
+      source: KnowledgeGraphNode
+      target: KnowledgeGraphNode
+    }
+
+function GraphDestructiveDialog({
+  action,
+  onCancel,
+  onConfirm
+}: {
+  action: GraphDestructiveAction
+  onCancel: () => void
+  onConfirm: () => void | Promise<void>
+}): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string>()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
+  const descriptionId = useId()
+  const title =
+    action.kind === 'delete-entity'
+      ? t('graph.confirm.deleteEntity.title', {
+          name: action.node.label
+        })
+      : action.kind === 'delete-relation'
+        ? t('graph.confirm.deleteRelation.title', {
+            type: action.typeLabel
+          })
+        : t('graph.confirm.merge.title', {
+            source: action.source.label,
+            target: action.target.label
+          })
+  const description =
+    action.kind === 'delete-entity'
+      ? t('graph.confirm.deleteEntity.description', {
+          name: action.node.label,
+          count: action.relationCount
+        })
+      : action.kind === 'delete-relation'
+        ? t('graph.confirm.deleteRelation.description', {
+            source: action.sourceLabel,
+            target: action.targetLabel,
+            type: action.typeLabel
+          })
+        : t('graph.confirm.merge.description', {
+            source: action.source.label,
+            target: action.target.label
+          })
+  const confirmLabel =
+    action.kind === 'delete-entity'
+      ? t('graph.confirm.deleteEntity.action')
+      : action.kind === 'delete-relation'
+        ? t('graph.confirm.deleteRelation.action')
+        : t('graph.confirm.merge.action')
+
+  useEffect(
+    () => activateModalFocus(() => cancelRef.current),
+    []
+  )
+
+  const confirm = async (): Promise<void> => {
+    setPending(true)
+    setError(undefined)
+    try {
+      await onConfirm()
+      onCancel()
+    } catch (reason) {
+      setError(toErrorMessage(reason, t))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <div
+      aria-describedby={descriptionId}
+      aria-labelledby={titleId}
+      aria-modal="true"
+      className="knowledge-confirm-dialog-backdrop"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !pending) {
+          event.preventDefault()
+          onCancel()
+          return
+        }
+        trapTabFocus(event, dialogRef.current)
+      }}
+      ref={dialogRef}
+      role="alertdialog"
+      tabIndex={-1}
+    >
+      <section className="knowledge-confirm-dialog">
+        <AlertCircle aria-hidden="true" size={26} />
+        <h2 id={titleId}>{title}</h2>
+        <p id={descriptionId}>{description}</p>
+        {error && (
+          <p className="knowledge-inline-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="knowledge-confirm-dialog__actions">
+          <button
+            className="secondary-button"
+            disabled={pending}
+            onClick={onCancel}
+            ref={cancelRef}
+            type="button"
+          >
+            {t('actions.cancel')}
+          </button>
+          <button
+            className="danger-button"
+            disabled={pending}
+            onClick={() => void confirm()}
+            type="button"
+          >
+            <Trash2 aria-hidden="true" size={15} />
+            {pending ? t('graph.confirm.processing') : confirmLabel}
+          </button>
+        </div>
+      </section>
     </div>
   )
 }
@@ -1135,16 +1260,16 @@ function DocumentsView({
   }, [documents, locale, query])
 
   return (
-    <div className="knowledge-documents" style={{ display: 'grid', gap: 18 }}>
+    <div className="knowledge-documents">
       <section aria-labelledby="sources-title">
         <div
           className="knowledge-documents__section-heading"
         >
           <div>
-            <h3 id="sources-title" style={{ margin: 0 }}>
+            <h3 id="sources-title">
               {t('documents.sources.title')}
             </h3>
-            <p style={{ ...styles.muted, margin: '5px 0 0' }}>
+            <p className="knowledge-section-description">
               {t(
                 library.graphEnabled
                   ? 'documents.sources.descriptionWithGraph'
@@ -1156,7 +1281,6 @@ function DocumentsView({
             <button
               className="secondary-button"
               onClick={() => fileInputRef.current?.click()}
-              style={styles.button}
               type="button"
             >
               <FilePlus2 aria-hidden="true" size={15} />
@@ -1173,7 +1297,6 @@ function DocumentsView({
                   )
                 )
               }
-              style={styles.button}
               type="button"
             >
               <FolderOpen aria-hidden="true" size={15} />
@@ -1182,7 +1305,6 @@ function DocumentsView({
             <button
               className="secondary-button"
               onClick={() => setUrlOpen((current) => !current)}
-              style={styles.button}
               type="button"
             >
               <Link2 aria-hidden="true" size={15} />
@@ -1202,13 +1324,7 @@ function DocumentsView({
         </div>
 
         {library.graphEnabled && library.graphStrategy === 'ask' && (
-          <label
-            style={{
-              ...styles.label,
-              maxWidth: 320,
-              marginTop: 14
-            }}
-          >
+          <label className="knowledge-documents__import-strategy knowledge-field">
             {t('documents.importStrategy')}
             <select
               onChange={(event) =>
@@ -1219,7 +1335,6 @@ function DocumentsView({
                   >
                 )
               }
-              style={styles.input}
               value={askStrategy}
             >
               <option value="rules">
@@ -1272,24 +1387,17 @@ function DocumentsView({
                 }
               })
             }}
-            style={{
-              ...styles.surface,
-              marginTop: 12,
-              padding: 12
-            }}
           >
             <input
               aria-label={t('documents.urlImport.addressAriaLabel')}
               onChange={(event) => setUrl(event.currentTarget.value)}
               placeholder="https://"
-              style={styles.input}
               type="url"
               value={url}
             />
             <button
               className="primary-button"
               disabled={pending === 'url'}
-              style={styles.button}
               type="submit"
             >
               {t('actions.import')}
@@ -1298,7 +1406,6 @@ function DocumentsView({
               aria-label={t('documents.urlImport.closeAriaLabel')}
               className="secondary-button"
               onClick={() => setUrlOpen(false)}
-              style={styles.button}
               type="button"
             >
               <X aria-hidden="true" size={15} />
@@ -1307,6 +1414,9 @@ function DocumentsView({
         )}
 
         <div
+          className={`knowledge-documents__drop-zone${
+            dragging ? ' knowledge-documents__drop-zone--dragging' : ''
+          }`}
           onDragEnter={(event) => {
             event.preventDefault()
             setDragging(true)
@@ -1322,22 +1432,9 @@ function DocumentsView({
             setDragging(false)
             importFiles(Array.from(event.dataTransfer.files))
           }}
-          style={{
-            marginTop: 12,
-            padding: 18,
-            border: `1px dashed ${
-              dragging ? 'var(--accent)' : 'var(--border-default)'
-            }`,
-            borderRadius: 8,
-            textAlign: 'center',
-            background: dragging
-              ? 'var(--accent-subtle)'
-              : 'var(--surface-subtle)',
-            color: dragging ? 'var(--accent)' : 'var(--text-muted)'
-          }}
         >
           <UploadCloud aria-hidden="true" size={22} />
-          <div style={{ marginTop: 5 }}>
+          <div>
             {t('documents.dropFiles', { name: library.name })}
           </div>
         </div>
@@ -1345,30 +1442,24 @@ function DocumentsView({
         {error && (
           <p
             aria-live="polite"
+            className="knowledge-inline-error"
             role="alert"
-            style={{ color: 'var(--danger)' }}
           >
             {error}
           </p>
         )}
 
         {sources.length === 0 ? (
-          <div style={{ ...styles.surface, marginTop: 12, padding: 18 }}>
+          <div className="knowledge-documents__empty">
             <strong>{t('documents.sources.emptyTitle')}</strong>
-            <p style={{ ...styles.muted, marginBottom: 0 }}>
+            <p className="knowledge-muted">
               {t('documents.sources.emptyDescription')}
             </p>
           </div>
         ) : (
           <ul
             aria-label={t('documents.sources.listAriaLabel')}
-            style={{
-              display: 'grid',
-              gap: 9,
-              margin: '12px 0 0',
-              padding: 0,
-              listStyle: 'none'
-            }}
+            className="knowledge-source-list"
           >
             {sources.map((source) => {
               const relatedTasks = tasks?.filter(
@@ -1378,22 +1469,9 @@ function DocumentsView({
               <li
                 className="knowledge-source-row"
                 key={source.id}
-                style={{
-                  ...styles.surface,
-                  display: 'grid',
-                  gap: 12,
-                  padding: 12
-                }}
               >
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      minWidth: 0
-                    }}
-                  >
+                <div className="knowledge-source-row__main">
+                  <div className="knowledge-source-row__identity">
                     {source.kind === 'url' ? (
                       <Link2 aria-hidden="true" size={16} />
                     ) : source.kind === 'directory' ? (
@@ -1402,33 +1480,12 @@ function DocumentsView({
                       <FileText aria-hidden="true" size={16} />
                     )}
                     <strong
-                      style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}
                       title={source.name}
                     >
                       {source.name}
                     </strong>
                     <span
-                      style={{
-                        padding: '2px 7px',
-                        borderRadius: 999,
-                        background:
-                          source.status === 'failed'
-                            ? 'var(--danger-subtle)'
-                            : source.status === 'ready'
-                              ? 'var(--success-subtle)'
-                              : 'var(--accent-subtle)',
-                        color:
-                          source.status === 'failed'
-                            ? 'var(--danger)'
-                            : source.status === 'ready'
-                              ? 'var(--success)'
-                              : 'var(--accent)',
-                        fontSize: 12
-                      }}
+                      className={`knowledge-source-row__status knowledge-source-row__status--${source.status}`}
                     >
                       {t(sourceStatusLabelKeys[source.status])}
                       {source.status === 'syncing' &&
@@ -1440,20 +1497,14 @@ function DocumentsView({
                         : ''}
                     </span>
                   </div>
-                  <div style={{ ...styles.muted, marginTop: 5 }}>
+                  <div className="knowledge-source-row__meta">
                     {t('documents.sourceMeta', {
                       count: formatNumber(source.documentCount, locale),
                       time: formatTime(source.lastSyncedAt, locale, t)
                     })}
                   </div>
                   {source.error && (
-                    <div
-                      style={{
-                        color: 'var(--danger)',
-                        fontSize: 12,
-                        marginTop: 5
-                      }}
-                    >
+                    <div className="knowledge-source-row__error">
                       {source.error}
                     </div>
                   )}
@@ -1481,7 +1532,6 @@ function DocumentsView({
                       onClick={() =>
                         void run(source.id, () => onPauseSource(source.id))
                       }
-                      style={styles.button}
                       type="button"
                     >
                       <CirclePause aria-hidden="true" size={14} />
@@ -1497,7 +1547,6 @@ function DocumentsView({
                       onClick={() =>
                         void run(source.id, () => onRetrySource(source.id))
                       }
-                      style={styles.button}
                       type="button"
                     >
                       <RotateCcw aria-hidden="true" size={14} />
@@ -1513,7 +1562,6 @@ function DocumentsView({
                       onClick={() =>
                         void run(source.id, () => onSyncSource(source.id))
                       }
-                      style={styles.button}
                       type="button"
                     >
                       <RefreshCw aria-hidden="true" size={14} />
@@ -1529,7 +1577,6 @@ function DocumentsView({
                     onClick={() =>
                       void run(source.id, () => onRemoveSource(source.id))
                     }
-                    style={styles.button}
                     type="button"
                   >
                     <Trash2 aria-hidden="true" size={14} />
@@ -1547,75 +1594,52 @@ function DocumentsView({
         <div
           className="knowledge-documents__section-heading"
         >
-          <h3 id="documents-title" style={{ margin: 0 }}>
+          <h3 id="documents-title">
             {t('documents.table.title')}
           </h3>
           <label
             className="knowledge-documents__search"
-            style={{
-              position: 'relative',
-              display: 'flex',
-              alignItems: 'center'
-            }}
           >
             <Search
               aria-hidden="true"
               size={15}
-              style={{
-                position: 'absolute',
-                left: 11,
-                color: 'var(--text-muted)'
-              }}
             />
-            <span style={{ position: 'absolute', clip: 'rect(0 0 0 0)' }}>
+            <span className="sr-only">
               {t('documents.search.label')}
             </span>
             <input
               aria-label={t('documents.search.label')}
               onChange={(event) => setQuery(event.currentTarget.value)}
               placeholder={t('documents.search.placeholder')}
-              style={{ ...styles.input, paddingLeft: 34 }}
               type="search"
               value={query}
             />
           </label>
         </div>
         {filteredDocuments.length === 0 ? (
-          <div style={{ ...styles.surface, marginTop: 12, padding: 18 }}>
+          <div className="knowledge-documents__empty">
             {documents.length === 0
               ? t('documents.table.empty')
               : t('documents.table.noResults')}
           </div>
         ) : (
           <div className="knowledge-documents__table-scroll">
-            <table
-              style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                fontSize: 13
-              }}
-            >
-              <thead
-                style={{
-                  color: 'var(--text-secondary)',
-                  textAlign: 'left',
-                  background: 'var(--surface-subtle)'
-                }}
-              >
+            <table>
+              <thead>
                 <tr>
-                  <th style={{ padding: '9px 10px' }}>
+                  <th>
                     {t('documents.table.columns.document')}
                   </th>
-                  <th style={{ padding: '9px 10px' }}>
+                  <th>
                     {t('documents.table.columns.processingStatus')}
                   </th>
-                  <th style={{ padding: '9px 10px' }}>
+                  <th>
                     {t('documents.table.columns.chunks')}
                   </th>
-                  <th style={{ padding: '9px 10px' }}>
+                  <th>
                     {t('documents.table.columns.size')}
                   </th>
-                  <th style={{ padding: '9px 10px' }}>
+                  <th>
                     {t('documents.table.columns.actions')}
                   </th>
                 </tr>
@@ -1631,29 +1655,16 @@ function DocumentsView({
                       task.status === 'running'
                   )
                   return (
-                  <tr
-                    key={document.id}
-                    style={{
-                      borderTop: '1px solid var(--border-subtle)'
-                    }}
-                  >
-                    <td style={{ padding: 10 }}>
+                  <tr key={document.id}>
+                    <td>
                       <strong>{document.name}</strong>
                       {document.path && (
-                        <div
-                          style={{
-                            ...styles.muted,
-                            maxWidth: 360,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
-                          }}
-                        >
+                        <div className="knowledge-document-path">
                           {formatDocumentLocation(document.path, t)}
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: 10 }}>
+                    <td>
                       <div className="knowledge-document-status">
                         <span
                           className={`knowledge-document-status__durable knowledge-document-status__durable--${document.status}`}
@@ -1672,22 +1683,20 @@ function DocumentsView({
                         )}
                       </div>
                       {document.error && (
-                        <div
-                          style={{ color: 'var(--danger)', marginTop: 4 }}
-                        >
+                        <div className="knowledge-document-error">
                           {document.error}
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: 10 }}>
+                    <td>
                       {document.chunkCount === undefined
                         ? '—'
                         : formatNumber(document.chunkCount, locale)}
                     </td>
-                    <td style={{ padding: 10 }}>
+                    <td>
                       {formatSize(document.size, locale, t)}
                     </td>
-                    <td style={{ padding: 10 }}>
+                    <td>
                       <div className="knowledge-document-actions">
                         {relatedTasks.length > 0 && (
                           <button
@@ -1759,6 +1768,7 @@ function EntityEditor({
       aria-label={
         node ? t('entityEditor.editAriaLabel') : t('entityEditor.addAriaLabel')
       }
+      className="knowledge-graph__form"
       onSubmit={(event) => {
         event.preventDefault()
         void onSave({
@@ -1768,23 +1778,20 @@ function EntityEditor({
           aliases: parseAliases(aliases)
         })
       }}
-      style={{ display: 'grid', gap: 10 }}
     >
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.name')}
         <input
           onChange={(event) => setLabel(event.currentTarget.value)}
           required
-          style={styles.input}
           value={label}
         />
       </label>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.type')}
         <select
           onChange={(event) => setType(event.currentTarget.value)}
           required
-          style={styles.input}
           value={type}
         >
           {display.entityTypes.map((definition) => (
@@ -1794,31 +1801,28 @@ function EntityEditor({
           ))}
         </select>
       </label>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.description')}
         <textarea
           onChange={(event) => setDescription(event.currentTarget.value)}
           rows={3}
-          style={{ ...styles.input, resize: 'vertical' }}
           value={description}
         />
       </label>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.aliases')}
         <input
           onChange={(event) => setAliases(event.currentTarget.value)}
-          style={styles.input}
           value={aliases}
         />
       </label>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button className="primary-button" style={styles.button}>
+      <div className="knowledge-graph__form-actions">
+        <button className="primary-button">
           {node ? t('actions.saveEntity') : t('actions.addEntity')}
         </button>
         <button
           className="secondary-button"
           onClick={onCancel}
-          style={styles.button}
           type="button"
         >
           {t('actions.cancel')}
@@ -1894,6 +1898,7 @@ function RelationForm({
           ? t('relationEditor.editAriaLabel')
           : t('relationEditor.addAriaLabel')
       }
+      className="knowledge-graph__relation-form"
       onSubmit={(event) => {
         event.preventDefault()
         void onSave({
@@ -1903,20 +1908,12 @@ function RelationForm({
           description: description.trim()
         })
       }}
-      style={{
-        ...styles.surface,
-        display: 'grid',
-        gap: 9,
-        padding: 12,
-        marginTop: 10
-      }}
     >
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.source')}
         <select
           onChange={(event) => setSource(event.currentTarget.value)}
           required
-          style={styles.input}
           value={source}
         >
           {nodes.map((node) => (
@@ -1926,12 +1923,11 @@ function RelationForm({
           ))}
         </select>
       </label>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.target')}
         <select
           onChange={(event) => setTarget(event.currentTarget.value)}
           required
-          style={styles.input}
           value={target}
         >
           <option disabled value="">
@@ -1944,12 +1940,11 @@ function RelationForm({
           ))}
         </select>
       </label>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.relationType')}
         <select
           onChange={(event) => setType(event.currentTarget.value)}
           required
-          style={styles.input}
           value={selectedType}
         >
           <option disabled value="">
@@ -1967,24 +1962,22 @@ function RelationForm({
           </span>
         )}
       </label>
-      <label style={styles.label}>
+      <label className="knowledge-field">
         {t('fields.notes')}
         <input
           onChange={(event) =>
             setDescription(event.currentTarget.value)
           }
-          style={styles.input}
           value={description}
         />
       </label>
-      <div style={{ display: 'flex', gap: 7 }}>
-        <button className="primary-button" style={styles.button}>
+      <div className="knowledge-graph__form-actions">
+        <button className="primary-button">
           {relation ? t('actions.saveRelation') : t('actions.addRelation')}
         </button>
         <button
           className="secondary-button"
           onClick={onCancel}
-          style={styles.button}
           type="button"
         >
           {t('actions.cancel')}
@@ -2238,19 +2231,20 @@ function KnowledgeSettingsView({
       {mode === 'index' && (
       <section
         aria-labelledby="knowledge-graph-capability-title"
-        style={{ ...styles.surface, padding: 16 }}
+        className="knowledge-settings__section"
       >
         <div>
-          <h3 id="knowledge-graph-capability-title" style={{ margin: 0 }}>
+          <h3 id="knowledge-graph-capability-title">
             {t('settings.graphCapability.title')}
           </h3>
-          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+          <p className="knowledge-section-description">
             {t('settings.graphCapability.description')}
           </p>
         </div>
         <label
-          className="knowledge-settings__toggle toggle-row"
-          style={{ ...styles.surface, cursor: saving ? 'wait' : 'pointer' }}
+          className={`knowledge-settings__toggle toggle-row${
+            saving ? ' knowledge-settings__toggle--pending' : ''
+          }`}
         >
           <input
             checked={library.graphEnabled}
@@ -2262,8 +2256,8 @@ function KnowledgeSettingsView({
             type="checkbox"
           />
           <span>
-            <strong style={{ display: 'block' }}>{t('graph.enable')}</strong>
-            <span style={styles.muted}>
+            <strong>{t('graph.enable')}</strong>
+            <span className="knowledge-muted">
               {library.graphEnabled
                 ? t('settings.graphCapability.enabledDescription')
                 : t('settings.graphCapability.disabledDescription')}
@@ -2275,17 +2269,17 @@ function KnowledgeSettingsView({
       {mode === 'graph' && (
       <section
         aria-labelledby="knowledge-graph-settings-title"
-        style={{ ...styles.surface, padding: 16 }}
+        className="knowledge-settings__section"
       >
         <div>
-          <h3 id="knowledge-graph-settings-title" style={{ margin: 0 }}>
+          <h3 id="knowledge-graph-settings-title">
             {t('settings.graphConfiguration.title')}
           </h3>
-          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+          <p className="knowledge-section-description">
             {t('settings.graphConfiguration.description')}
           </p>
         </div>
-        <label style={styles.label}>
+        <label className="knowledge-field">
           {t('fields.graphExtractionStrategy')}
           <select
             aria-label={t('settings.strategyAriaLabel')}
@@ -2296,7 +2290,6 @@ function KnowledgeSettingsView({
                   event.currentTarget.value as KnowledgeGraphStrategy
               })
             }
-            style={styles.input}
             value={library.graphStrategy}
           >
             {Object.entries(strategyLabelKeys).map(([value, key]) => (
@@ -2305,7 +2298,7 @@ function KnowledgeSettingsView({
               </option>
             ))}
           </select>
-          <span style={styles.muted}>
+          <span className="knowledge-muted">
             {t('settings.askDescription')}
           </span>
         </label>
@@ -2314,20 +2307,19 @@ function KnowledgeSettingsView({
       {mode === 'index' && (
       <section
         aria-labelledby="knowledge-chunking-settings-title"
-        style={{ ...styles.surface, padding: 16 }}
+        className="knowledge-settings__section"
       >
         <div>
           <h3
             id="knowledge-chunking-settings-title"
-            style={{ margin: 0 }}
           >
             {t('settings.chunking.title')}
           </h3>
-          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+          <p className="knowledge-section-description">
             {t('settings.chunking.description')}
           </p>
         </div>
-        <label style={styles.label}>
+        <label className="knowledge-field">
           {t('settings.chunking.mode')}
           <select
             disabled={saving || rebuilding}
@@ -2338,7 +2330,6 @@ function KnowledgeSettingsView({
                   .value as KnowledgeChunkingSettings['mode']
               }))
             }
-            style={styles.input}
             value={chunking.mode}
           >
             <option value="fixed">
@@ -2373,7 +2364,7 @@ function KnowledgeSettingsView({
           />
         </label>
         <div className="knowledge-settings__chunking-grid">
-          <label style={styles.label}>
+          <label className="knowledge-field">
             {t('settings.chunking.targetCharacters')}
             <input
               disabled={saving || rebuilding}
@@ -2385,12 +2376,11 @@ function KnowledgeSettingsView({
                   targetCharacters: Number(event.currentTarget.value)
                 }))
               }
-              style={styles.input}
               type="number"
               value={chunking.targetCharacters}
             />
           </label>
-          <label style={styles.label}>
+          <label className="knowledge-field">
             {t('settings.chunking.overlapCharacters')}
             <input
               disabled={saving || rebuilding}
@@ -2402,14 +2392,13 @@ function KnowledgeSettingsView({
                   overlapCharacters: Number(event.currentTarget.value)
                 }))
               }
-              style={styles.input}
               type="number"
               value={chunking.overlapCharacters}
             />
           </label>
           {chunking.mode === 'parent-child' && (
             <>
-              <label style={styles.label}>
+              <label className="knowledge-field">
                 {t('settings.chunking.parentCharacters')}
                 <input
                   disabled={saving || rebuilding}
@@ -2423,12 +2412,11 @@ function KnowledgeSettingsView({
                       )
                     }))
                   }
-                  style={styles.input}
                   type="number"
                   value={chunking.parentCharacters}
                 />
               </label>
-              <label style={styles.label}>
+              <label className="knowledge-field">
                 {t('settings.chunking.childCharacters')}
                 <input
                   disabled={saving || rebuilding}
@@ -2442,7 +2430,6 @@ function KnowledgeSettingsView({
                       )
                     }))
                   }
-                  style={styles.input}
                   type="number"
                   value={chunking.childCharacters}
                 />
@@ -2487,14 +2474,13 @@ function KnowledgeSettingsView({
       {mode === 'graph' && (
       <section
         aria-labelledby="knowledge-ontology-settings-title"
-        className="knowledge-settings__ontology"
-        style={{ ...styles.surface, padding: 16 }}
+        className="knowledge-settings__ontology knowledge-settings__section"
       >
         <div>
-          <h3 id="knowledge-ontology-settings-title" style={{ margin: 0 }}>
+          <h3 id="knowledge-ontology-settings-title">
             {t('settings.ontology.title')}
           </h3>
-          <p style={{ ...styles.muted, margin: '6px 0 0' }}>
+          <p className="knowledge-section-description">
             {t('settings.ontology.description')}
           </p>
         </div>
@@ -2825,7 +2811,7 @@ function KnowledgeSettingsView({
       </section>
       )}
       {error && (
-        <p role="alert" style={{ color: 'var(--danger)', margin: 0 }}>
+        <p className="knowledge-inline-error" role="alert">
           {error}
         </p>
       )}
@@ -3209,10 +3195,10 @@ function KnowledgeTasksView({
     >
       <div className="knowledge-tasks__summary">
         <div>
-          <h3 id="knowledge-tasks-title" style={{ margin: 0 }}>
+          <h3 id="knowledge-tasks-title">
             {t('tasks.title')}
           </h3>
-          <p style={{ ...styles.muted, margin: '5px 0 0' }}>
+          <p className="knowledge-section-description">
             {t('tasks.totalCount', {
               count: formatNumber(tasks.length, locale)
             })}
@@ -3418,6 +3404,9 @@ function GraphView({
   const [relationForm, setRelationForm] =
     useState<KnowledgeGraphRelation | 'new'>()
   const [mergeTargetId, setMergeTargetId] = useState('')
+  const [destructiveAction, setDestructiveAction] =
+    useState<GraphDestructiveAction>()
+  const entityPickerRef = useRef<HTMLSelectElement>(null)
   const [zoom, setZoom] = useState(1)
   const [fitViewRequest, setFitViewRequest] = useState(0)
   const [sidebarTab, setSidebarTab] =
@@ -3494,34 +3483,23 @@ function GraphView({
   }
 
   return (
-    <div className="knowledge-graph knowledge-graph--with-details">
+    <div className="knowledge-graph">
       <section
         aria-label={t('graph.canvasAriaLabel')}
         className="knowledge-graph__canvas"
-        style={{
-          ...styles.surface,
-          display: 'grid',
-          gridTemplateRows: 'auto minmax(0, 1fr) auto',
-          overflow: 'hidden'
-        }}
       >
         <div
           className="knowledge-graph__toolbar"
         >
-          <label
-            className="knowledge-graph__search"
-            style={{ position: 'relative' }}
-          >
+          <label className="knowledge-graph__search">
             <Search
               aria-hidden="true"
               size={15}
-              style={{ position: 'absolute', left: 11, top: 12 }}
             />
             <input
               aria-label={t('graph.searchAriaLabel')}
               onChange={(event) => setQuery(event.currentTarget.value)}
               placeholder={t('graph.searchPlaceholder')}
-              style={{ ...styles.input, paddingLeft: 34 }}
               type="search"
               value={query}
             />
@@ -3530,7 +3508,6 @@ function GraphView({
             aria-label={t('graph.typeFilterAriaLabel')}
             className="knowledge-graph__filter"
             onChange={(event) => setTypeFilter(event.currentTarget.value)}
-            style={styles.input}
             value={typeFilter}
           >
             <option value="all">{t('graph.allTypes')}</option>
@@ -3548,6 +3525,7 @@ function GraphView({
                 selectNode(event.currentTarget.value)
               }
             }}
+            ref={entityPickerRef}
             value={
               selectedNodeId && visibleIds.has(selectedNodeId)
                 ? selectedNodeId
@@ -3573,7 +3551,6 @@ function GraphView({
                 )
                 .finally(() => setReextracting(false))
             }}
-            style={styles.button}
             type="button"
           >
             <RefreshCw aria-hidden="true" size={15} />
@@ -3588,7 +3565,6 @@ function GraphView({
               setCreatingEntity(true)
               setSidebarTab('details')
             }}
-            style={styles.button}
             type="button"
           >
             <Plus aria-hidden="true" size={15} />
@@ -3596,12 +3572,11 @@ function GraphView({
           </button>
           <button
             aria-label={t('graph.zoomOutAriaLabel')}
-            className="secondary-button"
+            className="knowledge-graph__icon-button secondary-button"
             disabled={zoom <= 0.5}
             onClick={() =>
               setZoom((current) => Math.max(0.5, current - 0.15))
             }
-            style={{ ...styles.button, padding: 8 }}
             type="button"
           >
             <ZoomOut aria-hidden="true" size={16} />
@@ -3609,21 +3584,16 @@ function GraphView({
           <span
             aria-live="polite"
             className="knowledge-graph__zoom"
-            style={{
-              minWidth: 42,
-              color: 'var(--text-muted)'
-            }}
           >
             {formatPercent(zoom, locale)}
           </span>
           <button
             aria-label={t('graph.zoomInAriaLabel')}
-            className="secondary-button"
+            className="knowledge-graph__icon-button secondary-button"
             disabled={zoom >= 2}
             onClick={() =>
               setZoom((current) => Math.min(2, current + 0.15))
             }
-            style={{ ...styles.button, padding: 8 }}
             type="button"
           >
             <ZoomIn aria-hidden="true" size={16} />
@@ -3631,7 +3601,6 @@ function GraphView({
           <button
             className="secondary-button"
             onClick={() => setFitViewRequest((current) => current + 1)}
-            style={styles.button}
             type="button"
           >
             <RotateCcw aria-hidden="true" size={15} />
@@ -3647,22 +3616,14 @@ function GraphView({
           )}
         </div>
         {graphNodes.length === 0 ? (
-          <div
-            style={{
-              display: 'grid',
-              placeItems: 'center',
-              padding: 30,
-              color: 'var(--text-muted)',
-              textAlign: 'center'
-            }}
-          >
+          <div className="knowledge-graph__empty">
             <div>
               <Network aria-hidden="true" size={30} />
               <p>{t('graph.empty')}</p>
             </div>
           </div>
         ) : (
-          <KnowledgeGraphChart
+          <KnowledgeGraphChartLoader
             fitViewRequest={fitViewRequest}
             nodes={visibleNodes}
             onMoveNode={onMoveNode}
@@ -3752,7 +3713,7 @@ function GraphView({
             id="knowledge-graph-sidebar-panel-details"
             role="tabpanel"
           >
-            <h3 style={{ marginTop: 0 }}>{t('actions.addEntity')}</h3>
+            <h3>{t('actions.addEntity')}</h3>
             <EntityEditor
               ontology={ontology}
               onCancel={() => {
@@ -3785,28 +3746,20 @@ function GraphView({
             id="knowledge-graph-sidebar-panel-details"
             role="tabpanel"
           >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 8
-            }}
-          >
+          <div className="knowledge-graph__entity-heading">
             <div>
-              <span style={{ color: 'var(--accent)', fontSize: 12 }}>
+              <span>
                 {entityTypeLabel(selectedNode.type)}
               </span>
-              <h3 style={{ margin: '4px 0 0' }}>{selectedNode.label}</h3>
+              <h3>{selectedNode.label}</h3>
             </div>
             <button
               aria-label={t('graph.closeEntityDetailsAriaLabel')}
-              className="secondary-button"
+              className="knowledge-graph__icon-button secondary-button"
               onClick={() => {
                 setSelectedNodeId(undefined)
                 setSidebarTab('topology')
               }}
-              style={{ ...styles.button, padding: 7 }}
               type="button"
             >
               <X aria-hidden="true" size={15} />
@@ -3814,7 +3767,7 @@ function GraphView({
           </div>
 
           {editingEntity ? (
-            <div style={{ marginTop: 14 }}>
+            <div className="knowledge-graph__entity-editor">
               <EntityEditor
                 node={selectedNode}
                 ontology={ontology}
@@ -3827,11 +3780,11 @@ function GraphView({
             </div>
           ) : (
             <>
-              <p style={styles.muted}>
+              <p className="knowledge-muted">
                 {selectedNode.description || t('graph.noEntityDescription')}
               </p>
               {(selectedNode.aliases?.length ?? 0) > 0 && (
-                <div style={{ ...styles.muted, marginBottom: 12 }}>
+                <div className="knowledge-graph__aliases">
                   {t('graph.aliases', {
                     aliases: selectedNode.aliases?.join(
                       t('format.listSeparator')
@@ -3843,16 +3796,23 @@ function GraphView({
                 <button
                   className="secondary-button"
                   onClick={() => setEditingEntity(true)}
-                  style={styles.button}
                   type="button"
                 >
                   <Pencil aria-hidden="true" size={14} />
                   {t('actions.edit')}
                 </button>
                 <button
+                  aria-label={t('graph.deleteEntityAriaLabel', {
+                    name: selectedNode.label
+                  })}
                   className="danger-button danger-button--quiet"
-                  onClick={() => void onDeleteEntity(selectedNode.id)}
-                  style={styles.button}
+                  onClick={() =>
+                    setDestructiveAction({
+                      kind: 'delete-entity',
+                      node: selectedNode,
+                      relationCount: relatedRelations.length
+                    })
+                  }
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={14} />
@@ -3862,21 +3822,14 @@ function GraphView({
             </>
           )}
 
-          <hr
-            style={{
-              margin: '16px 0',
-              border: 0,
-              borderTop: '1px solid var(--border-subtle)'
-            }}
-          />
+          <hr className="knowledge-graph__divider" />
           <div
             className="knowledge-graph__section-heading"
           >
             <strong>{t('graph.relations')}</strong>
             <button
-              className="secondary-button"
+              className="knowledge-graph__compact-button secondary-button"
               onClick={() => setRelationForm('new')}
-              style={{ ...styles.button, padding: '6px 9px' }}
               type="button"
             >
               <Plus aria-hidden="true" size={14} />
@@ -3925,9 +3878,8 @@ function GraphView({
                       aria-label={t('graph.editRelationAriaLabel', {
                         type: relation.type
                       })}
-                      className="secondary-button"
+                      className="knowledge-graph__compact-button secondary-button"
                       onClick={() => setRelationForm(relation)}
-                      style={{ ...styles.button, padding: 6 }}
                       type="button"
                     >
                       <Pencil aria-hidden="true" size={13} />
@@ -3937,9 +3889,20 @@ function GraphView({
                       aria-label={t('graph.deleteRelationAriaLabel', {
                         type: relation.type
                       })}
-                      className="danger-button danger-button--quiet"
-                      onClick={() => void onDeleteRelation(relation.id)}
-                      style={{ ...styles.button, padding: 6 }}
+                      className="knowledge-graph__compact-button danger-button danger-button--quiet"
+                      onClick={() =>
+                        setDestructiveAction({
+                          kind: 'delete-relation',
+                          relation,
+                          sourceLabel:
+                            nodeMap.get(relation.sourceId)?.label ??
+                            t('graph.unknownEntity'),
+                          targetLabel:
+                            nodeMap.get(relation.targetId)?.label ??
+                            t('graph.unknownEntity'),
+                          typeLabel: relationTypeLabel(relation.type)
+                        })
+                      }
                       type="button"
                     >
                       <Trash2 aria-hidden="true" size={13} />
@@ -3956,7 +3919,6 @@ function GraphView({
             <select
               aria-label={t('graph.merge.targetAriaLabel')}
               onChange={(event) => setMergeTargetId(event.currentTarget.value)}
-              style={styles.input}
               value={mergeTargetId}
             >
               <option value="">{t('graph.merge.targetPlaceholder')}</option>
@@ -3970,93 +3932,65 @@ function GraphView({
             </select>
             <button
               aria-label={t('graph.merge.actionAriaLabel')}
-              className="secondary-button"
+              className="knowledge-graph__icon-button secondary-button"
               disabled={!mergeTargetId}
               onClick={() => {
-                void onMergeEntities(selectedNode.id, mergeTargetId)
-                setMergeTargetId('')
+                const mergeTarget = nodeMap.get(mergeTargetId)
+                if (mergeTarget) {
+                  setDestructiveAction({
+                    kind: 'merge-entities',
+                    source: selectedNode,
+                    target: mergeTarget
+                  })
+                }
               }}
-              style={{ ...styles.button, padding: 8 }}
               type="button"
             >
               <GitMerge aria-hidden="true" size={15} />
             </button>
           </div>
 
-          <hr
-            style={{
-              margin: '16px 0',
-              border: 0,
-              borderTop: '1px solid var(--border-subtle)'
-            }}
-          />
+          <hr className="knowledge-graph__divider" />
           <strong>
             {t('graph.evidence.title', {
               count: formatNumber(selectedEvidence.length, locale)
             })}
           </strong>
           {selectedEvidence.length === 0 ? (
-            <p style={styles.muted}>{t('graph.evidence.empty')}</p>
+            <p className="knowledge-muted">{t('graph.evidence.empty')}</p>
           ) : (
-            <ol
-              style={{
-                display: 'grid',
-                gap: 8,
-                paddingLeft: 20,
-                color: 'var(--text-secondary)'
-              }}
-            >
+            <ol className="knowledge-graph__evidence-list">
               {selectedEvidence.map((item) => (
                 <li key={item.id}>
                   {onOpenEvidence ? (
                     <button
+                      className="knowledge-graph__evidence-button"
                       onClick={() => onOpenEvidence(item)}
-                      style={{
-                        width: '100%',
-                        padding: 0,
-                        border: 0,
-                        background: 'transparent',
-                        color: 'inherit',
-                        textAlign: 'left',
-                        cursor: 'pointer'
-                      }}
                       type="button"
                     >
-                      <strong style={{ fontSize: 13 }}>
+                      <strong>
                         {item.documentName}
                       </strong>
                       {item.location && (
-                        <span style={{ ...styles.muted, marginLeft: 5 }}>
+                        <span className="knowledge-graph__evidence-location">
                           {item.location}
                         </span>
                       )}
-                      <span
-                        style={{
-                          ...styles.muted,
-                          display: 'block',
-                          marginTop: 4
-                        }}
-                      >
+                      <span className="knowledge-graph__evidence-excerpt">
                         {item.excerpt}
                       </span>
                     </button>
                   ) : (
                     <div>
-                    <strong style={{ fontSize: 13 }}>
+                    <strong>
                       {item.documentName}
                     </strong>
                     {item.location && (
-                      <span style={{ ...styles.muted, marginLeft: 5 }}>
+                      <span className="knowledge-graph__evidence-location">
                         {item.location}
                       </span>
                     )}
-                    <span
-                      style={{
-                        ...styles.muted,
-                        display: 'block',
-                        marginTop: 4
-                      }}
-                    >
+                    <span className="knowledge-graph__evidence-excerpt">
                       {item.excerpt}
                     </span>
                     </div>
@@ -4090,6 +4024,39 @@ function GraphView({
             </p>
           </section>
         </aside>
+      )}
+      {destructiveAction && (
+        <GraphDestructiveDialog
+          action={destructiveAction}
+          onCancel={() => setDestructiveAction(undefined)}
+          onConfirm={async () => {
+            if (destructiveAction.kind === 'delete-entity') {
+              await onDeleteEntity(destructiveAction.node.id)
+              setSelectedNodeId(undefined)
+              setSidebarTab('topology')
+              requestAnimationFrame(() =>
+                entityPickerRef.current?.focus()
+              )
+              return
+            }
+            if (destructiveAction.kind === 'delete-relation') {
+              await onDeleteRelation(destructiveAction.relation.id)
+              requestAnimationFrame(() =>
+                entityPickerRef.current?.focus()
+              )
+              return
+            }
+            await onMergeEntities(
+              destructiveAction.source.id,
+              destructiveAction.target.id
+            )
+            setMergeTargetId('')
+            setSelectedNodeId(destructiveAction.target.id)
+            requestAnimationFrame(() =>
+              entityPickerRef.current?.focus()
+            )
+          }}
+        />
       )}
     </div>
   )
@@ -4305,7 +4272,6 @@ export function KnowledgeWorkspace({
               setCreating(true)
               setMobileListOpen(false)
             }}
-            style={styles.button}
             type="button"
           >
             <Plus aria-hidden="true" size={16} />
@@ -4325,7 +4291,6 @@ export function KnowledgeWorkspace({
         className={`knowledge-workspace${
           mobileListOpen ? ' knowledge-workspace--mobile-list' : ''
         }`}
-        style={styles.workspace}
       >
         <aside className="knowledge-workspace__sidebar">
           <div className="knowledge-workspace__sidebar-heading">
@@ -4340,36 +4305,31 @@ export function KnowledgeWorkspace({
           <nav
             aria-label={t('workspace.libraryList')}
             className="knowledge-workspace__library-nav"
-            style={{ flex: 1 }}
           >
             {libraries.length === 0 ? (
-              <div
-                style={{
-                  ...styles.surface,
-                  padding: 13,
-                  color: 'var(--text-muted)',
-                  fontSize: 13,
-                  lineHeight: 1.55
-                }}
-              >
+              <div className="knowledge-workspace__library-empty">
                 {t('workspace.libraryListEmpty')}
               </div>
             ) : (
-              <ul
-                style={{
-                  display: 'grid',
-                  gap: 7,
-                  margin: 0,
-                  padding: 0,
-                  listStyle: 'none'
-                }}
-              >
+              <ul className="knowledge-workspace__library-list">
                 {libraries.map((library) => {
                   const selected = library.id === selectedLibrary?.id
+                  const libraryMeta = t('workspace.libraryMeta', {
+                    count: formatNumber(library.documentCount, locale),
+                    storageMode: t(
+                      storageModeLabelKeys[library.storageMode]
+                    )
+                  })
                   return (
                     <li key={library.id}>
                       <button
                         aria-current={selected ? 'page' : undefined}
+                        aria-label={`${library.name} ${libraryMeta}`}
+                        className={`knowledge-workspace__library-button${
+                          selected
+                            ? ' knowledge-workspace__library-button--selected'
+                            : ''
+                        }`}
                         onClick={() => {
                           onSelectLibrary(library.id)
                           setTab('documents')
@@ -4377,60 +4337,16 @@ export function KnowledgeWorkspace({
                           setTaskContext(undefined)
                           setMobileListOpen(false)
                         }}
-                        style={{
-                          width: '100%',
-                          padding: 11,
-                          border: `1px solid ${
-                            selected
-                              ? 'var(--accent)'
-                              : 'transparent'
-                          }`,
-                          borderRadius: 'var(--radius-control)',
-                          background: selected
-                            ? 'var(--accent-subtle)'
-                            : 'transparent',
-                          color: selected
-                            ? 'var(--accent)'
-                            : 'var(--text-primary)',
-                          textAlign: 'left',
-                          cursor: 'pointer'
-                        }}
                         type="button"
                       >
-                        <span
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 7
-                          }}
-                        >
+                        <span className="knowledge-workspace__library-identity">
                           <BookOpen aria-hidden="true" size={15} />
-                          <strong
-                            style={{
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
+                          <strong>
                             {library.name}
                           </strong>
                         </span>
-                        <span
-                          style={{
-                            ...styles.muted,
-                            display: 'block',
-                            marginTop: 5
-                          }}
-                        >
-                          {t('workspace.libraryMeta', {
-                            count: formatNumber(
-                              library.documentCount,
-                              locale
-                            ),
-                            storageMode: t(
-                              storageModeLabelKeys[library.storageMode]
-                            )
-                          })}
+                        <span className="knowledge-workspace__library-meta">
+                          {libraryMeta}
                         </span>
                       </button>
                     </li>
@@ -4444,20 +4360,11 @@ export function KnowledgeWorkspace({
       <section
         aria-label={t('workspace.detailsAriaLabel')}
         className="knowledge-workspace__main"
-        style={{ minWidth: 0, background: 'var(--surface-raised)' }}
       >
         {loadError && libraries.length > 0 && (
-          <div
-            role="alert"
-            style={{
-              ...styles.surface,
-              margin: 'var(--space-4)',
-              padding: 'var(--space-3)',
-              color: 'var(--danger)'
-            }}
-          >
+          <div className="knowledge-workspace__refresh-error" role="alert">
             <strong>{t('errors.refreshTitle')}</strong>
-            <p style={{ margin: 'var(--space-2) 0' }}>{loadError}</p>
+            <p>{loadError}</p>
             <button
               className="secondary-button"
               onClick={() => void onRetryLoad()}
@@ -4491,7 +4398,6 @@ export function KnowledgeWorkspace({
               <button
                 className="secondary-button"
                 onClick={() => void onRetryLoad()}
-                style={styles.button}
                 type="button"
               >
                 <RefreshCw aria-hidden="true" size={14} />
@@ -4510,17 +4416,6 @@ export function KnowledgeWorkspace({
           />
         ) : !selectedLibrary ? (
           <EmptyState
-            action={
-              <button
-                className="primary-button"
-                onClick={() => setCreating(true)}
-                style={styles.button}
-                type="button"
-              >
-                <Plus aria-hidden="true" size={16} />
-                {t('actions.createLibrary')}
-              </button>
-            }
             description={t('empty.description')}
             icon={<BookOpen size={34} />}
             level="page"
@@ -4532,16 +4427,7 @@ export function KnowledgeWorkspace({
               className="knowledge-workspace__header"
             >
               <div>
-                <span
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 7,
-                    color: 'var(--accent)',
-                    fontSize: 12,
-                    fontWeight: 750
-                  }}
-                >
+                <span className="knowledge-workspace__scope">
                   <Database aria-hidden="true" size={13} />
                   {t('workspace.scopeGlobal')} ·{' '}
                   {t(storageModeLabelKeys[selectedLibrary.storageMode])}
@@ -4550,10 +4436,10 @@ export function KnowledgeWorkspace({
                       strategyLabelKeys[selectedLibrary.graphStrategy]
                     )}`}
                 </span>
-                <h2 style={{ margin: '6px 0 3px' }}>
+                <h2>
                   {selectedLibrary.name}
                 </h2>
-                <p style={{ ...styles.muted, margin: 0 }}>
+                <p className="knowledge-workspace__description">
                   {selectedLibrary.description ||
                     t('workspace.librarySummary', {
                       sourceCount: formatNumber(
@@ -4582,7 +4468,6 @@ export function KnowledgeWorkspace({
                     setRetrievalResponse(undefined)
                     setRetrievalOpen(true)
                   }}
-                  style={styles.button}
                   type="button"
                 >
                   <Search aria-hidden="true" size={15} />
@@ -4592,7 +4477,6 @@ export function KnowledgeWorkspace({
                   className="secondary-button"
                   onClick={() => setEditingLibrary(selectedLibrary)}
                   ref={editLibraryTriggerRef}
-                  style={styles.button}
                   type="button"
                 >
                   <Pencil aria-hidden="true" size={15} />
@@ -4605,7 +4489,6 @@ export function KnowledgeWorkspace({
                   className="danger-button danger-button--quiet"
                   onClick={() => setDeletingLibrary(selectedLibrary)}
                   ref={deleteLibraryTriggerRef}
-                  style={styles.button}
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={15} />

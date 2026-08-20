@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import {
+  builtInDefaultProjectSeedDescription,
+  builtInDefaultProjectSeedName,
   conversationSnapshotSchema,
   expertCreateSchema,
   normalizeInteractiveWorkMode,
@@ -82,6 +84,7 @@ type ProjectRow = {
   runtime_selection_json: string | null
   kind: AssistantProject['kind']
   channel: ProjectChannel | null
+  built_in_default: number
   status: AssistantProject['status']
   created_at: string
   updated_at: string
@@ -427,6 +430,7 @@ function toProject(row: ProjectRow): AssistantProject {
         : parseRuntimeSelection(row.runtime_selection_json),
     kind: row.kind,
     channel: row.channel ?? undefined,
+    builtInDefault: row.built_in_default === 1,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -982,12 +986,15 @@ export class AssistantDatabase {
         .prepare('SELECT COUNT(*) AS count FROM projects')
         .get() as { count: number }
       if (count.count === 0) {
-        this.createProject({
-          name: '默认项目',
-          description: 'GoodBuddy 默认工作区',
-          rootPath: defaultRootPath,
-          defaultWorkMode: 'ask'
-        })
+        this.createLocalProject(
+          {
+            name: builtInDefaultProjectSeedName,
+            description: builtInDefaultProjectSeedDescription,
+            rootPath: defaultRootPath,
+            defaultWorkMode: 'ask'
+          },
+          true
+        )
       }
       const expertCount = database
         .prepare('SELECT COUNT(*) AS count FROM experts')
@@ -1283,6 +1290,13 @@ export class AssistantDatabase {
   }
 
   createProject(input: ProjectCreateInput): AssistantProject {
+    return this.createLocalProject(input, false)
+  }
+
+  private createLocalProject(
+    input: ProjectCreateInput,
+    builtInDefault: boolean
+  ): AssistantProject {
     const database = this.requireDatabase()
     const id = randomUUID()
     const now = new Date().toISOString()
@@ -1290,9 +1304,9 @@ export class AssistantDatabase {
       .prepare(
         `INSERT INTO projects
           (id, name, description, root_path, default_work_mode,
-           runtime_selection_json, kind, channel, status, created_at,
-           updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, 'active', ?, ?)`
+           runtime_selection_json, kind, channel, built_in_default,
+           status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, ?, 'active', ?, ?)`
       )
       .run(
         id,
@@ -1303,6 +1317,7 @@ export class AssistantDatabase {
         input.runtimeSelection
           ? JSON.stringify(input.runtimeSelection)
           : null,
+        builtInDefault ? 1 : 0,
         now,
         now
       )
@@ -1914,6 +1929,32 @@ export class AssistantDatabase {
         )
         .run(conversationId)
       database
+        .prepare(
+          `DELETE FROM delegation_outbox
+           WHERE task_id IN (
+             SELECT id FROM tasks WHERE conversation_id = ?
+           )`
+        )
+        .run(conversationId)
+      database
+        .prepare(
+          `DELETE FROM artifacts
+           WHERE kind = 'markdown'
+             AND task_id IN (
+               SELECT id
+               FROM tasks
+               WHERE conversation_id = ?
+                 AND (
+                   origin = 'user'
+                   OR (
+                     origin = 'delegation'
+                     AND conversation_id NOT LIKE 'delegation:%'
+                   )
+                 )
+             )`
+        )
+        .run(conversationId)
+      database
         .prepare('DELETE FROM tasks WHERE conversation_id = ?')
         .run(conversationId)
       const deleted = database
@@ -2214,7 +2255,11 @@ export class AssistantDatabase {
     this.requireDatabase()
       .prepare(
         `UPDATE channel_outbox
-         SET state = ?,
+         SET state = CASE
+               WHEN ? = 'failed' AND attempts + 1 >= 5
+               THEN 'terminal'
+               ELSE ?
+             END,
              attempts = attempts + 1,
              message_json = CASE
                WHEN ? = 'delivered' OR attempts + 1 >= 5
@@ -2223,7 +2268,7 @@ export class AssistantDatabase {
              END
          WHERE id = ?`
       )
-      .run(state, state, id)
+      .run(state, state, state, id)
   }
 
   listUndeliveredChannelResults(
@@ -2232,7 +2277,7 @@ export class AssistantDatabase {
   ): Array<{
     id: string
     message: ChannelResultMessage
-    state: 'pending' | 'failed'
+    state: 'pending' | 'failed' | 'terminal'
     attempts: number
     createdAt: number
   }> {
@@ -2252,7 +2297,6 @@ export class AssistantDatabase {
                   ) AS cumulative_bytes
            FROM channel_outbox
            WHERE state != 'delivered'
-             AND attempts < 5
              ${channel === undefined ? '' : 'AND channel = ?'}
          )
          SELECT id, message_json, state, attempts, created_at
@@ -2272,7 +2316,7 @@ export class AssistantDatabase {
       ) as Array<{
       id: string
       message_json: string
-      state: 'pending' | 'failed'
+      state: 'pending' | 'failed' | 'terminal'
       attempts: number
       created_at: number
     }>
@@ -5340,32 +5384,46 @@ export class AssistantDatabase {
               ]!
           ).toISOString()
         : null
-    const result = database
-      .prepare(
-        `UPDATE heartbeat_runs
-         SET status = 'failed', next_attempt_at = ?,
-             completed_at = ?, error = ?, lease_owner = NULL,
-             lease_expires_at = NULL, updated_at = ?
-         WHERE id = ? AND status = 'claimed' AND lease_owner = ?`
-      )
-      .run(
-        nextAttemptAt,
-        timestamp,
-        error.slice(0, 2_000),
-        timestamp,
-        claim.run.id,
-        claim.leaseOwner
-      )
-    if (result.changes !== 1) {
-      throw new Error('Heartbeat lease is no longer active')
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = database
+        .prepare(
+          `UPDATE heartbeat_runs
+           SET status = 'failed', next_attempt_at = ?,
+               completed_at = ?, error = ?, lease_owner = NULL,
+               lease_expires_at = NULL, updated_at = ?
+           WHERE id = ? AND config_id = ?
+             AND status = 'claimed' AND lease_owner = ?
+             AND lease_expires_at > ?`
+        )
+        .run(
+          nextAttemptAt,
+          timestamp,
+          error.slice(0, 2_000),
+          timestamp,
+          claim.run.id,
+          claim.config.id,
+          claim.leaseOwner,
+          timestamp
+        )
+      if (result.changes !== 1) {
+        throw new Error('Heartbeat lease is no longer active')
+      }
+      const configResult = database
+        .prepare(
+          `UPDATE heartbeat_configs
+           SET last_status = 'failed', updated_at = ?
+           WHERE id = ?`
+        )
+        .run(timestamp, claim.config.id)
+      if (configResult.changes !== 1) {
+        throw new Error('Heartbeat config no longer exists')
+      }
+      database.exec('COMMIT')
+    } catch (transactionError) {
+      database.exec('ROLLBACK')
+      throw transactionError
     }
-    database
-      .prepare(
-        `UPDATE heartbeat_configs
-         SET last_status = 'failed', updated_at = ?
-         WHERE id = ?`
-      )
-      .run(timestamp, claim.config.id)
     return this.getHeartbeatRun(claim.run.id)
   }
 
@@ -5741,12 +5799,12 @@ export class AssistantDatabase {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
-    if (version.user_version > 23) {
+    if (version.user_version > 25) {
       throw new Error(
         `当前 GoodBuddy 不支持助理数据库版本 ${version.user_version}，请升级应用后重试`
       )
     }
-    if (version.user_version === 23) {
+    if (version.user_version === 25) {
       return
     }
     if (version.user_version < 1) {
@@ -5760,6 +5818,8 @@ export class AssistantDatabase {
         default_work_mode TEXT NOT NULL
           CHECK(default_work_mode IN ('ask', 'execute')),
         runtime_selection_json TEXT,
+        built_in_default INTEGER NOT NULL DEFAULT 0
+          CHECK(built_in_default IN (0, 1)),
         status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -6994,6 +7054,122 @@ export class AssistantDatabase {
           WHERE sr.status IN ('pending', 'running')
             AND t.conversation_id IS NOT NULL;
           PRAGMA user_version = 23;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 24) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          ALTER TABLE channel_outbox
+            RENAME TO channel_outbox_legacy;
+          DROP INDEX IF EXISTS channel_outbox_state_created;
+          CREATE TABLE channel_outbox (
+            id TEXT PRIMARY KEY,
+            channel TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            message_json TEXT NOT NULL,
+            state TEXT NOT NULL
+              CHECK(
+                state IN (
+                  'pending', 'delivered', 'failed', 'terminal'
+                )
+              ),
+            attempts INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+          );
+          INSERT INTO channel_outbox
+            (id, channel, event_id, message_json, state, attempts,
+             created_at)
+          SELECT id, channel, event_id,
+                 CASE
+                   WHEN state = 'failed' AND attempts >= 5
+                   THEN json_remove(message_json, '$.attachments')
+                   ELSE message_json
+                 END,
+                 CASE
+                   WHEN state = 'failed' AND attempts >= 5
+                   THEN 'terminal'
+                   ELSE state
+                 END,
+                 attempts, created_at
+          FROM channel_outbox_legacy;
+          DROP TABLE channel_outbox_legacy;
+          CREATE INDEX channel_outbox_state_created
+            ON channel_outbox(state, created_at);
+          PRAGMA user_version = 24;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 25) {
+      const projectColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(projects)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!projectColumns.has('built_in_default')) {
+          database.exec(`
+            ALTER TABLE projects
+              ADD COLUMN built_in_default INTEGER NOT NULL DEFAULT 0
+                CHECK(built_in_default IN (0, 1));
+          `)
+        }
+        database.exec('UPDATE projects SET built_in_default = 0')
+        const legacyCandidates = database
+          .prepare(
+            `SELECT id
+             FROM projects
+             WHERE name = ?
+               AND description = ?
+               AND kind = 'user'
+               AND channel IS NULL
+               AND status = 'active'
+               AND default_work_mode = 'ask'
+               AND runtime_selection_json IS NULL
+               AND created_at = updated_at
+             LIMIT 2`
+          )
+          .all(
+            builtInDefaultProjectSeedName,
+            builtInDefaultProjectSeedDescription
+          ) as Array<{ id: string }>
+        const originalProject = database
+          .prepare(
+            `SELECT id
+             FROM projects
+             WHERE rowid = 1`
+          )
+          .get() as { id: string } | undefined
+        if (
+          legacyCandidates.length === 1 &&
+          legacyCandidates[0]!.id === originalProject?.id
+        ) {
+          database
+            .prepare(
+              `UPDATE projects
+               SET built_in_default = 1
+               WHERE id = ?`
+            )
+            .run(legacyCandidates[0]!.id)
+        }
+        database.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS
+            projects_built_in_default_unique
+            ON projects(built_in_default)
+            WHERE built_in_default = 1;
+          PRAGMA user_version = 25;
           COMMIT;
         `)
       } catch (error) {

@@ -50,6 +50,7 @@ import { stageRuntimeSkillPackages } from './runtime-skill-packages'
 import { readBoundedResponseText } from './bounded-response'
 import { scopedReadToolNames } from '../../shared/scoped-data-tools'
 import { readBoundedFile } from '../workspace-file-access'
+import { terminateProcessTreeAndWait } from './child-process-termination'
 
 const supportedVersion = '1.5.47'
 const supportedBundleHashes = new Set([
@@ -65,6 +66,7 @@ const maximumConfiguredRules = runtimeNativeInventoryLimits.rules
 const maximumConfiguredPrompts = runtimeNativeInventoryLimits.prompts
 const maximumStreamEvents = 5_000
 const maximumStreamEventBytes = 2 * 1024 * 1024
+const maximumToolCalls = 100
 const maximumExecutionMilliseconds = 10 * 60_000
 const knowledgeMcpName = 'goodbuddy-knowledge'
 const customMcpName = 'goodbuddy-custom-mcp'
@@ -237,6 +239,13 @@ export type ContinueHostAdapterOptions = {
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
   skillPackages?: RuntimeSkillPackage[]
+}
+
+export type ContinueHostAdapterDependencies = {
+  terminateProcessTree: typeof terminateProcessTreeAndWait
+  maximumStreamEvents: number
+  maximumStreamEventBytes: number
+  maximumToolCalls: number
 }
 
 export type ContinueHostRunOptions = {
@@ -504,8 +513,12 @@ export type ContinueHostChild = {
     ) => unknown
   } | null
   once: (
-    event: 'error',
-    listener: (error: Error) => void
+    event: 'error' | 'close',
+    listener: (error: Error | number | null) => void
+  ) => unknown
+  removeListener?: (
+    event: 'error' | 'close',
+    listener: (error: Error | number | null) => void
   ) => unknown
   kill: (signal?: NodeJS.Signals) => unknown
 }
@@ -792,6 +805,10 @@ function extractUsageDelta(
 
 export class ContinueHostAdapter {
   private readonly children = new Set<ContinueHostChild>()
+  private readonly childTerminations = new WeakMap<
+    ContinueHostChild,
+    Promise<void>
+  >()
   private readonly pendingQuestions = new Map<
     string,
     {
@@ -802,7 +819,20 @@ export class ContinueHostAdapter {
   >()
   private preparation?: Promise<PreparedHost>
 
-  constructor(private readonly options: ContinueHostAdapterOptions) {}
+  private readonly dependencies: ContinueHostAdapterDependencies
+
+  constructor(
+    private readonly options: ContinueHostAdapterOptions,
+    dependencies: Partial<ContinueHostAdapterDependencies> = {}
+  ) {
+    this.dependencies = {
+      terminateProcessTree: terminateProcessTreeAndWait,
+      maximumStreamEvents,
+      maximumStreamEventBytes,
+      maximumToolCalls,
+      ...dependencies
+    }
+  }
 
   private async prepare(): Promise<PreparedHost> {
     if (!isAbsolute(this.options.cacheRoot)) {
@@ -1515,17 +1545,20 @@ export class ContinueHostAdapter {
     child.stderr?.on('data', (chunk: Buffer | string) => {
       stderrBytes += Buffer.byteLength(chunk)
       if (stderrBytes > 64 * 1024) {
-        this.terminate(child)
+        void this.terminate(child)
       }
     })
     const abort = (): void => {
-      this.terminate(child)
+      void this.terminate(child)
     }
     signal.addEventListener('abort', abort, { once: true })
 
     let observedTools: ContinueHostTool[] = []
     const reportedQuestionIds = new Set<string>()
     let streamedText = false
+    let streamEventCount = 0
+    let streamEventBytes = 0
+    const observedToolCallIds = new Set<string>()
     let executionTimeoutSignal: AbortSignal | undefined
     try {
       const initialState = await this.waitForStartup(
@@ -1585,17 +1618,55 @@ export class ContinueHostAdapter {
         if (state.goodbuddyEventsOverflow) {
           throw new Error('Continue 宿主流式事件超过安全限制')
         }
-        const streamEventBytes = Buffer.byteLength(
-          JSON.stringify(state.goodbuddyEvents ?? [])
+        const streamEvents = state.goodbuddyEvents ?? []
+        const batchStreamEventBytes = Buffer.byteLength(
+          JSON.stringify(streamEvents)
         )
-        if (streamEventBytes > maximumStreamEventBytes) {
+        const nextStreamEventCount =
+          streamEventCount + streamEvents.length
+        const nextStreamEventBytes =
+          streamEventBytes + batchStreamEventBytes
+        const nextToolCallIds = new Set(observedToolCallIds)
+        for (const event of streamEvents) {
+          if (event.type === 'tool') {
+            nextToolCallIds.add(event.callId)
+          }
+        }
+        if (
+          nextStreamEventCount >
+            this.dependencies.maximumStreamEvents ||
+          nextStreamEventBytes >
+            this.dependencies.maximumStreamEventBytes
+        ) {
           throw new Error('Continue 宿主流式事件超过安全限制')
+        }
+        if (
+          nextToolCallIds.size > this.dependencies.maximumToolCalls
+        ) {
+          throw new Error('Continue 单次运行的工具调用超过 100 个')
+        }
+        streamEventCount = nextStreamEventCount
+        streamEventBytes = nextStreamEventBytes
+        for (const callId of nextToolCallIds) {
+          observedToolCallIds.add(callId)
+        }
+        const historyTools = extractContinueTools(
+          state.session.history,
+          startIndex
+        )
+        for (const tool of historyTools) {
+          observedToolCallIds.add(tool.callId)
+        }
+        if (
+          observedToolCallIds.size > this.dependencies.maximumToolCalls
+        ) {
+          throw new Error('Continue 单次运行的工具调用超过 100 个')
         }
         observedTools = mergeContinueTools(
           observedTools,
-          extractContinueTools(state.session.history, startIndex)
+          historyTools
         )
-        for (const event of state.goodbuddyEvents ?? []) {
+        for (const event of streamEvents) {
           if (event.type === 'text') {
             streamedText = true
             await runOptions.onEvent?.(event)
@@ -1653,7 +1724,10 @@ export class ContinueHostAdapter {
         }
         const pending = state.pendingPermission
         if (pending && !handledPermissionIds.has(pending.requestId)) {
-          if (handledPermissionIds.size >= 100) {
+          if (
+            handledPermissionIds.size >=
+            this.dependencies.maximumToolCalls
+          ) {
             throw new Error('Continue 单次运行的工具调用超过 100 个')
           }
           handledPermissionIds.add(pending.requestId)
@@ -1667,9 +1741,14 @@ export class ContinueHostAdapter {
           if (
             !observedTools.some((tool) => tool.callId === pendingCallId)
           ) {
-            if (observedTools.length >= 100) {
+            if (
+              !observedToolCallIds.has(pendingCallId) &&
+              observedToolCallIds.size >=
+                this.dependencies.maximumToolCalls
+            ) {
               throw new Error('Continue 单次运行的工具调用超过 100 个')
             }
+            observedToolCallIds.add(pendingCallId)
             observedTools = [
               ...observedTools,
               {
@@ -1771,7 +1850,7 @@ export class ContinueHostAdapter {
           signal: cleanupSignal
         }).catch(() => undefined)
       } finally {
-        this.terminate(child)
+        await this.terminate(child)
         this.children.delete(child)
         if (generatedConfigPath) {
           await rm(generatedConfigPath, { force: true })
@@ -1795,31 +1874,24 @@ export class ContinueHostAdapter {
     }
   }
 
-  private terminate(child: ContinueHostChild): void {
-    if (child.exitCode !== null || child.killed) {
+  private async terminate(child: ContinueHostChild): Promise<void> {
+    const existing = this.childTerminations.get(child)
+    if (existing) {
+      await existing
       return
     }
-    if (process.platform === 'win32' && child.pid) {
-      const killer = spawn(
-        'taskkill.exe',
-        ['/PID', String(child.pid), '/T', '/F'],
-        {
-          shell: false,
-          stdio: 'ignore',
-          windowsHide: true
-        }
-      )
-      killer.unref()
-    } else {
-      child.kill('SIGTERM')
-    }
+    const termination = this.dependencies
+      .terminateProcessTree(child)
+      .catch(() => undefined)
+    this.childTerminations.set(child, termination)
+    await termination
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.pendingQuestions.clear()
-    for (const child of this.children) {
-      this.terminate(child)
-    }
+    await Promise.all(
+      [...this.children].map((child) => this.terminate(child))
+    )
     this.children.clear()
   }
 }

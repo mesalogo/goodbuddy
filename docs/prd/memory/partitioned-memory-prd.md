@@ -140,10 +140,10 @@ agent:{expertId}
 Conversation → Project → Global
 ```
 
-Task/Job Run：
+Task 执行（内部 Job/Run）：
 
 ```text
-Run → Automation → Conversation（可选）→ Project → Global
+Run → Job → Task → Conversation → Project → Global
 ```
 
 实验 Run：
@@ -232,7 +232,7 @@ type MemorySource =
 
 - 用户明确“记住这个”。
 - 会话结束总结。
-- Task/Job Run 结束反思。
+- Task 执行结束反思。
 - 实验结论。
 - Supervisor 建议后用户采纳。
 - 智能心跳。
@@ -481,7 +481,7 @@ Project 记忆与 Global 偏好冲突时：
 - [ ] 普通会话只读取 Global、当前 Project 和当前 Conversation 的允许记忆。
 - [ ] 智能心跳配置只能属于 Global 或 Main 已验证的一个、多个 Project。
 - [ ] 未来分区记忆完成独立设计前，不新增相关表、状态或检索行为。
-- [ ] Task/Job Run 只读取运行快照绑定的分区。
+- [ ] Task 执行只读取内部 Run 快照绑定的分区。
 - [ ] 实验 Run 不能读取其他 Run 的消息或记忆。
 - [ ] 每条非手动记忆都有可追溯来源。
 - [ ] 候选和被拒绝记忆不进入普通上下文。
@@ -489,6 +489,6 @@ Project 记忆与 Global 偏好冲突时：
 - [ ] 冲突事实不被静默覆盖。
 - [ ] 当前有效事实可通过有效时间正确选择。
 - [ ] 上下文组装遵守各层和总字符预算。
-- [ ] UI 能显示某次 Run 实际使用的记忆。
+- [ ] UI 能在 Task 执行记录中显示实际使用的记忆，不把 Run 暴露为独立导航对象。
 - [ ] 删除或忘记后，文本、索引和缓存不再可检索。
 - [ ] Restricted 记忆不会自动生成或发送给外部 Embedding 服务。

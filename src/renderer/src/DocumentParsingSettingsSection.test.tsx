@@ -123,6 +123,7 @@ const snapshot: DocumentParsingSnapshot = {
 }
 
 const getSnapshot = vi.fn(async () => snapshot)
+const getOcrModelProgress = vi.fn(async () => ({ operations: [] }))
 const update = vi.fn(async (input: DocumentParsingSettings) => ({
   ...snapshot,
   settings: input
@@ -181,6 +182,7 @@ describe('DocumentParsingSettingsSection', () => {
       value: {
         documentParsing: {
           getSnapshot,
+          getOcrModelProgress,
           update,
           test,
           installOcrModel,
@@ -317,6 +319,51 @@ describe('DocumentParsingSettingsSection', () => {
         message: 'PP-OCRv6 Tiny 已安装'
       })
     )
+  })
+
+  it('waits for each OCR progress request before scheduling the next', async () => {
+    let resolveProgress:
+      | ((value: { operations: [] }) => void)
+      | undefined
+    let resolveInstall:
+      | ((value: DocumentParsingSnapshot) => void)
+      | undefined
+    getOcrModelProgress.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveProgress = resolve
+        })
+    )
+    installOcrModel.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveInstall = resolve
+        })
+    )
+    render(<DocumentParsingSettingsSection />)
+    const installButton = await screen.findByRole('button', {
+      name: '下载 PP-OCRv6 Tiny'
+    })
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(installButton)
+
+      await vi.advanceTimersByTimeAsync(300)
+      expect(getOcrModelProgress).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1_200)
+      expect(getOcrModelProgress).toHaveBeenCalledTimes(1)
+
+      resolveProgress?.({ operations: [] })
+      await vi.advanceTimersByTimeAsync(299)
+      expect(getOcrModelProgress).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getOcrModelProgress).toHaveBeenCalledTimes(2)
+
+      resolveInstall?.(snapshot)
+      await vi.runAllTimersAsync()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('downloads and selects an uninstalled model in one action', async () => {
@@ -463,17 +510,35 @@ describe('DocumentParsingSettingsSection', () => {
     render(<DocumentParsingSettingsSection />)
     await screen.findByText('PP-OCRv6 Tiny')
 
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: '测试聊天与成果模式'
-      })
-    )
+    const trigger = screen.getByRole('button', {
+      name: '测试聊天与成果模式'
+    })
+    trigger.focus()
+    fireEvent.click(trigger)
 
+    const dialog = await screen.findByRole('dialog', {
+      name: '解析测试结果'
+    })
+    expect(dialog).toHaveTextContent('扫描件识别正文')
+    const close = screen.getByRole('button', {
+      name: '关闭结果'
+    })
+    expect(close).toHaveFocus()
+    const backgroundSection = trigger.closest<HTMLElement>(
+      '.settings-section'
+    )
+    expect(backgroundSection?.inert).toBe(true)
     expect(
-      await screen.findByRole('dialog', {
-        name: '解析测试结果'
-      })
-    ).toHaveTextContent('扫描件识别正文')
+      fireEvent.keyDown(dialog, { key: 'Tab' })
+    ).toBe(false)
+    expect(close).toHaveFocus()
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(trigger).toHaveFocus()
+    expect(backgroundSection?.inert).toBe(false)
     expect(test).toHaveBeenCalledWith('chat-attachment')
     expect(update).not.toHaveBeenCalled()
   })

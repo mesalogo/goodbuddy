@@ -127,7 +127,6 @@ import {
   normalizeInteractiveWorkMode,
   projectChannelLabels
 } from '../../shared/assistant-contracts'
-import { ActivityPanel } from './ActivityPanel'
 import {
   ChatTimeline,
   type ImageViewerItem,
@@ -171,6 +170,8 @@ import { ConversationInputQueue } from './ConversationInputQueue'
 import { OverflowMarquee } from './OverflowMarquee'
 import { findTaskSchedule } from './TaskScheduleActions'
 import type { SettingsCategoryId } from './settings-categories'
+import type { SettingsLeaveRequester } from './SettingsPanel'
+import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
 import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
 import goodbuddyLightIcon from './assets/goodbuddy-light.png'
 import {
@@ -202,10 +203,13 @@ import {
 import { formatMediumDateTime } from './locale-formatters'
 import { formatCompactTokens } from './token-format'
 import {
+  filterKeepAliveEntries,
   pruneKeepAliveEntries,
-  touchKeepAliveEntry,
+  touchAndPruneKeepAliveEntries,
   type KeepAliveCacheEntry
 } from './keep-alive-cache'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import { getProjectDisplayText } from './project-display'
 
 const knowledgeWorkspaceRoute = createPreloadableComponent(
   () => import('./KnowledgeWorkspace'),
@@ -223,17 +227,19 @@ const settingsPanelRoute = createPreloadableComponent(
   () => import('./SettingsPanel'),
   (module) => module.SettingsPanel
 )
+const activityPanelRoute = createPreloadableComponent(
+  () => import('./ActivityPanel'),
+  (module) => module.ActivityPanel
+)
 const idleRouteModuleLoaders = [
-  knowledgeWorkspaceRoute.preload,
-  heartbeatCenterRoute.preload,
-  magicNotesWorkspaceRoute.preload,
-  settingsPanelRoute.preload
+  heartbeatCenterRoute.preload
 ] as const
 
 const KnowledgeWorkspace = knowledgeWorkspaceRoute.Component
 const HeartbeatCenter = heartbeatCenterRoute.Component
 const MagicNotesWorkspace = magicNotesWorkspaceRoute.Component
 const SettingsPanel = settingsPanelRoute.Component
+const ActivityPanel = activityPanelRoute.Component
 
 const messageRenderBatchSize = 80
 const conversationPersistenceIntervalMs = 500
@@ -501,6 +507,24 @@ type WorkspaceView =
   | 'activity'
   | 'settings'
 
+const intentRoutePreloaders: Partial<
+  Record<WorkspaceView, () => Promise<unknown>>
+> = {
+  'magic-notes': magicNotesWorkspaceRoute.preload,
+  knowledge: knowledgeWorkspaceRoute.preload,
+  activity: activityPanelRoute.preload,
+  settings: settingsPanelRoute.preload
+}
+
+function preloadWorkspaceRouteOnIntent(view: WorkspaceView): void {
+  const preload = intentRoutePreloaders[view]
+  if (preload) {
+    void preload().catch(() => {
+      // Click and programmatic navigation retain their local retry boundary.
+    })
+  }
+}
+
 const emptyTokenUsage: TokenUsageSummary = {
   totals: {
     callCount: 0,
@@ -743,6 +767,7 @@ function ChatHistoryPane({
   visibleMessageCount: number
 }): React.JSX.Element {
   const { t } = useTranslation('app')
+  const headingId = `chat-heading-${conversation.id}`
   const scrollRef = useRef<HTMLElement>(null)
   const pinnedToBottomRef = useRef(
     scrollSnapshot?.pinnedToBottom ?? true
@@ -948,8 +973,12 @@ function ChatHistoryPane({
       hidden={!active}
       inert={!active}
     >
+      <h1 className="sr-only" id={headingId}>
+        {t('chat.heading')}
+      </h1>
       {taskStrip}
       <section
+        aria-labelledby={headingId}
         className="chat"
         id={active ? 'chat-message-list' : undefined}
         onScroll={updateScrollPosition}
@@ -961,7 +990,7 @@ function ChatHistoryPane({
               <Sparkles size={18} />
             </div>
             <p className="eyebrow">{t('chat.welcome.eyebrow')}</p>
-            <h1>{t('chat.welcome.title')}</h1>
+            <h2>{t('chat.welcome.title')}</h2>
             <p className="welcome__description">
               {t('chat.welcome.description')}
             </p>
@@ -2112,12 +2141,17 @@ function App(): React.JSX.Element {
   const [assistantSidebarOpen, setAssistantSidebarOpen] = useState(
     () => window.innerWidth >= 1280
   )
+  const [assistantSidebarOverlay, setAssistantSidebarOverlay] =
+    useState(() => window.innerWidth < 1280)
   const [assistantSidebarTab, setAssistantSidebarTab] =
     useState<AssistantSidebarTab>('tasks')
   const [browserStates, setBrowserStates] = useState<
     Record<string, BrowserLiveState>
   >({})
   const [view, setViewState] = useState<WorkspaceView>('chat')
+  const settingsLeaveRequesterRef = useRef<
+    SettingsLeaveRequester | undefined
+  >(undefined)
   const [cachedWorkspaceViews, setCachedWorkspaceViews] = useState<
     KeepAliveCacheEntry<WorkspaceView>[]
   >(() => [{ key: 'chat', lastVisitedAt: Date.now() }])
@@ -2128,17 +2162,83 @@ function App(): React.JSX.Element {
       ? [{ key: activeId, lastVisitedAt: Date.now() }]
       : []
   )
+  const commitView = useCallback(
+    (next: WorkspaceView): void => {
+      const now = Date.now()
+      const runningConversationIds = new Set(
+        [...activeRuns.current.values()].map((run) => run.conversationId)
+      )
+      preparingConversations.current.forEach((conversationId) =>
+        runningConversationIds.add(conversationId)
+      )
+      const protectedWorkspaceViews = new Set<WorkspaceView>()
+      if (runningConversationIds.size > 0) {
+        protectedWorkspaceViews.add('chat')
+        protectedWorkspaceViews.add('activity')
+      }
+      if (knowledgeOperationCountRef.current > 0) {
+        protectedWorkspaceViews.add('knowledge')
+        protectedWorkspaceViews.add('activity')
+      }
+      if (
+        assistantTasksRef.current.some(
+          (task) =>
+            task.status === 'queued' ||
+            task.status === 'running' ||
+            task.status === 'waiting_approval'
+        )
+      ) {
+        protectedWorkspaceViews.add('activity')
+      }
+      viewRef.current = next
+      setCachedWorkspaceViews((current) =>
+        touchAndPruneKeepAliveEntries(current, next, now, {
+          expiresAfterMs: keepAliveExpirationMs,
+          maximumEntries: maximumCachedWorkspaceViews,
+          protectedKeys: protectedWorkspaceViews,
+          recentEntries: recentCachedWorkspaceViews
+        })
+      )
+      setViewState(next)
+    },
+    []
+  )
   const setView = useCallback(
     (update: SetStateAction<WorkspaceView>): void => {
       const next =
         typeof update === 'function'
           ? update(viewRef.current)
           : update
-      viewRef.current = next
-      setCachedWorkspaceViews((current) =>
-        touchKeepAliveEntry(current, next, Date.now())
+      if (viewRef.current === 'settings' && next !== 'settings') {
+        const requestLeave = settingsLeaveRequesterRef.current
+        if (requestLeave) {
+          requestLeave(() => commitView(next))
+          return
+        }
+      }
+      commitView(next)
+    },
+    [commitView]
+  )
+  const registerSettingsLeaveRequester = useCallback(
+    (requester: SettingsLeaveRequester | undefined): void => {
+      settingsLeaveRequesterRef.current = requester
+    },
+    []
+  )
+  const handleShortcutSettingsChanged = useCallback(
+    (snapshot: GlobalShortcutSettingsSnapshot): void => {
+      setAppInfo((current) =>
+        current
+          ? {
+              ...current,
+              shortcut: snapshot.registered
+                ? snapshot.displayAccelerator
+                : '',
+              shortcutStatus: snapshot.status
+            }
+          : current
       )
-      setViewState(next)
     },
     []
   )
@@ -2150,8 +2250,20 @@ function App(): React.JSX.Element {
           : update
       activeConversationIdRef.current = next
       if (next) {
+        const now = Date.now()
+        const runningConversationIds = new Set(
+          [...activeRuns.current.values()].map((run) => run.conversationId)
+        )
+        preparingConversations.current.forEach((conversationId) =>
+          runningConversationIds.add(conversationId)
+        )
         setCachedConversationViews((current) =>
-          touchKeepAliveEntry(current, next, Date.now())
+          touchAndPruneKeepAliveEntries(current, next, now, {
+            expiresAfterMs: keepAliveExpirationMs,
+            maximumEntries: maximumCachedConversations,
+            protectedKeys: runningConversationIds,
+            recentEntries: recentCachedConversations
+          })
         )
       }
       setActiveIdState(next)
@@ -2234,6 +2346,14 @@ function App(): React.JSX.Element {
   const imageViewerTriggerRef = useRef<HTMLElement | undefined>(
     undefined
   )
+  const imageViewerDialogRef = useRef<HTMLElement>(null)
+  const imageViewerCloseRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!imageViewerItem) {
+      return
+    }
+    return activateModalFocus(() => imageViewerCloseRef.current)
+  }, [imageViewerItem])
   useEffect(
     () =>
       window.goodbuddy.context.onFileSelectionProgress((progress) => {
@@ -2255,6 +2375,7 @@ function App(): React.JSX.Element {
   const [knowledgeLoading, setKnowledgeLoading] = useState(true)
   const [knowledgeLoadError, setKnowledgeLoadError] = useState<string>()
   const [knowledgeOperationCount, setKnowledgeOperationCount] = useState(0)
+  const knowledgeOperationCountRef = useRef(knowledgeOperationCount)
   const knowledgeLoadRequestRef = useRef(0)
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(
     undefined
@@ -2263,6 +2384,8 @@ function App(): React.JSX.Element {
     string[]
   >([])
   const [knowledgeScopeOpen, setKnowledgeScopeOpen] = useState(false)
+  const knowledgeScopeTriggerRef = useRef<HTMLButtonElement>(null)
+  const knowledgeScopePopoverRef = useRef<HTMLDivElement>(null)
   const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>(
     loadActivityRecords
   )
@@ -2314,6 +2437,7 @@ function App(): React.JSX.Element {
   >({})
   const sidebarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
+  const assistantSidebarToggleRef = useRef<HTMLButtonElement>(null)
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
   )
@@ -2339,6 +2463,15 @@ function App(): React.JSX.Element {
     setSidebarOpen(false)
     requestAnimationFrame(() => sidebarToggleRef.current?.focus())
   }, [])
+  const navigateFromSidebar = useCallback(
+    (nextView: WorkspaceView): void => {
+      setView(nextView)
+      if (narrowWindow) {
+        closeNarrowSidebar()
+      }
+    },
+    [closeNarrowSidebar, narrowWindow, setView]
+  )
 
   useEffect(() => {
     if (!conversationStoreReady) {
@@ -2399,7 +2532,9 @@ function App(): React.JSX.Element {
       }
       setCachedConversationViews((current) =>
         pruneKeepAliveEntries(
-          current.filter((entry) => conversationIds.has(entry.key)),
+          filterKeepAliveEntries(current, (entry) =>
+            conversationIds.has(entry.key)
+          ),
           {
             currentKey: activeId,
             expiresAfterMs: keepAliveExpirationMs,
@@ -2429,6 +2564,7 @@ function App(): React.JSX.Element {
     const collapseSidebarAtNarrowWidth = (): void => {
       const narrow = window.innerWidth < 900
       setNarrowWindow(narrow)
+      setAssistantSidebarOverlay(window.innerWidth < 1280)
       if (narrow) {
         setSidebarOpen(false)
       }
@@ -2461,6 +2597,41 @@ function App(): React.JSX.Element {
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [closeNarrowSidebar, narrowWindow, sidebarOpen])
+
+  useEffect(() => {
+    if (!knowledgeScopeOpen) {
+      return
+    }
+    const focusFrame = requestAnimationFrame(() => {
+      knowledgeScopePopoverRef.current
+        ?.querySelector<HTMLInputElement>('input')
+        ?.focus()
+    })
+    const isScopeTarget = (target: EventTarget | null): boolean =>
+      target instanceof Node &&
+      (knowledgeScopePopoverRef.current?.contains(target) === true ||
+        knowledgeScopeTriggerRef.current?.contains(target) === true)
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (!isScopeTarget(event.target)) {
+        setKnowledgeScopeOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      event.preventDefault()
+      setKnowledgeScopeOpen(false)
+      knowledgeScopeTriggerRef.current?.focus()
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [knowledgeScopeOpen])
 
   useLayoutEffect(() => {
     conversationsRef.current = conversations
@@ -3094,6 +3265,9 @@ function App(): React.JSX.Element {
     () => projects.find((project) => project.id === activeProjectId),
     [activeProjectId, projects]
   )
+  const activeProjectDisplayName = activeProject
+    ? getProjectDisplayText(activeProject, tWorkspace).name
+    : undefined
   const filteredConversations = useMemo(() => {
     const query = deferredSearchQuery.trim().toLocaleLowerCase()
     const candidates = query
@@ -3157,8 +3331,13 @@ function App(): React.JSX.Element {
   )
   const projectNames = useMemo(
     () =>
-      new Map(projects.map((project) => [project.id, project.name])),
-    [projects]
+      new Map(
+        projects.map((project) => [
+          project.id,
+          getProjectDisplayText(project, tWorkspace).name
+        ])
+      ),
+    [projects, tWorkspace]
   )
   const pendingSidebarApprovals = useMemo<PendingSidebarApproval[]>(
     () =>
@@ -5680,11 +5859,10 @@ function App(): React.JSX.Element {
   }, [])
 
   const closeImageViewer = (): void => {
+    const trigger = imageViewerTriggerRef.current
     setImageViewerItem(undefined)
-    requestAnimationFrame(() => {
-      imageViewerTriggerRef.current?.focus()
-      imageViewerTriggerRef.current = undefined
-    })
+    imageViewerTriggerRef.current = undefined
+    requestAnimationFrame(() => trigger?.focus())
   }
 
   const openCitationContext = useCallback(async (
@@ -6665,7 +6843,11 @@ function App(): React.JSX.Element {
   const runKnowledgeSourceAction = async <T,>(
     action: () => Promise<T>
   ): Promise<T> => {
-    setKnowledgeOperationCount((count) => count + 1)
+    setKnowledgeOperationCount((count) => {
+      const next = count + 1
+      knowledgeOperationCountRef.current = next
+      return next
+    })
     try {
       const result = await action()
       await refreshSelectedKnowledge()
@@ -6674,7 +6856,11 @@ function App(): React.JSX.Element {
       await refreshSelectedKnowledge().catch(() => undefined)
       throw error
     } finally {
-      setKnowledgeOperationCount((count) => Math.max(0, count - 1))
+      setKnowledgeOperationCount((count) => {
+        const next = Math.max(0, count - 1)
+        knowledgeOperationCountRef.current = next
+        return next
+      })
     }
   }
 
@@ -7079,16 +7265,28 @@ function App(): React.JSX.Element {
     runtimeSettings
   ])
 
+  const assistantOverlayOpen =
+    assistantSidebarOverlay &&
+    assistantSidebarOpen &&
+    view === 'chat'
+  const mainSidebarOpen = narrowWindow && sidebarOpen
+  const backgroundIsolated = mainSidebarOpen || assistantOverlayOpen
+
   return (
     <div className="app-shell">
       <aside
         aria-label={
           narrowWindow && sidebarOpen ? t('sidebar.label') : undefined
         }
-        aria-hidden={!sidebarOpen}
+        aria-hidden={!sidebarOpen || assistantOverlayOpen}
         aria-modal={narrowWindow && sidebarOpen ? 'true' : undefined}
         className={sidebarOpen ? 'sidebar' : 'sidebar sidebar--closed'}
-        inert={!sidebarOpen}
+        inert={!sidebarOpen || assistantOverlayOpen}
+        onKeyDown={(event) => {
+          if (mainSidebarOpen) {
+            trapTabFocus(event, sidebarRef.current)
+          }
+        }}
         ref={sidebarRef}
         role={narrowWindow && sidebarOpen ? 'dialog' : undefined}
       >
@@ -7152,7 +7350,7 @@ function App(): React.JSX.Element {
             className={
               view === 'chat' ? 'nav-item nav-item--active' : 'nav-item'
             }
-            onClick={() => setView('chat')}
+            onClick={() => navigateFromSidebar('chat')}
             type="button"
           >
             <MessageSquare aria-hidden="true" size={17} />
@@ -7166,7 +7364,11 @@ function App(): React.JSX.Element {
                   ? 'nav-item nav-item--active'
                   : 'nav-item'
               }
-              onClick={() => setView('magic-notes')}
+              onFocus={() => preloadWorkspaceRouteOnIntent('magic-notes')}
+              onClick={() => navigateFromSidebar('magic-notes')}
+              onPointerEnter={() =>
+                preloadWorkspaceRouteOnIntent('magic-notes')
+              }
               type="button"
             >
               <Sparkles aria-hidden="true" size={17} />
@@ -7180,7 +7382,11 @@ function App(): React.JSX.Element {
                 ? 'nav-item nav-item--active'
                 : 'nav-item'
             }
-            onClick={() => setView('knowledge')}
+            onFocus={() => preloadWorkspaceRouteOnIntent('knowledge')}
+            onClick={() => navigateFromSidebar('knowledge')}
+            onPointerEnter={() =>
+              preloadWorkspaceRouteOnIntent('knowledge')
+            }
             type="button"
           >
             <Library aria-hidden="true" size={17} />
@@ -7193,7 +7399,7 @@ function App(): React.JSX.Element {
                 ? 'nav-item nav-item--active'
                 : 'nav-item'
             }
-            onClick={() => setView('heartbeat')}
+            onClick={() => navigateFromSidebar('heartbeat')}
             type="button"
           >
             <HeartPulse aria-hidden="true" size={17} />
@@ -7216,7 +7422,11 @@ function App(): React.JSX.Element {
                 ? 'nav-item nav-item--active'
                 : 'nav-item'
             }
-            onClick={() => setView('activity')}
+            onFocus={() => preloadWorkspaceRouteOnIntent('activity')}
+            onClick={() => navigateFromSidebar('activity')}
+            onPointerEnter={() =>
+              preloadWorkspaceRouteOnIntent('activity')
+            }
             type="button"
           >
             <TerminalSquare aria-hidden="true" size={17} />
@@ -7292,6 +7502,9 @@ function App(): React.JSX.Element {
                       return next
                     })
                     setView('chat')
+                    if (narrowWindow) {
+                      closeNarrowSidebar()
+                    }
                   }}
                 >
                   <span className="conversation-item__primary">
@@ -7517,7 +7730,12 @@ function App(): React.JSX.Element {
                               ? 'conversation-task-child conversation-task-child--active'
                               : 'conversation-task-child'
                           }
-                          onClick={() => openAssistantTask(task)}
+                          onClick={() => {
+                            openAssistantTask(task)
+                            if (narrowWindow) {
+                              closeNarrowSidebar()
+                            }
+                          }}
                           type="button"
                         >
                           <span
@@ -7549,6 +7767,9 @@ function App(): React.JSX.Element {
                           )
                           setActiveId(conversation.id)
                           setView('chat')
+                          if (narrowWindow) {
+                            closeNarrowSidebar()
+                          }
                         }}
                         type="button"
                       >
@@ -7577,7 +7798,11 @@ function App(): React.JSX.Element {
           <button
             className="user-card"
             type="button"
-            onClick={() => setView('settings')}
+            onFocus={() => preloadWorkspaceRouteOnIntent('settings')}
+            onClick={() => navigateFromSidebar('settings')}
+            onPointerEnter={() =>
+              preloadWorkspaceRouteOnIntent('settings')
+            }
           >
             <span className="avatar">GB</span>
             <span className="user-card__copy">
@@ -7602,9 +7827,9 @@ function App(): React.JSX.Element {
       )}
 
       <main
-        aria-hidden={narrowWindow && sidebarOpen ? 'true' : undefined}
+        aria-hidden={backgroundIsolated ? 'true' : undefined}
         className="workspace"
-        inert={narrowWindow && sidebarOpen}
+        inert={backgroundIsolated}
       >
         <header className="topbar">
           <button
@@ -7648,7 +7873,8 @@ function App(): React.JSX.Element {
                   activeProject
                     ? {
                         kind: 'project',
-                        projectName: activeProject.name
+                        projectName:
+                          activeProjectDisplayName ?? activeProject.name
                       }
                     : {
                         kind: 'unavailable',
@@ -7689,6 +7915,7 @@ function App(): React.JSX.Element {
                 onClick={() =>
                   setAssistantSidebarOpen((current) => !current)
                 }
+                ref={assistantSidebarToggleRef}
                 type="button"
               >
                 <PanelRightOpen size={18} />
@@ -8065,8 +8292,20 @@ function App(): React.JSX.Element {
                   </button>
                 </div>
                 {knowledgeSnapshot.libraries.length > 0 && (
-                  <div className="knowledge-scope">
+                  <div
+                    className="knowledge-scope"
+                    onBlurCapture={(event) => {
+                      if (
+                        !(event.relatedTarget instanceof Node) ||
+                        !event.currentTarget.contains(event.relatedTarget)
+                      ) {
+                        setKnowledgeScopeOpen(false)
+                      }
+                    }}
+                  >
                     <button
+                      aria-controls="knowledge-scope-popover"
+                      aria-haspopup="dialog"
                       aria-label={t('composer.knowledge.select', {
                         count: enabledKnowledgeLibraryIds.length
                       })}
@@ -8074,6 +8313,7 @@ function App(): React.JSX.Element {
                       onClick={() =>
                         setKnowledgeScopeOpen((current) => !current)
                       }
+                      ref={knowledgeScopeTriggerRef}
                       title={t('composer.knowledge.title')}
                       type="button"
                     >
@@ -8084,7 +8324,13 @@ function App(): React.JSX.Element {
                       </span>
                     </button>
                     {knowledgeScopeOpen && (
-                      <div className="knowledge-scope__popover">
+                      <div
+                        aria-label={t('composer.knowledge.scope')}
+                        className="knowledge-scope__popover"
+                        id="knowledge-scope-popover"
+                        ref={knowledgeScopePopoverRef}
+                        role="dialog"
+                      >
                         <strong>{t('composer.knowledge.scope')}</strong>
                         {knowledgeSnapshot.libraries.map((library) => (
                           <label key={library.id}>
@@ -9132,7 +9378,7 @@ function App(): React.JSX.Element {
             onClose={() => {
               setSettingsInitialCategory(undefined)
               setSettingsInitialChannel(undefined)
-              setView('chat')
+              commitView('chat')
             }}
             onExpertsChanged={(experts) => {
               setAssistantExperts(experts)
@@ -9151,9 +9397,11 @@ function App(): React.JSX.Element {
               setMagicNotesEnabled(enabled)
             }}
             onNotify={notify}
+            onLeaveRequestReady={registerSettingsLeaveRequester}
             onSaved={(settings) => {
               setRuntimeSettings(settings)
             }}
+            onShortcutSettingsChanged={handleShortcutSettingsChanged}
             onUpdateProject={updateProject}
             open={view === 'settings'}
             presentation="page"
@@ -9170,12 +9418,29 @@ function App(): React.JSX.Element {
             route="activity"
           >
             <PageShell variant="dashboard">
-              <ActivityPanel
-                onClear={() => setActivityRecords([])}
-                onOpenConversation={openActivityConversation}
-                records={activityRecords}
-                tokenUsage={tokenUsage}
-              />
+              <RouteErrorBoundary
+                key="activity"
+                fallback={
+                  <RouteLoadError
+                    message={t('route.loadFailed')}
+                    reloadLabel={t('route.reload')}
+                  />
+                }
+              >
+                <Suspense
+                  fallback={
+                    <RouteLoadingStatus label={t('route.loading')} />
+                  }
+                >
+                  <ActivityPanel
+                    onClear={() => setActivityRecords([])}
+                    onOpenConversation={openActivityConversation}
+                    projects={projects}
+                    records={activityRecords}
+                    tokenUsage={tokenUsage}
+                  />
+                </Suspense>
+              </RouteErrorBoundary>
             </PageShell>
           </KeepAliveRoute>
         )}
@@ -9233,9 +9498,13 @@ function App(): React.JSX.Element {
             className="image-viewer-dialog"
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
+                event.preventDefault()
                 closeImageViewer()
+                return
               }
+              trapTabFocus(event, imageViewerDialogRef.current)
             }}
+            ref={imageViewerDialogRef}
             role="dialog"
           >
             <header className="image-viewer-dialog__header">
@@ -9253,9 +9522,9 @@ function App(): React.JSX.Element {
                 </button>
                 <button
                   aria-label={t('chat.images.closeViewer')}
-                  autoFocus
                   className="icon-button"
                   onClick={closeImageViewer}
+                  ref={imageViewerCloseRef}
                   type="button"
                 >
                   <X size={16} />
@@ -9283,7 +9552,9 @@ function App(): React.JSX.Element {
           onClose={() => setCustomTaskDialog(undefined)}
           onCreate={createCustomTask}
           projectId={activeProject.id}
-          projectName={activeProject.name}
+          projectName={
+            activeProjectDisplayName ?? activeProject.name
+          }
           runtimeLabel={activeRuntimeLabel}
           supportsToolExecution={Boolean(
             runtime?.supportsToolExecution
@@ -9291,6 +9562,14 @@ function App(): React.JSX.Element {
           workspaceLabel={
             activeProject.rootPath || t('customTask.scope.noWorkspace')
           }
+        />
+      )}
+      {assistantOverlayOpen && (
+        <button
+          aria-label={tWorkspace('sidebar.dismissOverlay')}
+          className="assistant-sidebar-backdrop"
+          onClick={() => setAssistantSidebarOpen(false)}
+          type="button"
         />
       )}
       <RightAssistantSidebar
@@ -9386,6 +9665,8 @@ function App(): React.JSX.Element {
         open={
           assistantSidebarOpen && view === 'chat'
         }
+        overlay={assistantSidebarOverlay}
+        restoreFocusRef={assistantSidebarToggleRef}
         tab={assistantSidebarTab}
         workspaceChanges={workspaceChanges}
         workspaceProjectId={activeProjectId || undefined}

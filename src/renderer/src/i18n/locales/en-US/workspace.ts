@@ -2,6 +2,10 @@ import type { TranslationShape } from '../../resource-types'
 import type { workspace as chineseWorkspace } from '../zh-CN/workspace'
 
 export const workspace = {
+  builtInDefaultProject: {
+    name: 'Default project',
+    description: 'GoodBuddy default workspace'
+  },
   projectSwitcher: {
     workModes: {
       ask: 'Ask · Read-only',
@@ -70,6 +74,7 @@ export const workspace = {
     resizeValue: '{{width}} pixels',
     title: 'Workspace',
     close: 'Close assistant workspace',
+    dismissOverlay: 'Dismiss assistant workspace overlay',
     categoriesAriaLabel: 'Workspace categories',
     tabs: {
       tasks: {
@@ -291,8 +296,9 @@ export const workspace = {
       global: 'Global',
       allProjects: 'All projects',
       project: 'Project: {{projectName}}',
+      projects: '{{count}} projects',
       mixedProject: 'Project: {{projectName}} + Global',
-      mixedCurrent: 'Current project + Global',
+      mixedCurrent: 'Projects + Global',
       unavailable: 'Scope unavailable'
     },
     destructive: {

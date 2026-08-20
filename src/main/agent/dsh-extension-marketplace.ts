@@ -26,6 +26,7 @@ import type {
   RuntimeExtensionCatalog,
   RuntimeExtensionStoreDependencies
 } from './runtime-extension-store'
+import { terminateProcessTreeAndWait } from './child-process-termination'
 
 const NPM_REGISTRY_URL = 'https://registry.npmjs.org'
 const NPM_SEARCH_PAGE_SIZE = 250
@@ -167,61 +168,14 @@ export type PackageManagerRunner = (
   }
 ) => Promise<PackageManagerRunResult>
 
-function waitForProcessClose(
-  child: ReturnType<typeof spawn>
-): Promise<void> {
-  if (child.exitCode !== null) {
-    return Promise.resolve()
-  }
-  return new Promise((resolve) => {
-    const finish = (): void => {
-      clearTimeout(timer)
-      child.removeListener('close', finish)
-      resolve()
-    }
-    const timer = setTimeout(finish, 5_000)
-    child.once('close', finish)
-  })
-}
-
 async function terminatePackageManager(
   child: ReturnType<typeof spawn>
 ): Promise<void> {
-  const closed = waitForProcessClose(child)
-  if (process.platform === 'win32' && child.pid) {
-    const killer = spawn(
-      'taskkill.exe',
-      ['/PID', String(child.pid), '/T', '/F'],
-      {
-        shell: false,
-        stdio: 'ignore',
-        windowsHide: true
-      }
-    )
-    await new Promise<void>((resolve) => {
-      const finish = (): void => {
-        clearTimeout(timer)
-        killer.removeListener('close', finish)
-        killer.removeListener('error', finish)
-        resolve()
-      }
-      const timer = setTimeout(finish, 5_000)
-      killer.once('close', finish)
-      killer.once('error', finish)
-    })
-  } else if (child.pid) {
-    try {
-      process.kill(-child.pid, 'SIGKILL')
-    } catch {
-      child.kill('SIGKILL')
-    }
-  } else {
-    child.kill('SIGKILL')
-  }
-  if (child.exitCode === null) {
-    child.kill('SIGKILL')
-  }
-  await closed
+  await terminateProcessTreeAndWait(child, {
+    processGroup: true,
+    signal: 'SIGKILL',
+    waitMs: 5_000
+  })
 }
 
 function boundedAppend(current: string, chunk: unknown): string {

@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RightAssistantSidebar,
@@ -18,11 +24,17 @@ beforeEach(() => {
 function renderSidebar({
   tab = 'context',
   artifacts = [],
-  onLoadArtifact = vi.fn(async () => undefined)
+  onLoadArtifact = vi.fn(async () => undefined),
+  onClose = vi.fn(),
+  overlay = false,
+  restoreFocusRef
 }: {
   tab?: AssistantSidebarTab
   artifacts?: SidebarArtifact[]
   onLoadArtifact?: (artifactId: string) => Promise<void>
+  onClose?: () => void
+  overlay?: boolean
+  restoreFocusRef?: { current: HTMLElement | null }
 } = {}): HTMLElement {
   render(
     <RightAssistantSidebar
@@ -35,7 +47,7 @@ function renderSidebar({
       tasks={[]}
       conversationTitles={new Map()}
       projectNames={new Map()}
-      onClose={vi.fn()}
+      onClose={onClose}
       onCreateCustomTask={vi.fn()}
       onImportArtifacts={vi.fn(async () => undefined)}
       onListWorkspaceDirectory={vi.fn(async (path: string) => ({
@@ -57,11 +69,13 @@ function renderSidebar({
       onStopBrowser={vi.fn(async () => undefined)}
       onTabChange={vi.fn()}
       open
+      overlay={overlay}
+      restoreFocusRef={restoreFocusRef}
       tab={tab}
     />
   )
 
-  return screen.getByRole('complementary', {
+  return screen.getByRole(overlay ? 'dialog' : 'complementary', {
     name: '助手工作栏'
   })
 }
@@ -164,6 +178,27 @@ describe('RightAssistantSidebar resizing', () => {
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()
+  })
+
+  it('treats overlay mode as a focus-trapped dismissible dialog', async () => {
+    const onClose = vi.fn()
+    const trigger = document.createElement('button')
+    document.body.append(trigger)
+    const sidebar = renderSidebar({
+      onClose,
+      overlay: true,
+      restoreFocusRef: { current: trigger }
+    })
+
+    expect(sidebar).toHaveAttribute('aria-modal', 'true')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('tab', { name: '上下文' })
+      ).toHaveFocus()
+    )
+    fireEvent.keyDown(sidebar, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledOnce()
+    trigger.remove()
   })
 
   it('keeps the product Task index in the task center', () => {

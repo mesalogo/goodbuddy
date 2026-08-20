@@ -239,6 +239,41 @@ export const settingsSections = {
       general: 'General',
       magicNotes: 'Magic Notes'
     },
+    shortcut: {
+      title: 'Global quick access',
+      description:
+        'Show or hide GoodBuddy while another application is active.',
+      enabled: 'Enable global shortcut',
+      accelerator: 'Shortcut',
+      recorderHelp:
+        'Focus this field and press a key combination, or enter an Electron accelerator such as CommandOrControl+Shift+Space.',
+      reset: 'Reset to default',
+      save: 'Save shortcut',
+      saving: 'Saving…',
+      saved: 'Global shortcut updated',
+      loading: 'Loading shortcut status…',
+      status: {
+        registered: 'Registered: {{shortcut}}',
+        disabled: 'The global shortcut is disabled.',
+        conflict:
+          'Another application is using this shortcut. Record a different combination and save it.',
+        failed:
+          'The system could not register this shortcut. Record another combination or check system shortcut settings.'
+      },
+      errors: {
+        serviceUnavailable:
+          'Shortcut settings are not available in this version',
+        readFailed: 'Could not load shortcut settings. Try again.',
+        invalidAccelerator:
+          'Enter a valid key combination that includes a modifier.',
+        conflict:
+          'Another application is using this shortcut. Record a different combination and try again.',
+        registrationFailed:
+          'The system could not register this shortcut. Choose another combination or check system shortcut settings.',
+        saveFailed:
+          'The shortcut could not be saved. The previous working shortcut is still active. Try again.'
+      }
+    },
     modelDownloadSource: {
       cardTitle: 'Local models',
       cardDescription:

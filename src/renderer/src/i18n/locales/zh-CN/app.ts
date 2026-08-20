@@ -189,6 +189,7 @@ export const app = {
     }
   },
   chat: {
+    heading: '对话内容',
     user: '用户',
     taskResult: '任务结果：{{title}}',
     welcome: {

@@ -96,6 +96,13 @@ export const settings = {
     clearing: '正在清除…',
     clearLocalData: '清除本地数据'
   },
+  unsaved: {
+    close: '当前设置有未保存更改。请先保存，或确认放弃更改后再关闭设置中心。',
+    navigation: '当前设置有未保存更改。请先保存，或确认放弃更改后再切换分类。',
+    keepEditing: '继续编辑',
+    discardAndClose: '放弃更改并关闭',
+    discardAndNavigate: '放弃更改并切换'
+  },
   errors: {
     readSettings: '读取设置失败',
     detectRuntimes: 'Runtime 自动检测失败',

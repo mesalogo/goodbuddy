@@ -12,6 +12,7 @@ import {
   DestructiveConfirmActions,
   SegmentedControl
 } from './WorkspacePrimitives'
+import { getProjectDisplayText } from './project-display'
 
 type HeartbeatSettingsProps = {
   heartbeats: AssistantHeartbeatConfig[]
@@ -38,6 +39,7 @@ export function HeartbeatSettings({
   onRunNow
 }: HeartbeatSettingsProps): React.JSX.Element {
   const { t, i18n } = useTranslation('heartbeat')
+  const { t: tWorkspace } = useTranslation('workspace')
   const [editingId, setEditingId] = useState<string>()
   const [name, setName] = useState(t('settings.defaultName'))
   const [time, setTime] = useState('09:00')
@@ -162,11 +164,12 @@ export function HeartbeatSettings({
     if (heartbeat.scope.kind === 'global') {
       return t('settings.scope.global')
     }
-    const names = heartbeat.scope.projectIds.map(
-      (projectId) =>
-        projectById.get(projectId)?.name ??
-        t('settings.scope.unavailableProject')
-    )
+    const names = heartbeat.scope.projectIds.map((projectId) => {
+      const project = projectById.get(projectId)
+      return project
+        ? getProjectDisplayText(project, tWorkspace).name
+        : t('settings.scope.unavailableProject')
+    })
     return t('settings.scope.selectedProjectsSummary', {
       count: names.length,
       names: names.join(t('settings.scope.nameSeparator'))
@@ -176,10 +179,10 @@ export function HeartbeatSettings({
   return (
     <div className="heartbeat-settings">
       <div className="heartbeat-settings__intro">
-        <h3>
+        <h2>
           <HeartPulse size={15} />
           {t('settings.title')}
-        </h3>
+        </h2>
         <p>{t('settings.description')}</p>
       </div>
       <div className="heartbeat-settings__editor">
@@ -250,7 +253,9 @@ export function HeartbeatSettings({
                       }
                       type="checkbox"
                     />
-                    <span>{project.name}</span>
+                    <span>
+                      {getProjectDisplayText(project, tWorkspace).name}
+                    </span>
                     {project.status !== 'active' && (
                       <small>{t('settings.scope.archived')}</small>
                     )}

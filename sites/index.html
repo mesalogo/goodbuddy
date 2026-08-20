@@ -5,11 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="GoodBuddy 是跨平台桌面助手与 AI 编程工具台，以统一 Agent Runtime 连接直连模型、OpenCode、Continue 与 DeepSeek Harness。"
+      content="GoodBuddy 是免注册、支持信创软硬件的一站式 AI 助手，以统一 Agent Runtime 连接直连模型、OpenCode、Continue 与 DeepSeek Harness。"
     />
     <link rel="canonical" href="https://mesalogo.github.io/goodbuddy/" />
+    <link rel="alternate" hreflang="zh-CN" href="https://mesalogo.github.io/goodbuddy/" />
+    <link rel="alternate" hreflang="en" href="https://mesalogo.github.io/goodbuddy/en.html" />
+    <link rel="alternate" hreflang="x-default" href="https://mesalogo.github.io/goodbuddy/en.html" />
     <meta name="theme-color" content="#f6f8fb" />
-    <title>GoodBuddy｜桌面助手与 AI 编程工具台</title>
+    <title>GoodBuddy｜免注册、支持信创软硬件的一站式 AI 助手</title>
     <link
       rel="icon"
       href="./assets/goodbuddy-light.png"
@@ -23,6 +26,7 @@
       media="(prefers-color-scheme: dark)"
     />
     <link rel="stylesheet" href="./styles.css" />
+    <script src="./language.js"></script>
     <script>
       (() => {
         try {
@@ -73,6 +77,16 @@
         </nav>
 
         <div class="header-actions">
+          <a
+            class="language-link"
+            href="./en.html?lang=en"
+            lang="en"
+            hreflang="en"
+            aria-label="Switch to English"
+            data-language-link
+          >
+            EN
+          </a>
           <button class="icon-button" type="button" aria-label="切换为深色主题" data-theme-toggle>
             <svg class="theme-icon theme-icon--sun" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="4" />
@@ -94,6 +108,7 @@
         </div>
       </div>
     </header>
+    <div class="menu-backdrop" aria-hidden="true" data-menu-backdrop></div>
 
     <main id="main-content">
       <section class="hero section" id="home" aria-labelledby="hero-title">
@@ -103,10 +118,14 @@
               <span class="status-dot" aria-hidden="true"></span>
               Windows · macOS · Linux
             </div>
-            <h1 id="hero-title">桌面助手，<br /><span>也是 AI 编程工具台。</span></h1>
+            <h1 id="hero-title">
+              免注册，<br />
+              支持信创软硬件的<br />
+              <span>一站式 AI 助手。</span>
+            </h1>
             <p class="hero-lead">
-              GoodBuddy 管理对话、知识、笔记与任务，也通过独创的统一 Agent Runtime
-              接入直连模型、OpenCode、Continue 和 DeepSeek Harness。
+              作为桌面助手与 AI 编程工具台，GoodBuddy 管理对话、知识、笔记与任务，
+              也通过独创的统一 Agent Runtime 接入直连模型、OpenCode、Continue 和 DeepSeek Harness。
               无需反复配置命令行，选择工具和项目即可开始。
             </p>
             <div class="hero-actions">
@@ -124,7 +143,7 @@
               </li>
               <li>
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 3 3 7-7" /></svg>
-                图形化配置，执行仍受控
+                无需注册 GoodBuddy 账号
               </li>
             </ul>
           </div>
@@ -155,7 +174,7 @@
                   <div class="side-item"><span></span>知识库</div>
                   <div class="side-item"><span></span>魔法笔记</div>
                   <div class="side-item"><span></span>智能心跳</div>
-                  <div class="side-item"><span></span>任务与活动</div>
+                  <div class="side-item"><span></span>运行记录</div>
                   <div class="sidebar-spacer"></div>
                   <div class="side-item"><span></span>设置</div>
                 </aside>
@@ -324,13 +343,9 @@
               </p>
             </article>
           </div>
-          <div class="download-release-status" data-release-status role="status">
-            正在连接官方下载源…
-          </div>
-
           <aside class="domestic-support" aria-labelledby="domestic-support-title">
             <div>
-              <p class="kicker">国产化适配</p>
+              <p class="kicker">信创软硬件支持</p>
               <h3 id="domestic-support-title">统信 UOS、银河麒麟，覆盖国产 x64 与 ARM64</h3>
               <p>使用对应的 Linux x64 或 arm64 安装包。</p>
             </div>
@@ -435,7 +450,7 @@
               </div>
               <span class="feature-number">06</span>
               <h3>从运行到结果，全程可追踪</h3>
-              <p>统一查看工具调用、取消、超时、Token 用量和活动记录，知道 Runtime 做了什么。</p>
+              <p>统一查看工具调用、取消、超时、Token 用量和运行记录，知道 Runtime 做了什么。</p>
             </article>
           </div>
         </div>
@@ -496,7 +511,7 @@
           </span>
           <span>GoodBuddy</span>
         </a>
-        <p>桌面助手｜AI 编程工具台</p>
+        <p>免注册、支持信创软硬件的一站式 AI 助手</p>
         <div class="footer-links">
           <a href="#download">下载</a>
           <a href="#features">Agent Runtime</a>
@@ -509,6 +524,7 @@
       </div>
     </footer>
 
+    <script src="./release-index.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

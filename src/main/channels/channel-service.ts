@@ -198,7 +198,12 @@ export class ChannelService {
       if (this.state !== 'running') {
         return
       }
-      if (entry.attempts >= 5) {
+      if (entry.state === 'terminal' || entry.attempts >= 5) {
+        this.onDeliveryFailure?.(
+          new Error(
+            `通道结果已达到重试上限，发件箱记录 ${entry.id} 已终止`
+          )
+        )
         continue
       }
       try {

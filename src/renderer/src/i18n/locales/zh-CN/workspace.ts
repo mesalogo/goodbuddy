@@ -1,4 +1,8 @@
 export const workspace = {
+  builtInDefaultProject: {
+    name: '默认项目',
+    description: 'GoodBuddy 默认工作区'
+  },
   projectSwitcher: {
     workModes: {
       ask: 'Ask · 只读问答',
@@ -67,6 +71,7 @@ export const workspace = {
     resizeValue: '{{width}} 像素',
     title: '工作栏',
     close: '关闭助手工作栏',
+    dismissOverlay: '关闭助手工作栏背景',
     categoriesAriaLabel: '工作栏分类',
     tabs: {
       tasks: {
@@ -277,8 +282,9 @@ export const workspace = {
       global: '全局',
       allProjects: '全部项目',
       project: '项目：{{projectName}}',
+      projects: '{{count}} 个项目',
       mixedProject: '项目：{{projectName}} + 全局',
-      mixedCurrent: '当前项目 + 全局',
+      mixedCurrent: '项目 + 全局',
       unavailable: '范围不可用'
     },
     destructive: {

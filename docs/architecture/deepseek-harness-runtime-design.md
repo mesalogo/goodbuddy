@@ -219,6 +219,10 @@ GoodBuddy 控制面自身不导出 `apply(ctx, config)`，也不提供默认 std
 - 插件成功激活后可注册工具或后台生命周期逻辑。Ask 只能拦截模型工具调用，不能撤销初始化阶段已经发生的副作用。
 
 GoodBuddy 不扫描任意目录、不读取用户 profile 插件清单，也不接受 Renderer 直接提供文件路径。
+插件安装、升级和移除在目录重命名前写入受管变更日志。Main 下次初始化时以持久
+Store 是否已经提交为准，确定性完成新目录或恢复旧目录，并在处理前重新验证受管
+目录、入口真实路径、符号链接和根目录包含关系。旧版 `store.json` 继续原地迁移，
+不要求用户重新安装插件。
 
 ## 8. 协议设计
 
@@ -523,14 +527,14 @@ OpenCode、Continue 和 DeepSeek Harness 的后续能力按操作生命周期放
 | 表面 | 负责内容 | 不负责内容 |
 | --- | --- | --- |
 | Composer 通用行 | 附件、语音、知识范围、专家、Ask/Execute、Runtime 和发送 | Session 监督、后台进度、历史任务管理 |
-| Composer Runtime 专属行 | 仅对当前消息生效且需要高频选择的 Agent、预设、Prompt/Command 快捷操作 | Subagent 树、后台 Job、Workflow/Hook 生命周期 |
-| 助手工作栏固定“Runtime”栏目 | 用户所选会话或 Run 的 Runtime 状态、Subagent 层级与取消、后台 Job 队列/进度/结果、Workflow/Hook 运行、长任务暂停/恢复/终止和会话监督 | 持久模型、程序路径、默认 Agent/预设配置 |
+| Composer Runtime 专属行 | 仅对当前消息生效且需要高频选择的 Agent、预设、Prompt/Command 快捷操作 | Task 级委派、后台执行、Workflow/Hook 生命周期 |
+| 助手工作栏固定“Runtime”栏目 | 用户所选 Conversation 或 Task 的 Runtime 状态、Task 级委派与取消、后台执行进度/结果、Workflow/Hook 运行、长任务暂停/恢复/终止和会话监督；不显示 Job/Run 树 | 持久模型、程序路径、默认 Agent/预设配置 |
 | 设置 > Agent Runtime | 持久 Runtime 配置、默认值、插件管理、能力清单和连接诊断 | 某次活动会话的实时控制 |
 
 Runtime 栏目入口始终存在，并采用统一监督模型；内部再按用户所选目标及其 Runtime 的真实能力
 显示 OpenCode、Continue 或 DSH 的具体区域。未支持能力不渲染空卡片或一排禁用按钮，而是
-在用户需要理解缺口时显示原因和可执行入口。跟随模式切换 Runtime 或会话时必须清理上一归属
-的 Job/Subagent 状态，固定目标则保持不变。完整工作栏契约见
+在用户需要理解缺口时显示原因和可执行入口。跟随模式切换 Runtime、Conversation 或 Task
+时必须清理上一归属的聚合执行状态，固定目标则保持不变。完整工作栏契约见
 [通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)。
 
 所有未来的 Subagent、Job、Workflow、Hook 和会话操作仍须经过 Main 的 Runtime 边界，保留取消、超时、权限、Task/Job/Subjob 层级、用量和活动审计。高风险动作在侧栏就地确认，运行结果进入活动与成果记录，不以 Composer 按钮代替监督面板。DeepSeek Harness 首版仍不加载这些服务，本节只确定未来跨 Runtime 的产品位置和协议归属。
@@ -732,7 +736,7 @@ npm run build
 - Harness 文件和命令工具没有 Runtime OS 隔离，会继承 GoodBuddy 客户端当前用户能够访问的主机资源。
 - 首版不恢复 Harness 原生 Session，Runtime 重启后由 GoodBuddy 历史重建。
 - 图片输入仅在所选模型连接明确声明支持时可用；首版仍不支持知识库、浏览器控制和 Harness Subagent。Web Search/Fetch 仅使用 Main 代理，MCP 仅支持用户分配、Main 代理和 Execute 自动单次授权路径。
-- Harness Subagent、后台 Job、Workflow、Hook 和原生会话监督尚未实现；未来入口固定在右侧 Runtime 监督栏，不扩张 Composer 工具栏。
+- Harness Subagent、后台 Job、Workflow、Hook 和原生会话监督尚未实现；未来按 Task 聚合到右侧 Runtime 监督栏，不扩张 Composer 工具栏或暴露 Job/Run 层级。
 - 推理、工具和用量扩展属于 GoodBuddy 协议，不是标准 ACP 保证。
 - 市场来自公共 npm 关键字搜索，不是精选目录；包的质量、兼容性和维护状态由发布者负责。
 - 插件安装、初始化、后台生命周期和 Execute 工具使用当前用户权限，不受 Runtime OS 沙箱保护；Ask 只控制模型工具调用。

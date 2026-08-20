@@ -15,6 +15,10 @@ import type {
   AssistantMemory,
   AssistantTask
 } from '../../shared/assistant-contracts'
+import {
+  builtInDefaultProjectSeedDescription,
+  builtInDefaultProjectSeedName
+} from '../../shared/assistant-contracts'
 import { HeartbeatCenter, type HeartbeatCenterProps } from './HeartbeatCenter'
 import i18n from './i18n'
 
@@ -110,11 +114,12 @@ function createProps(
     projects: [
       {
         id: '00000000-0000-4000-8000-000000000101',
-        name: '默认项目',
-        description: '',
+        name: builtInDefaultProjectSeedName,
+        description: builtInDefaultProjectSeedDescription,
         rootPath: 'C:\\Workspace',
         defaultWorkMode: 'ask',
         kind: 'user',
+        builtInDefault: true,
         status: 'active',
         createdAt: '2026-07-31T01:00:00.000Z',
         updatedAt: '2026-07-31T01:00:00.000Z'
@@ -155,6 +160,12 @@ describe('HeartbeatCenter', () => {
       screen.getByRole('button', { name: 'Run heartbeat now' })
     ).toBeInTheDocument()
     expect(screen.getByText(entry.summary)).toBeInTheDocument()
+    expect(screen.getByText('Project: Default project')).toHaveClass(
+      'scope-badge'
+    )
+    expect(
+      screen.getByText(/Every day at 09:00 · Default project/u)
+    ).toBeInTheDocument()
     const englishDate = new Intl.DateTimeFormat('en-US', {
       month: '2-digit',
       day: '2-digit',
@@ -171,6 +182,14 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('button', { name: /Handle in conversation/ })
     ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Heartbeat plans' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Selected projects' })
+    )
+    expect(screen.getByLabelText('Default project')).toBeInTheDocument()
   })
 
   it('shows heartbeat health, growth dimensions, and the latest report', () => {
@@ -179,7 +198,7 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: '智能心跳' })
     ).toBeInTheDocument()
-    expect(screen.getByText('全局')).toHaveClass(
+    expect(screen.getByText('项目：默认项目')).toHaveClass(
       'scope-badge'
     )
     expect(screen.getByText(/每天 09:00 · 默认项目/u)).toBeInTheDocument()
@@ -197,6 +216,98 @@ describe('HeartbeatCenter', () => {
       within(dimensions).getByText('行动转化')
     ).toBeInTheDocument()
     expect(within(dimensions).getByText('2')).toBeInTheDocument()
+  })
+
+  it('distinguishes multi-project-only scope from global and project scope', async () => {
+    const secondProject = {
+      ...createProps().projects[0]!,
+      id: '00000000-0000-4000-8000-000000000102',
+      name: '第二项目',
+      rootPath: 'C:\\Second'
+    }
+    const projectConfig: AssistantHeartbeatConfig = {
+      ...config,
+      scope: {
+        kind: 'projects',
+        projectIds: [createProps().projects[0]!.id, secondProject.id]
+      }
+    }
+    const { rerender } = render(
+      <HeartbeatCenter
+        {...createProps({
+          configs: [projectConfig],
+          projects: [...createProps().projects, secondProject]
+        })}
+      />
+    )
+
+    expect(screen.getByLabelText('2 个项目')).toHaveTextContent(
+      '2 个项目'
+    )
+    expect(screen.queryByText(/全局/u)).not.toBeInTheDocument()
+
+    rerender(
+      <HeartbeatCenter
+        {...createProps({
+          configs: [
+            projectConfig,
+            {
+              ...config,
+              id: 'heartbeat-global',
+              scope: { kind: 'global' }
+            }
+          ],
+          projects: [...createProps().projects, secondProject]
+        })}
+      />
+    )
+    expect(screen.getByLabelText('项目 + 全局')).toBeInTheDocument()
+
+    await i18n.changeLanguage('en-US')
+    rerender(
+      <HeartbeatCenter
+        {...createProps({
+          configs: [projectConfig],
+          projects: [...createProps().projects, secondProject]
+        })}
+      />
+    )
+    expect(screen.getByLabelText('2 projects')).toBeInTheDocument()
+  })
+
+  it('uses level-two headings for direct tab panel sections', () => {
+    render(<HeartbeatCenter {...createProps()} />)
+
+    expect(
+      screen.getByRole('heading', { level: 2, name: '当前状态' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '成长趋势' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '本次心跳' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /待处理建议/u }))
+    expect(
+      screen.getByRole('heading', { level: 2, name: '待确认记忆' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '行动建议' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '心跳轨迹' }))
+    expect(
+      screen.getByRole('heading', { level: 2, name: '成长轨迹' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 2, name: '运行记录' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '心跳计划' }))
+    expect(
+      screen.getByRole('heading', { level: 2, name: '智能心跳' })
+    ).toBeInTheDocument()
   })
 
   it('turns heartbeat findings into explicit user actions', async () => {

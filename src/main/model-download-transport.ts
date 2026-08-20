@@ -1,3 +1,5 @@
+import { ensureModelOperationNotAborted } from './model-package-utils'
+
 const MAX_REDIRECTS = 3
 const redirectStatuses = new Set([301, 302, 303, 307, 308])
 
@@ -28,9 +30,7 @@ export async function fetchModelDownloadResponse(options: {
   const initialHost = url.hostname
   const allowedRedirectHosts = new Set(options.redirectHosts)
   for (let redirectCount = 0; ; redirectCount += 1) {
-    if (options.signal.aborted) {
-      throw new DOMException('The operation was aborted', 'AbortError')
-    }
+    ensureModelOperationNotAborted(options.signal)
     const response = await options.transport(url, {
       method: 'GET',
       redirect: 'manual',

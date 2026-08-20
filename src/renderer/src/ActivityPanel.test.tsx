@@ -7,6 +7,10 @@ import {
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TokenUsageSummary } from '../../shared/assistant-contracts'
+import {
+  builtInDefaultProjectSeedDescription,
+  builtInDefaultProjectSeedName
+} from '../../shared/assistant-contracts'
 import { ActivityPanel } from './ActivityPanel'
 import {
   MAX_ACTIVITY_RECORDS,
@@ -359,6 +363,139 @@ describe('ActivityPanel', () => {
 
     expect(screen.getByText('项目：项目甲')).toBeInTheDocument()
     expect(screen.getByText('范围不可用')).toBeInTheDocument()
+  })
+
+  it('localizes current project IDs while preserving unknown snapshots', async () => {
+    await i18n.changeLanguage('en-US')
+    const currentProjectId =
+      '00000000-0000-4000-8000-000000000101'
+    const currentRecord: ActivityRecord = {
+      ...makeRecord(1),
+      scope: {
+        kind: 'project',
+        projectId: currentProjectId,
+        projectName: builtInDefaultProjectSeedName
+      }
+    }
+    const deletedRecord: ActivityRecord = {
+      ...makeRecord(2),
+      scope: {
+        kind: 'project',
+        projectId: 'deleted-project',
+        projectName: 'Deleted project snapshot'
+      }
+    }
+    const usage = makeTokenUsage()
+    usage.records = [
+      {
+        ...usage.records[0]!,
+        projectId: currentProjectId,
+        projectName: builtInDefaultProjectSeedName
+      },
+      {
+        ...usage.records[0]!,
+        requestId: 'request-deleted',
+        projectId: 'deleted-project',
+        projectName: 'Deleted project snapshot'
+      }
+    ]
+
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        projects={[
+          {
+            id: currentProjectId,
+            name: builtInDefaultProjectSeedName,
+            description: builtInDefaultProjectSeedDescription,
+            rootPath: 'C:\\Workspace',
+            defaultWorkMode: 'ask',
+            kind: 'user',
+            builtInDefault: true,
+            status: 'active',
+            createdAt: '2026-08-01T00:00:00.000Z',
+            updatedAt: '2026-08-01T00:00:00.000Z'
+          }
+        ]}
+        records={[currentRecord, deletedRecord]}
+        tokenUsage={usage}
+      />
+    )
+
+    expect(screen.getByText('Project: Default project')).toBeInTheDocument()
+    expect(
+      screen.getByText('Project: Deleted project snapshot')
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Usage analytics' })
+    )
+    expect(screen.getByText('Default project')).toBeInTheDocument()
+    expect(
+      screen.getByText('Deleted project snapshot')
+    ).toBeInTheDocument()
+  })
+
+  it('preserves ordinary activity and token snapshots after a project rename', async () => {
+    await i18n.changeLanguage('en-US')
+    const projectId = 'ordinary-project'
+    const usage = makeTokenUsage()
+    usage.records = [
+      {
+        ...usage.records[0]!,
+        projectId,
+        projectName: 'Original project snapshot'
+      }
+    ]
+
+    render(
+      <ActivityPanel
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        projects={[
+          {
+            id: projectId,
+            name: 'Renamed current project',
+            description: '',
+            rootPath: 'C:\\Renamed',
+            defaultWorkMode: 'ask',
+            kind: 'user',
+            status: 'active',
+            createdAt: '2026-08-01T00:00:00.000Z',
+            updatedAt: '2026-08-02T00:00:00.000Z'
+          }
+        ]}
+        records={[
+          {
+            ...makeRecord(1),
+            scope: {
+              kind: 'project',
+              projectId,
+              projectName: 'Original project snapshot'
+            }
+          }
+        ]}
+        tokenUsage={usage}
+      />
+    )
+
+    expect(
+      screen.getByText('Project: Original project snapshot')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Project: Renamed current project')
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Usage analytics' })
+    )
+    expect(
+      screen.getByText('Original project snapshot')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Renamed current project')
+    ).not.toBeInTheDocument()
   })
 
   it('uses shared page tabs and explicit global scope', () => {

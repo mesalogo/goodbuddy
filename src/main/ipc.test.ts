@@ -158,6 +158,27 @@ describe('registerIpcHandlers computer capabilities', () => {
     let browserStateListener:
       | ((state: BrowserLiveState) => void)
       | undefined
+    const shortcutSnapshot = {
+      settings: {
+        enabled: true,
+        accelerator: 'Control+Alt+K'
+      },
+      defaultSettings: {
+        enabled: true,
+        accelerator: 'CommandOrControl+Shift+Space'
+      },
+      displayAccelerator: 'Ctrl + Alt + K',
+      registered: true,
+      registeredAccelerator: 'Control+Alt+K',
+      status: 'registered' as const
+    }
+    const shortcutSettingsService = {
+      getSnapshot: vi.fn(() => shortcutSnapshot),
+      update: vi.fn(async () => ({
+        ok: true as const,
+        snapshot: shortcutSnapshot
+      }))
+    }
     const dispose = registerIpcHandlers(
       window as never,
       { capability: 'text' } as never,
@@ -182,12 +203,54 @@ describe('registerIpcHandlers computer capabilities', () => {
           browserStateListener = listener
           return vi.fn()
         }
-      }
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      shortcutSettingsService as never
     )
     const event = {
       sender: webContents,
       senderFrame: webContents.mainFrame
     }
+
+    expect(
+      electronMocks.handlers.get(ipcChannels.appInfo)?.(event)
+    ).toMatchObject({
+      shortcut: 'Ctrl + Alt + K',
+      shortcutStatus: 'registered'
+    })
+    expect(
+      electronMocks.handlers.get(ipcChannels.shortcutSettingsGet)?.(
+        event
+      )
+    ).toEqual(shortcutSnapshot)
+    await expect(
+      electronMocks.handlers.get(ipcChannels.shortcutSettingsUpdate)?.(
+        event,
+        { enabled: true, accelerator: 'ctrl+alt+k' }
+      )
+    ).resolves.toEqual({
+      ok: true,
+      snapshot: shortcutSnapshot
+    })
+    expect(shortcutSettingsService.update).toHaveBeenCalledWith({
+      enabled: true,
+      accelerator: 'Control+Alt+K'
+    })
 
     await expect(
       electronMocks.handlers.get(ipcChannels.contextSelectFiles)?.(event)
@@ -493,6 +556,9 @@ describe('registerIpcHandlers model download source routing', () => {
     }
     const documentOcrModelManager = {
       install: vi.fn(async () => undefined),
+      getProgressSnapshot: vi.fn(() => ({
+        operations: []
+      })),
       getRepositoryUrl: vi.fn(
         () => 'https://huggingface.co/example/ocr'
       )
@@ -588,6 +654,23 @@ describe('registerIpcHandlers model download source routing', () => {
       'ocr-model',
       'hugging-face'
     )
+
+    expect(
+      electronMocks.handlers.get(
+        ipcChannels.documentOcrModelsProgress
+      )?.(event)
+    ).toEqual({ operations: [] })
+    expect(
+      documentOcrModelManager.getProgressSnapshot
+    ).toHaveBeenCalledOnce()
+    expect(() =>
+      electronMocks.handlers
+        .get(ipcChannels.documentOcrModelsProgress)
+        ?.({
+          sender: {},
+          senderFrame: webContents.mainFrame
+        })
+    ).toThrow('拒绝来自未知窗口的 IPC 请求')
 
     await expect(
       electronMocks.handlers.get(
@@ -815,6 +898,107 @@ describe('registerIpcHandlers DSH runtime extensions', () => {
   })
 })
 
+function runtimeUpdateFixture(
+  workspacePath: string,
+  provider: 'model' | 'opencode' | 'continue' = 'model'
+) {
+  const profileId = '00000000-0000-4000-8000-000000000095'
+  const profile = {
+    id: profileId,
+    name: 'Default',
+    baseUrl: 'https://model.example/v1',
+    modelName: 'model',
+    protocol: 'openai-chat-completions' as const,
+    authentication: 'api-key' as const,
+    imageGenerationQuality: 'auto' as const,
+    apiKeyConfigured: true,
+    credentialSource: 'encrypted' as const
+  }
+  const publicSettings = {
+    provider,
+    modelBaseUrl: profile.baseUrl,
+    modelName: profile.modelName,
+    modelProtocol: profile.protocol,
+    modelAuthentication: profile.authentication,
+    imageGenerationQuality: profile.imageGenerationQuality,
+    opencodeBaseUrl: '',
+    opencodeEmbedded: true,
+    opencodeBinaryPath: '',
+    opencodeConfigPath: '',
+    continueBinaryPath: '',
+    continueConfigPath: '',
+    continueMode: 'chat' as const,
+    subagentSmartRoutingEnabled: false,
+    knowledgeEmbeddingEnabled: false,
+    knowledgeEmbeddingBaseUrl: 'https://embedding.example/v1',
+    knowledgeEmbeddingModel: 'embedding',
+    knowledgeEmbeddingApiKeyConfigured: false,
+    knowledgeEmbeddingCredentialSource: 'none' as const,
+    knowledgeRerankEnabled: false,
+    knowledgeRerankEndpoint: 'https://rerank.example/v1',
+    knowledgeRerankModel: 'rerank',
+    knowledgeRerankApiKeyConfigured: false,
+    knowledgeRerankCredentialSource: 'none' as const,
+    workspacePath,
+    apiKeyConfigured: true,
+    credentialSource: 'encrypted' as const,
+    modelProfiles: [profile],
+    defaultModelProfileId: profileId,
+    opencodeModelSource: { kind: 'platform' as const },
+    continueModelSource: { kind: 'platform' as const },
+    deepseekHarnessModelSource: { kind: 'platform' as const },
+    secureStorageAvailable: true,
+    toolApproval: 'always' as const
+  }
+  return {
+    publicSettings,
+    input: {
+      provider,
+      modelBaseUrl: profile.baseUrl,
+      modelName: profile.modelName,
+      modelProtocol: profile.protocol,
+      modelAuthentication: profile.authentication,
+      imageGenerationQuality: profile.imageGenerationQuality,
+      opencodeBaseUrl: '',
+      opencodeEmbedded: true,
+      opencodeBinaryPath: '',
+      opencodeConfigPath: '',
+      continueBinaryPath: '',
+      continueConfigPath: '',
+      continueMode: 'chat' as const,
+      subagentSmartRoutingEnabled: false,
+      knowledgeEmbeddingEnabled: false,
+      knowledgeEmbeddingBaseUrl:
+        publicSettings.knowledgeEmbeddingBaseUrl,
+      knowledgeEmbeddingModel:
+        publicSettings.knowledgeEmbeddingModel,
+      knowledgeRerankEnabled: false,
+      knowledgeRerankEndpoint:
+        publicSettings.knowledgeRerankEndpoint,
+      knowledgeRerankModel: publicSettings.knowledgeRerankModel,
+      workspacePath,
+      apiKey: { action: 'keep' as const },
+      modelProfiles: [
+        {
+          id: profile.id,
+          name: profile.name,
+          baseUrl: profile.baseUrl,
+          modelName: profile.modelName,
+          protocol: profile.protocol,
+          authentication: profile.authentication,
+          imageGenerationQuality: profile.imageGenerationQuality,
+          apiKey: { action: 'keep' as const }
+        }
+      ],
+      defaultModelProfileId: profileId,
+      opencodeModelSource: { kind: 'platform' as const },
+      continueModelSource: { kind: 'platform' as const },
+      deepseekHarnessModelSource: { kind: 'platform' as const },
+      toolApproval: 'always' as const
+    }
+  }
+}
+
 describe('registerIpcHandlers lifecycle tracking', () => {
   afterEach(() => {
     electronMocks.handlers.clear()
@@ -893,7 +1077,13 @@ describe('registerIpcHandlers lifecycle tracking', () => {
       window as never,
       { capability: 'text' } as never,
       'CommandOrControl+Shift+Space',
-      { update } as never,
+      {
+        captureRollback: vi.fn(async () => ({
+          publicSettings: savedSettings,
+          restore: vi.fn(async () => savedSettings)
+        })),
+        update
+      } as never,
       {} as never,
       { clear: vi.fn() } as never,
       {} as never,
@@ -967,6 +1157,332 @@ describe('registerIpcHandlers lifecycle tracking', () => {
     } finally {
       releaseUpdate()
       releaseReload()
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('restores settings and preserves activation plus rollback failures', async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-ipc-settings-rollback-')
+    )
+    const profileId = '00000000-0000-4000-8000-000000000091'
+    const profile = {
+      id: profileId,
+      name: 'Default',
+      baseUrl: 'https://model.example/v1',
+      modelName: 'model',
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const,
+      imageGenerationQuality: 'auto' as const,
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted' as const
+    }
+    const previousSettings = {
+      provider: 'model' as const,
+      modelBaseUrl: profile.baseUrl,
+      modelName: profile.modelName,
+      modelProtocol: profile.protocol,
+      modelAuthentication: profile.authentication,
+      imageGenerationQuality: profile.imageGenerationQuality,
+      opencodeBaseUrl: '',
+      opencodeEmbedded: true,
+      opencodeBinaryPath: '',
+      opencodeConfigPath: '',
+      continueBinaryPath: '',
+      continueConfigPath: '',
+      continueMode: 'chat' as const,
+      subagentSmartRoutingEnabled: false,
+      knowledgeEmbeddingEnabled: false,
+      knowledgeEmbeddingBaseUrl: 'https://embedding.example/v1',
+      knowledgeEmbeddingModel: 'embedding',
+      knowledgeEmbeddingApiKeyConfigured: false,
+      knowledgeEmbeddingCredentialSource: 'none' as const,
+      knowledgeRerankEnabled: false,
+      knowledgeRerankEndpoint: 'https://rerank.example/v1',
+      knowledgeRerankModel: 'rerank',
+      knowledgeRerankApiKeyConfigured: false,
+      knowledgeRerankCredentialSource: 'none' as const,
+      workspacePath: workspace,
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted' as const,
+      modelProfiles: [profile],
+      defaultModelProfileId: profileId,
+      opencodeModelSource: { kind: 'platform' as const },
+      continueModelSource: { kind: 'platform' as const },
+      deepseekHarnessModelSource: { kind: 'platform' as const },
+      secureStorageAvailable: true,
+      toolApproval: 'always' as const
+    }
+    const candidateSettings = {
+      ...previousSettings,
+      provider: 'opencode' as const
+    }
+    const update = vi.fn().mockResolvedValue(candidateSettings)
+    const restore = vi.fn(async () => previousSettings)
+    const activationError = new Error('candidate activation failed')
+    const rollbackError = new Error('rollback activation failed')
+    const onRuntimeSettingsChanged = vi
+      .fn()
+      .mockRejectedValueOnce(activationError)
+      .mockRejectedValueOnce(rollbackError)
+    const repairs = vi.fn()
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {
+        captureRollback: vi.fn(async () => ({
+          publicSettings: previousSettings,
+          restore
+        })),
+        update
+      } as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => []),
+        repairConversationRuntimeSelections: repairs
+      } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      onRuntimeSettingsChanged
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const input = {
+      provider: candidateSettings.provider,
+      modelBaseUrl: profile.baseUrl,
+      modelName: profile.modelName,
+      modelProtocol: profile.protocol,
+      modelAuthentication: profile.authentication,
+      imageGenerationQuality: profile.imageGenerationQuality,
+      opencodeBaseUrl: '',
+      opencodeEmbedded: true,
+      opencodeBinaryPath: '',
+      opencodeConfigPath: '',
+      continueBinaryPath: '',
+      continueConfigPath: '',
+      continueMode: 'chat',
+      subagentSmartRoutingEnabled: false,
+      knowledgeEmbeddingEnabled: false,
+      knowledgeEmbeddingBaseUrl:
+        previousSettings.knowledgeEmbeddingBaseUrl,
+      knowledgeEmbeddingModel:
+        previousSettings.knowledgeEmbeddingModel,
+      knowledgeRerankEnabled: false,
+      knowledgeRerankEndpoint:
+        previousSettings.knowledgeRerankEndpoint,
+      knowledgeRerankModel:
+        previousSettings.knowledgeRerankModel,
+      workspacePath: workspace,
+      apiKey: { action: 'keep' },
+      modelProfiles: [
+        {
+          id: profile.id,
+          name: profile.name,
+          baseUrl: profile.baseUrl,
+          modelName: profile.modelName,
+          protocol: profile.protocol,
+          authentication: profile.authentication,
+          imageGenerationQuality: profile.imageGenerationQuality,
+          apiKey: { action: 'keep' }
+        }
+      ],
+      defaultModelProfileId: profileId,
+      opencodeModelSource: { kind: 'platform' },
+      continueModelSource: { kind: 'platform' },
+      deepseekHarnessModelSource: { kind: 'platform' },
+      toolApproval: 'always'
+    }
+
+    try {
+      const result = Promise.resolve(
+        electronMocks.handlers.get(
+          ipcChannels.runtimeSettingsUpdate
+        )?.(event, input)
+      )
+      await expect(result).rejects.toMatchObject({
+        errors: [activationError, rollbackError]
+      })
+      expect(update).toHaveBeenCalledOnce()
+      expect(restore).toHaveBeenCalledOnce()
+      expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(2)
+      expect(repairs).not.toHaveBeenCalled()
+    } finally {
+      await dispose()
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('serializes failed settings, customization, and a later successful candidate', async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-ipc-settings-overlap-')
+    )
+    const initial = runtimeUpdateFixture(workspace, 'model')
+    const candidateA = runtimeUpdateFixture(workspace, 'opencode')
+    const candidateB = runtimeUpdateFixture(workspace, 'continue')
+    let currentSettings = initial.publicSettings
+    const initialCustomization = {
+      opencode: {},
+      continue: { presets: [] }
+    }
+    const candidateCustomization = {
+      opencode: { defaultAgent: 'candidate-agent' },
+      continue: { presets: [] }
+    }
+    let currentCustomization = initialCustomization
+    const captureRollback = vi.fn(async () => {
+      const snapshot = currentSettings
+      return {
+        publicSettings: snapshot,
+        restore: vi.fn(async () => {
+          currentSettings = snapshot
+          return snapshot
+        })
+      }
+    })
+    const update = vi.fn(
+      async (input: { provider: 'model' | 'opencode' | 'continue' }) => {
+        currentSettings =
+          input.provider === 'opencode'
+            ? candidateA.publicSettings
+            : candidateB.publicSettings
+        return currentSettings
+      }
+    )
+    const updateRuntimeCustomization = vi.fn(
+      async (settings: typeof candidateCustomization) => {
+        currentCustomization = settings
+        return settings
+      }
+    )
+    let releaseCandidateA!: () => void
+    const candidateABlocked = new Promise<void>((resolve) => {
+      releaseCandidateA = resolve
+    })
+    const candidateAError = new Error('candidate A activation failed')
+    let activationCount = 0
+    const onRuntimeSettingsChanged = vi.fn(async () => {
+      activationCount += 1
+      if (activationCount === 1) {
+        await candidateABlocked
+        throw candidateAError
+      }
+    })
+    const repairs = vi.fn(() => [])
+    const reportRepairs = vi.fn()
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {
+        captureRollback,
+        update,
+        getRuntimeCustomization: vi.fn(
+          async () => currentCustomization
+        ),
+        updateRuntimeCustomization
+      } as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => []),
+        repairConversationRuntimeSelections: repairs
+      } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      onRuntimeSettingsChanged,
+      undefined,
+      undefined,
+      undefined,
+      {
+        reportRuntimeSelectionRepairs: reportRepairs
+      } as never
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    try {
+      const updateA = Promise.resolve(
+        electronMocks.handlers.get(
+          ipcChannels.runtimeSettingsUpdate
+        )?.(event, candidateA.input)
+      )
+      await vi.waitFor(() =>
+        expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+      )
+      const customizationUpdate = Promise.resolve(
+        electronMocks.handlers.get(
+          ipcChannels.runtimeCustomizationUpdate
+        )?.(event, candidateCustomization)
+      )
+      const updateB = Promise.resolve(
+        electronMocks.handlers.get(
+          ipcChannels.runtimeSettingsUpdate
+        )?.(event, candidateB.input)
+      )
+      await Promise.resolve()
+
+      expect(captureRollback).toHaveBeenCalledOnce()
+      expect(update).toHaveBeenCalledOnce()
+
+      releaseCandidateA()
+      await expect(updateA).rejects.toBe(candidateAError)
+      await expect(customizationUpdate).resolves.toEqual(
+        candidateCustomization
+      )
+      await expect(updateB).resolves.toMatchObject({
+        provider: 'continue'
+      })
+
+      expect(currentSettings.provider).toBe('continue')
+      expect(currentCustomization).toEqual(candidateCustomization)
+      expect(captureRollback).toHaveBeenCalledTimes(2)
+      expect(update).toHaveBeenCalledTimes(2)
+      expect(updateRuntimeCustomization).toHaveBeenCalledOnce()
+      expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(4)
+      expect(repairs).toHaveBeenCalledOnce()
+      expect(repairs).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'continue' })
+      )
+      expect(reportRepairs).toHaveBeenCalledOnce()
+    } finally {
+      releaseCandidateA()
+      await dispose()
       await rm(workspace, { recursive: true, force: true })
     }
   })
@@ -2502,7 +3018,9 @@ describe('registerIpcHandlers Runtime customization', () => {
     }
     const settingsStore = {
       getRuntimeCustomization: vi.fn(async () => customization),
-      updateRuntimeCustomization: vi.fn(async () => customization),
+      updateRuntimeCustomization: vi.fn(
+        async (value: unknown) => value
+      ),
       getResolvedSettings: vi.fn(async () => ({
         provider: 'opencode',
         modelProfiles: [],
@@ -2547,16 +3065,27 @@ describe('registerIpcHandlers Runtime customization', () => {
       updateTaskStatus: vi.fn(),
       upsertModelUsageCall: vi.fn()
     }
+    let releaseFirstCompaction: (() => void) | undefined
+    const firstCompactionBlocked = new Promise<void>((resolve) => {
+      releaseFirstCompaction = resolve
+    })
+    const compactionOutcome = {
+      result: {
+        provider: 'opencode' as const,
+        strategy: 'native' as const,
+        compacted: true,
+        detail: 'OpenCode compacted the conversation'
+      }
+    }
     const selectedRuntimes = {
       getNativeSnapshot: vi.fn(async () => snapshot),
-      compactConversation: vi.fn(async () => ({
-        result: {
-          provider: 'opencode' as const,
-          strategy: 'native' as const,
-          compacted: true,
-          detail: 'OpenCode compacted the conversation'
-        }
-      }))
+      compactConversation: vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          await firstCompactionBlocked
+          return compactionOutcome
+        })
+        .mockResolvedValue(compactionOutcome)
     }
     const approvalBroker = { clear: vi.fn() }
     const onRuntimeSettingsChanged = vi.fn(async () => undefined)
@@ -2603,6 +3132,26 @@ describe('registerIpcHandlers Runtime customization', () => {
     ).toHaveBeenCalledWith(customization)
     expect(onRuntimeSettingsChanged).toHaveBeenCalledOnce()
     expect(approvalBroker.clear).toHaveBeenCalledOnce()
+    const activationError = new Error('customization activation failed')
+    onRuntimeSettingsChanged
+      .mockRejectedValueOnce(activationError)
+      .mockResolvedValueOnce(undefined)
+    const failedCustomization = {
+      ...customization,
+      opencode: { defaultAgent: 'candidate-agent' }
+    }
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.runtimeCustomizationUpdate
+      )?.(event, failedCustomization)
+    ).rejects.toBe(activationError)
+    expect(
+      settingsStore.updateRuntimeCustomization
+    ).toHaveBeenNthCalledWith(2, failedCustomization)
+    expect(
+      settingsStore.updateRuntimeCustomization
+    ).toHaveBeenNthCalledWith(3, customization)
+    expect(onRuntimeSettingsChanged).toHaveBeenCalledTimes(3)
     await expect(
       electronMocks.handlers.get(
         ipcChannels.runtimeCustomizationUpdate
@@ -2636,11 +3185,19 @@ describe('registerIpcHandlers Runtime customization', () => {
       })),
       historyMessageIds: messageIds
     }
+    const firstCompaction = electronMocks.handlers.get(
+      ipcChannels.agentCompactConversation
+    )?.(event, compactInput)
+    await vi.waitFor(() =>
+      expect(selectedRuntimes.compactConversation).toHaveBeenCalledOnce()
+    )
     await expect(
       electronMocks.handlers.get(
         ipcChannels.agentCompactConversation
       )?.(event, compactInput)
-    ).resolves.toEqual({
+    ).rejects.toThrow('上下文压缩请求正在执行')
+    releaseFirstCompaction?.()
+    await expect(firstCompaction).resolves.toEqual({
       provider: 'opencode',
       strategy: 'native',
       compacted: true,
@@ -2861,7 +3418,14 @@ describe('registerIpcHandlers agent terminal state', () => {
       'CommandOrControl+Shift+Space',
       {
         getPolicySettings,
-        getResolvedSettings
+        getResolvedSettings,
+        getRuntimeCustomization: vi.fn(async () => ({
+          opencode: {},
+          continue: { presets: [] }
+        })),
+        updateRuntimeCustomization: vi.fn(
+          async (settings: unknown) => settings
+        )
       } as never,
       (capabilityServiceOverride ?? {}) as never,
       contextManager as never,
@@ -3079,6 +3643,101 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('fails scheduled runs promptly when a Runtime asks an interactive question', async () => {
+    const taskId = '00000000-0000-4000-8000-000000000711'
+    const conversationId =
+      '00000000-0000-4000-8000-000000000712'
+    const scheduleId =
+      '00000000-0000-4000-8000-000000000713'
+    const runId = '00000000-0000-4000-8000-000000000714'
+    const respondToQuestion = vi.fn().mockResolvedValue(undefined)
+    const runtime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      respondToQuestion,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'question',
+          questionId: 'opencode-background-question',
+          questions: [
+            {
+              header: 'Choice',
+              question: 'Choose an implementation',
+              options: [],
+              multiple: false,
+              custom: true
+            }
+          ]
+        } as const
+        await new Promise(() => undefined)
+      }
+    }
+    const harness = createHarness(runtime)
+    const schedule = {
+      id: scheduleId,
+      projectId: '00000000-0000-4000-8000-000000000401',
+      taskId,
+      conversationId,
+      title: '后台提问测试',
+      prompt: '执行任务',
+      workMode: 'execute' as const,
+      recurrence: 'daily' as const,
+      nextRunAt: '2026-08-20T00:00:00.000Z',
+      enabled: true,
+      createdAt: '2026-08-19T00:00:00.000Z',
+      updatedAt: '2026-08-19T00:00:00.000Z'
+    }
+    const queueItem = {
+      id: runId,
+      conversationId,
+      source: 'schedule' as const,
+      label: schedule.title,
+      scheduleRunId: runId,
+      scheduleId,
+      taskId,
+      createdAt: '2026-08-19T00:01:00.000Z'
+    }
+    harness.assistantDatabase.queueScheduleNow.mockReturnValue(
+      queueItem
+    )
+    harness.assistantDatabase.listConversationQueueItems
+      .mockReturnValueOnce([queueItem])
+      .mockReturnValue([])
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValue({
+      source: 'schedule',
+      item: queueItem,
+      schedule,
+      runId
+    })
+
+    await electronMocks.handlers.get(
+      ipcChannels.schedulesRunNow
+    )?.(trustedEvent(harness.webContents), scheduleId)
+
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.completeScheduleRun
+      ).toHaveBeenCalledWith(runId, 'failed')
+    )
+    expect(respondToQuestion).toHaveBeenCalledWith(
+      'opencode-background-question'
+    )
+    expect(
+      harness.assistantDatabase.appendConversationMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId,
+        state: 'error',
+        status: '定时任务失败',
+        content:
+          '后台任务无法回答 Runtime 交互提问。请改为在 GoodBuddy 对话中运行，或调整提示词和工具配置以避免交互提问。'
+      })
+    )
+    await harness.dispose()
+  })
+
   it('serializes Agent runs that target the same Conversation', async () => {
     let finishRun: (() => void) | undefined
     const runtimeStarted = vi.fn()
@@ -3124,6 +3783,179 @@ describe('registerIpcHandlers agent terminal state', () => {
 
     finishRun?.()
     await firstRun
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(
+        '00000000-0000-4000-8000-000000000722',
+        'completed'
+      )
+    )
+
+    await expect(
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId: '00000000-0000-4000-8000-000000000724',
+        conversationId,
+        prompt: '第三条',
+        workMode: 'ask',
+        knowledgeLibraryIds: []
+      })
+    ).resolves.toBeUndefined()
+    await vi.waitFor(() =>
+      expect(runtimeStarted).toHaveBeenCalledTimes(2)
+    )
+    finishRun?.()
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(
+        '00000000-0000-4000-8000-000000000724',
+        'completed'
+      )
+    )
+    await harness.dispose()
+  })
+
+  it('keeps a replacement lease owned after the bulk-aborted lease releases', async () => {
+    const controls = new Map<
+      string,
+      {
+        finish: () => void
+        signal: AbortSignal
+      }
+    >()
+    const runtimeStarted = vi.fn()
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      async *run(
+        request: { conversationId: string; requestId: string },
+        signal: AbortSignal
+      ) {
+        runtimeStarted(request.conversationId)
+        await new Promise<void>((resolve) => {
+          controls.set(request.conversationId, {
+            finish: resolve,
+            signal
+          })
+        })
+        signal.throwIfAborted()
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const goodbuddyConfigService = {
+      takePendingReload: vi.fn(() => 'none'),
+      revokeRequest: vi.fn(),
+      clear: vi.fn()
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'lease-race-capability'),
+      getAvailableToolNames: vi.fn(() => []),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      false,
+      goodbuddyConfigService
+    )
+    const requestId = '00000000-0000-4000-8000-000000000741'
+    const oldConversationId =
+      '00000000-0000-4000-8000-000000000742'
+    const newConversationId =
+      '00000000-0000-4000-8000-000000000743'
+    const event = trustedEvent(harness.webContents)
+
+    await harness.handler?.(event, {
+      requestId,
+      conversationId: oldConversationId,
+      prompt: '旧请求',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(controls.has(oldConversationId)).toBe(true)
+    )
+
+    await electronMocks.handlers.get(
+      ipcChannels.runtimeCustomizationUpdate
+    )?.(event, {
+      opencode: {},
+      continue: { presets: [] }
+    })
+    expect(controls.get(oldConversationId)?.signal.aborted).toBe(true)
+
+    await harness.handler?.(event, {
+      requestId,
+      conversationId: newConversationId,
+      prompt: '替换请求',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(controls.has(newConversationId)).toBe(true)
+    )
+
+    controls.get(oldConversationId)?.finish()
+    await vi.waitFor(() =>
+      expect(goodbuddyConfigService.revokeRequest).toHaveBeenCalledOnce()
+    )
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).toHaveBeenCalledWith(requestId, 'cancelled', '请求已取消')
+
+    harness.cancelHandler?.(event, requestId)
+    expect(controls.get(newConversationId)?.signal.aborted).toBe(true)
+    await expect(
+      harness.handler?.(event, {
+        requestId: '00000000-0000-4000-8000-000000000744',
+        conversationId: newConversationId,
+        prompt: '不能并发',
+        workMode: 'ask',
+        knowledgeLibraryIds: []
+      })
+    ).rejects.toThrow('当前对话已有执行中的请求')
+
+    controls.get(newConversationId)?.finish()
+    await vi.waitFor(() => {
+      const cancellations =
+        harness.assistantDatabase.updateTaskStatus.mock.calls.filter(
+          ([id, status]) =>
+            id === requestId && status === 'cancelled'
+        )
+      expect(cancellations).toHaveLength(2)
+    })
+    await vi.waitFor(() =>
+      expect(goodbuddyConfigService.revokeRequest).toHaveBeenCalledTimes(2)
+    )
+
+    await harness.handler?.(event, {
+      requestId,
+      conversationId: newConversationId,
+      prompt: '清理后重试',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(runtimeStarted).toHaveBeenCalledTimes(3)
+    )
+    controls.get(newConversationId)?.finish()
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
     await harness.dispose()
   })
 
@@ -4355,13 +5187,25 @@ describe('registerIpcHandlers agent terminal state', () => {
       getStatus: vi.fn(),
       releaseConversation: vi.fn(async () => undefined)
     }
+    const getWebSearchCapabilityStatus = vi.fn(async () => ({
+      enabled: true
+    }))
+    const getEnabledBuiltinMcpServerIds = vi.fn(async () => [])
     const harness = createHarness(
       selectedRuntime,
       undefined,
       'always',
       undefined,
       false,
-      selectedRuntimes
+      selectedRuntimes,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      {
+        getWebSearchCapabilityStatus,
+        getEnabledBuiltinMcpServerIds
+      }
     )
     const event = trustedEvent(harness.webContents)
     const request = {
@@ -4380,6 +5224,8 @@ describe('registerIpcHandlers agent terminal state', () => {
 
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
     expect(harness.getApplicationSettings).toHaveBeenCalledOnce()
+    expect(getWebSearchCapabilityStatus).toHaveBeenCalledOnce()
+    expect(getEnabledBuiltinMcpServerIds).toHaveBeenCalledOnce()
     expect(harness.contextManager.enrichRequest).toHaveBeenCalledOnce()
 
     releaseRun()
@@ -4388,6 +5234,117 @@ describe('registerIpcHandlers agent terminal state', () => {
         request.requestId,
         'completed'
       )
+    )
+    await harness.dispose()
+  })
+
+  it('starts independent interactive request lookups concurrently after enrichment', async () => {
+    let resolveApplicationSettings!: (value: {
+      magicNotesEnabled: boolean
+    }) => void
+    const applicationSettings = new Promise<{
+      magicNotesEnabled: boolean
+    }>((resolve) => {
+      resolveApplicationSettings = resolve
+    })
+    let resolveWebSearch!: (value: { enabled: boolean }) => void
+    const webSearch = new Promise<{ enabled: boolean }>((resolve) => {
+      resolveWebSearch = resolve
+    })
+    let resolveRuntimeSettings!: (value: {
+      workspacePath: string
+    }) => void
+    const runtimeSettings = new Promise<{
+      workspacePath: string
+    }>((resolve) => {
+      resolveRuntimeSettings = resolve
+    })
+    let resolveBuiltinMcpServers!: (value: never[]) => void
+    const builtinMcpServers = new Promise<never[]>((resolve) => {
+      resolveBuiltinMcpServers = resolve
+    })
+    const getWebSearchCapabilityStatus = vi.fn(() => webSearch)
+    const getEnabledBuiltinMcpServerIds = vi.fn(
+      () => builtinMcpServers
+    )
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const goodbuddyConfigService = {
+      takePendingReload: vi.fn(() => 'none'),
+      revokeRequest: vi.fn(),
+      clear: vi.fn()
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      goodbuddyConfigService,
+      {
+        getWebSearchCapabilityStatus,
+        getEnabledBuiltinMcpServerIds
+      }
+    )
+    harness.getApplicationSettings.mockReturnValueOnce(
+      applicationSettings
+    )
+    harness.getResolvedSettings.mockReturnValueOnce(runtimeSettings)
+    const requestId = '00000000-0000-4000-8000-000000000014'
+    const operation = harness.handler?.(
+      trustedEvent(harness.webContents),
+      {
+        requestId,
+        conversationId: 'concurrent-request-setup',
+        prompt: 'prepare concurrently',
+        workMode: 'ask',
+        knowledgeLibraryIds: []
+      }
+    )
+
+    await vi.waitFor(() => {
+      expect(harness.getApplicationSettings).toHaveBeenCalledOnce()
+      expect(getWebSearchCapabilityStatus).toHaveBeenCalledOnce()
+      expect(harness.getResolvedSettings).toHaveBeenCalledOnce()
+      expect(getEnabledBuiltinMcpServerIds).toHaveBeenCalledOnce()
+    })
+    const enrichmentOrder =
+      harness.contextManager.enrichRequest.mock.invocationCallOrder[0]
+    if (enrichmentOrder === undefined) {
+      throw new Error('Request was not enriched')
+    }
+    for (const lookup of [
+      harness.getApplicationSettings,
+      getWebSearchCapabilityStatus,
+      harness.getResolvedSettings,
+      getEnabledBuiltinMcpServerIds
+    ]) {
+      const lookupOrder = lookup.mock.invocationCallOrder[0]
+      if (lookupOrder === undefined) {
+        throw new Error('Interactive request lookup did not start')
+      }
+      expect(enrichmentOrder).toBeLessThan(lookupOrder)
+    }
+
+    resolveApplicationSettings({ magicNotesEnabled: false })
+    resolveWebSearch({ enabled: false })
+    resolveRuntimeSettings({ workspacePath: 'C:\\Workspace' })
+    resolveBuiltinMcpServers([])
+    await expect(operation).resolves.toBeUndefined()
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
     )
     await harness.dispose()
   })
@@ -5408,6 +6365,111 @@ describe('registerIpcHandlers agent terminal state', () => {
     ).not.toHaveBeenCalled()
     await harness.dispose()
   })
+
+  it.each([
+    {
+      name: 'Runtime status resolution fails',
+      getStatus: () => Promise.reject(new Error('状态查询失败')),
+      expectedError: '状态查询失败'
+    },
+    {
+      name: 'Runtime is available without tool execution',
+      getStatus: () =>
+        Promise.resolve({
+          id: 'model',
+          label: 'Direct model',
+          available: true,
+          supportsToolExecution: false
+        }),
+      expectedError:
+        '所选处理后端不支持工具执行，请在消息通道设置中选择 OpenCode、Continue 或支持工具的直连模型'
+    }
+  ])(
+    'finalizes remote Execute consistently when $name',
+    async ({ getStatus, expectedError }) => {
+      const runtime = {
+        runtimeId: 'model',
+        capability: 'chat',
+        supportsToolExecution: true,
+        getStatus: vi.fn(getStatus),
+        run: vi.fn()
+      }
+      const harness = createHarness(runtime)
+      const executor = channelMocks.executor
+      if (!executor) {
+        throw new Error('Expected channel executor')
+      }
+
+      await expect(
+        executor(
+          {
+            channel: 'wecom',
+            eventId: 'event-execute-unavailable',
+            senderId: 'user-1',
+            conversationId: 'conversation-execute-unavailable',
+            conversationType: 'direct',
+            text: '/execute 更新 README',
+            mentioned: false,
+            workMode: 'ask'
+          },
+          new AbortController().signal
+        )
+      ).resolves.toEqual({
+        status: 'failed',
+        error: expectedError
+      })
+
+      const remoteTask =
+        harness.assistantDatabase.createTask.mock.calls[0]?.[0]
+      expect(remoteTask).toEqual(
+        expect.objectContaining({
+          projectId: '00000000-0000-4000-8000-000000000401',
+          conversationId: '00000000-0000-4000-8000-000000000402',
+          workMode: 'execute',
+          origin: 'delegation',
+          visible: false
+        })
+      )
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(remoteTask?.id, 'failed', expectedError)
+      expect(
+        harness.assistantDatabase.appendRemoteConversationMessage
+      ).toHaveBeenLastCalledWith({
+        conversationId: '00000000-0000-4000-8000-000000000402',
+        role: 'assistant',
+        content: expectedError,
+        status: '执行不可用'
+      })
+      const activities = harness.webContents.send.mock.calls
+        .filter(
+          ([channel]) =>
+            channel === ipcChannels.remoteChannelActivity
+        )
+        .map(([, activity]) => activity)
+      expect(activities).toHaveLength(2)
+      expect(activities[0]).toEqual(
+        expect.objectContaining({
+          requestId: remoteTask?.id,
+          kind: 'request',
+          status: 'running'
+        })
+      )
+      expect(activities[1]).toEqual({
+        requestId: remoteTask?.id,
+        conversationId: '00000000-0000-4000-8000-000000000402',
+        projectId: '00000000-0000-4000-8000-000000000401',
+        projectName: '企业微信',
+        channel: 'wecom',
+        kind: 'result',
+        title: '企业微信远程执行不可用',
+        detail: expectedError,
+        status: 'failed'
+      })
+      expect(runtime.run).not.toHaveBeenCalled()
+      await harness.dispose()
+    }
+  )
 
   it('runs remote Execute immediately with the selected direct model policy', async () => {
     let authorization: string | undefined

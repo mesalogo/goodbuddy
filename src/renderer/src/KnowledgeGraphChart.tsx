@@ -30,7 +30,7 @@ type ChartKnowledgeGraphRelation = Omit<
   evidenceIds?: readonly string[]
 }
 
-type KnowledgeGraphChartProps = {
+export type KnowledgeGraphChartProps = {
   nodes: readonly ChartKnowledgeGraphNode[]
   relations: readonly ChartKnowledgeGraphRelation[]
   selectedNodeId?: string

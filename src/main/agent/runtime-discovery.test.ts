@@ -1,10 +1,13 @@
+import { EventEmitter } from 'node:events'
 import { realpath } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   detectAgentRuntimes,
-  detectRuntimeBinary
+  detectRuntimeBinary,
+  validateRuntimeVersion,
+  type RuntimeVersionProcess
 } from './runtime-discovery'
 
 const originalPath = process.env.PATH
@@ -24,6 +27,54 @@ afterEach(() => {
 })
 
 describe('runtime discovery', () => {
+  it('launches a detached POSIX version probe and awaits bounded tree cleanup', async () => {
+    const child =
+      new EventEmitter() as RuntimeVersionProcess & EventEmitter
+    child.exitCode = null
+    child.pid = 2718
+    child.kill = vi.fn()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    const spawnProcess = vi.fn(() => child)
+    let releaseCleanup!: () => void
+    const cleanupBlocked = new Promise<void>((resolve) => {
+      releaseCleanup = resolve
+    })
+    const terminateProcessTree = vi.fn(async () => {
+      await cleanupBlocked
+    })
+
+    const validation = validateRuntimeVersion('runtime', {
+      platform: 'linux',
+      spawnProcess,
+      terminateProcessTree,
+      outputLimit: 4,
+      terminationWaitMs: 25
+    })
+    ;(child.stdout as EventEmitter).emit('data', '12345')
+    let completed = false
+    void validation.then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+
+    expect(completed).toBe(false)
+    expect(spawnProcess).toHaveBeenCalledWith(
+      'runtime',
+      ['--version'],
+      expect.objectContaining({ detached: true })
+    )
+    expect(terminateProcessTree).toHaveBeenCalledWith(child, {
+      platform: 'linux',
+      processGroup: true,
+      signal: 'SIGKILL',
+      waitMs: 25
+    })
+
+    releaseCleanup()
+    await expect(validation).resolves.toEqual({ valid: false })
+  })
+
   it('canonicalizes and validates a configured ordinary file first', async () => {
     process.env.PATH = ''
     process.env.Path = ''

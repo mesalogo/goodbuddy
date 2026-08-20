@@ -74,7 +74,7 @@ export class MemoryDedupStore implements DedupStore {
 export type OutboxEntry = {
   id: string
   message: ChannelResultMessage
-  state: 'pending' | 'delivered' | 'failed'
+  state: 'pending' | 'delivered' | 'failed' | 'terminal'
   attempts: number
   createdAt: number
 }
@@ -129,6 +129,7 @@ export class MemoryOutbox implements Outbox {
     entry.state = 'failed'
     entry.attempts += 1
     if (entry.attempts >= 5) {
+      entry.state = 'terminal'
       entry.message = this.withoutAttachments(entry.message)
     }
   }

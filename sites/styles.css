@@ -1,3 +1,15 @@
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./assets/fonts/inter-latin-variable.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   color-scheme: light;
   --surface-canvas: #f6f8fb;
@@ -8,11 +20,11 @@
   --surface-overlay: rgba(255, 255, 255, 0.82);
   --text-primary: #10213a;
   --text-secondary: #4f6178;
-  --text-muted: #738198;
+  --text-muted: #5b6c82;
   --text-on-accent: #ffffff;
   --text-on-inverse: #f7faff;
   --border-default: #d6dee9;
-  --border-control: #bcc8d7;
+  --border-control: #7c8b9e;
   --border-subtle: #e6ebf2;
   --accent: #0877e8;
   --accent-hover: #0567ca;
@@ -59,8 +71,9 @@
   --z-header: 20;
   --z-menu: 30;
   font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "PingFang SC", "Microsoft YaHei", sans-serif;
+    "Inter Variable", "PingFang SC", "Microsoft YaHei UI",
+    "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui,
+    sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -327,13 +340,36 @@ p {
   gap: var(--space-2);
 }
 
+.language-link {
+  display: inline-grid;
+  min-width: 40px;
+  height: 40px;
+  padding-inline: var(--space-2);
+  place-items: center;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 750;
+  text-decoration: none;
+  transition:
+    border-color var(--motion-fast) ease-out,
+    background-color var(--motion-fast) ease-out;
+}
+
+.language-link:hover {
+  border-color: var(--accent-selected);
+  background: var(--accent-subtle);
+}
+
 .icon-button {
   display: inline-grid;
   width: 40px;
   height: 40px;
   padding: 0;
   place-items: center;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--surface-raised);
   color: var(--text-primary);
@@ -376,6 +412,10 @@ p {
 }
 
 .menu-toggle {
+  display: none;
+}
+
+.menu-backdrop {
   display: none;
 }
 
@@ -430,7 +470,7 @@ p {
 .button--quiet {
   min-height: 40px;
   padding: var(--space-2) var(--space-4);
-  border-color: var(--border-default);
+  border-color: var(--border-control);
   background: var(--surface-raised);
   color: var(--text-primary);
 }
@@ -511,7 +551,7 @@ p {
 .hero h1 {
   max-width: 760px;
   margin-bottom: var(--space-6);
-  font-size: var(--font-page-title);
+  font-size: clamp(2.45rem, 4vw, 3.5rem);
   letter-spacing: -0.065em;
 }
 
@@ -1351,28 +1391,6 @@ p {
   text-align: left;
 }
 
-.download-release-status {
-  padding: var(--space-3) var(--space-4);
-  margin-top: var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  text-align: center;
-}
-
-.download-release-status.is-ready {
-  border-color: color-mix(in srgb, var(--success) 34%, var(--border-default));
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.download-release-status.is-fallback {
-  border-color: color-mix(in srgb, var(--warning) 34%, var(--border-default));
-  color: var(--text-secondary);
-}
-
 .domestic-support {
   display: grid;
   grid-template-columns: minmax(260px, 0.9fr) minmax(420px, 1.1fr);
@@ -1724,6 +1742,8 @@ p {
   }
 
   .header-inner {
+    position: relative;
+    z-index: 1;
     grid-template-columns: auto 1fr auto;
     min-height: 64px;
   }
@@ -1761,6 +1781,14 @@ p {
     border-radius: var(--radius-card);
     background: var(--surface-raised);
     box-shadow: var(--shadow-dialog);
+  }
+
+  .menu-backdrop.is-active {
+    position: fixed;
+    z-index: calc(var(--z-header) - 1);
+    inset: 64px 0 0;
+    display: block;
+    background: transparent;
   }
 
   .site-header.is-menu-open .site-navigation {
@@ -1970,5 +1998,80 @@ p {
 
   .floating-card {
     transform: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root,
+  [data-theme="dark"] {
+    --surface-canvas: Canvas;
+    --surface-raised: Canvas;
+    --surface-subtle: Canvas;
+    --surface-muted: Canvas;
+    --surface-inverse: Canvas;
+    --surface-overlay: Canvas;
+    --text-primary: CanvasText;
+    --text-secondary: CanvasText;
+    --text-muted: CanvasText;
+    --text-on-accent: HighlightText;
+    --text-on-inverse: CanvasText;
+    --border-default: ButtonBorder;
+    --border-control: ButtonText;
+    --border-subtle: ButtonBorder;
+    --accent: LinkText;
+    --accent-hover: LinkText;
+    --accent-solid: Highlight;
+    --accent-solid-hover: Highlight;
+    --accent-selected: Highlight;
+    --accent-subtle: Canvas;
+    --accent-cyan: LinkText;
+    --accent-mint: LinkText;
+    --success: CanvasText;
+    --success-subtle: Canvas;
+    --warning: CanvasText;
+    --danger: CanvasText;
+    --shadow-card: none;
+    --shadow-dialog: none;
+    --shadow-button: none;
+  }
+
+  .site-header.is-scrolled,
+  .site-header.is-menu-open,
+  .site-navigation,
+  .language-link,
+  .icon-button,
+  .button,
+  .app-window,
+  .floating-card,
+  .feature-card,
+  .download-card,
+  .download-options select,
+  .domestic-support {
+    border-color: ButtonBorder;
+  }
+
+  .site-navigation a[aria-current="true"],
+  .button--primary,
+  .message--user,
+  .composer-actions b {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+
+  .hero h1 span {
+    background: none;
+    color: LinkText;
+  }
+
+  .stage-glow,
+  .hero::before,
+  .product-stage::before,
+  .app-window::after {
+    display: none;
+  }
+
+  :focus-visible {
+    outline-color: Highlight;
   }
 }

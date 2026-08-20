@@ -3,6 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  builtInDefaultProjectSeedDescription,
+  builtInDefaultProjectSeedName,
+  isUntouchedBuiltInDefaultProject
+} from '../../shared/assistant-contracts'
 import { AssistantDatabase } from './assistant-database'
 
 const temporaryDirectories: string[] = []
@@ -156,7 +161,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 23', async () => {
+  it('migrates existing databases to schema version 25', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -185,7 +190,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(23)
+    ).toBe(25)
     expect(
       current
         .prepare(
@@ -200,7 +205,12 @@ describe('AssistantDatabase', () => {
         .all()
     ).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: 'runtime_selection_json' })
+        expect.objectContaining({ name: 'runtime_selection_json' }),
+        expect.objectContaining({
+          name: 'built_in_default',
+          notnull: 1,
+          dflt_value: '0'
+        })
       ])
     )
     const foreignKeys = current
@@ -268,6 +278,174 @@ describe('AssistantDatabase', () => {
     current.close()
   })
 
+  it('backfills one exact legacy built-in default candidate', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-default-project-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP INDEX projects_built_in_default_unique;
+      ALTER TABLE projects DROP COLUMN built_in_default;
+      PRAGMA user_version = 24;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    const [project] = migrated.listProjects()
+    expect(project).toMatchObject({
+      name: builtInDefaultProjectSeedName,
+      description: builtInDefaultProjectSeedDescription,
+      builtInDefault: true
+    })
+    expect(
+      project && isUntouchedBuiltInDefaultProject(project)
+    ).toBe(true)
+    migrated.close()
+  })
+
+  it('does not backfill an ambiguous legacy default identity', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-ambiguous-default-project-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const independent = initial.createProject({
+      name: builtInDefaultProjectSeedName,
+      description: builtInDefaultProjectSeedDescription,
+      rootPath: 'D:\\Independent',
+      defaultWorkMode: 'ask'
+    })
+    expect(independent.builtInDefault).toBe(false)
+    expect(isUntouchedBuiltInDefaultProject(independent)).toBe(false)
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP INDEX projects_built_in_default_unique;
+      ALTER TABLE projects DROP COLUMN built_in_default;
+      PRAGMA user_version = 24;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(
+      migrated
+        .listProjects()
+        .map((project) => project.builtInDefault)
+    ).toEqual([false, false])
+    migrated.close()
+  })
+
+  it('does not mark a later exact clone after the original default was edited', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-edited-default-project-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const original = initial.listProjects()[0]!
+    initial.updateProject(original.id, {
+      name: '已编辑默认项目',
+      description: builtInDefaultProjectSeedDescription,
+      rootPath: original.rootPath,
+      defaultWorkMode: 'ask'
+    })
+    const clone = initial.createProject({
+      name: builtInDefaultProjectSeedName,
+      description: builtInDefaultProjectSeedDescription,
+      rootPath: original.rootPath,
+      defaultWorkMode: 'ask'
+    })
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP INDEX projects_built_in_default_unique;
+      ALTER TABLE projects DROP COLUMN built_in_default;
+      PRAGMA user_version = 24;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(
+      migrated
+        .listProjects()
+        .filter((project) => project.builtInDefault)
+    ).toEqual([])
+    expect(migrated.getProject(clone.id).builtInDefault).toBe(false)
+    migrated.close()
+  })
+
+  it('does not mark a later exact clone after the original default was deleted', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-deleted-default-project-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const original = initial.listProjects()[0]!
+    const clone = initial.createProject({
+      name: builtInDefaultProjectSeedName,
+      description: builtInDefaultProjectSeedDescription,
+      rootPath: original.rootPath,
+      defaultWorkMode: 'ask'
+    })
+    initial.deleteProject(original.id, original.name)
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP INDEX projects_built_in_default_unique;
+      ALTER TABLE projects DROP COLUMN built_in_default;
+      PRAGMA user_version = 24;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(migrated.getProject(clone.id).builtInDefault).toBe(false)
+    migrated.close()
+  })
+
+  it('does not backfill when no exact legacy candidate exists', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-missing-default-project-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      UPDATE projects
+      SET updated_at = created_at || '-edited';
+      DROP INDEX projects_built_in_default_unique;
+      ALTER TABLE projects DROP COLUMN built_in_default;
+      PRAGMA user_version = 24;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(migrated.listProjects()[0]?.builtInDefault).toBe(false)
+    migrated.close()
+  })
+
   it('idempotently migrates version 5 databases to computer control audit schema', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-control-audit-migration-')
@@ -298,7 +476,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(23)
+    ).toBe(25)
     expect(
       current
         .prepare(
@@ -436,7 +614,7 @@ describe('AssistantDatabase', () => {
     const inspected = new DatabaseSync(databasePath)
     expect(
       inspected.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 23 })
+    ).toEqual({ user_version: 25 })
     expect(
       inspected
         .prepare(
@@ -566,11 +744,34 @@ describe('AssistantDatabase', () => {
     const database = await createDatabase()
     const [defaultProject] = database.listProjects()
     expect(defaultProject).toMatchObject({
-      name: '默认项目',
+      name: builtInDefaultProjectSeedName,
+      description: builtInDefaultProjectSeedDescription,
       rootPath: 'C:\\Workspace',
       defaultWorkMode: 'ask',
+      kind: 'user',
+      builtInDefault: true,
       status: 'active'
     })
+    expect(defaultProject?.runtimeSelection).toBeUndefined()
+    expect(defaultProject?.createdAt).toBe(defaultProject?.updatedAt)
+    expect(
+      defaultProject &&
+        isUntouchedBuiltInDefaultProject(defaultProject)
+    ).toBe(true)
+    const reconfiguredDefault = database.updateProject(
+      defaultProject!.id,
+      {
+        name: builtInDefaultProjectSeedName,
+        description: builtInDefaultProjectSeedDescription,
+        rootPath: 'D:\\Moved',
+        defaultWorkMode: 'execute',
+        runtimeSelection: { provider: 'continue' }
+      }
+    )
+    expect(reconfiguredDefault.builtInDefault).toBe(true)
+    expect(
+      isUntouchedBuiltInDefaultProject(reconfiguredDefault)
+    ).toBe(true)
     expect(database.listExperts()).toHaveLength(3)
 
     const project = database.createProject({
@@ -579,6 +780,7 @@ describe('AssistantDatabase', () => {
       rootPath: 'C:\\Release',
       defaultWorkMode: 'ask'
     })
+    expect(project.builtInDefault).toBe(false)
     expect(database.listProjects()).toHaveLength(2)
 
     const updated = database.updateProject(project.id, {
@@ -861,6 +1063,192 @@ describe('AssistantDatabase', () => {
       reopened.claimChannelEvent('weixin', 'account-1', 'event-1')
     ).toBe(false)
     reopened.close()
+  })
+
+  it('keeps exhausted channel results terminal and observable', async () => {
+    const database = await createDatabase()
+    const entry = database.enqueueChannelResult({
+      channel: 'weixin',
+      eventId: 'terminal-event',
+      conversationId: 'conversation-1',
+      recipientId: 'sender-1',
+      status: 'completed',
+      output: '已完成',
+      attachments: [
+        {
+          name: 'result.txt',
+          mimeType: 'text/plain',
+          size: 1,
+          kind: 'file',
+          dataBase64: 'eA=='
+        }
+      ]
+    })
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      database.markChannelResult(entry.id, 'failed')
+    }
+
+    const terminal = database.listUndeliveredChannelResults()
+    expect(terminal).toEqual([
+      expect.objectContaining({
+        id: entry.id,
+        state: 'terminal',
+        attempts: 5,
+        message: expect.objectContaining({
+          eventId: 'terminal-event',
+          output: '已完成'
+        })
+      })
+    ])
+    expect(terminal[0]?.message).not.toHaveProperty('attachments')
+    database.close()
+  })
+
+  it('migrates exhausted legacy outbox failures to terminal state', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-channel-terminal-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const entry = initial.enqueueChannelResult({
+      channel: 'weixin',
+      eventId: 'legacy-terminal-event',
+      conversationId: 'conversation-1',
+      recipientId: 'sender-1',
+      status: 'completed',
+      output: '已完成',
+      attachments: [
+        {
+          name: 'legacy.txt',
+          mimeType: 'text/plain',
+          size: 1,
+          kind: 'file',
+          dataBase64: 'eA=='
+        }
+      ]
+    })
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy
+      .prepare(
+        `UPDATE channel_outbox
+         SET state = 'failed', attempts = 5
+         WHERE id = ?`
+      )
+      .run(entry.id)
+    legacy.exec('PRAGMA user_version = 23')
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    const terminal = migrated.listUndeliveredChannelResults()
+    expect(terminal).toEqual([
+      expect.objectContaining({
+        id: entry.id,
+        state: 'terminal',
+        attempts: 5
+      })
+    ])
+    expect(terminal[0]?.message).not.toHaveProperty('attachments')
+    migrated.close()
+  })
+
+  it('rolls back both heartbeat failure updates atomically', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-heartbeat-rollback-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const config = database.createHeartbeatConfig(
+      {
+        scope: { kind: 'global' },
+        name: '事务心跳',
+        timezone: 'UTC',
+        recurrence: { type: 'daily', localTime: '09:00' },
+        enabled: true,
+        lookbackHours: 24,
+        retentionDays: 30
+      },
+      new Date('2026-08-16T00:00:00.000Z')
+    )
+    const claim = database.claimHeartbeatNow(
+      config.id,
+      'heartbeat-rollback',
+      'test-owner',
+      new Date('2026-08-16T01:00:00.000Z')
+    )
+    const raw = new DatabaseSync(databasePath)
+    raw.exec(`
+      CREATE TRIGGER reject_heartbeat_config_failure
+      BEFORE UPDATE OF last_status ON heartbeat_configs
+      BEGIN
+        SELECT RAISE(ABORT, 'forced config update failure');
+      END;
+    `)
+    raw.close()
+
+    expect(() =>
+      database.failHeartbeatRun(
+        claim,
+        'runtime failed',
+        new Date('2026-08-16T01:01:00.000Z')
+      )
+    ).toThrow('forced config update failure')
+    expect(database.getHeartbeatRun(claim.run.id)).toMatchObject({
+      status: 'claimed',
+      attemptCount: 1,
+      completedAt: undefined,
+      error: undefined
+    })
+    expect(database.getHeartbeatConfig(config.id).lastStatus).toBe(
+      'claimed'
+    )
+    database.close()
+  })
+
+  it('rejects heartbeat failure after its lease expires', async () => {
+    const database = await createDatabase()
+    const config = database.createHeartbeatConfig(
+      {
+        scope: { kind: 'global' },
+        name: '租约过期心跳',
+        timezone: 'UTC',
+        recurrence: { type: 'daily', localTime: '09:00' },
+        enabled: true,
+        lookbackHours: 24,
+        retentionDays: 30
+      },
+      new Date('2026-08-16T00:00:00.000Z')
+    )
+    const claim = database.claimHeartbeatNow(
+      config.id,
+      'expired-heartbeat',
+      'expired-owner',
+      new Date('2026-08-16T01:00:00.000Z'),
+      60_000
+    )
+
+    expect(() =>
+      database.failHeartbeatRun(
+        claim,
+        'late worker failure',
+        new Date('2026-08-16T01:01:00.001Z')
+      )
+    ).toThrow('Heartbeat lease is no longer active')
+    expect(database.getHeartbeatRun(claim.run.id)).toMatchObject({
+      status: 'claimed',
+      completedAt: undefined,
+      error: undefined
+    })
+    expect(database.getHeartbeatConfig(config.id).lastStatus).toBe(
+      'claimed'
+    )
+    database.close()
   })
 
   it('preserves legacy channel event claims while adding account identity', async () => {
@@ -2299,6 +2687,7 @@ describe('AssistantDatabase', () => {
   it('explicitly deletes only local conversations and cascades messages', async () => {
     const database = await createDatabase()
     const localId = '00000000-0000-4000-8000-000000000521'
+    const localTaskId = '00000000-0000-4000-8000-000000000523'
     database.replaceConversations([
       {
         id: localId,
@@ -2341,6 +2730,28 @@ describe('AssistantDatabase', () => {
       recurrence: 'daily',
       nextRunAt: '2027-01-01T00:00:00.000Z'
     })
+    database.createTask({
+      id: localTaskId,
+      conversationId: localId,
+      title: '本地对话任务',
+      instructions: '生成仅属于对话的回复',
+      workMode: 'ask'
+    })
+    database.updateTaskStatus(localTaskId, 'completed')
+    const hiddenReply = database.createTextArtifact({
+      taskId: localTaskId,
+      title: '本地对话回复',
+      content: '删除对话后不得进入成果列表'
+    })
+    database.saveDelegationResult(localTaskId, {
+      status: 'completed',
+      output: '不应残留'
+    })
+    expect(
+      database
+        .listArtifacts()
+        .some((artifact) => artifact.id === hiddenReply.id)
+    ).toBe(false)
 
     expect(database.deleteLocalConversation(localId)).toBe(true)
     expect(database.deleteLocalConversation(localId)).toBe(false)
@@ -2357,6 +2768,10 @@ describe('AssistantDatabase', () => {
     expect(() =>
       database.getConversation(localId)
     ).toThrow('对话不存在')
+    expect(() => database.getArtifact(hiddenReply.id)).toThrow(
+      '成果不存在'
+    )
+    expect(database.listPendingDelegationResults()).toEqual([])
     expect(() =>
       database.deleteLocalConversation(remote.id)
     ).toThrow('远程对话不能作为本地对话删除')

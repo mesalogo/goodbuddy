@@ -11,7 +11,7 @@ import {
   stat,
   writeFile
 } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { z } from 'zod'
 import {
   installedSpeechModelSchema,
@@ -39,11 +39,24 @@ import {
   extractModelArchive
 } from '../model-archive'
 import { fetchModelDownloadResponse } from '../model-download-transport'
+import {
+  MODEL_PARTIAL_SUFFIX,
+  attachModelAbortSignal,
+  cleanupStaleModelInstallArtifacts,
+  createModelStagingDirectory,
+  ensureModelOperationNotAborted,
+  fingerprintModelFile,
+  hashModelFile,
+  managedModelChild,
+  modelFileFingerprintMatches,
+  type ModelFileFingerprint,
+  writeModelBuffer
+} from '../model-package-utils'
+import { isMissingFileError } from '../settings-file-utils'
 
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 const MANIFEST_FILE_NAME = 'manifest.json'
 const SELECTION_FILE_NAME = '.selection.json'
-const PARTIAL_SUFFIX = '.partial'
 const MAXIMUM_ARCHIVE_BYTES = 4 * 1024 * 1024 * 1024 - 1
 const ARCHIVE_OVERHEAD_BYTES = 1024 * 1024
 
@@ -61,6 +74,17 @@ type ActiveOperation = {
   progress: SpeechModelOperation
 }
 
+type SpeechSelectionFileOperations = {
+  writeFile: typeof writeFile
+  rename: typeof rename
+}
+
+type CachedSelectedSpeechRuntimeModel = {
+  model: SelectedSpeechRuntimeModel
+  manifestFingerprint: ModelFileFingerprint
+  fileFingerprints: Map<string, ModelFileFingerprint>
+}
+
 export type SpeechModelManagerOptions = {
   userDataDirectory: string
   fetch: typeof fetch
@@ -69,6 +93,7 @@ export type SpeechModelManagerOptions = {
     | ModelDownloadSource
     | Promise<ModelDownloadSource>
   maxFileBytes?: number
+  selectionFileOperations?: Partial<SpeechSelectionFileOperations>
 }
 
 export type SelectedSpeechRuntimeModel = {
@@ -101,16 +126,6 @@ function toCatalogView(entry: SpeechModelCatalogEntry) {
   })
 }
 
-function abortError(): DOMException {
-  return new DOMException('The operation was aborted', 'AbortError')
-}
-
-function ensureNotAborted(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw abortError()
-  }
-}
-
 function validateMaximumBytes(value: number | undefined): number {
   const maximum = value ?? DEFAULT_MAX_FILE_BYTES
   if (
@@ -124,40 +139,7 @@ function validateMaximumBytes(value: number | undefined): number {
 }
 
 function safeChild(parent: string, name: string): string {
-  const child = resolve(parent, name)
-  if (dirname(child) !== resolve(parent)) {
-    throw new Error('模型路径超出受管目录')
-  }
-  return child
-}
-
-async function hashFile(
-  path: string,
-  signal?: AbortSignal
-): Promise<{
-  size: number
-  sha256: string
-}> {
-  const handle = await open(path, 'r')
-  const hash = createHash('sha256')
-  let size = 0
-  const buffer = Buffer.allocUnsafe(64 * 1024)
-  try {
-    while (true) {
-      if (signal) {
-        ensureNotAborted(signal)
-      }
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length)
-      if (bytesRead === 0) {
-        break
-      }
-      hash.update(buffer.subarray(0, bytesRead))
-      size += bytesRead
-    }
-  } finally {
-    await handle.close()
-  }
-  return { size, sha256: hash.digest('hex') }
+  return managedModelChild(parent, name, '模型路径超出受管目录')
 }
 
 export class SpeechModelManager {
@@ -170,7 +152,13 @@ export class SpeechModelManager {
     | ModelDownloadSource
     | Promise<ModelDownloadSource>
   private readonly maxFileBytes: number
+  private readonly selectionFileOperations: SpeechSelectionFileOperations
   private readonly operations = new Map<string, ActiveOperation>()
+  private readonly activeSelectionPartialNames = new Set<string>()
+  private selectedRuntimeModel?: Promise<
+    CachedSelectedSpeechRuntimeModel | undefined
+  >
+  private selectedRuntimeGeneration = 0
 
   constructor(options: SpeechModelManagerOptions) {
     if (!options.userDataDirectory.trim()) {
@@ -192,10 +180,16 @@ export class SpeechModelManager {
     }
     this.catalogViews = this.catalog.map(toCatalogView)
     this.maxFileBytes = validateMaximumBytes(options.maxFileBytes)
+    this.selectionFileOperations = {
+      writeFile,
+      rename,
+      ...options.selectionFileOperations
+    }
   }
 
   async snapshot(): Promise<SpeechModelSnapshot> {
     await this.ensureRoot()
+    await this.cleanupStaleArtifacts()
     const [installed, selected, selectedDownloadSource] =
       await Promise.all([
         this.readInstalled(),
@@ -236,25 +230,52 @@ export class SpeechModelManager {
   async getSelectedRuntimeModel(): Promise<
     SelectedSpeechRuntimeModel | undefined
   > {
-    const snapshot = await this.snapshot()
-    if (!snapshot.selectedModelId) {
+    const selectedModelId = await this.readSelection()
+    if (!selectedModelId) {
+      this.invalidateSelectedRuntimeModel()
       return undefined
     }
-    const catalogEntry = this.catalog.find(
-      (entry) => entry.id === snapshot.selectedModelId
-    )
-    const installed = snapshot.installed.find(
-      (entry) => entry.id === snapshot.selectedModelId
-    )
-    if (!catalogEntry || !installed) {
-      return undefined
+    const cachedPromise = this.selectedRuntimeModel
+    if (cachedPromise) {
+      const cached = await cachedPromise
+      if (
+        cached?.model.id === selectedModelId &&
+        (await this.selectedRuntimeFingerprintsMatch(cached))
+      ) {
+        return this.cloneSelectedRuntimeModel(cached.model)
+      }
+      if (this.selectedRuntimeModel === cachedPromise) {
+        this.invalidateSelectedRuntimeModel()
+      }
     }
-    return {
-      id: installed.id,
-      family: catalogEntry.family,
-      directory: this.modelDirectory(installed.id),
-      files: installed.files.map((file) => ({ ...file }))
+    const selected = await this.getOrCreateSelectedRuntimeModel(
+      selectedModelId
+    )
+    return selected
+      ? this.cloneSelectedRuntimeModel(selected.model)
+      : undefined
+  }
+
+  private getOrCreateSelectedRuntimeModel(
+    selectedModelId: string
+  ): Promise<CachedSelectedSpeechRuntimeModel | undefined> {
+    const current = this.selectedRuntimeModel
+    if (current) {
+      return current
     }
+    const generation = this.selectedRuntimeGeneration
+    const resolution = this.resolveSelectedRuntimeModel(
+      selectedModelId,
+      generation
+    )
+    const tracked = resolution.catch((error) => {
+      if (this.selectedRuntimeModel === tracked) {
+        this.selectedRuntimeModel = undefined
+      }
+      throw error
+    })
+    this.selectedRuntimeModel = tracked
+    return tracked
   }
 
   async install(
@@ -290,7 +311,7 @@ export class SpeechModelManager {
       await this.assertNotInstalled(entry.id)
       stagingDirectory = await this.createStagingDirectory(entry.id)
       for (const file of resolvedPackage.files) {
-        ensureNotAborted(operation.controller.signal)
+        ensureModelOperationNotAborted(operation.controller.signal)
         operation.progress.phase = 'transferring'
         operation.progress.currentFile = file.name
         const destination = safeChild(stagingDirectory, file.name)
@@ -309,12 +330,13 @@ export class SpeechModelManager {
         stagingDirectory,
         operation.controller.signal
       )
-      ensureNotAborted(operation.controller.signal)
+      ensureModelOperationNotAborted(operation.controller.signal)
       await rename(
         stagingDirectory,
         this.modelDirectory(entry.id)
       )
       stagingDirectory = undefined
+      this.invalidateSelectedRuntimeModel()
       return installed
     } finally {
       detachExternalAbort()
@@ -338,6 +360,7 @@ export class SpeechModelManager {
   async remove(modelId: string): Promise<void> {
     speechModelIdSchema.parse(modelId)
     this.cancel(modelId)
+    this.invalidateSelectedRuntimeModel()
     await this.ensureRoot()
     const target = this.modelDirectory(modelId)
     await rm(target, { recursive: true, force: true })
@@ -356,6 +379,7 @@ export class SpeechModelManager {
       }
     }
     await this.writeSelection(modelId)
+    this.invalidateSelectedRuntimeModel()
   }
 
   async registerLocalDirectory(
@@ -382,12 +406,12 @@ export class SpeechModelManager {
       stagingDirectory = await this.createStagingDirectory(entry.id)
       operation.progress.phase = 'transferring'
       for (const file of entry.files) {
-        ensureNotAborted(operation.controller.signal)
+        ensureModelOperationNotAborted(operation.controller.signal)
         operation.progress.currentFile = file.name
         const sourceFile = safeChild(source, file.name)
         const destination = safeChild(stagingDirectory, file.name)
         await copyFile(sourceFile, destination)
-        ensureNotAborted(operation.controller.signal)
+        ensureModelOperationNotAborted(operation.controller.signal)
         const copied = await stat(destination)
         if (copied.size > this.maxFileBytes) {
           throw new RangeError(`模型文件过大：${file.name}`)
@@ -404,12 +428,13 @@ export class SpeechModelManager {
         stagingDirectory,
         operation.controller.signal
       )
-      ensureNotAborted(operation.controller.signal)
+      ensureModelOperationNotAborted(operation.controller.signal)
       await rename(
         stagingDirectory,
         this.modelDirectory(entry.id)
       )
       stagingDirectory = undefined
+      this.invalidateSelectedRuntimeModel()
       return installed
     } finally {
       detachExternalAbort()
@@ -542,9 +567,10 @@ export class SpeechModelManager {
         `${JSON.stringify(installed, null, 2)}\n`,
         { encoding: 'utf8', flag: 'wx' }
       )
-      ensureNotAborted(operation.controller.signal)
+      ensureModelOperationNotAborted(operation.controller.signal)
       await rename(stagingDirectory, this.modelDirectory(entry.id))
       stagingDirectory = undefined
+      this.invalidateSelectedRuntimeModel()
       return installed
     } finally {
       this.operations.delete(entry.id)
@@ -556,6 +582,163 @@ export class SpeechModelManager {
 
   private async ensureRoot(): Promise<void> {
     await mkdir(this.rootDirectory, { recursive: true })
+  }
+
+  private invalidateSelectedRuntimeModel(): void {
+    this.selectedRuntimeGeneration += 1
+    this.selectedRuntimeModel = undefined
+  }
+
+  private async resolveSelectedRuntimeModel(
+    selectedModelId: string,
+    generation: number
+  ): Promise<CachedSelectedSpeechRuntimeModel | undefined> {
+    await this.ensureRoot()
+    const catalogEntry = this.catalog.find(
+      (entry) => entry.id === selectedModelId
+    )
+    if (!catalogEntry) {
+      return undefined
+    }
+    try {
+      const directory = this.modelDirectory(selectedModelId)
+      const manifestPath = safeChild(directory, MANIFEST_FILE_NAME)
+      const manifestFingerprintBefore = await fingerprintModelFile(
+        manifestPath
+      )
+      if (
+        !manifestFingerprintBefore.isFile ||
+        manifestFingerprintBefore.isSymbolicLink
+      ) {
+        return undefined
+      }
+      const installed = installedSpeechModelSchema.parse(
+        JSON.parse(
+          await readFile(manifestPath, 'utf8')
+        ) as unknown
+      )
+      const manifestFingerprint = await fingerprintModelFile(manifestPath)
+      if (
+        !modelFileFingerprintMatches(
+          manifestFingerprintBefore,
+          manifestFingerprint
+        )
+      ) {
+        return undefined
+      }
+      if (installed.id !== selectedModelId) {
+        return undefined
+      }
+      if (
+        installed.files.length !== catalogEntry.files.length ||
+        catalogEntry.files.some((expected) => {
+          const recorded = installed.files.find(
+            (file) =>
+              file.name === expected.name &&
+              file.role === expected.role
+          )
+          return (
+            !recorded ||
+            recorded.size !== expected.size ||
+            recorded.sha256 !== expected.sha256
+          )
+        })
+      ) {
+        return undefined
+      }
+      const fileFingerprints = new Map<string, ModelFileFingerprint>()
+      for (const file of installed.files) {
+        const path = safeChild(directory, file.name)
+        const fingerprintBefore = await fingerprintModelFile(path)
+        if (
+          !fingerprintBefore.isFile ||
+          fingerprintBefore.isSymbolicLink ||
+          fingerprintBefore.size !== BigInt(file.size)
+        ) {
+          return undefined
+        }
+        const actual = await hashModelFile(path)
+        const fingerprint = await fingerprintModelFile(path)
+        if (
+          actual.size !== file.size ||
+          actual.sha256 !== file.sha256 ||
+          !modelFileFingerprintMatches(
+            fingerprintBefore,
+            fingerprint
+          )
+        ) {
+          return undefined
+        }
+        fileFingerprints.set(file.name, fingerprint)
+      }
+      if (
+        generation !== this.selectedRuntimeGeneration ||
+        (await this.readSelection()) !== selectedModelId
+      ) {
+        return undefined
+      }
+      return {
+        model: {
+          id: installed.id,
+          family: catalogEntry.family,
+          directory,
+          files: installed.files.map((file) => ({ ...file }))
+        },
+        manifestFingerprint,
+        fileFingerprints
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  private cloneSelectedRuntimeModel(
+    model: SelectedSpeechRuntimeModel
+  ): SelectedSpeechRuntimeModel {
+    return {
+      ...model,
+      files: model.files.map((file) => ({ ...file }))
+    }
+  }
+
+  private async selectedRuntimeFingerprintsMatch(
+    cached: CachedSelectedSpeechRuntimeModel
+  ): Promise<boolean> {
+    try {
+      const manifestFingerprint = await fingerprintModelFile(
+        safeChild(cached.model.directory, MANIFEST_FILE_NAME)
+      )
+      if (
+        !manifestFingerprint.isFile ||
+        manifestFingerprint.isSymbolicLink ||
+        !modelFileFingerprintMatches(
+          manifestFingerprint,
+          cached.manifestFingerprint
+        )
+      ) {
+        return false
+      }
+      for (const file of cached.model.files) {
+        const expected = cached.fileFingerprints.get(file.name)
+        if (!expected) {
+          return false
+        }
+        const actual = await fingerprintModelFile(
+          safeChild(cached.model.directory, file.name)
+        )
+        if (
+          !actual.isFile ||
+          actual.isSymbolicLink ||
+          actual.size !== BigInt(file.size) ||
+          !modelFileFingerprintMatches(actual, expected)
+        ) {
+          return false
+        }
+      }
+      return true
+    } catch {
+      return false
+    }
   }
 
   private modelDirectory(modelId: string): string {
@@ -601,16 +784,7 @@ export class SpeechModelManager {
     signal: AbortSignal | undefined,
     controller: AbortController
   ): () => void {
-    if (!signal) {
-      return () => undefined
-    }
-    const abort = (): void => controller.abort()
-    if (signal.aborted) {
-      controller.abort()
-    } else {
-      signal.addEventListener('abort', abort, { once: true })
-    }
-    return () => signal.removeEventListener('abort', abort)
+    return attachModelAbortSignal(signal, controller)
   }
 
   private async assertNotInstalled(modelId: string): Promise<void> {
@@ -618,11 +792,7 @@ export class SpeechModelManager {
       await lstat(this.modelDirectory(modelId))
       throw new Error('语音模型已安装')
     } catch (error) {
-      if (
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
+      if (isMissingFileError(error)) {
         return
       }
       throw error
@@ -630,12 +800,11 @@ export class SpeechModelManager {
   }
 
   private async createStagingDirectory(modelId: string): Promise<string> {
-    const directory = safeChild(
+    return createModelStagingDirectory(
       this.rootDirectory,
-      `.install-${modelId}-${randomUUID()}`
+      modelId,
+      '模型路径超出受管目录'
     )
-    await mkdir(directory, { recursive: false })
-    return directory
   }
 
   private async downloadFile(
@@ -676,29 +845,34 @@ export class SpeechModelManager {
       }
     }
 
-    const partialPath = `${destination}${PARTIAL_SUFFIX}`
+    const partialPath = `${destination}${MODEL_PARTIAL_SUFFIX}`
     const handle = await open(partialPath, 'wx')
     const reader = response.body.getReader()
     const hash = createHash('sha256')
     let written = 0
     try {
       while (true) {
-        ensureNotAborted(signal)
+        ensureModelOperationNotAborted(signal)
         const result = await reader.read()
         if (result.done) {
           break
         }
-        written += result.value.byteLength
         if (
-          written > file.size ||
-          written > this.maxFileBytes
+          written + result.value.byteLength > file.size ||
+          written + result.value.byteLength > this.maxFileBytes
         ) {
           await reader.cancel()
           throw new RangeError(`模型文件过大：${file.name}`)
         }
-        await handle.write(result.value)
-        hash.update(result.value)
-        operation.progress.completedBytes += result.value.byteLength
+        const persistedBytes = await writeModelBuffer(
+          handle,
+          result.value,
+          (persisted) => {
+            hash.update(persisted)
+            operation.progress.completedBytes += persisted.byteLength
+          }
+        )
+        written += persistedBytes
       }
     } catch (error) {
       await reader.cancel().catch(() => undefined)
@@ -728,7 +902,7 @@ export class SpeechModelManager {
       visited: 0
     })
     for (const expectedFile of entry.files) {
-      ensureNotAborted(signal)
+      ensureModelOperationNotAborted(signal)
       const sourceFile = safeChild(sourceDirectory, expectedFile.name)
       const sourceFileInfo = await lstat(sourceFile)
       if (
@@ -745,7 +919,7 @@ export class SpeechModelManager {
       }
       if (
         sourceFileInfo.size !== expectedFile.size ||
-        (await hashFile(sourceFile, signal)).sha256 !==
+        (await hashModelFile(sourceFile, signal)).sha256 !==
           expectedFile.sha256
       ) {
         throw new Error(`本地模型文件校验失败：${expectedFile.name}`)
@@ -760,7 +934,7 @@ export class SpeechModelManager {
   ): Promise<void> {
     const entries = await readdir(directory, { withFileTypes: true })
     for (const entry of entries) {
-      ensureNotAborted(signal)
+      ensureModelOperationNotAborted(signal)
       counter.visited += 1
       if (counter.visited > 4_096) {
         throw new Error('本地模型目录包含过多条目')
@@ -830,8 +1004,8 @@ export class SpeechModelManager {
   ): Promise<InstalledSpeechModel> {
     const files = []
     for (const file of entry.files) {
-      ensureNotAborted(signal)
-      const metadata = await hashFile(
+      ensureModelOperationNotAborted(signal)
+      const metadata = await hashModelFile(
         safeChild(stagingDirectory, file.name),
         signal
       )
@@ -899,11 +1073,7 @@ export class SpeechModelManager {
       )
       return value.selectedModelId
     } catch (error) {
-      if (
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
+      if (isMissingFileError(error)) {
         return null
       }
       return null
@@ -913,23 +1083,44 @@ export class SpeechModelManager {
   private async writeSelection(modelId: string | null): Promise<void> {
     await this.ensureRoot()
     const target = safeChild(this.rootDirectory, SELECTION_FILE_NAME)
+    const partialName =
+      `${SELECTION_FILE_NAME}.${randomUUID()}${MODEL_PARTIAL_SUFFIX}`
     const partial = safeChild(
       this.rootDirectory,
-      `${SELECTION_FILE_NAME}.${randomUUID()}${PARTIAL_SUFFIX}`
+      partialName
     )
-    await writeFile(
-      partial,
-      `${JSON.stringify(
-        selectionSchema.parse({ selectedModelId: modelId })
-      )}\n`,
-      { encoding: 'utf8', flag: 'wx' }
-    )
+    this.activeSelectionPartialNames.add(partialName)
     try {
-      await rename(partial, target)
+      await this.selectionFileOperations.writeFile(
+        partial,
+        `${JSON.stringify(
+          selectionSchema.parse({ selectedModelId: modelId })
+        )}\n`,
+        { encoding: 'utf8', flag: 'wx' }
+      )
+      await this.selectionFileOperations.rename(partial, target)
     } catch (error) {
       await rm(partial, { force: true })
       throw error
+    } finally {
+      this.activeSelectionPartialNames.delete(partialName)
     }
+  }
+
+  private cleanupStaleArtifacts(): Promise<void> {
+    return cleanupStaleModelInstallArtifacts({
+      rootDirectory: this.rootDirectory,
+      isModelId: (value) => speechModelIdSchema.safeParse(value).success,
+      activeModelIds: new Set(this.operations.keys()),
+      partialFileNames: new Set(
+        this.catalog.flatMap((entry) =>
+          entry.files.map((file) => file.name)
+        )
+      ),
+      cleanSelectionPartials: true,
+      activeSelectionPartialNames: this.activeSelectionPartialNames,
+      escapeMessage: '模型路径超出受管目录'
+    })
   }
 }
 

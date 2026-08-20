@@ -78,6 +78,34 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('restores an exact credential-bearing snapshot after a failed activation', async () => {
+    const { store } = await createStore()
+    await store.update(
+      settings({
+        apiKey: { action: 'replace', value: 'previous-key' }
+      })
+    )
+    const rollback = await store.captureRollback()
+
+    await store.update(
+      settings({
+        modelBaseUrl: 'https://candidate.example/v1',
+        modelName: 'candidate',
+        apiKey: { action: 'replace', value: 'candidate-key' }
+      })
+    )
+    await expect(rollback.restore()).resolves.toMatchObject({
+      modelBaseUrl: 'https://bigtoken.ai',
+      modelName: 'sonnet-5',
+      apiKeyConfigured: true
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'https://bigtoken.ai',
+      modelName: 'sonnet-5',
+      apiKey: 'previous-key'
+    })
+  })
+
   it('migrates version 17 to empty Runtime customization', async () => {
     const { filePath, store } = await createStore()
     await store.update(settings())

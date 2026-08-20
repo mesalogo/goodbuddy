@@ -12,5 +12,5 @@
 
 ## 阅读顺序
 
-先阅读统一领域模型。其他三份文档不得重新定义 Task、Conversation、Job、Run 或 Subagent。
+先阅读统一领域模型。其他功能文档不得重新定义 Task、Conversation、Job、Run 或 Subagent。
 若实现与文档出现冲突，应先修正统一模型，再同步功能 PRD。

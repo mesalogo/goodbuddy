@@ -241,6 +241,8 @@ flowchart LR
     )
     expect(mermaidMock.initialize).toHaveBeenCalledWith(
       expect.objectContaining({
+        fontFamily:
+          '"Inter Variable", "Segoe UI Variable", "SF Pro Text", "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC Variable", "Noto Sans CJK SC", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
         htmlLabels: false,
         maxEdges: 300,
         maxTextSize: 20_000,

@@ -411,9 +411,24 @@ export type AssistantProject = ProjectCreateInput & {
   id: string
   kind: ProjectKind
   channel?: ProjectChannel
+  readonly builtInDefault?: boolean
   status: 'active' | 'archived'
   createdAt: string
   updatedAt: string
+}
+
+export const builtInDefaultProjectSeedName = '默认项目'
+export const builtInDefaultProjectSeedDescription =
+  'GoodBuddy 默认工作区'
+
+export function isUntouchedBuiltInDefaultProject(
+  project: AssistantProject
+): boolean {
+  return (
+    project.builtInDefault === true &&
+    project.name === builtInDefaultProjectSeedName &&
+    project.description === builtInDefaultProjectSeedDescription
+  )
 }
 
 export type WorkspaceChanges = {

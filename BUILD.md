@@ -195,8 +195,32 @@ git push origin "$tag"
 git push github "$tag"
 ```
 
-当前未配置 Windows/macOS 代码签名或 macOS notarization。对外分发前应按
-目标平台配置签名凭据并重新验证安装、升级和系统安全提示。
+macOS 发布 job 使用 Developer ID Application 证书签名，并通过 App Store
+Connect API Key 提交 Apple notarization。仓库的 Actions Secrets 需要配置：
+
+- `MACOS_CERTIFICATE_BASE64`：包含证书及私钥的 `.p12` 文件经 Base64 编码后的内容。
+- `MACOS_CERTIFICATE_PASSWORD`：导出 `.p12` 时设置的密码。
+- `APPLE_API_KEY_BASE64`：App Store Connect API Key 的 `.p8` 文件经 Base64 编码后的内容。
+- `APPLE_API_KEY_ID`：App Store Connect API Key 的 Key ID。
+- `APPLE_API_ISSUER`：App Store Connect API Key 的 Issuer ID。
+
+在 macOS 上生成适合 Secrets 的单行 Base64 内容：
+
+```bash
+base64 -i DeveloperIDApplication.p12 | tr -d '\n'
+base64 -i AuthKey_XXXXXXXXXX.p8 | tr -d '\n'
+```
+
+证书必须是 Apple Developer 后台创建的 `Developer ID Application`，并在导出
+`.p12` 的 Mac 钥匙串中同时包含对应私钥。API Key 建议使用团队级 App Store
+Connect Key；`.p8` 只能下载一次。签名材料只放入 GitHub Secrets，不提交到仓库。
+
+macOS 打包完成后，工作流会挂载 DMG，并分别执行 `codesign`、Gatekeeper `spctl`
+和 `stapler` 校验。缺少凭据、签名无效或 notarization ticket 不存在时，发布矩阵
+会在上传产物前失败。本地没有签名凭据时仍可生成仅供开发验证的未签名包。
+
+Windows 代码签名仍未配置。对外分发前还应配置 Windows 签名凭据，并重新验证
+安装、升级和系统安全提示。
 
 ## 发布前冒烟测试
 
@@ -259,3 +283,24 @@ npm test -- src/main/agent/deepseek-harness-acp-e2e.test.ts -t "rejects a real n
 
 如需覆盖发布包内置 npm 路径，再设置 `GOODBUDDY_DSH_NPM_CLI` 与
 `GOODBUDDY_DSH_NODE_EXECUTABLE` 指向已解包应用中的 npm CLI 和应用主程序。
+
+## Renderer bundle 性能门禁
+
+`electron-vite` 会在 `out/renderer/.vite` 生成 Vite manifest 和仅含构建模块
+归属的 module manifest。`npm run build:bundle` 在 bundle 完成后自动运行
+`build/check-renderer-bundle.cjs`，去重统计首屏同步闭包及 Knowledge、知识图谱、
+Activity、Magic Notes、Settings 动态入口同步加载的 JS 与 CSS 合计 raw / gzip
+大小并执行预算校验。
+
+门禁同时验证以下结构约束：
+
+- Knowledge、Activity 与 G6 不得进入首屏同步闭包。
+- `KnowledgeGraphChart` 与 G6 不得进入 Knowledge shell 的同步闭包。
+- G6 必须由知识图谱动态入口同步拥有。
+
+路径遍历使用 manifest 中的相对文件名并通过 Node `path.resolve` 读取，因此兼容
+Windows 与 POSIX 构建输出。构建专用 module manifest 只记录项目相对路径、
+`node_modules/` 相对路径或稳定的虚拟模块名，不记录 Runner 的盘符、主目录或
+绝对路径；检查成功后会删除该诊断文件，检查失败时保留以便排查。标准 Vite
+manifest 会保留在输出中。预算以干净生产构建为基线并保留有限余量；若业务确需
+提高预算，必须先检查 manifest 闭包和产物差异，不能只为通过 CI 调大数值。

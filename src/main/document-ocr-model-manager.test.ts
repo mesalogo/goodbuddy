@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import {
   mkdtemp,
   mkdir,
+  readFile,
+  readdir,
   rm,
   writeFile
 } from 'node:fs/promises'
@@ -186,6 +188,26 @@ afterEach(async () => {
 })
 
 describe('DocumentOcrModelManager', () => {
+  it('reads active progress without creating or scanning model storage', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-document-ocr-progress-')
+    )
+    temporaryDirectories.push(directory)
+    const getDownloadSource = vi.fn(() => 'modelscope' as const)
+    const manager = new DocumentOcrModelManager({
+      userDataDirectory: directory,
+      fetch: vi.fn<typeof fetch>(),
+      catalog: [],
+      getDownloadSource
+    })
+
+    expect(manager.getProgressSnapshot()).toEqual({ operations: [] })
+    expect(getDownloadSource).not.toHaveBeenCalled()
+    await expect(
+      readdir(join(directory, 'models', 'document-ocr'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('reports a removed catalog model as unavailable', async () => {
     const { manager } = await createManager()
 
@@ -321,6 +343,107 @@ describe('DocumentOcrModelManager', () => {
     expect(snapshot.selectedDownloadSource).toBe('modelscope')
     expect(snapshot.catalog[0]?.files[0]).not.toHaveProperty('targets')
     expect(JSON.stringify(snapshot.catalog)).not.toContain('/resolve/')
+  })
+
+  it('revalidates externally changed OCR files after a successful status check', async () => {
+    const { directory, manager, modelBytes } = await createManager()
+    await manager.install('pp-ocrv6-tiny')
+    await expect(manager.getStatus('pp-ocrv6-tiny')).resolves.toMatchObject({
+      available: true,
+      verified: true
+    })
+
+    await writeFile(
+      join(
+        directory,
+        'models',
+        'document-ocr',
+        'pp-ocrv6-tiny',
+        'detection.onnx'
+      ),
+      Buffer.alloc(modelBytes.detection.byteLength, 0x7f)
+    )
+
+    await expect(manager.getStatus('pp-ocrv6-tiny')).resolves.toMatchObject({
+      available: false,
+      verified: false
+    })
+  })
+
+  it('does not let an invalidated verification survive remove and reinstall', async () => {
+    const { manager } = await createManager()
+    await manager.install('pp-ocrv6-tiny')
+
+    const checking = manager.getStatus('pp-ocrv6-tiny')
+    await manager.remove('pp-ocrv6-tiny')
+    await expect(checking).resolves.toMatchObject({
+      available: false,
+      verified: false
+    })
+    await expect(manager.getStatus('pp-ocrv6-tiny')).resolves.toMatchObject({
+      available: false,
+      verified: false
+    })
+
+    await manager.install('pp-ocrv6-tiny')
+    await expect(manager.getStatus('pp-ocrv6-tiny')).resolves.toMatchObject({
+      available: true,
+      verified: true
+    })
+  })
+
+  it('cleans only manager-owned stale staging and partial artifacts', async () => {
+    const { directory, manager, modelBytes } = await createManager()
+    await manager.install('pp-ocrv6-tiny')
+    const root = join(directory, 'models', 'document-ocr')
+    const modelDirectory = join(root, 'pp-ocrv6-tiny')
+    const staleStaging =
+      '.install-pp-ocrv6-tiny-00000000-0000-4000-8000-000000000001'
+    const unrelatedStaging = '.install-pp-ocrv6-tiny-user-backup'
+    await mkdir(join(root, staleStaging))
+    await writeFile(
+      join(root, staleStaging, 'detection.onnx.partial'),
+      'stale'
+    )
+    await mkdir(join(root, unrelatedStaging))
+    await writeFile(join(root, unrelatedStaging, 'keep.txt'), 'keep')
+    await writeFile(
+      join(modelDirectory, 'detection.onnx.partial'),
+      'interrupted'
+    )
+    await writeFile(join(modelDirectory, 'notes.partial'), 'keep')
+    await writeFile(join(root, 'user.partial'), 'keep')
+
+    await expect(manager.getSnapshot()).resolves.toMatchObject({
+      installed: [expect.objectContaining({ id: 'pp-ocrv6-tiny' })]
+    })
+
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        'pp-ocrv6-tiny',
+        unrelatedStaging,
+        'user.partial'
+      ])
+    )
+    expect(await readdir(root)).not.toContain(staleStaging)
+    expect(await readdir(modelDirectory)).toEqual(
+      expect.arrayContaining([
+        'manifest.json',
+        'detection.onnx',
+        'recognition.onnx',
+        'dictionary.yml',
+        'notes.partial'
+      ])
+    )
+    expect(await readdir(modelDirectory)).not.toContain(
+      'detection.onnx.partial'
+    )
+    await expect(
+      readFile(join(modelDirectory, 'detection.onnx'))
+    ).resolves.toEqual(Buffer.from(modelBytes.detection))
+    await expect(
+      readFile(join(root, unrelatedStaging, 'keep.txt'), 'utf8')
+    ).resolves.toBe('keep')
   })
 
   it('downloads the same canonical package from Hugging Face', async () => {

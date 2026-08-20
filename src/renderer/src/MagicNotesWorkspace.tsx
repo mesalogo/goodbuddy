@@ -19,6 +19,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState
@@ -40,6 +41,7 @@ import type { MagicNoteCommentMode } from '../../shared/application-settings-con
 import { MagicNoteContent } from './MagicNoteContent'
 import { MagicNoteEditor } from './MagicNoteEditor'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type { AppNotificationInput } from './notifications'
 import {
   EmptyState,
@@ -61,6 +63,12 @@ type ValidationTarget =
   | 'note-title'
   | 'new-entry'
   | 'edit-entry'
+type DraftSwitchTarget =
+  | { kind: 'library-view'; value: LibraryView }
+  | { kind: 'create-note'; title: string }
+  | { kind: 'edit-entry'; entry: MagicNoteEntry }
+  | { kind: 'note'; noteId: string; entryId?: string }
+  | { kind: 'todo'; todoId: string }
 
 const defaultAiPaneWidth = 280
 const minimumAiPaneWidth = 240
@@ -115,6 +123,13 @@ function hasContent(content?: MagicNoteRichContent): boolean {
         : true
     )
   )
+}
+
+function richContentEqual(
+  left: MagicNoteRichContent | undefined,
+  right: MagicNoteRichContent | undefined
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -174,12 +189,14 @@ function AiComment({
 
 function TodoListItem({
   disabled,
+  id,
   onSelect,
   onToggle,
   selected,
   todo
 }: {
   disabled: boolean
+  id: string
   onSelect: () => void
   onToggle: () => void
   selected: boolean
@@ -214,6 +231,7 @@ function TodoListItem({
       <button
         aria-pressed={selected}
         className="magic-todo-list-item__content"
+        id={id}
         onClick={onSelect}
         type="button"
       >
@@ -351,6 +369,8 @@ export function MagicNotesWorkspace({
     target: ValidationTarget
     message: string
   }>()
+  const [pendingDraftSwitch, setPendingDraftSwitch] =
+    useState<DraftSwitchTarget>()
   const detailRequestRef = useRef(0)
   const requestedNoteIdRef = useRef('')
   const refreshRequestRef = useRef(0)
@@ -374,6 +394,12 @@ export function MagicNotesWorkspace({
   const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
   const liveAiPaneWidthRef = useRef(defaultAiPaneWidth)
   const aiResizePointerIdRef = useRef<number | undefined>(undefined)
+  const composerRef = useRef<HTMLDivElement>(null)
+  const continueEditingRef = useRef<HTMLButtonElement>(null)
+  const discardDraftRef = useRef<HTMLButtonElement>(null)
+  const discardDraftDialogRef = useRef<HTMLDivElement>(null)
+  const discardDraftTitleId = useId()
+  const discardDraftDescriptionId = useId()
   const runDraftAnalysisRef = useRef<
     (content: MagicNoteRichContent) => Promise<void>
   >(async () => undefined)
@@ -716,6 +742,8 @@ export function MagicNotesWorkspace({
             window.clearTimeout(draftAnalysisTimerRef.current)
             draftAnalysisTimerRef.current = undefined
           }
+          setEditingEntry(undefined)
+          editingContentRef.current = undefined
           setSelectedNoteId(noteId)
           applyDetail(nextDetail)
         }
@@ -733,6 +761,226 @@ export function MagicNotesWorkspace({
     },
     [applyDetail]
   )
+
+  const discardComposerDraft = useCallback((): void => {
+    composerContentRef.current = undefined
+    draftAnalysisArmedRef.current = false
+    draftAnalysisQueuedRef.current = false
+    draftAnalysisContextRef.current += 1
+    setDraftAnalyses([])
+    if (draftAnalysisTimerRef.current !== undefined) {
+      window.clearTimeout(draftAnalysisTimerRef.current)
+      draftAnalysisTimerRef.current = undefined
+    }
+    setComposerKey((current) => current + 1)
+  }, [])
+
+  const discardEditingDraft = useCallback((): void => {
+    setEditingEntry(undefined)
+    editingContentRef.current = undefined
+    clearValidation('edit-entry')
+  }, [clearValidation])
+
+  const hasDirtyEditingDraft = useCallback(
+    (): boolean =>
+      Boolean(
+        editingEntry &&
+          !richContentEqual(
+            editingContentRef.current,
+            editingEntry.content
+          )
+      ),
+    [editingEntry]
+  )
+
+  const createNote = useCallback(
+    async (title: string, discardDraft: boolean): Promise<void> => {
+      const operation = 'create-note'
+      if (!beginBusy(operation)) {
+        return
+      }
+      try {
+        const created = await window.goodbuddy.magicNotes.create({
+          title
+        })
+        if (discardDraft) {
+          discardComposerDraft()
+          discardEditingDraft()
+        }
+        applyDetail(created)
+        requestedNoteIdRef.current = created.id
+        setSelectedNoteId(created.id)
+        setNewTitle('')
+        setCreating(false)
+        notifySuccess(t('notifications.noteCreated'))
+      } catch (createError) {
+        notifyError(createError)
+      } finally {
+        endBusy(operation)
+      }
+    },
+    [
+      applyDetail,
+      beginBusy,
+      discardComposerDraft,
+      discardEditingDraft,
+      endBusy,
+      notifyError,
+      notifySuccess,
+      t
+    ]
+  )
+
+  const focusSwitchTarget = useCallback(
+    (target: DraftSwitchTarget): void => {
+      requestAnimationFrame(() => {
+        const focusTarget =
+          target.kind === 'library-view'
+            ? document.getElementById(`magic-library-tab-${target.value}`)
+            : target.kind === 'note'
+              ? document.getElementById(
+                  `magic-note-select-${target.noteId}`
+                )
+              : target.kind === 'todo'
+                ? document.getElementById(
+                    `magic-todo-select-${target.todoId}`
+                  )
+                : target.kind === 'edit-entry'
+                  ? document
+                      .getElementById(
+                        `magic-note-entry-${target.entry.id}`
+                      )
+                      ?.querySelector<HTMLElement>(
+                        '.ql-editor, [data-testid="magic-note-editor"]'
+                      )
+                  : composerRef.current?.querySelector<HTMLElement>(
+                      '.ql-editor, [data-testid="magic-note-editor"]'
+                    )
+        focusTarget?.focus()
+      })
+    },
+    []
+  )
+
+  const performDraftSwitch = useCallback(
+    (target: DraftSwitchTarget): void => {
+      setPendingDraftSwitch(undefined)
+      setValidation(undefined)
+      if (target.kind === 'library-view') {
+        if (target.value === 'todos') {
+          discardComposerDraft()
+          discardEditingDraft()
+        }
+        setLibraryView(target.value)
+        setCreating(false)
+        setSearch('')
+        focusSwitchTarget(target)
+        return
+      }
+      if (target.kind === 'todo') {
+        setSelectedTodoId(target.todoId)
+        focusSwitchTarget(target)
+        return
+      }
+      if (target.kind === 'edit-entry') {
+        discardEditingDraft()
+        setDeletingEntryId('')
+        setEditingEntry(target.entry)
+        editingContentRef.current = target.entry.content
+        focusSwitchTarget(target)
+        return
+      }
+      if (target.kind === 'create-note') {
+        void createNote(target.title, true)
+          .then(() => focusSwitchTarget(target))
+        return
+      }
+      setDeletingNote(false)
+      setLibraryView('notes')
+      void loadDetail(target.noteId).then(() => {
+        focusSwitchTarget(target)
+        if (!target.entryId) {
+          return
+        }
+        requestAnimationFrame(() =>
+          document
+            .getElementById(`magic-note-entry-${target.entryId}`)
+            ?.scrollIntoView({ block: 'center' })
+        )
+      })
+    },
+    [
+      createNote,
+      discardComposerDraft,
+      discardEditingDraft,
+      focusSwitchTarget,
+      loadDetail
+    ]
+  )
+
+  const requestDraftSwitch = useCallback(
+    (target: DraftSwitchTarget): void => {
+      if (pendingDraftSwitch) {
+        return
+      }
+      const changesContext =
+        target.kind === 'library-view'
+          ? target.value !== libraryView
+          : target.kind === 'note'
+            ? target.noteId !== selectedNoteId ||
+              target.entryId !== undefined
+            : target.kind === 'todo'
+              ? target.todoId !== selectedTodoId
+              : target.kind === 'edit-entry'
+                ? target.entry.id !== editingEntry?.id
+                : true
+      if (!changesContext) {
+        return
+      }
+      const wouldClearComposer = target.kind !== 'edit-entry'
+      const wouldClearEditing = target.kind !== 'todo'
+      if (
+        (wouldClearComposer && hasContent(composerContentRef.current)) ||
+        (wouldClearEditing && hasDirtyEditingDraft())
+      ) {
+        setPendingDraftSwitch(target)
+        return
+      }
+      performDraftSwitch(target)
+    },
+    [
+      editingEntry?.id,
+      hasDirtyEditingDraft,
+      libraryView,
+      pendingDraftSwitch,
+      performDraftSwitch,
+      selectedNoteId,
+      selectedTodoId
+    ]
+  )
+
+  const continueEditing = useCallback((): void => {
+    setPendingDraftSwitch(undefined)
+    requestAnimationFrame(() => {
+      const editor = editingEntry
+        ? document
+            .getElementById(`magic-note-entry-${editingEntry.id}`)
+            ?.querySelector<HTMLElement>(
+              '.ql-editor, [data-testid="magic-note-editor"]'
+            )
+        : composerRef.current?.querySelector<HTMLElement>(
+            '.ql-editor, [data-testid="magic-note-editor"]'
+          )
+      editor?.focus()
+    })
+  }, [editingEntry])
+
+  useEffect(() => {
+    if (!pendingDraftSwitch) {
+      return
+    }
+    return activateModalFocus(() => continueEditingRef.current)
+  }, [pendingDraftSwitch])
 
   const refreshNotes = useCallback(
     async (preferredId?: string): Promise<void> => {
@@ -884,7 +1132,7 @@ export function MagicNotesWorkspace({
   const aiPaneWidthLimits = getAiPaneWidthLimits(magicNotesLayoutWidth)
   const canResizeAiPane = aiPaneOpen && magicNotesLayoutWidth > 800
 
-  const createNote = async (): Promise<void> => {
+  const submitCreateNote = async (): Promise<void> => {
     const title = newTitle.trim()
     if (!title) {
       setValidation({
@@ -894,25 +1142,10 @@ export function MagicNotesWorkspace({
       return
     }
     clearValidation('create-note')
-    const operation = 'create-note'
-    if (!beginBusy(operation)) {
-      return
-    }
-    try {
-      const created = await window.goodbuddy.magicNotes.create({
-        title
-      })
-      applyDetail(created)
-      requestedNoteIdRef.current = created.id
-      setSelectedNoteId(created.id)
-      setNewTitle('')
-      setCreating(false)
-      notifySuccess(t('notifications.noteCreated'))
-    } catch (createError) {
-      notifyError(createError)
-    } finally {
-      endBusy(operation)
-    }
+    requestDraftSwitch({
+      kind: 'create-note',
+      title
+    })
   }
 
   const analyzeTodo = async (todoId: string): Promise<void> => {
@@ -1028,8 +1261,8 @@ export function MagicNotesWorkspace({
         content: composerContent
       })
       applyDetail(updated)
-      await reloadTodos()
       composerContentRef.current = undefined
+      setPendingDraftSwitch(undefined)
       draftAnalysisArmedRef.current = false
       draftAnalysisQueuedRef.current = false
       draftAnalysisContextRef.current += 1
@@ -1040,6 +1273,11 @@ export function MagicNotesWorkspace({
       }
       setComposerKey((current) => current + 1)
       notifySuccess(t('notifications.entrySaved'))
+      try {
+        await reloadTodos()
+      } catch (refreshTodosError) {
+        notifyError(refreshTodosError)
+      }
       const createdEntry = updated.entries.find(
         (entry) => !existingEntryIds.has(entry.id)
       )
@@ -1097,10 +1335,14 @@ export function MagicNotesWorkspace({
         expectedRevision: editingEntry.revision
       })
       applyDetail(updated)
-      await reloadTodos()
       setEditingEntry(undefined)
       editingContentRef.current = undefined
       notifySuccess(t('notifications.entryUpdated'))
+      try {
+        await reloadTodos()
+      } catch (refreshTodosError) {
+        notifyError(refreshTodosError)
+      }
       if (commentMode === 'after-save-auto') {
         const options = await createAnalysisOptions()
         setLiveAnalysis({
@@ -1268,12 +1510,12 @@ export function MagicNotesWorkspace({
           <PageTabs
             ariaLabel={t('page.contentLabel')}
             idPrefix="magic-library"
-            onChange={(value) => {
-              setLibraryView(value)
-              setCreating(false)
-              setValidation(undefined)
-              setSearch('')
-            }}
+            onChange={(value) =>
+              requestDraftSwitch({
+                kind: 'library-view',
+                value
+              })
+            }
             tabs={libraryTabs}
             value={libraryView}
             variant="segmented"
@@ -1303,7 +1545,7 @@ export function MagicNotesWorkspace({
               className="magic-notes-create"
               onSubmit={(event) => {
                 event.preventDefault()
-                void createNote()
+                void submitCreateNote()
               }}
             >
               <label>
@@ -1380,6 +1622,7 @@ export function MagicNotesWorkspace({
               visibleNotes.map((note) => (
                 <button
                   key={note.id}
+                  id={`magic-note-select-${note.id}`}
                   aria-pressed={selectedNoteId === note.id}
                   className={`magic-note-list-item ${
                     selectedNoteId === note.id
@@ -1387,13 +1630,12 @@ export function MagicNotesWorkspace({
                       : ''
                   }`}
                   type="button"
-                  onClick={() => {
-                    setValidation(undefined)
-                    setDeletingNote(false)
-                    setEditingEntry(undefined)
-                    editingContentRef.current = undefined
-                    void loadDetail(note.id)
-                  }}
+                  onClick={() =>
+                    requestDraftSwitch({
+                      kind: 'note',
+                      noteId: note.id
+                    })
+                  }
                 >
                   <span className="magic-note-list-item__title">
                     {note.pinned && (
@@ -1487,11 +1729,14 @@ export function MagicNotesWorkspace({
                         {directory.todos.map((todo) => (
                           <TodoListItem
                             disabled={busy === `update-todo-${todo.id}`}
+                            id={`magic-todo-select-${todo.id}`}
                             key={todo.id}
-                            onSelect={() => {
-                              setValidation(undefined)
-                              setSelectedTodoId(todo.id)
-                            }}
+                            onSelect={() =>
+                              requestDraftSwitch({
+                                kind: 'todo',
+                                todoId: todo.id
+                              })
+                            }
                             onToggle={() =>
                               void updateTodoCompletion(todo)
                             }
@@ -1538,7 +1783,12 @@ export function MagicNotesWorkspace({
                   </span>
                   <button
                     className="secondary-button"
-                    onClick={() => void loadDetail(detailLoadError.noteId)}
+                    onClick={() =>
+                      requestDraftSwitch({
+                        kind: 'note',
+                        noteId: detailLoadError.noteId
+                      })
+                    }
                     type="button"
                   >
                     {t('actions.retry')}
@@ -1670,7 +1920,7 @@ export function MagicNotesWorkspace({
                 </div>
               )}
 
-              <div className="magic-note-composer">
+              <div className="magic-note-composer" ref={composerRef}>
                 <MagicNoteEditor
                   key={`${detail.id}-${composerKey}`}
                   ariaDescribedBy={
@@ -1703,6 +1953,52 @@ export function MagicNotesWorkspace({
                     }
                   }}
                 />
+                {pendingDraftSwitch && (
+                  <div
+                    aria-describedby={discardDraftDescriptionId}
+                    aria-labelledby={discardDraftTitleId}
+                    aria-modal="true"
+                    className="magic-note-draft-confirmation"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        continueEditing()
+                        return
+                      }
+                      trapTabFocus(event, discardDraftDialogRef.current)
+                    }}
+                    ref={discardDraftDialogRef}
+                    role="alertdialog"
+                    tabIndex={-1}
+                  >
+                    <strong id={discardDraftTitleId}>
+                      {t('confirmations.discardDraftTitle')}
+                    </strong>
+                    <span id={discardDraftDescriptionId}>
+                      {t('confirmations.discardDraftDescription')}
+                    </span>
+                    <div>
+                      <button
+                        className="secondary-button"
+                        onClick={continueEditing}
+                        ref={continueEditingRef}
+                        type="button"
+                      >
+                        {t('actions.continueEditing')}
+                      </button>
+                      <button
+                        className="danger-button"
+                        onClick={() =>
+                          performDraftSwitch(pendingDraftSwitch)
+                        }
+                        ref={discardDraftRef}
+                        type="button"
+                      >
+                        {t('actions.discardAndSwitch')}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {validation?.target === 'new-entry' && (
                   <p
                     className="magic-notes-field-error"
@@ -1764,12 +2060,12 @@ export function MagicNotesWorkspace({
                           <button
                             className="secondary-button"
                             type="button"
-                            onClick={() => {
-                              clearValidation('edit-entry')
-                              setDeletingEntryId('')
-                              setEditingEntry(entry)
-                              editingContentRef.current = entry.content
-                            }}
+                            onClick={() =>
+                              requestDraftSwitch({
+                                kind: 'edit-entry',
+                                entry
+                              })
+                            }
                           >
                             {t('actions.edit')}
                           </button>
@@ -1975,18 +2271,13 @@ export function MagicNotesWorkspace({
                 </p>
                 <button
                   className="secondary-button"
-                  onClick={() => {
-                    setLibraryView('notes')
-                    void loadDetail(selectedTodo.noteId).then(() => {
-                      requestAnimationFrame(() =>
-                        document
-                          .getElementById(
-                            `magic-note-entry-${selectedTodo.entryId}`
-                          )
-                          ?.scrollIntoView({ block: 'center' })
-                      )
+                  onClick={() =>
+                    requestDraftSwitch({
+                      kind: 'note',
+                      noteId: selectedTodo.noteId,
+                      entryId: selectedTodo.entryId
                     })
-                  }}
+                  }
                   type="button"
                 >
                   <BookOpen size={14} />

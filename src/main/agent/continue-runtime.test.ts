@@ -83,6 +83,7 @@ describe('ContinueAgentRuntime', () => {
       text: 'Continue response'
     })
     mocks.respondHostQuestion.mockResolvedValue(undefined)
+    mocks.disposeHost.mockResolvedValue(undefined)
   })
 
   it('does not launch the CLI for an already-cancelled request', async () => {
@@ -102,6 +103,29 @@ describe('ContinueAgentRuntime', () => {
     await expect(stream.next()).rejects.toThrow('cancelled')
     expect(mocks.detectRuntimeBinary).not.toHaveBeenCalled()
     expect(mocks.runHost).not.toHaveBeenCalled()
+  })
+
+  it('awaits host process cleanup during Runtime disposal', async () => {
+    let releaseDispose!: () => void
+    mocks.disposeHost.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDispose = resolve
+        })
+    )
+    const runtime = createRuntime()
+    await collectEvents(runtime)
+    let disposed = false
+
+    const disposal = runtime.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+
+    releaseDispose()
+    await disposal
+    expect(disposed).toBe(true)
   })
 
   it('uses the resolved binary through the Continue host adapter', async () => {

@@ -192,7 +192,7 @@ function mermaidConfig(darkTheme: boolean): MermaidConfig {
     deterministicIds: true,
     dompurifyConfig: sharedSanitizerConfig,
     fontFamily:
-      '"Inter Variable", "Noto Sans SC Variable", "Segoe UI Variable", sans-serif',
+      '"Inter Variable", "Segoe UI Variable", "SF Pro Text", "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC Variable", "Noto Sans CJK SC", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
     htmlLabels: false,
     logLevel: 'fatal',
     maxEdges: MAX_MERMAID_EDGES,

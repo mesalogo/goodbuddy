@@ -27,7 +27,7 @@
     "test:watch": "vitest",
     "eval:retrieval": "vitest run --config tests/support/knowledge-retrieval-evaluation.ts tests/knowledge-retrieval-metrics.test.ts tests/knowledge-retrieval-evaluation.test.ts",
     "build": "npm run typecheck && npm run build:bundle",
-    "build:bundle": "electron-vite build",
+    "build:bundle": "electron-vite build && node build/check-renderer-bundle.cjs",
     "smoke:deepseek-harness": "npm run build:bundle && node build/run-deepseek-harness-utility-smoke.cjs",
     "smoke:deepseek-harness:packaged": "node build/run-packaged-deepseek-harness-smoke.cjs",
     "release:notes:verify": "node build/release-notes.cjs",
@@ -208,6 +208,9 @@
         "dmg"
       ],
       "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "notarize": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "GoodBuddy 需要访问麦克风，将语音转换为可编辑文字。"
       }
