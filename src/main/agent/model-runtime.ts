@@ -1640,6 +1640,18 @@ export class ModelAgentRuntime implements AgentRuntime {
     return headers
   }
 
+  private createImageGenerationRequest(
+    prompt: string
+  ): Record<string, unknown> {
+    return {
+      model: this.options.model,
+      prompt: prompt.slice(0, 100_000),
+      n: 1,
+      quality: this.options.imageGenerationQuality ?? 'auto',
+      response_format: 'b64_json'
+    }
+  }
+
   private async fetchWithTimeout(
     input: URL,
     init: RequestInit,
@@ -1688,38 +1700,44 @@ export class ModelAgentRuntime implements AgentRuntime {
     if (!this.isConfigured()) {
       return this.getStatus()
     }
-    if (this.options.protocol === 'openai-images-generations') {
-      return {
-        ...(await this.getStatus()),
-        detail: `已识别图像生成配置，发送提示词时执行实际生成验证 · ${this.options.baseUrl}`
-      }
-    }
+    const imageGeneration =
+      this.options.protocol === 'openai-images-generations'
+    const marker = `GOODBUDDY_MODEL_TEST_${randomBytes(12)
+      .toString('hex')
+      .toUpperCase()}`
+    const prompt = imageGeneration
+      ? 'Generate a simple image of one solid blue circle centered on a white background.'
+      : `Reply with exactly this text and nothing else: ${marker}`
     const response = await this.fetcher(this.getEndpoint(), {
       method: 'POST',
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(60_000),
       headers: this.getHeaders(),
       body: JSON.stringify(
-        this.options.protocol === 'openai-responses'
+        imageGeneration
+          ? this.createImageGenerationRequest(prompt)
+          : this.options.protocol === 'openai-responses'
           ? {
               model: this.options.model,
-              max_output_tokens: 16,
+              max_output_tokens: 64,
               stream: false,
-              input: 'Reply OK.'
+              input: prompt
             }
           : {
               model: this.options.model,
-              max_tokens: 1,
+              max_tokens: 64,
               stream: false,
-              messages: [{ role: 'user', content: 'Reply OK.' }]
+              messages: [{ role: 'user', content: prompt }]
             }
       )
     })
+    const responseText = await readBoundedResponseText(response, {
+      maxBytes: response.ok && imageGeneration
+        ? maxImageResponseBytes
+        : 128 * 1024,
+      missingBodyMessage: '模型接口未返回响应内容',
+      tooLargeMessage: '模型接口响应超过安全限制'
+    })
     if (!response.ok) {
-      const responseText = await readBoundedResponseText(response, {
-        maxBytes: 128 * 1024,
-        missingBodyMessage: '模型接口未返回响应内容',
-        tooLargeMessage: '模型接口响应超过安全限制'
-      })
       let detail: string | undefined
       try {
         detail = getErrorMessage(
@@ -1733,13 +1751,34 @@ export class ModelAgentRuntime implements AgentRuntime {
           `模型接口连接测试失败（HTTP ${response.status}）`
       )
     }
-    await response.body?.cancel().catch(() => undefined)
+    let payload: unknown
+    try {
+      payload = JSON.parse(responseText)
+    } catch {
+      throw new Error('模型接口返回了无效 JSON，未完成真实生成测试')
+    }
+    if (imageGeneration) {
+      parseGeneratedImage(payload)
+    } else {
+      const result = parseModelToolResponse(
+        payload,
+        this.options.protocol === 'anthropic-messages'
+          ? 'anthropic'
+          : this.options.protocol === 'openai-responses'
+            ? 'openai-responses'
+            : 'openai'
+      )
+      if (!result.text.includes(marker)) {
+        throw new Error('模型接口未返回测试文本，未完成真实生成测试')
+      }
+    }
     return {
-      id: 'model',
-      label: this.options.model,
+      ...(await this.getStatus()),
       available: true,
-      supportsToolExecution: this.supportsToolExecution,
-      detail: `已验证模型接口连接 · ${this.options.baseUrl}`
+      detail: `${imageGeneration
+        ? '已完成真实图像生成测试'
+        : '已完成真实模型生成测试'
+      } · ${this.options.baseUrl}`
     }
   }
 
@@ -2376,13 +2415,9 @@ export class ModelAgentRuntime implements AgentRuntime {
       type: 'status',
       message: `${this.options.model} 正在生成图片`
     }
-    const imageRequest = {
-      model: this.options.model,
-      prompt: request.prompt.slice(0, 100_000),
-      n: 1,
-      quality: this.options.imageGenerationQuality ?? 'auto',
-      response_format: 'b64_json'
-    }
+    const imageRequest = this.createImageGenerationRequest(
+      request.prompt
+    )
     const modelRequest = await this.fetchWithTimeout(
       this.getEndpoint(),
       {

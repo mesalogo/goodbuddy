@@ -7,7 +7,6 @@ export function translateSettingsWarning(
 ): string {
   switch (warning.code) {
     case 'runtime-model-credential-unreadable':
-    case 'runtime-model-credential-binding-mismatch':
       return t(warning.code, {
         subject: warning.subject ?? ''
       })

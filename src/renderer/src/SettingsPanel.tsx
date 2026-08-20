@@ -1138,7 +1138,8 @@ export function SettingsPanel({
           imageGenerationQuality: profile.imageGenerationQuality,
           apiKey: profile.clearApiKey
             ? ({ action: 'clear' } as const)
-            : profile.apiKey.trim()
+            : profile.authentication === 'api-key' &&
+                profile.apiKey.trim()
               ? ({
                   action: 'replace',
                   value: profile.apiKey.trim()
@@ -1295,12 +1296,13 @@ export function SettingsPanel({
       }
       onNotify({
         tone: 'success',
-        message:
-          status.capability === 'image-generation'
-            ? status.detail
-            : t('notifications.connectionSucceeded', {
-                label: status.label
-              }),
+        message: testingModel
+          ? t('notifications.modelGenerationTestSucceeded', {
+              label: status.label
+            })
+          : t('notifications.connectionSucceeded', {
+              label: status.label
+            }),
         dedupeKey: testingModel
           ? 'model-connection-tested'
           : `runtime-connection-tested-${agentRuntimeType}`
@@ -2765,11 +2767,7 @@ export function SettingsPanel({
                         const authentication = event.target
                           .value as ModelProfileDraft['authentication']
                         updateModelProfile(profile.id, {
-                          authentication,
-                          apiKey: '',
-                          clearApiKey:
-                            authentication === 'none' &&
-                            profile.apiKeyConfigured
+                          authentication
                         })
                       }}
                       value={profile.authentication}
@@ -2780,6 +2778,67 @@ export function SettingsPanel({
                       </option>
                     </select>
                   </label>
+                  {profile.authentication === 'api-key' ? (
+                    <>
+                      <label className="field">
+                        <span>API Key</span>
+                        <input
+                          autoComplete="off"
+                          disabled={
+                            environmentManaged ||
+                            !settings?.secureStorageAvailable
+                          }
+                          onChange={(event) =>
+                            updateModelProfile(profile.id, {
+                              apiKey: event.target.value,
+                              clearApiKey: false
+                            })
+                          }
+                          placeholder={
+                            profile.apiKeyConfigured
+                              ? t('credentials.configuredPlaceholder')
+                              : t('credentials.enterApiKey')
+                          }
+                          type="password"
+                          value={profile.apiKey}
+                        />
+                      </label>
+                      <div className="credential-state">
+                        <LockKeyhole size={15} />
+                        <span>
+                          {t(
+                            `credentials.${profile.credentialSource}`
+                          )}
+                        </span>
+                        {profile.credentialSource === 'encrypted' && (
+                          <button
+                            onClick={() =>
+                              updateModelProfile(profile.id, {
+                                apiKey: '',
+                                clearApiKey: true
+                              })
+                            }
+                            type="button"
+                          >
+                            {profile.clearApiKey
+                              ? t('actions.clearAfterSave')
+                              : t('actions.clearCredential')}
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="credential-state">
+                      <LockKeyhole size={15} />
+                      <span>
+                        {profile.apiKeyConfigured
+                          ? t('credentials.savedForConnection')
+                          : t(
+                              'credentials.noAuthenticationDescription'
+                            )}
+                      </span>
+                    </div>
+                  )}
                   {isAgentRuntimeModelProtocol(profile.protocol) && (
                     <>
                       <div className="field">
@@ -2864,63 +2923,6 @@ export function SettingsPanel({
                         </small>
                       </label>
                     )}
-                  {profile.authentication === 'api-key' ? (
-                    <>
-                      <label className="field">
-                        <span>API Key</span>
-                        <input
-                          autoComplete="off"
-                          disabled={
-                            environmentManaged ||
-                            !settings?.secureStorageAvailable
-                          }
-                          onChange={(event) =>
-                            updateModelProfile(profile.id, {
-                              apiKey: event.target.value,
-                              clearApiKey: false
-                            })
-                          }
-                          placeholder={
-                            profile.apiKeyConfigured
-                              ? t('credentials.configuredPlaceholder')
-                              : t('credentials.enterApiKey')
-                          }
-                          type="password"
-                          value={profile.apiKey}
-                        />
-                      </label>
-                      <div className="credential-state">
-                        <LockKeyhole size={15} />
-                        <span>
-                          {t(
-                            `credentials.${profile.credentialSource}`
-                          )}
-                        </span>
-                        {profile.credentialSource === 'encrypted' && (
-                          <button
-                            onClick={() =>
-                              updateModelProfile(profile.id, {
-                                apiKey: '',
-                                clearApiKey: true
-                              })
-                            }
-                            type="button"
-                          >
-                            {profile.clearApiKey
-                              ? t('actions.clearAfterSave')
-                              : t('actions.clearCredential')}
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="credential-state">
-                      <LockKeyhole size={15} />
-                      <span>
-                        {t('credentials.noAuthenticationDescription')}
-                      </span>
-                    </div>
-                  )}
                   <small className="model-connection-detail__compatibility">
                     {t('model.profile.compatibilitySummary', {
                       directCapability:

@@ -129,6 +129,7 @@ export const settings = {
   notifications: {
     settingsSaved: '设置已保存',
     connectionSucceeded: '连接成功：{{label}}',
+    modelGenerationTestSucceeded: '真实生成测试通过：{{label}}',
     documentParsingSaved: '文档解析设置已保存',
     documentParsingTestSucceeded: '文档解析测试完成'
   },
@@ -140,7 +141,9 @@ export const settings = {
     configuredPlaceholder: '已配置，留空保持不变',
     enterApiKey: '输入 API Key',
     noAuthentication: '无需认证',
-    noAuthenticationDescription: '无需认证，不会发送 API Key'
+    noAuthenticationDescription: '无需认证，不会发送 API Key',
+    savedForConnection:
+      '当前无需认证；已保存的 API Key 仍保留在此连接中'
   },
   runtime: {
     configCard: {
@@ -628,7 +631,7 @@ export const settings = {
       generatedName: '模型连接 {{count}}',
       title: 'LLM 模型连接',
       description:
-        '支持 OpenAI Responses、Anthropic Messages 和 OpenAI 兼容 Chat Completions；图片模型使用独立的 OpenAI Images Generations 接口类型',
+        '支持 OpenAI Responses、Anthropic Messages 和 OpenAI 兼容 Chat Completions；图片模型使用独立的 OpenAI Images Generations 接口类型。“保存并测试模型”会发送一次真实文本或图片生成请求，可能产生服务商用量费用。',
       listAriaLabel: '模型连接列表',
       listTitle: '连接列表',
       editAriaLabel: '编辑模型连接 {{name}}',

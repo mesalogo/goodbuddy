@@ -12,16 +12,10 @@ export const warnings = {
     'The Runtime settings file was corrupt. The original file was isolated, and defaults are now in use.',
   'runtime-model-credential-unreadable':
     'The API Key for model connection “{{subject}}” cannot be read. Re-enter or clear this credential.',
-  'runtime-model-credential-binding-mismatch':
-    'The service address for model connection “{{subject}}” does not match its saved API Key. Re-enter or clear this credential.',
   'runtime-embedding-credential-unreadable':
     'The embedding model API Key cannot be read. Re-enter or clear this credential.',
-  'runtime-embedding-credential-binding-mismatch':
-    'The embedding endpoint does not match its saved API Key. Re-enter or clear this credential.',
   'runtime-rerank-credential-unreadable':
     'The rerank model API Key cannot be read. Re-enter or clear this credential.',
-  'runtime-rerank-credential-binding-mismatch':
-    'The rerank endpoint does not match its saved API Key. Re-enter or clear this credential.',
   'channel-settings-recovered':
     'The channel settings file was corrupt. The original file was isolated, and all channels were restored as disabled.',
   'channel-weixin-credential-unreadable':

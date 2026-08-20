@@ -147,6 +147,8 @@ export const settings = {
   notifications: {
     settingsSaved: 'Settings saved',
     connectionSucceeded: 'Connected: {{label}}',
+    modelGenerationTestSucceeded:
+      'Real generation test passed: {{label}}',
     documentParsingSaved: 'Document parsing settings saved',
     documentParsingTestSucceeded: 'Document parsing test completed'
   },
@@ -159,7 +161,9 @@ export const settings = {
     enterApiKey: 'Enter API Key',
     noAuthentication: 'No authentication',
     noAuthenticationDescription:
-      'No authentication is required; no API Key will be sent'
+      'No authentication is required; no API Key will be sent',
+    savedForConnection:
+      'Authentication is currently disabled; the saved API Key remains stored with this connection'
   },
   runtime: {
     configCard: {
@@ -684,7 +688,7 @@ export const settings = {
       generatedName: 'Model connection {{count}}',
       title: 'LLM model connections',
       description:
-        'Supports OpenAI Responses, Anthropic Messages, and OpenAI-compatible Chat Completions. Image models use the separate OpenAI Images Generations protocol.',
+        'Supports OpenAI Responses, Anthropic Messages, and OpenAI-compatible Chat Completions. Image models use the separate OpenAI Images Generations protocol. “Save and test model” sends a real text or image generation request and may incur provider usage charges.',
       listAriaLabel: 'Model connection list',
       listTitle: 'Connections',
       editAriaLabel: 'Edit model connection {{name}}',

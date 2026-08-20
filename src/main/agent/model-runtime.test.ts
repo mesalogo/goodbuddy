@@ -369,12 +369,22 @@ describe('ModelAgentRuntime', () => {
     }
   )
 
-  it('performs a real minimal request when testing the connection', async () => {
-    const fetcher = vi.fn<typeof fetch>(async () =>
-      Response.json({
-        content: [{ type: 'text', text: 'OK' }]
+  it('requires generated text from a real minimal Anthropic request when testing the connection', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(init?.body as string) as {
+        messages: Array<{ content: string }>
+      }
+      const marker =
+        /GOODBUDDY_MODEL_TEST_[A-F0-9]+/u.exec(
+          body.messages[0]?.content ?? ''
+        )?.[0]
+      if (!marker) {
+        throw new Error('missing model test marker')
+      }
+      return Response.json({
+        content: [{ type: 'text', text: marker }]
       })
-    )
+    })
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai',
@@ -386,12 +396,71 @@ describe('ModelAgentRuntime', () => {
 
     await expect(runtime.testConnection()).resolves.toMatchObject({
       available: true,
-      id: 'model'
+      id: 'model',
+      detail: expect.stringContaining('真实模型生成测试')
     })
     const body = JSON.parse(
       fetcher.mock.calls[0]?.[1]?.body as string
     ) as { max_tokens: number; stream: boolean }
-    expect(body).toMatchObject({ max_tokens: 1, stream: false })
+    expect(body).toMatchObject({ max_tokens: 64, stream: false })
+  })
+
+  it('rejects a successful HTTP response that does not contain generated test text', async () => {
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher: vi.fn(async () =>
+        Response.json({
+          content: [{ type: 'text', text: 'generic health check' }]
+        })
+      )
+    })
+
+    await expect(runtime.testConnection()).rejects.toThrow(
+      '未完成真实生成测试'
+    )
+  })
+
+  it('validates generated test text from an OpenAI Chat Completions response', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(init?.body as string) as {
+        messages: Array<{ content: string }>
+      }
+      const marker =
+        /GOODBUDDY_MODEL_TEST_[A-F0-9]+/u.exec(
+          body.messages[0]?.content ?? ''
+        )?.[0]
+      if (!marker) {
+        throw new Error('missing model test marker')
+      }
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: marker
+            }
+          }
+        ]
+      })
+    })
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://model.example/v1',
+      model: 'chat-model',
+      protocol: 'openai-chat-completions',
+      authentication: 'api-key',
+      fetcher
+    })
+
+    await expect(runtime.testConnection()).resolves.toMatchObject({
+      available: true,
+      detail: expect.stringContaining('真实模型生成测试')
+    })
+    expect(fetcher).toHaveBeenCalledOnce()
   })
 
   it('uses the Anthropic messages endpoint and streams text deltas', async () => {
@@ -1818,9 +1887,26 @@ describe('ModelAgentRuntime', () => {
   })
 
   it('tests an OpenAI Responses connection with Responses request fields', async () => {
-    const fetcher = vi.fn<typeof fetch>(async () =>
-      Response.json({ id: 'resp-test', output: [] })
-    )
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(init?.body as string) as {
+        input: string
+      }
+      const marker =
+        /GOODBUDDY_MODEL_TEST_[A-F0-9]+/u.exec(body.input)?.[0]
+      if (!marker) {
+        throw new Error('missing model test marker')
+      }
+      return Response.json({
+        id: 'resp-test',
+        status: 'completed',
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: marker }]
+          }
+        ]
+      })
+    })
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',
       baseUrl: 'https://api.openai.com/v1/',
@@ -1832,19 +1918,21 @@ describe('ModelAgentRuntime', () => {
 
     await expect(runtime.testConnection()).resolves.toMatchObject({
       available: true,
-      detail: expect.stringContaining('已验证')
+      detail: expect.stringContaining('真实模型生成测试')
     })
     expect(fetcher.mock.calls[0]?.[0]?.toString()).toBe(
       'https://api.openai.com/v1/responses'
     )
     expect(
       JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)
-    ).toEqual({
+    ).toMatchObject({
       model: 'gpt-5',
-      max_output_tokens: 16,
-      stream: false,
-      input: 'Reply OK.'
+      max_output_tokens: 64,
+      stream: false
     })
+    expect(
+      JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string).input
+    ).toMatch(/GOODBUDDY_MODEL_TEST_[A-F0-9]+/u)
   })
 
   it('runs approved direct-model tools and returns their results to OpenAI', async () => {
@@ -4527,8 +4615,14 @@ describe('ModelAgentRuntime', () => {
     expect(fetcher).toHaveBeenCalledOnce()
   })
 
-  it('reports image configuration checks without pretending to generate', async () => {
-    const fetcher = vi.fn<typeof fetch>()
+  it('performs and validates a real image generation when testing an image connection', async () => {
+    const png = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00
+    ]).toString('base64')
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({ data: [{ b64_json: png }] })
+    )
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',
       baseUrl: 'https://bigtoken.ai/v1',
@@ -4543,10 +4637,18 @@ describe('ModelAgentRuntime', () => {
       available: true,
       capability: 'image-generation',
       detail: expect.stringContaining(
-        '发送提示词时执行实际生成验证'
+        '已完成真实图像生成测试'
       )
     })
-    expect(fetcher).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(
+      JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)
+    ).toMatchObject({
+      model: 'gpt-image-2',
+      n: 1,
+      quality: 'medium',
+      response_format: 'b64_json'
+    })
   })
 
   it('generates a bounded image through the BigToken-compatible endpoint', async () => {

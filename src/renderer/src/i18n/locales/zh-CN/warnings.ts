@@ -9,16 +9,10 @@ export const warnings = {
     'Runtime 设置文件已损坏。原文件已隔离，当前使用默认设置。',
   'runtime-model-credential-unreadable':
     '模型连接“{{subject}}”的 API Key 无法读取。请重新输入或清除该凭据。',
-  'runtime-model-credential-binding-mismatch':
-    '模型连接“{{subject}}”的服务地址与已保存 API Key 不匹配。请重新输入或清除该凭据。',
   'runtime-embedding-credential-unreadable':
     '向量模型 API Key 无法读取。请重新输入或清除该凭据。',
-  'runtime-embedding-credential-binding-mismatch':
-    '向量接口地址与已保存 API Key 不匹配。请重新输入或清除该凭据。',
   'runtime-rerank-credential-unreadable':
     '重排模型 API Key 无法读取。请重新输入或清除该凭据。',
-  'runtime-rerank-credential-binding-mismatch':
-    '重排接口地址与已保存 API Key 不匹配。请重新输入或清除该凭据。',
   'channel-settings-recovered':
     '通道设置文件已损坏。原文件已隔离，所有通道已恢复为关闭状态。',
   'channel-weixin-credential-unreadable':

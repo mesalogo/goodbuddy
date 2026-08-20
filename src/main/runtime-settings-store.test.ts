@@ -906,7 +906,7 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(true)
   })
 
-  it('encrypts an OpenAI-compatible embedding API key and binds it to the full endpoint', async () => {
+  it('keeps an encrypted embedding API key when its endpoint changes', async () => {
     const { filePath, store } = await createStore()
     await store.update(
       settings({
@@ -933,15 +933,18 @@ describe('RuntimeSettingsStore', () => {
       knowledgeEmbeddingApiKeyConfigured: true,
       knowledgeEmbeddingCredentialSource: 'encrypted'
     })
-    await expect(
-      store.update(
-        settings({
-          knowledgeEmbeddingBaseUrl:
-            'https://vectors.example/v1/embeddings',
-          knowledgeEmbeddingApiKey: { action: 'keep' }
-        })
-      )
-    ).rejects.toThrow('重新输入或清除 API Key')
+    await store.update(
+      settings({
+        knowledgeEmbeddingBaseUrl:
+          'https://vectors.example/v1/embeddings',
+        knowledgeEmbeddingApiKey: { action: 'keep' }
+      })
+    )
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      knowledgeEmbeddingBaseUrl:
+        'https://vectors.example/v1/embeddings',
+      knowledgeEmbeddingApiKey: 'vector-secret-value'
+    })
   })
 
   it('migrates version 13 with reranking disabled by default', async () => {
@@ -968,7 +971,7 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
-  it('encrypts and endpoint-binds the rerank API key', async () => {
+  it('keeps an encrypted rerank API key when its endpoint changes', async () => {
     const { filePath, store } = await createStore()
     await store.update(
       settings({
@@ -995,14 +998,16 @@ describe('RuntimeSettingsStore', () => {
       knowledgeRerankApiKeyConfigured: true,
       knowledgeRerankCredentialSource: 'encrypted'
     })
-    await expect(
-      store.update(
-        settings({
-          knowledgeRerankEndpoint: 'https://other.example/v1/rerank',
-          knowledgeRerankApiKey: { action: 'keep' }
-        })
-      )
-    ).rejects.toThrow('重排接口 URL 已更改')
+    await store.update(
+      settings({
+        knowledgeRerankEndpoint: 'https://other.example/v1/rerank',
+        knowledgeRerankApiKey: { action: 'keep' }
+      })
+    )
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      knowledgeRerankEndpoint: 'https://other.example/v1/rerank',
+      knowledgeRerankApiKey: 'rerank-secret-value'
+    })
   })
 
   it('prefers the rerank environment API key without exposing it', async () => {
@@ -1251,7 +1256,7 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
-  it('encrypts the API key and binds it to the configured origin', async () => {
+  it('keeps an encrypted API key with its model connection when the URL changes', async () => {
     const { filePath, store } = await createStore()
     await store.update(
       settings({
@@ -1266,14 +1271,93 @@ describe('RuntimeSettingsStore', () => {
       modelBaseUrl: 'https://bigtoken.ai'
     })
 
-    await expect(
-      store.update(
-        settings({
-          modelBaseUrl: 'https://other.example',
-          apiKey: { action: 'keep' }
+    await store.update(
+      settings({
+        modelBaseUrl: 'https://other.example',
+        apiKey: { action: 'keep' }
+      })
+    )
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      apiKey: 'test-secret-value',
+      modelBaseUrl: 'https://other.example'
+    })
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted'
+    })
+  })
+
+  it('keeps a model API key while authentication is disabled and restores it when re-enabled', async () => {
+    const { store } = await createStore()
+    await store.update(
+      settings({
+        apiKey: {
+          action: 'replace',
+          value: 'connection-scoped-secret'
+        }
+      })
+    )
+
+    await store.update(
+      settings({
+        modelAuthentication: 'none',
+        apiKey: { action: 'keep' }
+      })
+    )
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      modelAuthentication: 'none',
+      modelProfiles: [
+        expect.objectContaining({
+          authentication: 'none',
+          apiKeyConfigured: true,
+          credentialSource: 'encrypted'
         })
-      )
-    ).rejects.toThrow('请重新输入或清除')
+      ]
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelAuthentication: 'none',
+      apiKey: undefined
+    })
+
+    await store.update(
+      settings({
+        modelAuthentication: 'api-key',
+        apiKey: { action: 'keep' }
+      })
+    )
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelAuthentication: 'api-key',
+      apiKey: 'connection-scoped-secret'
+    })
+  })
+
+  it('reads a legacy API key payload after the model connection URL changes', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    persisted.modelProfiles[0]!.baseUrl = 'https://new.example/v1'
+    persisted.modelProfiles[0]!.credential = {
+      formatVersion: 1,
+      scheme: 'electron-safe-storage',
+      ciphertextBase64: cipher
+        .encrypt(
+          JSON.stringify({
+            version: 1,
+            apiKey: 'legacy-connection-secret',
+            origin: 'https://old.example'
+          })
+        )
+        .toString('base64')
+    }
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'https://new.example/v1',
+      apiKey: 'legacy-connection-secret'
+    })
   })
 
   it('does not infer image capability from the model name', async () => {
@@ -1470,6 +1554,59 @@ describe('RuntimeSettingsStore', () => {
     await expect(environmentStore.getResolvedSettings()).resolves.toMatchObject({
       apiKey: 'YOUR_API_KEY_HERE',
       modelBaseUrl: 'https://bigtoken.ai'
+    })
+  })
+
+  it('uses the default environment key only for the default model connection', async () => {
+    const { filePath, store } = await createStore()
+    const defaultId = '00000000-0000-4000-8000-000000000031'
+    const secondaryId = '00000000-0000-4000-8000-000000000032'
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: defaultId,
+            name: 'Default',
+            baseUrl: 'https://default.example/v1',
+            modelName: 'default-model',
+            protocol: 'openai-chat-completions',
+            authentication: 'api-key',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'replace', value: 'stored-default-key' }
+          },
+          {
+            id: secondaryId,
+            name: 'Secondary',
+            baseUrl: 'https://secondary.example/v1',
+            modelName: 'secondary-model',
+            protocol: 'openai-chat-completions',
+            authentication: 'api-key',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'replace', value: 'secondary-key' }
+          }
+        ],
+        defaultModelProfileId: defaultId
+      })
+    )
+
+    const environmentStore = new RuntimeSettingsStore(filePath, cipher, {
+      GOODBUDDY_MODEL_API_KEY: 'environment-default-key',
+      GOODBUDDY_MODEL_BASE_URL: 'https://environment.example/v1',
+      GOODBUDDY_MODEL_NAME: 'environment-model'
+    })
+    await expect(
+      environmentStore.getResolvedSettings()
+    ).resolves.toMatchObject({
+      modelProfiles: [
+        expect.objectContaining({
+          id: defaultId,
+          apiKey: 'environment-default-key'
+        }),
+        expect.objectContaining({
+          id: secondaryId,
+          apiKey: 'secondary-key'
+        })
+      ]
     })
   })
 

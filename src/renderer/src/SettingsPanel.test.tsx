@@ -3402,11 +3402,119 @@ describe('SettingsPanel runtime files', () => {
     await waitFor(() =>
       expect(onNotify).toHaveBeenCalledWith({
         tone: 'success',
-        message: '连接成功：sonnet-5',
+        message: '真实生成测试通过：sonnet-5',
         dedupeKey: 'model-connection-tested'
       })
     )
-    expect(screen.queryByText('连接成功：sonnet-5')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('真实生成测试通过：sonnet-5')
+    ).not.toBeInTheDocument()
+  })
+
+  it('places the API Key directly after authentication and keeps it when the model URL changes', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted',
+      modelProfiles: [
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          apiKeyConfigured: true,
+          credentialSource: 'encrypted'
+        }
+      ]
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    const authentication = screen.getByLabelText(
+      '认证方式 默认模型'
+    )
+    const apiKey = screen.getByLabelText('API Key')
+    expect(
+      authentication.closest('label')?.nextElementSibling
+    ).toBe(apiKey.closest('label'))
+    expect(apiKey).toHaveAttribute(
+      'placeholder',
+      '已配置，留空保持不变'
+    )
+
+    fireEvent.change(screen.getByDisplayValue('https://bigtoken.ai'), {
+      target: { value: 'https://new-model.example/v1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: [
+            expect.objectContaining({
+              baseUrl: 'https://new-model.example/v1',
+              apiKey: { action: 'keep' }
+            })
+          ]
+        })
+      )
+    )
+  })
+
+  it('does not clear a saved API Key when authentication is temporarily disabled', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      apiKeyConfigured: true,
+      credentialSource: 'encrypted',
+      modelProfiles: [
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          apiKeyConfigured: true,
+          credentialSource: 'encrypted'
+        }
+      ]
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.change(screen.getByLabelText('认证方式 默认模型'), {
+      target: { value: 'none' }
+    })
+    expect(screen.queryByLabelText('API Key')).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '当前无需认证；已保存的 API Key 仍保留在此连接中'
+      )
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: [
+            expect.objectContaining({
+              authentication: 'none',
+              apiKey: { action: 'keep' }
+            })
+          ]
+        })
+      )
+    )
   })
 
   it('shows an actionable model error without Electron IPC prefixes', async () => {
