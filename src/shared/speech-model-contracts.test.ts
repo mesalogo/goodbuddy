@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { modelArtifactTargetsSchema } from './model-download-contracts'
 import {
   speechModelCatalogEntrySchema,
   speechModelLocalDirectoryInputSchema,
@@ -169,6 +170,50 @@ describe('speech model contracts', () => {
             }
           }
         ]
+      }).success
+    ).toBe(false)
+  })
+
+  it('allows only the declared ModelScope CDN redirect host', () => {
+    const modelscopeRepositoryUrl =
+      'https://modelscope.cn/models/example/test-speech-model'
+    const target = {
+      url:
+        `${modelscopeRepositoryUrl}/resolve/${revision}/` +
+        'model.onnx',
+      repositoryUrl: modelscopeRepositoryUrl,
+      revision,
+      redirectHosts: ['cdn-lfs-cn-1.modelscope.cn']
+    }
+
+    expect(
+      modelArtifactTargetsSchema.safeParse({
+        modelscope: target
+      }).success
+    ).toBe(true)
+    expect(
+      modelArtifactTargetsSchema.safeParse({
+        modelscope: {
+          ...target,
+          size: 13,
+          sha256: 'b'.repeat(64)
+        }
+      }).success
+    ).toBe(true)
+    expect(
+      modelArtifactTargetsSchema.safeParse({
+        modelscope: {
+          ...target,
+          size: 13
+        }
+      }).success
+    ).toBe(false)
+    expect(
+      modelArtifactTargetsSchema.safeParse({
+        modelscope: {
+          ...target,
+          redirectHosts: ['untrusted.example']
+        }
       }).success
     ).toBe(false)
   })

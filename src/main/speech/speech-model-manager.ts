@@ -28,7 +28,10 @@ import {
 } from '../../shared/speech-model-contracts'
 import {
   MODEL_DOWNLOAD_SOURCES,
+  getMaximumModelPackageBytes,
   getModelDownloadAvailability,
+  getModelPackageFingerprints,
+  modelPackageFingerprintMatches,
   resolveModelDownloadPackage,
   type ModelDownloadSource,
   type ResolvedModelArtifactFile
@@ -124,6 +127,21 @@ function toCatalogView(entry: SpeechModelCatalogEntry) {
       getModelDownloadAvailability(files, source)
     )
   })
+}
+
+function speechModelPackageMatches(
+  entry: SpeechModelCatalogEntry,
+  files: readonly {
+    name: string
+    role: string
+    size: number
+    sha256: string
+  }[]
+): boolean {
+  return getModelPackageFingerprints(entry.files).some(
+    (fingerprint) =>
+      modelPackageFingerprintMatches(fingerprint, files)
+  )
 }
 
 function validateMaximumBytes(value: number | undefined): number {
@@ -457,6 +475,9 @@ export class SpeechModelManager {
     if (!installed) {
       throw new Error('只能导出已安装的语音模型')
     }
+    if (!speechModelPackageMatches(entry, installed.files)) {
+      throw new Error('语音模型文件与当前模型目录不匹配')
+    }
     const directory = this.modelDirectory(entry.id)
     const files = []
     for (const expected of entry.files) {
@@ -467,9 +488,7 @@ export class SpeechModelManager {
       if (
         !recorded ||
         recorded.size <= 0 ||
-        recorded.size > this.maxFileBytes ||
-        recorded.size !== expected.size ||
-        recorded.sha256 !== expected.sha256
+        recorded.size > this.maxFileBytes
       ) {
         throw new Error(`语音模型文件不可导出：${expected.name}`)
       }
@@ -497,10 +516,7 @@ export class SpeechModelManager {
     archivePath: string
   ): Promise<InstalledSpeechModel> {
     const entry = this.requireCatalogEntry(modelId)
-    const expectedTotal = entry.files.reduce(
-      (total, file) => total + file.size,
-      0
-    )
+    const expectedTotal = getMaximumModelPackageBytes(entry.files)
     const maximumTotalBytes = Math.min(
       MAXIMUM_ARCHIVE_BYTES,
       expectedTotal + ARCHIVE_OVERHEAD_BYTES
@@ -536,23 +552,18 @@ export class SpeechModelManager {
           operation.progress.completedBytes = completedBytes
         }
       })
-      for (const expected of entry.files) {
-        const archived = descriptor.files.find(
-          (file) =>
-            file.name === expected.name &&
-            file.role === expected.role
-        )
-        if (
-          !archived ||
-          archived.size > this.maxFileBytes ||
-          archived.size !== expected.size ||
-          archived.sha256 !== expected.sha256
-        ) {
-          throw new Error(
-            `语音模型 ZIP 与当前模型目录不匹配：${expected.name}`
-          )
-        }
+      if (
+        descriptor.files.some(
+          (file) => file.size > this.maxFileBytes
+        ) ||
+        !speechModelPackageMatches(entry, descriptor.files)
+      ) {
+        throw new Error('语音模型 ZIP 与当前模型目录不匹配')
       }
+      operation.progress.totalBytes = descriptor.files.reduce(
+        (total, file) => total + file.size,
+        0
+      )
       operation.progress.phase = 'installing'
       operation.progress.currentFile = null
       const installed = installedSpeechModelSchema.parse({
@@ -631,18 +642,7 @@ export class SpeechModelManager {
       }
       if (
         installed.files.length !== catalogEntry.files.length ||
-        catalogEntry.files.some((expected) => {
-          const recorded = installed.files.find(
-            (file) =>
-              file.name === expected.name &&
-              file.role === expected.role
-          )
-          return (
-            !recorded ||
-            recorded.size !== expected.size ||
-            recorded.sha256 !== expected.sha256
-          )
-        })
+        !speechModelPackageMatches(catalogEntry, installed.files)
       ) {
         return undefined
       }
@@ -901,6 +901,7 @@ export class SpeechModelManager {
     await this.rejectUnsafeLocalEntries(sourceDirectory, signal, {
       visited: 0
     })
+    const actualFiles: InstalledSpeechModel['files'] = []
     for (const expectedFile of entry.files) {
       ensureModelOperationNotAborted(signal)
       const sourceFile = safeChild(sourceDirectory, expectedFile.name)
@@ -917,13 +918,14 @@ export class SpeechModelManager {
       ) {
         throw new RangeError(`模型文件大小无效：${expectedFile.name}`)
       }
-      if (
-        sourceFileInfo.size !== expectedFile.size ||
-        (await hashModelFile(sourceFile, signal)).sha256 !==
-          expectedFile.sha256
-      ) {
-        throw new Error(`本地模型文件校验失败：${expectedFile.name}`)
-      }
+      actualFiles.push({
+        name: expectedFile.name,
+        role: expectedFile.role,
+        ...(await hashModelFile(sourceFile, signal))
+      })
+    }
+    if (!speechModelPackageMatches(entry, actualFiles)) {
+      throw new Error('本地模型文件与当前模型目录不匹配')
     }
   }
 
@@ -1022,6 +1024,9 @@ export class SpeechModelManager {
       installedAt: new Date().toISOString(),
       files
     })
+    if (!speechModelPackageMatches(entry, manifest.files)) {
+      throw new Error('语音模型文件与当前模型目录不匹配')
+    }
     await writeFile(
       safeChild(stagingDirectory, MANIFEST_FILE_NAME),
       `${JSON.stringify(manifest, null, 2)}\n`,

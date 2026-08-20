@@ -117,6 +117,50 @@ describe('SpeechModelSettingsSection', () => {
     expect(openRepository).toHaveBeenCalledWith('sensevoice-small-int8')
   })
 
+  it('shows the selected download source artifact size', async () => {
+    await changeUiLocale('en-US')
+    const sourceSpecificSnapshot: SpeechModelSnapshot = {
+      ...snapshot,
+      catalog: [
+        {
+          ...entry,
+          downloadAvailability: [
+            {
+              source: 'modelscope',
+              available: true,
+              totalBytes: 2 * 1024 * 1024
+            },
+            {
+              source: 'hugging-face',
+              available: true,
+              totalBytes: 1_100
+            }
+          ]
+        }
+      ]
+    }
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        speechModels: {
+          getSnapshot: vi.fn(async () => sourceSpecificSnapshot),
+          install: vi.fn(),
+          cancel: vi.fn(async () => true),
+          remove: vi.fn(),
+          select: vi.fn(),
+          importArchive: vi.fn(),
+          exportArchive: vi.fn(),
+          openRepository: vi.fn(),
+          openModelsDirectory: vi.fn()
+        }
+      } as unknown as DesktopApi
+    })
+
+    render(<SpeechModelSettingsSection />)
+
+    expect(await screen.findByText('2.0 MB')).toBeInTheDocument()
+  })
+
   it('lists downloadable models and starts a verified download', async () => {
     const installedSnapshot: SpeechModelSnapshot = {
       ...snapshot,

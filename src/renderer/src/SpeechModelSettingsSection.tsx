@@ -309,11 +309,17 @@ export function SpeechModelSettingsSection({
   const percent = operation
     ? progressPercent(operation)
     : undefined
-  const size = model ? catalogSize(model) : undefined
   const downloadAvailability = model?.downloadAvailability.find(
     (availability) =>
       availability.source === snapshot.selectedDownloadSource
   )
+  const size = installed
+    ? installed.files.reduce(
+        (total, file) => total + file.size,
+        0
+      )
+    : downloadAvailability?.totalBytes ??
+      (model ? catalogSize(model) : undefined)
   const sourceAvailable = downloadAvailability?.available === true
   const selected = model?.id === effectiveSelectedModelId
   const inUse = model?.id === effectivePersistedModelId

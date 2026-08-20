@@ -32,7 +32,10 @@ import {
 } from '../shared/document-parsing-contracts'
 import {
   MODEL_DOWNLOAD_SOURCES,
+  getMaximumModelPackageBytes,
   getModelDownloadAvailability,
+  getModelPackageFingerprints,
+  modelPackageFingerprintMatches,
   resolveModelDownloadPackage,
   type ModelDownloadSource,
   type ResolvedModelArtifactFile
@@ -103,6 +106,21 @@ function toCatalogView(entry: DocumentOcrModelCatalogEntry) {
       getModelDownloadAvailability(files, source)
     )
   })
+}
+
+function documentOcrPackageMatches(
+  entry: DocumentOcrModelCatalogEntry,
+  files: readonly {
+    name: string
+    role: string
+    size: number
+    sha256: string
+  }[]
+): boolean {
+  return getModelPackageFingerprints(entry.files).some(
+    (fingerprint) =>
+      modelPackageFingerprintMatches(fingerprint, files)
+  )
 }
 
 function safeChild(parent: string, name: string): string {
@@ -408,6 +426,9 @@ export class DocumentOcrModelManager {
     if (!installed) {
       throw new Error('只能导出已安装的 OCR 模型')
     }
+    if (!documentOcrPackageMatches(entry, installed.files)) {
+      throw new Error('OCR 模型文件与当前模型目录不匹配')
+    }
     const directory = this.modelDirectory(entry.id)
     const files = []
     for (const expected of entry.files) {
@@ -416,11 +437,7 @@ export class DocumentOcrModelManager {
           file.name === expected.name &&
           file.role === expected.role
       )
-      if (
-        !recorded ||
-        recorded.size !== expected.size ||
-        recorded.sha256 !== expected.sha256
-      ) {
+      if (!recorded) {
         throw new Error(`OCR 模型文件校验失败：${expected.name}`)
       }
       files.push({
@@ -447,10 +464,7 @@ export class DocumentOcrModelManager {
     archivePath: string
   ): Promise<InstalledDocumentOcrModel> {
     const entry = this.requireCatalogEntry(modelId)
-    const expectedTotal = entry.files.reduce(
-      (total, file) => total + file.size,
-      0
-    )
+    const expectedTotal = getMaximumModelPackageBytes(entry.files)
     const operation = this.beginOperation(
       entry.id,
       'import',
@@ -482,22 +496,13 @@ export class DocumentOcrModelManager {
           operation.progress.completedBytes = completedBytes
         }
       })
-      for (const expected of entry.files) {
-        const archived = descriptor.files.find(
-          (file) =>
-            file.name === expected.name &&
-            file.role === expected.role
-        )
-        if (
-          !archived ||
-          archived.size !== expected.size ||
-          archived.sha256 !== expected.sha256
-        ) {
-          throw new Error(
-            `OCR 模型 ZIP 与当前模型目录不匹配：${expected.name}`
-          )
-        }
+      if (!documentOcrPackageMatches(entry, descriptor.files)) {
+        throw new Error('OCR 模型 ZIP 与当前模型目录不匹配')
       }
+      operation.progress.totalBytes = descriptor.files.reduce(
+        (total, file) => total + file.size,
+        0
+      )
       operation.progress.phase = 'installing'
       operation.progress.currentFile = null
       const installed = installedDocumentOcrModelSchema.parse({
@@ -723,6 +728,7 @@ export class DocumentOcrModelManager {
         throw new Error('本地 OCR 模型目录包含不安全文件')
       }
     }
+    const actualFiles: InstalledDocumentOcrModel['files'] = []
     for (const file of entry.files) {
       ensureModelOperationNotAborted(signal)
       const path = safeChild(sourceDirectory, file.name)
@@ -730,13 +736,22 @@ export class DocumentOcrModelManager {
       if (!info.isFile() || info.isSymbolicLink()) {
         throw new Error(`OCR 模型文件必须是普通文件：${file.name}`)
       }
-      const actual = await hashModelFile(path, signal)
       if (
-        actual.size !== file.size ||
-        actual.sha256 !== file.sha256
+        info.size <= 0 ||
+        info.size > this.maxFileBytes
       ) {
-        throw new Error(`本地 OCR 模型文件校验失败：${file.name}`)
+        throw new RangeError(`OCR 模型文件大小无效：${file.name}`)
       }
+      actualFiles.push({
+        name: file.name,
+        role: file.role,
+        ...(await hashModelFile(path, signal))
+      })
+    }
+    if (!documentOcrPackageMatches(entry, actualFiles)) {
+      throw new Error(
+        '本地 OCR 模型文件校验失败：与当前模型目录不匹配'
+      )
     }
   }
 
@@ -765,6 +780,9 @@ export class DocumentOcrModelManager {
       installedAt: new Date().toISOString(),
       files
     })
+    if (!documentOcrPackageMatches(entry, manifest.files)) {
+      throw new Error('OCR 模型文件与当前模型目录不匹配')
+    }
     await writeFile(
       safeChild(stagingDirectory, MANIFEST_FILE_NAME),
       `${JSON.stringify(manifest, null, 2)}\n`,
@@ -831,6 +849,9 @@ export class DocumentOcrModelManager {
   ): Promise<void> {
     const directory = this.modelDirectory(entry.id)
     const manifest = await this.readInstalledManifest(entry)
+    if (!documentOcrPackageMatches(entry, manifest.files)) {
+      throw new Error('OCR 模型文件与当前模型目录不匹配')
+    }
     for (const file of entry.files) {
       const installed = manifest.files.find(
         (candidate) =>
@@ -842,8 +863,6 @@ export class DocumentOcrModelManager {
       )
       if (
         !installed ||
-        actual.size !== file.size ||
-        actual.sha256 !== file.sha256 ||
         actual.size !== installed.size ||
         actual.sha256 !== installed.sha256
       ) {
@@ -893,6 +912,9 @@ export class DocumentOcrModelManager {
   ): Promise<DocumentOcrAssets> {
     const directory = this.modelDirectory(entry.id)
     const manifest = await this.readInstalledManifest(entry)
+    if (!documentOcrPackageMatches(entry, manifest.files)) {
+      throw new Error('OCR 模型文件与当前模型目录不匹配')
+    }
     const loaded = new Map<
       DocumentOcrModelFile['role'],
       ArrayBuffer
@@ -911,8 +933,6 @@ export class DocumentOcrModelManager {
       }
       if (
         !installed ||
-        actual.size !== file.size ||
-        actual.sha256 !== file.sha256 ||
         actual.size !== installed.size ||
         actual.sha256 !== installed.sha256
       ) {

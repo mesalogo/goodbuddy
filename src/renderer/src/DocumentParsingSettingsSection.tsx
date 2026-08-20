@@ -501,6 +501,13 @@ export function DocumentParsingSettingsSection({
   )
   const modelSourceAvailable =
     modelDownloadAvailability?.available === true
+  const modelSize = installedModel
+    ? installedModel.files.reduce(
+        (total, file) => total + file.size,
+        0
+      )
+    : modelDownloadAvailability?.totalBytes ??
+      (model ? catalogSize(model) : undefined)
   const pendingModelSelection =
     draft.localOcrModelId !== snapshot.settings.localOcrModelId
   const selectedModelReady = installedModel !== undefined
@@ -845,7 +852,9 @@ export function DocumentParsingSettingsSection({
                     })}
                   </span>
                   <span className="speech-model-tag">
-                    {formatBytes(catalogSize(model))}
+                    {formatBytes(
+                      modelSize ?? catalogSize(model)
+                    )}
                   </span>
                   <span className="speech-model-tag">
                     {model.license.name}

@@ -16,7 +16,7 @@ export type ModelDownloadSource = z.infer<
 
 export const MODEL_DOWNLOAD_SOURCES = modelDownloadSourceSchema.options
 export const MODEL_DOWNLOAD_REDIRECT_HOSTS = {
-  modelscope: [],
+  modelscope: ['cdn-lfs-cn-1.modelscope.cn'],
   'hugging-face': [
     'cdn-lfs.hf.co',
     'cdn-lfs-us-1.hf.co',
@@ -37,8 +37,17 @@ function isSourceHost(
     : hostname === 'huggingface.co'
 }
 
+export const modelArtifactFingerprintSchema = z
+  .object({
+    size: z.number().int().positive().safe(),
+    sha256: z.string().regex(sha256Pattern)
+  })
+  .strict()
+
 export const modelArtifactTargetSchema = z
   .object({
+    size: modelArtifactFingerprintSchema.shape.size.optional(),
+    sha256: modelArtifactFingerprintSchema.shape.sha256.optional(),
     url: z.url().max(2_048),
     repositoryUrl: z.url().max(2_048),
     revision: z.string().regex(immutableRevisionPattern),
@@ -49,6 +58,13 @@ export const modelArtifactTargetSchema = z
   })
   .strict()
   .superRefine((target, context) => {
+    if ((target.size === undefined) !== (target.sha256 === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['size'],
+        message: '来源专用模型工件必须同时声明大小和 SHA-256'
+      })
+    }
     for (const [key, value] of [
       ['url', target.url],
       ['repositoryUrl', target.repositoryUrl]
@@ -157,6 +173,9 @@ export const modelDownloadAvailabilitySchema = z
 export type ModelArtifactTarget = z.infer<
   typeof modelArtifactTargetSchema
 >
+export type ModelArtifactFingerprint = z.infer<
+  typeof modelArtifactFingerprintSchema
+>
 export type ModelArtifactTargets = z.infer<
   typeof modelArtifactTargetsSchema
 >
@@ -186,6 +205,35 @@ export type ResolvedModelPackage<Role extends string = string> = {
   files: ResolvedModelArtifactFile<Role>[]
 }
 
+export type ModelPackageFingerprintFile<
+  Role extends string = string
+> = {
+  name: string
+  role: Role
+  size: number
+  sha256: string
+}
+
+export type ModelPackageFingerprint<
+  Role extends string = string
+> = {
+  totalBytes: number
+  files: ModelPackageFingerprintFile<Role>[]
+}
+
+function totalModelBytes(
+  files: readonly { size: number }[]
+): number {
+  const totalBytes = files.reduce(
+    (total, file) => total + file.size,
+    0
+  )
+  if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0) {
+    throw new RangeError('模型总大小超出安全范围')
+  }
+  return totalBytes
+}
+
 export function getModelDownloadAvailability(
   files: readonly ResolvableModelArtifactFile[],
   source: ModelDownloadSource
@@ -199,14 +247,14 @@ export function getModelDownloadAvailability(
       unavailableReason: '当前下载源暂不提供此模型的完整已验证文件'
     })
   }
-  const totalBytes = files.reduce((total, file) => total + file.size, 0)
-  if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0) {
-    throw new RangeError('模型总大小超出安全范围')
-  }
   return modelDownloadAvailabilitySchema.parse({
     source,
     available: true,
-    totalBytes
+    totalBytes: totalModelBytes(
+      files.map((file) => ({
+        size: file.targets[source]!.size ?? file.size
+      }))
+    )
   })
 }
 
@@ -232,18 +280,88 @@ export function resolveModelDownloadPackage<Role extends string>(
       return {
         name: file.name,
         role: file.role,
-        size: file.size,
-        sha256: file.sha256,
+        size: target.size ?? file.size,
+        sha256: target.sha256 ?? file.sha256,
         target
       }
     })
   }
 }
 
+export function getModelPackageFingerprints<Role extends string>(
+  files: readonly ResolvableModelArtifactFile<Role>[]
+): ModelPackageFingerprint<Role>[] {
+  const candidates: ModelPackageFingerprint<Role>[] = [
+    {
+      totalBytes: totalModelBytes(files),
+      files: files.map((file) => ({
+        name: file.name,
+        role: file.role,
+        size: file.size,
+        sha256: file.sha256
+      }))
+    }
+  ]
+  for (const source of MODEL_DOWNLOAD_SOURCES) {
+    if (!files.every((file) => file.targets[source])) {
+      continue
+    }
+    const resolved = resolveModelDownloadPackage(files, source)
+    candidates.push({
+      totalBytes: resolved.totalBytes,
+      files: resolved.files.map((file) => ({
+        name: file.name,
+        role: file.role,
+        size: file.size,
+        sha256: file.sha256
+      }))
+    })
+  }
+  const seen = new Set<string>()
+  return candidates.filter((candidate) => {
+    const key = JSON.stringify(candidate.files)
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+export function modelPackageFingerprintMatches<
+  Role extends string
+>(
+  expected: ModelPackageFingerprint<Role>,
+  actual: readonly ModelPackageFingerprintFile[]
+): boolean {
+  return (
+    actual.length === expected.files.length &&
+    expected.files.every((file) =>
+      actual.some(
+        (candidate) =>
+          candidate.name === file.name &&
+          candidate.role === file.role &&
+          candidate.size === file.size &&
+          candidate.sha256 === file.sha256
+      )
+    )
+  )
+}
+
+export function getMaximumModelPackageBytes(
+  files: readonly ResolvableModelArtifactFile[]
+): number {
+  return Math.max(
+    ...getModelPackageFingerprints(files).map(
+      (fingerprint) => fingerprint.totalBytes
+    )
+  )
+}
+
 export const modelArtifactIdentitySchema = z
   .object({
-    size: z.number().int().positive().safe(),
-    sha256: z.string().regex(sha256Pattern),
+    size: modelArtifactFingerprintSchema.shape.size,
+    sha256: modelArtifactFingerprintSchema.shape.sha256,
     targets: modelArtifactTargetsSchema
   })
   .strict()

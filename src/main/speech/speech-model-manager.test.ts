@@ -204,6 +204,20 @@ describe('speech model catalog', () => {
           file.targets['hugging-face'] !== undefined
       )
     ).toBe(true)
+    expect(
+      SPEECH_MODEL_CATALOG.filter((entry) =>
+        entry.files.every(
+          (file) => file.targets.modelscope !== undefined
+        )
+      ).map((entry) => entry.id)
+    ).toEqual([
+      'sensevoice-small-int8',
+      'whisper-tiny-multilingual',
+      'paraformer-bilingual-zh-en-int8',
+      'paraformer-trilingual-zh-yue-en-int8',
+      'whisper-small-multilingual-int8',
+      'whisper-medium-multilingual-int8'
+    ])
     expect(whisper?.files.map((file) => file.name)).toEqual([
       'tiny-encoder.int8.onnx',
       'tiny-decoder.int8.onnx',
@@ -212,7 +226,7 @@ describe('speech model catalog', () => {
     expect(paraformerBilingual).toMatchObject({
       family: 'paraformer',
       languages: ['中文', '英语'],
-      license: { name: 'MIT License' },
+      license: { name: 'Apache License 2.0 / MIT License' },
       recommended: true
     })
     expect(paraformerTrilingual).toMatchObject({
@@ -240,13 +254,32 @@ describe('speech model catalog', () => {
             /^https:\/\/(?:modelscope\.cn\/models|huggingface\.co)\/[^/]+\/[^/]+\/resolve\/[a-f0-9]{40}\/[^/]+$/u
           )
         }
+        if (file.targets.modelscope) {
+          expect(file.targets.modelscope.redirectHosts).toEqual([
+            'cdn-lfs-cn-1.modelscope.cn'
+          ])
+        }
       }
     }
     expect(
-      paraformerBilingual?.files.some(
-        (file) => file.targets.modelscope !== undefined
-      )
-    ).toBe(false)
+      paraformerBilingual?.files.map((file) => ({
+        canonicalSize: file.size,
+        modelscopeSize: file.targets.modelscope?.size,
+        sameSha256:
+          file.sha256 === file.targets.modelscope?.sha256
+      }))
+    ).toEqual([
+      {
+        canonicalSize: 223_385_835,
+        modelscopeSize: 227_330_205,
+        sameSha256: false
+      },
+      {
+        canonicalSize: 75_756,
+        modelscopeSize: 75_354,
+        sameSha256: false
+      }
+    ])
   })
 })
 
@@ -471,6 +504,140 @@ describe('SpeechModelManager downloads', () => {
       selectedModelId: null,
       installed: []
     })
+  })
+
+  it('installs and round-trips a source-specific artifact fingerprint', async () => {
+    const userData = await temporaryDirectory()
+    const importUserData = await temporaryDirectory()
+    const mixedUserData = await temporaryDirectory()
+    const huggingFaceModel = new TextEncoder().encode('hf model')
+    const huggingFaceTokens = new TextEncoder().encode('hf tokens')
+    const modelScopeModel = new TextEncoder().encode(
+      'modelscope model variant'
+    )
+    const modelScopeTokens = new TextEncoder().encode(
+      'modelscope tokens variant'
+    )
+    const catalog = downloadableCatalog(
+      huggingFaceModel,
+      huggingFaceTokens
+    ).map((entry) => ({
+      ...entry,
+      files: entry.files.map((file) => {
+        const bytes =
+          file.role === 'model'
+            ? modelScopeModel
+            : modelScopeTokens
+        return {
+          ...file,
+          targets: {
+            ...file.targets,
+            modelscope: file.targets.modelscope
+              ? {
+                  ...file.targets.modelscope,
+                  size: bytes.byteLength,
+                  sha256: sha256(bytes)
+                }
+              : undefined
+          }
+        }
+      })
+    }))
+    const transport = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+      const bytes = url.endsWith('model.onnx')
+        ? modelScopeModel
+        : modelScopeTokens
+      return new Response(bytes, {
+        headers: { 'content-length': String(bytes.byteLength) }
+      })
+    })
+    const manager = new SpeechModelManager({
+      userDataDirectory: userData,
+      fetch: transport,
+      catalog
+    })
+
+    await expect(manager.snapshot()).resolves.toMatchObject({
+      catalog: [
+        {
+          downloadAvailability: [
+            {
+              source: 'modelscope',
+              available: true,
+              totalBytes:
+                modelScopeModel.byteLength +
+                modelScopeTokens.byteLength
+            },
+            {
+              source: 'hugging-face',
+              available: true,
+              totalBytes:
+                huggingFaceModel.byteLength +
+                huggingFaceTokens.byteLength
+            }
+          ]
+        }
+      ]
+    })
+    const installed = await manager.install(
+      'download-test-model',
+      'modelscope'
+    )
+    expect(installed.files).toMatchObject([
+      {
+        name: 'model.onnx',
+        size: modelScopeModel.byteLength,
+        sha256: sha256(modelScopeModel)
+      },
+      {
+        name: 'tokens.txt',
+        size: modelScopeTokens.byteLength,
+        sha256: sha256(modelScopeTokens)
+      }
+    ])
+    await manager.select('download-test-model')
+    await expect(manager.getSelectedRuntimeModel()).resolves.toMatchObject({
+      id: 'download-test-model',
+      files: installed.files
+    })
+
+    const archive = join(userData, 'modelscope-variant.zip')
+    await manager.exportArchive('download-test-model', archive)
+    const importing = new SpeechModelManager({
+      userDataDirectory: importUserData,
+      fetch: vi.fn<typeof fetch>(),
+      catalog
+    })
+    await expect(
+      importing.importArchive('download-test-model', archive)
+    ).resolves.toMatchObject({
+      files: installed.files
+    })
+
+    const mixedDirectory = join(mixedUserData, 'mixed-package')
+    await mkdir(mixedDirectory)
+    await Promise.all([
+      writeFile(
+        join(mixedDirectory, 'model.onnx'),
+        modelScopeModel
+      ),
+      writeFile(
+        join(mixedDirectory, 'tokens.txt'),
+        huggingFaceTokens
+      )
+    ])
+    const mixed = new SpeechModelManager({
+      userDataDirectory: mixedUserData,
+      fetch: vi.fn<typeof fetch>(),
+      catalog
+    })
+    await expect(
+      mixed.registerLocalDirectory(
+        'download-test-model',
+        mixedDirectory
+      )
+    ).rejects.toThrow('与当前模型目录不匹配')
   })
 
   it('cleans only manager-owned stale staging and partial artifacts', async () => {

@@ -25,10 +25,31 @@ const whisperTinyHuggingFaceRepository =
 const whisperTinyHuggingFaceRevision =
   '65176e2deb88badc814a94058666cadccc29b61c'
 
+const paraformerBilingualModelScopeRepository =
+  'pengzhendong/sherpa-onnx-paraformer-zh'
+const paraformerBilingualModelScopeRevision =
+  '66e549ea2ba4951d5d533b8ad3ffad09a29a4ba9'
+
+const paraformerTrilingualModelScopeRepository =
+  'pengzhendong/sherpa-onnx-paraformer-trilingual-zh-cantonese-en'
+const paraformerTrilingualModelScopeRevision =
+  '7cd698783acc17a4d0a7d3390e1588b534d949c7'
+
+const whisperSmallModelScopeRepository =
+  'pengzhendong/sherpa-onnx-whisper-small'
+const whisperSmallModelScopeRevision =
+  '893b50bd57565edb13eb1dfe84d33bfef77b0102'
+
+const whisperMediumModelScopeRepository =
+  'pengzhendong/sherpa-onnx-whisper-medium'
+const whisperMediumModelScopeRevision =
+  '4d75596a69806a269ff5911bb56fbae542f35463'
+
 /**
- * Model weights are never bundled with GoodBuddy. Canonical file identity is
- * source-independent; a source target is included only after its bytes match
- * the declared size and SHA-256.
+ * Model weights are never bundled with GoodBuddy. Each file keeps a canonical
+ * fingerprint for local import compatibility, while a source target can pin a
+ * different verified size and SHA-256 when that source publishes another
+ * compatible artifact revision.
  */
 export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
   speechModelCatalogEntrySchema.array().parse([
@@ -193,17 +214,17 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
       speed: 'fast',
       recommended: true,
       repositoryUrls: {
+        modelscope:
+          `https://modelscope.cn/models/${paraformerBilingualModelScopeRepository}`,
         'hugging-face':
           'https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-bilingual-zh-en'
       },
       license: {
-        name: 'MIT License',
+        name: 'Apache License 2.0 / MIT License',
         notice:
-          '转换仓库声明 MIT License；模型源自 FunASR Paraformer，使用前请同时阅读仓库说明。',
+          'ModelScope 工件声明 Apache License 2.0；Hugging Face 转换仓库声明 MIT License。模型源自 FunASR Paraformer，使用前请阅读所选来源的仓库说明。',
         url:
-          'https://huggingface.co/csukuangfj/' +
-          'sherpa-onnx-paraformer-bilingual-zh-en/blob/' +
-          '4b891f7b5c73d874e607797a4b0578fd4c35dd4b/README.md'
+          `https://modelscope.cn/models/${paraformerBilingualModelScopeRepository}`
       },
       manualOnly: false,
       files: [
@@ -214,6 +235,16 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             '9ada9127ca5b82320385ac12340eb8b05dee64fd45cf8cf593ec693826ec2fd7',
           targets: {
+            modelscope: modelScopeTarget(
+              paraformerBilingualModelScopeRepository,
+              paraformerBilingualModelScopeRevision,
+              'model.int8.onnx',
+              {
+                size: 227_330_205,
+                sha256:
+                  '90bc03034ae1bef9575f8cc798cd1519c8be8aa9e8b458a033e32017ff4d584c'
+              }
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-paraformer-bilingual-zh-en',
               '4b891f7b5c73d874e607797a4b0578fd4c35dd4b',
@@ -228,6 +259,16 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             '59aba8873a2ed1e122c25fee421e25f283b63290efbde85c1f01a853d83cb6e6',
           targets: {
+            modelscope: modelScopeTarget(
+              paraformerBilingualModelScopeRepository,
+              paraformerBilingualModelScopeRevision,
+              'tokens.txt',
+              {
+                size: 75_354,
+                sha256:
+                  '6c0e3b35cece259829e6cb5b8d90d13db88f61ea3a2953d11898e4b2bfd7a2e2'
+              }
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-paraformer-bilingual-zh-en',
               '4b891f7b5c73d874e607797a4b0578fd4c35dd4b',
@@ -249,6 +290,8 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
       speed: 'balanced',
       recommended: false,
       repositoryUrls: {
+        modelscope:
+          `https://modelscope.cn/models/${paraformerTrilingualModelScopeRepository}`,
         'hugging-face':
           'https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-trilingual-zh-cantonese-en'
       },
@@ -270,6 +313,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             'eb3cdd288f535cf73258f491cdd7d68ad5a00aee135c0bba4c0884ea8d926144',
           targets: {
+            modelscope: modelScopeTarget(
+              paraformerTrilingualModelScopeRepository,
+              paraformerTrilingualModelScopeRevision,
+              'model.int8.onnx'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-paraformer-trilingual-zh-cantonese-en',
               '8d90151338178bb433354c9fb677bd3acb8023cd',
@@ -284,6 +332,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             '8e4593d7a2eb2404ff82976b5494265e9a06283ca4d5e8605bf7b4fed557a492',
           targets: {
+            modelscope: modelScopeTarget(
+              paraformerTrilingualModelScopeRepository,
+              paraformerTrilingualModelScopeRevision,
+              'tokens.txt'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-paraformer-trilingual-zh-cantonese-en',
               '8d90151338178bb433354c9fb677bd3acb8023cd',
@@ -305,6 +358,8 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
       speed: 'balanced',
       recommended: false,
       repositoryUrls: {
+        modelscope:
+          `https://modelscope.cn/models/${whisperSmallModelScopeRepository}`,
         'hugging-face':
           'https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small'
       },
@@ -323,6 +378,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             '4cbe7b22fa9026b843b60a68640c747de05bafb1a11b57edc0e66c232d9f33a9',
           targets: {
+            modelscope: modelScopeTarget(
+              whisperSmallModelScopeRepository,
+              whisperSmallModelScopeRevision,
+              'small-encoder.int8.onnx'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-whisper-small',
               '8f3c18b358db4d1f2fc1eae49d75cd20989e4309',
@@ -337,6 +397,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             'acad50b5c782696e91b55914cc5ab4f756f1532f76e22aa6fc615f39fb69a8ee',
           targets: {
+            modelscope: modelScopeTarget(
+              whisperSmallModelScopeRepository,
+              whisperSmallModelScopeRevision,
+              'small-decoder.int8.onnx'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-whisper-small',
               '8f3c18b358db4d1f2fc1eae49d75cd20989e4309',
@@ -351,6 +416,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             'b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126',
           targets: {
+            modelscope: modelScopeTarget(
+              whisperSmallModelScopeRepository,
+              whisperSmallModelScopeRevision,
+              'small-tokens.txt'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-whisper-small',
               '8f3c18b358db4d1f2fc1eae49d75cd20989e4309',
@@ -372,6 +442,8 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
       speed: 'slow',
       recommended: false,
       repositoryUrls: {
+        modelscope:
+          `https://modelscope.cn/models/${whisperMediumModelScopeRepository}`,
         'hugging-face':
           'https://huggingface.co/csukuangfj/sherpa-onnx-whisper-medium'
       },
@@ -390,6 +462,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             '1c54582b4d829de0089f6cb63bbbdb3bf7555398bacaf855fbecf1a84dfd193e',
           targets: {
+            modelscope: modelScopeTarget(
+              whisperMediumModelScopeRepository,
+              whisperMediumModelScopeRevision,
+              'medium-encoder.int8.onnx'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-whisper-medium',
               '8c31d28503847560985df21f90e14f0c736e075e',
@@ -404,6 +481,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             '595d00a338a365a7bfa0ca7f296cabc639583bef770ab6130df90f49a6412747',
           targets: {
+            modelscope: modelScopeTarget(
+              whisperMediumModelScopeRepository,
+              whisperMediumModelScopeRevision,
+              'medium-decoder.int8.onnx'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-whisper-medium',
               '8c31d28503847560985df21f90e14f0c736e075e',
@@ -418,6 +500,11 @@ export const SPEECH_MODEL_CATALOG: readonly SpeechModelCatalogEntry[] =
           sha256:
             'b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126',
           targets: {
+            modelscope: modelScopeTarget(
+              whisperMediumModelScopeRepository,
+              whisperMediumModelScopeRevision,
+              'medium-tokens.txt'
+            ),
             'hugging-face': huggingFaceTarget(
               'csukuangfj/sherpa-onnx-whisper-medium',
               '8c31d28503847560985df21f90e14f0c736e075e',
