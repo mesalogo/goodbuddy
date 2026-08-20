@@ -2,7 +2,16 @@
 
 [English](README.en.md) | 简体中文
 
-安全、跨平台、本地优先的桌面 AI 助手与 Agent 工作空间。
+GoodBuddy是一个开箱即用的 AI 生产平台，安全、跨平台、本地优先的桌面 AI 助手与 Agent 工作空间。
+
+产品官网：https://mesalogo.github.io/goodbuddy/
+
+五大特点：
+1. 支持国产信创系统和硬件
+2. 免注册，不收集个人信息
+3. 完全开源和免费，友好的OBSD协议
+4. 不需要联网，纯私有网络也可以用
+5. 开放生态，内置主流好用的Agent Runtime，目前支持OpenCode、Continue和DeepSeek Harness，让小白用户也可以快速用起来最前沿的Agent工具
 
 ![GoodBuddy 工作空间](docs/screenshots/workspace-overview.png)
 
@@ -74,12 +83,16 @@ npm run typecheck
 npm run lint
 ```
 
+## 为什么选择GoodBuddy
+
+<img width="1024" height="1536" alt="6dd45371542dea9fb2d99474387708f5" src="https://github.com/user-attachments/assets/ca608646-ea48-4039-9177-d862be8396ac" />
+
+
 ## 社区交流
 
 目前采用微信群的方式供大家高效交流，大家可以微信扫码进入社区群：
 
-<img width="1279" height="1306" alt="056bfac87840a95547f9805a8122fc2d" src="https://github.com/user-attachments/assets/b3342635-60a1-484c-959c-f90ba3c39d69" />
-
+<img width="993" height="1335" alt="image" src="https://github.com/user-attachments/assets/4893715a-edaf-4db6-8a6d-d529b972db8e" />
 
 
 ## 开源许可
