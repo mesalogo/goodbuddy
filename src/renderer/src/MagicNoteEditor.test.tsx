@@ -1,9 +1,24 @@
+/// <reference types="node" />
+
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
 import { MagicNoteEditor } from './MagicNoteEditor'
 
+const stylesheet = readFileSync(
+  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
+  'utf8'
+)
+
 describe('MagicNoteEditor', () => {
+  it('uses the themed muted text color for its placeholder', () => {
+    expect(stylesheet).toMatch(
+      /\.magic-note-editor__content\s+\.ql-editor\.ql-blank::before\s*\{\s*color:\s*var\(--text-muted\);\s*\}/
+    )
+  })
+
   it('exposes numeric font sizes, text color, and attachment controls', () => {
     const { container } = render(
       <MagicNoteEditor

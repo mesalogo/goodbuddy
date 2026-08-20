@@ -1965,6 +1965,10 @@
   line-height: 1.65;
 }
 
+.magic-note-editor__content .ql-editor.ql-blank::before {
+  color: var(--text-muted);
+}
+
 .magic-note-editor .ql-size-small,
 .magic-note-content .ql-size-small {
   font-size: 12px;
