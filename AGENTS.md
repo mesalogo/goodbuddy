@@ -150,7 +150,11 @@ Release note: 修复左上角项目设置与消息通道项目设置不一致的
   run validation and build the production bundle without running the native
   package matrix. Manual builds upload 30-day GitHub Actions artifacts.
   Version-tag builds verify and aggregate packages before publishing GitHub
-  Release assets. Signing and macOS notarization are not configured.
+  Release assets. The macOS jobs sign, notarize, and verify packages when all
+  five Apple credentials are configured. With no Apple credentials they must
+  use the explicit `--unsigned` path, warn that Gatekeeper may block the
+  packages, and still complete; a partial credential set must fail rather than
+  silently downgrade.
 - Keep `ELECTRON_CACHE` and `ELECTRON_BUILDER_CACHE` under
   `${{ runner.temp }}` in step-level workflow contexts. A cache beneath the
   repository inherits the root `"type": "module"` and breaks electron-builder's
@@ -286,10 +290,13 @@ GitHub Release:
 
 Do not report a release complete until all of the following are verified:
 
-1. The tag workflow and all six native package jobs succeeded. In the final
-   release job, explicitly verify the OSS configuration, OIDC authentication,
-   release-index generation, immutable upload, public asset check, GitHub
-   Release publication, and latest-pointer steps.
+1. The tag workflow and all six native package jobs succeeded. Verify the
+   recorded macOS signing mode: signed builds must pass `codesign`, `spctl`,
+   and `stapler`; unsigned builds must record the Gatekeeper caveat in the
+   Actions log and job summary. In the final release job, explicitly verify
+   the OSS configuration, OIDC authentication, release-index generation,
+   immutable upload, public asset check, GitHub Release publication, and
+   latest-pointer steps.
 2. The public GitHub Release is non-draft, non-prerelease, marked Latest, and
    uses the expected tag and title. Its body must exactly match the Markdown
    generated from the approved packaged bilingual notes.

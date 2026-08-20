@@ -156,6 +156,12 @@ Linux 的 `x64`、`arm64` 版本。生产 bundle 仅作为短期 Actions artifac
 npm run release:package -- --platform <windows|macos|linux> --arch <x64|arm64>
 ```
 
+在 macOS 上明确生成未签名、未公证的开发验证包：
+
+```bash
+npm run release:package -- --platform macos --arch <x64|arm64> --unsigned
+```
+
 默认发布产物为 Windows 的 NSIS 安装包与 portable ZIP、macOS 的 DMG 与
 ZIP，以及 Linux 的 AppImage 与 DEB。Windows portable ZIP 解压后可直接
 运行 `GoodBuddy.exe`，并包含启用便携数据目录的
@@ -195,8 +201,11 @@ git push origin "$tag"
 git push github "$tag"
 ```
 
-macOS 发布 job 使用 Developer ID Application 证书签名，并通过 App Store
-Connect API Key 提交 Apple notarization。仓库的 Actions Secrets 需要配置：
+macOS 发布 job 会先原子判断 Apple 凭据状态：以下五项 Actions Secrets 全部
+存在时，使用 Developer ID Application 证书签名，并通过 App Store Connect
+API Key 提交 Apple notarization；五项全部缺失时，明确生成未签名、未公证的
+DMG 和 ZIP，并在 Actions 日志与摘要中警告 Gatekeeper 限制；只配置一部分时
+任务失败，不能静默降级为未签名包。
 
 - `MACOS_CERTIFICATE_BASE64`：包含证书及私钥的 `.p12` 文件经 Base64 编码后的内容。
 - `MACOS_CERTIFICATE_PASSWORD`：导出 `.p12` 时设置的密码。
@@ -215,9 +224,12 @@ base64 -i AuthKey_XXXXXXXXXX.p8 | tr -d '\n'
 `.p12` 的 Mac 钥匙串中同时包含对应私钥。API Key 建议使用团队级 App Store
 Connect Key；`.p8` 只能下载一次。签名材料只放入 GitHub Secrets，不提交到仓库。
 
-macOS 打包完成后，工作流会挂载 DMG，并分别执行 `codesign`、Gatekeeper `spctl`
-和 `stapler` 校验。缺少凭据、签名无效或 notarization ticket 不存在时，发布矩阵
-会在上传产物前失败。本地没有签名凭据时仍可生成仅供开发验证的未签名包。
+凭据完整时，macOS 打包完成后会挂载 DMG，并分别执行 `codesign`、Gatekeeper
+`spctl` 和 `stapler` 校验；签名无效或 notarization ticket 不存在时，发布矩阵
+会在上传产物前失败。完全没有凭据时，六平台矩阵和标签发布仍可完成，但 macOS
+产物没有 Developer ID 签名或 Apple 公证，Gatekeeper 可能阻止首次打开。发布
+工作流必须在 Actions 日志与摘要中明确这一限制；获得完整凭据后应恢复签名
+发布并重新验证。
 
 Windows 代码签名仍未配置。对外分发前还应配置 Windows 签名凭据，并重新验证
 安装、升级和系统安全提示。

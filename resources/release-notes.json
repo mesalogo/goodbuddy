@@ -2,6 +2,66 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.0",
+      "releasedAt": "2026-08-20",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.11.0 新增与会话关联的定制计划任务和持久发送队列，扩展智能心跳范围与本地模型下载源，并全面提升桌面工作流的可靠性。"
+          ],
+          "features": [
+            "**定制计划任务。** 可将单次、每日或每周任务关联到当前或新会话；重复触发会复用同一 Task，将文本结果写回会话，并可从会话列表和 Task Center 统一查看与管理。",
+            "**会话发送队列。** 回复生成期间仍可继续发送消息；普通消息与到期计划任务会按 Conversation 持久排队，支持删除待发送项，或中断当前回复并优先执行指定项，重启后仍可恢复。",
+            "**智能心跳范围。** 心跳计划现在从唯一的权威入口选择 Global 或一个、多个 Project；旧配置和历史会无损迁移，项目级记忆与行动输出会严格写入所选范围。",
+            "**本地模型下载源。** 可在“设置 → 平台功能 → 通用设置”中选择 ModelScope 或 Hugging Face，统一用于后续语音输入与 OCR 模型下载；下载不会静默换源或混合不同来源的文件。",
+            "**可配置全局快捷键。** 可启停、录制或恢复 GoodBuddy 的全局唤起快捷键；冲突或保存失败时会保留上一组可用快捷键。",
+            "**更清楚的项目切换。** 项目选择器现在按本地项目和远程通道分组，并显示目录或通道来源，切换时更容易辨认目标。"
+          ],
+          "fixes": [
+            "**真实模型验证与凭据保留。** “保存并测试”现在执行有界的真实文本或图片生成并校验输出，不再只把接口成功响应视为模型可用；修改地址或临时关闭认证时，加密 API Key 会继续随连接保留，直到用户明确清除或删除连接。",
+            "**多专家结果展示。** 并行分析现在可以展开查看每位专家的完整输出，并在其下方显示和保存总 Agent 的综合结果。",
+            "**Runtime 与数据可靠性。** 强化 Runtime 子进程退出、配置原子回滚、模型包安装及持久化写入恢复；设置、知识库、魔法笔记和智能心跳失败时会更可靠地保留状态与未保存草稿。",
+            "**成果与通道回复。** 普通本地和消息通道回复不再重复出现在成果栏，已有重复项只会隐藏而不会删除；完整通道结果也不再被公共服务统一截断为 4,000 字符。",
+            "**内置浏览器设置。** 内置浏览器已移至直连模型工具，并明确它只操作 GoodBuddy 的隔离浏览器；暂时隐藏尚未生效的托管浏览器配置，同时保留原有开关状态和底层数据。",
+            "**界面与加载体验。** 助手工作栏可在宽屏上使用更多空间，打开会话时会可靠保持在底部；同时改进对话框、键盘操作、无障碍状态和重型页面的按需加载。"
+          ],
+          "notices": [
+            "**计划任务限制。** 当前支持单次、每日和每周计划，应用关闭期间不能执行任务；新建任务默认使用 Execute，但仍遵守所选 Runtime、工具授权和高风险审批边界。",
+            "**模型测试可能产生用量。** 真实文本或图片测试会调用所选模型服务，可能产生少量 Token 或图片生成费用。",
+            "**模型下载源默认值。** 升级后默认使用 ModelScope；切换来源只影响之后启动的语音与 OCR 下载，已安装模型、正在进行的下载和 ZIP 导入不受影响。",
+            "**全局快捷键兼容性。** 默认组合为 `CommandOrControl+Shift+Space`；若操作系统或桌面环境不支持注册，仍可通过窗口或托盘使用 GoodBuddy。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.11.0 adds conversation-backed custom scheduled tasks and a durable input queue, expands Smart Heartbeat scoping and local model download sources, and strengthens reliability across desktop workflows."
+          ],
+          "features": [
+            "**Conversation-backed scheduled tasks.** Create once, daily, or weekly custom tasks for the current or a new conversation. Recurring runs reuse one Task, write text results back to the conversation, and can be viewed and managed from the conversation list and Task Center.",
+            "**Durable conversation queue.** Send more messages while a reply is running. Messages and due Scheduled Tasks are persisted and serialized per Conversation, can be removed or promoted by interrupting the current reply, and recover after restart.",
+            "**Scoped Smart Heartbeat.** Heartbeat plans now select Global or one or more Projects from a single authoritative editor. Existing configurations and history migrate without data loss, while project-level memory and actions remain within the selected scope.",
+            "**Local model download sources.** Settings → Platform Features → General now lets you choose ModelScope or Hugging Face for subsequent speech-input and OCR model downloads. Downloads never silently switch sources or mix files from different sources.",
+            "**Configurable global shortcut.** Enable, disable, record, or restore GoodBuddy’s global activation shortcut. If registration conflicts or saving fails, the last working shortcut remains active.",
+            "**Clearer project switching.** The project selector now groups local projects and remote channels and shows folder or channel context, making the intended destination easier to identify."
+          ],
+          "fixes": [
+            "**Real model verification and retained credentials.** Save & Test now performs bounded real text or image generation and validates the output instead of treating a successful endpoint response as proof that the model works. Encrypted API keys remain with their connection across URL or authentication changes until explicitly cleared or the connection is deleted.",
+            "**Visible expert results.** Parallel analyses now let you expand each expert’s complete output, with the lead Agent’s synthesis displayed beneath them and saved with the conversation.",
+            "**Runtime and data reliability.** Improved Runtime child-process shutdown, atomic configuration rollback, model-package installation, and persisted-write recovery. Settings, Knowledge, Magic Notes, and Smart Heartbeat now preserve state and unsaved drafts more reliably when an operation fails.",
+            "**Results and channel replies.** Ordinary local and channel replies no longer appear again in Results, while legacy duplicates are hidden without deleting data. Complete channel output also reaches each platform adapter instead of being truncated by the shared service at 4,000 characters.",
+            "**Built-in browser settings.** The built-in browser now appears under direct-model tools and is clearly identified as GoodBuddy’s isolated browser. Inactive managed-profile controls are hidden while preserving the existing switch state and stored data.",
+            "**Layout and loading experience.** The assistant workbar can use more space on wide screens, opened conversations reliably remain at the bottom, and dialogs, keyboard behavior, accessibility states, and lazy loading for heavy pages have been improved."
+          ],
+          "notices": [
+            "**Scheduled-task limits.** Current schedules support once, daily, and weekly triggers and cannot run while the app is closed. New tasks default to Execute but continue to honor the selected Runtime, tool authorization, and high-risk approval boundaries.",
+            "**Model tests may incur usage.** Real text or image tests call the selected model provider and may consume a small number of tokens or incur image-generation charges.",
+            "**Default model download source.** Upgrades default to ModelScope. Changing the source affects only subsequent speech and OCR downloads; installed models, active downloads, and ZIP imports are unchanged.",
+            "**Global shortcut compatibility.** The default accelerator is `CommandOrControl+Shift+Space`. If the operating system or desktop environment cannot register it, GoodBuddy remains available from its window or tray."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.10.4",
       "releasedAt": "2026-08-17",
       "notes": {

@@ -153,6 +153,7 @@ function parseArguments(argv, environment = process) {
     formats: [],
     skipBuild: false,
     dryRun: false,
+    unsigned: false,
     help: false
   }
   for (let index = 0; index < argv.length; index += 1) {
@@ -176,6 +177,8 @@ function parseArguments(argv, environment = process) {
       options.skipBuild = true
     } else if (argument === '--dry-run') {
       options.dryRun = true
+    } else if (argument === '--unsigned') {
+      options.unsigned = true
     } else if (argument === '--help' || argument === '-h') {
       options.help = true
     } else {
@@ -190,6 +193,9 @@ function parseArguments(argv, environment = process) {
   }
   if (!supportedArchitectures.has(options.arch)) {
     throw new Error(`不支持的架构：${options.arch}`)
+  }
+  if (options.unsigned && options.platform !== 'macos') {
+    throw new Error('--unsigned 仅支持 macOS 发布包')
   }
   const definition = platformDefinitions[options.platform]
   const requestedFormats =
@@ -337,7 +343,43 @@ function buildElectronBuilderArguments(options, outputDirectory) {
       `--config.nsis.artifactName=${productName}-\${version}-windows-\${arch}-setup.\${ext}`
     )
   }
+  if (options.platform === 'macos' && options.unsigned) {
+    builderArguments.push('--config.mac.notarize=false')
+  }
   return builderArguments
+}
+
+function electronBuilderEnvironment(
+  options,
+  environment = process.env
+) {
+  const builderEnvironment = {
+    ...environment,
+    CSC_IDENTITY_AUTO_DISCOVERY:
+      environment.CSC_IDENTITY_AUTO_DISCOVERY ?? 'false'
+  }
+  if (options.platform !== 'macos' || !options.unsigned) {
+    return builderEnvironment
+  }
+  for (const name of [
+    'CSC_LINK',
+    'CSC_KEY_PASSWORD',
+    'CSC_NAME',
+    'CSC_INSTALLER_LINK',
+    'CSC_INSTALLER_KEY_PASSWORD',
+    'APPLE_API_KEY',
+    'APPLE_API_KEY_ID',
+    'APPLE_API_ISSUER',
+    'APPLE_ID',
+    'APPLE_APP_SPECIFIC_PASSWORD',
+    'APPLE_TEAM_ID',
+    'APPLE_KEYCHAIN',
+    'APPLE_KEYCHAIN_PROFILE'
+  ]) {
+    delete builderEnvironment[name]
+  }
+  builderEnvironment.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+  return builderEnvironment
 }
 
 function detectBinaryArchitecture(buffer) {
@@ -1568,6 +1610,7 @@ function printHelp() {
   --format <列表>  覆盖默认格式，逗号分隔
   --skip-build     复用已有 out 生产构建
   --dry-run        仅显示目标与 electron-builder 参数
+  --unsigned       仅用于 macOS，明确禁用代码签名与公证
 
 默认格式：
   windows: nsis, portable (ZIP)
@@ -1606,6 +1649,11 @@ async function main(argv = process.argv.slice(2)) {
       `${options.platform} 包必须在对应系统构建，当前系统为 ${hostPlatform ?? process.platform}`
     )
   }
+  if (options.unsigned) {
+    console.warn(
+      '警告：正在生成未签名、未公证的 macOS 包，Gatekeeper 可能阻止用户首次打开。'
+    )
+  }
 
   rmSync(stagingDirectory, { recursive: true, force: true })
   let cleanupTargetDependencies = () => undefined
@@ -1622,11 +1670,7 @@ async function main(argv = process.argv.slice(2)) {
     await run(
       process.execPath,
       builderArguments,
-      {
-        ...process.env,
-        CSC_IDENTITY_AUTO_DISCOVERY:
-          process.env.CSC_IDENTITY_AUTO_DISCOVERY ?? 'false'
-      }
+      electronBuilderEnvironment(options)
     )
     const unpackedDirectory = verifyUnpackedOutput(
       stagingDirectory,
@@ -1665,6 +1709,7 @@ module.exports = {
   buildElectronBuilderArguments,
   createPortableZip,
   detectBinaryArchitecture,
+  electronBuilderEnvironment,
   normalizePlatform,
   parseArguments,
   parsePackedPackageMetadata,

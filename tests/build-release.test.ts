@@ -19,6 +19,7 @@ interface ReleaseOptions {
   formats: string[]
   skipBuild: boolean
   dryRun: boolean
+  unsigned: boolean
   help: boolean
 }
 
@@ -31,6 +32,10 @@ interface ReleaseBuilderModule {
     options: ReleaseOptions,
     outputDirectory: string
   ) => string[]
+  electronBuilderEnvironment: (
+    options: ReleaseOptions,
+    environment?: NodeJS.ProcessEnv
+  ) => NodeJS.ProcessEnv
   createPortableZip: (
     unpackedDirectory: string,
     zipPath: string,
@@ -174,6 +179,7 @@ const windowsOptions: ReleaseOptions = {
   formats: ['nsis', 'portable'],
   skipBuild: false,
   dryRun: false,
+  unsigned: false,
   help: false
 }
 
@@ -304,7 +310,8 @@ describe('release build arguments', () => {
           '--format',
           'DMG,zip,dmg',
           '--skip-build',
-          '--dry-run'
+          '--dry-run',
+          '--unsigned'
         ],
         { platform: 'win32', arch: 'x64' }
       )
@@ -314,6 +321,7 @@ describe('release build arguments', () => {
       formats: ['dmg', 'zip'],
       skipBuild: true,
       dryRun: true,
+      unsigned: true,
       help: false
     })
   })
@@ -322,6 +330,7 @@ describe('release build arguments', () => {
     [['--platform', 'freebsd'], '不支持当前系统'],
     [['--arch', 'ia32'], '不支持的架构'],
     [['--format', 'rpm'], '不支持打包格式'],
+    [['--platform', 'linux', '--unsigned'], '仅支持 macOS'],
     [['--unknown'], '未知参数']
   ])('rejects invalid arguments', (arguments_, message) => {
     expect(() =>
@@ -341,6 +350,7 @@ describe('release build arguments', () => {
           formats: ['nsis', 'portable'],
           skipBuild: false,
           dryRun: false,
+          unsigned: false,
           help: false
         },
         'C:\\release-stage'
@@ -364,6 +374,51 @@ describe('release build arguments', () => {
         argument.includes('portable.artifactName=')
       )
     ).toBe(false)
+  })
+
+  it('explicitly disables notarization for unsigned macOS packages', () => {
+    const arguments_ =
+      releaseBuilder.buildElectronBuilderArguments(
+        {
+          ...windowsOptions,
+          platform: 'macos',
+          formats: ['dmg', 'zip'],
+          unsigned: true
+        },
+        '/release-stage'
+      )
+
+    expect(arguments_).toContain('--config.mac.notarize=false')
+  })
+
+  it('removes signing credentials from unsigned macOS builds', () => {
+    const environment =
+      releaseBuilder.electronBuilderEnvironment(
+        {
+          ...windowsOptions,
+          platform: 'macos',
+          formats: ['dmg', 'zip'],
+          unsigned: true
+        },
+        {
+          CSC_LINK: 'certificate',
+          CSC_KEY_PASSWORD: 'password',
+          APPLE_API_KEY: 'api-key',
+          APPLE_API_KEY_ID: 'key-id',
+          APPLE_API_ISSUER: 'issuer',
+          KEEP_ME: 'present'
+        }
+      )
+
+    expect(environment).toMatchObject({
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+      KEEP_ME: 'present'
+    })
+    expect(environment).not.toHaveProperty('CSC_LINK')
+    expect(environment).not.toHaveProperty('CSC_KEY_PASSWORD')
+    expect(environment).not.toHaveProperty('APPLE_API_KEY')
+    expect(environment).not.toHaveProperty('APPLE_API_KEY_ID')
+    expect(environment).not.toHaveProperty('APPLE_API_ISSUER')
   })
 
   it('pins and unpacks only the required Harness native packages', () => {

@@ -44,4 +44,27 @@ describe('packages workflow', () => {
       [...workflow.matchAll(/--region "\$OSS_REGION"/gu)]
     ).toHaveLength(2)
   })
+
+  it('allows fully unsigned macOS builds but rejects partial credentials', () => {
+    expect(workflow).toContain('id: macos-signing')
+    expect(workflow).toContain(
+      'if [[ "$configured" -eq 0 ]]; then'
+    )
+    expect(workflow).toContain(
+      'if [[ "$configured" -ne "${#names[@]}" ]]; then'
+    )
+    expect(workflow).toContain(
+      'Build unsigned macOS release packages'
+    )
+    expect(workflow).toContain('--skip-build --unsigned')
+    expect(workflow).toContain(
+      "steps.macos-signing.outputs.enabled == 'true'"
+    )
+    expect(workflow).toContain(
+      "steps.macos-signing.outputs.enabled == 'false'"
+    )
+    expect(workflow).toContain(
+      'Apple signing credentials are not configured'
+    )
+  })
 })
