@@ -64,6 +64,7 @@ import type {
   MagicNoteUpdateInput,
   MagicTodoItem,
   MagicTodoUpdateInput,
+  MagicTodoUpdateResult,
   MagicTodosSnapshot
 } from './magic-notes-contracts'
 import type {
@@ -1704,7 +1705,7 @@ export type DesktopApi = {
     listTodos: () => Promise<MagicTodosSnapshot>
     updateTodo: (
       input: MagicTodoUpdateInput
-    ) => Promise<MagicTodoItem>
+    ) => Promise<MagicTodoUpdateResult>
     analyzeTodo: (
       todoId: string,
       options: MagicNoteAnalysisOptions

@@ -5686,9 +5686,13 @@ export function registerIpcHandlers(
     ipcChannels.magicTodosUpdate,
     (event, input: unknown) => {
       assertTrustedSender(event, window)
-      return assistantDatabase.updateMagicTodo(
+      const todo = assistantDatabase.updateMagicTodo(
         magicTodoUpdateSchema.parse(input)
       )
+      return {
+        todo,
+        note: assistantDatabase.getMagicNote(todo.noteId)
+      }
     }
   )
 

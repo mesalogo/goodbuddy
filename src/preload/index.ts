@@ -107,6 +107,7 @@ import type {
   MagicNoteDetail,
   MagicNotesSnapshot,
   MagicTodoItem,
+  MagicTodoUpdateResult,
   MagicTodosSnapshot
 } from '../shared/magic-notes-contracts'
 import type {
@@ -1113,7 +1114,7 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.magicTodosUpdate,
         input
-      ) as Promise<MagicTodoItem>,
+      ) as Promise<MagicTodoUpdateResult>,
     analyzeTodo: (todoId, options) =>
       ipcRenderer.invoke(ipcChannels.magicTodosAnalyze, {
         todoId,

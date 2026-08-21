@@ -693,9 +693,7 @@ export function MagicNotesWorkspace({
     []
   )
 
-  const applyDetail = useCallback((next: MagicNoteDetail) => {
-    setDetail(next)
-    setTitleDraft(next.title)
+  const applyNoteSummary = useCallback((next: MagicNoteDetail) => {
     setNotes((current) => {
       const summary = noteSummary(next)
       const existing = current.some((note) => note.id === next.id)
@@ -709,6 +707,15 @@ export function MagicNotesWorkspace({
       )
     })
   }, [])
+
+  const applyDetail = useCallback(
+    (next: MagicNoteDetail) => {
+      setDetail(next)
+      setTitleDraft(next.title)
+      applyNoteSummary(next)
+    },
+    [applyNoteSummary]
+  )
 
   const applyTodo = useCallback((next: MagicTodoItem) => {
     setTodos((current) =>
@@ -1184,13 +1191,17 @@ export function MagicNotesWorkspace({
     }
     try {
       const completed = !todo.completed
-      applyTodo(
-        await window.goodbuddy.magicNotes.updateTodo({
-          todoId: todo.id,
-          completed,
-          expectedRevision: todo.revision
-        })
-      )
+      const result = await window.goodbuddy.magicNotes.updateTodo({
+        todoId: todo.id,
+        completed,
+        expectedRevision: todo.revision
+      })
+      applyTodo(result.todo)
+      if (requestedNoteIdRef.current === result.note.id) {
+        applyDetail(result.note)
+      } else {
+        applyNoteSummary(result.note)
+      }
       notifySuccess(
         t(
           completed

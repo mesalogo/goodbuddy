@@ -433,6 +433,11 @@ export type MagicTodoItem = {
   updatedAt: string
 }
 
+export type MagicTodoUpdateResult = {
+  todo: MagicTodoItem
+  note: MagicNoteDetail
+}
+
 export type MagicTodosSnapshot = {
   todos: MagicTodoItem[]
 }

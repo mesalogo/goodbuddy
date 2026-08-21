@@ -14,7 +14,9 @@ import type { ApplicationSettings } from '../../shared/application-settings-cont
 import type {
   MagicNoteDetail,
   MagicNotesSnapshot,
+  MagicNoteRichContent,
   MagicTodoItem,
+  MagicTodoUpdateResult,
   MagicTodosSnapshot
 } from '../../shared/magic-notes-contracts'
 import { MagicNotesWorkspace } from './MagicNotesWorkspace'
@@ -47,7 +49,22 @@ vi.mock('./MagicNoteEditor', () => ({
 }))
 
 vi.mock('./MagicNoteContent', () => ({
-  MagicNoteContent: () => <div>记录正文</div>
+  MagicNoteContent: ({ content }: { content: MagicNoteRichContent }) => {
+    const checklistState =
+      content.ops.find(
+        (operation) =>
+          operation.attributes?.list === 'checked' ||
+          operation.attributes?.list === 'unchecked'
+      )?.attributes?.list ?? 'none'
+    return (
+      <div>
+        <span>记录正文</span>
+        <output data-testid="magic-note-checklist-state">
+          {checklistState}
+        </output>
+      </div>
+    )
+  }
 }))
 
 const noteId = '00000000-0000-4000-8000-000000000601'
@@ -229,11 +246,41 @@ beforeEach(() => {
       revision: entry.revision + 1
     }))
   })
-  updateTodo.mockImplementation(async (input) => ({
-    ...noteTodo,
-    completed: input.completed,
-    revision: noteTodo.revision + 1
-  }))
+  updateTodo.mockImplementation(
+    async (input): Promise<MagicTodoUpdateResult> => ({
+      todo: {
+        ...noteTodo,
+        completed: input.completed,
+        revision: input.expectedRevision + 1
+      },
+      note: {
+        ...detail,
+        revision: detail.revision + 1,
+        entries: detail.entries.map((entry) =>
+          entry.id === noteTodo.entryId
+            ? {
+                ...entry,
+                content: {
+                  version: 1,
+                  ops: [
+                    { insert: noteTodo.title },
+                    {
+                      insert: '\n',
+                      attributes: {
+                        list: input.completed ? 'checked' : 'unchecked'
+                      }
+                    }
+                  ]
+                },
+                comments: [],
+                analyzedAt: undefined,
+                revision: entry.revision + 1
+              }
+            : entry
+        )
+      }
+    })
+  )
   analyze.mockResolvedValue({
     ...createdDetail,
     entries: createdDetail.entries.map((entry) =>
@@ -957,7 +1004,7 @@ describe('MagicNotesWorkspace', () => {
     expect(screen.getByText('准备演示')).toBeInTheDocument()
   })
 
-  it('marks a todo completed from the standalone todo tab', async () => {
+  it('synchronizes todo completion with its source note immediately', async () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
 
     await screen.findByText('记录正文')
@@ -986,6 +1033,30 @@ describe('MagicNotesWorkspace', () => {
         message: '待办已完成'
       })
     )
+
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }))
+    expect(
+      screen.getByTestId('magic-note-checklist-state')
+    ).toHaveTextContent('checked')
+
+    fireEvent.click(screen.getByRole('tab', { name: '待办' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `标记为未完成：${noteTodo.title}`
+      })
+    )
+    await waitFor(() =>
+      expect(updateTodo).toHaveBeenNthCalledWith(2, {
+        todoId: noteTodo.id,
+        completed: false,
+        expectedRevision: noteTodo.revision + 1
+      })
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '笔记' }))
+    expect(
+      screen.getByTestId('magic-note-checklist-state')
+    ).toHaveTextContent('unchecked')
   })
 
   it('reuses the AI comments pane for selected todos', async () => {
