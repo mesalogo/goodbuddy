@@ -199,7 +199,16 @@ describe('WorkspacePrimitives', () => {
       /\.assistant-sidebar__tab\s*\{[^}]*white-space:\s*nowrap;/u
     )
     expect(stylesheet).toMatch(
-      /\.app-frame\s*\{[^}]*display:\s*grid;[^}]*grid-template-rows:\s*58px minmax\(0,\s*1fr\);/u
+      /\.app-frame\s*\{[^}]*display:\s*grid;[^}]*flex:\s*1;[^}]*grid-template-rows:\s*58px minmax\(0,\s*1fr\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.app-shell\s*\{[^}]*display:\s*flex;[^}]*width:\s*100%;[^}]*height:\s*100%;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.release-notes-backdrop\s*\{[^}]*position:\s*fixed;[^}]*background:\s*var\(--overlay-backdrop\);[^}]*inset:\s*0;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.app-content\s*\{[^}]*position:\s*relative;[^}]*display:\s*flex;[^}]*width:\s*100%;[^}]*height:\s*100%;/u
     )
     expect(stylesheet).toMatch(
       /\.workspace\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\);/u

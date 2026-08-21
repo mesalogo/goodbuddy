@@ -2270,8 +2270,8 @@ textarea:focus-visible {
 .app-frame {
   position: relative;
   display: grid;
-  width: 100%;
   height: 100%;
+  flex: 1;
   min-width: 0;
   min-height: 0;
   background: var(--surface-canvas);
@@ -2280,6 +2280,17 @@ textarea:focus-visible {
 }
 
 .app-shell {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+}
+
+.app-content {
   position: relative;
   display: flex;
   width: 100%;
@@ -5411,7 +5422,7 @@ button > svg {
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
-  inset: 38px 0 0;
+  inset: 0;
   place-items: center;
 }
 
@@ -12558,7 +12569,7 @@ details.settings-section > :not(summary) + :not(summary) {
   --shadow-dialog: 0 18px 48px rgb(0 4 10 / 48%);
 }
 
-:root[data-theme='dark'] :where(.app-frame, .app-shell) {
+:root[data-theme='dark'] :where(.app-frame, .app-shell, .app-content) {
   background: var(--surface-canvas);
   color: var(--text-primary);
 }

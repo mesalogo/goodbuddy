@@ -8028,7 +8028,16 @@ describe('App', () => {
     const assistantTrigger =
       screen.getByLabelText('切换助手工作栏')
     expect(assistantTrigger.parentElement).toBe(
+      container.querySelector('.app-content')
+    )
+    expect(container.querySelector('.sidebar')?.parentElement).toBe(
       container.querySelector('.app-shell')
+    )
+    expect(container.querySelector('.app-frame')?.parentElement).toBe(
+      container.querySelector('.app-shell')
+    )
+    expect(container.querySelector('.topbar')?.parentElement).toBe(
+      container.querySelector('.app-frame')
     )
     expect(assistantTrigger).toHaveClass('assistant-sidebar-toggle')
     expect(assistantTrigger).not.toHaveClass('icon-button--active')
@@ -8582,7 +8591,7 @@ describe('App', () => {
         name: '助手工作栏'
       })
       expect(workbar).toHaveClass('assistant-sidebar--open')
-      expect(workbar.parentElement).toHaveClass('app-shell')
+      expect(workbar.parentElement).toHaveClass('app-content')
       expect(
         workbar.parentElement?.querySelector('main.workspace')
       ).toBeInTheDocument()

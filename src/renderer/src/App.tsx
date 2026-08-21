@@ -7389,114 +7389,7 @@ function App(): React.JSX.Element {
   const backgroundIsolated = mainSidebarOpen
 
   return (
-    <div className="app-frame">
-      <header className="topbar">
-        <button
-          className="icon-button sidebar-toggle"
-          type="button"
-          aria-label={t('sidebar.toggle')}
-          onClick={() => setSidebarOpen((open) => !open)}
-          ref={sidebarToggleRef}
-        >
-          <PanelLeft aria-hidden="true" size={18} />
-        </button>
-        {view === 'chat' && (
-          <>
-            <div
-              className="conversation-title"
-              title={activeConversation?.title}
-            >
-              <span className="conversation-title__text">
-                {activeConversation
-                  ? getConversationDisplayTitle(
-                      activeConversation,
-                      t('conversation.defaultTitle')
-                    )
-                  :
-                  (activeProject?.kind === 'channel'
-                    ? t('conversation.remoteTitle')
-                    : t('conversation.defaultTitle'))}
-              </span>
-              {activeConversation?.branch && (
-                <ConversationBranchBadge
-                  sourceTitle={
-                    conversationTitles.get(
-                      activeConversation.branch.sourceConversationId
-                    ) ?? activeConversation.branch.sourceTitle
-                  }
-                />
-              )}
-              {activeConversation?.remote && (
-                <b className="conversation-source-badge">
-                  {
-                    projectChannelLabels[
-                      activeConversation.remote.channel
-                    ]
-                  }
-                </b>
-              )}
-            </div>
-            <ScopeBadge
-              scope={
-                activeProject
-                  ? {
-                      kind: 'project',
-                      projectName:
-                        activeProjectDisplayName ?? activeProject.name
-                    }
-                  : {
-                      kind: 'unavailable',
-                      explanation: t('notices.projectNotLoaded')
-                    }
-              }
-            />
-          </>
-        )}
-        <div className="topbar__actions">
-          <span
-            className={
-              runtime?.available
-                ? 'runtime-status runtime-status--online'
-                : 'runtime-status'
-            }
-            title={runtime?.detail}
-          >
-            <span className="runtime-status__dot" />
-            <span className="runtime-status__label">
-              {runtime?.label ?? t('runtime.detecting')}
-            </span>
-            {runtime?.capability === 'image-generation' && (
-              <span className="runtime-capability-badge">
-                {t('runtime.imageGeneration')}
-              </span>
-            )}
-          </span>
-          <button
-            aria-label={
-              resolvedAppearanceTheme === 'dark'
-                ? t('topbar.switchLight')
-                : t('topbar.switchDark')
-            }
-            aria-pressed={resolvedAppearanceTheme === 'dark'}
-            className="icon-button theme-toggle-button"
-            onClick={toggleAppearanceTheme}
-            title={
-              resolvedAppearanceTheme === 'dark'
-                ? t('topbar.switchLight')
-                : t('topbar.switchDark')
-            }
-            type="button"
-          >
-            {resolvedAppearanceTheme === 'dark' ? (
-              <Sun aria-hidden="true" size={18} />
-            ) : (
-              <Moon aria-hidden="true" size={18} />
-            )}
-          </button>
-        </div>
-        <WindowControls onError={handleWindowControlError} />
-      </header>
-      <div className="app-shell">
+    <div className="app-shell">
       <aside
         aria-label={
           narrowWindow && sidebarOpen ? t('sidebar.label') : undefined
@@ -8148,32 +8041,141 @@ function App(): React.JSX.Element {
         />
       )}
 
-      {view === 'chat' && (
-        <button
-          aria-controls="assistant-sidebar"
-          aria-expanded={assistantSidebarOpen}
-          aria-label={t('topbar.toggleAssistantSidebar')}
-          className="icon-button assistant-sidebar-toggle"
-          onClick={() =>
-            setAssistantSidebarOpen((current) => !current)
-          }
-          ref={assistantSidebarToggleRef}
-          title={t('topbar.toggleAssistantSidebar')}
-          type="button"
-        >
-          {assistantSidebarOpen ? (
-            <PanelRightClose aria-hidden="true" size={18} />
-          ) : (
-            <PanelRightOpen aria-hidden="true" size={18} />
+      <div className="app-frame">
+        <header className="topbar">
+          <button
+            className="icon-button sidebar-toggle"
+            type="button"
+            aria-label={t('sidebar.toggle')}
+            onClick={() => setSidebarOpen((open) => !open)}
+            ref={sidebarToggleRef}
+          >
+            <PanelLeft aria-hidden="true" size={18} />
+          </button>
+          {view === 'chat' && (
+            <>
+              <div
+                className="conversation-title"
+                title={activeConversation?.title}
+              >
+                <span className="conversation-title__text">
+                  {activeConversation
+                    ? getConversationDisplayTitle(
+                        activeConversation,
+                        t('conversation.defaultTitle')
+                      )
+                    :
+                    (activeProject?.kind === 'channel'
+                      ? t('conversation.remoteTitle')
+                      : t('conversation.defaultTitle'))}
+                </span>
+                {activeConversation?.branch && (
+                  <ConversationBranchBadge
+                    sourceTitle={
+                      conversationTitles.get(
+                        activeConversation.branch.sourceConversationId
+                      ) ?? activeConversation.branch.sourceTitle
+                    }
+                  />
+                )}
+                {activeConversation?.remote && (
+                  <b className="conversation-source-badge">
+                    {
+                      projectChannelLabels[
+                        activeConversation.remote.channel
+                      ]
+                    }
+                  </b>
+                )}
+              </div>
+              <ScopeBadge
+                scope={
+                  activeProject
+                    ? {
+                        kind: 'project',
+                        projectName:
+                          activeProjectDisplayName ?? activeProject.name
+                      }
+                    : {
+                        kind: 'unavailable',
+                        explanation: t('notices.projectNotLoaded')
+                      }
+                }
+              />
+            </>
           )}
-        </button>
-      )}
+          <div className="topbar__actions">
+            <span
+              className={
+                runtime?.available
+                  ? 'runtime-status runtime-status--online'
+                  : 'runtime-status'
+              }
+              title={runtime?.detail}
+            >
+              <span className="runtime-status__dot" />
+              <span className="runtime-status__label">
+                {runtime?.label ?? t('runtime.detecting')}
+              </span>
+              {runtime?.capability === 'image-generation' && (
+                <span className="runtime-capability-badge">
+                  {t('runtime.imageGeneration')}
+                </span>
+              )}
+            </span>
+            <button
+              aria-label={
+                resolvedAppearanceTheme === 'dark'
+                  ? t('topbar.switchLight')
+                  : t('topbar.switchDark')
+              }
+              aria-pressed={resolvedAppearanceTheme === 'dark'}
+              className="icon-button theme-toggle-button"
+              onClick={toggleAppearanceTheme}
+              title={
+                resolvedAppearanceTheme === 'dark'
+                  ? t('topbar.switchLight')
+                  : t('topbar.switchDark')
+              }
+              type="button"
+            >
+              {resolvedAppearanceTheme === 'dark' ? (
+                <Sun aria-hidden="true" size={18} />
+              ) : (
+                <Moon aria-hidden="true" size={18} />
+              )}
+            </button>
+          </div>
+          <WindowControls onError={handleWindowControlError} />
+        </header>
 
-      <main
-        aria-hidden={backgroundIsolated ? 'true' : undefined}
-        className="workspace"
-        inert={backgroundIsolated}
-      >
+        <div className="app-content">
+          {view === 'chat' && (
+            <button
+              aria-controls="assistant-sidebar"
+              aria-expanded={assistantSidebarOpen}
+              aria-label={t('topbar.toggleAssistantSidebar')}
+              className="icon-button assistant-sidebar-toggle"
+              onClick={() =>
+                setAssistantSidebarOpen((current) => !current)
+              }
+              ref={assistantSidebarToggleRef}
+              title={t('topbar.toggleAssistantSidebar')}
+              type="button"
+            >
+              {assistantSidebarOpen ? (
+                <PanelRightClose aria-hidden="true" size={18} />
+              ) : (
+                <PanelRightOpen aria-hidden="true" size={18} />
+              )}
+            </button>
+          )}
+
+          <main
+            aria-hidden={backgroundIsolated ? 'true' : undefined}
+            className="workspace"
+            inert={backgroundIsolated}
+          >
         {(view === 'chat' || cachedWorkspaceViewKeys.has('chat')) && (
           <KeepAliveRoute
             active={view === 'chat'}
@@ -9882,7 +9884,8 @@ function App(): React.JSX.Element {
         tab={assistantSidebarTab}
         workspaceChanges={workspaceChanges}
         workspaceProjectId={activeProjectId || undefined}
-      />
+          />
+        </div>
       </div>
     </div>
   )
