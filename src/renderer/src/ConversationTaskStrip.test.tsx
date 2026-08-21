@@ -24,7 +24,6 @@ describe('ConversationTaskStrip', () => {
     render(
       <ConversationTaskStrip
         locale="zh-CN"
-        onCreate={vi.fn()}
         onRemoveSchedule={onRemoveSchedule}
         onRunSchedule={onRunSchedule}
         onSelectTask={vi.fn()}
@@ -62,6 +61,9 @@ describe('ConversationTaskStrip', () => {
 
     expect(screen.getByText('每日状态', { selector: 'strong' }))
       .toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '新建任务' })
+    ).not.toBeInTheDocument()
     expect(screen.getByText('Execute')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '立即运行' }))
     await waitFor(() =>
@@ -86,5 +88,23 @@ describe('ConversationTaskStrip', () => {
     await waitFor(() =>
       expect(onRemoveSchedule).toHaveBeenCalledWith(scheduleId)
     )
+  })
+
+  it('hides the conversation task row when there are no tasks', () => {
+    render(
+      <ConversationTaskStrip
+        locale="zh-CN"
+        onRemoveSchedule={vi.fn(async () => undefined)}
+        onRunSchedule={vi.fn(async () => undefined)}
+        onSelectTask={vi.fn()}
+        onSetScheduleEnabled={vi.fn(async () => undefined)}
+        schedules={[]}
+        tasks={[]}
+      />
+    )
+
+    expect(
+      screen.queryByRole('region', { name: '当前会话的任务' })
+    ).not.toBeInTheDocument()
   })
 })

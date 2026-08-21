@@ -192,6 +192,39 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).toMatch(
       /\.composer-wrap\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*padding:\s*var\(--space-3\)\s*max\(var\(--page-gutter\),\s*calc\(\(100% - var\(--content-reading\)\) \/ 2\)\)\s*var\(--space-2\);/u
     )
+    expect(stylesheet).toMatch(
+      /\.assistant-sidebar__tabs\s*\{[^}]*grid-template-columns:\s*repeat\(5,\s*minmax\(max-content,\s*1fr\)\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.assistant-sidebar__tab\s*\{[^}]*white-space:\s*nowrap;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.app-frame\s*\{[^}]*display:\s*grid;[^}]*grid-template-rows:\s*58px minmax\(0,\s*1fr\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.workspace\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.assistant-sidebar-toggle\s*\{[^}]*position:\s*absolute;[^}]*top:\s*6px;[^}]*right:\s*6px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-task-strip\s*\{[^}]*min-height:\s*46px;[^}]*padding:\s*0\s+max\(/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-task-strip__header\s*\{[^}]*min-height:\s*45px;/u
+    )
+    expect(stylesheet).toMatch(
+      /@media \(max-width: 720px\)\s*\{[\s\S]*?\.conversation-task-strip\s*\{[^}]*padding-right:\s*46px;[^}]*padding-left:\s*var\(--space-3\);/u
+    )
+    expect(stylesheet).not.toMatch(
+      /@media \(max-width: 720px\)\s*\{[\s\S]*?\.conversation-task-strip__header\s*\{[^}]*flex-direction:\s*column;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.task-center__filters \.segmented-control\s*\{[^}]*width:\s*100%;[^}]*overflow:\s*hidden;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.task-center__filters \.segmented-control__option\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1;/u
+    )
   })
 
   it('floats Runtime context compaction without shifting the composer', () => {

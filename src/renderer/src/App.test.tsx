@@ -1121,17 +1121,29 @@ describe('App', () => {
       expect(
         within(assistantSidebar).getByText('Project: Default project')
       ).toBeInTheDocument()
-      fireEvent.click(
-        within(assistantSidebar).getByRole('button', {
-          name: 'New custom task'
-        })
+      const taskIndexHeading = within(assistantSidebar).getByRole(
+        'heading',
+        { name: 'Task index' }
       )
+      const newTaskButton = within(assistantSidebar).getByRole(
+        'button',
+        { name: 'New task' }
+      )
+      expect(taskIndexHeading.parentElement).toContainElement(
+        newTaskButton
+      )
+      fireEvent.click(newTaskButton)
       const taskDialog = screen.getByRole('dialog', {
         name: 'New custom task'
       })
       expect(
         within(taskDialog).getByText('Default project')
       ).toBeInTheDocument()
+      expect(
+        within(taskDialog).getByRole('button', {
+          name: 'Current conversation'
+        })
+      ).toHaveAttribute('aria-pressed', 'true')
       fireEvent.click(
         within(taskDialog).getByRole('button', {
           name: 'Close new custom task'
@@ -8015,9 +8027,9 @@ describe('App', () => {
     expect(sidebar).not.toHaveClass('assistant-sidebar--open')
     const assistantTrigger =
       screen.getByLabelText('切换助手工作栏')
-    expect(
-      container.querySelector('.topbar')
-    ).toContainElement(assistantTrigger)
+    expect(assistantTrigger.parentElement).toBe(
+      container.querySelector('.app-shell')
+    )
     expect(assistantTrigger).toHaveClass('assistant-sidebar-toggle')
     expect(assistantTrigger).not.toHaveClass('icon-button--active')
     expect(assistantTrigger).toHaveAttribute('aria-expanded', 'false')
@@ -8032,8 +8044,14 @@ describe('App', () => {
       assistantTrigger.querySelector('.lucide-panel-right-close')
     ).not.toBeInTheDocument()
     expect(
-      container.querySelector('.window-titlebar')
+      container.querySelector('.topbar')
     ).toContainElement(screen.getByLabelText('关闭窗口'))
+    expect(container.querySelector('.topbar')).toContainElement(
+      container.querySelector('.conversation-title')
+    )
+    expect(
+      container.querySelector('.topbar')
+    ).not.toContainElement(assistantTrigger)
     expect(
       screen.queryByLabelText('关闭助手工作栏')
     ).not.toBeInTheDocument()
@@ -8059,9 +8077,18 @@ describe('App', () => {
     expect(
       screen.getByRole('tab', { name: '任务中心' })
     ).toHaveAttribute('aria-selected', 'true')
+    const taskIndexHeading = screen.getByRole('heading', {
+      name: '任务索引'
+    })
+    const newTaskButton = screen.getByRole('button', {
+      name: '新建任务'
+    })
+    expect(taskIndexHeading.parentElement).toContainElement(
+      newTaskButton
+    )
     expect(
-      screen.getByRole('heading', { name: '任务索引' })
-    ).toBeInTheDocument()
+      screen.queryByRole('region', { name: '当前会话的任务' })
+    ).not.toBeInTheDocument()
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '上下文' }))
     expect(

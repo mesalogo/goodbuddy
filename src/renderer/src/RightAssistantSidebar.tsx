@@ -640,19 +640,9 @@ export function RightAssistantSidebar({
         ) : null}
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
-            <div className="task-center__heading">
-              <p className="assistant-sidebar__section-description">
-                {t('sidebar.tasks.description')}
-              </p>
-              <button
-                className="primary-button"
-                onClick={onCreateCustomTask}
-                type="button"
-              >
-                <Plus aria-hidden="true" size={13} />
-                {t('sidebar.tasks.createCustom')}
-              </button>
-            </div>
+            <p className="assistant-sidebar__section-description">
+              {t('sidebar.tasks.description')}
+            </p>
             <h3>
               <ShieldAlert size={15} />
               {t('sidebar.tasks.approvalsTitle')}
@@ -694,10 +684,20 @@ export function RightAssistantSidebar({
               ))
             )}
 
-            <h3>
-              <ClockFading size={15} />
-              {t('sidebar.tasks.taskIndexTitle')}
-            </h3>
+            <div className="task-center__index-heading">
+              <h3>
+                <ClockFading size={15} />
+                {t('sidebar.tasks.taskIndexTitle')}
+              </h3>
+              <button
+                className="secondary-button task-center__create"
+                onClick={onCreateCustomTask}
+                type="button"
+              >
+                <Plus aria-hidden="true" size={13} />
+                {t('taskStrip.create')}
+              </button>
+            </div>
             <div className="task-center__filters">
               <SegmentedControl
                 ariaLabel={t('sidebar.tasks.filters.ariaLabel')}

@@ -99,7 +99,6 @@ export const workspace = {
     tasks: {
       description:
         'Review pending approvals and create or manage automations.',
-      createCustom: 'New custom task',
       approvalsTitle: 'Awaiting approval',
       noApprovals: 'There are no operations awaiting approval.',
       deny: 'Deny',
@@ -248,7 +247,6 @@ export const workspace = {
     title: 'Conversation tasks',
     count: '{{count}}',
     create: 'New task',
-    empty: 'This conversation has no tasks yet.',
     taskList: 'Task list'
   },
   files: {

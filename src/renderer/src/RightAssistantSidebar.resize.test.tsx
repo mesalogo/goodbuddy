@@ -253,11 +253,17 @@ describe('RightAssistantSidebar resizing', () => {
     renderSidebar({ tab: 'tasks' })
 
     expect(screen.getByText('等待审批')).toBeInTheDocument()
+    const taskIndexHeading = screen.getByRole('heading', {
+      name: '任务索引'
+    })
+    const newTaskButton = screen.getByRole('button', {
+      name: '新建任务'
+    })
+    expect(taskIndexHeading.parentElement).toContainElement(
+      newTaskButton
+    )
     expect(
-      screen.getByRole('heading', { name: '任务索引' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: '新建定制任务' })
+      screen.getByRole('group', { name: '筛选任务' })
     ).toBeInTheDocument()
     expect(screen.queryByLabelText('定时任务标题')).not.toBeInTheDocument()
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()

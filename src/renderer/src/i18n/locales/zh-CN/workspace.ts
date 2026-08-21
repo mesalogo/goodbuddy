@@ -94,7 +94,6 @@ export const workspace = {
     },
     tasks: {
       description: '处理当前待审批操作，并创建和管理自动化任务。',
-      createCustom: '新建定制任务',
       approvalsTitle: '等待审批',
       noApprovals: '当前没有等待审批的操作。',
       deny: '拒绝',
@@ -236,7 +235,6 @@ export const workspace = {
     title: '会话任务',
     count: '{{count}} 个',
     create: '新建任务',
-    empty: '当前会话还没有任务。',
     taskList: '任务列表'
   },
   files: {

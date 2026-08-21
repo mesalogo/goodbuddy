@@ -196,15 +196,21 @@
 
 .conversation-task-strip {
   flex: 0 0 auto;
-  padding:
-    var(--space-2)
+  min-height: 46px;
+  padding: 0
     max(var(--page-gutter), calc((100% - var(--content-reading)) / 2));
+  padding-right: max(
+    46px,
+    var(--page-gutter),
+    calc((100% - var(--content-reading)) / 2)
+  );
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-raised);
 }
 
 .conversation-task-strip__header {
   display: flex;
+  min-height: 45px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
@@ -236,12 +242,6 @@
 
 .conversation-task-strip__toggle span {
   color: var(--text-muted);
-  font-size: var(--font-caption);
-}
-
-.conversation-task-strip__create {
-  min-height: 30px;
-  padding: 0 var(--space-2);
   font-size: var(--font-caption);
 }
 
@@ -381,7 +381,6 @@
   opacity: 0.6;
 }
 
-.conversation-task-strip__empty,
 .conversation-task-strip__error {
   margin: 0;
   color: var(--text-muted);
@@ -392,19 +391,40 @@
   color: var(--danger);
 }
 
-.task-center__heading {
-  display: grid;
-  align-items: start;
+.task-center__index-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  margin: 8px 0 2px;
   gap: var(--space-2);
 }
 
-.task-center__heading .primary-button {
-  justify-self: start;
+.assistant-sidebar__section .task-center__index-heading h3 {
+  min-width: 0;
+  margin: 0;
+}
+
+.task-center__create {
+  min-height: 30px;
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
 }
 
 .task-center__filters {
   min-width: 0;
-  overflow-x: auto;
+  overflow: hidden;
+}
+
+.task-center__filters .segmented-control {
+  width: 100%;
+  overflow: hidden;
+}
+
+.task-center__filters .segmented-control__option {
+  min-width: 0;
+  flex: 1;
+  padding-right: var(--space-1);
+  padding-left: var(--space-1);
 }
 
 .task-center__item {
@@ -791,18 +811,8 @@
   }
 
   .conversation-task-strip {
-    padding-right: var(--space-3);
+    padding-right: 46px;
     padding-left: var(--space-3);
-  }
-
-  .conversation-task-strip__header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .conversation-task-strip__create {
-    width: 100%;
-    justify-content: center;
   }
 }
 
@@ -2266,18 +2276,7 @@ textarea:focus-visible {
   min-height: 0;
   background: var(--surface-canvas);
   color: var(--text-primary);
-  grid-template-rows: 30px minmax(0, 1fr);
-}
-
-.window-titlebar {
-  display: flex;
-  min-width: 0;
-  align-items: stretch;
-  justify-content: flex-end;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-subtle);
-  -webkit-app-region: drag;
-  user-select: none;
+  grid-template-rows: 58px minmax(0, 1fr);
 }
 
 .app-shell {
@@ -2977,7 +2976,7 @@ textarea:focus-visible {
   flex: 1;
   overflow: hidden;
   background: var(--surface-raised);
-  grid-template-rows: 46px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .workspace-route-cache {
@@ -3003,10 +3002,6 @@ textarea:focus-visible {
   user-select: none;
 }
 
-.topbar--with-assistant-toggle {
-  padding-right: 46px;
-}
-
 .topbar :is(button, input, select),
 .topbar__actions,
 .window-controls {
@@ -3018,7 +3013,7 @@ textarea:focus-visible {
   height: 100%;
   flex: 0 0 auto;
   align-self: stretch;
-  -webkit-app-region: no-drag;
+  margin-left: 8px;
 }
 
 .window-control {
@@ -3160,7 +3155,7 @@ button > svg {
   flex: 0 0 46px;
   align-items: center;
   gap: 3px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(max-content, 1fr));
 }
 
 .assistant-sidebar-toggle {
@@ -3180,6 +3175,7 @@ button > svg {
   color: var(--text-muted);
   cursor: pointer;
   font-size: 10px;
+  white-space: nowrap;
 }
 
 .assistant-sidebar__tab:hover,
@@ -12579,7 +12575,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
 :root[data-theme='dark'] :where(
   .sidebar,
-  .window-titlebar,
   .topbar,
   .assistant-sidebar,
   .project-create-card,
@@ -12602,7 +12597,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
 :root[data-theme='dark'] :where(
   .sidebar,
-  .window-titlebar,
   .topbar
 ) {
   background: var(--surface-subtle);
@@ -12660,7 +12654,6 @@ details.settings-section > :not(summary) + :not(summary) {
 :root[data-theme='dark'] :where(
   .primary-nav,
   .sidebar-footer,
-  .window-titlebar,
   .topbar,
   .assistant-sidebar,
   .assistant-sidebar__tabs,
