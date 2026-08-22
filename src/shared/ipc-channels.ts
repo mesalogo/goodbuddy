@@ -178,6 +178,8 @@ export const ipcChannels = {
   magicNotesAnalyzeDraft: 'magic-notes:analyze-draft',
   magicNotesAnalysisEvent: 'magic-notes:analysis-event',
   magicTodosList: 'magic-todos:list',
+  magicTodosStatus: 'magic-todos:status',
+  magicTodosStatusChanged: 'magic-todos:status-changed',
   magicTodosUpdate: 'magic-todos:update',
   magicTodosAnalyze: 'magic-todos:analyze',
   knowledgeSnapshot: 'knowledge:snapshot',

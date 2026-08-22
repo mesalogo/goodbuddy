@@ -511,7 +511,22 @@ if (hasSingleInstanceLock) {
       | ReturnType<typeof createRerankProvider>
       | undefined
     const startupAssistantDatabase = new AssistantDatabase(
-      join(app.getPath('userData'), 'assistant.sqlite')
+      join(app.getPath('userData'), 'assistant.sqlite'),
+      {
+        onMagicTodosChanged: () => {
+          queueMicrotask(() => {
+            if (
+              mainWindow &&
+              !mainWindow.isDestroyed() &&
+              !mainWindow.webContents.isDestroyed()
+            ) {
+              mainWindow.webContents.send(
+                ipcChannels.magicTodosStatusChanged
+              )
+            }
+          })
+        }
+      }
     )
     assistantDatabase = startupAssistantDatabase
     const goodbuddyConfigService = new GoodBuddyConfigService(

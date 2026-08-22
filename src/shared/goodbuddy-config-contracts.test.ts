@@ -136,6 +136,7 @@ describe('GoodBuddy configuration contracts', () => {
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
         magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate',
         magicNoteCommentFormat: 'combined'
       },

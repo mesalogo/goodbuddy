@@ -48,6 +48,7 @@ export const app = {
     knowledge: 'Knowledge',
     heartbeat: 'Smart Heartbeat',
     activity: 'Run history',
+    incompleteTodos: '{{count}} incomplete to-dos',
     pendingSuggestions: '{{count}} pending suggestions'
   },
   route: {

@@ -22,6 +22,7 @@ describe('UpdateSettingsSection', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate' as const,
       magicNoteCommentFormat: 'combined' as const
     }

@@ -190,6 +190,7 @@ const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async (
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   magicNotesEnabled: true,
+  magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
 }))
@@ -202,6 +203,7 @@ beforeEach(() => {
     updateSource: 'github',
     modelDownloadSource: 'modelscope',
     magicNotesEnabled: true,
+    magicNotesShowIncompleteTodoCount: true,
     magicNoteCommentMode: 'immediate',
     magicNoteCommentFormat: 'combined'
   })
@@ -1065,6 +1067,7 @@ describe('MagicNotesWorkspace', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'combined'
     })
@@ -1097,6 +1100,7 @@ describe('MagicNotesWorkspace', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'narrative'
     })
@@ -1212,6 +1216,7 @@ describe('MagicNotesWorkspace', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-auto',
       magicNoteCommentFormat: 'combined'
     })

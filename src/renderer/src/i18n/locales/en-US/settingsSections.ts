@@ -226,6 +226,8 @@ export const settingsSections = {
         'Application settings are not available in this version',
       readFailed: 'Could not load platform feature settings',
       saveMagicNotesFailed: 'Could not save Magic Notes settings. Try again.',
+      saveIncompleteTodoCountFailed:
+        'Could not save the incomplete to-do count setting. Try again.',
       saveCommentModeFailed:
         'Could not save the AI comment mode. Try again.',
       saveCommentFormatFailed:
@@ -297,6 +299,9 @@ export const settingsSections = {
       description:
         'Off by default. Enable it to capture notes and to-dos and analyze content with AI.',
       showEntry: 'Show Magic Notes',
+      showIncompleteTodoCount: 'Show incomplete to-do count',
+      showIncompleteTodoCountHelp:
+        'Shows the number of incomplete to-dos beside Magic Notes in the primary navigation. Counts above 99 appear as 99+.',
       commentMode: 'AI comment mode',
       commentModeAria: 'Magic Notes AI comment mode',
       modes: {

@@ -63,6 +63,7 @@ import {
   type MagicNoteSearchResult,
   type MagicNoteSummary,
   type MagicTodoItem,
+  type MagicTodoStatus,
   type MagicTodoUpdateInput
 } from '../../shared/magic-notes-contracts'
 import type { ComputerControlAuditEvent } from '../computer-control/audit'
@@ -967,7 +968,16 @@ export class AssistantDatabase {
   private channelEventWrites = 0
   private channelOutboxWrites = 0
 
-  constructor(private readonly databasePath: string) {}
+  constructor(
+    private readonly databasePath: string,
+    private readonly options: {
+      onMagicTodosChanged?: () => void
+    } = {}
+  ) {}
+
+  private notifyMagicTodosChanged(): void {
+    this.options.onMagicTodosChanged?.()
+  }
 
   initialize(defaultRootPath: string): void {
     if (this.database) {
@@ -2605,7 +2615,11 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
-    return this.getMagicNote(id)
+    const detail = this.getMagicNote(id)
+    if (input.content) {
+      this.notifyMagicTodosChanged()
+    }
+    return detail
   }
 
   updateMagicNote(input: {
@@ -2644,6 +2658,7 @@ export class AssistantDatabase {
     if (result.changes !== 1) {
       throw new Error('笔记不存在')
     }
+    this.notifyMagicTodosChanged()
   }
 
   createMagicNoteEntry(input: {
@@ -2696,7 +2711,9 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
-    return this.getMagicNote(input.noteId)
+    const detail = this.getMagicNote(input.noteId)
+    this.notifyMagicTodosChanged()
+    return detail
   }
 
   updateMagicNoteEntry(input: {
@@ -2758,7 +2775,9 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
-    return this.getMagicNote(existing.note_id)
+    const detail = this.getMagicNote(existing.note_id)
+    this.notifyMagicTodosChanged()
+    return detail
   }
 
   deleteMagicNoteEntry(entryId: string): MagicNoteDetail {
@@ -2787,7 +2806,9 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
-    return this.getMagicNote(existing.note_id)
+    const detail = this.getMagicNote(existing.note_id)
+    this.notifyMagicTodosChanged()
+    return detail
   }
 
   getMagicNoteEntry(entryId: string): MagicNoteEntry {
@@ -2859,6 +2880,17 @@ export class AssistantDatabase {
         )
         .all() as MagicTodoRow[]
     ).map(toMagicTodo)
+  }
+
+  getMagicTodoStatus(): MagicTodoStatus {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS incomplete_count
+         FROM magic_todos
+         WHERE source = 'note' AND completed = 0`
+      )
+      .get() as { incomplete_count: number }
+    return { incompleteCount: row.incomplete_count }
   }
 
   searchMagicNotes(query: string, limit: number): MagicNoteSearchResult[] {
@@ -2985,7 +3017,9 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
-    return this.getMagicTodo(input.todoId)
+    const todo = this.getMagicTodo(input.todoId)
+    this.notifyMagicTodosChanged()
+    return todo
   }
 
   saveMagicTodoAnalysis(input: {

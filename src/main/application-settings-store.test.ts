@@ -58,13 +58,15 @@ describe('ApplicationSettingsStore', () => {
     await expect(
       store.update({
         checkUpdatesOnStartup: false,
-        magicNotesEnabled: false
+        magicNotesEnabled: false,
+        magicNotesShowIncompleteTodoCount: false
       })
     ).resolves.toEqual({
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
@@ -73,15 +75,17 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 7,
+      version: 8,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined',
       lastSeenReleaseNotesVersion: null
@@ -107,6 +111,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
@@ -130,6 +135,7 @@ describe('ApplicationSettingsStore', () => {
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
         magicNotesEnabled: false,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate',
         magicNoteCommentFormat: 'combined'
       })
@@ -153,6 +159,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
@@ -176,6 +183,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'combined'
     })
@@ -201,11 +209,12 @@ describe('ApplicationSettingsStore', () => {
       new ApplicationSettingsStore(filePath).getLastSeenReleaseNotesVersion()
     ).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 7,
+      version: 8,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'narrative',
       lastSeenReleaseNotesVersion: '0.8.18'
@@ -232,6 +241,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-auto',
       magicNoteCommentFormat: 'structured'
     })
@@ -258,6 +268,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'mirror',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-auto',
       magicNoteCommentFormat: 'structured'
     })
@@ -268,9 +279,38 @@ describe('ApplicationSettingsStore', () => {
     await store.update({ modelDownloadSource: 'hugging-face' })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionSix,
-      version: 7,
-      modelDownloadSource: 'hugging-face'
+      version: 8,
+      modelDownloadSource: 'hugging-face',
+      magicNotesShowIncompleteTodoCount: true
     })
+  })
+
+  it('migrates version 7 to show incomplete todo counts', async () => {
+    const { filePath, store } = await createStore()
+    const versionSeven = {
+      version: 7,
+      checkUpdatesOnStartup: false,
+      updateSource: 'github',
+      modelDownloadSource: 'modelscope',
+      magicNotesEnabled: true,
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined',
+      lastSeenReleaseNotesVersion: null
+    }
+    await writeFile(filePath, JSON.stringify(versionSeven), 'utf8')
+
+    await expect(store.get()).resolves.toEqual({
+      checkUpdatesOnStartup: false,
+      updateSource: 'github',
+      modelDownloadSource: 'modelscope',
+      magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
+    })
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual(
+      versionSeven
+    )
   })
 
   it('strictly rejects incomplete full settings', () => {
@@ -319,6 +359,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
@@ -433,15 +474,17 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 7,
+      version: 8,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined',
       lastSeenReleaseNotesVersion: null
@@ -467,6 +510,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })

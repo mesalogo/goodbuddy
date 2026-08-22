@@ -2313,6 +2313,12 @@ function App(): React.JSX.Element {
   const [settingsInitialChannel, setSettingsInitialChannel] =
     useState<ProjectChannel>()
   const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
+  const [
+    magicNotesShowIncompleteTodoCount,
+    setMagicNotesShowIncompleteTodoCount
+  ] = useState(true)
+  const [incompleteMagicTodoCount, setIncompleteMagicTodoCount] =
+    useState(0)
   const [searchQuery, setSearchQuery] = useState('')
   const deferredSearchQuery = useDeferredValue(searchQuery)
   const [searchConversationSnapshot, setSearchConversationSnapshot] =
@@ -2713,6 +2719,9 @@ function App(): React.JSX.Element {
       .getSettings()
       .then(async (settings) => {
         setMagicNotesEnabled(settings.magicNotesEnabled)
+        setMagicNotesShowIncompleteTodoCount(
+          settings.magicNotesShowIncompleteTodoCount
+        )
         if (!settings.magicNotesEnabled) {
           setView((current) =>
             current === 'magic-notes' ? 'chat' : current
@@ -2735,6 +2744,42 @@ function App(): React.JSX.Element {
       })
       .catch(() => undefined)
   }, [i18n, setView])
+
+  useEffect(() => {
+    const magicNotes = window.goodbuddy.magicNotes
+    if (
+      !magicNotesEnabled ||
+      !magicNotesShowIncompleteTodoCount
+    ) {
+      return
+    }
+    let active = true
+    let requestId = 0
+    const refresh = async (): Promise<void> => {
+      const currentRequestId = ++requestId
+      try {
+        const status = await magicNotes.getTodoStatus()
+        if (active && requestId === currentRequestId) {
+          setIncompleteMagicTodoCount(status.incompleteCount)
+        }
+      } catch {
+        if (active && requestId === currentRequestId) {
+          setIncompleteMagicTodoCount(0)
+        }
+      }
+    }
+    const removeListener = magicNotes.onTodoStatusChanged(() => {
+      void refresh()
+    })
+    void refresh()
+    return () => {
+      active = false
+      removeListener()
+    }
+  }, [
+    magicNotesEnabled,
+    magicNotesShowIncompleteTodoCount
+  ])
 
   useEffect(() => {
     const releaseNotesApi = window.goodbuddy.releaseNotes
@@ -7489,6 +7534,19 @@ function App(): React.JSX.Element {
             >
               <Sparkles aria-hidden="true" size={17} />
               <span>{t('navigation.magicNotes')}</span>
+              {magicNotesShowIncompleteTodoCount &&
+                incompleteMagicTodoCount > 0 && (
+                  <span
+                    aria-label={t('navigation.incompleteTodos', {
+                      count: incompleteMagicTodoCount
+                    })}
+                    className="nav-item__badge"
+                  >
+                    {incompleteMagicTodoCount > 99
+                      ? '99+'
+                      : incompleteMagicTodoCount}
+                  </span>
+                )}
             </button>
           )}
           <button
@@ -9619,7 +9677,18 @@ function App(): React.JSX.Element {
             }}
             onMagicNotesEnabledChange={(enabled) => {
               setMagicNotesEnabled(enabled)
+              if (!enabled) {
+                setIncompleteMagicTodoCount(0)
+              }
             }}
+            onMagicNotesShowIncompleteTodoCountChange={
+              (enabled) => {
+                setMagicNotesShowIncompleteTodoCount(enabled)
+                if (!enabled) {
+                  setIncompleteMagicTodoCount(0)
+                }
+              }
+            }
             onNotify={notify}
             onLeaveRequestReady={registerSettingsLeaveRequester}
             onSaved={(settings) => {

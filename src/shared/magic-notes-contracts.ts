@@ -438,6 +438,10 @@ export type MagicTodoUpdateResult = {
   note: MagicNoteDetail
 }
 
+export type MagicTodoStatus = {
+  incompleteCount: number
+}
+
 export type MagicTodosSnapshot = {
   todos: MagicTodoItem[]
 }

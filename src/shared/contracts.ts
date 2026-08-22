@@ -63,6 +63,7 @@ import type {
   MagicNotesSnapshot,
   MagicNoteUpdateInput,
   MagicTodoItem,
+  MagicTodoStatus,
   MagicTodoUpdateInput,
   MagicTodoUpdateResult,
   MagicTodosSnapshot
@@ -1703,6 +1704,7 @@ export type DesktopApi = {
       options: MagicNoteAnalysisOptions
     ) => Promise<MagicNoteDraftAnalysis>
     listTodos: () => Promise<MagicTodosSnapshot>
+    getTodoStatus: () => Promise<MagicTodoStatus>
     updateTodo: (
       input: MagicTodoUpdateInput
     ) => Promise<MagicTodoUpdateResult>
@@ -1713,6 +1715,7 @@ export type DesktopApi = {
     onAnalysisEvent: (
       listener: (event: MagicNoteAnalysisStreamEvent) => void
     ) => () => void
+    onTodoStatusChanged: (listener: () => void) => () => void
   }
   knowledge: {
     getSnapshot: (libraryId?: string) => Promise<KnowledgeSnapshot>

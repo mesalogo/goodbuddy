@@ -107,6 +107,7 @@ let fileSelectionProgressListener:
     >[0]
   | undefined
 let newConversationListener: (() => void) | undefined
+let magicTodoStatusChangedListener: (() => void) | undefined
 let maximizedChangedListener: ((maximized: boolean) => void) | undefined
 let beforeQuitListener: (() => Promise<void>) | undefined
 let conversationQueueDispatchListener:
@@ -682,13 +683,20 @@ const api: DesktopApi = {
       throw new Error('not used')
     }),
     listTodos: vi.fn(async () => ({ todos: [] })),
+    getTodoStatus: vi.fn(async () => ({ incompleteCount: 0 })),
     updateTodo: vi.fn(async () => {
       throw new Error('not used')
     }),
     analyzeTodo: vi.fn(async () => {
       throw new Error('not used')
     }),
-    onAnalysisEvent: vi.fn(() => vi.fn())
+    onAnalysisEvent: vi.fn(() => vi.fn()),
+    onTodoStatusChanged: vi.fn((listener) => {
+      magicTodoStatusChangedListener = listener
+      return () => {
+        magicTodoStatusChangedListener = undefined
+      }
+    })
   },
   knowledge: {
     getSnapshot: vi.fn(async () => ({
@@ -870,6 +878,18 @@ describe('App', () => {
     delete document.documentElement.dataset.theme
     document.documentElement.style.colorScheme = ''
     vi.clearAllMocks()
+    magicTodoStatusChangedListener = undefined
+    vi.mocked(api.magicNotes.getTodoStatus)
+      .mockReset()
+      .mockResolvedValue({ incompleteCount: 0 })
+    vi.mocked(api.magicNotes.onTodoStatusChanged)
+      .mockReset()
+      .mockImplementation((listener) => {
+        magicTodoStatusChangedListener = listener
+        return () => {
+          magicTodoStatusChangedListener = undefined
+        }
+      })
     vi.mocked(api.conversations.list).mockReset().mockResolvedValue([])
     vi.mocked(api.conversations.replace)
       .mockReset()
@@ -1849,6 +1869,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: false,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -1942,6 +1963,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -1950,6 +1972,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -2044,6 +2067,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -2052,6 +2076,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -3887,6 +3912,7 @@ describe('App', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     }
@@ -8617,6 +8643,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -8625,6 +8652,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -8659,6 +8687,91 @@ describe('App', () => {
     }
   })
 
+  it('shows and refreshes the incomplete Magic Notes todo count', async () => {
+    vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValueOnce({
+      incompleteCount: 4
+    })
+    api.updates = {
+      getSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: false,
+        updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
+        magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: true,
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
+      })),
+      updateSettings: vi.fn(),
+      check: vi.fn(),
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      render(<App />)
+
+      expect(
+        await screen.findByLabelText('4 个未完成待办')
+      ).toHaveTextContent('4')
+
+      vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValueOnce({
+        incompleteCount: 0
+      })
+      await act(async () => {
+        magicTodoStatusChangedListener?.()
+      })
+      await waitFor(() =>
+        expect(
+          screen.queryByLabelText('4 个未完成待办')
+        ).not.toBeInTheDocument()
+      )
+
+      vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValueOnce({
+        incompleteCount: 125
+      })
+      await act(async () => {
+        magicTodoStatusChangedListener?.()
+      })
+      expect(
+        await screen.findByLabelText('125 个未完成待办')
+      ).toHaveTextContent('99+')
+    } finally {
+      delete api.updates
+    }
+  })
+
+  it('hides the todo count when its Magic Notes setting is off', async () => {
+    vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValue({
+      incompleteCount: 4
+    })
+    api.updates = {
+      getSettings: vi.fn(async () => ({
+        checkUpdatesOnStartup: false,
+        updateSource: 'github' as const,
+        modelDownloadSource: 'modelscope' as const,
+        magicNotesEnabled: true,
+        magicNotesShowIncompleteTodoCount: false,
+        magicNoteCommentMode: 'immediate' as const,
+        magicNoteCommentFormat: 'combined' as const
+      })),
+      updateSettings: vi.fn(),
+      check: vi.fn(),
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+    try {
+      render(<App />)
+
+      expect(
+        await screen.findByRole('button', { name: '魔法笔记' })
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByLabelText('4 个未完成待办')
+      ).not.toBeInTheDocument()
+      expect(api.magicNotes.getTodoStatus).not.toHaveBeenCalled()
+    } finally {
+      delete api.updates
+    }
+  })
   it('hides Magic Notes when the platform feature is disabled', async () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
@@ -8666,6 +8779,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: false,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -8674,6 +8788,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         magicNotesEnabled: false,
+        magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
         magicNoteCommentFormat: 'combined' as const
       })),
@@ -8707,6 +8822,7 @@ describe('App', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     }

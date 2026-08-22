@@ -211,6 +211,8 @@ export const settingsSections = {
       serviceUnavailable: '当前版本未提供应用设置服务',
       readFailed: '读取平台功能设置失败',
       saveMagicNotesFailed: '保存魔法笔记设置失败，请重试',
+      saveIncompleteTodoCountFailed:
+        '保存未完成待办数量设置失败，请重试',
       saveCommentModeFailed: '保存 AI 评论方式失败，请重试',
       saveCommentFormatFailed: '保存 AI 评论形式失败，请重试',
       saveModelDownloadSourceFailed: '保存模型下载源失败，请重试'
@@ -267,6 +269,9 @@ export const settingsSections = {
       title: '魔法笔记',
       description: '默认关闭；开启后可记录笔记与待办，并使用 AI 分析内容',
       showEntry: '显示魔法笔记入口',
+      showIncompleteTodoCount: '显示未完成待办数量',
+      showIncompleteTodoCountHelp:
+        '开启后，左侧魔法笔记入口显示未完成待办数量；超过 99 项显示 99+。',
       commentMode: 'AI 评论方式',
       commentModeAria: '魔法笔记 AI 评论方式',
       modes: {

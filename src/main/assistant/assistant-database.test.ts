@@ -24,10 +24,17 @@ afterEach(async () => {
   )
 })
 
-async function createDatabase(): Promise<AssistantDatabase> {
+async function createDatabase(
+  options: {
+    onMagicTodosChanged?: () => void
+  } = {}
+): Promise<AssistantDatabase> {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-assistant-'))
   temporaryDirectories.push(directory)
-  const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
+  const database = new AssistantDatabase(
+    join(directory, 'assistant.sqlite'),
+    options
+  )
   database.initialize('C:\\Workspace')
   return database
 }
@@ -4060,6 +4067,60 @@ describe('AssistantDatabase', () => {
         expectedRevision: todo.revision
       })
     ).toThrow('待办已被更新，请刷新后重试')
+
+    database.close()
+  })
+
+  it('counts incomplete todos and publishes todo-changing writes', async () => {
+    const onMagicTodosChanged = vi.fn()
+    const database = await createDatabase({ onMagicTodosChanged })
+    const note = database.createMagicNote({ title: '发布笔记' })
+
+    expect(database.getMagicTodoStatus()).toEqual({
+      incompleteCount: 0
+    })
+    expect(onMagicTodosChanged).not.toHaveBeenCalled()
+
+    database.createMagicNoteEntry({
+      noteId: note.id,
+      content: {
+        version: 1,
+        ops: [
+          { insert: '核对发布材料' },
+          { insert: '\n', attributes: { list: 'unchecked' } },
+          { insert: '上传构建产物' },
+          { insert: '\n', attributes: { list: 'unchecked' } },
+          { insert: '通知负责人' },
+          { insert: '\n', attributes: { list: 'checked' } }
+        ]
+      },
+      plainText: '核对发布材料\n上传构建产物\n通知负责人'
+    })
+
+    expect(database.getMagicTodoStatus()).toEqual({
+      incompleteCount: 2
+    })
+    expect(onMagicTodosChanged).toHaveBeenCalledTimes(1)
+
+    const todo = database
+      .listMagicTodos()
+      .find((candidate) => !candidate.completed)!
+    database.updateMagicTodo({
+      todoId: todo.id,
+      completed: true,
+      expectedRevision: todo.revision
+    })
+
+    expect(database.getMagicTodoStatus()).toEqual({
+      incompleteCount: 1
+    })
+    expect(onMagicTodosChanged).toHaveBeenCalledTimes(2)
+
+    database.deleteMagicNote(note.id)
+    expect(database.getMagicTodoStatus()).toEqual({
+      incompleteCount: 0
+    })
+    expect(onMagicTodosChanged).toHaveBeenCalledTimes(3)
 
     database.close()
   })

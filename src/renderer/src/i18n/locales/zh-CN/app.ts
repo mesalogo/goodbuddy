@@ -45,6 +45,7 @@ export const app = {
     knowledge: '知识库',
     heartbeat: '智能心跳',
     activity: '运行记录',
+    incompleteTodos: '{{count}} 个未完成待办',
     pendingSuggestions: '{{count}} 条待处理建议'
   },
   route: {

@@ -20,7 +20,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 7
+const CURRENT_SETTINGS_VERSION = 8
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -47,14 +47,22 @@ const versionThreeStoredApplicationSettingsSchema = z
   .strict()
 
 const versionFourStoredApplicationSettingsSchema = applicationSettingsSchema
-  .omit({ updateSource: true, modelDownloadSource: true })
+  .omit({
+    updateSource: true,
+    modelDownloadSource: true,
+    magicNotesShowIncompleteTodoCount: true
+  })
   .extend({
     version: z.literal(4)
   })
   .strict()
 
 const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
-  .omit({ updateSource: true, modelDownloadSource: true })
+  .omit({
+    updateSource: true,
+    modelDownloadSource: true,
+    magicNotesShowIncompleteTodoCount: true
+  })
   .extend({
     version: z.literal(5),
     lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
@@ -62,12 +70,24 @@ const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
   .strict()
 
 const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
-  .omit({ modelDownloadSource: true })
+  .omit({
+    modelDownloadSource: true,
+    magicNotesShowIncompleteTodoCount: true
+  })
   .extend({
     version: z.literal(6),
     lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
   })
   .strict()
+
+const versionSevenStoredApplicationSettingsSchema =
+  applicationSettingsSchema
+    .omit({ magicNotesShowIncompleteTodoCount: true })
+    .extend({
+      version: z.literal(7),
+      lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
+    })
+    .strict()
 
 const storedApplicationSettingsSchema = applicationSettingsSchema
   .extend({
@@ -85,6 +105,7 @@ export const defaultApplicationSettings: ApplicationSettings = {
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   magicNotesEnabled: false,
+  magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
 }
@@ -140,13 +161,24 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionSevenResult =
+          versionSevenStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionSevenResult.success) {
+          this.settings = {
+            ...versionSevenResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            magicNotesShowIncompleteTodoCount: true
+          }
+          return this.settings
+        }
         const versionSixResult =
           versionSixStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionSixResult.success) {
           this.settings = {
             ...versionSixResult.data,
             version: CURRENT_SETTINGS_VERSION,
-            modelDownloadSource: 'modelscope'
+            modelDownloadSource: 'modelscope',
+            magicNotesShowIncompleteTodoCount: true
           }
           return this.settings
         }
@@ -157,7 +189,8 @@ export class ApplicationSettingsStore {
             ...versionFiveResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
-            modelDownloadSource: 'modelscope'
+            modelDownloadSource: 'modelscope',
+            magicNotesShowIncompleteTodoCount: true
           }
           return this.settings
         }
@@ -169,6 +202,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            magicNotesShowIncompleteTodoCount: true,
             lastSeenReleaseNotesVersion: null
           }
           return this.settings
@@ -181,6 +215,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
           }
@@ -194,6 +229,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
@@ -210,6 +246,7 @@ export class ApplicationSettingsStore {
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
             magicNotesEnabled: false,
+            magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
@@ -251,6 +288,8 @@ export class ApplicationSettingsStore {
       updateSource: stored.updateSource,
       modelDownloadSource: stored.modelDownloadSource,
       magicNotesEnabled: stored.magicNotesEnabled,
+      magicNotesShowIncompleteTodoCount:
+        stored.magicNotesShowIncompleteTodoCount,
       magicNoteCommentMode: stored.magicNoteCommentMode,
       magicNoteCommentFormat: stored.magicNoteCommentFormat,
       ...(this.warnings.length > 0
@@ -284,6 +323,8 @@ export class ApplicationSettingsStore {
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
         magicNotesEnabled: next.magicNotesEnabled,
+        magicNotesShowIncompleteTodoCount:
+          next.magicNotesShowIncompleteTodoCount,
         magicNoteCommentMode: next.magicNoteCommentMode,
         magicNoteCommentFormat: next.magicNoteCommentFormat
       }

@@ -5683,6 +5683,14 @@ export function registerIpcHandlers(
   )
 
   registerHandler(
+    ipcChannels.magicTodosStatus,
+    (event) => {
+      assertTrustedSender(event, window)
+      return assistantDatabase.getMagicTodoStatus()
+    }
+  )
+
+  registerHandler(
     ipcChannels.magicTodosUpdate,
     (event, input: unknown) => {
       assertTrustedSender(event, window)

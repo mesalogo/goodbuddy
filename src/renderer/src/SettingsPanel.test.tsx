@@ -404,6 +404,7 @@ let applicationSettings: ApplicationSettings = {
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   magicNotesEnabled: false,
+  magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
 }
@@ -625,6 +626,7 @@ describe('SettingsPanel runtime files', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     }
@@ -1116,12 +1118,16 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
   })
 
-  it('toggles the Magic Notes platform entry setting', async () => {
+  it('toggles Magic Notes navigation settings', async () => {
     const onMagicNotesEnabledChange = vi.fn()
+    const onMagicNotesShowIncompleteTodoCountChange = vi.fn()
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
         onMagicNotesEnabledChange={onMagicNotesEnabledChange}
+        onMagicNotesShowIncompleteTodoCountChange={
+          onMagicNotesShowIncompleteTodoCountChange
+        }
         open
         onClearLocalData={vi.fn(async () => {})}
         onClose={vi.fn()}
@@ -1146,6 +1152,19 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(onMagicNotesEnabledChange).toHaveBeenCalledWith(true)
+    const countToggle = screen.getByRole('switch', {
+      name: '显示未完成待办数量'
+    })
+    expect(countToggle).toBeChecked()
+    fireEvent.click(countToggle)
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        magicNotesShowIncompleteTodoCount: false
+      })
+    )
+    expect(
+      onMagicNotesShowIncompleteTodoCountChange
+    ).toHaveBeenCalledWith(false)
     fireEvent.click(
       screen.getByRole('button', { name: '保存后自动' })
     )

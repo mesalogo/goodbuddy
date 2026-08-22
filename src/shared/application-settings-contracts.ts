@@ -30,6 +30,7 @@ const applicationPreferencesSchema = z
     updateSource: updateSourceSchema,
     modelDownloadSource: modelDownloadSourceSchema,
     magicNotesEnabled: z.boolean(),
+    magicNotesShowIncompleteTodoCount: z.boolean(),
     magicNoteCommentMode: magicNoteCommentModeSchema,
     magicNoteCommentFormat: magicNoteCommentFormatSchema
   })

@@ -185,6 +185,9 @@ type SettingsPanelProps = {
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
   magicNotesEnabled?: boolean
   onMagicNotesEnabledChange?: (enabled: boolean) => void
+  onMagicNotesShowIncompleteTodoCountChange?: (
+    enabled: boolean
+  ) => void
   onShortcutSettingsChanged?: (
     snapshot: GlobalShortcutSettingsSnapshot
   ) => void
@@ -542,6 +545,7 @@ export function SettingsPanel({
   onAppearanceThemeChange = () => {},
   magicNotesEnabled = false,
   onMagicNotesEnabledChange = () => {},
+  onMagicNotesShowIncompleteTodoCountChange = () => {},
   onShortcutSettingsChanged = () => {},
   onLeaveRequestReady = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
@@ -1857,6 +1861,9 @@ export function SettingsPanel({
             <PlatformFeaturesSettingsSection
               onDirtyChange={setPlatformFeaturesDirty}
               onMagicNotesEnabledChange={onMagicNotesEnabledChange}
+              onMagicNotesShowIncompleteTodoCountChange={
+                onMagicNotesShowIncompleteTodoCountChange
+              }
               onNotify={onNotify}
               onShortcutSettingsChanged={onShortcutSettingsChanged}
             />

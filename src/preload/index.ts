@@ -107,6 +107,7 @@ import type {
   MagicNoteDetail,
   MagicNotesSnapshot,
   MagicTodoItem,
+  MagicTodoStatus,
   MagicTodoUpdateResult,
   MagicTodosSnapshot
 } from '../shared/magic-notes-contracts'
@@ -1110,6 +1111,10 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.magicTodosList
       ) as Promise<MagicTodosSnapshot>,
+    getTodoStatus: () =>
+      ipcRenderer.invoke(
+        ipcChannels.magicTodosStatus
+      ) as Promise<MagicTodoStatus>,
     updateTodo: (input) =>
       ipcRenderer.invoke(
         ipcChannels.magicTodosUpdate,
@@ -1129,6 +1134,15 @@ const desktopApi: DesktopApi = {
       return () =>
         ipcRenderer.removeListener(
           ipcChannels.magicNotesAnalysisEvent,
+          handler
+        )
+    },
+    onTodoStatusChanged: (listener) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(ipcChannels.magicTodosStatusChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.magicTodosStatusChanged,
           handler
         )
     }

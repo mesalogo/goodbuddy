@@ -25,6 +25,9 @@ import {
 
 type PlatformFeaturesSettingsSectionProps = {
   onMagicNotesEnabledChange: (enabled: boolean) => void
+  onMagicNotesShowIncompleteTodoCountChange: (
+    enabled: boolean
+  ) => void
   onNotify?: (notification: AppNotificationInput) => void
   onDirtyChange?: (dirty: boolean) => void
   onShortcutSettingsChanged?: (
@@ -48,6 +51,7 @@ const shortcutErrorTranslationKeys: Record<
 
 export function PlatformFeaturesSettingsSection({
   onMagicNotesEnabledChange,
+  onMagicNotesShowIncompleteTodoCountChange,
   onNotify,
   onDirtyChange,
   onShortcutSettingsChanged
@@ -307,6 +311,32 @@ export function PlatformFeaturesSettingsSection({
       )
     } catch {
       setError(t('platformFeatures.errors.saveCommentModeFailed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const changeIncompleteTodoCount = async (
+    magicNotesShowIncompleteTodoCount: boolean
+  ): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates || !settings) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      const nextSettings = await updates.updateSettings({
+        magicNotesShowIncompleteTodoCount
+      })
+      setSettings(nextSettings)
+      onMagicNotesShowIncompleteTodoCountChange(
+        nextSettings.magicNotesShowIncompleteTodoCount
+      )
+    } catch {
+      setError(
+        t('platformFeatures.errors.saveIncompleteTodoCountFailed')
+      )
     } finally {
       setSaving(false)
     }
@@ -580,6 +610,31 @@ export function PlatformFeaturesSettingsSection({
             />
             <span>{t('platformFeatures.magicNotes.showEntry')}</span>
           </label>
+          <label className="toggle-row">
+            <input
+              checked={
+                settings.magicNotesShowIncompleteTodoCount
+              }
+              disabled={saving}
+              onChange={(event) =>
+                void changeIncompleteTodoCount(
+                  event.target.checked
+                )
+              }
+              role="switch"
+              type="checkbox"
+            />
+            <span>
+              {t(
+                'platformFeatures.magicNotes.showIncompleteTodoCount'
+              )}
+            </span>
+          </label>
+          <p className="settings-notice">
+            {t(
+              'platformFeatures.magicNotes.showIncompleteTodoCountHelp'
+            )}
+          </p>
           <div className="platform-feature-option">
             <span>
               {t('platformFeatures.magicNotes.commentMode')}
