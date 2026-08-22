@@ -8125,10 +8125,9 @@ describe('App', () => {
       screen.queryByRole('region', { name: '当前会话的任务' })
     ).not.toBeInTheDocument()
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '上下文' }))
     expect(
-      screen.getByText('尚未添加文件、截图或剪贴板内容。')
-    ).toBeInTheDocument()
+      screen.queryByRole('tab', { name: '上下文' })
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
     expect(
       screen.getByText(/选择文件后在当前工作区内预览/)

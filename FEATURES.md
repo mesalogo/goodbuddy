@@ -17,7 +17,7 @@
 - [x] **文件、截图、窗口、剪贴板上下文**：用户明确选择后才加入模型上下文。
 - [x] **富文本回答**：支持 GitHub Flavored Markdown、LaTeX 数学公式和受控 Mermaid 图表；大图可缩放、拖动或查看源码，失败时保留原始图表代码。
 - [ ] **项目 Agent Space**（规划中）：在 Project 中统一角色、知识、Skills/MCP、模型、审批策略、预算和超时，并支持模板复用。
-- [ ] **通用助手工作栏与执行空间**（规划中）：保留 Task Center 作为 Task 的单例索引，并把监督、Runtime、终端、进程、工作区、浏览器、成果和上下文作为始终可访问的应用级能力；除 Task Center 外的可绑定能力由用户选择跟随或固定目标，并逐步支持静态安全 HTML 预览、本机/SSH 执行空间和远程 Agent Runtime。详见 [Feature PRD](./docs/prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)。
+- [ ] **通用助手工作栏与执行空间**（规划中）：保留 Task Center 作为 Task 的单例索引，并把监督、Runtime、终端、进程、工作区、浏览器和成果作为始终可访问的应用级能力；除 Task Center 外的可绑定能力由用户选择跟随或固定目标，并逐步支持静态安全 HTML 预览、本机/SSH 执行空间和远程 Agent Runtime。附件与知识库继续由会话输入区管理，未来的记忆与历史执行上下文归入关联 Task。详见 [Feature PRD](./docs/prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)。
 
 ### Agent Runtime 与模型连接
 

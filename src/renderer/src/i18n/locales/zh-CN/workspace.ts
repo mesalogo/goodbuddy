@@ -75,10 +75,6 @@ export const workspace = {
         label: '任务中心',
         description: '处理待审批操作并管理自动化'
       },
-      context: {
-        label: '上下文',
-        description: '查看本次对话使用的附件、知识库与记忆'
-      },
       workspace: {
         label: '工作区',
         description: '浏览项目文件、Git 变更与文件内容'
@@ -127,18 +123,6 @@ export const workspace = {
         confirmDeleteAction: '停止后续运行',
         deleteMessage: '这会停止后续自动运行，但保留任务、会话和既有结果。'
       }
-    },
-    context: {
-      description: '查看当前对话实际使用的附件、知识库与已确认记忆。',
-      attachmentsTitle: '本次附件',
-      noAttachments: '尚未添加文件、截图或剪贴板内容。',
-      attachmentDetails: '{{kind}} · {{formattedSize}} 字节',
-      removeAttachment: '移除上下文 {{name}}',
-      librariesTitle: '已启用知识库',
-      noLibraries: '当前对话未启用知识库。',
-      documentCount: '{{formattedCount}} 个文档',
-      memoriesTitle: '已确认记忆',
-      noMemories: '当前范围没有已确认的长期记忆。'
     },
     workspace: {
       back: '返回工作区',

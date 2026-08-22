@@ -1,5 +1,4 @@
 import {
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -11,13 +10,11 @@ import {
   Plus,
   RefreshCw,
   ShieldAlert,
-  Upload,
-  X
+  Upload
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
-  AssistantMemory,
   AssistantSchedule,
   AssistantTask,
   WorkspaceChanges,
@@ -27,9 +24,7 @@ import type {
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type {
   ApprovalDecision,
-  BrowserLiveState,
-  ContextAttachment,
-  KnowledgeLibrary
+  BrowserLiveState
 } from '../../shared/contracts'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 import { SegmentedControl } from './WorkspacePrimitives'
@@ -40,7 +35,6 @@ import {
 
 export type AssistantSidebarTab =
   | 'tasks'
-  | 'context'
   | 'workspace'
   | 'browser'
   | 'results'
@@ -67,9 +61,6 @@ type RightAssistantSidebarProps = {
   tab: AssistantSidebarTab
   approvals: PendingSidebarApproval[]
   artifacts: SidebarArtifact[]
-  attachments: ContextAttachment[]
-  enabledLibraries: KnowledgeLibrary[]
-  memories: AssistantMemory[]
   schedules: AssistantSchedule[]
   tasks: AssistantTask[]
   conversationTitles: ReadonlyMap<string, string>
@@ -84,7 +75,6 @@ type RightAssistantSidebarProps = {
   onCreateCustomTask: () => void
   onImportArtifacts: () => Promise<void>
   onLoadArtifact: (artifactId: string) => Promise<void>
-  onRemoveAttachment: (attachmentId: string) => void
   onRefreshChanges: () => Promise<void>
   onListWorkspaceDirectory: (
     path: string
@@ -110,7 +100,6 @@ type RightAssistantSidebarProps = {
 
 const tabIds: AssistantSidebarTab[] = [
   'tasks',
-  'context',
   'workspace',
   'browser',
   'results'
@@ -173,9 +162,6 @@ export function RightAssistantSidebar({
   tab,
   approvals,
   artifacts,
-  attachments,
-  enabledLibraries,
-  memories,
   schedules,
   tasks,
   conversationTitles,
@@ -190,7 +176,6 @@ export function RightAssistantSidebar({
   onCreateCustomTask,
   onImportArtifacts,
   onLoadArtifact,
-  onRemoveAttachment,
   onRefreshChanges,
   onListWorkspaceDirectory,
   onLoadWorkspaceFile,
@@ -264,9 +249,6 @@ export function RightAssistantSidebar({
     'attention' | 'active' | 'paused' | 'finished'
   >('active')
   const [actionError, setActionError] = useState('')
-  const activeMemories = memories.filter(
-    (memory) => memory.status === 'confirmed'
-  )
   const artifactPreview =
     artifacts.find((artifact) => artifact.id === selectedArtifactId)
   const currentWorkspacePreview =
@@ -823,91 +805,6 @@ export function RightAssistantSidebar({
                   </article>
                 )
               })
-            )}
-          </section>
-        )}
-
-        {tab === 'context' && (
-          <section className="assistant-sidebar__section">
-            <p className="assistant-sidebar__section-description">
-              {t('sidebar.context.description')}
-            </p>
-            <h3>
-              <FileText size={15} />
-              {t('sidebar.context.attachmentsTitle')}
-            </h3>
-            {attachments.length === 0 ? (
-              <p className="assistant-sidebar__empty">
-                {t('sidebar.context.noAttachments')}
-              </p>
-            ) : (
-              attachments.map((attachment) => (
-                <article
-                  className="assistant-sidebar__context"
-                  key={attachment.id}
-                >
-                  <span>
-                    <strong>{attachment.name}</strong>
-                    <small>
-                      {t('sidebar.context.attachmentDetails', {
-                        kind: attachment.kind,
-                        formattedSize:
-                          attachment.size.toLocaleString(locale)
-                      })}
-                    </small>
-                  </span>
-                  <button
-                    aria-label={t(
-                      'sidebar.context.removeAttachment',
-                      { name: attachment.name }
-                    )}
-                    className="icon-button"
-                    onClick={() => onRemoveAttachment(attachment.id)}
-                    type="button"
-                  >
-                    <X size={14} />
-                  </button>
-                </article>
-              ))
-            )}
-            <h3>
-              <FolderTree size={15} />
-              {t('sidebar.context.librariesTitle')}
-            </h3>
-            {enabledLibraries.length === 0 ? (
-              <p className="assistant-sidebar__empty">
-                {t('sidebar.context.noLibraries')}
-              </p>
-            ) : (
-              enabledLibraries.map((library) => (
-                <div className="assistant-sidebar__library" key={library.id}>
-                  <strong>{library.name}</strong>
-                  <small>
-                    {t('sidebar.context.documentCount', {
-                      formattedCount:
-                        library.documentCount.toLocaleString(locale)
-                    })}
-                  </small>
-                </div>
-              ))
-            )}
-            <h3>
-              <CheckCircle2 size={15} />
-              {t('sidebar.context.memoriesTitle')}
-            </h3>
-            {activeMemories.length === 0 ? (
-              <p className="assistant-sidebar__empty">
-                {t('sidebar.context.noMemories')}
-              </p>
-            ) : (
-              activeMemories.map((memory) => (
-                <article
-                  className="assistant-sidebar__memory"
-                  key={memory.id}
-                >
-                  <span>{memory.content}</span>
-                </article>
-              ))
             )}
           </section>
         )}

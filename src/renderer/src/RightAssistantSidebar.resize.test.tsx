@@ -22,7 +22,7 @@ beforeEach(() => {
 })
 
 function renderSidebar({
-  tab = 'context',
+  tab = 'tasks',
   artifacts = [],
   onLoadArtifact = vi.fn(async () => undefined),
   restoreFocusRef
@@ -38,9 +38,6 @@ function renderSidebar({
       <RightAssistantSidebar
         approvals={[]}
         artifacts={artifacts}
-        attachments={[]}
-        enabledLibraries={[]}
-        memories={[]}
         schedules={[]}
         tasks={[]}
         conversationTitles={new Map()}
@@ -57,7 +54,6 @@ function renderSidebar({
         onOpenWorkspaceEntry={vi.fn(async () => undefined)}
         onInteractBrowser={vi.fn(async () => undefined)}
         onRefreshChanges={vi.fn(async () => undefined)}
-        onRemoveAttachment={vi.fn()}
         onRemoveSchedule={vi.fn(async () => undefined)}
         onRespondApproval={vi.fn()}
         onRunSchedule={vi.fn(async () => undefined)}
@@ -231,12 +227,12 @@ describe('RightAssistantSidebar resizing', () => {
     }
   })
 
-  it('exposes the task center and four reusable work surfaces', () => {
+  it('exposes the task center and three reusable work surfaces', () => {
     renderSidebar()
 
     expect(
       screen.getAllByRole('tab').map((tab) => tab.textContent)
-    ).toEqual(['任务中心', '上下文', '工作区', '浏览器', '成果'])
+    ).toEqual(['任务中心', '工作区', '浏览器', '成果'])
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()

@@ -3466,13 +3466,6 @@ function App(): React.JSX.Element {
         })),
     [activeProjectId, assistantArtifacts]
   )
-  const enabledSidebarLibraries = useMemo(
-    () =>
-      knowledgeSnapshot.libraries.filter((library) =>
-        enabledKnowledgeLibraryIds.includes(library.id)
-      ),
-    [enabledKnowledgeLibraryIds, knowledgeSnapshot.libraries]
-  )
   const pendingHeartbeatSuggestionCount = useMemo(() => {
     const memoryIds = new Set(
       heartbeatEntries.flatMap((entry) => entry.proposedMemoryIds)
@@ -6752,13 +6745,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  const removeAttachment = (attachmentId: string): void => {
-    void window.goodbuddy.context.remove(attachmentId)
-    updateAttachments((current) =>
-      current.filter((attachment) => attachment.id !== attachmentId)
-    )
-  }
-
   const startWebSpeechInput = async (): Promise<void> => {
     const SpeechRecognition =
       getSpeechRecognitionConstructor(window)
@@ -9854,11 +9840,8 @@ function App(): React.JSX.Element {
       <RightAssistantSidebar
         approvals={pendingSidebarApprovals}
         artifacts={sidebarArtifacts}
-        attachments={attachments}
         browserState={browserStates[activeId]}
         conversationTitles={conversationTitles}
-        enabledLibraries={enabledSidebarLibraries}
-        memories={assistantMemories}
         onCreateCustomTask={() => openCustomTaskDialog('current')}
         schedules={assistantSchedules}
         selectedTaskId={selectedAssistantTaskId}
@@ -9922,7 +9905,6 @@ function App(): React.JSX.Element {
             mergeArtifacts(current, [artifact])
           )
         }}
-        onRemoveAttachment={removeAttachment}
         onOpenTask={openAssistantTask}
         onRemoveSchedule={removeAssistantSchedule}
         onRespondApproval={(approval, decision) => {

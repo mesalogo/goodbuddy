@@ -78,11 +78,6 @@ export const workspace = {
         label: 'Task center',
         description: 'Review approvals and manage automations'
       },
-      context: {
-        label: 'Context',
-        description:
-          'View attachments, knowledge libraries, and memories used in this conversation'
-      },
       workspace: {
         label: 'Files',
         description: 'Browse project files, Git changes, and file contents'
@@ -133,22 +128,6 @@ export const workspace = {
         deleteMessage:
           'This stops future automatic runs but keeps the task, conversation, and existing results.'
       }
-    },
-    context: {
-      description:
-        'View the attachments, knowledge libraries, and confirmed memories used in this conversation.',
-      attachmentsTitle: 'Attachments',
-      noAttachments:
-        'No files, screenshots, or clipboard content have been added.',
-      attachmentDetails: '{{kind}} · {{formattedSize}} bytes',
-      removeAttachment: 'Remove {{name}} from context',
-      librariesTitle: 'Enabled knowledge libraries',
-      noLibraries:
-        'No knowledge libraries are enabled for this conversation.',
-      documentCount: '{{formattedCount}} documents',
-      memoriesTitle: 'Confirmed memories',
-      noMemories:
-        'There are no confirmed long-term memories in the current scope.'
     },
     workspace: {
       back: 'Back to workspace',

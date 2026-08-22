@@ -3433,27 +3433,21 @@ button > svg {
   background: var(--accent-subtle);
 }
 
-.assistant-sidebar__row span,
-.assistant-sidebar__context span,
-.assistant-sidebar__library {
+.assistant-sidebar__row span {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 3px;
 }
 
-.assistant-sidebar__row strong,
-.assistant-sidebar__context strong,
-.assistant-sidebar__library strong {
+.assistant-sidebar__row strong {
   overflow: hidden;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.assistant-sidebar__row small,
-.assistant-sidebar__context small,
-.assistant-sidebar__library small {
+.assistant-sidebar__row small {
   overflow: hidden;
   color: var(--text-muted);
   font-size: 9px;
@@ -3495,48 +3489,6 @@ button > svg {
   flex: 1;
   padding: 7px 5px;
   font-size: 9px;
-}
-
-.assistant-sidebar__context {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 9px;
-  gap: 8px;
-}
-
-.assistant-sidebar__library {
-  padding: 9px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 9px;
-  background: var(--surface-subtle);
-}
-
-.assistant-sidebar__memory {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 9px 10px;
-  border: 1px solid var(--accent-selected);
-  border-radius: 9px;
-  background: var(--accent-subtle);
-  color: var(--accent);
-  font-size: 10px;
-  gap: 8px;
-  line-height: 1.45;
-}
-
-.assistant-sidebar__memory > span {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.assistant-sidebar__memory > span small {
-  color: var(--warning);
-  font-size: 8px;
 }
 
 .assistant-sidebar__schedule-form {
@@ -12655,7 +12607,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .settings-section,
   .settings-tabs,
   .assistant-sidebar__row,
-  .assistant-sidebar__library,
   .assistant-sidebar__diff,
   .assistant-sidebar__preview pre,
   .tool-activity,
@@ -12680,7 +12631,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .topbar,
   .assistant-sidebar,
   .assistant-sidebar__tabs,
-  .assistant-sidebar__context,
   .assistant-sidebar__preview > header,
   .divider,
   .runtime-picker__divider,
@@ -13334,13 +13284,9 @@ details.settings-section > :not(summary) + :not(summary) {
 .assistant-sidebar__diff,
 .assistant-sidebar__empty,
 .assistant-sidebar__import,
-.assistant-sidebar__memory,
-.assistant-sidebar__memory > span small,
 .assistant-sidebar__preview > header small,
 .assistant-sidebar__preview pre,
 .assistant-sidebar__row small,
-.assistant-sidebar__context small,
-.assistant-sidebar__library small,
 .assistant-sidebar__schedule button,
 .assistant-sidebar__schedule small,
 .assistant-sidebar__schedule strong,
