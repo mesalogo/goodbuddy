@@ -251,24 +251,33 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
-  it('keeps the conversation action close to the sidebar edge', () => {
+  it('reveals the conversation action without reserving its space', () => {
     expect(stylesheet).toMatch(
       /\.conversation-row:has\(\.conversation-task-toggle\) \.conversation-item\s*\{[^}]*padding-left:\s*34px;/u
     )
     expect(stylesheet).toMatch(
       /\.conversation-task-toggle\s*\{[^}]*left:\s*3px;[^}]*width:\s*28px;[^}]*height:\s*28px;/u
     )
-    expect(stylesheet).toMatch(
-      /\.conversation-row \.conversation-item\s*\{[^}]*padding-right:\s*36px;/u
+    expect(stylesheet).not.toMatch(
+      /\.conversation-row \.conversation-item\s*\{[^}]*padding-right:/u
     )
     expect(stylesheet).toMatch(
       /\.conversation-more\s*\{[^}]*right:\s*5px;/u
     )
     expect(stylesheet).toMatch(
-      /\.conversation-row:has\(\.conversation-activity-indicator\)\s+\.conversation-item\s*\{[^}]*padding-right:\s*52px;/u
+      /\.conversation-row:hover \.conversation-more,\s*\.conversation-row:focus-within \.conversation-more,[^{]*\{[^}]*opacity:\s*1;/u
     )
     expect(stylesheet).toMatch(
-      /\.conversation-activity-indicator\s*\{[^}]*right:\s*38px;/u
+      /\.conversation-row:hover \.conversation-item small,[^{]*\.conversation-item small\s*\{[^}]*opacity:\s*0;/u
+    )
+    expect(stylesheet).not.toContain(
+      '.conversation-row--active .conversation-more'
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-row:has\(\.conversation-activity-indicator\)\s+\.conversation-item\s*\{[^}]*padding-right:\s*28px;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.conversation-activity-indicator\s*\{[^}]*right:\s*10px;/u
     )
     expect(stylesheet).not.toContain('.conversation-delete')
   })

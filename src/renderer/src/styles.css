@@ -2846,6 +2846,7 @@ textarea:focus-visible {
   flex: 0 0 auto;
   color: var(--text-muted);
   font-size: var(--font-caption);
+  transition: opacity var(--motion-fast) ease-out;
 }
 
 .overflow-marquee {
@@ -8900,18 +8901,14 @@ details.settings-section > :not(summary) + :not(summary) {
   align-items: center;
 }
 
-.conversation-row .conversation-item {
-  padding-right: 36px;
-}
-
 .conversation-row:has(.conversation-activity-indicator)
   .conversation-item {
-  padding-right: 52px;
+  padding-right: 28px;
 }
 
 .conversation-activity-indicator {
   position: absolute;
-  right: 38px;
+  right: 10px;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -8920,6 +8917,7 @@ details.settings-section > :not(summary) + :not(summary) {
   box-shadow: 0 0 0 4px
     color-mix(in srgb, var(--success) 14%, transparent);
   pointer-events: none;
+  transition: right var(--motion-fast) ease-out;
 }
 
 .conversation-more {
@@ -8940,9 +8938,23 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .conversation-row:hover .conversation-more,
-.conversation-row--active .conversation-more,
+.conversation-row:focus-within .conversation-more,
 .conversation-more:focus-visible {
   opacity: 1;
+}
+
+.conversation-row:hover .conversation-item small,
+.conversation-row:focus-within .conversation-item small,
+.conversation-row:has(.conversation-more[aria-expanded='true'])
+  .conversation-item small {
+  opacity: 0;
+}
+
+.conversation-row:hover .conversation-activity-indicator,
+.conversation-row:focus-within .conversation-activity-indicator,
+.conversation-row:has(.conversation-more[aria-expanded='true'])
+  .conversation-activity-indicator {
+  right: 38px;
 }
 
 .conversation-more[aria-expanded='true'] {

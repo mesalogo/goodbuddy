@@ -7640,13 +7640,7 @@ function App(): React.JSX.Element {
               `conversation-branch-disabled-${conversation.id}`
             return (
             <div className="conversation-entry" key={conversation.id}>
-              <div
-                className={
-                  conversation.id === activeId
-                    ? 'conversation-row conversation-row--active'
-                    : 'conversation-row'
-                }
-              >
+              <div className="conversation-row">
                 {conversationTasks.length > 0 && (
                   <button
                     aria-expanded={tasksExpanded}
