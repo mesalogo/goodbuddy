@@ -137,10 +137,6 @@ export function ChannelProjectSettingsFields({
       })}
       className={`channel-project-settings channel-project-settings--${variant}`}
     >
-      <div className="channel-project-settings__identity">
-        <span>{t('channels.project.identity')}</span>
-        <strong>{value.name}</strong>
-      </div>
       <label className="field">
         <span>{t('channels.project.descriptionLabel')}</span>
         <textarea

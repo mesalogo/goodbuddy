@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  builtinEmbeddingConnectionId,
+  legacyEmbeddingConnectionId,
   runtimeSettingsInputSchema,
   type RuntimeSettingsInput
 } from '../shared/contracts'
@@ -479,7 +481,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
-    expect(persisted.version).toBe(18)
+    expect(persisted.version).toBe(19)
     expect(persisted).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
@@ -758,7 +760,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(18)
+    expect(persisted.version).toBe(19)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -778,7 +780,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(18)
+    expect(persisted.version).toBe(19)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -945,6 +947,118 @@ describe('RuntimeSettingsStore', () => {
         'https://vectors.example/v1/embeddings',
       knowledgeEmbeddingApiKey: 'vector-secret-value'
     })
+  })
+
+  it('migrates version 18 embedding settings into a separate user connection', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        knowledgeEmbeddingEnabled: true,
+        knowledgeEmbeddingBaseUrl:
+          'https://legacy-vectors.example/v1/embeddings',
+        knowledgeEmbeddingModel: 'legacy/embed-large',
+        knowledgeEmbeddingApiKey: {
+          action: 'replace',
+          value: 'legacy-vector-secret'
+        }
+      })
+    )
+    const previous = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    previous.version = 18
+    delete previous.embeddingConnections
+    delete previous.activeEmbeddingConnectionId
+    await writeFile(filePath, JSON.stringify(previous), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      activeEmbeddingConnectionId: legacyEmbeddingConnectionId,
+      embeddingConnections: [
+        {
+          id: builtinEmbeddingConnectionId,
+          kind: 'builtin',
+          apiKeyConfigured: false,
+          credentialSource: 'none'
+        },
+        {
+          id: legacyEmbeddingConnectionId,
+          kind: 'openai-compatible',
+          baseUrl: 'https://legacy-vectors.example/v1/embeddings',
+          modelName: 'legacy/embed-large',
+          apiKeyConfigured: true,
+          credentialSource: 'encrypted'
+        }
+      ],
+      knowledgeEmbeddingBaseUrl:
+        'https://legacy-vectors.example/v1/embeddings',
+      knowledgeEmbeddingModel: 'legacy/embed-large'
+    })
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      activeEmbeddingConnection: {
+        id: legacyEmbeddingConnectionId,
+        apiKey: 'legacy-vector-secret'
+      },
+      knowledgeEmbeddingApiKey: 'legacy-vector-secret'
+    })
+  })
+
+  it('round-trips embedding connections without assigning them to Runtime profiles', async () => {
+    const { filePath, store } = await createStore()
+    const connectionId = '00000000-0000-4000-8000-000000000081'
+    await store.update(
+      settings({
+        embeddingConnections: [
+          {
+            id: builtinEmbeddingConnectionId,
+            name: 'GoodBuddy 内置向量模型',
+            kind: 'builtin'
+          },
+          {
+            id: connectionId,
+            name: '团队向量模型',
+            kind: 'openai-compatible',
+            baseUrl: 'https://team-vectors.example/v1/embeddings',
+            modelName: 'team/embed-v2',
+            authentication: 'api-key',
+            apiKey: {
+              action: 'replace',
+              value: 'team-vector-secret'
+            }
+          }
+        ],
+        activeEmbeddingConnectionId: connectionId
+      })
+    )
+
+    const reloaded = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(reloaded.getResolvedSettings()).resolves.toMatchObject({
+      activeEmbeddingConnectionId: connectionId,
+      activeEmbeddingConnection: {
+        id: connectionId,
+        kind: 'openai-compatible',
+        apiKey: 'team-vector-secret'
+      },
+      modelProfiles: [
+        expect.not.objectContaining({ id: connectionId })
+      ]
+    })
+    const publicSettings = await reloaded.getPublicSettings()
+    expect(JSON.stringify(publicSettings)).not.toContain(
+      'team-vector-secret'
+    )
+    expect(publicSettings.embeddingConnections).toContainEqual(
+      expect.objectContaining({
+        id: connectionId,
+        apiKeyConfigured: true,
+        credentialSource: 'encrypted'
+      })
+    )
+    expect(
+      (JSON.parse(await readFile(filePath, 'utf8')) as {
+        version: number
+      }).version
+    ).toBe(19)
   })
 
   it('migrates version 13 with reranking disabled by default', async () => {
@@ -1451,7 +1565,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(18)
+    expect(persisted.version).toBe(19)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -1750,7 +1864,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 18,
+      version: 19,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -2029,7 +2143,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(18)
+    expect(persisted.version).toBe(19)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

@@ -108,6 +108,9 @@ describe('SpeechModelSettingsSection', () => {
       })
     ).toBeInTheDocument()
     expect(screen.getByText('模型仓库自定义许可')).toBeInTheDocument()
+    expect(screen.queryByText(snapshot.rootDirectory)).not.toBeInTheDocument()
+    expect(screen.queryByText('Current model download source: ModelScope')).not.toBeInTheDocument()
+    expect(screen.getByText('ModelScope')).toBeInTheDocument()
     expect(screen.queryByText('Model details')).not.toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', {

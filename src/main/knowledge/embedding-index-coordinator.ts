@@ -19,6 +19,14 @@ export interface EmbeddingIndexProvider {
   readonly model: string
   readonly fingerprint?: string
   embed(input: readonly string[], signal?: AbortSignal): Promise<number[][]>
+  embedQuery?(
+    input: readonly string[],
+    signal?: AbortSignal
+  ): Promise<number[][]>
+  embedDocuments?(
+    input: readonly string[],
+    signal?: AbortSignal
+  ): Promise<number[][]>
 }
 
 export interface EmbeddingIndexItem {
@@ -161,11 +169,13 @@ export async function diagnoseEmbeddingProvider(
   const now = options.now ?? Date.now
   const startedAt = now()
   try {
-    const vectors = await provider.embed(
-      [options.probeText ?? 'GoodBuddy 向量模型连接测试'],
-      options.signal
-    )
-    if (vectors.length !== 1 || !vectors[0]) {
+    const queryDiagnosticInput = [
+      options.probeText ?? 'GoodBuddy 向量模型连接测试'
+    ]
+    const queryVectors = provider.embedQuery
+      ? await provider.embedQuery(queryDiagnosticInput, options.signal)
+      : await provider.embed(queryDiagnosticInput, options.signal)
+    if (queryVectors.length !== 1 || !queryVectors[0]) {
       throw new EmbeddingOperationError({
         code: 'invalid_response',
         message: '向量服务返回了无效结果。',
@@ -173,7 +183,27 @@ export async function diagnoseEmbeddingProvider(
         remedy: '请确认服务为每个输入返回一个有效向量。'
       })
     }
-    const dimensions = validateVector(vectors[0])
+    const dimensions = validateVector(queryVectors[0])
+    if (provider.embedQuery || provider.embedDocuments) {
+      const documentVectors = provider.embedDocuments
+        ? await provider.embedDocuments(
+            ['GoodBuddy 知识文档向量连接测试'],
+            options.signal
+          )
+        : await provider.embed(
+            ['GoodBuddy 知识文档向量连接测试'],
+            options.signal
+          )
+      if (documentVectors.length !== 1 || !documentVectors[0]) {
+        throw new EmbeddingOperationError({
+          code: 'invalid_response',
+          message: '向量服务返回了无效结果。',
+          retryable: false,
+          remedy: '请确认服务为每个输入返回一个有效向量。'
+        })
+      }
+      validateVector(documentVectors[0], dimensions)
+    }
     const checkedAt = now()
     return {
       status: 'available',
@@ -394,10 +424,10 @@ export class EmbeddingIndexCoordinator {
               offset,
               offset + this.batchSize
             )
-            const vectors = await provider.embed(
-              batch.map((item) => item.content),
-              signal
-            )
+            const embeddingInput = batch.map((item) => item.content)
+            const vectors = provider.embedDocuments
+              ? await provider.embedDocuments(embeddingInput, signal)
+              : await provider.embed(embeddingInput, signal)
             if (vectors.length !== batch.length) {
               throw new EmbeddingOperationError({
                 code: 'invalid_response',

@@ -68,6 +68,98 @@ describe('OpenAIEmbeddingClient', () => {
     )
   })
 
+  it('encodes query and document roles explicitly and fingerprints the recipe', async () => {
+    const bodies: unknown[] = []
+    const transport = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        input: string[]
+      }
+      bodies.push(body)
+      return new Response(
+        JSON.stringify({
+          data: body.input.map((_, index) => ({
+            index,
+            embedding: [1, 2, 3]
+          }))
+        })
+      )
+    })
+    const options = {
+      endpoint: 'https://vectors.example/v1/embeddings',
+      model: 'embed-v2',
+      dimensions: 3,
+      encodingRecipe: {
+        recipeId: 'query-passage',
+        queryTemplate: 'query: {text}',
+        documentTemplate: 'passage: {text}'
+      },
+      fetch: transport
+    } as const
+    const client = new OpenAIEmbeddingClient(options)
+    const changedRecipe = new OpenAIEmbeddingClient({
+      ...options,
+      encodingRecipe: {
+        ...options.encodingRecipe,
+        queryTemplate: 'search: {text}'
+      }
+    })
+
+    await client.embedQuery(['question'])
+    await client.embedDocuments(['answer'])
+    await client.embed(['legacy document'])
+
+    expect(bodies).toEqual([
+      {
+        model: 'embed-v2',
+        input: ['query: question'],
+        dimensions: 3
+      },
+      {
+        model: 'embed-v2',
+        input: ['passage: answer'],
+        dimensions: 3
+      },
+      {
+        model: 'embed-v2',
+        input: ['passage: legacy document'],
+        dimensions: 3
+      }
+    ])
+    expect(client.fingerprint).not.toBe(changedRecipe.fingerprint)
+    expect(client.fingerprint).not.toContain('vectors.example')
+  })
+
+  it('rejects vectors that do not match configured dimensions', async () => {
+    const client = new OpenAIEmbeddingClient({
+      endpoint: 'https://vectors.example/v1/embeddings',
+      model: 'embed-v2',
+      dimensions: 2,
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ index: 0, embedding: [1, 2, 3] }]
+          })
+        )
+    })
+
+    await expect(client.embedQuery(['question'])).rejects.toThrow(
+      'configured dimensions'
+    )
+  })
+
+  it('rejects unsupported encoding behavior instead of silently changing it', () => {
+    expect(
+      () =>
+        new OpenAIEmbeddingClient({
+          endpoint: 'https://vectors.example/v1/embeddings',
+          model: 'embed-v2',
+          encodingRecipe: {
+            pooling: 'mean'
+          } as never
+        })
+    ).toThrow('pooling must be provider-managed')
+  })
+
   it('distinguishes its request timeout from caller cancellation', async () => {
     const waitForAbort = vi.fn<typeof fetch>(
       async (_input, init) =>

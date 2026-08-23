@@ -1,6 +1,5 @@
 export const knowledge = {
   page: {
-    eyebrow: '知识',
     title: '知识库',
     description: '管理文件、目录和网页来源，并查看索引与图谱。'
   },
@@ -156,46 +155,23 @@ export const knowledge = {
     eyebrow: '当前知识库：{{libraryName}}',
     title: '检索测试',
     description:
-      '使用临时参数直接验证当前知识库的召回结果。本测试不会创建对话、调用大模型或修改知识内容。',
+      '临时参数仅用于本次测试；不会创建对话、调用大模型或修改知识内容。',
     close: '关闭检索测试',
     query: {
       title: '测试问题',
-      help: '输入一个真实问题，查看各检索通道、排名和最终上下文。',
       label: '检索问题',
       placeholder: '例如：如何为离线环境配置文档解析？',
       count: '{{count}} / 4000 字'
-    },
-    pipeline: {
-      recall: {
-        title: '召回候选',
-        summary: '最多 {{count}} 个融合候选',
-        pending: '设置有效参数后计算'
-      },
-      rerank: {
-        title: '本地重排',
-        enabled: '重排最多 {{count}} 个候选',
-        disabled: '已关闭，保留融合排名'
-      },
-      select: {
-        title: '最终结果',
-        summary: '保留前 {{count}} 个分块'
-      },
-      context: {
-        title: '组装上下文',
-        summary: '预算 {{count}} 字符'
-      }
     },
     settings: {
       title: '本次测试参数',
       temporary: '这些调整只影响本次测试。需要长期使用时，请保存为当前知识库默认值。',
       groups: {
         recall: {
-          title: '候选召回',
-          description: '控制首轮检索范围、过滤阈值和各检索通道对融合排名的影响。'
+          title: '候选召回'
         },
         output: {
-          title: '重排与上下文',
-          description: '控制候选排序、最终保留数量，以及实际送入模型的上下文范围。'
+          title: '重排与上下文'
         }
       },
       candidateMultiplier: '召回倍数',
@@ -467,9 +443,6 @@ export const knowledge = {
   documents: {
     sources: {
       title: '内容来源',
-      description: '导入内容后会自动解析并建立检索索引。',
-      descriptionWithGraph:
-        '导入内容后会自动解析、建立检索索引并按当前策略更新知识图谱。',
       emptyTitle: '尚未连接内容来源',
       emptyDescription:
         '可选择文件、目录或 URL；也可以直接将文件拖入上方区域。',
@@ -531,15 +504,8 @@ export const knowledge = {
       '启用后，新导入和重新同步的文档会按所选策略抽取图谱。',
     strategyAriaLabel: '知识图谱抽取策略',
     askDescription: '“按需询问”不会自动生成图谱，也不能执行重新抽取。',
-    graphCapability: {
-      title: '可选能力',
-      description: '按需开启额外能力；未启用的能力不会出现在工作区中。',
-      enabledDescription: '知识图谱已启用，可在“知识图谱”中探索关系和管理图谱设置。',
-      disabledDescription: '启用后才会显示图谱探索、抽取策略和本体定义。'
-    },
     graphConfiguration: {
-      title: '抽取方式',
-      description: '控制新导入、重新同步和显式重建时如何生成实体、关系与证据。'
+      title: '抽取方式'
     },
     chunking: {
       title: '分块策略',
@@ -588,8 +554,7 @@ export const knowledge = {
     },
     vectorIndex: {
       title: '向量索引',
-      description:
-        '查看当前知识库在现用向量模型下的覆盖情况，并只重建这个知识库。',
+      description: '范围：当前知识库。',
       rebuild: '重建向量索引',
       rebuilding: '正在重建…',
       cancel: '取消重建',

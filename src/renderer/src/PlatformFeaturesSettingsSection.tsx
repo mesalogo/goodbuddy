@@ -508,22 +508,19 @@ export function PlatformFeaturesSettingsSection({
           <div className="capability-card__header">
             <div>
               <strong>
-                {t('platformFeatures.modelDownloadSource.cardTitle')}
+                {t('platformFeatures.modelDownloadSource.title')}
               </strong>
               <small>
                 {t(
-                  'platformFeatures.modelDownloadSource.cardDescription'
+                  'platformFeatures.modelDownloadSource.description'
                 )}
               </small>
             </div>
           </div>
           <fieldset className="model-download-source">
-            <legend>
+            <legend className="sr-only">
               {t('platformFeatures.modelDownloadSource.title')}
             </legend>
-            <p>
-              {t('platformFeatures.modelDownloadSource.description')}
-            </p>
             {(
               ['modelscope', 'hugging-face'] as const
             ).map((source) => (
@@ -561,16 +558,6 @@ export function PlatformFeaturesSettingsSection({
               {sourceError}
             </p>
           )}
-          <p className="model-download-source__current">
-            {t('platformFeatures.modelDownloadSource.current', {
-              source: t(
-                `modelDownloadSources.${settings.modelDownloadSource}`
-              )
-            })}
-          </p>
-          <p className="settings-notice">
-            {t('platformFeatures.modelDownloadSource.activeDownloadNote')}
-          </p>
         </article>
         ) : (
           !error && (

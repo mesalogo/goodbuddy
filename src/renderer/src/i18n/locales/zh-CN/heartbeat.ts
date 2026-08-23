@@ -5,10 +5,8 @@ export const heartbeat = {
     unknownTime: '时间未知'
   },
   center: {
-    eyebrow: 'SMART HEARTBEAT',
     title: '智能心跳',
-    description:
-      '定期回顾经历、沉淀记忆、发现问题，并把每次变化转化为可处理的成长建议。',
+    description: '按计划只读回顾所选范围，不调用工具。',
     scope: {
       currentProject: '当前项目',
       global: '全局'
@@ -35,7 +33,6 @@ export const heartbeat = {
       plans: '心跳计划'
     },
     currentStatus: {
-      eyebrow: 'CURRENT PULSE',
       title: '当前状态',
       activePlans: '{{formattedCount}} 个计划运行中',
       disabled: '尚未启用',
@@ -82,7 +79,6 @@ export const heartbeat = {
       actionRateAriaLabel: '建议任务完成率 {{percent}}'
     },
     trend: {
-      eyebrow: 'GROWTH TREND',
       title: '成长趋势',
       empty:
         '完成心跳后，这里会显示洞察、记忆与行动建议的变化。',
@@ -93,7 +89,6 @@ export const heartbeat = {
         '{{date}}：{{insights}} 条洞察，{{memories}} 条记忆建议，{{actions}} 个行动建议'
     },
     latest: {
-      eyebrow: 'LATEST REPORT',
       title: '本次心跳',
       viewHistory: '查看心跳轨迹',
       handleSuggestions: '处理 {{formattedCount}} 条建议',
@@ -101,7 +96,6 @@ export const heartbeat = {
         '尚无心跳报告。运行一次心跳后，你会在这里看到本次学到了什么。'
     },
     suggestions: {
-      memoryEyebrow: 'MEMORY GROWTH',
       memoryTitle: '待确认记忆',
       memoryCount: '{{formattedCount}} 条',
       memoryEmpty: '当前没有等待确认的记忆建议。',
@@ -111,7 +105,6 @@ export const heartbeat = {
       expandContent: '查看完整内容',
       confirmMemory: '确认记忆',
       ignore: '忽略',
-      taskEyebrow: 'NEXT ACTIONS',
       taskTitle: '行动建议',
       taskCount: '{{formattedCount}} 个',
       taskEmpty: '当前没有由智能心跳产生的行动建议。',
@@ -120,7 +113,6 @@ export const heartbeat = {
       ignoreSuggestion: '忽略建议'
     },
     history: {
-      timelineEyebrow: 'HEARTBEAT TIMELINE',
       timelineTitle: '成长轨迹',
       reportCount: '{{formattedCount}} 份报告',
       emptyTimeline: '完成心跳后，每次学习和变化都会沉淀在这里。',
@@ -129,7 +121,6 @@ export const heartbeat = {
       collapseReport: '收起报告',
       expandReport: '展开完整报告',
       loadMoreReports: '加载更多心跳报告',
-      auditEyebrow: 'RUN AUDIT',
       auditTitle: '运行记录',
       runCount: '{{formattedCount}} 次',
       emptyRuns: '尚无智能心跳运行记录。',
@@ -166,8 +157,7 @@ export const heartbeat = {
   },
   settings: {
     title: '智能心跳',
-    description:
-      '定期回顾经历、沉淀记忆、发现问题，并把变化转化为可处理的成长建议。智能心跳只读且不调用工具。',
+    description: '心跳计划按时只读运行，不调用工具。',
     recurrenceAriaLabel: '心跳重复规则',
     recurrenceLabel: '重复规则',
     daily: '每天',

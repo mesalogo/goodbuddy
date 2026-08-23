@@ -2,118 +2,202 @@ import {
   cleanup,
   fireEvent,
   render,
-  screen
+  screen,
+  within
 } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type {
-  EmbeddingConfigurationSummary
-} from '../../shared/embedding-contracts'
-import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi
+} from 'vitest'
+import {
+  EmbeddingSettingsSection,
+  type EmbeddingSettingsSectionProps
+} from './EmbeddingSettingsSection'
 import { changeUiLocale } from './i18n'
 
-const configuration: EmbeddingConfigurationSummary = {
-  provider: 'openai-compatible',
-  model: 'text-embedding-3-small',
-  endpoint: 'https://vectors.example/v1/embeddings',
-  credentialConfigured: true
+const connections: EmbeddingSettingsSectionProps['connections'] = [
+  {
+    id: 'builtin',
+    name: 'GoodBuddy 内置',
+    kind: 'builtin',
+    model: 'granite-embedding-107m',
+    statusText: '尚未安装',
+    installed: false
+  },
+  {
+    id: 'custom',
+    name: '公司向量服务',
+    kind: 'openai-compatible',
+    model: 'bge-m3',
+    endpoint: 'https://vectors.example/v1/embeddings',
+    authentication: 'api-key',
+    apiKey: '',
+    apiKeyConfigured: true,
+    statusText: '已配置凭据'
+  }
+]
+
+function renderSection(
+  overrides: Partial<EmbeddingSettingsSectionProps> = {}
+): EmbeddingSettingsSectionProps {
+  const props: EmbeddingSettingsSectionProps = {
+    connections,
+    currentConnectionId: 'custom',
+    selectedConnectionId: 'custom',
+    enabled: true,
+    secureStorageAvailable: true,
+    onEnabledChange: vi.fn(),
+    onAddConnection: vi.fn(),
+    onSelectConnection: vi.fn(),
+    onSetCurrent: vi.fn(),
+    onUpdateConnection: vi.fn(),
+    onDeleteConnection: vi.fn(),
+    onDownloadBuiltin: vi.fn(),
+    onCancelBuiltin: vi.fn(),
+    onImportBuiltin: vi.fn(),
+    onRemoveBuiltin: vi.fn(),
+    onTestConnection: vi.fn(),
+    ...overrides
+  }
+  render(<EmbeddingSettingsSection {...props} />)
+  return props
 }
 
-afterEach(() => {
-  cleanup()
+beforeEach(async () => {
+  await changeUiLocale('zh-CN')
 })
 
+afterEach(cleanup)
+
 describe('EmbeddingSettingsSection', () => {
-  it('keeps model settings limited to connection details and diagnostics', () => {
-    const onTest = vi.fn()
-    render(
-      <EmbeddingSettingsSection
-        configuration={configuration}
-        onTest={onTest}
-      />
-    )
+  it('uses the LLM connection manager layout with one visible title', () => {
+    renderSection()
 
+    expect(screen.getAllByText('向量模型连接')).toHaveLength(1)
+    const section = screen.getByRole('region', { name: '向量模型' })
+    expect(section.querySelectorAll('.model-connection-manager')).toHaveLength(1)
+    expect(section.querySelector('.model-connection-list')).toBeInTheDocument()
+    expect(section.querySelector('.model-connection-detail')).toBeInTheDocument()
     expect(
-      screen.getByRole('heading', { name: '向量模型连接' })
+      screen.getByRole('list', { name: '向量模型连接列表' })
     ).toBeInTheDocument()
-    expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument()
-    expect(screen.getByText('已配置凭据')).toBeInTheDocument()
+    expect(screen.getByText('当前使用')).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: /重建向量索引/u })
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText(/知识向量索引/u)).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '测试向量模型' }))
-    expect(onTest).toHaveBeenCalledOnce()
+      screen.getByText(
+        '建立索引时会向 vectors.example 发送知识分块，检索时会发送查询。'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Agent Runtime/u)).not.toBeInTheDocument()
   })
 
-  it('renders connection copy in English without translating model data', async () => {
-    await changeUiLocale('en-US')
-    render(
-      <EmbeddingSettingsSection
-        configuration={configuration}
-        onTest={vi.fn()}
-      />
-    )
+  it('selects a peer connection without changing the current draft', () => {
+    const props = renderSection()
 
-    expect(
-      screen.getByRole('heading', {
-        name: 'Embedding model connection'
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑向量模型连接 GoodBuddy 内置'
       })
-    ).toBeInTheDocument()
-    expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Test embedding model' })
-    ).toBeInTheDocument()
+    )
+
+    expect(props.onSelectConnection).toHaveBeenCalledWith('builtin')
+    expect(props.onSetCurrent).not.toHaveBeenCalled()
   })
 
-  it('shows dimensions and latency from a real diagnostic result', () => {
-    render(
-      <EmbeddingSettingsSection
-        configuration={configuration}
-        diagnostic={{
-          status: 'available',
-          provider: 'openai-compatible',
-          model: 'text-embedding-3-small',
-          checkedAt: 1_700_000_000_000,
-          latencyMs: 126,
-          dimensions: 1_536
-        }}
-        onTest={vi.fn()}
-      />
+  it('keeps custom definitions editable while retrieval is disabled', () => {
+    const props = renderSection({ enabled: false })
+
+    expect(screen.getByRole('radio', { name: '当前连接' })).toBeDisabled()
+    expect(
+      screen.getByRole('button', {
+        name: '测试向量模型连接 公司向量服务'
+      })
+    ).toBeDisabled()
+    const endpoint = screen.getByLabelText('向量接口 URL')
+    expect(endpoint).toBeEnabled()
+    fireEvent.change(endpoint, {
+      target: { value: 'https://new.example/v1/embeddings' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '删除向量模型连接 公司向量服务'
+      })
     )
+    expect(props.onUpdateConnection).toHaveBeenCalledWith('custom', {
+      endpoint: 'https://new.example/v1/embeddings'
+    })
+    expect(props.onDeleteConnection).toHaveBeenCalledWith('custom')
+  })
+
+  it('shows read-only builtin metadata and model actions', () => {
+    const props = renderSection({
+      enabled: false,
+      selectedConnectionId: 'builtin'
+    })
+    const detail = document.querySelector<HTMLElement>(
+      '.model-connection-detail'
+    )!
+
+    expect(within(detail).getByText('granite-embedding-107m')).toBeInTheDocument()
+    expect(within(detail).getByText('尚未安装')).toBeInTheDocument()
+    expect(within(detail).queryByText(/本机知识分块/u)).not.toBeInTheDocument()
+    expect(within(detail).queryByText(/知识分块和查询/u)).not.toBeInTheDocument()
+    expect(within(detail).queryByRole('textbox')).not.toBeInTheDocument()
+    const download = within(detail).getByRole('button', {
+      name: '下载 GoodBuddy 内置'
+    })
+    expect(download).toBeEnabled()
+    fireEvent.click(download)
+    fireEvent.click(
+      within(detail).getByRole('button', {
+        name: '从 ZIP 导入 GoodBuddy 内置'
+      })
+    )
+    expect(props.onDownloadBuiltin).toHaveBeenCalledWith(
+      'granite-embedding-107m'
+    )
+    expect(props.onImportBuiltin).toHaveBeenCalledWith(
+      'granite-embedding-107m'
+    )
+  })
+
+  it('identifies a loopback custom endpoint without showing a remote warning', () => {
+    renderSection({
+      connections: [
+        {
+          ...connections[1]!,
+          endpoint: 'http://127.0.0.1:11434/v1/embeddings'
+        }
+      ],
+      currentConnectionId: 'custom',
+      selectedConnectionId: 'custom'
+    })
+
+    expect(
+      screen.getByText(
+        '知识分块和查询将发送到此设备上的 127.0.0.1:11434。'
+      )
+    ).toHaveClass('settings-notice')
+  })
+
+  it('renders diagnostic dimensions and latency in the selected detail', () => {
+    renderSection({
+      diagnostic: {
+        status: 'available',
+        provider: 'openai-compatible',
+        model: 'bge-m3',
+        checkedAt: 1_700_000_000_000,
+        latencyMs: 126,
+        dimensions: 1_536
+      }
+    })
 
     expect(screen.getByText('测试成功')).toBeInTheDocument()
     expect(
       screen.getByText('服务返回 1536 维向量，耗时 126 毫秒。')
     ).toBeInTheDocument()
-  })
-
-  it('renders a safe actionable diagnostic error', () => {
-    render(
-      <EmbeddingSettingsSection
-        configuration={configuration}
-        diagnostic={{
-          status: 'unavailable',
-          provider: 'openai-compatible',
-          model: 'missing-model',
-          checkedAt: 1,
-          latencyMs: 25,
-          error: {
-            code: 'model_not_found',
-            message: '未找到指定的向量模型。',
-            retryable: false,
-            remedy: '请确认模型名称正确。'
-          }
-        }}
-        onTest={vi.fn()}
-      />
-    )
-
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      '未找到指定的向量模型。'
-    )
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      '处理建议：请确认模型名称正确。'
-    )
   })
 })

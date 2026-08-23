@@ -158,6 +158,14 @@ export interface EmbeddingProvider {
   readonly model: string
   readonly fingerprint?: string
   embed(input: readonly string[], signal?: AbortSignal): Promise<number[][]>
+  embedQuery?(
+    input: readonly string[],
+    signal?: AbortSignal
+  ): Promise<number[][]>
+  embedDocuments?(
+    input: readonly string[],
+    signal?: AbortSignal
+  ): Promise<number[][]>
 }
 
 export interface RerankProviderResult {

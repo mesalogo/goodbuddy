@@ -2,13 +2,17 @@ const { existsSync, readFileSync, rmSync } = require('node:fs')
 const { gzipSync } = require('node:zlib')
 const { resolve } = require('node:path')
 
+// These are hard regression ceilings, not user-experience targets. In
+// particular, do not lazy-load one peer tab solely to stay below a ceiling.
+// The Settings ceiling is the validated 2026-08-23 production baseline
+// (648.78 kB raw / 97.79 kB gzip), rounded up with about 15% review headroom.
 const rendererBundleBudgets = Object.freeze({
   initial: Object.freeze({ raw: 3_500_000, gzip: 720_000 }),
   knowledge: Object.freeze({ raw: 330_000, gzip: 50_000 }),
   graph: Object.freeze({ raw: 3_500_000, gzip: 720_000 }),
   activity: Object.freeze({ raw: 55_000, gzip: 9_000 }),
   magicNotes: Object.freeze({ raw: 630_000, gzip: 130_000 }),
-  settings: Object.freeze({ raw: 650_000, gzip: 105_000 })
+  settings: Object.freeze({ raw: 750_000, gzip: 115_000 })
 })
 
 function normalizePath(value) {
@@ -29,10 +33,21 @@ function findEntryKey(manifest) {
 
 function findSourceKey(manifest, sourceSuffix) {
   const normalizedSuffix = normalizePath(sourceSuffix)
-  const matches = Object.entries(manifest).filter(([key, item]) => {
+  let matches = Object.entries(manifest).filter(([key, item]) => {
     const source = normalizePath(item.src || key)
     return source.endsWith(normalizedSuffix)
   })
+  if (matches.length === 0) {
+    const sourceName = normalizedSuffix
+      .split('/')
+      .at(-1)
+      ?.replace(/\.[^.]+$/u, '')
+    matches = Object.entries(manifest).filter(
+      ([, item]) =>
+        item?.isDynamicEntry &&
+        item.name === sourceName
+    )
+  }
   if (matches.length !== 1) {
     throw new Error(
       `Expected one manifest entry for ${sourceSuffix}, found ${matches.length}`

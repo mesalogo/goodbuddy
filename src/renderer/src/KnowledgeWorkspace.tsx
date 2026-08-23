@@ -1269,13 +1269,6 @@ function DocumentsView({
             <h3 id="sources-title">
               {t('documents.sources.title')}
             </h3>
-            <p className="knowledge-section-description">
-              {t(
-                library.graphEnabled
-                  ? 'documents.sources.descriptionWithGraph'
-                  : 'documents.sources.description'
-              )}
-            </p>
           </div>
           <div className="knowledge-documents__import-actions">
             <button
@@ -2230,17 +2223,8 @@ function KnowledgeSettingsView({
       )}
       {mode === 'index' && (
       <section
-        aria-labelledby="knowledge-graph-capability-title"
         className="knowledge-settings__section"
       >
-        <div>
-          <h3 id="knowledge-graph-capability-title">
-            {t('settings.graphCapability.title')}
-          </h3>
-          <p className="knowledge-section-description">
-            {t('settings.graphCapability.description')}
-          </p>
-        </div>
         <label
           className={`knowledge-settings__toggle toggle-row${
             saving ? ' knowledge-settings__toggle--pending' : ''
@@ -2258,9 +2242,7 @@ function KnowledgeSettingsView({
           <span>
             <strong>{t('graph.enable')}</strong>
             <span className="knowledge-muted">
-              {library.graphEnabled
-                ? t('settings.graphCapability.enabledDescription')
-                : t('settings.graphCapability.disabledDescription')}
+              {t('settings.enableDescription')}
             </span>
           </span>
         </label>
@@ -2275,9 +2257,6 @@ function KnowledgeSettingsView({
           <h3 id="knowledge-graph-settings-title">
             {t('settings.graphConfiguration.title')}
           </h3>
-          <p className="knowledge-section-description">
-            {t('settings.graphConfiguration.description')}
-          </p>
         </div>
         <label className="knowledge-field">
           {t('fields.graphExtractionStrategy')}
@@ -4279,7 +4258,6 @@ export function KnowledgeWorkspace({
           </button>
         }
         description={t('page.description')}
-        eyebrow={t('page.eyebrow')}
         headingId="knowledge-workspace-title"
         icon={<Database size={20} />}
         scope={{ kind: 'global' }}

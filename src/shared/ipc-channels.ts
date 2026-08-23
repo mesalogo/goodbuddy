@@ -67,6 +67,12 @@ export const ipcChannels = {
   speechTranscriptionCancel: 'speech:transcription:cancel',
   embeddingSettingsGet: 'settings:embedding:get',
   embeddingDiagnose: 'settings:embedding:diagnose',
+  embeddingSetCurrent: 'settings:embedding:set-current',
+  embeddingModelsInstall: 'settings:embedding-models:install',
+  embeddingModelsCancel: 'settings:embedding-models:cancel',
+  embeddingModelsImportArchive:
+    'settings:embedding-models:import-archive',
+  embeddingModelsRemove: 'settings:embedding-models:remove',
   documentParsingGet: 'settings:document-parsing:get',
   documentOcrModelsProgress:
     'settings:document-ocr-models:progress',

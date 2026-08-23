@@ -457,14 +457,9 @@ export function McpSettingsSection({
       >
 
       {activeTab === 'custom' && (
-        <>
-          <p className="settings-notice">
-            {t('mcp.customNotice')}
-          </p>
-          <p className="settings-notice">
-            {t('mcp.securityNotice')}
-          </p>
-        </>
+        <p className="settings-notice">
+          {t('mcp.customNotice')}
+        </p>
       )}
       {activeTab === 'computer' && (
         <section
@@ -478,9 +473,6 @@ export function McpSettingsSection({
               {t('mcp.computer.title')}
             </strong>
           </div>
-          <small>
-            {t('mcp.computer.subtitle')}
-          </small>
         </div>
         <div className="capability-list">
           {desktopCapabilities.map((capability) => {
@@ -493,11 +485,7 @@ export function McpSettingsSection({
                     <small>
                       {capability.supported
                         ? t('mcp.computer.supported')
-                        : t('mcp.computer.unsupported')}{' '}
-                      ·{' '}
-                      {capability.enabled
-                        ? t('mcp.computer.enabled')
-                        : t('mcp.computer.disabled')}
+                        : t('mcp.computer.unsupported')}
                     </small>
                   </div>
                 </div>
@@ -524,11 +512,7 @@ export function McpSettingsSection({
                     role="switch"
                     type="checkbox"
                   />
-                  <span>
-                    {capability.enabled
-                      ? t('mcp.computer.enabled')
-                      : t('mcp.computer.disabled')}
-                  </span>
+                  <span>{t('mcp.computer.enable')}</span>
                 </label>
                 <p>{capability.description}</p>
                 <p className="computer-capability-risk">
@@ -585,12 +569,9 @@ export function McpSettingsSection({
         <div className="mcp-subsection-heading">
           <div>
             <Database size={15} />
-            <span className="mcp-subsection-heading__title">
-              <strong id="builtin-mcp-heading">
-                {t('mcp.builtin.title')}
-              </strong>
-              <small>{t('mcp.builtin.availableTo')}</small>
-            </span>
+            <strong id="builtin-mcp-heading">
+              {t('mcp.builtin.title')}
+            </strong>
           </div>
           <small>
             {t('mcp.profiles.count', {
@@ -598,9 +579,6 @@ export function McpSettingsSection({
             })}
           </small>
         </div>
-        <p className="settings-notice">
-          {t('mcp.builtin.notice')}
-        </p>
         <div className="mcp-server-list">
           {builtinMcpServers.map((server) => {
             const expansionId = `builtin:${server.id}`
@@ -1385,9 +1363,6 @@ export function McpSettingsSection({
           })}
         </small>
       </div>
-      <p className="settings-notice">
-        {t('mcp.custom.notice')}
-      </p>
       <div className="capability-list">
         {snapshot?.mcpServers.length === 0 && !editor && (
           <p className="settings-empty">{t('mcp.custom.empty')}</p>

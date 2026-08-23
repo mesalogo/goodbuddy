@@ -8,10 +8,9 @@ export const heartbeat = {
     unknownTime: 'Unknown time'
   },
   center: {
-    eyebrow: 'SMART HEARTBEAT',
     title: 'Smart Heartbeat',
     description:
-      'Periodically review experiences, retain memories, identify issues, and turn each change into an actionable growth suggestion.',
+      'Runs scheduled, read-only reviews of the selected scope without using tools.',
     scope: {
       currentProject: 'Current project',
       global: 'Global'
@@ -38,7 +37,6 @@ export const heartbeat = {
       plans: 'Heartbeat plans'
     },
     currentStatus: {
-      eyebrow: 'CURRENT PULSE',
       title: 'Current status',
       activePlans: 'Active plans: {{formattedCount}}',
       disabled: 'Not enabled',
@@ -85,7 +83,6 @@ export const heartbeat = {
       actionRateAriaLabel: 'Suggested task completion rate {{percent}}'
     },
     trend: {
-      eyebrow: 'GROWTH TREND',
       title: 'Growth trend',
       empty:
         'After a heartbeat completes, changes in insights, memories, and suggested actions will appear here.',
@@ -96,7 +93,6 @@ export const heartbeat = {
         '{{date}}: {{insights}} insights, {{memories}} memory suggestions, and {{actions}} action suggestions'
     },
     latest: {
-      eyebrow: 'LATEST REPORT',
       title: 'Latest heartbeat',
       viewHistory: 'View heartbeat history',
       handleSuggestions: 'Review suggestions ({{formattedCount}})',
@@ -104,7 +100,6 @@ export const heartbeat = {
         'There are no heartbeat reports yet. Run a heartbeat to see what GoodBuddy learned.'
     },
     suggestions: {
-      memoryEyebrow: 'MEMORY GROWTH',
       memoryTitle: 'Memories to confirm',
       memoryCount: 'Items: {{formattedCount}}',
       memoryEmpty: 'There are no memory suggestions to confirm.',
@@ -114,7 +109,6 @@ export const heartbeat = {
       expandContent: 'View full content',
       confirmMemory: 'Confirm memory',
       ignore: 'Ignore',
-      taskEyebrow: 'NEXT ACTIONS',
       taskTitle: 'Suggested actions',
       taskCount: 'Items: {{formattedCount}}',
       taskEmpty: 'Smart Heartbeat has not suggested any actions.',
@@ -123,7 +117,6 @@ export const heartbeat = {
       ignoreSuggestion: 'Ignore suggestion'
     },
     history: {
-      timelineEyebrow: 'HEARTBEAT TIMELINE',
       timelineTitle: 'Growth history',
       reportCount: 'Reports: {{formattedCount}}',
       emptyTimeline:
@@ -133,7 +126,6 @@ export const heartbeat = {
       collapseReport: 'Collapse report',
       expandReport: 'Expand full report',
       loadMoreReports: 'Load more heartbeat reports',
-      auditEyebrow: 'RUN AUDIT',
       auditTitle: 'Run history',
       runCount: 'Runs: {{formattedCount}}',
       emptyRuns: 'There are no Smart Heartbeat runs yet.',
@@ -171,7 +163,7 @@ export const heartbeat = {
   settings: {
     title: 'Smart Heartbeat',
     description:
-      'Periodically review experiences, retain memories, identify issues, and turn changes into actionable growth suggestions. Smart Heartbeat is read-only and never uses tools.',
+      'Heartbeat plans run on schedule in read-only mode without tools.',
     recurrenceAriaLabel: 'Heartbeat recurrence',
     recurrenceLabel: 'Recurrence',
     daily: 'Daily',

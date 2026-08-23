@@ -317,6 +317,9 @@ describe('KnowledgeWorkspace', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('架构说明.md')).toBeInTheDocument()
     expect(screen.getByText('Local file · 架构说明.md')).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Imported content is parsed/u)
+    ).not.toBeInTheDocument()
   })
 
   it('imports an HTTP URL into the selected library', async () => {
@@ -644,6 +647,11 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
     expect(screen.getByRole('switch', { name: /启用知识图谱/u }))
       .not.toBeChecked()
+    expect(
+      screen.getByText(
+        '启用后，新导入和重新同步的文档会按所选策略抽取图谱。'
+      )
+    ).toBeInTheDocument()
     expect(screen.queryByLabelText('知识图谱抽取策略'))
       .not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '本体定义' }))

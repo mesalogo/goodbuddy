@@ -1054,8 +1054,8 @@ describe('App', () => {
       expect(
         screen.getByRole('button', { name: 'Chat' })
       ).toBeInTheDocument()
-      expect(screen.getByText('Desktop workspace')).toBeInTheDocument()
-      expect(screen.getByText('GOODBUDDY WORKSPACE')).toBeInTheDocument()
+      expect(screen.queryByText('Desktop workspace')).not.toBeInTheDocument()
+      expect(screen.queryByText('GOODBUDDY WORKSPACE')).not.toBeInTheDocument()
       expect(
         screen.getByRole('heading', {
           level: 1,
@@ -1074,14 +1074,18 @@ describe('App', () => {
       expect(screen.getByText('Project: Default project')).toHaveClass(
         'scope-badge'
       )
-      expect(
-        screen.getByText(/Hi, I’m GoodBuddy/u)
-      ).toBeInTheDocument()
+      expect(screen.getByText('Hi, I’m GoodBuddy.')).toBeInTheDocument()
       expect(
         screen.getByLabelText('Message GoodBuddy')
       ).toHaveAttribute(
         'placeholder',
-        'Message GoodBuddy…\nEnter to send · Shift+Enter for a new line · Ctrl+V to paste an image or text'
+        'Message GoodBuddy…'
+      )
+      expect(
+        screen.getByLabelText('Message GoodBuddy')
+      ).toHaveAttribute(
+        'title',
+        'Enter to send, Shift+Enter for a new line'
       )
     } finally {
       cleanup()
@@ -1236,8 +1240,12 @@ describe('App', () => {
   it('renders localized workspace branding in Chinese', async () => {
     render(<App />)
 
-    expect(await screen.findByText('桌面工作区')).toBeInTheDocument()
-    expect(screen.getByText('GOODBUDDY 工作台')).toBeInTheDocument()
+    await screen.findByRole('heading', {
+      name: '今天想一起完成什么？'
+    })
+    expect(screen.getByText('你好，我是 GoodBuddy。')).toBeInTheDocument()
+    expect(screen.queryByText('桌面工作区')).not.toBeInTheDocument()
+    expect(screen.queryByText('GOODBUDDY 工作台')).not.toBeInTheDocument()
     expect(
       document.querySelector('.composer__runtime-toolbar')
     ).not.toBeInTheDocument()
@@ -5316,7 +5324,7 @@ describe('App', () => {
       within(modeMenu)
         .getAllByRole('menuitemradio')
         .map((option) => option.querySelector('span')?.textContent)
-    ).toEqual(['Ask · 只读问答', 'Execute · 受控执行'])
+    ).toEqual(['Ask · 只读问答', 'Execute · 完全权限'])
 
     fireEvent.click(screen.getByLabelText('新建项目'))
     const dialog = screen.getByRole('dialog', { name: '新建项目' })
@@ -5327,7 +5335,7 @@ describe('App', () => {
       within(defaultMode)
         .getAllByRole('option')
         .map((option) => option.textContent)
-    ).toEqual(['Ask · 只读问答', 'Execute · 受控执行'])
+    ).toEqual(['Ask · 只读问答', 'Execute · 完全权限'])
     expect(screen.queryByRole('option', { name: /Plan/u })).toBeNull()
   })
 
@@ -5387,10 +5395,7 @@ describe('App', () => {
     ).toHaveAttribute('title', '添加附件')
     expect(
       within(contentTools).getByRole('button', { name: '语音输入' })
-    ).toHaveAttribute(
-      'title',
-      '语音转文字，转写后可编辑再发送'
-    )
+    ).not.toHaveAttribute('title')
 
     const conversationSettings = within(composer!).getByRole(
       'group',
@@ -5413,7 +5418,7 @@ describe('App', () => {
     ).toHaveTextContent(/^Ask$/u)
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
       'placeholder',
-      '给 GoodBuddy 发消息…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本'
+      '给 GoodBuddy 发消息…'
     )
     expect(
       within(conversationSettings).getByRole('button', {
@@ -5449,7 +5454,7 @@ describe('App', () => {
     ).toHaveTextContent(secondProject.name)
     expect(
       screen.getByRole('button', {
-        name: '工作模式：Execute · 受控执行'
+        name: '工作模式：Execute · 完全权限'
       })
     ).toBeEnabled()
 
@@ -5892,9 +5897,9 @@ describe('App', () => {
     expect(
       await screen.findByText('快捷唤起：', { exact: false })
     ).toBeInTheDocument()
-    selectComposerOption('工作模式', 'Execute · 受控执行')
+    selectComposerOption('工作模式', 'Execute · 完全权限')
     expect(mode).toHaveAccessibleName(
-      '工作模式：Execute · 受控执行'
+      '工作模式：Execute · 完全权限'
     )
     expect(mode).toHaveTextContent(/^Execute$/u)
 
@@ -6325,9 +6330,9 @@ describe('App', () => {
       name: '工作模式：Ask · 只读问答'
     })
     expect(mode).toBeEnabled()
-    selectComposerOption('工作模式', 'Execute · 受控执行')
+    selectComposerOption('工作模式', 'Execute · 完全权限')
     expect(mode).toHaveAccessibleName(
-      '工作模式：Execute · 受控执行'
+      '工作模式：Execute · 完全权限'
     )
 
     fireEvent.click(await screen.findByRole('button', { name: /OpenCode/u }))
@@ -6359,7 +6364,7 @@ describe('App', () => {
     const modeMenu = openComposerMenu('工作模式')
     expect(
       within(modeMenu).getByRole('menuitemradio', {
-        name: /^Execute · 受控执行/u
+        name: /^Execute · 完全权限/u
       })
     ).toBeDisabled()
     expect(mode).toHaveAccessibleName('工作模式：Ask · 只读问答')
@@ -6378,7 +6383,7 @@ describe('App', () => {
     const mode = await screen.findByRole('button', {
       name: '工作模式：Ask · 只读问答'
     })
-    selectComposerOption('工作模式', 'Execute · 受控执行')
+    selectComposerOption('工作模式', 'Execute · 完全权限')
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '读取项目文件' }
     })
@@ -6443,7 +6448,9 @@ describe('App', () => {
     expect(cancelledDot).not.toHaveClass('message__status-dot--active')
     fireEvent.click(screen.getByText('运行记录'))
     expect((await screen.findAllByText('已取消')).length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: /^进行中 \d+$/u })
+    )
     expect(
       screen.getByText('当前没有等待中或正在运行的活动。')
     ).toBeInTheDocument()
@@ -7626,7 +7633,7 @@ describe('App', () => {
     expect((await screen.findAllByText('生图')).length).toBeGreaterThan(0)
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
       'placeholder',
-      '描述你想生成的图片…\nEnter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本'
+      '描述你想生成的图片…'
     )
     await waitFor(() =>
       expect(api.artifacts.list).toHaveBeenCalled()
@@ -8130,17 +8137,20 @@ describe('App', () => {
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
     expect(
-      screen.getByText(/选择文件后在当前工作区内预览/)
+      screen.getByRole('button', { name: '刷新工作区文件' })
     ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/选择文件后在当前工作区内预览/)
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
     expect(
       screen.getByText(/Agent 打开网页后/)
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '成果' }))
-    expect(screen.getByText('生成与导入成果')).toBeInTheDocument()
     expect(
-      screen.getByText(/查看并预览由任务、自动化生成或手动导入/)
+      screen.getByRole('button', { name: '导入 PDF、图片或网页' })
     ).toBeInTheDocument()
+    expect(screen.queryByText('生成与导入成果')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()

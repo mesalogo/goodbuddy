@@ -3,11 +3,22 @@
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  stableMainEntryFileName,
   sanitizeRendererModuleId,
   serializeDeepSeekHarnessBundleManifest
 } from '../electron.vite.config'
 
 describe('Electron Vite configuration', () => {
+  it('keeps Utility Process bootstrap entry names stable', () => {
+    expect(
+      stableMainEntryFileName({
+        name: 'embedding-inference-bootstrap'
+      })
+    ).toBe('embedding-inference-bootstrap.js')
+    expect(stableMainEntryFileName({ name: 'index' })).toBe(
+      '[name].js'
+    )
+  })
   it('serializes the DeepSeek Harness bundle manifest', () => {
     const source = serializeDeepSeekHarnessBundleManifest('1.2.3')
 

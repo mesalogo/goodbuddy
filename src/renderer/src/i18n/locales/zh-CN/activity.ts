@@ -1,9 +1,6 @@
 export const activity = {
   header: {
-    eyebrow: 'RUN HISTORY',
-    title: '运行记录',
-    description:
-      '按项目、任务与会话查看执行详情，或浏览活动时间线和模型用量。'
+    title: '运行记录'
   },
   tabs: {
     ariaLabel: '运行记录视图',
@@ -35,9 +32,9 @@ export const activity = {
     result: '结果'
   },
   filters: {
-    all: '全部',
-    active: '进行中',
-    failed: '异常',
+    all: '全部 {{formattedCount}}',
+    active: '进行中 {{formattedCount}}',
+    failed: '异常 {{formattedCount}}',
     ariaLabel: '筛选活动',
     clear: '清除筛选'
   },
@@ -76,16 +73,8 @@ export const activity = {
       unknownRuntime: '未知 Runtime'
     }
   },
-  stats: {
-    ariaLabel: '活动统计',
-    all: '全部',
-    active: '进行中',
-    failed: '异常'
-  },
   timeline: {
     ariaLabel: '按项目和会话分组的并行活动轨道',
-    description:
-      '所有轨道共享同一执行顺序，节点按发生时间依次展开，点击节点查看身份和活动详情。',
     lanes: '项目 / 会话',
     laneAriaLabel: '会话 {{title}} 的活动轨道',
     nodeAriaLabel: '{{actor}}，{{kind}}，{{status}}，{{title}}，{{time}}',

@@ -4,9 +4,7 @@ export const settings = {
     'hugging-face': 'Hugging Face'
   },
   center: {
-    eyebrow: '设置',
     title: '设置中心',
-    description: '管理模型连接、Agent Runtime、自动化、扩展能力和本地数据。',
     close: '关闭设置',
     categoriesAriaLabel: '设置分类'
   },
@@ -92,6 +90,7 @@ export const settings = {
     deleteConnection: '删除连接',
     clearAfterSave: '保存后清除',
     clearCredential: '清除凭据',
+    done: '完成',
     cancel: '取消',
     clearing: '正在清除…',
     clearLocalData: '清除本地数据'
@@ -316,8 +315,6 @@ export const settings = {
       title: 'OpenCode Agent',
       recommendation:
         '推荐直接跟随 GoodBuddy 模型。只有需要复用 OpenCode 原生模型、插件或 MCP 配置时，才切换到 Runtime 自有配置。',
-      advancedDescription:
-        '普通使用无需修改。这里可以切换模型配置来源、管理 Runtime 自有配置，或覆盖内置程序与服务。',
       followDescription:
         '自动生成安全的运行期配置，无需维护 Runtime 配置文件。',
       ownDescription: '适合需要原生模型、插件或 MCP 配置的专业用户。',
@@ -335,8 +332,6 @@ export const settings = {
       title: 'Continue CLI',
       recommendation:
         '推荐直接跟随 GoodBuddy 模型。只有需要复用 Continue 原生模型、规则或 MCP 配置时，才切换到 Runtime 自有配置。',
-      advancedDescription:
-        '普通使用无需修改。这里可以切换模型配置来源、管理 Runtime 自有配置，或覆盖内置程序。',
       followDescription:
         '自动生成安全的临时运行期配置，任务结束后立即删除。',
       ownDescription: '适合需要原生模型、规则或 MCP 配置的专业用户。',
@@ -678,15 +673,27 @@ export const settings = {
     },
     embedding: {
       title: '向量模型连接',
-      description: '使用 OpenAI 兼容 Embeddings 接口，不限定服务提供商',
+      description: '管理内置本地推理和 OpenAI 兼容向量模型连接',
       enabled: '启用向量模型',
+      addConnection: '添加向量模型连接',
+      newConnectionName: '向量模型连接',
+      connectionName: '连接名称',
+      authentication: '认证方式',
+      noAuthentication: '无需认证',
       endpoint: '向量接口 URL',
       endpointDescription: '填写完整的 OpenAI 兼容 Embeddings 端点。',
       modelName: '模型名称',
+      builtinDataLocation:
+        '本机知识分块 → GoodBuddy 本地推理进程 → 本地 SQLite',
+      builtinUnavailable: '模型工件尚未完成发布校验，当前不可安装',
       optionalApiKey: 'API Key（可选）',
       optionalApiKeyPlaceholder: '本地无认证服务可留空',
+      installed: '已安装并通过校验',
+      notInstalled: '尚未安装',
+      progress: '安装中… {{percent}}%',
+      removeBuiltin: '移除本地模型 {{name}}',
       privacyDescription:
-        '仅向所填接口发送已启用知识库的分块文本。API Key 由系统安全存储加密；向量服务失败时自动回退到 FTS5 与证据图谱。'
+        '仅向所填接口发送已启用知识库的分块文本。API Key 由系统安全存储加密；向量服务失败时会明确标记未使用向量检索，并显示实际检索通道。'
     },
     rerank: {
       title: '重排模型连接',

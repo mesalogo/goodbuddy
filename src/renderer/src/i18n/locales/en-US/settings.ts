@@ -7,10 +7,7 @@ export const settings = {
     'hugging-face': 'Hugging Face'
   },
   center: {
-    eyebrow: 'Settings',
     title: 'Settings',
-    description:
-      'Manage model connections, Agent Runtimes, automation, extensions, and local data.',
     close: 'Close settings',
     categoriesAriaLabel: 'Settings categories'
   },
@@ -105,6 +102,7 @@ export const settings = {
     deleteConnection: 'Delete connection',
     clearAfterSave: 'Clear after saving',
     clearCredential: 'Clear credential',
+    done: 'Done',
     cancel: 'Cancel',
     clearing: 'Clearing…',
     clearLocalData: 'Clear local data'
@@ -347,8 +345,6 @@ export const settings = {
       title: 'OpenCode Agent',
       recommendation:
         'Following the GoodBuddy model is recommended. Use OpenCode configuration only when you need its native models, plugins, or MCP configuration.',
-      advancedDescription:
-        'Most users do not need to change these options. Switch model sources, manage OpenCode configuration, or override the bundled program and service here.',
       followDescription:
         'Generates a secure runtime configuration automatically, with no Runtime configuration file to maintain.',
       ownDescription:
@@ -367,8 +363,6 @@ export const settings = {
       title: 'Continue CLI',
       recommendation:
         'Following the GoodBuddy model is recommended. Use Continue configuration only when you need its native models, rules, or MCP configuration.',
-      advancedDescription:
-        'Most users do not need to change these options. Switch model sources, manage Continue configuration, or override the bundled program here.',
       followDescription:
         'Generates a secure temporary runtime configuration and deletes it when the task ends.',
       ownDescription:
@@ -738,15 +732,28 @@ export const settings = {
     embedding: {
       title: 'Embedding model connection',
       description:
-        'Uses an OpenAI-compatible Embeddings API with any provider',
+        'Manage built-in local inference and OpenAI-compatible embedding connections',
       enabled: 'Enable embedding model',
+      addConnection: 'Add embedding connection',
+      newConnectionName: 'Embedding connection',
+      connectionName: 'Connection name',
+      authentication: 'Authentication',
+      noAuthentication: 'No authentication',
       endpoint: 'Embedding API URL',
       endpointDescription:
         'Enter the complete OpenAI-compatible Embeddings endpoint.',
       modelName: 'Model name',
+      builtinDataLocation:
+        'Local knowledge chunks → GoodBuddy local inference process → local SQLite',
+      builtinUnavailable:
+        'Model artifacts have not completed release validation and cannot be installed yet',
       optionalApiKey: 'API Key (optional)',
       optionalApiKeyPlaceholder:
         'Leave blank for a local service without authentication',
+      installed: 'Installed and verified',
+      notInstalled: 'Not installed',
+      progress: 'Installing… {{percent}}%',
+      removeBuiltin: 'Remove local model {{name}}',
       privacyDescription:
         'Only chunks from enabled knowledge bases are sent to this endpoint. The API Key is encrypted in secure system storage. If the embedding service fails, retrieval falls back to FTS5 and the evidence graph.'
     },

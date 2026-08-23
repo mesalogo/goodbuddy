@@ -585,9 +585,6 @@ export function DocumentParsingSettingsSection({
             label={t('documentParsing.status.conversion')}
           />
         </div>
-        <p className="settings-notice">
-          {t('documentParsing.status.partialNotice')}
-        </p>
       </section>
 
       <section
@@ -792,19 +789,6 @@ export function DocumentParsingSettingsSection({
           </small>
         </label>
 
-        <p className="settings-notice document-ocr-settings__storage">
-          {t('documentParsing.ocr.storagePrefix')}{' '}
-          <code>{snapshot.ocrModels.rootDirectory}</code>
-          {t('documentParsing.ocr.storageSuffix')}
-        </p>
-        <p className="settings-notice">
-          {t('documentParsing.ocr.downloadSource', {
-            source: t(
-              `modelDownloadSources.${snapshot.ocrModels.selectedDownloadSource}`
-            )
-          })}
-        </p>
-
         {model ? (
           <article className="document-ocr-model">
             <div className="document-ocr-model__header">
@@ -833,9 +817,6 @@ export function DocumentParsingSettingsSection({
                         )
                       )
                       .join(' / ')}
-                  </span>
-                  <span className="speech-model-tag">
-                    {model.runtime}
                   </span>
                   <span className="speech-model-tag">
                     {t('documentParsing.ocr.quality.label', {
@@ -888,32 +869,23 @@ export function DocumentParsingSettingsSection({
               </button>
             </div>
 
-            {(modelOperation || installedModel) && (
+            {modelOperation && (
               <div className="document-ocr-model__state">
                 <span
-                  className={`document-ocr-model__status${
-                    installedModel
-                      ? ' document-ocr-model__status--installed'
-                      : ''
-                  }`}
+                  className="document-ocr-model__status"
                 >
-                  {installedModel && (
-                    <CheckCircle2 aria-hidden="true" size={13} />
-                  )}
-                  {modelOperation
-                    ? t(
-                        modelOperation.phase === 'installing'
-                          ? 'documentParsing.ocr.operations.installing'
-                          : modelOperation.kind === 'import'
-                            ? 'documentParsing.ocr.operations.importing'
-                            : 'documentParsing.ocr.operations.downloading',
-                        {
-                          source: t(
-                            `modelDownloadSources.${modelOperation.downloadSource}`
-                          )
-                        }
+                  {t(
+                    modelOperation.phase === 'installing'
+                      ? 'documentParsing.ocr.operations.installing'
+                      : modelOperation.kind === 'import'
+                        ? 'documentParsing.ocr.operations.importing'
+                        : 'documentParsing.ocr.operations.downloading',
+                    {
+                      source: t(
+                        `modelDownloadSources.${modelOperation.downloadSource}`
                       )
-                    : t('documentParsing.ocr.installed')}
+                    }
+                  )}
                 </span>
               </div>
             )}

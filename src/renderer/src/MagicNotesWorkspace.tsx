@@ -1453,7 +1453,6 @@ export function MagicNotesWorkspace({
           </>
         }
         description={t('page.description')}
-        eyebrow={t('page.eyebrow')}
         headingId="magic-notes-title"
         icon={<Sparkles size={20} />}
         scope={{ kind: 'global' }}
@@ -1538,10 +1537,6 @@ export function MagicNotesWorkspace({
               id="magic-library-panel-notes"
               role="tabpanel"
             >
-          <div className="magic-notes-pane-heading">
-            <strong>{t('notes.heading')}</strong>
-            <span>{notes.length}</span>
-          </div>
           <label className="magic-notes-search">
             <span className="sr-only">{t('notes.searchLabel')}</span>
             <input
@@ -2433,14 +2428,14 @@ export function MagicNotesWorkspace({
               <EmptyState
                 description={t('comments.selectTodo')}
                 icon={<Bot size={20} />}
-                title={t('comments.emptyTitle')}
+                title={t('comments.selectTodoTitle')}
               />
             ) : selectedTodo.comments.length === 0 ? (
               !liveAnalysis && (
                 <EmptyState
                   description={t('comments.analyzeTodoHint')}
                   icon={<Bot size={20} />}
-                  title={t('comments.emptyTitle')}
+                  title={t('comments.analyzeTodoTitle')}
                 />
               )
             ) : (
@@ -2466,7 +2461,7 @@ export function MagicNotesWorkspace({
               title={
                 loadStatus === 'loading'
                   ? t('status.loading')
-                  : t('comments.emptyTitle')
+                  : t('comments.selectNoteTitle')
               }
             />
           ) : aiEntries.length === 0 &&
@@ -2482,7 +2477,13 @@ export function MagicNotesWorkspace({
                     : t('comments.manualHint')
               }
               icon={<Bot size={20} />}
-              title={t('comments.emptyTitle')}
+              title={
+                commentMode === 'immediate'
+                  ? t('comments.startWritingTitle')
+                  : commentMode === 'after-save-auto'
+                    ? t('comments.saveEntryTitle')
+                    : t('comments.analyzeEntryTitle')
+              }
             />
           ) : (
             <div className="magic-notes-ai-feed">

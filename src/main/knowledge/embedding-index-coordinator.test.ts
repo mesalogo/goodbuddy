@@ -156,6 +156,59 @@ describe('EmbeddingIndexCoordinator', () => {
     )
   })
 
+  it('uses explicit query and document provider entry points when available', async () => {
+    const repository = new MemoryRepository()
+    const embed = vi.fn(async () => [[9, 9]])
+    const embedQuery = vi.fn(async () => [[1, 2]])
+    const embedDocuments = vi.fn(async (input: readonly string[]) =>
+      input.map(() => [3, 4])
+    )
+    const roleAwareProvider = {
+      ...provider(embed),
+      embedQuery,
+      embedDocuments
+    }
+    const coordinator = new EmbeddingIndexCoordinator(repository, {
+      createId: () => 'job-role-aware'
+    })
+
+    await coordinator.diagnose(roleAwareProvider)
+    coordinator.startRebuild(roleAwareProvider)
+    await coordinator.waitForCompletion()
+
+    expect(embedQuery).toHaveBeenCalledWith(
+      ['GoodBuddy 向量模型连接测试'],
+      undefined
+    )
+    expect(embedDocuments).toHaveBeenCalledWith(
+      ['GoodBuddy 知识文档向量连接测试'],
+      undefined
+    )
+    expect(embedDocuments).toHaveBeenCalledWith(['alpha'], expect.any(AbortSignal))
+    expect(embedDocuments).toHaveBeenCalledWith(
+      ['beta', 'gamma'],
+      expect.any(AbortSignal)
+    )
+    expect(embed).not.toHaveBeenCalled()
+  })
+
+  it('rejects diagnostics whose query and document dimensions differ', async () => {
+    const repository = new MemoryRepository()
+    const coordinator = new EmbeddingIndexCoordinator(repository)
+    const roleAwareProvider = {
+      ...provider(async () => [[9, 9]]),
+      embedQuery: vi.fn(async () => [[1, 2]]),
+      embedDocuments: vi.fn(async () => [[1, 2, 3]])
+    }
+
+    await expect(coordinator.diagnose(roleAwareProvider)).resolves.toMatchObject({
+      status: 'unavailable',
+      error: {
+        code: 'invalid_response'
+      }
+    })
+  })
+
   it('reports a safe diagnostic failure instead of treating config as success', async () => {
     const repository = new MemoryRepository()
     const coordinator = new EmbeddingIndexCoordinator(repository, {

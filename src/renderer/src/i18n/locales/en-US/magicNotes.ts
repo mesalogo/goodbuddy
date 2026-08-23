@@ -3,7 +3,6 @@ import type { magicNotes as chineseMagicNotes } from '../zh-CN/magicNotes'
 
 export const magicNotes = {
   page: {
-    eyebrow: 'MAGIC NOTES',
     title: 'Magic Notes',
     description:
       'Capture rich text, local media, attachments, and to-do lists globally, with read-only comments from AI.',
@@ -74,7 +73,6 @@ export const magicNotes = {
   notes: {
     listLabel: 'Notes list',
     streamLabel: 'Note entries',
-    heading: 'Notes',
     searchLabel: 'Search notes in the current scope',
     searchPlaceholder: 'Search notes',
     titleLabel: 'Note title',
@@ -126,7 +124,12 @@ export const magicNotes = {
   comments: {
     paneLabel: 'AI comments',
     closePane: 'Close AI comments pane',
-    emptyTitle: 'No AI comments yet',
+    selectTodoTitle: 'Select a to-do',
+    analyzeTodoTitle: 'Analyze this to-do',
+    selectNoteTitle: 'Select a note',
+    startWritingTitle: 'Write a sentence',
+    saveEntryTitle: 'Save an entry for feedback',
+    analyzeEntryTitle: 'Analyze an entry',
     directionLabel: 'Comment direction',
     directionAriaLabel: 'AI comment direction',
     directionHelp:

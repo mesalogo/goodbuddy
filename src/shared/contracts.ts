@@ -96,6 +96,7 @@ import type {
 } from './speech-model-contracts'
 import type {
   EmbeddingDiagnosticResult,
+  EmbeddingModelSnapshot,
   EmbeddingSettingsSnapshot,
   KnowledgeEmbeddingIndexSnapshot
 } from './embedding-contracts'
@@ -387,6 +388,11 @@ export type ImageGenerationQuality = z.infer<
 export const defaultModelProfileId =
   '00000000-0000-4000-8000-000000000001'
 export const modelProfileIdSchema = z.string().uuid()
+export const builtinEmbeddingConnectionId =
+  '00000000-0000-4000-8000-000000000002'
+export const legacyEmbeddingConnectionId =
+  '00000000-0000-4000-8000-000000000003'
+export const embeddingConnectionIdSchema = z.string().uuid()
 
 export const contextCompressionModelSourceSchema =
   z.discriminatedUnion('kind', [
@@ -554,6 +560,35 @@ const modelProfileInputSchema = z
   })
   .strict()
 
+const embeddingConnectionInputSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      id: z.literal(builtinEmbeddingConnectionId),
+      name: z.string().trim().min(1).max(64),
+      kind: z.literal('builtin')
+    })
+    .strict(),
+  z
+    .object({
+      id: embeddingConnectionIdSchema.refine(
+        (id) => id !== builtinEmbeddingConnectionId,
+        '系统向量连接 ID 不能用于用户连接'
+      ),
+      name: z.string().trim().min(1).max(64),
+      kind: z.literal('openai-compatible'),
+      baseUrl: z.string().url().max(2_048),
+      modelName: z
+        .string()
+        .trim()
+        .min(1)
+        .max(256)
+        .regex(/^[\w./:-]+$/, '向量模型名称包含不支持的字符'),
+      authentication: modelAuthenticationSchema,
+      apiKey: modelApiKeyUpdateSchema
+    })
+    .strict()
+])
+
 export const runtimeModelSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('platform') }).strict(),
   z
@@ -597,6 +632,13 @@ export const runtimeSettingsInputSchema = z
       .max(256)
       .regex(/^[\w./:-]+$/, '向量模型名称包含不支持的字符'),
     knowledgeEmbeddingApiKey: modelApiKeyUpdateSchema.optional(),
+    embeddingConnections: z
+      .array(embeddingConnectionInputSchema)
+      .min(1)
+      .max(20)
+      .optional(),
+    activeEmbeddingConnectionId:
+      embeddingConnectionIdSchema.optional(),
     knowledgeRerankEnabled: z.boolean(),
     knowledgeRerankEndpoint: z.string().url().max(2_048),
     knowledgeRerankModel: z
@@ -797,6 +839,76 @@ export const runtimeSettingsInputSchema = z
         message: '向量接口 URL 必须使用 HTTP 或 HTTPS'
       })
     }
+    if (settings.embeddingConnections) {
+      const ids = new Set(
+        settings.embeddingConnections.map((connection) => connection.id)
+      )
+      const names = new Set(
+        settings.embeddingConnections.map((connection) =>
+          connection.name.toLowerCase()
+        )
+      )
+      if (
+        ids.size !== settings.embeddingConnections.length ||
+        names.size !== settings.embeddingConnections.length
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['embeddingConnections'],
+          message: '向量连接的 ID 和名称必须唯一'
+        })
+      }
+      if (
+        !settings.embeddingConnections.some(
+          (connection) =>
+            connection.id === builtinEmbeddingConnectionId &&
+            connection.kind === 'builtin'
+        )
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['embeddingConnections'],
+          message: '系统向量连接不能删除'
+        })
+      }
+      for (const [index, connection] of
+        settings.embeddingConnections.entries()) {
+        if (connection.kind === 'builtin') {
+          continue
+        }
+        if (
+          !['http:', 'https:'].includes(
+            new URL(connection.baseUrl).protocol
+          )
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['embeddingConnections', index, 'baseUrl'],
+            message: '向量接口 URL 必须使用 HTTP 或 HTTPS'
+          })
+        }
+        if (
+          connection.authentication === 'none' &&
+          connection.apiKey.action === 'replace'
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['embeddingConnections', index, 'apiKey'],
+            message: '无认证向量连接不得配置 API Key'
+          })
+        }
+      }
+      const activeId =
+        settings.activeEmbeddingConnectionId ??
+        builtinEmbeddingConnectionId
+      if (!ids.has(activeId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['activeEmbeddingConnectionId'],
+          message: '当前向量连接不存在'
+        })
+      }
+    }
     if (
       !['http:', 'https:'].includes(
         new URL(settings.knowledgeRerankEndpoint).protocol
@@ -827,6 +939,33 @@ export type ModelConnectionSettings = {
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment' | 'unreadable'
 }
+
+export type EmbeddingConnectionSettings =
+  | {
+      id: typeof builtinEmbeddingConnectionId
+      name: string
+      kind: 'builtin'
+      apiKeyConfigured?: false
+      credentialSource?: 'none'
+    }
+  | {
+      id: string
+      name: string
+      kind: 'openai-compatible'
+      baseUrl: string
+      modelName: string
+      authentication: ModelAuthentication
+      apiKeyConfigured?: boolean
+      credentialSource?:
+        | 'none'
+        | 'encrypted'
+        | 'environment'
+        | 'unreadable'
+      apiKey?:
+        | { action: 'keep' }
+        | { action: 'replace'; value: string }
+        | { action: 'clear' }
+    }
 
 export type ConfiguredRuntimeSettings = {
   modelProfiles: ModelConnectionSettings[]
@@ -866,6 +1005,8 @@ export type RuntimeSettings = {
     | 'encrypted'
     | 'environment'
     | 'unreadable'
+  embeddingConnections?: EmbeddingConnectionSettings[]
+  activeEmbeddingConnectionId?: string
   knowledgeRerankEnabled?: boolean
   knowledgeRerankEndpoint?: string
   knowledgeRerankModel?: string
@@ -1448,7 +1589,19 @@ export type DesktopApi = {
   }
   embeddings?: {
     getSnapshot: () => Promise<EmbeddingSettingsSnapshot>
-    diagnose: () => Promise<EmbeddingDiagnosticResult>
+    diagnose: (connectionId: string) => Promise<EmbeddingDiagnosticResult>
+    setCurrent: (
+      connectionId: string
+    ) => Promise<EmbeddingSettingsSnapshot>
+    installModel: (
+      modelId: string,
+      expectedDownloadSource: ModelDownloadSource
+    ) => Promise<EmbeddingModelSnapshot>
+    cancelModelOperation: (modelId: string) => Promise<boolean>
+    importModelArchive: (
+      modelId: string
+    ) => Promise<EmbeddingModelSnapshot | undefined>
+    removeModel: (modelId: string) => Promise<EmbeddingModelSnapshot>
   }
   documentParsing?: {
     getSnapshot: () => Promise<DocumentParsingSnapshot>

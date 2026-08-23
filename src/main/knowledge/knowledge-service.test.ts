@@ -48,6 +48,56 @@ afterEach(async () => {
 })
 
 describe('KnowledgeService', () => {
+  it('uses document and query embedding roles without exposing providers to runtimes', async () => {
+    const embed = vi.fn(async (input: readonly string[]) =>
+      input.map(() => [9, 9])
+    )
+    const embedDocuments = vi.fn(async (input: readonly string[]) =>
+      input.map(() => [1, 0])
+    )
+    const embedQuery = vi.fn(async (input: readonly string[]) =>
+      input.map(() => [1, 0])
+    )
+    const provider: EmbeddingProvider = {
+      provider: 'openai-compatible',
+      model: 'role-aware',
+      embed,
+      embedDocuments,
+      embedQuery
+    }
+    const { directory, service } = await createService(
+      undefined,
+      provider
+    )
+    const sourcePath = join(directory, 'role-aware.md')
+    await writeFile(sourcePath, 'role aware knowledge content', 'utf8')
+    const library = service.createLibrary({
+      name: 'Role-aware library',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+
+    await service.importPaths(library.id, [sourcePath])
+    expect(embedDocuments).toHaveBeenCalled()
+    expect(embed).not.toHaveBeenCalled()
+
+    await service.retrieve({
+      knowledgeBaseId: library.id,
+      query: 'role aware',
+      settings: {
+        ...library.retrievalSettings,
+        ftsWeight: 0,
+        vectorWeight: 1,
+        graphWeight: 0
+      }
+    })
+    expect(embedQuery).toHaveBeenCalledWith(
+      ['role aware'],
+      expect.any(AbortSignal)
+    )
+    expect(embed).not.toHaveBeenCalled()
+  })
+
   it('rebuilds vectors only for the selected knowledge base', async () => {
     const embed = vi.fn(async (input: readonly string[]) =>
       input.map(() => [1, 0])

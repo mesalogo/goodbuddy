@@ -14,10 +14,7 @@ export const integrations = {
     },
     project: {
       sectionAriaLabel: '{{name}} 通道项目设置',
-      identity: '通道项目',
       cardTitle: '项目设置',
-      cardDescription:
-        '与左上角当前通道项目的设置保持同步。',
       descriptionLabel: '项目说明',
       descriptionAriaLabel: '{{name}} 项目说明',
       rootLabel: '默认工作目录',
@@ -167,14 +164,12 @@ export const integrations = {
       custom: '自定义 MCP'
     },
     customNotice:
-      '自定义 MCP 可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness，新建时默认分配给直连模型，并仅在 Execute 模式加载。Agent Runtime 只接收按请求签发的本机回环权限；服务地址、命令和凭据始终由 GoodBuddy 主进程保管。',
-    securityNotice:
-      '内置工具由 GoodBuddy 提供，不属于 MCP Server。自定义 MCP Server 及其工具具有当前用户权限，请仅添加可信服务；远程访问令牌将由系统安全存储加密，工具调用前仍需 GoodBuddy 审批。',
+      '自定义 MCP 仅在 Execute 模式加载，可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness，新建时默认分配给直连模型。Server 及其工具具有当前用户权限，请仅添加可信服务；服务地址、命令和凭据由 GoodBuddy 主进程保管，远程访问令牌由系统安全存储加密，工具调用前仍需 GoodBuddy 审批。stdio Server 会以不含桌面会话变量的受限环境启动；需要电脑控制时请使用经过诊断的内置能力。',
     computer: {
       title: '电脑控制能力',
-      subtitle: '仅显示实际操作客户端电脑的能力',
       supported: '当前设备支持',
       unsupported: '当前设备不支持',
+      enable: '启用此能力',
       enabled: '已启用',
       disabled: '已停用',
       enableAriaLabel: '启用 {{name}}',
@@ -189,9 +184,6 @@ export const integrations = {
     },
     builtin: {
       title: 'GoodBuddy 内置 MCP',
-      availableTo: '按请求提供，可分别控制启停与 Runtime 分配',
-      notice:
-        '内置 MCP 由 GoodBuddy 在主进程按当前对话签发短期权限，不公开服务地址或凭据。设置更改会应用到后续请求，Ask / Execute 的读写边界仍由系统强制。',
       enabled: '已启用',
       disabled: '已停用',
       enableAriaLabel: '启用 {{name}} 内置 MCP',
@@ -200,10 +192,9 @@ export const integrations = {
       runtimeAssignmentUnsupportedAriaLabel:
         '{{name}} 无法分配给 {{runtime}}，当前 Runtime 不支持内置 MCP',
       unsupportedSuffix: '（暂不支持）',
-      serverSummaryMixed: '内置 MCP Server · 按模式读写 · 按对话授权',
-      serverSummaryReadOnly: '内置 MCP Server · 只读 · 按对话授权',
-      serverSummaryDisabled:
-        '内置 MCP Server · 未启用 · 需要开启魔法笔记',
+      serverSummaryMixed: '按模式读写',
+      serverSummaryReadOnly: '只读',
+      serverSummaryDisabled: '未启用 · 需要开启魔法笔记',
       featureDisabled:
         '魔法笔记功能已关闭，此内置能力当前不会向任何 Runtime 提供工具。',
       collapseServer: '收起服务器 {{name}}',
@@ -281,8 +272,6 @@ export const integrations = {
     custom: {
       title: '自定义 MCP Servers（高级）',
       count: '{{count}} 个',
-      notice:
-        '自定义 stdio MCP 会以受限环境启动，不会获得桌面会话变量。需要电脑控制时请使用上方经过诊断的内置能力。',
       empty: '尚未配置 MCP Server',
       collapseServer: '收起服务器 {{name}}',
       expandServer: '展开服务器 {{name}}',

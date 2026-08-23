@@ -17,10 +17,7 @@ export const integrations = {
     },
     project: {
       sectionAriaLabel: '{{name}} channel project settings',
-      identity: 'Channel project',
       cardTitle: 'Project settings',
-      cardDescription:
-        'Stays synchronized with the selected channel project in the top-left project switcher.',
       descriptionLabel: 'Project description',
       descriptionAriaLabel: '{{name}} project description',
       rootLabel: 'Default working directory',
@@ -180,14 +177,12 @@ export const integrations = {
       custom: 'Custom MCP'
     },
     customNotice:
-      'Custom MCP can be assigned to direct models, GoodBuddy-managed OpenCode, Continue Agent, or DeepSeek Harness. New servers target direct models by default and load only in Execute mode. Agent runtimes receive only a request-scoped loopback capability; GoodBuddy keeps server addresses, commands, and credentials in the main process.',
-    securityNotice:
-      'Built-in tools are provided by GoodBuddy and are not MCP servers. Custom MCP servers and tools run with the current user’s permissions, so add only trusted services. Remote access tokens are encrypted in secure system storage, and tool calls still require GoodBuddy approval.',
+      'Custom MCP loads only in Execute mode and can be assigned to direct models, GoodBuddy-managed OpenCode, Continue Agent, or DeepSeek Harness. New servers target direct models by default. Servers and their tools run with the current user’s permissions, so add only trusted services. GoodBuddy keeps server addresses, commands, and credentials in the main process, encrypts remote access tokens in secure system storage, and still requires approval for tool calls. stdio servers start in a restricted environment without desktop session variables; use diagnosed built-in capabilities for computer control.',
     computer: {
       title: 'Computer control capabilities',
-      subtitle: 'Only capabilities that control the client computer',
       supported: 'Supported on this device',
       unsupported: 'Not supported on this device',
+      enable: 'Enable this capability',
       enabled: 'Enabled',
       disabled: 'Disabled',
       enableAriaLabel: 'Enable {{name}}',
@@ -202,10 +197,6 @@ export const integrations = {
     },
     builtin: {
       title: 'Built-in GoodBuddy MCP',
-      availableTo:
-        'Provided per request with independent enablement and runtime assignment',
-      notice:
-        'GoodBuddy grants built-in MCP short-lived permissions for the current conversation in the main process without exposing service addresses or credentials. Changes apply to subsequent requests, while Ask and Execute access boundaries remain enforced by the system.',
       enabled: 'Enabled',
       disabled: 'Disabled',
       enableAriaLabel: 'Enable the built-in {{name}} MCP',
@@ -215,12 +206,9 @@ export const integrations = {
       runtimeAssignmentUnsupportedAriaLabel:
         '{{name}} cannot be assigned to {{runtime}} because this runtime does not support built-in MCP',
       unsupportedSuffix: ' (not supported yet)',
-      serverSummaryMixed:
-        'Built-in MCP server · Access depends on mode · Authorized per conversation',
-      serverSummaryReadOnly:
-        'Built-in MCP server · Read-only · Authorized per conversation',
-      serverSummaryDisabled:
-        'Built-in MCP server · Disabled · Enable Magic Notes first',
+      serverSummaryMixed: 'Read and write by mode',
+      serverSummaryReadOnly: 'Read-only',
+      serverSummaryDisabled: 'Disabled · Enable Magic Notes first',
       featureDisabled:
         'Magic Notes is disabled, so this built-in capability does not provide tools to any runtime.',
       collapseServer: 'Collapse server {{name}}',
@@ -298,8 +286,6 @@ export const integrations = {
     custom: {
       title: 'Custom MCP servers (advanced)',
       count: '{{count}}',
-      notice:
-        'Custom stdio MCP starts in a restricted environment without desktop session variables. For computer control, use the diagnosed built-in capabilities above.',
       empty: 'No MCP servers configured',
       collapseServer: 'Collapse server {{name}}',
       expandServer: 'Expand server {{name}}',

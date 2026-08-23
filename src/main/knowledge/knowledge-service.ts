@@ -180,6 +180,26 @@ interface PreparedQueryEmbedding {
   degradationReason?: string
 }
 
+function embedKnowledgeDocuments(
+  provider: EmbeddingProvider,
+  input: readonly string[],
+  signal?: AbortSignal
+): Promise<number[][]> {
+  return provider.embedDocuments
+    ? provider.embedDocuments(input, signal)
+    : provider.embed(input, signal)
+}
+
+function embedKnowledgeQuery(
+  provider: EmbeddingProvider,
+  input: readonly string[],
+  signal?: AbortSignal
+): Promise<number[][]> {
+  return provider.embedQuery
+    ? provider.embedQuery(input, signal)
+    : provider.embed(input, signal)
+}
+
 export class KnowledgeService {
   readonly database: KnowledgeDatabase
   private readonly managedRoot: string
@@ -636,7 +656,11 @@ export class KnowledgeService {
             chunk.metadata?.contextPrefix
           )
         )
-        const vectors = await provider.embed(contents, effectiveSignal)
+        const vectors = await embedKnowledgeDocuments(
+          provider,
+          contents,
+          effectiveSignal
+        )
         effectiveSignal.throwIfAborted()
         if (vectors.length !== batch.length) {
           throw new Error('Embedding provider returned an invalid result count')
@@ -1740,7 +1764,8 @@ export class KnowledgeService {
       ? AbortSignal.any([signal, this.lifecycleController.signal])
       : this.lifecycleController.signal
     try {
-      const result = await provider.embed(
+      const result = await embedKnowledgeQuery(
+        provider,
         [query],
         effectiveSignal
       )
@@ -3164,7 +3189,8 @@ export class KnowledgeService {
       ) {
         effectiveSignal.throwIfAborted()
         const batch = chunks.slice(offset, offset + this.embeddingBatchSize)
-        const vectors = await provider.embed(
+        const vectors = await embedKnowledgeDocuments(
+          provider,
           batch.map((chunk) => chunk.content),
           effectiveSignal
         )

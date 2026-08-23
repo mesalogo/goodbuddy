@@ -34,6 +34,7 @@ import type {
 } from '../../shared/contracts'
 import {
   defaultContextCompressionSettings,
+  builtinEmbeddingConnectionId,
   defaultModelProfileId as builtInDefaultModelProfileId,
   defaultRuntimeSettings,
   isAgentRuntimeModelProtocol,
@@ -46,7 +47,6 @@ import { ChannelSettingsSection } from './ChannelSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
-import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
 import {
@@ -66,8 +66,10 @@ import type { AppearanceTheme } from './theme'
 import type { AppNotificationInput } from './notifications'
 import type {
   EmbeddingDiagnosticResult,
-  EmbeddingConfigurationSummary
+  EmbeddingModelSnapshot,
+  EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
+import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { useUiLocale } from './i18n/UiLocaleProvider'
 import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
 import { findPreferredCompatibleModelProfile } from './model-profile-selection'
@@ -80,6 +82,36 @@ type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
   supportsImageInput: boolean
   apiKey: string
   clearApiKey: boolean
+}
+type EmbeddingConnectionDraft =
+  Omit<
+    Exclude<
+      NonNullable<RuntimeSettings['embeddingConnections']>[number],
+      { kind: 'builtin' }
+    >,
+    'apiKey'
+  > & {
+    apiKey: string
+    clearApiKey: boolean
+  }
+
+function toEmbeddingConnectionDrafts(
+  settings: RuntimeSettings
+): EmbeddingConnectionDraft[] {
+  return (settings.embeddingConnections ?? [])
+    .filter(
+      (
+        connection
+      ): connection is Exclude<
+        NonNullable<RuntimeSettings['embeddingConnections']>[number],
+        { kind: 'builtin' }
+      > => connection.kind === 'openai-compatible'
+    )
+    .map((connection) => ({
+      ...connection,
+      apiKey: '',
+      clearApiKey: false
+    }))
 }
 
 const settingsTabs = settingsCategoryList.map(({ id }) => id)
@@ -276,6 +308,8 @@ function hydrateRuntimeSettings(
     knowledgeEmbeddingModel: (value: string) => void
     knowledgeEmbeddingApiKey: (value: string) => void
     clearKnowledgeEmbeddingApiKey: (value: boolean) => void
+    embeddingConnections: (value: EmbeddingConnectionDraft[]) => void
+    activeEmbeddingConnectionId: (value: string) => void
     knowledgeRerankEnabled: (value: boolean) => void
     knowledgeRerankEndpoint: (value: string) => void
     knowledgeRerankModel: (value: string) => void
@@ -324,6 +358,10 @@ function hydrateRuntimeSettings(
   setters.knowledgeEmbeddingModel(value.knowledgeEmbeddingModel)
   setters.knowledgeEmbeddingApiKey('')
   setters.clearKnowledgeEmbeddingApiKey(false)
+  setters.embeddingConnections(toEmbeddingConnectionDrafts(value))
+  setters.activeEmbeddingConnectionId(
+    value.activeEmbeddingConnectionId ?? builtinEmbeddingConnectionId
+  )
   setters.knowledgeRerankEnabled(
     value.knowledgeRerankEnabled ??
       defaultRuntimeSettings.knowledgeRerankEnabled
@@ -600,6 +638,15 @@ export function SettingsPanel({
     clearKnowledgeEmbeddingApiKey,
     setClearKnowledgeEmbeddingApiKey
   ] = useState(false)
+  const [embeddingConnections, setEmbeddingConnections] = useState<
+    EmbeddingConnectionDraft[]
+  >([])
+  const [
+    activeEmbeddingConnectionId,
+    setActiveEmbeddingConnectionId
+  ] = useState(builtinEmbeddingConnectionId)
+  const [editingEmbeddingConnectionId, setEditingEmbeddingConnectionId] =
+    useState<string>()
   const [knowledgeRerankEnabled, setKnowledgeRerankEnabled] =
     useState<boolean>(defaultRuntimeSettings.knowledgeRerankEnabled)
   const [knowledgeRerankEndpoint, setKnowledgeRerankEndpoint] =
@@ -642,11 +689,15 @@ export function SettingsPanel({
       : profile.name
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [embeddingConfiguration, setEmbeddingConfiguration] =
-    useState<EmbeddingConfigurationSummary>()
+  const [embeddingSnapshot, setEmbeddingSnapshot] =
+    useState<EmbeddingSettingsSnapshot>()
+  const [embeddingModels, setEmbeddingModels] =
+    useState<EmbeddingModelSnapshot>()
   const [embeddingDiagnostic, setEmbeddingDiagnostic] =
     useState<EmbeddingDiagnosticResult>()
   const [embeddingDiagnosticRunning, setEmbeddingDiagnosticRunning] =
+    useState(false)
+  const [embeddingModelActionRunning, setEmbeddingModelActionRunning] =
     useState(false)
   const [error, setError] = useState<string>()
   const [confirmingClear, setConfirmingClear] = useState(false)
@@ -721,6 +772,9 @@ export function SettingsPanel({
         knowledgeEmbeddingModel: setKnowledgeEmbeddingModel,
         knowledgeEmbeddingApiKey: setKnowledgeEmbeddingApiKey,
         clearKnowledgeEmbeddingApiKey: setClearKnowledgeEmbeddingApiKey,
+        embeddingConnections: setEmbeddingConnections,
+        activeEmbeddingConnectionId:
+          setActiveEmbeddingConnectionId,
         knowledgeRerankEnabled: setKnowledgeRerankEnabled,
         knowledgeRerankEndpoint: setKnowledgeRerankEndpoint,
         knowledgeRerankModel: setKnowledgeRerankModel,
@@ -779,6 +833,8 @@ export function SettingsPanel({
       knowledgeEmbeddingModel,
       knowledgeEmbeddingApiKey,
       clearKnowledgeEmbeddingApiKey,
+      embeddingConnections,
+      activeEmbeddingConnectionId,
       knowledgeRerankEnabled,
       knowledgeRerankEndpoint,
       knowledgeRerankModel,
@@ -819,6 +875,10 @@ export function SettingsPanel({
         knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
         knowledgeEmbeddingApiKey: '',
         clearKnowledgeEmbeddingApiKey: false,
+        embeddingConnections: toEmbeddingConnectionDrafts(settings),
+        activeEmbeddingConnectionId:
+          settings.activeEmbeddingConnectionId ??
+          builtinEmbeddingConnectionId,
         knowledgeRerankEnabled:
           settings.knowledgeRerankEnabled ??
           defaultRuntimeSettings.knowledgeRerankEnabled,
@@ -981,7 +1041,8 @@ export function SettingsPanel({
       .then((snapshot) => {
         if (active) {
           setEmbeddingDiagnostic(undefined)
-          setEmbeddingConfiguration(snapshot.configuration)
+          setEmbeddingSnapshot(snapshot)
+          setEmbeddingModels(snapshot.models)
         }
       })
       .catch((reason: unknown) => {
@@ -1000,6 +1061,27 @@ export function SettingsPanel({
       active = false
     }
   }, [i18n, open])
+
+  useEffect(() => {
+    const embeddings = window.goodbuddy.embeddings
+    if (
+      !open ||
+      !embeddings ||
+      !embeddingModels?.operations.length
+    ) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      void embeddings.getSnapshot().then(
+        (snapshot) => {
+          setEmbeddingSnapshot(snapshot)
+          setEmbeddingModels(snapshot.models)
+        },
+        () => undefined
+      )
+    }, 300)
+    return () => window.clearInterval(timer)
+  }, [embeddingModels?.operations.length, open])
 
   const normalizedContextCompression =
     normalizeContextCompressionTokenDrafts(
@@ -1035,6 +1117,14 @@ export function SettingsPanel({
     )
     setKnowledgeEmbeddingApiKey('')
     setClearKnowledgeEmbeddingApiKey(false)
+    setEmbeddingConnections((connections) =>
+      connections.map((connection) => ({
+        ...connection,
+        apiKey: '',
+        clearApiKey: false
+      }))
+    )
+    setEditingEmbeddingConnectionId(undefined)
     setKnowledgeRerankApiKey('')
     setClearKnowledgeRerankApiKey(false)
     setSpeechModelDraftId(undefined)
@@ -1187,6 +1277,31 @@ export function SettingsPanel({
                 value: knowledgeEmbeddingApiKey.trim()
               }
             : { action: 'keep' },
+        embeddingConnections: [
+          {
+            id: builtinEmbeddingConnectionId,
+            name: 'GoodBuddy 内置向量模型',
+            kind: 'builtin'
+          },
+          ...embeddingConnections.map((connection) => ({
+            id: connection.id,
+            name: connection.name,
+            kind: connection.kind,
+            baseUrl: connection.baseUrl,
+            modelName: connection.modelName,
+            authentication: connection.authentication,
+            apiKey: connection.clearApiKey
+              ? ({ action: 'clear' } as const)
+              : connection.authentication === 'api-key' &&
+                  connection.apiKey.trim()
+                ? ({
+                    action: 'replace',
+                    value: connection.apiKey.trim()
+                  } as const)
+                : ({ action: 'keep' } as const)
+          }))
+        ],
+        activeEmbeddingConnectionId,
         knowledgeRerankEnabled,
         knowledgeRerankEndpoint,
         knowledgeRerankModel,
@@ -1231,9 +1346,9 @@ export function SettingsPanel({
       const embeddings = window.goodbuddy.embeddings
       if (embeddings) {
         try {
-          setEmbeddingConfiguration(
-            (await embeddings.getSnapshot()).configuration
-          )
+          const snapshot = await embeddings.getSnapshot()
+          setEmbeddingSnapshot(snapshot)
+          setEmbeddingModels(snapshot.models)
         } catch (reason) {
           setError(
             settingsErrorMessage(
@@ -1325,7 +1440,9 @@ export function SettingsPanel({
     }
   }
 
-  const runEmbeddingDiagnostic = async (): Promise<void> => {
+  const runEmbeddingDiagnostic = async (
+    connectionId: string
+  ): Promise<void> => {
     const embeddings = window.goodbuddy.embeddings
     if (!embeddings) {
       setError(t('errors.embeddingDiagnosticUnavailable'))
@@ -1338,15 +1455,60 @@ export function SettingsPanel({
       if (!(await save(false))) {
         return
       }
-      const diagnostic = await embeddings.diagnose()
+      const diagnostic = await embeddings.diagnose(connectionId)
       setEmbeddingDiagnostic(diagnostic)
-      setEmbeddingConfiguration(
-        (await embeddings.getSnapshot()).configuration
-      )
+      const snapshot = await embeddings.getSnapshot()
+      setEmbeddingSnapshot(snapshot)
+      setEmbeddingModels(snapshot.models)
     } catch (reason) {
       setError(settingsErrorMessage(reason, t('errors.testEmbedding')))
     } finally {
       setEmbeddingDiagnosticRunning(false)
+    }
+  }
+
+  const runEmbeddingModelOperation = async (
+    operation: (
+      api: NonNullable<typeof window.goodbuddy.embeddings>
+    ) => Promise<EmbeddingModelSnapshot | undefined>
+  ): Promise<void> => {
+    const embeddings = window.goodbuddy.embeddings
+    if (!embeddings) {
+      setError(t('errors.embeddingDiagnosticUnavailable'))
+      return
+    }
+    setEmbeddingModelActionRunning(true)
+    setError(undefined)
+    try {
+      const models = await operation(embeddings)
+      if (models) {
+        setEmbeddingModels(models)
+        const snapshot = await embeddings.getSnapshot()
+        setEmbeddingSnapshot(snapshot)
+      }
+    } catch (reason) {
+      setError(settingsErrorMessage(reason, t('errors.saveSettings')))
+    } finally {
+      setEmbeddingModelActionRunning(false)
+    }
+  }
+
+  const cancelEmbeddingModelOperation = async (
+    modelId: string
+  ): Promise<void> => {
+    const embeddings = window.goodbuddy.embeddings
+    if (!embeddings) {
+      setError(t('errors.embeddingDiagnosticUnavailable'))
+      return
+    }
+    setError(undefined)
+    try {
+      await embeddings.cancelModelOperation(modelId)
+      const snapshot = await embeddings.getSnapshot()
+      setEmbeddingSnapshot(snapshot)
+      setEmbeddingModels(snapshot.models)
+    } catch (reason) {
+      setError(settingsErrorMessage(reason, t('errors.saveSettings')))
     }
   }
 
@@ -1633,8 +1795,6 @@ export function SettingsPanel({
                   <X aria-hidden="true" size={19} />
                 </button>
               }
-              description={t('center.description')}
-              eyebrow={t('center.eyebrow')}
               headingId="settings-title"
               title={t('center.title')}
             />
@@ -1670,11 +1830,6 @@ export function SettingsPanel({
                 <strong>
                   {t(`categories.${category.translationKey}.label`)}
                 </strong>
-                <small>
-                  {t(
-                    `categories.${category.translationKey}.navigationDescription`
-                  )}
-                </small>
               </button>
             ))}
           </nav>
@@ -1974,9 +2129,6 @@ export function SettingsPanel({
               </div>
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
-                <p className="settings-panel__description">
-                  {t('runtime.opencode.advancedDescription')}
-                </p>
                 <fieldset className="runtime-source-options">
                   <legend>{t('runtime.sourceLegend')}</legend>
                   <label>
@@ -2205,9 +2357,6 @@ export function SettingsPanel({
               </div>
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
-                <p className="settings-panel__description">
-                  {t('runtime.continue.advancedDescription')}
-                </p>
                 <fieldset className="runtime-source-options">
                   <legend>{t('runtime.sourceLegend')}</legend>
                   <label>
@@ -2508,15 +2657,6 @@ export function SettingsPanel({
               ]}
               value={modelType}
             />
-            <small>
-              {modelType === 'llm'
-                ? t('model.types.llm.description')
-                : modelType === 'embedding'
-                  ? t('model.types.embedding.description')
-                  : modelType === 'rerank'
-                    ? t('model.types.rerank.description')
-                    : t('model.types.speech.description')}
-            </small>
           </div>
           {modelType === 'llm' && (
           <div className="settings-section">
@@ -2963,115 +3103,153 @@ export function SettingsPanel({
           </div>
           )}
           {modelType === 'embedding' && (
-            <div className="settings-section">
-              <div className="settings-section__title">
-                <KeyRound size={17} />
-                <div>
-                  <strong>{t('model.embedding.title')}</strong>
-                  <small>{t('model.embedding.description')}</small>
-                </div>
-              </div>
-              <div className="runtime-note model-service-form">
-                <label className="toggle-row">
-                  <input
-                    checked={knowledgeEmbeddingEnabled}
-                    onChange={(event) =>
-                      setKnowledgeEmbeddingEnabled(event.target.checked)
-                    }
-                    role="switch"
-                    type="checkbox"
-                  />
-                  <span>{t('model.embedding.enabled')}</span>
-                </label>
-                <label className="field">
-                  <span>{t('model.embedding.endpoint')}</span>
-                  <input
-                    aria-label={t('model.embedding.endpoint')}
-                    disabled={!knowledgeEmbeddingEnabled}
-                    inputMode="url"
-                    onChange={(event) =>
-                      setKnowledgeEmbeddingBaseUrl(event.target.value)
-                    }
-                    placeholder="https://provider.example/v1/embeddings"
-                    value={knowledgeEmbeddingBaseUrl}
-                  />
-                  <small>
-                    {t('model.embedding.endpointDescription')}
-                  </small>
-                </label>
-                <label className="field">
-                  <span>{t('model.embedding.modelName')}</span>
-                  <input
-                    aria-label={t('model.embedding.modelName')}
-                    disabled={!knowledgeEmbeddingEnabled}
-                    onChange={(event) =>
-                      setKnowledgeEmbeddingModel(event.target.value)
-                    }
-                    value={knowledgeEmbeddingModel}
-                  />
-                </label>
-                <label className="field">
-                  <span>{t('model.embedding.optionalApiKey')}</span>
-                  <input
-                    aria-label={t('model.embedding.optionalApiKey')}
-                    autoComplete="off"
-                    disabled={
-                      !knowledgeEmbeddingEnabled ||
-                      settings?.knowledgeEmbeddingCredentialSource ===
-                        'environment' ||
-                      !settings?.secureStorageAvailable
-                    }
-                    onChange={(event) => {
-                      setKnowledgeEmbeddingApiKey(event.target.value)
-                      setClearKnowledgeEmbeddingApiKey(false)
-                    }}
-                    placeholder={
-                      settings?.knowledgeEmbeddingApiKeyConfigured
-                        ? t('credentials.configuredPlaceholder')
-                        : t('model.embedding.optionalApiKeyPlaceholder')
-                    }
-                    type="password"
-                    value={knowledgeEmbeddingApiKey}
-                  />
-                </label>
-                <div className="credential-state">
-                  <LockKeyhole size={15} />
-                  <span>
-                    {settings
-                      ? t(
-                          `credentials.${settings.knowledgeEmbeddingCredentialSource}`
-                        )
-                      : t('credentials.none')}
-                  </span>
-                  {settings?.knowledgeEmbeddingCredentialSource ===
-                    'encrypted' && (
-                    <button
-                      onClick={() => {
-                        setKnowledgeEmbeddingApiKey('')
-                        setClearKnowledgeEmbeddingApiKey(true)
-                      }}
-                      type="button"
-                    >
-                      {clearKnowledgeEmbeddingApiKey
-                        ? t('actions.clearAfterSave')
-                        : t('actions.clearCredential')}
-                    </button>
-                  )}
-                </div>
-                <small>
-                  {t('model.embedding.privacyDescription')}
-                </small>
-              </div>
-            </div>
-          )}
-          {modelType === 'embedding' && embeddingConfiguration && (
             <EmbeddingSettingsSection
-              configuration={embeddingConfiguration}
+              connections={[
+                ...(embeddingSnapshot?.connections ?? [])
+                  .filter((connection) => connection.kind === 'builtin')
+                  .map((connection) => {
+                    const installed = embeddingModels?.installed.some(
+                      (candidate) => candidate.id === connection.model
+                    )
+                    const operation = embeddingModels?.operations.find(
+                      (candidate) =>
+                        candidate.modelId === connection.model
+                    )
+                    const progress =
+                      operation?.totalBytes &&
+                      Math.round(
+                        (operation.completedBytes /
+                          operation.totalBytes) *
+                          100
+                      )
+                    return {
+                      ...connection,
+                      installed,
+                      operationActive: Boolean(operation),
+                      statusText: operation
+                        ? t('model.embedding.progress', {
+                            percent: progress ?? 0
+                          })
+                        : installed
+                          ? t('model.embedding.installed')
+                          : t('model.embedding.notInstalled')
+                    }
+                  }),
+                ...embeddingConnections.map((connection) => ({
+                  ...connection,
+                  model: connection.modelName,
+                  endpoint: connection.baseUrl
+                }))
+              ]}
+              currentConnectionId={activeEmbeddingConnectionId}
               diagnostic={embeddingDiagnostic}
               diagnosticRunning={embeddingDiagnosticRunning}
-              disabled={saving || !knowledgeEmbeddingEnabled}
-              onTest={() => {
-                void runEmbeddingDiagnostic()
+              enabled={knowledgeEmbeddingEnabled}
+              busy={saving || embeddingModelActionRunning}
+              secureStorageAvailable={
+                settings?.secureStorageAvailable ?? false
+              }
+              selectedConnectionId={editingEmbeddingConnectionId}
+              onAddConnection={() => {
+                const id = crypto.randomUUID()
+                setEmbeddingConnections((connections) => [
+                  ...connections,
+                  {
+                    id,
+                    name: t('model.embedding.newConnectionName'),
+                    kind: 'openai-compatible',
+                    baseUrl:
+                      'https://provider.example/v1/embeddings',
+                    modelName: 'text-embedding-3-small',
+                    authentication: 'api-key',
+                    apiKeyConfigured: false,
+                    credentialSource: 'none',
+                    apiKey: '',
+                    clearApiKey: false
+                  }
+                ])
+                setEditingEmbeddingConnectionId(id)
+              }}
+              onCancelBuiltin={(modelId) => {
+                void cancelEmbeddingModelOperation(modelId)
+              }}
+              onDeleteConnection={(connectionId) => {
+                setEmbeddingConnections((connections) =>
+                  connections.filter(
+                    (connection) => connection.id !== connectionId
+                  )
+                )
+                if (activeEmbeddingConnectionId === connectionId) {
+                  setActiveEmbeddingConnectionId(
+                    builtinEmbeddingConnectionId
+                  )
+                }
+                setEditingEmbeddingConnectionId(
+                  builtinEmbeddingConnectionId
+                )
+              }}
+              onDownloadBuiltin={(modelId) => {
+                const model = embeddingModels?.catalog.find(
+                  (candidate) => candidate.id === modelId
+                )
+                if (model && embeddingModels) {
+                  void runEmbeddingModelOperation((api) =>
+                    api.installModel(
+                      model.id,
+                      embeddingModels.selectedDownloadSource
+                    )
+                  )
+                }
+              }}
+              onEnabledChange={setKnowledgeEmbeddingEnabled}
+              onImportBuiltin={(modelId) => {
+                void runEmbeddingModelOperation((api) =>
+                  api.importModelArchive(modelId)
+                )
+              }}
+              onRemoveBuiltin={(modelId) => {
+                void runEmbeddingModelOperation((api) =>
+                  api.removeModel(modelId)
+                )
+              }}
+              onSelectConnection={setEditingEmbeddingConnectionId}
+              onSetCurrent={setActiveEmbeddingConnectionId}
+              onTestConnection={(connectionId) => {
+                void runEmbeddingDiagnostic(connectionId)
+              }}
+              onUpdateConnection={(connectionId, changes) => {
+                setEmbeddingConnections((connections) =>
+                  connections.map((connection) =>
+                    connection.id === connectionId
+                      ? {
+                          ...connection,
+                          ...(changes.name === undefined
+                            ? {}
+                            : { name: changes.name }),
+                          ...(changes.endpoint === undefined
+                            ? {}
+                            : { baseUrl: changes.endpoint }),
+                          ...(changes.model === undefined
+                            ? {}
+                            : { modelName: changes.model }),
+                          ...(changes.authentication === undefined
+                            ? {}
+                            : {
+                                authentication:
+                                  changes.authentication
+                              }),
+                          ...(changes.apiKey === undefined
+                            ? {}
+                            : { apiKey: changes.apiKey }),
+                          ...(changes.clearApiKey === undefined
+                            ? {}
+                            : {
+                                clearApiKey: changes.clearApiKey
+                              })
+                        }
+                      : connection
+                  )
+                )
               }}
             />
           )}

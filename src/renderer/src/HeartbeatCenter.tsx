@@ -415,7 +415,6 @@ export function HeartbeatCenter({
           )
         }
         description={t('center.description')}
-        eyebrow={t('center.eyebrow')}
         headingId="heartbeat-center-title"
         icon={<HeartPulse size={22} />}
         scope={heartbeatScope}
@@ -492,9 +491,6 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">
-                  {t('center.currentStatus.eyebrow')}
-                </p>
                 <h2 id="heartbeat-status-title">
                   {t('center.currentStatus.title')}
                 </h2>
@@ -713,9 +709,6 @@ export function HeartbeatCenter({
             >
               <div className="heartbeat-center__section-heading">
                 <div>
-                  <p className="eyebrow">
-                    {t('center.trend.eyebrow')}
-                  </p>
                   <h2 id="heartbeat-trend-title">
                     {t('center.trend.title')}
                   </h2>
@@ -807,9 +800,6 @@ export function HeartbeatCenter({
             >
               <div className="heartbeat-center__section-heading">
                 <div>
-                  <p className="eyebrow">
-                    {t('center.latest.eyebrow')}
-                  </p>
                   <h2 id="latest-heartbeat-title">
                     {t('center.latest.title')}
                   </h2>
@@ -876,9 +866,6 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">
-                  {t('center.suggestions.memoryEyebrow')}
-                </p>
                 <h2 id="heartbeat-memory-title">
                   {t('center.suggestions.memoryTitle')}
                 </h2>
@@ -990,9 +977,6 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">
-                  {t('center.suggestions.taskEyebrow')}
-                </p>
                 <h2 id="heartbeat-task-title">
                   {t('center.suggestions.taskTitle')}
                 </h2>
@@ -1112,9 +1096,6 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">
-                  {t('center.history.timelineEyebrow')}
-                </p>
                 <h2 id="heartbeat-reports-title">
                   <History aria-hidden="true" size={16} />
                   {t('center.history.timelineTitle')}
@@ -1215,9 +1196,6 @@ export function HeartbeatCenter({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <p className="eyebrow">
-                  {t('center.history.auditEyebrow')}
-                </p>
                 <h2 id="heartbeat-runs-title">
                   {t('center.history.auditTitle')}
                 </h2>

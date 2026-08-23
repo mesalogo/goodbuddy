@@ -459,7 +459,6 @@ export function KnowledgeRetrievalWorkbench({
             <div className="knowledge-workbench-section__heading">
               <div>
                 <h3 id={`${titleId}-query`}>{t('retrieval.query.title')}</h3>
-                <p>{t('retrieval.query.help')}</p>
               </div>
               <span className="knowledge-character-count">
                 {t('retrieval.query.count', { count: query.length })}
@@ -507,71 +506,6 @@ export function KnowledgeRetrievalWorkbench({
                 {validationErrors.weights}
               </p>
             )}
-            <div className="knowledge-retrieval-pipeline">
-              <div className="knowledge-retrieval-pipeline__step">
-                <span>1</span>
-                <div>
-                  <strong>{t('retrieval.pipeline.recall.title')}</strong>
-                  <small>
-                    {candidateLimit === undefined
-                      ? t('retrieval.pipeline.recall.pending')
-                      : t('retrieval.pipeline.recall.summary', {
-                          count: candidateLimit
-                        })}
-                  </small>
-                </div>
-              </div>
-              <div className="knowledge-retrieval-pipeline__connector" />
-              <div
-                className={`knowledge-retrieval-pipeline__step${
-                  draftSettings.rerankMode !== 'none'
-                    ? ''
-                    : ' knowledge-retrieval-pipeline__step--muted'
-                }`}
-              >
-                <span>2</span>
-                <div>
-                  <strong>{t('retrieval.pipeline.rerank.title')}</strong>
-                  <small>
-                    {draftSettings.rerankMode !== 'none'
-                      ? t('retrieval.pipeline.rerank.enabled', {
-                          count: candidateLimit ?? '—'
-                        })
-                      : t('retrieval.pipeline.rerank.disabled')}
-                  </small>
-                </div>
-              </div>
-              <div className="knowledge-retrieval-pipeline__connector" />
-              <div className="knowledge-retrieval-pipeline__step">
-                <span>3</span>
-                <div>
-                  <strong>{t('retrieval.pipeline.select.title')}</strong>
-                  <small>
-                    {t('retrieval.pipeline.select.summary', {
-                      count: Number.isSafeInteger(draftSettings.topK)
-                        ? draftSettings.topK
-                        : '—'
-                    })}
-                  </small>
-                </div>
-              </div>
-              <div className="knowledge-retrieval-pipeline__connector" />
-              <div className="knowledge-retrieval-pipeline__step">
-                <span>4</span>
-                <div>
-                  <strong>{t('retrieval.pipeline.context.title')}</strong>
-                  <small>
-                    {t('retrieval.pipeline.context.summary', {
-                      count: Number.isSafeInteger(
-                        draftSettings.contextMaxCharacters
-                      )
-                        ? draftSettings.contextMaxCharacters.toLocaleString()
-                        : '—'
-                    })}
-                  </small>
-                </div>
-              </div>
-            </div>
             <div
               aria-describedby={
                 showSettingsValidation && validationErrors.weights
@@ -590,7 +524,6 @@ export function KnowledgeRetrievalWorkbench({
                     <h4 id={`${titleId}-recall-settings`}>
                       {t('retrieval.settings.groups.recall.title')}
                     </h4>
-                    <p>{t('retrieval.settings.groups.recall.description')}</p>
                   </div>
                 </div>
                 <div className="knowledge-workbench-settings__grid knowledge-workbench-settings__grid--three">
@@ -704,7 +637,6 @@ export function KnowledgeRetrievalWorkbench({
                     <h4 id={`${titleId}-output-settings`}>
                       {t('retrieval.settings.groups.output.title')}
                     </h4>
-                    <p>{t('retrieval.settings.groups.output.description')}</p>
                   </div>
                 </div>
                 <div className="field">

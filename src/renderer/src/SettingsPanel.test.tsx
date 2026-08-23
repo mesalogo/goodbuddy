@@ -15,6 +15,10 @@ import type {
   DesktopApi,
   RuntimeSettings
 } from '../../shared/contracts'
+import {
+  builtinEmbeddingConnectionId,
+  legacyEmbeddingConnectionId
+} from '../../shared/contracts'
 import type {
   CapabilityAssignments,
   CapabilitySnapshot
@@ -64,6 +68,24 @@ const runtimeSettings: RuntimeSettings = {
   knowledgeEmbeddingModel: 'nomic-embed-text',
   knowledgeEmbeddingApiKeyConfigured: false,
   knowledgeEmbeddingCredentialSource: 'none',
+  embeddingConnections: [
+    {
+      id: builtinEmbeddingConnectionId,
+      name: 'GoodBuddy 内置向量模型',
+      kind: 'builtin'
+    },
+    {
+      id: legacyEmbeddingConnectionId,
+      name: '自定义向量模型',
+      kind: 'openai-compatible',
+      baseUrl: 'http://127.0.0.1:11434/v1/embeddings',
+      modelName: 'nomic-embed-text',
+      authentication: 'none',
+      apiKeyConfigured: false,
+      credentialSource: 'none'
+    }
+  ],
+  activeEmbeddingConnectionId: legacyEmbeddingConnectionId,
   knowledgeRerankEnabled: false,
   knowledgeRerankEndpoint: 'https://api.cohere.com/v1/rerank',
   knowledgeRerankModel: 'rerank-v3.5',
@@ -386,6 +408,31 @@ const embeddingSnapshot: EmbeddingSettingsSnapshot = {
     model: 'nomic-embed-text',
     endpoint: 'http://127.0.0.1:11434/v1/embeddings',
     credentialConfigured: false
+  },
+  connections: [
+    {
+      id: builtinEmbeddingConnectionId,
+      name: 'GoodBuddy 内置向量模型',
+      kind: 'builtin',
+      model: 'granite-embedding-107m-multilingual',
+      credentialConfigured: false
+    },
+    {
+      id: legacyEmbeddingConnectionId,
+      name: '自定义向量模型',
+      kind: 'openai-compatible',
+      model: 'nomic-embed-text',
+      endpoint: 'http://127.0.0.1:11434/v1/embeddings',
+      authentication: 'none',
+      credentialConfigured: false
+    }
+  ],
+  currentConnectionId: legacyEmbeddingConnectionId,
+  models: {
+    selectedDownloadSource: 'modelscope',
+    catalog: [],
+    installed: [],
+    operations: []
   }
 }
 const getEmbeddingSnapshot = vi.fn(async () => embeddingSnapshot)
@@ -398,6 +445,17 @@ const diagnoseEmbedding = vi.fn(
     latencyMs: 128,
     checkedAt: Date.UTC(2026, 7, 5, 12, 0, 0)
   })
+)
+const setCurrentEmbedding = vi.fn(async () => embeddingSnapshot)
+const installEmbeddingModel = vi.fn(
+  async () => embeddingSnapshot.models
+)
+const cancelEmbeddingModel = vi.fn(async () => true)
+const importEmbeddingModel = vi.fn(
+  async () => embeddingSnapshot.models
+)
+const removeEmbeddingModel = vi.fn(
+  async () => embeddingSnapshot.models
 )
 let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
@@ -710,7 +768,12 @@ describe('SettingsPanel runtime files', () => {
         },
         embeddings: {
           getSnapshot: getEmbeddingSnapshot,
-          diagnose: diagnoseEmbedding
+          diagnose: diagnoseEmbedding,
+          setCurrent: setCurrentEmbedding,
+          installModel: installEmbeddingModel,
+          cancelModelOperation: cancelEmbeddingModel,
+          importModelArchive: importEmbeddingModel,
+          removeModel: removeEmbeddingModel
         },
         speechModels: {
           getSnapshot: getSpeechModelSnapshot,
@@ -797,8 +860,8 @@ describe('SettingsPanel runtime files', () => {
       })
     ).toBeInTheDocument()
     expect(
-      screen.getByText('直连模型的历史压缩与原文保留')
-    ).toBeInTheDocument()
+      screen.queryByText('直连模型的历史压缩与原文保留')
+    ).not.toBeInTheDocument()
     const enabled = screen.getByRole('switch', {
       name: '自动压缩较早的对话'
     })
@@ -1348,7 +1411,7 @@ describe('SettingsPanel runtime files', () => {
       ).not.toHaveClass('capability-card--disabled')
     )
     expect(
-      screen.getAllByText('内置 MCP Server · 按模式读写 · 按对话授权')
+      screen.getAllByText('按模式读写')
     ).not.toHaveLength(0)
   })
 
@@ -1373,7 +1436,7 @@ describe('SettingsPanel runtime files', () => {
     expect(content).toHaveClass('settings-panel__content')
     expect(
       screen.getByRole('tab', { name: 'Agent Runtime' })
-    ).toHaveTextContent('配置 Agent Runtime、默认工作区与原生能力')
+    ).toHaveTextContent(/^Agent Runtime$/u)
   })
 
   it('omits the redundant close-only footer on passive settings pages', () => {
@@ -3738,7 +3801,7 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
-  it('configures vector models under model connections instead of security', async () => {
+  it('renders vector settings synchronously under model connections instead of security', async () => {
     getEmbeddingSnapshot
       .mockResolvedValueOnce(embeddingSnapshot)
       .mockResolvedValue({
@@ -3748,7 +3811,19 @@ describe('SettingsPanel runtime files', () => {
           model: 'bge-m3',
           endpoint: 'https://vectors.example/v1/embeddings',
           credentialConfigured: true
-        }
+        },
+        connections: embeddingSnapshot.connections.map((connection) =>
+          connection.id === legacyEmbeddingConnectionId
+            ? {
+                ...connection,
+                model: 'bge-m3',
+                endpoint:
+                  'https://vectors.example/v1/embeddings',
+                authentication: 'api-key' as const,
+                credentialConfigured: true
+              }
+            : connection
+        )
       })
     render(
       <SettingsPanel
@@ -3762,32 +3837,40 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '安全与数据' }))
     expect(
-      screen.queryByRole('switch', { name: '启用向量模型' })
+      screen.queryByRole('switch', { name: '启用向量检索' })
     ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
     expect(
-      screen
-        .getByLabelText('API Key（可选）')
-        .closest('.runtime-note')
-    ).toHaveClass('model-service-form')
-    expect(
-      screen.getByText('向量模型连接', { selector: 'strong' })
+      screen.getByText('向量模型连接', {
+        selector: 'strong'
+      })
     ).toBeInTheDocument()
+    expect(
+      screen.queryByText('正在加载向量模型设置…')
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: '保存并测试模型' })
     ).not.toBeInTheDocument()
 
     fireEvent.click(
-      screen.getByRole('switch', { name: '启用向量模型' })
+      screen.getByRole('switch', { name: '启用向量检索' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑向量模型连接 自定义向量模型'
+      })
     )
     fireEvent.change(screen.getByLabelText('向量接口 URL'), {
       target: { value: 'https://vectors.example/v1/embeddings' }
     })
     fireEvent.change(screen.getByLabelText('模型名称'), {
       target: { value: 'bge-m3' }
+    })
+    fireEvent.change(screen.getByLabelText('认证方式'), {
+      target: { value: 'api-key' }
     })
     fireEvent.change(screen.getByLabelText('API Key（可选）'), {
       target: { value: 'vector-secret' }
@@ -3798,28 +3881,38 @@ describe('SettingsPanel runtime files', () => {
       expect(updateRuntime).toHaveBeenCalledWith(
         expect.objectContaining({
           knowledgeEmbeddingEnabled: true,
-          knowledgeEmbeddingBaseUrl:
-            'https://vectors.example/v1/embeddings',
-          knowledgeEmbeddingModel: 'bge-m3',
-          knowledgeEmbeddingApiKey: {
-            action: 'replace',
-            value: 'vector-secret'
-          }
+          embeddingConnections: expect.arrayContaining([
+            expect.objectContaining({
+              id: legacyEmbeddingConnectionId,
+              baseUrl:
+                'https://vectors.example/v1/embeddings',
+              modelName: 'bge-m3',
+              apiKey: {
+                action: 'replace',
+                value: 'vector-secret'
+              }
+            })
+          ])
         })
       )
     )
     const section = screen.getByRole('region', { name: '向量模型' })
     await waitFor(() => {
       expect(
-        within(section).getByText('bge-m3', { selector: 'strong' })
-      ).toBeInTheDocument()
+        within(section).getAllByText('自定义向量模型', {
+          selector: 'strong'
+        })
+      ).toHaveLength(2)
       expect(
-        within(section).getByText(
-          /https:\/\/vectors\.example\/v1\/embeddings/u
+        within(section).getByDisplayValue(
+          'https://vectors.example/v1/embeddings'
         )
       ).toBeInTheDocument()
-      expect(within(section).getByText('已配置凭据'))
-        .toBeInTheDocument()
+      expect(
+        within(section).queryByText(
+          /https:\/\/vectors\.example\/v1\/embeddings/u
+        )
+      ).not.toBeInTheDocument()
     })
   })
 
@@ -3892,15 +3985,20 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
 
     const section = screen.getByRole('region', { name: '向量模型' })
+    const testButton = within(section).getByRole('button', {
+      name: '测试向量模型连接 自定义向量模型'
+    })
     expect(
-      within(section).getByRole('button', { name: '测试向量模型' })
+      testButton
     ).toBeDisabled()
 
     fireEvent.click(
-      screen.getByRole('switch', { name: '启用向量模型' })
+      screen.getByRole('switch', { name: '启用向量检索' })
     )
     fireEvent.click(
-      within(section).getByRole('button', { name: '测试向量模型' })
+      within(section).getByRole('button', {
+        name: '测试向量模型连接 自定义向量模型'
+      })
     )
     await waitFor(() => expect(diagnoseEmbedding).toHaveBeenCalledTimes(1))
     expect(
@@ -3909,6 +4007,61 @@ describe('SettingsPanel runtime files', () => {
     expect(
       within(section).queryByRole('button', { name: '重建向量索引' })
     ).not.toBeInTheDocument()
+  })
+
+  it('preserves embedding credentials after a failed save, clears them after success, and sets the current connection explicitly', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑向量模型连接 自定义向量模型'
+      })
+    )
+    fireEvent.change(await screen.findByLabelText('认证方式'), {
+      target: { value: 'api-key' }
+    })
+    const credential = screen.getByLabelText('API Key（可选）')
+    fireEvent.change(credential, {
+      target: { value: 'embedding-secret' }
+    })
+    updateRuntime.mockRejectedValueOnce(new Error('保存失败'))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await screen.findByText('保存失败')
+    expect(credential).toHaveValue('embedding-secret')
+
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(credential).toHaveValue(''))
+
+    fireEvent.click(
+      screen.getByRole('switch', { name: '启用向量检索' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑向量模型连接 GoodBuddy 内置向量模型'
+      })
+    )
+    fireEvent.click(screen.getByRole('radio', { name: '当前连接' }))
+    expect(setCurrentEmbedding).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          activeEmbeddingConnectionId: builtinEmbeddingConnectionId
+        })
+      )
+    )
+    expect(setCurrentEmbedding).not.toHaveBeenCalled()
   })
 
   it('keeps Smart Heartbeat configuration out of Settings', () => {
@@ -4032,8 +4185,8 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(await screen.findByText('电脑控制能力')).toBeInTheDocument()
     expect(
-      screen.getByText('仅显示实际操作客户端电脑的能力')
-    ).toBeInTheDocument()
+      screen.queryByText('仅显示实际操作客户端电脑的能力')
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByRole('switch', {
         name: '启用直连模型内置浏览器'
@@ -4045,6 +4198,16 @@ describe('SettingsPanel runtime files', () => {
         name: '启用 Linux 桌面控制'
       })
     ).toBeDisabled()
+    const desktopCapabilityCard = screen
+      .getByRole('switch', { name: '启用 Linux 桌面控制' })
+      .closest('article')
+    expect(desktopCapabilityCard).not.toBeNull()
+    expect(
+      within(desktopCapabilityCard!).queryByText('已停用')
+    ).not.toBeInTheDocument()
+    expect(
+      within(desktopCapabilityCard!).getByText('启用此能力')
+    ).toBeInTheDocument()
     fireEvent.click(
       within(mcpTabs).getByRole('tab', { name: '直连模型' })
     )
@@ -4161,7 +4324,7 @@ describe('SettingsPanel runtime files', () => {
     })
     expect(
       await screen.findByText(
-        '内置 MCP Server · 未启用 · 需要开启魔法笔记'
+        '未启用 · 需要开启魔法笔记'
       )
     ).toBeInTheDocument()
     expect(noteServerToggle.closest('article')).toHaveClass(
@@ -4180,11 +4343,11 @@ describe('SettingsPanel runtime files', () => {
       })
     ).toHaveLength(builtinMcpServers.length)
     expect(
-      screen.getByText(/按请求提供，可分别控制启停与 Runtime 分配/)
-    ).toBeInTheDocument()
+      screen.queryByText(/按请求提供，可分别控制启停与 Runtime 分配/)
+    ).not.toBeInTheDocument()
     expect(
-      screen.getByText(/不公开服务地址或凭据/)
-    ).toBeInTheDocument()
+      screen.queryByText(/不公开服务地址或凭据/)
+    ).not.toBeInTheDocument()
     fireEvent.click(
       within(mcpTabs).getByRole('tab', { name: '直连模型' })
     )
@@ -4208,12 +4371,18 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(
       screen.getByText(
-        /自定义 MCP 可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness/
+        /可分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent 或 DeepSeek Harness/
       )
     ).toHaveTextContent('新建时默认分配给直连模型')
     expect(
-      screen.getByText(/服务地址、命令和凭据始终由 GoodBuddy 主进程保管/)
+      screen.getByText(/服务地址、命令和凭据由 GoodBuddy 主进程保管/)
     ).toBeInTheDocument()
+    expect(screen.getByText(/具有当前用户权限/)).toHaveTextContent(
+      '请仅添加可信服务'
+    )
+    expect(
+      screen.getByText(/远程访问令牌由系统安全存储加密/)
+    ).toHaveTextContent('工具调用前仍需 GoodBuddy 审批')
     expect(
       await screen.findByText('尚未配置 MCP Server')
     ).toBeInTheDocument()
@@ -4221,8 +4390,13 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('button', { name: /添加 Server/ })
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/自定义 stdio MCP 会以受限环境启动/)
-    ).toHaveTextContent('不会获得桌面会话变量')
+      screen.getByText(/stdio Server 会以不含桌面会话变量的受限环境启动/)
+    ).toHaveTextContent('需要电脑控制时请使用经过诊断的内置能力')
+    expect(
+      document.querySelectorAll(
+        '#mcp-settings-panel-custom > .settings-notice'
+      )
+    ).toHaveLength(1)
     const addServer = screen.getByRole('button', { name: /添加 Server/ })
     fireEvent.click(addServer)
     const dialog = screen.getByRole('dialog', {

@@ -37,6 +37,13 @@ import { KnowledgeService } from './knowledge/knowledge-service'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { createModelGraphExtractor } from './knowledge/model-extractor'
 import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
+import { embeddingProviderFingerprint } from './knowledge/embedding-provider-key'
+import type { EmbeddingProvider } from './knowledge/types'
+import { EmbeddingModelManager } from './knowledge/embedding-model-manager'
+import {
+  EmbeddingInferenceBroker,
+  type EmbeddingInferenceTransport
+} from './knowledge/embedding-inference-broker'
 import { CohereRerankClient } from './knowledge/cohere-rerank-client'
 import { RuntimeSettingsStore } from './runtime-settings-store'
 import type { ResolvedRuntimeSettings } from './runtime-settings-store'
@@ -101,6 +108,7 @@ import { ShortcutSettingsService } from './shortcut-settings-service'
 import { defaultGlobalShortcutSettings } from '../shared/shortcut'
 import { requestProcessTreeTermination } from './agent/child-process-termination'
 import { createContinueUtilityProcessChild } from './agent/continue-utility-process-adapter'
+import type { RuntimeSettings, RuntimeSettingsInput } from '../shared/contracts'
 
 const legacyDefaultShortcut =
   defaultGlobalShortcutSettings.accelerator
@@ -145,19 +153,220 @@ let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
 let documentOcrBroker: DocumentOcrBroker | undefined
 let documentOcrModelManager: DocumentOcrModelManager | undefined
+let embeddingModelManager: EmbeddingModelManager | undefined
+const embeddingBrokers = new Set<EmbeddingInferenceBroker>()
 let stopRuntimeReconfiguration: (() => Promise<void>) | undefined
 let dshExtensionInstaller: DshNpmExtensionInstaller | undefined
 
-function createEmbeddingProvider(
-  settings: ResolvedRuntimeSettings
-): OpenAIEmbeddingClient | undefined {
-  return settings.knowledgeEmbeddingEnabled
-    ? new OpenAIEmbeddingClient({
-        endpoint: settings.knowledgeEmbeddingBaseUrl,
-        model: settings.knowledgeEmbeddingModel,
-        apiKey: settings.knowledgeEmbeddingApiKey
-      })
-    : undefined
+type ManagedEmbeddingProvider = EmbeddingProvider & {
+  dispose?: () => void | Promise<void>
+}
+
+function createEmbeddingUtilityTransport(
+  modulePath: string,
+  modelDirectory: string
+): EmbeddingInferenceTransport {
+  const child = utilityProcess.fork(
+    modulePath,
+    [modelDirectory],
+    {
+      serviceName: 'GoodBuddy Embedding Inference',
+      stdio: 'pipe',
+      allowLoadingUnsignedLibraries: false
+    }
+  )
+  return {
+    postMessage: (message) => child.postMessage(message),
+    onMessage: (listener) => {
+      child.on('message', listener)
+      return () => child.removeListener('message', listener)
+    },
+    onClose: (listener) => {
+      let closed = false
+      const notify = (): void => {
+        if (closed) {
+          return
+        }
+        closed = true
+        listener()
+      }
+      child.on('exit', notify)
+      child.on('error', notify)
+      return () => {
+        child.removeListener('exit', notify)
+        child.removeListener('error', notify)
+      }
+    },
+    close: () => {
+      child.kill()
+    }
+  }
+}
+
+async function createEmbeddingProvider(
+  settings: ResolvedRuntimeSettings,
+  manager: EmbeddingModelManager,
+  connectionId = settings.activeEmbeddingConnectionId
+): Promise<ManagedEmbeddingProvider | undefined> {
+  if (!settings.knowledgeEmbeddingEnabled) {
+    return undefined
+  }
+  const connection = settings.embeddingConnections?.find(
+    (candidate) => candidate.id === connectionId
+  )
+  if (!connection) {
+    throw new Error('当前向量连接不存在')
+  }
+  if (connection.kind !== 'builtin') {
+    return new OpenAIEmbeddingClient({
+      endpoint: connection.baseUrl,
+      model: connection.modelName,
+      apiKey: connection.apiKey
+    })
+  }
+  const snapshot = await manager.getSnapshot()
+  const model =
+    snapshot.catalog.find((candidate) => candidate.recommended) ??
+    snapshot.catalog[0]
+  if (!model) {
+    throw new Error('内置向量模型目录为空')
+  }
+  const modelDirectory =
+    await manager.getVerifiedModelDirectory(model.id)
+  const installed = snapshot.installed.find(
+    (candidate) => candidate.id === model.id
+  )
+  if (!installed) {
+    throw new Error('内置向量模型尚未安装')
+  }
+  const tokenizerDigest = installed.files.find(
+    (file) => file.role === 'tokenizer'
+  )?.sha256
+  const modelDigest = installed.files.find(
+    (file) => file.role === 'model'
+  )?.sha256
+  if (!tokenizerDigest || !modelDigest) {
+    throw new Error('内置向量模型安装清单不完整')
+  }
+  const broker = new EmbeddingInferenceBroker({
+    createTransport: () =>
+      createEmbeddingUtilityTransport(
+        join(mainModuleDirectory, 'embedding-inference-bootstrap.js'),
+        modelDirectory
+      )
+  })
+  embeddingBrokers.add(broker)
+  return {
+    provider: 'builtin',
+    model: model.id,
+    fingerprint: embeddingProviderFingerprint({
+      provider: 'builtin',
+      dataPath: { kind: 'device' },
+      model: model.id,
+      dimensions: model.dimensions,
+      encodingRecipe: {
+        recipeId: 'granite-embedding-97m-r2',
+        artifactDigest: modelDigest,
+        tokenizerDigest,
+        pooling: 'cls',
+        normalization: 'l2',
+        queryTemplate: '{text}',
+        documentTemplate: '{text}',
+        maximumSequenceTokens: model.contextTokens
+      }
+    }),
+    embed: (texts, signal) =>
+      broker.embed(texts, 'document', signal),
+    embedQuery: (texts, signal) =>
+      broker.embed(texts, 'query', signal),
+    embedDocuments: (texts, signal) =>
+      broker.embed(texts, 'document', signal),
+    dispose: async () => {
+      try {
+        await broker.shutdown()
+      } finally {
+        embeddingBrokers.delete(broker)
+      }
+    }
+  }
+}
+
+function runtimeSettingsInputWithEmbeddingSelection(
+  settings: RuntimeSettings,
+  activeEmbeddingConnectionId: string
+): RuntimeSettingsInput {
+  const configured = settings.configured ?? settings
+  const defaultProfile =
+    settings.modelProfiles.find(
+      (profile) => profile.id === settings.defaultModelProfileId
+    ) ?? settings.modelProfiles[0]
+  if (!defaultProfile || !settings.embeddingConnections) {
+    throw new Error('模型连接设置不完整')
+  }
+  return {
+    provider: settings.provider,
+    modelBaseUrl: defaultProfile.baseUrl,
+    modelName: defaultProfile.modelName,
+    modelProtocol: defaultProfile.protocol,
+    modelAuthentication: defaultProfile.authentication,
+    imageGenerationQuality: defaultProfile.imageGenerationQuality,
+    opencodeBaseUrl: configured.opencodeBaseUrl,
+    opencodeEmbedded: settings.opencodeEmbedded,
+    opencodeBinaryPath: configured.opencodeBinaryPath,
+    opencodeConfigPath: configured.opencodeConfigPath,
+    continueBinaryPath: configured.continueBinaryPath,
+    continueConfigPath: configured.continueConfigPath,
+    continueMode: settings.continueMode,
+    subagentSmartRoutingEnabled: settings.subagentSmartRoutingEnabled,
+    knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
+    knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
+    knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
+    knowledgeEmbeddingApiKey: { action: 'keep' },
+    embeddingConnections: settings.embeddingConnections.map(
+      (connection) =>
+        connection.kind === 'builtin'
+          ? {
+              id: connection.id,
+              name: connection.name,
+              kind: connection.kind
+            }
+          : {
+              id: connection.id,
+              name: connection.name,
+              kind: connection.kind,
+              baseUrl: connection.baseUrl,
+              modelName: connection.modelName,
+              authentication: connection.authentication,
+              apiKey: { action: 'keep' as const }
+            }
+    ),
+    activeEmbeddingConnectionId,
+    knowledgeRerankEnabled: settings.knowledgeRerankEnabled ?? false,
+    knowledgeRerankEndpoint: settings.knowledgeRerankEndpoint ?? '',
+    knowledgeRerankModel: settings.knowledgeRerankModel ?? '',
+    knowledgeRerankApiKey: { action: 'keep' },
+    contextCompression: settings.contextCompression,
+    workspacePath: configured.workspacePath,
+    apiKey: { action: 'keep' },
+    modelProfiles: settings.modelProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      baseUrl: profile.baseUrl,
+      modelName: profile.modelName,
+      protocol: profile.protocol,
+      authentication: profile.authentication,
+      supportsImageInput: profile.supportsImageInput,
+      contextWindowTokens: profile.contextWindowTokens,
+      imageGenerationQuality: profile.imageGenerationQuality,
+      apiKey: { action: 'keep' as const }
+    })),
+    defaultModelProfileId: settings.defaultModelProfileId,
+    opencodeModelSource: configured.opencodeModelSource,
+    continueModelSource: configured.continueModelSource,
+    deepseekHarnessModelSource:
+      configured.deepseekHarnessModelSource ?? { kind: 'platform' },
+    toolApproval: settings.toolApproval
+  }
 }
 
 function createRerankProvider(
@@ -410,6 +619,13 @@ if (hasSingleInstanceLock) {
     const applicationSettingsStore = new ApplicationSettingsStore(
       join(app.getPath('userData'), 'application-settings.json')
     )
+    const startupEmbeddingModelManager = new EmbeddingModelManager({
+      userDataDirectory: app.getPath('userData'),
+      fetch: globalThis.fetch,
+      getDownloadSource: async () =>
+        (await applicationSettingsStore.get()).modelDownloadSource
+    })
+    embeddingModelManager = startupEmbeddingModelManager
     const releaseNotesService = new ReleaseNotesService({
       currentVersion: app.getVersion(),
       filePath: app.isPackaged
@@ -505,7 +721,7 @@ if (hasSingleInstanceLock) {
     })
     knowledgeService = startupKnowledgeService
     let activeEmbeddingProvider:
-      | ReturnType<typeof createEmbeddingProvider>
+      | Awaited<ReturnType<typeof createEmbeddingProvider>>
       | undefined
     let activeRerankProvider:
       | ReturnType<typeof createRerankProvider>
@@ -621,8 +837,9 @@ if (hasSingleInstanceLock) {
       },
       initializeKnowledgeAndGateway: async () => {
         await startupKnowledgeService.initialize()
-        const embeddingProvider = createEmbeddingProvider(
-          initialResolvedSettings
+        const embeddingProvider = await createEmbeddingProvider(
+          initialResolvedSettings,
+          startupEmbeddingModelManager
         )
         const rerankProvider = createRerankProvider(
           initialResolvedSettings
@@ -706,7 +923,10 @@ if (hasSingleInstanceLock) {
         }
         const settings = await settingsStore.getResolvedSettings()
         const nextEmbeddingProvider =
-          createEmbeddingProvider(settings)
+          await createEmbeddingProvider(
+            settings,
+            startupEmbeddingModelManager
+          )
         const nextRerankProvider = createRerankProvider(settings)
         let nextRuntime: AgentRuntime | undefined
         let nextSubagentRuntime: AgentRuntime | undefined
@@ -760,8 +980,10 @@ if (hasSingleInstanceLock) {
             nextSubagentProfileRuntimes
           )
           await selectedRuntimeManager?.reset()
+          const previousEmbeddingProvider = activeEmbeddingProvider
           activeEmbeddingProvider = nextEmbeddingProvider
           activeRerankProvider = nextRerankProvider
+          await previousEmbeddingProvider?.dispose?.()
         } catch (activationError) {
           const rollbackResults = knowledgeService
             ? await Promise.allSettled([
@@ -774,6 +996,7 @@ if (hasSingleInstanceLock) {
               ])
             : []
           await Promise.allSettled([
+            nextEmbeddingProvider?.dispose?.(),
             runtimeConsumed ? undefined : nextRuntime?.dispose(),
             subagentRuntimesConsumed
               ? undefined
@@ -803,6 +1026,41 @@ if (hasSingleInstanceLock) {
     stopRuntimeReconfiguration = async () => {
       runtimeReconfigurationClosing = true
       await runtimeReconfigurationQueue
+    }
+    const setCurrentEmbeddingConnection = async (
+      connectionId: string
+    ): Promise<void> => {
+      const previous = await settingsStore.getPublicSettings()
+      if (previous.activeEmbeddingConnectionId === connectionId) {
+        return
+      }
+      await settingsStore.update(
+        runtimeSettingsInputWithEmbeddingSelection(
+          previous,
+          connectionId
+        )
+      )
+      try {
+        await reconfigureRuntimes()
+      } catch (activationError) {
+        try {
+          await settingsStore.update(
+            runtimeSettingsInputWithEmbeddingSelection(
+              previous,
+              previous.activeEmbeddingConnectionId ??
+                connectionId
+            )
+          )
+          await reconfigureRuntimes()
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [activationError, rollbackError],
+            '向量模型连接激活失败，且回滚未能完成',
+            { cause: rollbackError }
+          )
+        }
+        throw activationError
+      }
     }
 
     removeIpcHandlers = registerIpcHandlers(
@@ -837,7 +1095,21 @@ if (hasSingleInstanceLock) {
       releaseNotesService,
       goodbuddyConfigService,
       runtimeExtensionStore,
-      shortcutSettingsService
+      shortcutSettingsService,
+      startupEmbeddingModelManager,
+      async (connectionId) => {
+        const settings = await settingsStore.getResolvedSettings()
+        const provider = await createEmbeddingProvider(
+          settings,
+          startupEmbeddingModelManager,
+          connectionId
+        )
+        if (!provider) {
+          throw new Error('请先启用并保存向量模型设置')
+        }
+        return provider
+      },
+      setCurrentEmbeddingConnection
     )
     loadMainWindow(mainWindow)
     setImmediate(() => {
@@ -927,6 +1199,11 @@ app.on('before-quit', (event) => {
           () => selectedRuntimeManager?.dispose(),
           () => browserService?.dispose(),
           () => globalTlsPolicy?.dispose(),
+          () =>
+            Promise.allSettled(
+              [...embeddingBrokers].map((broker) => broker.shutdown())
+            ).then(() => undefined),
+          () => embeddingModelManager?.dispose(),
           () => documentOcrModelManager?.dispose(),
           () => documentOcrBroker?.dispose()
         ],

@@ -3,7 +3,6 @@ import type { knowledge as chineseKnowledge } from '../zh-CN/knowledge'
 
 export const knowledge = {
   page: {
-    eyebrow: 'Knowledge',
     title: 'Knowledge Base',
     description: 'Manage files, folders, and web sources, then inspect their indexes and graph.'
   },
@@ -161,34 +160,13 @@ export const knowledge = {
     eyebrow: 'Current library: {{libraryName}}',
     title: 'Retrieval test',
     description:
-      'Validate retrieval from this library with temporary settings. This test does not create a conversation, call an LLM, or modify knowledge content.',
+      'Settings are temporary for this test. It does not create a conversation, call an LLM, or modify knowledge content.',
     close: 'Close retrieval test',
     query: {
       title: 'Test question',
-      help: 'Enter a real question to inspect channels, ranking, and final context.',
       label: 'Retrieval question',
       placeholder: 'For example: How do I configure document parsing offline?',
       count: '{{count}} / 4000 characters'
-    },
-    pipeline: {
-      recall: {
-        title: 'Recall candidates',
-        summary: 'Up to {{count}} fused candidates',
-        pending: 'Enter valid settings to calculate'
-      },
-      rerank: {
-        title: 'Local reranking',
-        enabled: 'Rerank up to {{count}} candidates',
-        disabled: 'Off; keep fused ranking'
-      },
-      select: {
-        title: 'Final results',
-        summary: 'Keep the top {{count}} chunks'
-      },
-      context: {
-        title: 'Assemble context',
-        summary: '{{count}} character budget'
-      }
     },
     settings: {
       title: 'Settings for this test',
@@ -196,14 +174,10 @@ export const knowledge = {
         'These changes apply only to this test. Save them as the current library defaults to keep using them.',
       groups: {
         recall: {
-          title: 'Candidate recall',
-          description:
-            'Control the initial search pool, filtering threshold, and each channel’s influence on fused ranking.'
+          title: 'Candidate recall'
         },
         output: {
-          title: 'Reranking and context',
-          description:
-            'Control candidate ordering, final result count, and the context sent to the model.'
+          title: 'Reranking and context'
         }
       },
       candidateMultiplier: 'Recall multiplier',
@@ -500,10 +474,6 @@ export const knowledge = {
   documents: {
     sources: {
       title: 'Content sources',
-      description:
-        'Imported content is parsed and added to the retrieval index automatically.',
-      descriptionWithGraph:
-        'Imported content is parsed, indexed for retrieval, and added to the knowledge graph with the current strategy.',
       emptyTitle: 'No content sources connected',
       emptyDescription:
         'Choose files, a folder, or a URL, or drag files into the area above.',
@@ -569,19 +539,8 @@ export const knowledge = {
     strategyAriaLabel: 'Knowledge graph extraction strategy',
     askDescription:
       '“Ask when needed” does not generate a graph automatically and cannot run re-extraction.',
-    graphCapability: {
-      title: 'Optional capabilities',
-      description:
-        'Enable extra capabilities when needed. Disabled capabilities stay out of the workspace.',
-      enabledDescription:
-        'The knowledge graph is enabled. Explore relations and manage graph settings from Knowledge graph.',
-      disabledDescription:
-        'Enable it to expose graph exploration, extraction strategy, and ontology definitions.'
-    },
     graphConfiguration: {
-      title: 'Extraction method',
-      description:
-        'Control how new imports, resyncs, and explicit rebuilds generate entities, relations, and evidence.'
+      title: 'Extraction method'
     },
     chunking: {
       title: 'Chunking strategy',
@@ -633,8 +592,7 @@ export const knowledge = {
     },
     vectorIndex: {
       title: 'Embedding index',
-      description:
-        'Review coverage for this library with the current embedding model and rebuild only this library.',
+      description: 'Scope: current library.',
       rebuild: 'Rebuild embedding index',
       rebuilding: 'Rebuilding…',
       cancel: 'Cancel rebuild',

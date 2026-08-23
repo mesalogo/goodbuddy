@@ -3,10 +3,7 @@ import type { activity as chineseActivity } from '../zh-CN/activity'
 
 export const activity = {
   header: {
-    eyebrow: 'RUN HISTORY',
-    title: 'Run history',
-    description:
-      'Review execution details by project, task, and conversation, or browse the activity timeline and model usage.'
+    title: 'Run history'
   },
   tabs: {
     ariaLabel: 'Run history views',
@@ -38,9 +35,9 @@ export const activity = {
     result: 'Result'
   },
   filters: {
-    all: 'All',
-    active: 'In progress',
-    failed: 'Exceptions',
+    all: 'All {{formattedCount}}',
+    active: 'In progress {{formattedCount}}',
+    failed: 'Exceptions {{formattedCount}}',
     ariaLabel: 'Filter activity',
     clear: 'Clear filter'
   },
@@ -79,16 +76,8 @@ export const activity = {
       unknownRuntime: 'Unknown Runtime'
     }
   },
-  stats: {
-    ariaLabel: 'Activity totals',
-    all: 'All',
-    active: 'In progress',
-    failed: 'Exceptions'
-  },
   timeline: {
     ariaLabel: 'Parallel activity tracks grouped by project and conversation',
-    description:
-      'Every track shares the same execution order. Nodes are spread by event time. Select a node to inspect its identity and details.',
     lanes: 'Project / conversation',
     laneAriaLabel: 'Activity track for conversation {{title}}',
     nodeAriaLabel: '{{actor}}, {{kind}}, {{status}}, {{title}}, {{time}}',

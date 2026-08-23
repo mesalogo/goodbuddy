@@ -1,4 +1,9 @@
 import { z } from 'zod'
+import {
+  MODEL_DOWNLOAD_SOURCES,
+  modelDownloadAvailabilitySchema,
+  modelDownloadSourceSchema
+} from './model-download-contracts'
 
 const boundedLabelSchema = z.string().trim().min(1).max(256)
 const timestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
@@ -47,6 +52,120 @@ export const embeddingConfigurationSummarySchema = z
 export type EmbeddingConfigurationSummary = z.infer<
   typeof embeddingConfigurationSummarySchema
 >
+
+export const embeddingConnectionIdRequestSchema = z
+  .object({
+    connectionId: z.string().uuid()
+  })
+  .strict()
+
+export const embeddingConnectionSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().trim().min(1).max(64),
+    kind: z.enum(['builtin', 'openai-compatible']),
+    model: boundedLabelSchema,
+    endpoint: safeProviderEndpointSchema.optional(),
+    authentication: z.enum(['api-key', 'none']).optional(),
+    credentialConfigured: z.boolean()
+  })
+  .strict()
+export type EmbeddingConnectionSummary = z.infer<
+  typeof embeddingConnectionSummarySchema
+>
+
+export const embeddingModelIdSchema = z
+  .string()
+  .min(1)
+  .max(96)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)
+
+const embeddingModelFileSchema = z
+  .object({
+    name: z.string().min(1).max(255),
+    role: z.enum([
+      'model',
+      'tokenizer',
+      'tokenizer-configuration',
+      'configuration',
+      'license'
+    ]),
+    size: z.number().int().positive().safe(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u)
+  })
+  .strict()
+
+export const embeddingModelOperationSchema = z
+  .object({
+    modelId: embeddingModelIdSchema,
+    kind: z.enum(['download', 'import']),
+    phase: z.enum(['preparing', 'transferring', 'installing']),
+    currentFile: z.string().min(1).max(255).nullable(),
+    completedBytes: z.number().int().nonnegative().safe(),
+    totalBytes: z.number().int().positive().safe().nullable(),
+    downloadSource: modelDownloadSourceSchema.optional()
+  })
+  .strict()
+
+export const embeddingModelSnapshotSchema = z
+  .object({
+    selectedDownloadSource: modelDownloadSourceSchema,
+    catalog: z.array(
+      z
+        .object({
+          id: embeddingModelIdSchema,
+          displayName: z.string().trim().min(1).max(120),
+          description: z.string().trim().min(1).max(1_000),
+          languages: z.array(z.string().trim().min(1).max(80)).min(1).max(32),
+          runtime: z.literal('onnxruntime-web/wasm'),
+          dimensions: z.number().int().positive().max(65_536),
+          contextTokens: z.number().int().positive().max(10_000_000),
+          quantization: z.string().trim().min(1).max(40),
+          recommended: z.boolean(),
+          available: z.boolean(),
+          unavailableReason: z.string().trim().min(1).max(1_000).optional(),
+          license: z
+            .object({
+              name: z.string().trim().min(1).max(120),
+              notice: z.string().trim().min(1).max(1_000),
+              url: z.url()
+            })
+            .strict(),
+          files: z.array(embeddingModelFileSchema).min(1).max(32),
+          downloadAvailability: z
+            .array(modelDownloadAvailabilitySchema)
+            .length(MODEL_DOWNLOAD_SOURCES.length)
+        })
+        .strict()
+    ),
+    installed: z.array(
+      z
+        .object({
+          id: embeddingModelIdSchema,
+          displayName: z.string().trim().min(1).max(120),
+          source: z.enum(['download', 'local']),
+          installedAt: z.string().datetime(),
+          files: z.array(embeddingModelFileSchema).min(1).max(32)
+        })
+        .strict()
+    ),
+    operations: z.array(embeddingModelOperationSchema)
+  })
+  .strict()
+export type EmbeddingModelSnapshot = z.infer<
+  typeof embeddingModelSnapshotSchema
+>
+
+export const embeddingModelActionInputSchema = z
+  .object({ modelId: embeddingModelIdSchema })
+  .strict()
+
+export const embeddingModelInstallInputSchema = z
+  .object({
+    modelId: embeddingModelIdSchema,
+    expectedDownloadSource: modelDownloadSourceSchema
+  })
+  .strict()
 
 const embeddingDiagnosticBase = {
   provider: boundedLabelSchema,
@@ -180,7 +299,10 @@ export type EmbeddingIndexStatus = z.infer<
 
 export const embeddingSettingsSnapshotSchema = z
   .object({
-    configuration: embeddingConfigurationSummarySchema
+    configuration: embeddingConfigurationSummarySchema,
+    connections: z.array(embeddingConnectionSummarySchema),
+    currentConnectionId: z.string().uuid(),
+    models: embeddingModelSnapshotSchema
   })
   .strict()
 export type EmbeddingSettingsSnapshot = z.infer<

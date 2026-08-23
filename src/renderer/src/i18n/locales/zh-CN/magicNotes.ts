@@ -1,6 +1,5 @@
 export const magicNotes = {
   page: {
-    eyebrow: 'MAGIC NOTES',
     title: '魔法笔记',
     description: '全局记录富文本、本地媒体、附件和待办清单，由 AI 提供只读评论。',
     contentLabel: '魔法笔记内容'
@@ -69,7 +68,6 @@ export const magicNotes = {
   notes: {
     listLabel: '笔记列表',
     streamLabel: '笔记记录',
-    heading: '笔记',
     searchLabel: '搜索当前范围的笔记',
     searchPlaceholder: '搜索笔记',
     titleLabel: '笔记标题',
@@ -117,7 +115,12 @@ export const magicNotes = {
   comments: {
     paneLabel: 'AI 评论',
     closePane: '关闭 AI 评论面板',
-    emptyTitle: '暂无 AI 评论',
+    selectTodoTitle: '选择一个待办',
+    analyzeTodoTitle: '分析这个待办',
+    selectNoteTitle: '选择一篇笔记',
+    startWritingTitle: '写下一句话',
+    saveEntryTitle: '保存记录以获取评论',
+    analyzeEntryTitle: '分析一条记录',
     directionLabel: '评论方向',
     directionAriaLabel: 'AI 评论方向',
     directionHelp: '仅影响下一次评论；评论形式可在设置中心修改。',

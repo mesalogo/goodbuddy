@@ -4,7 +4,6 @@ import {
   CircleAlert,
   ExternalLink,
   FileText,
-  FolderTree,
   ClockFading,
   Monitor,
   Plus,
@@ -201,8 +200,7 @@ export function RightAssistantSidebar({
     () =>
       tabIds.map((id) => ({
         id,
-        label: t(`sidebar.tabs.${id}.label`),
-        description: t(`sidebar.tabs.${id}.description`)
+        label: t(`sidebar.tabs.${id}.label`)
       })),
     [t]
   )
@@ -596,7 +594,6 @@ export function RightAssistantSidebar({
             onKeyDown={(event) => moveTabFocus(event, item.id)}
             role="tab"
             tabIndex={tab === item.id ? 0 : -1}
-            title={item.description}
             type="button"
           >
             {item.label}
@@ -622,9 +619,6 @@ export function RightAssistantSidebar({
         ) : null}
         {tab === 'tasks' && (
           <section className="assistant-sidebar__section">
-            <p className="assistant-sidebar__section-description">
-              {t('sidebar.tasks.description')}
-            </p>
             <h3>
               <ShieldAlert size={15} />
               {t('sidebar.tasks.approvalsTitle')}
@@ -863,29 +857,22 @@ export function RightAssistantSidebar({
             </section>
           ) : (
             <section className="assistant-sidebar__section">
-              <p className="assistant-sidebar__section-description">
-                {t('sidebar.workspace.description')}
-              </p>
-              <h3>
-                <FolderTree size={15} />
-                {t('sidebar.workspace.projectTitle')}
-                <button
-                  aria-label={t('sidebar.workspace.refreshAriaLabel')}
-                  className="icon-button"
-                  disabled={!workspaceProjectId}
-                  onClick={() => {
-                    setWorkspaceRefreshVersion((current) => current + 1)
-                    runAction(
-                      onRefreshChanges,
-                      t('sidebar.errors.refreshWorkspace')
-                    )
-                  }}
-                  title={t('sidebar.workspace.refresh')}
-                  type="button"
-                >
-                  <RefreshCw size={14} />
-                </button>
-              </h3>
+              <button
+                aria-label={t('sidebar.workspace.refreshAriaLabel')}
+                className="icon-button"
+                disabled={!workspaceProjectId}
+                onClick={() => {
+                  setWorkspaceRefreshVersion((current) => current + 1)
+                  runAction(
+                    onRefreshChanges,
+                    t('sidebar.errors.refreshWorkspace')
+                  )
+                }}
+                title={t('sidebar.workspace.refresh')}
+                type="button"
+              >
+                <RefreshCw size={14} />
+              </button>
               <WorkspaceFilesPanel
                 changedFiles={workspaceChanges?.files ?? emptyChangedFiles}
                 key={`${workspaceProjectId ?? 'none'}:${workspaceRefreshVersion}`}
@@ -972,13 +959,6 @@ export function RightAssistantSidebar({
             </section>
           ) : (
             <section className="assistant-sidebar__section">
-              <p className="assistant-sidebar__section-description">
-                {t('sidebar.results.description')}
-              </p>
-              <h3>
-                <FileText size={15} />
-                {t('sidebar.results.sectionTitle')}
-              </h3>
               <button
                 className="secondary-button assistant-sidebar__import"
                 onClick={() =>
@@ -1031,10 +1011,6 @@ export function RightAssistantSidebar({
         {tab === 'browser' && (
           <section className="assistant-sidebar__browser">
             <header>
-              <span>
-                <Monitor size={15} />
-                <strong>{t('sidebar.browser.title')}</strong>
-              </span>
               {browserState &&
                 browserState.status !== 'stopped' && (
                   <div className="assistant-sidebar__browser-actions">

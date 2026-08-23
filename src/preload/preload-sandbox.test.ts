@@ -46,8 +46,31 @@ describe('sandboxed preload', () => {
     expect(source).toContain('exportArchive: (modelId: string)')
     expect(source).toContain('importOcrModelArchive: (modelId: string)')
     expect(source).toContain('exportOcrModelArchive: (modelId: string)')
+    expect(source).toContain('importModelArchive: (modelId: string)')
+    expect(source).toContain('ipcChannels.embeddingModelsImportArchive')
     expect(source).not.toContain('importLocalDirectory:')
     expect(source).not.toContain('importOcrModel:')
+    expect(source).not.toMatch(
+      /importModelArchive:\s*\([^)]*(?:path|directory|archivePath)/u
+    )
+  })
+
+  it('exposes explicit embedding settings operations without vectors or credentials', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    const embeddings =
+      source.match(
+        /embeddings: \{(?<body>[\s\S]*?)\n {2}\},\n {2}documentParsing:/u
+      )?.groups?.body ?? ''
+    expect(embeddings).toContain('getSnapshot:')
+    expect(embeddings).toContain('diagnose: (connectionId: string)')
+    expect(embeddings).toContain('setCurrent: (connectionId: string)')
+    expect(embeddings).toContain('installModel:')
+    expect(embeddings).toContain('cancelModelOperation:')
+    expect(embeddings).toContain('removeModel:')
+    expect(embeddings).not.toMatch(/\b(?:apiKey|credential|vector)\b/iu)
   })
 
   it('passes an explicit parsing scenario to document diagnostics', () => {

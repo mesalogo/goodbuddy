@@ -133,6 +133,17 @@ function rendererBundleModuleManifestPlugin(): Plugin {
   }
 }
 
+export function stableMainEntryFileName(chunk: {
+  readonly name: string
+}): string {
+  return [
+    'deepseek-harness-host-bootstrap',
+    'embedding-inference-bootstrap'
+  ].includes(chunk.name)
+    ? `${chunk.name}.js`
+    : '[name].js'
+}
+
 export default defineConfig({
   main: {
     plugins: [
@@ -177,6 +188,9 @@ export default defineConfig({
           ),
           'deepseek-harness-host-bootstrap': resolve(
             'src/main/deepseek-harness-host-bootstrap.ts'
+          ),
+          'embedding-inference-bootstrap': resolve(
+            'src/main/embedding-inference-bootstrap.ts'
           )
         },
         external: [
@@ -186,9 +200,7 @@ export default defineConfig({
         ],
         output: {
           entryFileNames(chunk) {
-            return chunk.name === 'deepseek-harness-host-bootstrap'
-              ? 'deepseek-harness-host-bootstrap.js'
-              : '[name].js'
+            return stableMainEntryFileName(chunk)
           },
           chunkFileNames(chunk) {
             const moduleIds = chunk.moduleIds.join('\n')

@@ -89,6 +89,11 @@ Keep Electron security boundaries intact:
   blocking page state, or an error with an immediate local recovery action.
 - Do not show the same event both inline and as an application notification.
   Preserve user input and actionable error context when an operation fails.
+- Treat renderer bundle budgets as regression guardrails, not UX targets. Do
+  not lazy-load one lightweight peer tab solely to satisfy a byte ceiling.
+  When a genuinely heavy view needs deferred loading, preserve peer
+  interaction semantics, render a non-empty layout-stable local fallback,
+  and test its first interaction rather than only its eventual appearance.
 
 ## Commit Messages and Release Notes
 

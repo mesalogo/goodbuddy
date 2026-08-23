@@ -2,9 +2,6 @@ import type { TranslationShape } from '../../resource-types'
 import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
-  brand: {
-    desktopWorkspace: 'Desktop workspace'
-  },
   notifications: {
     success: 'Success',
     error: 'Error',
@@ -75,8 +72,7 @@ export const app = {
   conversation: {
     defaultTitle: 'New conversation',
     remoteTitle: 'Remote conversation',
-    greeting:
-      'Hi, I’m GoodBuddy. Ask me a question, add local files, or use your knowledge base. With an Agent Runtime enabled, I can also use tools with your authorization.',
+    greeting: 'Hi, I’m GoodBuddy.',
     interrupted: 'The previous run stopped unexpectedly. You can resend your question.',
     active: 'Conversation is active',
     unread: 'Unread',
@@ -214,10 +210,7 @@ export const app = {
     user: 'You',
     taskResult: 'Task result: {{title}}',
     welcome: {
-      eyebrow: 'GOODBUDDY WORKSPACE',
-      title: 'What would you like to accomplish today?',
-      description:
-        'Ask a question, organize information, or connect OpenCode for file search and development tools.'
+      title: 'What would you like to accomplish today?'
     },
     quickActions: {
       summarize: {
@@ -384,8 +377,7 @@ export const app = {
     inputLabel: 'Message GoodBuddy',
     placeholder: 'Message GoodBuddy…',
     imagePlaceholder: 'Describe the image you want to generate…',
-    keyboardHint:
-      'Enter to send · Shift+Enter for a new line · Ctrl+V to paste an image or text',
+    keyboardHint: 'Enter to send, Shift+Enter for a new line',
     addContent: 'Add content',
     addAttachment: 'Add attachment',
     attachmentProgress: {
@@ -478,8 +470,8 @@ export const app = {
         description: 'Read-only answers without modifying files'
       },
       execute: {
-        label: 'Execute · Controlled',
-        description: 'Use tools after approval'
+        label: 'Execute · Full access',
+        description: 'Run tools with the account’s full permissions'
       }
     },
     voice: {
@@ -487,7 +479,6 @@ export const app = {
       cancel: 'Cancel speech recognition',
       input: 'Voice input',
       stopAndRecognize: 'Stop recording and recognize speech',
-      description: 'Convert speech to editable text before sending',
       unsupported:
         'Built-in speech recognition is unavailable. You can keep typing.',
       downloadingPack:

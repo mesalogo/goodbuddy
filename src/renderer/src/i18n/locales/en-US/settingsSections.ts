@@ -13,10 +13,6 @@ export const settingsSections = {
     description:
       'Model weights are not bundled. Download them as needed or move them offline with ZIP archives.',
     openModelsDirectory: 'Open models directory',
-    storagePrefix: 'Models are stored in',
-    storageSuffix:
-      '. Automatic downloads pin the source revision and verify SHA-256 hashes. Export a ZIP on an online device and import it directly on an offline device.',
-    downloadSource: 'Current model download source: {{source}}',
     modelSelector: 'Current speech model',
     modelSelectorDescription:
       'Choose an installed model, then select Save settings to switch speech recognition models.',
@@ -136,8 +132,65 @@ export const settingsSections = {
   },
   embedding: {
     label: 'Embedding model',
-    title: 'Embedding model connection',
-    description: 'Review the current configuration and verify the connection',
+    title: 'Embedding model connections',
+    description:
+      'Choose and configure the built-in local model or an OpenAI-compatible service for vector retrieval.',
+    enabled: 'Enable vector retrieval',
+    currentConnection: 'Current connection',
+    connections: {
+      heading: 'Connections',
+      listLabel: 'Embedding model connection list',
+      empty: 'No embedding model connections are available.',
+      types: {
+        builtin: 'GoodBuddy built-in connection',
+        'openai-compatible': 'OpenAI-compatible connection'
+      },
+      current: 'Currently in use',
+      model: 'Model: {{model}}',
+      endpoint: 'Endpoint: {{endpoint}}',
+      credentialConfigured: 'Credentials configured',
+      credentialMissing: 'Credentials not configured',
+      status: 'Status: {{status}}',
+      modelLabel: 'Model',
+      statusLabel: 'Status'
+    },
+    actions: {
+      addCustom: 'Add custom',
+      test: 'Test',
+      delete: 'Delete',
+      download: 'Download',
+      cancel: 'Cancel',
+      importZip: 'Import ZIP',
+      remove: 'Remove model',
+      clearCredential: 'Clear credential',
+      clearAfterSave: 'Credential will be cleared on save'
+    },
+    accessibility: {
+      select: 'Edit embedding connection {{name}}',
+      test: 'Test embedding connection {{name}}',
+      delete: 'Delete embedding connection {{name}}',
+      download: 'Download {{name}}',
+      cancel: 'Cancel download for {{name}}',
+      import: 'Import {{name}} from ZIP',
+      remove: 'Remove local model {{name}}'
+    },
+    fields: {
+      name: 'Name',
+      endpoint: 'Embedding API URL',
+      model: 'Model name',
+      authentication: 'Authentication',
+      noAuthentication: 'No authentication',
+      apiKey: 'API Key (optional)',
+      apiKeyPlaceholder:
+        'Leave blank for a local service without authentication',
+      configuredPlaceholder: 'Configured — enter a new value to replace'
+    },
+    endpointDestination: {
+      local:
+        'Knowledge chunks and queries will be sent to {{host}} on this device.',
+      network:
+        'Indexing sends knowledge chunks to {{host}}; retrieval sends queries.'
+    },
     model: {
       heading: 'Current embedding model',
       configured: 'Configured model',
@@ -164,7 +217,7 @@ export const settingsSections = {
     description: 'Manage chat roles and their trusted system prompts',
     newRole: 'New role',
     notice:
-      'The selected role adds its system prompt to the current text conversation. Expert teams use up to three enabled roles in parallel. Synthesis mode and expert teams always inherit the default model; only an individual role uses its assigned connection. Image generation connections do not use role prompts.',
+      'An individual role can use an assigned model. Synthesis mode and expert teams always inherit the default model.',
     listLabel: 'Role list',
     listTitle: 'Roles',
     editRole: 'Edit role {{name}}',
@@ -277,9 +330,6 @@ export const settingsSections = {
       }
     },
     modelDownloadSource: {
-      cardTitle: 'Local models',
-      cardDescription:
-        'Manage how GoodBuddy-managed local models are downloaded',
       title: 'Model download source',
       description:
         'Choose the platform for future GoodBuddy-managed local model downloads. Installed models, ZIP imports, Ollama models, and app updates are not affected.',
@@ -289,9 +339,6 @@ export const settingsSections = {
         'hugging-face':
           'Use when your network can access Hugging Face reliably.'
       },
-      current: 'Current selection: {{source}}',
-      activeDownloadNote:
-        'Downloads already in progress keep the source they started with. New downloads use the current selection.',
       notification: 'Model download source changed to {{source}}.'
     },
     magicNotes: {
@@ -340,7 +387,7 @@ export const settingsSections = {
     },
     listLabel: 'Skills list',
     notice:
-      'Skills inject local capability instructions into selected targets without changing the Runtime’s own configuration. Newly imported Skills are enabled by default and assigned to the direct model, OpenCode, Continue, and DeepSeek Harness.',
+      'Newly imported Skills are enabled by default and assigned to the direct model, OpenCode, Continue, and DeepSeek Harness.',
     loading: 'Loading Skills…',
     source: {
       builtin: 'Built in',

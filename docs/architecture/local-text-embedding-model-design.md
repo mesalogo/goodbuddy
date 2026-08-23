@@ -5,82 +5,83 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档类型 | 跨功能技术与产品架构 |
-| 状态 | 设计中 |
-| 版本 | 0.1 |
-| 日期 | 2026-08-19 |
+| 状态 | 已实施 |
+| 版本 | 0.4 |
+| 日期 | 2026-08-22 |
 | 适用产品 | GoodBuddy 桌面端 |
 | 目标平台 | Windows、macOS、Linux，x64 与 arm64 |
-| 相关基线 | [知识库检索与分块增强 PRD](../prd/knowledge/knowledge-rag-enhancement-prd.md)、[模型下载源设计](./model-download-source-design.md)、[知识检索评估](../quality/knowledge-retrieval-evaluation.md)、[跨平台助手产品设计](../design/cross-platform-assistant-product-design.md)、[统一界面设计系统](../../UI-DESIGN.md) |
+| 相关基线 | [知识库检索与分块增强 PRD](../prd/knowledge/knowledge-rag-enhancement-prd.md)、[模型下载源设计](./model-download-source-design.md)、[知识检索评估](../quality/knowledge-retrieval-evaluation.md)、[统一界面设计系统](../../UI-DESIGN.md) |
 
-本文定义 GoodBuddy 的文本向量模型产品形态，包括应用托管的轻量本地模型、用户自行安装的
-Ollama 或其他自托管服务、云端 OpenAI 兼容服务、模型管理界面、进程边界、编码契约、
-索引兼容性、失败状态和验收方法。
+本文定义 GoodBuddy 的文本向量模型产品形态，包括 GoodBuddy 提供的内置本地连接、
+用户添加的 OpenAI 兼容连接、模型管理界面、进程边界、编码契约、索引兼容性、失败状态
+和验收方法。
 
-本文所称“支持多种连接”是指用户可以显式选择不同向量执行路径，不代表应用可以在它们
-之间自动切换。**GoodBuddy 不设计静默替换向量 Provider、模型、精度、数据位置或编码
-方式。**
+本文中的向量模型是 **GoodBuddy Main 进程所管理的知识检索基础设施**，不是 LLM，也不是
+Agent Runtime。它不会成为直连模型、OpenCode、Continue、DeepSeek Harness 或后续 Runtime
+的模型来源。Runtime 只能获得知识服务返回的有界文本证据、引用和检索诊断，不能获得
+向量连接、模型文件、Tokenizer、原始向量或凭据。
+
+内置连接与用户连接使用同一连接列表、选择、诊断和索引兼容语义。本文所称“支持多种连接”
+不代表应用可以在它们之间自动切换。**GoodBuddy 不设计静默替换向量连接、模型、精度、
+数据位置或编码方式。**
 
 ---
 
 ## 1. 摘要与核心决策
 
-1. GoodBuddy 提供三种明确的向量执行路径：
-   - **应用托管本地模型**：由 GoodBuddy 下载、校验、安装并在受控进程中运行。
-   - **Ollama / 自托管服务**：由用户自行安装和管理服务及模型，GoodBuddy 只连接用户
-     明确填写的 Endpoint 和模型。
-   - **云端兼容服务**：使用用户明确配置的 OpenAI 兼容 Embeddings Endpoint。
-2. 首个应用托管默认模型选择
-   `ibm-granite/granite-embedding-97m-multilingual-r2` 的固定修订和官方 INT8 ONNX
-   工件。它是目录中的“推荐”模型，不在未获用户操作时自动下载或启用。
-3. 高性能设备或更高准确性需求不通过应用内自动路由解决。用户可以自行安装 Ollama，
-   显式选择 Qwen3-Embedding、BGE-M3、其他 BGE 或其认可的向量模型。
-4. Ollama 模型、云端模型和应用托管模型没有回退顺序。当前路径不可用时，向量通道明确
-   标记不可用；GoodBuddy 不自动换到另一路径或另一模型。
-5. 向量通道失败时，全文、中文 CJK 和图谱通道可以按已保存检索设置继续工作，但界面必须
+1. 向量连接只服务于 GoodBuddy 的知识索引与检索链路，不进入 Agent Runtime 的模型选择、
+   配置、进程环境或凭据边界。
+2. GoodBuddy 提供两种明确的向量连接类型：
+   - **内置连接**：GoodBuddy 提供的只读系统连接，负责下载、校验、安装并在受控进程中
+     运行固定本地模型。
+   - **OpenAI 兼容连接**：用户填写 Endpoint、模型名称和可选 API Key，可以指向
+     loopback、本地网络、自托管或外部服务。UI 不为具体服务品牌建立专属类型。
+3. 内置连接与 LLM 模型连接使用相同的连接列表交互。这里复用的是设置界面的管理模式，
+   不表示向量连接可分配给 LLM 或 Agent Runtime。向量页面不增加二级
+   `SegmentedControl`。
+4. 首个内置连接固定使用
+   `ibm-granite/granite-embedding-97m-multilingual-r2`。模型权重不随安装包交付，
+   用户需要先下载或导入，再完成真实诊断和保存。
+5. 内置连接和用户连接没有回退顺序。当前连接不可用时，向量通道明确标记不可用；
+   GoodBuddy 不自动换到另一连接或另一模型。
+6. 向量通道失败时，全文、中文 CJK 和图谱通道可以按已保存检索设置继续工作，但界面必须
    显示“未使用向量检索”、失败原因和实际使用通道。这是可见的检索通道降级，不是向量
    Provider 回退。
-6. 模型权重不随安装包交付。下载使用固定修订、已知字节数和 SHA-256；内网环境支持
-   ZIP 导入、导出。
-7. 应用托管推理不在 UI Renderer 或 Main 事件循环内执行。Main 通过受控推理进程调用
+7. 模型权重不随安装包交付。下载使用固定修订、已知字节数和 SHA-256；内网环境支持
+   ZIP 导入。
+8. 内置连接推理不在 UI Renderer 或 Main 事件循环内执行。Main 通过受控推理进程调用
    ONNX CPU Runtime，Renderer 只展示状态和发起经过校验的操作。
-8. 文档和查询编码必须具有显式角色。Tokenizer、特殊 Token、Pooling、归一化、前缀、
+9. 文档和查询编码必须具有显式角色。Tokenizer、特殊 Token、Pooling、归一化、前缀、
    最大序列长度、精度和输出维度共同构成可复现的 `EmbeddingEncodingRecipe`。
-9. Provider Fingerprint 必须覆盖完整编码配方和数据路径。任一兼容性字段变化后，旧向量
+10. Provider Fingerprint 必须覆盖完整编码配方和数据路径。任一兼容性字段变化后，旧向量
    不参与新请求，用户需要显式重建。
-10. 保存模型切换不自动重建所有知识库。界面先说明受影响的知识库数量，再由用户逐库或
+11. 保存模型切换不自动重建所有知识库。界面先说明受影响的知识库数量，再由用户逐库或
     显式批量发起重建。
 
 ---
 
-## 2. 背景与当前基础
+## 2. 实施基线
 
-### 2.1 当前已经具备的能力
+### 2.1 当前实现
 
 GoodBuddy 当前已经具备：
 
-- `EmbeddingProvider`、诊断、取消、超时和批量 Embeddings 调用。
-- OpenAI 兼容 Embeddings Endpoint、模型名称和可选 API Key 设置。
-- Main-only 凭据读取和系统安全存储。
-- Provider、Model、维度和 Fingerprint 参与的索引隔离。
+- 内置 Granite 系统连接与多个 OpenAI 兼容用户连接。
+- 与 LLM 模型连接一致的左侧连接列表、右侧详情管理模式。
+- 内置模型固定下载、进度、取消、SHA-256 校验、原子安装、ZIP 导入和删除。
+- `@huggingface/tokenizers`、`onnxruntime-web/wasm`、CLS Pooling、L2 归一化和
+  384 维输出组成的真实本地推理链路。
+- 独立 Utility Process、私有协议、超时、取消、崩溃恢复预算和有界结果校验。
+- `embedQuery()` 与 `embedDocuments()` 角色感知调用，以及旧 `embed()` 文档角色兼容。
+- Main-only OpenAI 兼容 Endpoint、模型名称和每连接可选 API Key。
+- Provider、Model、维度、数据路径和完整编码配方参与的 Fingerprint 与索引隔离。
 - Float32 SQLite BLOB 存储、向量模长和有界分页余弦扫描。
 - 文档级暂存与原子替换、失败和取消后的旧索引保护。
 - 每个知识库的向量覆盖率、重建任务和检索通道诊断。
-- 本地 OCR 与本地语音模型已经使用的受管模型目录、固定下载、SHA-256、ZIP 迁移和
-  操作进度模式。
-- `onnxruntime-web` 及 Renderer OCR Worker 证明的 ONNX/WASM 打包基础。
 
-当前实现仍有以下限制：
-
-- 只有一个全局 OpenAI 兼容向量连接，没有应用托管的本地向量模型。
-- 设置界面把“本地 loopback 服务”和“云端服务”表示为同一 Endpoint 表单，数据路径
-  不够直观。
-- `EmbeddingProvider.embed()` 没有区分 Query 和 Document 角色。
-- Fingerprint 主要由 Endpoint 和模型名称组成，尚未覆盖 Tokenizer、Pooling、归一化、
-  精度和角色格式。
-- 当前分块按字符计数，Provider 可能按 Token 截断，应用无法证明实际编码内容完整。
-- 模型变更后的受影响知识库数量和重建影响未在全局设置中集中显示。
-- “失败时自动回退”的设置文案没有准确表达实际使用通道，容易让用户误解为应用会自动
-  切换向量模型。
+当前仍待后续知识增强阶段完成的能力包括全局展示受影响知识库数量、模型切换确认与逐库
+重建入口，以及 Token 感知分块。内置 Granite 客户端不会静默截断超过 32,768 Token 的
+输入，而是明确拒绝并返回诊断。
 
 ### 2.2 当前存储和搜索约束
 
@@ -109,8 +110,8 @@ GoodBuddy 当前已经具备：
 
 - 不安装其他服务即可按需获得可用的本地语义检索。
 - 清楚知道向量计算发生在本机、局域网自托管服务还是云端。
-- 在高性能硬件上自行选择 Ollama 中的 Qwen3-Embedding、BGE 等模型。
-- 在断网设备上通过 ZIP 导入应用托管模型。
+- 在高性能硬件或自托管环境中通过 OpenAI 兼容连接使用自行选择的向量模型。
+- 在断网设备上通过 ZIP 导入内置模型。
 - 切换模型前知道哪些知识库会失去兼容向量，以及接下来需要做什么。
 - 查看模型下载、校验、加载、真实推理测试和索引重建的独立状态。
 - 失败时得到准确原因，不被应用暗中换模型、换精度或上传数据。
@@ -120,17 +121,49 @@ GoodBuddy 当前已经具备：
 - 提供一个六平台共同支持的轻量本地默认向量能力。
 - 复用现有知识索引、模型管理、安全存储、任务中心和通知体系。
 - 保持应用安装包不包含模型权重，避免无条件增加下载和安装体积。
-- 对本地、Ollama、自托管和云端连接使用同一上层 Provider 和索引兼容契约。
+- 对内置连接和任意 OpenAI 兼容连接使用同一上层 Provider 和索引兼容契约。
 - 让模型升级、量化变化和角色格式变化都可见、可诊断、可重建。
 - 保持 Renderer 无 Node 集成，不向 Renderer 暴露数据库、模型目录或长期凭据。
 
 ### 3.3 质量目标
 
-- 应用托管模型对当前中文、中英文混合和跨语言检索样例具有稳定收益。
+- 内置模型对当前中文、中英文混合和跨语言检索样例具有稳定收益。
 - 同一模型包、编码配方和输入在同一 CPU Runtime 下产生可复现的向量维度和近似值。
 - UI 线程不执行 Tokenization、ONNX 推理或大向量序列化。
 - 取消、应用退出和模型切换不会留下半安装目录、孤立进程或半替换索引。
 - 任何向量不可用、索引不兼容或输入过长都进入有界诊断，不能表现为正常的空向量结果。
+
+### 3.4 适用范围与 Agent Runtime 边界
+
+首期允许调用向量连接的生产服务只有 GoodBuddy Main 中的知识能力：
+
+- 知识库文档分块向量化。
+- 知识查询向量化。
+- 向量召回、混合检索以及 GraphRAG 中明确设计的语义召回。
+- 不读取用户知识库的固定连接诊断和检索质量评测。
+
+对话需要知识时，数据链路固定为：
+
+```text
+用户问题
+→ Main / KnowledgeService 生成查询向量并检索
+→ Main 选择有界文本证据、引用和诊断
+→ Runtime Orchestrator 把这些不可信证据作为上下文提供给当前 Agent Runtime
+```
+
+边界规则：
+
+- 向量连接不进入 `AgentRuntimeSelection`、Runtime Model Profile 或项目 Runtime 设置。
+- OpenCode、Continue、DeepSeek Harness、直连 LLM 和远程 Runtime 都不能直接创建或调用
+  `EmbeddingProvider`。
+- 向量 Endpoint、API Key、模型目录、Tokenizer、向量和索引 Fingerprint 不进入 Runtime
+  进程环境、配置文件、模型网关或远程主机。
+- `knowledge_search` 等 Runtime 工具只能调用 Main 暴露的有界知识服务，并获得文本结果、
+  引用和脱敏诊断。
+- Agent Runtime 的选择或切换不改变当前向量连接；向量连接的选择或切换也不改变当前
+  Agent Runtime。
+- 未来记忆、笔记或其他本地语义检索若要复用向量连接，必须经过独立产品设计、权限与
+  数据路径评审后显式接入，不能因存在全局向量连接而自动获得使用权。
 
 ---
 
@@ -139,15 +172,22 @@ GoodBuddy 当前已经具备：
 首期不包含：
 
 - 把 Granite、Qwen、BGE 或其他向量权重直接打入 GoodBuddy 安装包。
-- 由 GoodBuddy 自动安装 Ollama、执行 `ollama pull` 或管理 Ollama 服务生命周期。
-- 根据硬件、网络、延迟或准确率自动选择应用托管模型、Ollama 或云端模型。
-- 在 Ollama 不可用时自动连接云端，或在云端失败时自动加载应用托管模型。
+- 由 GoodBuddy 安装、启动、停止或升级用户填写的 OpenAI 兼容服务。
+- 根据硬件、网络、延迟或准确率自动选择内置连接或用户连接。
+- 在用户连接不可用时自动启用内置连接，或在内置连接失败时自动连接外部服务。
 - 在模型失败时自动改用另一个模型名称、量化档位、输出维度或 Query 前缀。
-- 为 Ollama 模型质量作统一保证。用户选择的具体模型需要通过真实诊断和知识评测验证。
+- 为用户连接背后的具体服务或模型质量作统一保证。用户选择的模型需要通过真实诊断和
+  知识评测验证。
 - 首期引入专用向量数据库、GPU 索引或平台原生 SQLite 向量扩展。
 - 在后台自动更新模型版本或覆盖当前正在使用的模型包。
 - 静默截断超过模型上下文的分块。
 - 把知识库文档、查询、向量或模型凭据用于训练、遥测或外部质量分析。
+- 把向量连接作为聊天生成模型、Agent Runtime 模型、Runtime 模型网关或远程 Runtime
+  依赖。
+- 向 Agent Runtime 暴露 Embedding Provider、模型文件、Tokenizer、原始向量、Endpoint
+  或凭据。
+- 在没有独立设计和显式接入的情况下，把当前向量连接自动扩展到记忆、自动化、项目文件
+  搜索或其他应用服务。
 
 ---
 
@@ -155,28 +195,27 @@ GoodBuddy 当前已经具备：
 
 | 术语 | 定义 |
 | --- | --- |
-| `managed-local` | GoodBuddy 管理模型包和推理进程，推理数据不离开设备 |
-| `ollama` | 用户管理的 Ollama 服务；loopback Endpoint 才标记为本机 |
+| `builtin` | GoodBuddy 提供的只读系统连接，管理模型包和推理进程，推理数据不离开设备 |
 | `openai-compatible` | 用户配置的通用 OpenAI 兼容 Embeddings 服务 |
 | 模型包 | 固定修订的 ONNX、Tokenizer、配置、许可和校验清单 |
 | 编码配方 | Query/Document 格式、Tokenizer、Pooling、归一化、精度、维度和 Token 限制 |
-| Provider Profile | 用户保存的执行路径和模型配置，不含凭据正文 |
-| Runtime Snapshot | 一次诊断、索引任务或查询实际使用的冻结配置 |
-| Provider Fingerprint | 对执行路径和编码配方的规范化摘要，用于索引隔离 |
+| Connection Profile | 一个可选择的内置或用户连接配置，不含凭据正文 |
+| Embedding Operation Snapshot | 一次向量诊断、索引任务或查询实际使用的冻结配置；与 Agent Runtime 无关 |
+| Provider Fingerprint | 对连接、数据路径和编码配方的规范化摘要，用于索引隔离 |
 | 兼容索引 | Provider Fingerprint、模型、维度和内容校验均匹配的向量集合 |
 | 可见通道降级 | 向量不可用时继续使用已配置的其他检索通道，并明确显示差异 |
 
-Ollama Endpoint 为 `127.0.0.1`、`localhost` 或 `[::1]` 时，可以标记“本机 Ollama”。
-局域网地址、VPN 地址、域名或公网地址统一标记“自托管网络服务”，不得仅因 Provider 类型
-是 Ollama 就声称数据不离开本机。
+OpenAI 兼容 Endpoint 为 `127.0.0.1`、`localhost` 或 `[::1]` 时，可以标记“本机服务”。
+局域网地址、VPN 地址、域名或公网地址统一标记“网络服务：<主机名>”。GoodBuddy 不根据
+URL 或模型名称猜测具体服务品牌，也不把非 loopback Endpoint 描述为数据不离开本机。
 
 ---
 
 ## 6. 模型选择
 
-### 6.1 应用托管默认模型
+### 6.1 内置默认模型
 
-首个应用托管目录只包含一个推荐模型：
+首个内置连接只包含一个固定模型：
 
 | 字段 | 值 |
 | --- | --- |
@@ -185,21 +224,38 @@ Ollama Endpoint 为 `127.0.0.1`、`localhost` 或 `[::1]` 时，可以标记“�
 | 输出维度 | 384 |
 | 上下文 | 32K Token |
 | 语言 | 200+，重点增强 52 种语言的检索 |
-| 权重 | 固定修订的官方 INT8 ONNX |
-| 量化权重体积 | 约 91 MB，以目录清单中的实际固定字节数为准 |
+| 权重 | 固定修订的通用 INT8 ONNX 工件 |
+| 量化权重体积 | 97,858,099 字节，不含 Tokenizer 和配置 |
 | License | Apache 2.0 |
-| UI 标签 | 推荐、轻量、多语言、本地、INT8 |
+| 编码配方 | Query/Document 空前缀、CLS Pooling、L2 归一化 |
+| UI 标签 | 内置、轻量、多语言、本地、INT8 |
 
 选择理由：
 
 1. 384 维降低当前 SQLite 线性扫描和长期索引成本。
 2. 32K 上下文覆盖 GoodBuddy 当前常见分块，不要求为了默认模型全面缩短分块。
 3. 中文、英文和混合内容可以使用同一索引，不需要按语言拆分。
-4. 官方提供量化 ONNX，适合 CPU 路径和按需下载。
+4. ONNX Community 提供面向 Transformers.js 的通用 INT8 转换，并在 Hugging Face 与
+   ModelScope 上提供 SHA-256 相同的固定工件。
 5. Apache 2.0 适合应用内提供目录元数据和用户自行下载使用。
 
-“推荐”表示 GoodBuddy 的默认集成目标，不表示模型已安装、已启用或适合所有资料。用户仍需
-执行下载或导入、保存选择和真实测试。
+“内置”表示 GoodBuddy 提供并维护该系统连接，不表示权重已经包含在安装包中。用户仍需
+执行下载或导入、真实测试和保存选择。
+
+IBM 官方仓库当前提供的轻量工件名为 `model_quint8_avx2.onnx`，明确面向 AVX2，不能未经
+验证作为六平台统一工件。当前内置连接使用
+`onnx-community/granite-embedding-97m-multilingual-r2-ONNX` 中固定修订的
+`onnx/model_quantized.onnx`：
+
+- Hugging Face Revision：`536a9f241cb3f02a9c5995a1e708c784bd274859`。
+- ModelScope Revision：`2741cd30a7448219ec2699afdf373a44df5aaa33`。
+- 文件大小：`97,858,099` 字节。
+- SHA-256：`704c1ebca5fbb7cd83ced41827658ac4c9990c64f7f2874d22b78044e5022e22`。
+
+该工件是社区自动转换。Windows x64 已使用固定 Tokenizer 和真实 ONNX 文件完成
+Query/Document 推理，确认输出为 384 维、CLS Pooling 和 L2 归一化链路可运行。其余五个
+发布目标仍由对应原生 Runner 验证安装、加载、推理、取消和退出；任一目标验证失败时必须
+修复同一路径，不能静默改用平台特定工件或用户连接。
 
 ### 6.2 为什么首期不托管多个默认模型
 
@@ -207,7 +263,7 @@ Ollama Endpoint 为 `127.0.0.1`、`localhost` 或 `[::1]` 时，可以标记“�
 当前默认中文分块，并增加每条索引的维度成本。首期不把它设为第二个自动候选，也不建立
 Granite → BGE 的回退关系。
 
-未来只有在以下条件全部满足后，才把其他模型加入应用托管目录：
+未来只有在以下条件全部满足后，才增加其他内置连接：
 
 - 固定修订和全部文件 SHA-256 已独立验证。
 - 六个平台均能加载和运行。
@@ -218,14 +274,12 @@ Granite → BGE 的回退关系。
 
 ### 6.3 高硬件或准确性需求
 
-高性能用户可以自行安装 Ollama，并在 GoodBuddy 中显式选择：
+高性能用户可以自行准备提供 OpenAI 兼容 Embeddings API 的本机、网络或外部服务，并在
+GoodBuddy 中添加连接，显式填写 Endpoint、模型名称、可选凭据和编码预设。
 
-- Qwen3-Embedding 的合适参数规模。
-- BGE-M3 或其他 BGE Embedding 模型。
-- Ollama 目录中其他声明支持 Embedding 的模型。
-
-GoodBuddy 不代替用户判断模型的显存、内存、速度、语言和 License。设置界面必须显示
-Ollama 返回的实际模型标识、输出维度和真实诊断结果，不能仅根据名称宣称质量更高。
+GoodBuddy 不代替用户判断服务背后模型的显存、内存、速度、语言和 License。设置界面必须
+显示用户填写的模型标识、实际 Endpoint 主机、输出维度和真实诊断结果，不能仅根据名称
+宣称质量更高。
 
 ---
 
@@ -237,9 +291,9 @@ Ollama 返回的实际模型标识、输出维度和真实诊断结果，不能�
 设置
 └─ 模型连接
    └─ 向量模型
-      ├─ 应用托管
-      ├─ Ollama / 自托管
-      └─ 云端服务
+      ├─ GoodBuddy 内置连接
+      ├─ 用户添加的 OpenAI 兼容连接
+      └─ 当前连接详情与诊断
 ```
 
 “模型连接”中的模型类型继续使用现有 `SegmentedControl`：
@@ -248,8 +302,10 @@ Ollama 返回的实际模型标识、输出维度和真实诊断结果，不能�
 [LLM 模型] [向量模型] [重排模型] [语音输入]
 ```
 
-向量模型内部的“应用托管 / Ollama / 云端服务”也是当前面板内的互斥模式，使用共享
-`SegmentedControl`，不使用 `PageTabs`，不新增页面专属切换样式。
+向量模型内部不增加第二组模式切换。它复用 LLM 模型连接的列表、当前连接、添加、编辑、
+测试和删除交互。复用只限界面模式和通用表单行为，不复用 LLM/Agent Runtime 的连接契约、
+选择状态、凭据注入或路由。内置连接只是列表中的一种只读系统连接，不是独立页面或独立
+模式。
 
 知识库设置继续显示当前知识库的向量覆盖率和重建入口，不复制全局模型下载、Endpoint 或
 凭据编辑表单。
@@ -262,56 +318,44 @@ Ollama 返回的实际模型标识、输出维度和真实诊断结果，不能�
 
 向量模型面板按以下顺序组织：
 
-1. 启用状态和当前生效摘要。
-2. 执行路径选择。
-3. 持续可见的数据路径说明。
-4. 当前路径的配置或模型目录。
-5. 待保存变化和索引影响。
-6. 真实诊断。
-7. 模型目录和低频维护操作。
+1. 标题、说明、启用开关和“添加自定义”。
+2. 左侧为内置连接与用户连接组成的单一连接列表。
+3. 右侧为所选连接详情；列表选择只切换详情，不改变当前连接。
+4. 当前连接单选、连接编辑和添加/删除均保存在页面草稿中，只随“保存设置”提交。
+5. 内置详情提供下载、取消、ZIP 导入、删除和真实诊断。
+6. 用户连接详情提供名称、Endpoint、模型、认证、API Key、删除和真实诊断。
+
+停用向量检索只阻止把连接设为当前和执行诊断，不阻止选择详情、编辑用户连接或管理内置
+模型文件。
 
 示意：
 
 ```text
-向量模型
-用于知识库语义检索与 GraphRAG                         [保存设置]
+向量模型              [启用向量检索] [添加自定义]
 
-[启用向量模型                                               开关]
-当前生效：应用托管 · Granite Embedding 97M R2 · INT8 · 384 维
+┌ 可用连接 ───────────────┬ 连接详情 ─────────────────────────────┐
+│ GoodBuddy 内置向量模型   │ GoodBuddy 内置向量模型       (当前连接) │
+│ Granite 97M R2           │ 模型：Granite 97M R2                  │
+│ [当前]                   │ 状态：已安装                           │
+│ 自定义向量模型           │ [测试] [从 ZIP 导入] [移除本地模型]     │
+│ nomic-embed-text         │                                      │
+└──────────────────────────┴──────────────────────────────────────┘
 
-执行路径
-[ 应用托管 ] [ Ollama / 自托管 ] [ 云端服务 ]
+用户连接详情：
+名称 / Embeddings Endpoint / 模型名称 / 认证方式 / API Key
+[删除] [测试]
 
-┌ 数据路径 ───────────────────────────────────────────────┐
-│ 本机知识分块 → GoodBuddy 本地推理进程 → 本地 SQLite      │
-│ 模型安装完成后，推理不需要联网，文档和查询不离开本机。   │
-└────────────────────────────────────────────────────────┘
-
-当前模型
-┌────────────────────────────────────────────────────────┐
-│ Granite Embedding 97M Multilingual R2                  │
-│ 推荐 · 多语言 · INT8 · 384 维 · 32K · Apache 2.0       │
-│ 状态：已安装                                             │
-│ [设为当前模型] [导出 ZIP] [打开模型仓库] [删除]          │
-└────────────────────────────────────────────────────────┘
-
-配置影响
-3 个知识库没有与待保存配置兼容的向量，需要显式重建。
-[查看受影响的知识库]
-
-连接诊断
-最近测试：可用 · 384 维 · 178 毫秒 · 2026-08-19 10:30
-[测试待保存配置]
+页面级 [保存设置] 提交启用状态、当前连接和用户连接草稿。
 ```
 
 ### 8.2 当前生效与待保存
 
 界面必须同时区分：
 
-- **当前生效**：Main 正在用于新查询和新索引任务的已保存 Profile。
-- **正在编辑**：表单中的草稿。
-- **已验证草稿**：最近一次诊断与草稿 Fingerprint 完全匹配。
-- **待保存**：草稿与当前生效 Profile 不同。
+- **当前生效**：Main 正在用于新查询和新索引任务的已保存 Connection Profile。
+- **正在编辑**：所选用户连接的表单草稿，或准备设为当前的内置连接。
+- **已验证草稿**：最近一次诊断与连接草稿 Fingerprint 完全匹配。
+- **待保存**：当前连接选择或用户连接草稿与已保存状态不同。
 
 用户修改路径、Endpoint、模型、精度、维度或编码预设后，旧诊断立即显示：
 
@@ -319,82 +363,71 @@ Ollama 返回的实际模型标识、输出维度和真实诊断结果，不能�
 
 不能把旧模型的“测试成功”继续显示在新模型旁边。
 
-### 8.3 应用托管模式
+### 8.3 内置连接
 
-应用托管模式显示：
+内置连接是 GoodBuddy 提供的只读系统 Profile，与用户连接出现在同一列表。它显示：
 
-- 模型目录根路径。
-- 当前目录中的模型选择器。
-- 单个模型详情卡，不同时铺开大量卡片。
-- 下载、取消、导入 ZIP、导出 ZIP、打开目录和删除。
-- 固定版本、量化、维度、上下文、语言、下载体积、预计内存、License 和仓库链接。
+- 固定连接名称“GoodBuddy 内置”和固定模型名称。
+- 下载、取消、导入 ZIP 和删除。
+- 固定模型名称和安装状态。
 - “已安装”“待保存”“正在使用”“下载中”“校验中”“损坏”等状态。
 
-首期只有一个目录条目时仍保留选择器和目录契约，为后续经评测的模型预留兼容结构。
+内置连接不能编辑 Endpoint、模型名称、凭据、精度、维度或编码配方。未来增加其他内置
+模型时，为每个经过验证的模型提供独立系统连接，不在同一个连接中建立自动模型路由。
 
 未安装时主操作是“下载”，次操作是“导入 ZIP”。下载完成后可以自动把该模型选入草稿，
 但不能自动保存、启用或重建知识库。
 
-### 8.4 Ollama / 自托管模式
+### 8.4 OpenAI 兼容连接
 
-Ollama 模式显示：
+用户可以添加多个 OpenAI 兼容连接。添加和编辑表单复用 LLM 模型连接的结构，显示：
 
-- Endpoint，loopback 默认建议为 `http://127.0.0.1:11434/v1/embeddings`。
-- 模型名称，例如 `qwen3-embedding:0.6b` 或 `bge-m3`。
-- 可选 API Key，只在用户的 Ollama 网关需要认证时使用。
+- 用户可编辑的连接名称。
+- 完整 Embeddings Endpoint。
+- 模型名称。
+- 可选 API Key 和凭据来源。
 - 编码预设和模型最大输入 Token。
-- 数据位置：“本机 Ollama”或“自托管网络服务：主机名”。
-- “检测服务”“测试向量生成”“打开 Ollama Embeddings 文档”。
+- 根据 Endpoint 显示“本机服务”或“网络服务：<主机名>”。
+- “测试向量生成”和连接删除操作。
 
-GoodBuddy 不显示“安装 Ollama”主操作，也不自动执行 CLI。可以提供只读说明或复制命令，
-但执行安装和拉取模型必须由用户在其环境中完成。
+UI 不显示具体服务的专属类型、安装入口、品牌文案或检测按钮。用户可以在任何兼容服务中
+自行准备模型，再将其 Endpoint 作为普通 OpenAI 兼容连接添加。
 
-当服务支持模型摘要或 Digest 时，诊断结果显示并纳入 Fingerprint。无法读取稳定 Digest
-时，界面显示：
+通用接口无法提供稳定模型摘要时，界面显示：
 
 > 服务未提供可验证的模型修订。GoodBuddy 将按 Endpoint、模型名称和编码配置隔离索引；
 > 服务端原地替换同名模型后，需要重新测试并重建。
 
-### 8.5 云端服务模式
-
-云端模式沿用 OpenAI 兼容字段：
-
-- 完整 Embeddings Endpoint。
-- 模型名称。
-- API Key 和凭据来源。
-- 编码预设。
-- Provider 或账号备注，不保存凭据正文到 Profile。
-
-Endpoint 下方持续显示：
+非 loopback Endpoint 下方持续显示：
 
 > 建立索引时会向 `api.example.com` 发送已启用知识库的分块文本；检索时会发送用户查询。
-> GoodBuddy 不会自动切换到本地模型或其他云端模型。
+> GoodBuddy 不会自动切换到内置连接或其他用户连接。
 
 设置页不把“已配置 API Key”表示为“服务可用”。只有真实 Embeddings 请求可以产生
 “测试成功”状态。
 
-### 8.6 数据路径卡
+### 8.5 数据去向
 
-数据路径卡不能折叠，也不能只用“本地”“云端”徽标表达：
+内置连接名称和模型管理操作已经明确表达本地执行，不再常驻展示固定的进程与 SQLite
+路径。下载模型时访问仓库属于模型安装操作，不等同于推理时发送知识内容。
+
+用户连接必须在 Endpoint 下方显示实际数据去向：
 
 | 路径 | 文案 |
 | --- | --- |
-| 应用托管 | 本机知识分块 → GoodBuddy 本地推理进程 → 本地 SQLite |
-| loopback Ollama | 本机知识分块 → 本机 Ollama → 本地 SQLite |
-| 网络自托管 | 本机知识分块 → `host:port` → 本地 SQLite |
-| 云端 | 本机知识分块 → `provider host` → 本地 SQLite |
+| Loopback 兼容连接 | 知识分块和查询将发送到此设备上的 `host:port` |
+| 非 Loopback 兼容连接 | 建立索引时会向 `host:port` 发送知识分块，检索时会发送查询 |
 
-下载模型时访问模型仓库与推理时发送文档是不同数据行为。应用托管模式应说明“下载阶段需要
-访问固定模型地址；安装后推理不联网”，不能简单写“完全不联网”。
+非 Loopback 提示持续可见，不能只用“网络服务”徽标表达。
 
-### 8.7 状态
+### 8.6 状态
 
 | 状态 | 界面表达 | 可用操作 |
 | --- | --- | --- |
 | 未安装 | 需要下载或导入后使用 | 下载、导入 ZIP |
 | 下载中 | 文件、已下载字节、总字节、百分比 | 取消 |
 | 校验中 | 正在校验大小和 SHA-256 | 取消 |
-| 已安装 | 已安装，尚未使用 | 设为当前模型、导出、删除 |
+| 已安装 | 已安装，尚未使用 | 设为当前模型、导入、删除 |
 | 待保存 | 选择尚未生效 | 保存设置 |
 | 可用 | 路径、模型、维度、最近测试时间 | 重新测试 |
 | 加载失败 | 脱敏原因和处理建议 | 重试当前配置 |
@@ -405,7 +438,7 @@ Endpoint 下方持续显示：
 
 状态必须同时使用图标和文字，不只依赖颜色。
 
-### 8.8 真实诊断
+### 8.7 真实诊断
 
 诊断使用固定、不含用户数据的测试文本，至少验证：
 
@@ -430,7 +463,7 @@ Endpoint 下方持续显示：
 
 诊断不读取用户知识库、不改变索引，也不证明真实资料的召回质量。
 
-### 8.9 保存和切换确认
+### 8.8 保存和切换确认
 
 保存会改变 Fingerprint 的配置前显示确认对话框：
 
@@ -450,9 +483,9 @@ Endpoint 下方持续显示：
 保存前存在运行中的向量重建任务时，界面必须说明任务将被取消并丢弃未发布的暂存结果。
 用户确认后先完成取消，再替换活动 Profile。
 
-### 8.10 删除模型
+### 8.9 删除模型
 
-- 当前生效的应用托管模型不能直接删除。
+- 当前生效的内置模型不能直接删除。
 - 用户必须先停用向量模型或显式选择并保存其他 Profile。
 - 删除只移除模型文件，不自动删除旧向量索引。
 - 删除确认显示模型名称、版本和磁盘空间。
@@ -481,7 +514,7 @@ Endpoint 下方持续显示：
 规则：
 
 - 当前 Profile 和索引 Fingerprint 完全匹配时才显示“兼容”。
-- 重建始终使用启动任务时冻结的 Runtime Snapshot。
+- 重建始终使用启动任务时冻结的 Embedding Operation Snapshot。
 - 重建期间全局 Profile 变化时取消旧任务，不让任务后半段切到新模型。
 - 同一 Fingerprint 的重建失败时，可以继续保留上一次完整就绪索引。
 - Fingerprint 已变化时，旧索引可以保留在数据库中等待清理，但不参与当前向量召回。
@@ -498,9 +531,9 @@ Endpoint 下方持续显示：
 
 以下变化不得在诊断、索引任务或查询中静默发生：
 
-- 应用托管、Ollama、自托管网络服务和云端之间切换。
+- 内置连接与任何 OpenAI 兼容连接之间切换。
 - Endpoint、Provider、账号或数据位置切换。
-- 模型名称、模型修订、Ollama Digest 或模型文件变化。
+- 模型名称、模型修订、服务端模型摘要或模型文件变化。
 - INT8、FP16、FP32 或其他精度变化。
 - 输出维度变化或 Matryoshka 截断维度变化。
 - Query/Document 前缀、指令或角色格式变化。
@@ -510,9 +543,9 @@ Endpoint 下方持续显示：
 
 ### 10.2 允许的内部恢复
 
-以下操作可以自动执行，但必须保持同一 Runtime Snapshot 和语义：
+以下操作可以自动执行，但必须保持同一 Embedding Operation Snapshot 和语义：
 
-- 同一应用托管模型进程的有限重启。
+- 同一内置模型进程的有限重启。
 - 同一 Endpoint、模型、Digest 和编码配方的有限网络重试。
 - 动态批大小、线程调度、缓存和空闲卸载等不改变向量语义的资源优化。
 - 同一索引任务内对可重试批次进行有界重试。
@@ -555,17 +588,22 @@ FTS、CJK、向量和图谱是用户已配置的并列检索通道。向量失�
 └───────────────┬──────────────────────┬────────────────────┘
                 │                      │
        Managed utility process     HTTP(S) provider
-       Tokenizer + ONNX CPU        Ollama / self-hosted / cloud
+       Tokenizer + ONNX CPU        OpenAI-compatible endpoint
                 │
        Managed model directory
        manifest + fixed artifacts
 ```
 
+Agent Runtime 不在向量 Provider 架构内。对话编排只能通过 `KnowledgeService` 获取有界
+检索结果；图中的 Provider、推理进程、HTTP Endpoint、凭据和向量存储都保持在 Main 知识
+服务边界内。
+
 ### 11.1 Renderer
 
 Renderer 负责：
 
-- 显示目录、下载进度、当前/草稿 Profile 和数据路径。
+- 显示内置模型状态与下载进度、当前/草稿 Profile，并仅为用户连接显示根据 Endpoint
+  判断的实际数据去向。
 - 发起下载、导入、导出、选择、删除、诊断和重建。
 - 展示知识库影响、真实维度和脱敏错误。
 - 使用应用通知显示短期成功和非字段异步错误。
@@ -577,7 +615,7 @@ Renderer 不负责：
 - 读取 API Key。
 - 为知识库分块执行 Tokenization 或推理。
 - 决定 Provider 回退。
-- 直接访问 Ollama、云端 Endpoint 或 SQLite。
+- 直接访问用户 Endpoint 或 SQLite。
 
 ### 11.2 Main
 
@@ -587,17 +625,17 @@ Main 负责：
 - 管理模型目录、固定下载、ZIP 和文件摘要。
 - 保存不含凭据正文的 Profile，并在系统安全存储中绑定凭据。
 - 规范化 Endpoint 和计算 Fingerprint。
-- 创建冻结的 Provider Runtime Snapshot。
+- 创建冻结的 Embedding Operation Snapshot。
 - 选择唯一的 Adapter，不执行自动 Adapter 路由。
 - 将查询、索引、取消、超时和应用关闭传播到推理进程或 HTTP Provider。
 - 对模型切换、任务取消和知识索引状态执行一致的生命周期管理。
 
-### 11.3 应用托管推理进程
+### 11.3 内置连接推理进程
 
-应用托管模型运行在 GoodBuddy 管理的独立 Utility Process：
+内置模型运行在 GoodBuddy 管理的独立 Utility Process：
 
 - 不监听端口。
-- 不继承云端 API Key、Runtime 凭据或无关环境变量。
+- 不继承云端 API Key、Agent Runtime 凭据或无关环境变量。
 - 只接受 Main 通过受控消息通道发送的有界请求。
 - 模型路径由 Main 从已校验 Manifest 解析，不接受 Renderer 或请求中的任意路径。
 - Tokenization、ONNX 推理、Pooling 和归一化都在该进程完成。
@@ -608,14 +646,14 @@ Main 负责：
 
 初始推理后端固定为 ONNX CPU。实现阶段必须验证所选 ONNX JavaScript/Native Runtime 在
 六个平台的打包、许可、算子、线程和退出行为；某个平台未通过时，该平台显示“不支持此
-本地模型”，不能改连 Ollama 或云端继续。
+本地模型”，不能改用用户连接继续。
 
 现有 Renderer OCR Worker 不直接复用，因为知识分块不应为了推理被批量发送到 UI
 Renderer。可以复用其 ONNX 资源固定、Worker 消息边界和有界错误经验。
 
-### 11.4 HTTP Provider
+### 11.4 OpenAI 兼容 Provider
 
-Ollama、自托管和云端首期复用 Main 中的 OpenAI 兼容 Embeddings Client，并保持：
+所有用户连接复用 Main 中的 OpenAI 兼容 Embeddings Client，并保持：
 
 - HTTP(S) 协议限制。
 - Endpoint 长度和规范化。
@@ -624,8 +662,20 @@ Ollama、自托管和云端首期复用 Main 中的 OpenAI 兼容 Embeddings Cli
 - 返回数量、索引顺序、维度、有限值和非零范数校验。
 - 取消传播和脱敏错误。
 
-Ollama 的服务检测、模型 Digest 和上下文元数据可以使用独立的 Ollama Adapter，但最终
-Embedding 调用仍遵守统一 `EmbeddingProvider` 契约。
+首期不增加品牌专属 Adapter，不探测服务安装状态、已安装模型列表或管理服务生命周期。
+
+### 11.5 Agent Runtime 集成边界
+
+知识检索发生在 Agent Runtime 启动前的 Main 预检索，或 Runtime 通过受控
+`knowledge_search` 工具请求 Main 检索时。两种路径都由 `KnowledgeService` 调用当前
+Embedding Operation Snapshot，Runtime 只接收：
+
+- 有界的证据文本和来源引用。
+- 请求通道、实际通道和是否降级。
+- 脱敏且有长度上限的检索诊断。
+
+Runtime 不接收连接 Profile、Endpoint、凭据引用、模型路径、Tokenizer、Float32 向量或
+索引存储键。远程 Runtime 不通过模型网关转发 Embeddings 请求，也不在远端复制向量配置。
 
 ---
 
@@ -655,8 +705,8 @@ interface EmbeddingProvider {
 索引分块始终使用 `document`，检索问题始终使用 `query`。诊断分别发送固定的 Query 和
 Document 测试输入，不能偷用文档角色代替查询测试，也不创建第三种模型角色。
 
-应用托管 Granite 使用模型包内固定的官方编码配置。Ollama 或通用服务通过用户显式选择的
-编码预设决定是否添加前缀或指令。不能只根据模型名称在后台猜测并改变输入。
+内置 Granite 使用模型包内固定的编码配置。OpenAI 兼容连接通过用户显式选择的编码预设
+决定是否添加前缀或指令。不能只根据模型名称在后台猜测并改变输入。
 
 ### 12.2 编码预设
 
@@ -665,14 +715,14 @@ Profile 至少支持：
 - `symmetric`：Query 和 Document 不添加不同前缀。
 - `query-passage`：固定 Query 与 Passage 前缀。
 - `instruction-query`：Query 使用固定检索指令，Document 使用固定文档格式。
-- `managed-manifest`：完全由受信任模型包 Manifest 决定，用户不可局部修改。
+- `builtin-manifest`：完全由受信任模型包 Manifest 决定，用户不可局部修改。
 
-已知 Ollama 模型可以提供推荐预设，但 UI 必须在保存前显示实际选择。自定义预设中的前缀
-有长度上限，不允许插入凭据或读取知识内容。
+UI 必须在保存前显示用户连接的实际编码预设。自定义预设中的前缀有长度上限，不允许插入
+凭据或读取知识内容。
 
 ### 12.3 Tokenizer、Pooling 和归一化
 
-应用托管模型必须从固定模型包读取：
+内置模型必须从固定模型包读取：
 
 - `tokenizer.json` 及其摘要。
 - 特殊 Token ID。
@@ -691,7 +741,7 @@ SQLite 当前会保存模长并计算余弦相似度。即使模型输出已经�
 ### 12.4 输入长度
 
 - 每个 Profile 声明 `maximumSequenceTokens`。
-- 应用托管路径在发送 ONNX 前完成 Token 计数。
+- 内置路径在发送 ONNX 前完成 Token 计数。
 - 批处理同时受最大项目数和最大总 Token 数限制。
 - 单条输入超过上限时返回 `input_too_long`，不截断后继续表示成功。
 - 已知模型上下文小于当前知识库分块时，设置和知识库页面持续显示不兼容提示。
@@ -708,15 +758,15 @@ GoodBuddy 继续执行客户端字符上限，但不声称已经证明服务端�
 建议扩展 `src/shared/embedding-contracts.ts`：
 
 ```ts
-type EmbeddingProviderKind =
-  | 'managed-local'
-  | 'ollama'
-  | 'openai-compatible'
+type EmbeddingConnectionKind = 'builtin' | 'openai-compatible'
 
 type EmbeddingDataLocation =
   | { kind: 'device' }
-  | { kind: 'self-hosted'; endpointHost: string }
-  | { kind: 'cloud'; endpointHost: string; region?: string }
+  | {
+      kind: 'endpoint'
+      endpointHost: string
+      scope: 'loopback' | 'network'
+    }
 
 type EmbeddingEncodingRecipe = {
   recipeId: string
@@ -737,10 +787,11 @@ type EmbeddingModelReference = {
   precision?: 'int8' | 'fp16' | 'fp32' | 'provider-managed'
 }
 
-type EmbeddingProviderProfile = {
+type EmbeddingConnectionProfile = {
   id: string
   name: string
-  kind: EmbeddingProviderKind
+  kind: EmbeddingConnectionKind
+  system: boolean
   endpoint?: string
   accountRef?: string
   credentialRef?: string
@@ -749,17 +800,19 @@ type EmbeddingProviderProfile = {
   dataLocation: EmbeddingDataLocation
 }
 
-type EmbeddingRuntimeSnapshot = {
-  profile: EmbeddingProviderProfile
+type EmbeddingOperationSnapshot = {
+  profile: EmbeddingConnectionProfile
   fingerprint: string
   actualDimensions: number
   createdAt: string
 }
 ```
 
-`accountRef` 和 `credentialRef` 只引用 Main 加密设置，不包含密钥正文。Endpoint 进入
-Profile 前删除用户名、密码和 Fragment；查询参数只有在 Provider API 明确需要且经过
-脱敏策略验证时才允许保留。
+内置连接固定为 `kind: 'builtin'` 和 `system: true`，不能携带 Endpoint、账号或凭据。
+用户连接固定为 `kind: 'openai-compatible'` 和 `system: false`。`accountRef` 和
+`credentialRef` 只引用 Main 加密设置，不包含密钥正文。Endpoint 进入 Profile 前删除
+用户名、密码和 Fragment；查询参数只有在 Provider API 明确需要且经过脱敏策略验证时
+才允许保留。
 
 模型目录契约复用语音模型管理模式，并增加适合文本向量的文件角色：
 
@@ -782,14 +835,14 @@ Fingerprint 使用规范化 JSON 计算 SHA-256，至少覆盖：
 - Provider Kind。
 - 规范化 Endpoint 和数据位置。
 - 模型 ID。
-- 固定 Revision、模型文件摘要或 Ollama Digest。
+- 固定 Revision、模型文件摘要或服务端稳定模型摘要。
 - 精度。
 - 输出维度。
 - Tokenizer 摘要。
 - Pooling 和归一化。
 - Query/Document 模板。
 - 最大序列长度。
-- 影响向量数值的 Runtime 配置版本。
+- 影响向量数值的推理配置版本。
 
 Fingerprint 不包含：
 
@@ -813,8 +866,8 @@ Fingerprint 本身必须来自上述完整规范化结构。
 5. 分块内容校验和匹配。
 6. 文档级索引状态为 Ready。
 
-不能因为两个模型都返回 384 维就视为兼容，也不能因为 Ollama 中模型名称相同就忽略
-Digest 变化。
+不能因为两个模型都返回 384 维就视为兼容，也不能因为用户连接中的模型名称相同就忽略
+Endpoint、编码配置或服务端稳定模型摘要变化。
 
 ### 14.3 模型切换
 
@@ -837,19 +890,17 @@ Digest 变化。
 
 ### 15.1 目录
 
-建议受管目录：
+受管目录：
 
 ```text
 <userData>/models/embedding/
 ├─ granite-embedding-97m-multilingual-r2-int8/
 │  ├─ manifest.json
-│  ├─ model.int8.onnx
+│  ├─ model_quantized.onnx
 │  ├─ tokenizer.json
 │  ├─ tokenizer_config.json
 │  ├─ config.json
-│  ├─ modules.json
-│  ├─ LICENSE
-│  └─ NOTICE
+│  └─ special_tokens_map.json
 └─ .staging-<uuid>/
 ```
 
@@ -871,57 +922,52 @@ Digest 变化。
 - 两个来源可以维护不同的固定大小和 SHA-256，但文件名和运行角色必须兼容；一次模型包
   只能完整使用一个来源，不混合来源文件。
 
-### 15.3 ZIP 导入与导出
+### 15.3 ZIP 导入
 
 - 导入先在暂存目录展开并验证 Manifest 和全部文件摘要。
 - 不接受 Manifest 之外的可执行文件。
 - 不接受路径穿越、符号链接、超大文件和压缩炸弹。
-- 导出只包含已验证模型包和许可文件，不包含设置、API Key、知识向量或用户数据。
 - 导入的模型 ID、Revision 和摘要必须与目录条目一致。
 
 ---
 
-## 16. Ollama 与自托管服务
+## 16. OpenAI 兼容连接
 
 ### 16.1 产品边界
 
-GoodBuddy 对 Ollama 负责：
+GoodBuddy 对用户连接负责：
 
-- 保存 Endpoint、模型名称和编码预设。
-- 可选检测 Ollama 服务和已安装模型元数据。
+- 保存连接名称、Endpoint、模型名称、可选凭据和编码预设。
 - 发送有界 Embeddings 请求。
 - 校验向量并展示真实诊断。
-- 根据 Endpoint、模型、Digest、维度和编码配置隔离索引。
+- 根据 Endpoint、模型、稳定模型摘要、维度和编码配置隔离索引。
 
 GoodBuddy 不负责：
 
-- 安装、启动、停止或升级 Ollama。
-- 下载、删除或更新 Ollama 模型。
-- 修改 Ollama 的监听地址、认证、代理或 GPU 设置。
+- 安装、启动、停止或升级 Endpoint 背后的服务。
+- 下载、删除或更新用户服务中的模型。
+- 修改用户服务的监听地址、认证、代理或硬件设置。
 - 判断第三方模型 License 是否适合用户用途。
 
-### 16.2 显式高性能路径
+### 16.2 统一连接表单
 
-设置页可以提供以下说明：
+添加连接只显示通用字段：
 
-> 如果设备具有更多内存或显存，或你希望自行评估更高准确性的模型，可以安装 Ollama，
-> 拉取 Qwen3-Embedding、BGE-M3 等 Embedding 模型，然后在这里填写模型名称。
-> GoodBuddy 不会自动安装、更新或切换这些模型。
+- 连接名称。
+- 完整 OpenAI 兼容 Embeddings Endpoint。
+- 模型名称。
+- 可选 API Key。
+- 编码预设和可选最大输入 Token。
 
-这段说明不能把任意 Qwen 或 BGE 模型标记为必然优于应用托管默认模型。真实质量以用户
-知识库评测为准。
+GoodBuddy 不根据 Endpoint、端口或模型名称猜测具体服务品牌。连接名称由用户决定，
+GoodBuddy 只持续显示规范化 Endpoint 主机、实际维度和诊断结果。
 
-### 16.3 服务检测
+### 16.3 连接诊断
 
-用户点击“检测 Ollama”后，Main 可以读取：
-
-- 服务版本。
-- 已安装模型列表。
-- 所选模型的 Digest。
-- 模型能力和可用时的上下文元数据。
-
-检测结果只用于当前草稿，不自动保存或改变模型。服务返回的自由文本经过长度限制和
-脱敏，不直接写入日志或 DOM。
+用户点击“测试”后，Main 发送固定、不含用户数据的真实 Embeddings 请求。诊断验证返回
+数量、维度、有限值、非零范数、Query/Document 编码和配置确定性。诊断结果只绑定当前
+连接草稿，不自动保存、切换或修改模型。服务返回的自由文本经过长度限制和脱敏，不直接
+写入日志或 DOM。
 
 ### 16.4 Endpoint 安全
 
@@ -930,7 +976,7 @@ GoodBuddy 不负责：
 - HTTPS 自托管地址按 TLS 校验，不忽略证书错误。
 - HTTP 非 loopback 地址显示明文传输警告，但不自动改写为其他地址。
 - 不跟随重定向。
-- 不把 Ollama API 响应中的模型路径或环境信息暴露给 Renderer。
+- 不把服务响应中的内部路径、环境信息或未受限原文暴露给 Renderer。
 
 ---
 
@@ -940,10 +986,9 @@ GoodBuddy 不负责：
 
 | 路径 | 文档分块 | 查询 | 向量 | 凭据 |
 | --- | --- | --- | --- | --- |
-| 应用托管 | Main → 本地 Utility Process | Main → 本地 Utility Process | 返回 Main，保存 SQLite | 不需要 |
-| loopback Ollama | Main → 本机 Ollama | Main → 本机 Ollama | 返回 Main，保存 SQLite | 可选，Main-only |
-| 网络自托管 | Main → 指定主机 | Main → 指定主机 | 返回 Main，保存 SQLite | Main-only |
-| 云端 | Main → 指定云端 | Main → 指定云端 | 返回 Main，保存 SQLite | Main-only |
+| 内置连接 | Main → 本地 Utility Process | Main → 本地 Utility Process | 返回 Main，保存 SQLite | 不需要 |
+| Loopback 兼容连接 | Main → 本机服务 | Main → 本机服务 | 返回 Main，保存 SQLite | 可选，Main-only |
+| 非 Loopback 兼容连接 | Main → 指定主机 | Main → 指定主机 | 返回 Main，保存 SQLite | 可选，Main-only |
 
 默认不记录原始分块、查询正文、返回向量或 Authorization Header。诊断只保存有界统计和
 脱敏错误。
@@ -962,7 +1007,7 @@ GoodBuddy 不负责：
 
 - 模型目录元数据进入源码审查。
 - Revision、大小和 SHA-256 必须固定。
-- License、NOTICE 和上游来源随模型包导出。
+- 模型许可和上游来源随应用资源与目录元数据交付。
 - 下载工件不执行脚本。
 - ONNX 外部数据文件必须显式列入 Manifest。
 - 模型加载前再次验证已安装 Manifest，不能只在首次下载时验证。
@@ -973,12 +1018,12 @@ GoodBuddy 不负责：
 
 | 场景 | 行为 |
 | --- | --- |
-| 应用托管模型未安装 | 阻止启用，提供下载或 ZIP 导入 |
-| 模型文件损坏 | 阻止加载，显示重新导入或删除，不连接 Ollama/云端 |
+| 内置模型未安装 | 阻止启用，提供下载或 ZIP 导入 |
+| 模型文件损坏 | 阻止加载，显示重新导入或删除，不启用用户连接 |
 | Utility Process 崩溃 | 同一 Snapshot 有限重启，耗尽后当前操作失败 |
-| Ollama 未运行 | 显示服务不可用，保留配置，不启动或改连其他服务 |
-| Ollama 模型不存在 | 显示准确模型名和用户处理建议，不自动选择已安装模型 |
-| 云端认证失败 | 显示认证错误，保留配置，不尝试本地模型 |
+| 用户 Endpoint 不可用 | 显示连接不可用，保留配置，不启动或改连其他服务 |
+| 用户连接模型不存在 | 显示准确模型名和处理建议，不自动选择其他模型 |
+| 用户连接认证失败 | 显示认证错误，保留配置，不尝试内置连接 |
 | Provider 限流或超时 | 同一 Provider 有界重试，之后明确失败 |
 | 返回维度变化 | 当前请求失败，索引标记不兼容，不截断或填充向量 |
 | 输入超过上下文 | 标记文档或查询失败，提示调整分块，不静默截断 |
@@ -997,7 +1042,7 @@ GoodBuddy 不负责：
 ### 19.1 推理生命周期
 
 - 本地推理进程按首次诊断、查询或索引任务惰性启动。
-- 同一时间只加载当前应用托管模型。
+- 同一时间只加载当前内置模型。
 - 空闲达到有界时间后可以卸载同一模型，下一次使用重新加载。
 - 卸载和重载不改变 Fingerprint。
 - 查询优先于后台索引批次，避免知识重建长期阻塞交互。
@@ -1040,7 +1085,7 @@ GoodBuddy 不负责：
 5. **平台评测**：六个平台的安装、加载、取消、退出和资源。
 
 现有[知识检索评估](../quality/knowledge-retrieval-evaluation.md)中的确定性内存 Provider
-用于验证生产检索管道，不代表真实模型质量。应用托管模型需要单独的可选本地评测命令，
+用于验证生产检索管道，不代表真实模型质量。内置模型需要单独的可选本地评测命令，
 该命令不读取用户数据库、不联网、不进入默认 CI。
 
 ### 20.2 固定质量样例
@@ -1068,52 +1113,57 @@ GoodBuddy 不负责：
 ### 20.3 对比组
 
 - FTS + CJK。
-- 应用托管 Granite 97M R2 INT8。
-- 用户显式配置时的 Ollama Qwen3-Embedding。
-- 用户显式配置时的 Ollama BGE。
-- 当前 OpenAI 兼容 Provider。
+- 内置 Granite 97M R2 INT8。
+- 用户显式配置的本机 OpenAI 兼容连接。
+- 用户显式配置的网络 OpenAI 兼容连接。
 
-Ollama 和云端组只在用户明确安装、配置并授权评测时运行。评测报告必须记录完整
-Fingerprint，不能只写模型显示名。
+用户连接组只在用户明确配置并授权评测时运行。评测报告必须记录完整 Fingerprint，不能
+只写连接名称或模型显示名。
 
 ---
 
-## 21. 实施阶段
+## 21. 实施状态
 
-### 阶段 1：契约和模型目录
+### 已完成：契约和模型目录
 
 - 扩展角色感知 `EmbeddingProvider`。
-- 定义 Profile、Encoding Recipe、Runtime Snapshot 和完整 Fingerprint。
-- 新增应用托管模型目录、Manifest、下载、取消、ZIP 和删除。
+- 定义 Profile、Encoding Recipe、Embedding Operation Snapshot 和完整 Fingerprint。
+- 新增内置模型目录、Manifest、下载、取消、ZIP 和删除。
 - 固定 Granite 97M R2 INT8 的 Revision、字节数、SHA-256、Tokenizer 和许可清单。
 
-### 阶段 2：本地推理
+### 已完成：本地推理
 
 - 新增 Utility Process 和私有消息协议。
 - 实现 Tokenizer、ONNX CPU、Pooling、归一化和动态 Token 批处理。
 - 实现加载、诊断、取消、崩溃恢复和退出。
-- 完成六平台推理与打包门。
+- Windows x64 已完成真实推理；其余目标由六平台发布 Runner 继续验证。
 
-### 阶段 3：设置界面
+### 已完成：设置界面
 
-- 把现有向量表单重组为应用托管、Ollama/自托管、云端三种显式路径。
-- 新增模型详情、下载进度、数据路径、当前/草稿状态和真实诊断。
-- 新增模型切换确认和受影响知识库入口。
+- 把现有单一向量表单重组为与 LLM 一致的连接列表，加入只读内置连接和用户可管理的
+  OpenAI 兼容连接。
+- 新增内置模型详情、下载进度、当前/草稿状态和真实诊断；内置连接不重复展示固定本地
+  路径。
 - 更正“自动回退”文案。
 
-### 阶段 4：索引兼容与知识库
+### 已完成：Provider 与索引兼容
 
 - 将完整 Fingerprint 接入索引存储和查询。
-- 冻结每个诊断、查询和重建任务的 Runtime Snapshot。
-- 显示当前模型、索引模型、兼容性和重建影响。
+- 冻结每个诊断、查询和重建任务的 Embedding Operation Snapshot。
 - 验证模型切换、任务取消和文档级原子替换。
 
-### 阶段 5：Ollama 增强
+### 已完成：多连接管理
 
-- 为 Ollama 增加显式服务检测、模型列表和 Digest。
-- 提供 Qwen3-Embedding、BGE 等已知模型的可见编码预设建议。
-- 保持安装、拉取、更新和硬件管理由用户负责。
-- 增加用户授权的 Ollama 质量评测入口。
+- 支持添加、编辑、测试和删除多个 OpenAI 兼容连接。
+- 将现有单一 Endpoint、模型和凭据迁移为一个用户 Connection Profile。
+- 用户连接持续显示 Loopback 与非 Loopback 数据去向，不引入品牌专属检测。
+
+### 后续知识增强阶段
+
+- 在全局设置中显示模型切换的受影响知识库数量和确认。
+- 提供逐库或显式批量重建入口。
+- 在知识库界面集中显示当前模型、索引模型和完整兼容性诊断。
+- 增加用户授权的兼容连接质量评测入口。
 
 ---
 
@@ -1121,10 +1171,12 @@ Fingerprint，不能只写模型显示名。
 
 ### 22.1 产品
 
-- 用户可以不安装外部服务，下载或导入应用托管 Granite 模型并完成真实诊断。
+- 用户可以不安装外部服务，下载或导入内置 Granite 模型并完成真实诊断。
 - 未经用户操作不会下载、启用、切换或更新模型。
-- 用户可以自行安装 Ollama，并明确配置 Qwen3-Embedding、BGE 或其他 Embedding 模型。
-- 三种路径持续显示数据去向，非 loopback Ollama 不标记为“本机”。
+- 内置连接与用户添加的 OpenAI 兼容连接出现在同一连接列表，不存在第二组路径切换。
+- 向量连接不出现在项目 Runtime、Agent Runtime 或远程 Runtime 的模型选择中。
+- 切换 Agent Runtime 不改变向量连接，切换向量连接也不改变 Agent Runtime。
+- 用户连接持续显示数据去向，非 Loopback Endpoint 不标记为“本机”。
 - 保存模型切换前显示当前模型、新模型和受影响知识库。
 - 模型切换不会自动重建知识库。
 - 向量失败时显示请求通道、实际通道和原因，不自动换模型。
@@ -1133,7 +1185,7 @@ Fingerprint，不能只写模型显示名。
 ### 22.2 推理与索引
 
 - Query 和 Document 使用显式角色。
-- 应用托管模型的 Tokenizer、Pooling、归一化、精度和维度全部来自固定 Manifest。
+- 内置模型的 Tokenizer、Pooling、归一化、精度和维度全部来自固定 Manifest。
 - 超长输入不会被 GoodBuddy 静默截断。
 - Fingerprint 任一兼容字段变化后，旧向量不参与当前召回。
 - 384 维向量继续以 Float32 和有效模长保存。
@@ -1143,6 +1195,8 @@ Fingerprint，不能只写模型显示名。
 ### 22.3 安全与交付
 
 - Renderer 不读取模型目录、知识数据库或长期凭据。
+- Agent Runtime 只能获得有界检索文本、引用和脱敏诊断，不能获得 Provider、模型文件、
+  Tokenizer、原始向量、Endpoint 或凭据。
 - 模型下载、导入和启动都验证 Manifest、大小和 SHA-256。
 - ZIP 导入拒绝路径穿越、符号链接、可执行文件和超限内容。
 - Utility Process 不监听端口、不继承无关密钥，应用退出时正常终止。
@@ -1160,8 +1214,8 @@ npm run lint
 npm run build
 ```
 
-真实本地模型评测、Ollama 和云端调用使用独立门控命令，只有在模型已安装且用户明确授权时
-运行。
+真实本地模型评测和用户连接调用使用独立门控命令，只有在模型已安装或连接已配置且用户
+明确授权时运行。
 
 ---
 
@@ -1177,13 +1231,5 @@ npm run build
   <https://bge-model.com/bge/bge_v1_v1.5.html>
 - BGE Small Chinese v1.5 模型卡：
   <https://huggingface.co/BAAI/bge-small-zh-v1.5>
-- Ollama Embeddings：
-  <https://docs.ollama.com/capabilities/embeddings>
-- Ollama Embed API：
-  <https://docs.ollama.com/api/embed>
-- Ollama OpenAI 兼容 API：
-  <https://docs.ollama.com/api/openai-compatibility>
-- Ollama Qwen3-Embedding：
-  <https://ollama.com/library/qwen3-embedding>
-- Ollama BGE-M3：
-  <https://ollama.com/library/bge-m3>
+- ONNX Community Granite 97M Multilingual R2：
+  <https://huggingface.co/onnx-community/granite-embedding-97m-multilingual-r2-ONNX>

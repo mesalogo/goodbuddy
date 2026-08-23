@@ -1,7 +1,4 @@
 export const app = {
-  brand: {
-    desktopWorkspace: '桌面工作区'
-  },
   notifications: {
     success: '成功',
     error: '错误',
@@ -72,8 +69,7 @@ export const app = {
   conversation: {
     defaultTitle: '新对话',
     remoteTitle: '远程会话',
-    greeting:
-      '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件或使用知识库。启用 Agent Runtime 后，我也可以在你的授权下调用工具。',
+    greeting: '你好，我是 GoodBuddy。',
     interrupted: '上次运行意外中断，可以重新发送问题',
     active: '会话正在活动',
     unread: '未读',
@@ -203,10 +199,7 @@ export const app = {
     user: '用户',
     taskResult: '任务结果：{{title}}',
     welcome: {
-      eyebrow: 'GOODBUDDY 工作台',
-      title: '今天想一起完成什么？',
-      description:
-        '快速提问、梳理信息，或连接 OpenCode 使用文件搜索和开发工具。'
+      title: '今天想一起完成什么？'
     },
     quickActions: {
       summarize: {
@@ -370,8 +363,7 @@ export const app = {
     inputLabel: '向 GoodBuddy 提问',
     placeholder: '给 GoodBuddy 发消息…',
     imagePlaceholder: '描述你想生成的图片…',
-    keyboardHint:
-      'Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片或文本',
+    keyboardHint: 'Enter 发送，Shift+Enter 换行',
     addContent: '添加内容',
     addAttachment: '添加附件',
     attachmentProgress: {
@@ -459,8 +451,8 @@ export const app = {
         description: '只读问答，不修改文件'
       },
       execute: {
-        label: 'Execute · 受控执行',
-        description: '通过审批后执行工具操作'
+        label: 'Execute · 完全权限',
+        description: '使用当前账号的完整权限执行工具操作'
       }
     },
     voice: {
@@ -468,7 +460,6 @@ export const app = {
       cancel: '取消语音识别',
       input: '语音输入',
       stopAndRecognize: '停止录音并开始识别',
-      description: '语音转文字，转写后可编辑再发送',
       unsupported: '当前系统不支持内置语音识别，可继续使用键盘输入',
       downloadingPack: '正在下载中文离线语音包，完成后将自动开始听写',
       transcribed: '语音已转为文字，可编辑后发送',

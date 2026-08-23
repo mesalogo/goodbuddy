@@ -646,8 +646,7 @@ const chatBottomProximity = 96
 function createConversation(
   projectId?: string,
   runtimeSelection?: AgentRuntimeSelection,
-  greeting =
-    '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件或使用知识库。启用 Agent Runtime 后，我也可以在你的授权下调用工具。'
+  greeting = '你好，我是 GoodBuddy。'
 ): Conversation {
   const now = Date.now()
   return {
@@ -1025,11 +1024,7 @@ function ChatHistoryPane({
             <div className="welcome__badge">
               <Sparkles size={18} />
             </div>
-            <p className="eyebrow">{t('chat.welcome.eyebrow')}</p>
             <h2>{t('chat.welcome.title')}</h2>
-            <p className="welcome__description">
-              {t('chat.welcome.description')}
-            </p>
             <div className="quick-actions">
               {quickActions.map((action) => (
                 <button
@@ -7451,7 +7446,6 @@ function App(): React.JSX.Element {
           </div>
           <div className="brand__copy">
             <strong>GoodBuddy</strong>
-            <span>{t('brand.desktopWorkspace')}</span>
           </div>
         </div>
 
@@ -8440,13 +8434,14 @@ function App(): React.JSX.Element {
             <div className="composer__input">
               <textarea
                 aria-label={t('composer.inputLabel')}
-                placeholder={`${
+                placeholder={
                   runtime?.capability === 'image-generation'
                     ? t('composer.imagePlaceholder')
                     : t('composer.placeholder')
-                }\n${t('composer.keyboardHint')}`}
+                }
                 ref={inputRef}
                 rows={3}
+                title={t('composer.keyboardHint')}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onInput={(event) =>
@@ -8546,7 +8541,7 @@ function App(): React.JSX.Element {
                         ? t('composer.voice.stopAndRecognize')
                         : voiceListening
                           ? t('composer.voice.cancel')
-                          : t('composer.voice.description')
+                          : undefined
                     }
                     type="button"
                   >

@@ -239,10 +239,12 @@ describe('KnowledgeRetrievalWorkbench', () => {
       />
     )
 
-    expect(screen.getByText('最多 24 个融合候选')).toBeInTheDocument()
+    expect(screen.getByText(/当前最多召回 24 个融合候选/u))
+      .toBeInTheDocument()
     const recallMultiplier = screen.getByLabelText(/^召回倍数/)
     fireEvent.change(recallMultiplier, { target: { value: '5' } })
-    expect(screen.getByText('最多 30 个融合候选')).toBeInTheDocument()
+    expect(screen.getByText(/当前最多召回 30 个融合候选/u))
+      .toBeInTheDocument()
     expect(screen.getByLabelText(/^全文占比/)).toHaveValue(35.7)
     expect(screen.getByLabelText(/^向量占比/)).toHaveValue(35.7)
     expect(screen.getByLabelText(/^图谱占比/)).toHaveValue(28.6)
@@ -260,9 +262,15 @@ describe('KnowledgeRetrievalWorkbench', () => {
     })
     const topK = screen.getByLabelText(/^最终结果数/)
     fireEvent.change(topK, { target: { value: '8' } })
-    expect(screen.getByText('最多 40 个融合候选')).toBeInTheDocument()
+    expect(screen.getByText(/当前最多召回 40 个融合候选/u))
+      .toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '本地规则' }))
-    expect(screen.getByText('重排最多 40 个候选')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '本地规则' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      document.querySelector('.knowledge-retrieval-pipeline')
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '测试检索' }))
 
     expect(onTest).toHaveBeenCalledWith({

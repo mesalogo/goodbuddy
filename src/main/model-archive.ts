@@ -47,7 +47,7 @@ const modelArchiveFileSchema = z
 
 const modelArchiveDescriptorSchema = z
   .object({
-    kind: z.enum(['speech', 'document-ocr']),
+    kind: z.enum(['speech', 'document-ocr', 'embedding']),
     modelId: z
       .string()
       .min(1)

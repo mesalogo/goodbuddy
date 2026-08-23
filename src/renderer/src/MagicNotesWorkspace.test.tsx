@@ -548,7 +548,10 @@ describe('MagicNotesWorkspace', () => {
         '写完一句并停止输入 5 秒后，评论会显示在这里。'
       )
     ).toBeInTheDocument()
-    expect(within(pane).getByText('暂无 AI 评论')).toBeInTheDocument()
+    expect(within(pane).getByText('写下一句话')).toBeInTheDocument()
+    expect(
+      within(pane).queryByText('暂无 AI 评论')
+    ).not.toBeInTheDocument()
     expect(within(pane).queryByText('正在加载')).not.toBeInTheDocument()
   })
 

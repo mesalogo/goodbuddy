@@ -84,6 +84,7 @@ import type {
 } from '../shared/speech-model-contracts'
 import type {
   EmbeddingDiagnosticResult,
+  EmbeddingModelSnapshot,
   EmbeddingSettingsSnapshot,
   KnowledgeEmbeddingIndexSnapshot
 } from '../shared/embedding-contracts'
@@ -485,10 +486,39 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.embeddingSettingsGet
       ) as Promise<EmbeddingSettingsSnapshot>,
-    diagnose: () =>
+    diagnose: (connectionId: string) =>
       ipcRenderer.invoke(
-        ipcChannels.embeddingDiagnose
-      ) as Promise<EmbeddingDiagnosticResult>
+        ipcChannels.embeddingDiagnose,
+        { connectionId }
+      ) as Promise<EmbeddingDiagnosticResult>,
+    setCurrent: (connectionId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingSetCurrent,
+        { connectionId }
+      ) as Promise<EmbeddingSettingsSnapshot>,
+    installModel: (
+      modelId: string,
+      expectedDownloadSource: ModelDownloadSource
+    ) =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingModelsInstall,
+        { modelId, expectedDownloadSource }
+      ) as Promise<EmbeddingModelSnapshot>,
+    cancelModelOperation: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingModelsCancel,
+        { modelId }
+      ) as Promise<boolean>,
+    importModelArchive: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingModelsImportArchive,
+        { modelId }
+      ) as Promise<EmbeddingModelSnapshot | undefined>,
+    removeModel: (modelId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingModelsRemove,
+        { modelId }
+      ) as Promise<EmbeddingModelSnapshot>
   },
   documentParsing: {
     getSnapshot: () =>

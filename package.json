@@ -54,6 +54,7 @@
     "asarUnpack": [
       "out/main/package.json",
       "out/main/deepseek-harness-*",
+      "out/main/embedding-inference-bootstrap.js",
       "out/main/chunks/**/*",
       "node_modules/node-pty/lib/**/*",
       "node_modules/node-pty/package.json",
@@ -62,7 +63,8 @@
       "node_modules/koffi/**/*",
       "node_modules/@koromix/koffi-*/**/*",
       "node_modules/@napi-rs/canvas{,/**/*}",
-      "node_modules/@napi-rs/canvas-*/**/*"
+      "node_modules/@napi-rs/canvas-*/**/*",
+      "node_modules/onnxruntime-web/dist/**/*.wasm"
     ],
     "npmRebuild": false,
     "compression": "maximum",
@@ -173,6 +175,10 @@
         "to": "licenses/onnxruntime-web-MIT.txt"
       },
       {
+        "from": "node_modules/@huggingface/tokenizers/LICENSE",
+        "to": "licenses/huggingface-tokenizers-Apache-2.0.txt"
+      },
+      {
         "from": "node_modules/katex/LICENSE",
         "to": "licenses/katex-MIT.txt"
       },
@@ -254,6 +260,7 @@
     "@deepseek-ai/dsh-tool-skill": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "@deepseek-ai/dsh-user-approval": "0.1.0-rc.6",
+    "@huggingface/tokenizers": "^0.1.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@napi-rs/canvas": "1.0.3",
     "@opencode-ai/sdk": "^1.18.9",

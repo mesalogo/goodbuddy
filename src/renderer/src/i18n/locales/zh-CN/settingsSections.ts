@@ -7,10 +7,6 @@ export const settingsSections = {
     title: '语音模型',
     description: '应用不内置模型权重，按需下载或通过 ZIP 离线迁移',
     openModelsDirectory: '打开模型目录',
-    storagePrefix: '模型保存在',
-    storageSuffix:
-      '。自动下载会固定来源版本并校验 SHA-256；外网设备可导出 ZIP，内网设备可直接导入。',
-    downloadSource: '当前模型下载源：{{source}}',
     modelSelector: '当前语音模型',
     modelSelectorDescription:
       '选择已安装模型后，点击“保存设置”切换语音识别模型。',
@@ -129,7 +125,62 @@ export const settingsSections = {
   embedding: {
     label: '向量模型',
     title: '向量模型连接',
-    description: '查看当前配置并确认向量模型连接可用',
+    description:
+      '选择并配置用于向量检索的内置本地模型或 OpenAI 兼容服务。',
+    enabled: '启用向量检索',
+    currentConnection: '当前连接',
+    connections: {
+      heading: '连接列表',
+      listLabel: '向量模型连接列表',
+      empty: '尚无可用的向量模型连接。',
+      types: {
+        builtin: 'GoodBuddy 内置连接',
+        'openai-compatible': 'OpenAI 兼容连接'
+      },
+      current: '当前使用',
+      model: '模型：{{model}}',
+      endpoint: '服务地址：{{endpoint}}',
+      credentialConfigured: '已配置凭据',
+      credentialMissing: '未配置凭据',
+      status: '状态：{{status}}',
+      modelLabel: '模型',
+      statusLabel: '状态'
+    },
+    actions: {
+      addCustom: '添加自定义',
+      test: '测试',
+      delete: '删除',
+      download: '下载',
+      cancel: '取消',
+      importZip: '导入 ZIP',
+      remove: '移除模型',
+      clearCredential: '清除凭据',
+      clearAfterSave: '保存后清除凭据'
+    },
+    accessibility: {
+      select: '编辑向量模型连接 {{name}}',
+      test: '测试向量模型连接 {{name}}',
+      delete: '删除向量模型连接 {{name}}',
+      download: '下载 {{name}}',
+      cancel: '取消下载 {{name}}',
+      import: '从 ZIP 导入 {{name}}',
+      remove: '移除本地模型 {{name}}'
+    },
+    fields: {
+      name: '名称',
+      endpoint: '向量接口 URL',
+      model: '模型名称',
+      authentication: '认证方式',
+      noAuthentication: '无需认证',
+      apiKey: 'API Key（可选）',
+      apiKeyPlaceholder: '本地无认证服务可留空',
+      configuredPlaceholder: '已配置；输入新值可替换'
+    },
+    endpointDestination: {
+      local: '知识分块和查询将发送到此设备上的 {{host}}。',
+      network:
+        '建立索引时会向 {{host}} 发送知识分块，检索时会发送查询。'
+    },
     model: {
       heading: '当前向量模型',
       configured: '已配置模型',
@@ -154,7 +205,7 @@ export const settingsSections = {
     description: '管理聊天角色及其受信任系统提示词',
     newRole: '新建角色',
     notice:
-      '选中的角色会把系统提示词加入本次文本对话。专家团队会并行使用最多 3 个已启用角色；综合模式和专家团队始终继承默认模型，只有单个角色会使用指定连接。图像生成连接不使用角色提示词。',
+      '单个角色可使用指定模型；综合模式和专家团队始终继承默认模型。',
     listLabel: '角色列表',
     listTitle: '角色列表',
     editRole: '编辑角色 {{name}}',
@@ -251,8 +302,6 @@ export const settingsSections = {
       }
     },
     modelDownloadSource: {
-      cardTitle: '本地模型',
-      cardDescription: '管理 GoodBuddy 托管本地模型的获取方式',
       title: '模型下载源',
       description:
         '选择 GoodBuddy 托管本地模型后续下载使用的平台。已安装模型、ZIP 导入、Ollama 模型和应用更新不受影响。',
@@ -260,9 +309,6 @@ export const settingsSections = {
         modelscope: '默认，适合优先访问 ModelScope 的网络环境。',
         'hugging-face': '适合可以稳定访问 Hugging Face 的网络环境。'
       },
-      current: '当前选择：{{source}}',
-      activeDownloadNote:
-        '正在进行的模型下载会继续使用启动时的来源；新的下载使用当前选择。',
       notification: '模型下载源已切换为 {{source}}。'
     },
     magicNotes: {
@@ -310,7 +356,7 @@ export const settingsSections = {
     },
     listLabel: 'Skills 列表',
     notice:
-      'Skill 以本地能力说明注入所选目标，不会写入 Runtime 自有配置。新导入的 Skill 默认启用，并分配给直连模型、OpenCode、Continue 和 DeepSeek Harness。',
+      '新导入的 Skill 默认启用，并分配给直连模型、OpenCode、Continue 和 DeepSeek Harness。',
     loading: '正在读取 Skills…',
     source: {
       builtin: '内置',

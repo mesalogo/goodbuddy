@@ -1,4 +1,5 @@
 import type { EmbeddingProvider } from './types'
+import { embeddingProviderFingerprint } from './embedding-provider-key'
 
 const MAX_INPUTS = 256
 const MAX_BATCH_SIZE = 32
@@ -16,9 +17,31 @@ export interface OpenAIEmbeddingClientOptions {
   endpoint: string
   model: string
   apiKey?: string
+  dimensions?: number
+  encodingRecipe?: Partial<OpenAIEmbeddingEncodingRecipe>
   batchSize?: number
   timeoutMs?: number
   fetch?: typeof fetch
+}
+
+export type EmbeddingInputRole = 'query' | 'document'
+
+export interface OpenAIEmbeddingEncodingRecipe {
+  recipeId: string
+  tokenizerDigest?: string
+  pooling: 'provider-managed'
+  normalization: 'provider-managed'
+  queryTemplate: string
+  documentTemplate: string
+  maximumSequenceTokens?: number
+}
+
+const DEFAULT_ENCODING_RECIPE: OpenAIEmbeddingEncodingRecipe = {
+  recipeId: 'symmetric',
+  pooling: 'provider-managed',
+  normalization: 'provider-managed',
+  queryTemplate: '{text}',
+  documentTemplate: '{text}'
 }
 
 function boundedInteger(
@@ -54,6 +77,71 @@ function normalizedEndpoint(input: string): string {
   }
   url.hash = ''
   return url.toString()
+}
+
+function endpointScope(endpoint: string): 'loopback' | 'network' {
+  const hostname = new URL(endpoint).hostname.toLowerCase()
+  return hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]'
+    ? 'loopback'
+    : 'network'
+}
+
+function normalizedTemplate(value: string, field: string): string {
+  const template = requiredString(value, field, MAX_INPUT_LENGTH)
+  if (template.split('{text}').length !== 2) {
+    throw new RangeError(`${field} must contain exactly one {text} placeholder`)
+  }
+  return template
+}
+
+function normalizedEncodingRecipe(
+  input: Partial<OpenAIEmbeddingEncodingRecipe> | undefined
+): OpenAIEmbeddingEncodingRecipe {
+  const recipe = { ...DEFAULT_ENCODING_RECIPE, ...input }
+  if (recipe.pooling !== 'provider-managed') {
+    throw new RangeError(
+      'encodingRecipe.pooling must be provider-managed'
+    )
+  }
+  if (recipe.normalization !== 'provider-managed') {
+    throw new RangeError(
+      'encodingRecipe.normalization must be provider-managed'
+    )
+  }
+  return {
+    recipeId: requiredString(recipe.recipeId, 'encodingRecipe.recipeId', 256),
+    ...(recipe.tokenizerDigest
+      ? {
+          tokenizerDigest: requiredString(
+            recipe.tokenizerDigest,
+            'encodingRecipe.tokenizerDigest',
+            256
+          )
+        }
+      : {}),
+    pooling: 'provider-managed',
+    normalization: 'provider-managed',
+    queryTemplate: normalizedTemplate(
+      recipe.queryTemplate,
+      'encodingRecipe.queryTemplate'
+    ),
+    documentTemplate: normalizedTemplate(
+      recipe.documentTemplate,
+      'encodingRecipe.documentTemplate'
+    ),
+    ...(recipe.maximumSequenceTokens !== undefined
+      ? {
+          maximumSequenceTokens: boundedInteger(
+            recipe.maximumSequenceTokens,
+            'encodingRecipe.maximumSequenceTokens',
+            1,
+            1_000_000
+          )
+        }
+      : {})
+  }
 }
 
 function embeddingAbortError(
@@ -174,6 +262,8 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
   readonly model: string
   readonly fingerprint: string
   private readonly endpoint: string
+  private readonly dimensions?: number
+  private readonly encodingRecipe: OpenAIEmbeddingEncodingRecipe
   private readonly apiKey?: string
   private readonly batchSize: number
   private readonly timeoutMs: number
@@ -183,7 +273,22 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
     this.endpoint = normalizedEndpoint(options.endpoint)
     this.model = requiredString(options.model, 'model', MAX_MODEL_LENGTH)
     this.apiKey = options.apiKey?.trim() || undefined
-    this.fingerprint = `${this.provider}:${this.endpoint}:${this.model}`
+    this.dimensions =
+      options.dimensions === undefined
+        ? undefined
+        : boundedInteger(options.dimensions, 'dimensions', 1, MAX_DIMENSIONS)
+    this.encodingRecipe = normalizedEncodingRecipe(options.encodingRecipe)
+    this.fingerprint = embeddingProviderFingerprint({
+      provider: this.provider,
+      endpoint: this.endpoint,
+      dataPath: {
+        kind: 'endpoint',
+        scope: endpointScope(this.endpoint)
+      },
+      model: this.model,
+      dimensions: this.dimensions,
+      encodingRecipe: this.encodingRecipe
+    })
     this.batchSize = boundedInteger(
       options.batchSize ?? 16,
       'batchSize',
@@ -206,6 +311,31 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
     input: readonly string[],
     signal?: AbortSignal
   ): Promise<number[][]> {
+    return this.embedRole(input, 'document', signal)
+  }
+
+  async embedQuery(
+    input: readonly string[],
+    signal?: AbortSignal
+  ): Promise<number[][]> {
+    return this.embedRole(input, 'query', signal)
+  }
+
+  async embedDocuments(
+    input: readonly string[],
+    signal?: AbortSignal
+  ): Promise<number[][]> {
+    return this.embedRole(input, 'document', signal)
+  }
+
+  async embedRole(
+    input: readonly string[],
+    role: EmbeddingInputRole,
+    signal?: AbortSignal
+  ): Promise<number[][]> {
+    if (role !== 'query' && role !== 'document') {
+      throw new RangeError('role must be query or document')
+    }
     if (!Array.isArray(input) || input.length < 1 || input.length > MAX_INPUTS) {
       throw new RangeError(`input must contain between 1 and ${MAX_INPUTS} items`)
     }
@@ -218,7 +348,17 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
           `input[${index}] must be at most ${MAX_INPUT_LENGTH} characters`
         )
       }
-      return item
+      const template =
+        role === 'query'
+          ? this.encodingRecipe.queryTemplate
+          : this.encodingRecipe.documentTemplate
+      const encoded = template.replace('{text}', item)
+      if (encoded.length > MAX_INPUT_LENGTH) {
+        throw new RangeError(
+          `encoded input[${index}] must be at most ${MAX_INPUT_LENGTH} characters`
+        )
+      }
+      return encoded
     })
 
     const embeddings: number[][] = []
@@ -284,7 +424,13 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
       response = await this.transport(this.endpoint, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ model: this.model, input }),
+        body: JSON.stringify({
+          model: this.model,
+          input,
+          ...(this.dimensions === undefined
+            ? {}
+            : { dimensions: this.dimensions })
+        }),
         redirect: 'error',
         signal: requestSignal
       })
@@ -293,10 +439,17 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
           `Embedding request failed with HTTP ${response.status}`
         )
       }
-      return validateEmbeddings(
+      const vectors = validateEmbeddings(
         await readBoundedJson(response),
         input.length
       )
+      if (
+        this.dimensions !== undefined &&
+        vectors.some((vector) => vector.length !== this.dimensions)
+      ) {
+        throw new Error('Embeddings do not match configured dimensions')
+      }
+      return vectors
     } catch (error) {
       if (requestSignal.aborted) {
         throw embeddingAbortError(requestSignal, timeoutError)

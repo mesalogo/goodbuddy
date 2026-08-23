@@ -366,18 +366,6 @@ export function SpeechModelSettingsSection({
         </button>
       </div>
 
-      <p className="settings-notice">
-        {t('speech.storagePrefix')}{' '}
-        <code>{snapshot.rootDirectory}</code>
-        {t('speech.storageSuffix')}
-      </p>
-      <p className="settings-notice">
-        {t('speech.downloadSource', {
-          source: t(
-            `modelDownloadSources.${snapshot.selectedDownloadSource}`
-          )
-        })}
-      </p>
       {error && <p className="settings-warning" role="alert">{error}</p>}
 
       <label className="field document-ocr-model-selector">

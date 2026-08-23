@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
@@ -11,6 +17,30 @@ import type { AgentEvent, BrowserLiveState } from '../shared/contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { registerIpcHandlers } from './ipc'
+
+describe('embedding IPC boundary', () => {
+  it('validates explicit IDs and keeps ZIP paths in the native dialog', async () => {
+    const source = await readFile(
+      join(process.cwd(), 'src', 'main', 'ipc.ts'),
+      'utf8'
+    )
+    const region =
+      source.match(
+        /const requireEmbeddingProvider[\s\S]*?registerHandler\(ipcChannels\.speechModelsGet/u
+      )?.[0] ?? ''
+    expect(region).toContain('embeddingConnectionIdRequestSchema.parse(input)')
+    expect(region).toContain('embeddingModelInstallInputSchema.parse(input)')
+    expect(region).toContain('embeddingModelActionInputSchema.parse(input)')
+    expect(region).toContain("properties: ['openFile']")
+    expect(region).toContain('filters: modelArchiveDialogFilters')
+    expect(region).not.toMatch(
+      /embeddingModelsImportArchive[\s\S]{0,300}input\.(?:path|archivePath|directory)/u
+    )
+    expect(region).not.toMatch(
+      /(?:agent|selectedRuntimes|remoteModelGateway).{0,80}(?:embedding|vector)/iu
+    )
+  })
+})
 
 type InvokeHandler = (event: unknown, input?: unknown) => unknown
 type KnowledgeGrantMock = (

@@ -258,6 +258,12 @@ describe('DocumentParsingSettingsSection', () => {
     expect(screen.getByText('ModelScope')).toBeInTheDocument()
     expect(screen.getByText('质量：基础')).toBeInTheDocument()
     expect(screen.getByText('速度：快')).toBeInTheDocument()
+    expect(
+      screen.queryByText('onnxruntime-web-wasm')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(snapshot.ocrModels.rootDirectory)
+    ).not.toBeInTheDocument()
     expect(screen.getByText('旧版 Office 转换')).toBeInTheDocument()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(screen.queryByText('隐私与云端处理')).not.toBeInTheDocument()

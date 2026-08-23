@@ -157,6 +157,12 @@ describe('HeartbeatCenter', () => {
       })
     ).toBeInTheDocument()
     expect(
+      screen.getByText(
+        'Runs scheduled, read-only reviews of the selected scope without using tools.'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText('SMART HEARTBEAT')).not.toBeInTheDocument()
+    expect(
       screen.getByRole('button', { name: 'Run heartbeat now' })
     ).toBeInTheDocument()
     expect(screen.getByText(entry.summary)).toBeInTheDocument()
@@ -287,6 +293,9 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: '本次心跳' })
     ).toBeInTheDocument()
+    expect(screen.queryByText('CURRENT PULSE')).not.toBeInTheDocument()
+    expect(screen.queryByText('GROWTH TREND')).not.toBeInTheDocument()
+    expect(screen.queryByText('LATEST REPORT')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: /待处理建议/u }))
     expect(
@@ -295,6 +304,8 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: '行动建议' })
     ).toBeInTheDocument()
+    expect(screen.queryByText('MEMORY GROWTH')).not.toBeInTheDocument()
+    expect(screen.queryByText('NEXT ACTIONS')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '心跳轨迹' }))
     expect(
@@ -303,10 +314,17 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: '运行记录' })
     ).toBeInTheDocument()
+    expect(
+      screen.queryByText('HEARTBEAT TIMELINE')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('RUN AUDIT')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '心跳计划' }))
     expect(
       screen.getByRole('heading', { level: 2, name: '智能心跳' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('心跳计划按时只读运行，不调用工具。')
     ).toBeInTheDocument()
   })
 

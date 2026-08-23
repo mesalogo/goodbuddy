@@ -108,6 +108,12 @@ describe('ActivityPanel', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: 'Run history' })
     ).toBeInTheDocument()
+    expect(screen.queryByText('RUN HISTORY')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'Review execution details by project, task, and conversation, or browse the activity timeline and model usage.'
+      )
+    ).not.toBeInTheDocument()
     expect(
       screen.getByRole('tab', { name: 'Tasks and conversations' })
     ).toHaveAttribute('aria-selected', 'true')
@@ -234,11 +240,11 @@ describe('ActivityPanel', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    fireEvent.click(screen.getByRole('button', { name: '进行中 1' }))
     expect(screen.getByText('对话：活动 1')).toBeInTheDocument()
     expect(screen.queryByText('活动 2')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '异常' }))
+    fireEvent.click(screen.getByRole('button', { name: '异常 2' }))
     expect(screen.getByText('对话：活动 2')).toBeInTheDocument()
     expect(screen.getByText('对话：活动 3')).toBeInTheDocument()
     expect(screen.queryByText('活动 1')).not.toBeInTheDocument()
@@ -299,12 +305,12 @@ describe('ActivityPanel', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    fireEvent.click(screen.getByRole('button', { name: '进行中 0' }))
     expect(screen.getByText('没有匹配的活动')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
 
     expect(
-      screen.getByRole('button', { name: '全部' })
+      screen.getByRole('button', { name: '全部 1' })
     ).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('对话：活动 1')).toBeInTheDocument()
   })
@@ -521,6 +527,7 @@ describe('ActivityPanel', () => {
     expect(screen.getByLabelText('筛选活动')).toHaveClass(
       'segmented-control'
     )
+    expect(screen.queryByLabelText('活动统计')).not.toBeInTheDocument()
     expect(
       screen.queryByLabelText('Token 用量分组')
     ).not.toBeInTheDocument()
@@ -609,10 +616,10 @@ describe('ActivityPanel', () => {
     ).toBeInTheDocument()
     expect(within(timeline).getByText('项目：项目甲')).toBeInTheDocument()
     expect(
-      within(timeline).getByText(
+      within(timeline).queryByText(
         '所有轨道共享同一执行顺序，节点按发生时间依次展开，点击节点查看身份和活动详情。'
       )
-    ).toBeInTheDocument()
+    ).not.toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('button', {

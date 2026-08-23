@@ -6,7 +6,7 @@ export const workspace = {
   projectSwitcher: {
     workModes: {
       ask: 'Ask · 只读问答',
-      execute: 'Execute · 受控执行'
+      execute: 'Execute · 完全权限'
     },
     selector: {
       ariaLabel: '当前项目',
@@ -72,24 +72,19 @@ export const workspace = {
     categoriesAriaLabel: '工作栏分类',
     tabs: {
       tasks: {
-        label: '任务中心',
-        description: '处理待审批操作并管理自动化'
+        label: '任务中心'
       },
       workspace: {
-        label: '工作区',
-        description: '浏览项目文件、Git 变更与文件内容'
+        label: '工作区'
       },
       browser: {
-        label: '浏览器',
-        description: '查看 Agent 操作网页时的实时画面'
+        label: '浏览器'
       },
       results: {
-        label: '成果',
-        description: '查看生成或手动导入的独立成果'
+        label: '成果'
       }
     },
     tasks: {
-      description: '处理当前待审批操作，并创建和管理自动化任务。',
       approvalsTitle: '等待审批',
       noApprovals: '当前没有等待审批的操作。',
       deny: '拒绝',
@@ -130,9 +125,6 @@ export const workspace = {
       fileSize: '{{formattedSize}} 字节',
       fileFallback: '项目工作区文件',
       reading: '正在读取文件…',
-      description:
-        '浏览当前项目文件与 Git 变更；选择文件后在当前工作区内预览。',
-      projectTitle: '项目工作区',
       refreshAriaLabel: '刷新工作区文件',
       refresh: '刷新',
       gitUnavailable: 'Git 状态不可用：{{error}}',
@@ -143,14 +135,10 @@ export const workspace = {
       back: '返回成果列表',
       title: '成果',
       loadingImage: '正在加载图片…',
-      description:
-        '查看并预览由任务、自动化生成或手动导入的文本、图片、PDF 与网页成果。',
-      sectionTitle: '生成与导入成果',
       import: '导入 PDF、图片或网页',
       empty: '生成的文件、图片、报告和手动导入内容会显示在这里。'
     },
     browser: {
-      title: '实时浏览器',
       interact: '交互',
       interacting: '交互中',
       stop: '停止浏览器',

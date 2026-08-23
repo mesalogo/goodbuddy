@@ -3,6 +3,7 @@ import {
   embeddingDiagnosticResultSchema,
   embeddingIndexJobSchema,
   embeddingIndexStatusSchema,
+  embeddingSettingsSnapshotSchema,
   knowledgeEmbeddingIndexSnapshotSchema,
   embeddingSafeErrorSchema,
   isEmbeddingIndexJobActive
@@ -64,6 +65,48 @@ describe('embedding contracts', () => {
         retryable: false
       }).success
     ).toBe(false)
+  })
+
+  it('keeps credentials, vectors, and Main-only paths out of settings snapshots', () => {
+    const snapshot = {
+      configuration: {
+        provider: 'builtin',
+        model: 'granite-embedding',
+        credentialConfigured: false
+      },
+      connections: [
+        {
+          id: '00000000-0000-4000-8000-000000000002',
+          name: 'GoodBuddy built-in',
+          kind: 'builtin' as const,
+          model: 'granite-embedding',
+          credentialConfigured: false
+        }
+      ],
+      currentConnectionId:
+        '00000000-0000-4000-8000-000000000002',
+      models: {
+        selectedDownloadSource: 'modelscope' as const,
+        catalog: [],
+        installed: [],
+        operations: []
+      }
+    }
+    expect(
+      embeddingSettingsSnapshotSchema.safeParse(snapshot).success
+    ).toBe(true)
+    for (const forbidden of [
+      { apiKey: 'secret' },
+      { vectors: [[0.1, 0.2]] },
+      { modelDirectory: 'C:\\private\\embedding' }
+    ]) {
+      expect(
+        embeddingSettingsSnapshotSchema.safeParse({
+          ...snapshot,
+          ...forbidden
+        }).success
+      ).toBe(false)
+    }
   })
 
   it('validates queued, running and terminal index jobs', () => {

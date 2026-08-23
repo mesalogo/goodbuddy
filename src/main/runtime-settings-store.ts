@@ -7,12 +7,14 @@ import { homedir } from 'node:os'
 import { z } from 'zod'
 import {
   continueModeSchema,
+  builtinEmbeddingConnectionId,
   contextCompressionSettingsSchema,
   defaultContextCompressionSettings,
   defaultModelProfileId,
   defaultRuntimeCustomizationSettings,
   defaultRuntimeSettings,
   imageGenerationQualitySchema,
+  legacyEmbeddingConnectionId,
   isAgentRuntimeModelProtocol,
   isDeepSeekHarnessModelProfile,
   minimumModelContextWindowTokens,
@@ -227,11 +229,45 @@ const version17StoredSettingsSchema = version16StoredSettingsSchema
     contextCompression: contextCompressionSettingsSchema
   })
 
-const storedSettingsSchema = version17StoredSettingsSchema
+const version18StoredSettingsSchema = version17StoredSettingsSchema
   .omit({ version: true })
   .extend({
     version: z.literal(18),
     runtimeCustomization: runtimeCustomizationSettingsSchema
+  })
+
+const storedEmbeddingConnectionSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      id: z.literal(builtinEmbeddingConnectionId),
+      name: z.string().trim().min(1).max(64),
+      kind: z.literal('builtin')
+    })
+    .strict(),
+  z
+    .object({
+      id: z.string().uuid().refine(
+        (id) => id !== builtinEmbeddingConnectionId
+      ),
+      name: z.string().trim().min(1).max(64),
+      kind: z.literal('openai-compatible'),
+      baseUrl: z.string().url().max(2_048),
+      modelName: z.string().trim().min(1).max(256),
+      authentication: modelAuthenticationSchema,
+      credential: credentialSchema
+    })
+    .strict()
+])
+
+const storedSettingsSchema = version18StoredSettingsSchema
+  .omit({ version: true })
+  .extend({
+    version: z.literal(19),
+    embeddingConnections: z
+      .array(storedEmbeddingConnectionSchema)
+      .min(1)
+      .max(20),
+    activeEmbeddingConnectionId: z.string().uuid()
   })
 
 type StoredSettings = z.infer<typeof storedSettingsSchema>
@@ -241,6 +277,9 @@ export type RuntimeSettingsRollback = {
 }
 type Version17StoredSettings = z.infer<
   typeof version17StoredSettingsSchema
+>
+type Version18StoredSettings = z.infer<
+  typeof version18StoredSettingsSchema
 >
 type Version16StoredSettings = z.infer<
   typeof version16StoredSettingsSchema
@@ -356,6 +395,9 @@ export type ResolvedRuntimeSettings = {
   knowledgeEmbeddingBaseUrl: string
   knowledgeEmbeddingModel: string
   knowledgeEmbeddingApiKey?: string
+  embeddingConnections?: ResolvedEmbeddingConnection[]
+  activeEmbeddingConnectionId?: string
+  activeEmbeddingConnection?: ResolvedEmbeddingConnection
   knowledgeRerankEnabled: boolean
   knowledgeRerankEndpoint: string
   knowledgeRerankModel: string
@@ -384,6 +426,22 @@ export type ResolvedModelProfile = {
   apiKey?: string
 }
 
+export type ResolvedEmbeddingConnection =
+  | {
+      id: typeof builtinEmbeddingConnectionId
+      name: string
+      kind: 'builtin'
+    }
+  | {
+      id: string
+      name: string
+      kind: 'openai-compatible'
+      baseUrl: string
+      modelName: string
+      authentication: RuntimeSettings['modelAuthentication']
+      apiKey?: string
+    }
+
 type ResolvedModelCredential = {
   activeApiKey?: string
   configured: boolean
@@ -391,7 +449,7 @@ type ResolvedModelCredential = {
 }
 
 const defaultSettings: StoredSettings = {
-  version: 18,
+  version: 19,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -431,6 +489,22 @@ const defaultSettings: StoredSettings = {
     defaultRuntimeSettings.knowledgeEmbeddingBaseUrl,
   knowledgeEmbeddingModel:
     defaultRuntimeSettings.knowledgeEmbeddingModel,
+  embeddingConnections: [
+    {
+      id: builtinEmbeddingConnectionId,
+      name: 'GoodBuddy 内置向量模型',
+      kind: 'builtin'
+    },
+    {
+      id: legacyEmbeddingConnectionId,
+      name: '自定义向量模型',
+      kind: 'openai-compatible',
+      baseUrl: defaultRuntimeSettings.knowledgeEmbeddingBaseUrl,
+      modelName: defaultRuntimeSettings.knowledgeEmbeddingModel,
+      authentication: 'api-key'
+    }
+  ],
+  activeEmbeddingConnectionId: builtinEmbeddingConnectionId,
   knowledgeRerankEnabled:
     defaultRuntimeSettings.knowledgeRerankEnabled,
   knowledgeRerankEndpoint:
@@ -528,13 +602,13 @@ function migrateVersion14(
     ...current
   } = settings
   void _obsolete
-  return {
+  return migrateVersion18({
     ...current,
     version: 18,
     deepseekHarnessModelSource: { kind: 'platform' },
     contextCompression: defaultContextCompressionSettings,
     runtimeCustomization: defaultRuntimeCustomizationSettings
-  }
+  })
 }
 
 function migrateVersion15(
@@ -547,32 +621,58 @@ function migrateVersion15(
   } = settings
   void _obsolete
   void _obsoleteSandbox
-  return {
+  return migrateVersion18({
     ...current,
     version: 18,
     contextCompression: defaultContextCompressionSettings,
     runtimeCustomization: defaultRuntimeCustomizationSettings
-  }
+  })
 }
 
 function migrateVersion16(
   settings: Version16StoredSettings
 ): StoredSettings {
-  return {
+  return migrateVersion18({
     ...settings,
     version: 18,
     contextCompression: defaultContextCompressionSettings,
     runtimeCustomization: defaultRuntimeCustomizationSettings
-  }
+  })
 }
 
 function migrateVersion17(
   settings: Version17StoredSettings
 ): StoredSettings {
-  return {
+  return migrateVersion18({
     ...settings,
     version: 18,
     runtimeCustomization: defaultRuntimeCustomizationSettings
+  })
+}
+
+function migrateVersion18(
+  settings: Version18StoredSettings
+): StoredSettings {
+  return {
+    ...settings,
+    version: 19,
+    embeddingConnections: [
+      {
+        id: builtinEmbeddingConnectionId,
+        name: 'GoodBuddy 内置向量模型',
+        kind: 'builtin'
+      },
+      {
+        id: legacyEmbeddingConnectionId,
+        name: '自定义向量模型',
+        kind: 'openai-compatible',
+        baseUrl: settings.knowledgeEmbeddingBaseUrl,
+        modelName: settings.knowledgeEmbeddingModel,
+        authentication: 'api-key',
+        credential: settings.knowledgeEmbeddingCredential
+      }
+    ],
+    activeEmbeddingConnectionId: legacyEmbeddingConnectionId
   }
 }
 
@@ -681,6 +781,26 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
         ? compressionSource
         : ({ kind: 'current' } as const)
   }
+  const userEmbeddingConnections = settings.embeddingConnections
+    .filter((connection) => connection.kind === 'openai-compatible')
+    .map((connection) => ({
+      ...connection,
+      baseUrl: normalizeModelBaseUrl(connection.baseUrl)
+    }))
+  const embeddingConnections: StoredSettings['embeddingConnections'] = [
+    {
+      id: builtinEmbeddingConnectionId,
+      name: 'GoodBuddy 内置向量模型',
+      kind: 'builtin'
+    },
+    ...userEmbeddingConnections
+  ]
+  const activeEmbeddingConnectionId = embeddingConnections.some(
+    (connection) =>
+      connection.id === settings.activeEmbeddingConnectionId
+  )
+    ? settings.activeEmbeddingConnectionId
+    : builtinEmbeddingConnectionId
 
   return {
     ...settings,
@@ -698,6 +818,8 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
       settings.deepseekHarnessModelSource
     ),
     contextCompression,
+    embeddingConnections,
+    activeEmbeddingConnectionId,
     opencodeBaseUrl,
     opencodeEmbedded: !opencodeBaseUrl
   }
@@ -873,7 +995,7 @@ export class RuntimeSettingsStore {
       const parsed: unknown = JSON.parse(contents)
       assertSupportedSettingsVersion(
         parsed,
-        18,
+        19,
         (version) =>
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${version}，请升级应用后重试`
       )
@@ -881,76 +1003,81 @@ export class RuntimeSettingsStore {
       if (current.success) {
         this.settings = current.data
       } else {
-        const version17 =
-          version17StoredSettingsSchema.safeParse(parsed)
-        if (version17.success) {
-          this.settings = migrateVersion17(version17.data)
+        const version18 =
+          version18StoredSettingsSchema.safeParse(parsed)
+        if (version18.success) {
+          this.settings = migrateVersion18(version18.data)
         } else {
-          const version16 =
-            version16StoredSettingsSchema.safeParse(parsed)
-          if (version16.success) {
-            this.settings = migrateVersion16(version16.data)
+          const version17 =
+            version17StoredSettingsSchema.safeParse(parsed)
+          if (version17.success) {
+            this.settings = migrateVersion17(version17.data)
           } else {
-            const version15 =
-              version15StoredSettingsSchema.safeParse(parsed)
-            if (version15.success) {
-              this.settings = migrateVersion15(version15.data)
+            const version16 =
+              version16StoredSettingsSchema.safeParse(parsed)
+            if (version16.success) {
+              this.settings = migrateVersion16(version16.data)
             } else {
-              const version14 =
-                version14StoredSettingsSchema.safeParse(parsed)
-              if (version14.success) {
-                this.settings = migrateVersion14(version14.data)
+              const version15 =
+                version15StoredSettingsSchema.safeParse(parsed)
+              if (version15.success) {
+                this.settings = migrateVersion15(version15.data)
               } else {
-                const version13 =
-                  version13StoredSettingsSchema.safeParse(parsed)
-                if (version13.success) {
-                  this.settings = migrateVersion13(version13.data)
+                const version14 =
+                  version14StoredSettingsSchema.safeParse(parsed)
+                if (version14.success) {
+                  this.settings = migrateVersion14(version14.data)
                 } else {
-                  const version12 =
-                    version12StoredSettingsSchema.safeParse(parsed)
-                  if (version12.success) {
-                    this.settings = migrateVersion12(version12.data)
+                  const version13 =
+                    version13StoredSettingsSchema.safeParse(parsed)
+                  if (version13.success) {
+                    this.settings = migrateVersion13(version13.data)
                   } else {
-                    const version11 =
-                      version11StoredSettingsSchema.safeParse(parsed)
-                    if (version11.success) {
-                      this.settings = migrateVersion11(version11.data)
+                    const version12 =
+                      version12StoredSettingsSchema.safeParse(parsed)
+                    if (version12.success) {
+                      this.settings = migrateVersion12(version12.data)
                     } else {
-                      const version10 =
-                        version10StoredSettingsSchema.safeParse(parsed)
-                      if (version10.success) {
-                        this.settings = migrateVersion10(version10.data)
+                      const version11 =
+                        version11StoredSettingsSchema.safeParse(parsed)
+                      if (version11.success) {
+                        this.settings = migrateVersion11(version11.data)
                       } else {
-                        const version9 =
-                          version9StoredSettingsSchema.safeParse(parsed)
-                        if (version9.success) {
-                          this.settings = migrateVersion9(version9.data)
+                        const version10 =
+                          version10StoredSettingsSchema.safeParse(parsed)
+                        if (version10.success) {
+                          this.settings = migrateVersion10(version10.data)
                         } else {
-                          const version8 =
-                            version8StoredSettingsSchema.safeParse(parsed)
-                          if (version8.success) {
-                            this.settings = migrateVersion8(version8.data)
+                          const version9 =
+                            version9StoredSettingsSchema.safeParse(parsed)
+                          if (version9.success) {
+                            this.settings = migrateVersion9(version9.data)
                           } else {
-                            const version7 =
-                              version7StoredSettingsSchema.safeParse(parsed)
-                            if (version7.success) {
-                              this.settings = migrateVersion7(version7.data)
+                            const version8 =
+                              version8StoredSettingsSchema.safeParse(parsed)
+                            if (version8.success) {
+                              this.settings = migrateVersion8(version8.data)
                             } else {
-                              const version6 =
-                                version6StoredSettingsSchema.safeParse(parsed)
-                              if (version6.success) {
-                                this.settings = migrateVersion6(version6.data)
+                              const version7 =
+                                version7StoredSettingsSchema.safeParse(parsed)
+                              if (version7.success) {
+                                this.settings = migrateVersion7(version7.data)
                               } else {
-                                const version5 =
-                                  version5StoredSettingsSchema.safeParse(parsed)
-                                if (version5.success) {
-                                  this.settings = migrateVersion5(version5.data)
+                                const version6 =
+                                  version6StoredSettingsSchema.safeParse(parsed)
+                                if (version6.success) {
+                                  this.settings = migrateVersion6(version6.data)
                                 } else {
-                                  const version4 =
-                                    version4StoredSettingsSchema.safeParse(parsed)
-                                  if (version4.success) {
-                                    this.settings = migrateVersion4(version4.data)
+                                  const version5 =
+                                    version5StoredSettingsSchema.safeParse(parsed)
+                                  if (version5.success) {
+                                    this.settings = migrateVersion5(version5.data)
                                   } else {
+                                    const version4 =
+                                      version4StoredSettingsSchema.safeParse(parsed)
+                                    if (version4.success) {
+                                      this.settings = migrateVersion4(version4.data)
+                                    } else {
                                     const version3 =
                                       version3StoredSettingsSchema.safeParse(parsed)
                                     if (version3.success) {
@@ -1006,6 +1133,7 @@ export class RuntimeSettingsStore {
                                           toolApproval: legacy.toolApproval
                                         })
                                       }
+                                    }
                                     }
                                   }
                                 }
@@ -1093,6 +1221,64 @@ export class RuntimeSettingsStore {
       })
       return undefined
     }
+  }
+
+  private getEmbeddingConnectionApiKey(
+    connection: Extract<
+      StoredSettings['embeddingConnections'][number],
+      { kind: 'openai-compatible' }
+    >
+  ): string | undefined {
+    if (!connection.credential) {
+      return undefined
+    }
+    if (!this.cipher.isAvailable()) {
+      this.addWarning({
+        code: 'runtime-embedding-credential-unreadable'
+      })
+      return undefined
+    }
+    try {
+      return endpointCredentialPayloadSchema.parse(
+        decryptSettingsCredential(this.cipher, connection.credential)
+      ).apiKey
+    } catch {
+      this.addWarning({
+        code: 'runtime-embedding-credential-unreadable'
+      })
+      return undefined
+    }
+  }
+
+  private resolveEmbeddingConnections(
+    settings: StoredSettings
+  ): ResolvedEmbeddingConnection[] {
+    const environmentApiKey =
+      this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim()
+    return settings.embeddingConnections.map((connection) => {
+      if (connection.kind === 'builtin') {
+        return connection
+      }
+      const storedApiKey =
+        connection.id === legacyEmbeddingConnectionId &&
+        environmentApiKey
+          ? undefined
+          : this.getEmbeddingConnectionApiKey(connection)
+      return {
+        id: connection.id,
+        name: connection.name,
+        kind: connection.kind,
+        baseUrl: connection.baseUrl,
+        modelName: connection.modelName,
+        authentication: connection.authentication,
+        apiKey:
+          connection.authentication === 'api-key'
+            ? connection.id === legacyEmbeddingConnectionId
+              ? environmentApiKey || storedApiKey
+              : storedApiKey
+            : undefined
+      }
+    })
   }
 
   private getStoredRerankApiKey(
@@ -1429,6 +1615,44 @@ export class RuntimeSettingsStore {
     const embeddingStoredApiKey = embeddingEnvironmentApiKey
       ? undefined
       : this.getStoredEmbeddingApiKey(settings)
+    const resolvedEmbeddingConnections =
+      this.resolveEmbeddingConnections(settings)
+    const embeddingConnections = settings.embeddingConnections.map(
+      (connection) => {
+        if (connection.kind === 'builtin') {
+          return {
+            ...connection,
+            apiKeyConfigured: false as const,
+            credentialSource: 'none' as const
+          }
+        }
+        const resolved = resolvedEmbeddingConnections.find(
+          (candidate) => candidate.id === connection.id
+        )
+        const environmentManaged =
+          connection.id === legacyEmbeddingConnectionId &&
+          Boolean(embeddingEnvironmentApiKey)
+        return {
+          id: connection.id,
+          name: connection.name,
+          kind: connection.kind,
+          baseUrl: connection.baseUrl,
+          modelName: connection.modelName,
+          authentication: connection.authentication,
+          apiKeyConfigured:
+            resolved?.kind === 'openai-compatible' &&
+            Boolean(resolved.apiKey),
+          credentialSource: environmentManaged
+            ? ('environment' as const)
+            : resolved?.kind === 'openai-compatible' &&
+                resolved.apiKey
+              ? ('encrypted' as const)
+              : connection.credential
+                ? ('unreadable' as const)
+                : ('none' as const)
+        }
+      }
+    )
     const rerankEnvironmentApiKey =
       this.environment.GOODBUDDY_RERANK_API_KEY?.trim()
     const rerankStoredApiKey = rerankEnvironmentApiKey
@@ -1464,6 +1688,9 @@ export class RuntimeSettingsStore {
           : settings.knowledgeEmbeddingCredential
             ? 'unreadable'
             : 'none',
+      embeddingConnections,
+      activeEmbeddingConnectionId:
+        settings.activeEmbeddingConnectionId,
       knowledgeRerankEnabled: settings.knowledgeRerankEnabled,
       knowledgeRerankEndpoint: settings.knowledgeRerankEndpoint,
       knowledgeRerankModel: settings.knowledgeRerankModel,
@@ -1588,6 +1815,16 @@ export class RuntimeSettingsStore {
             settings.deepseekHarnessModelSource.profileId
           )
         : this.resolvePlatformHarnessProfile()
+    const embeddingConnections =
+      this.resolveEmbeddingConnections(settings)
+    const activeEmbeddingConnection =
+      embeddingConnections.find(
+        (connection) =>
+          connection.id === settings.activeEmbeddingConnectionId
+      )
+    if (!activeEmbeddingConnection) {
+      throw new Error('当前向量连接不存在')
+    }
     return {
       provider: settings.provider,
       modelBaseUrl: effective.baseUrl,
@@ -1611,6 +1848,10 @@ export class RuntimeSettingsStore {
       knowledgeEmbeddingApiKey:
         this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim() ||
         this.getStoredEmbeddingApiKey(settings),
+      embeddingConnections,
+      activeEmbeddingConnectionId:
+        settings.activeEmbeddingConnectionId,
+      activeEmbeddingConnection,
       knowledgeRerankEnabled: settings.knowledgeRerankEnabled,
       knowledgeRerankEndpoint: settings.knowledgeRerankEndpoint,
       knowledgeRerankModel: settings.knowledgeRerankModel,
@@ -1680,6 +1921,12 @@ export class RuntimeSettingsStore {
             profile.apiKey.action === 'replace'
         ) ||
         input.knowledgeEmbeddingApiKey?.action === 'replace' ||
+        input.embeddingConnections?.some(
+          (connection) =>
+            connection.kind === 'openai-compatible' &&
+            connection.authentication === 'api-key' &&
+            connection.apiKey.action === 'replace'
+        ) ||
         input.knowledgeRerankApiKey?.action === 'replace'
       ) &&
       !this.cipher.isAvailable()
@@ -1732,6 +1979,71 @@ export class RuntimeSettingsStore {
         return nextProfile
       })
 
+    const embeddingConnections: StoredSettings['embeddingConnections'] =
+      input.embeddingConnections
+        ? input.embeddingConnections.map((connection) => {
+            if (connection.kind === 'builtin') {
+              return {
+                id: builtinEmbeddingConnectionId,
+                name: 'GoodBuddy 内置向量模型',
+                kind: 'builtin'
+              }
+            }
+            const existing = current.embeddingConnections.find(
+              (candidate) =>
+                candidate.kind === 'openai-compatible' &&
+                candidate.id === connection.id
+            )
+            const nextConnection: Extract<
+              StoredSettings['embeddingConnections'][number],
+              { kind: 'openai-compatible' }
+            > = {
+              id: connection.id,
+              name: connection.name,
+              kind: connection.kind,
+              baseUrl: normalizeModelBaseUrl(connection.baseUrl),
+              modelName: connection.modelName,
+              authentication: connection.authentication
+            }
+            if (
+              connection.apiKey.action === 'keep' &&
+              existing?.kind === 'openai-compatible' &&
+              existing.credential
+            ) {
+              nextConnection.credential = existing.credential
+            } else if (
+              connection.authentication === 'api-key' &&
+              connection.apiKey.action === 'replace'
+            ) {
+              nextConnection.credential = encryptSavedApiKey(
+                this.cipher,
+                connection.apiKey.value
+              )
+            }
+            return nextConnection
+          })
+        : current.embeddingConnections
+    if (
+      !embeddingConnections.some(
+        (connection) =>
+          connection.id === builtinEmbeddingConnectionId &&
+          connection.kind === 'builtin'
+      )
+    ) {
+      throw new Error('系统向量连接不能删除')
+    }
+    const activeEmbeddingConnectionId =
+      input.activeEmbeddingConnectionId ??
+      current.activeEmbeddingConnectionId
+    if (
+      !embeddingConnections.some(
+        (connection) =>
+          connection.id === activeEmbeddingConnectionId
+      )
+    ) {
+      throw new Error('当前向量连接不存在')
+    }
+
     const embeddingEndpoint = new URL(
       input.knowledgeEmbeddingBaseUrl
     ).toString()
@@ -1750,6 +2062,29 @@ export class RuntimeSettingsStore {
         embeddingApiKeyUpdate.value
       )
     }
+    const synchronizedEmbeddingConnections =
+      input.embeddingConnections
+        ? embeddingConnections
+        : embeddingConnections.map((connection) =>
+            connection.id === legacyEmbeddingConnectionId &&
+            connection.kind === 'openai-compatible'
+              ? {
+                  ...connection,
+                  baseUrl: embeddingEndpoint,
+                  modelName: input.knowledgeEmbeddingModel,
+                  credential: knowledgeEmbeddingCredential
+                }
+              : connection
+          )
+    const activeEmbeddingConnection =
+      synchronizedEmbeddingConnections.find(
+        (connection) =>
+          connection.id === activeEmbeddingConnectionId
+      )
+    const compatibleEmbeddingConnection =
+      activeEmbeddingConnection?.kind === 'openai-compatible'
+        ? activeEmbeddingConnection
+        : undefined
 
     const rerankEndpoint = new URL(
       input.knowledgeRerankEndpoint
@@ -1893,7 +2228,7 @@ export class RuntimeSettingsStore {
 
     const next: StoredSettings = {
       ...current,
-      version: 18,
+      version: 19,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId,
@@ -1912,9 +2247,17 @@ export class RuntimeSettingsStore {
         input.subagentSmartRoutingEnabled ??
         current.subagentSmartRoutingEnabled,
       knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,
-      knowledgeEmbeddingBaseUrl: embeddingEndpoint,
-      knowledgeEmbeddingModel: input.knowledgeEmbeddingModel,
-      knowledgeEmbeddingCredential,
+      knowledgeEmbeddingBaseUrl:
+        compatibleEmbeddingConnection?.baseUrl ?? embeddingEndpoint,
+      knowledgeEmbeddingModel:
+        compatibleEmbeddingConnection?.modelName ??
+        input.knowledgeEmbeddingModel,
+      knowledgeEmbeddingCredential:
+        compatibleEmbeddingConnection
+          ? compatibleEmbeddingConnection.credential
+          : knowledgeEmbeddingCredential,
+      embeddingConnections: synchronizedEmbeddingConnections,
+      activeEmbeddingConnectionId,
       knowledgeRerankEnabled: input.knowledgeRerankEnabled,
       knowledgeRerankEndpoint: rerankEndpoint,
       knowledgeRerankModel: input.knowledgeRerankModel,
@@ -1946,7 +2289,7 @@ export class RuntimeSettingsStore {
       const current = await this.load()
       const next: StoredSettings = {
         ...current,
-        version: 18,
+        version: 19,
         runtimeCustomization: parsed
       }
       await writeJsonFileAtomically(this.filePath, next)

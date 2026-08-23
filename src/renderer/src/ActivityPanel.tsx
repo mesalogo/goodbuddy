@@ -299,14 +299,6 @@ export function ActivityPanel({
     subagent: t('kinds.subagent'),
     result: t('kinds.result')
   }
-  const filters: ReadonlyArray<{
-    value: ActivityFilter
-    label: string
-  }> = [
-    { value: 'all', label: t('filters.all') },
-    { value: 'active', label: t('filters.active') },
-    { value: 'failed', label: t('filters.failed') }
-  ]
   const views: ReadonlyArray<{
     id: ActivityView
     label: string
@@ -428,6 +420,32 @@ export function ActivityPanel({
   )
   const activeCount = visibleRecords.filter(isActive).length
   const failedCount = visibleRecords.filter(isFailed).length
+  const filters: ReadonlyArray<{
+    value: ActivityFilter
+    label: string
+  }> = [
+    {
+      value: 'all',
+      label: t('filters.all', {
+        count: visibleRecords.length,
+        formattedCount: formatCount(visibleRecords.length)
+      })
+    },
+    {
+      value: 'active',
+      label: t('filters.active', {
+        count: activeCount,
+        formattedCount: formatCount(activeCount)
+      })
+    },
+    {
+      value: 'failed',
+      label: t('filters.failed', {
+        count: failedCount,
+        formattedCount: formatCount(failedCount)
+      })
+    }
+  ]
   const tokenTotals = useMemo(
     () => getTokenUsageTotals(tokenUsage),
     [tokenUsage]
@@ -592,25 +610,6 @@ export function ActivityPanel({
       </article>
     )
   }
-  const recordSummary = (
-    <dl
-      aria-label={t('stats.ariaLabel')}
-      className="activity-panel__stats"
-    >
-      <div>
-        <dt>{t('stats.all')}</dt>
-        <dd>{formatCount(visibleRecords.length)}</dd>
-      </div>
-      <div>
-        <dt>{t('stats.active')}</dt>
-        <dd>{formatCount(activeCount)}</dd>
-      </div>
-      <div>
-        <dt>{t('stats.failed')}</dt>
-        <dd>{formatCount(failedCount)}</dd>
-      </div>
-    </dl>
-  )
   const recordToolbar = (
     <div className="activity-panel__toolbar">
       <SegmentedControl
@@ -675,8 +674,6 @@ export function ActivityPanel({
       className="activity-panel"
     >
       <PageHeader
-        description={t('header.description')}
-        eyebrow={t('header.eyebrow')}
         headingId="activity-panel-title"
         icon={<Activity size={20} />}
         scope={{ kind: 'all-projects' }}
@@ -702,7 +699,6 @@ export function ActivityPanel({
           role="tabpanel"
           tabIndex={0}
         >
-          {recordSummary}
           {recordToolbar}
           {filteredRecords.length === 0 ? (
             emptyState
@@ -797,7 +793,6 @@ export function ActivityPanel({
           role="tabpanel"
           tabIndex={0}
         >
-          {recordSummary}
           {recordToolbar}
           {filteredRecords.length === 0 ? (
             emptyState
@@ -806,9 +801,6 @@ export function ActivityPanel({
               aria-label={t('timeline.ariaLabel')}
               className="activity-tracks"
             >
-              <p className="activity-tracks__description">
-                {t('timeline.description')}
-              </p>
               <ul
                 aria-label={t('timeline.legendAriaLabel')}
                 className="activity-tracks__legend"

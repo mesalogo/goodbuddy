@@ -80,6 +80,17 @@ describe('WorkspacePrimitives', () => {
     cleanup()
   })
 
+  it('keeps shared switch rows aligned without standalone dividers', () => {
+    const toggleRowStyles = stylesheet.match(
+      /\.toggle-row\s*\{(?<rules>[^}]*)\}/u
+    )?.groups?.rules
+
+    expect(toggleRowStyles).toBeDefined()
+    expect(toggleRowStyles).toMatch(/align-items:\s*center;/u)
+    expect(toggleRowStyles).not.toMatch(/border-top:/u)
+    expect(toggleRowStyles).not.toMatch(/padding-top:/u)
+  })
+
   it('uses bundled variable fonts and readable shared type tokens', () => {
     expect(rendererEntry).toContain(
       "@fontsource-variable/noto-sans-sc/wght.css"
@@ -93,6 +104,9 @@ describe('WorkspacePrimitives', () => {
     )
     expect(stylesheet).toMatch(/--font-body:\s*13px/u)
     expect(stylesheet).toMatch(/--font-caption:\s*11px/u)
+    expect(stylesheet).toMatch(
+      /:root\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+    )
     expect(stylesheet).toMatch(
       /--text-disabled:\s*#[\da-f]{6};/iu
     )
@@ -115,6 +129,12 @@ describe('WorkspacePrimitives', () => {
     )
     expect(stylesheet).toMatch(
       /\.conversation-item small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.runtime-overview__details dt\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.runtime-overview__details dd\s*\{[^}]*font-size:\s*var\(--font-body\);/u
     )
     expect(stylesheet).toMatch(
       /\.markdown-content\s*\{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.65;/u

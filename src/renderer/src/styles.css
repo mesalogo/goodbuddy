@@ -78,6 +78,7 @@
   --font-family-mono:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-family: var(--font-family-ui);
+  font-size: var(--font-body);
   font-optical-sizing: auto;
   font-synthesis: style;
   text-rendering: optimizeLegibility;
@@ -1126,6 +1127,7 @@
 }
 
 .knowledge-citation-dialog__metadata dt {
+  font-size: var(--font-body);
   font-weight: 700;
 }
 
@@ -6533,6 +6535,7 @@ button > svg {
 
 .runtime-overview__details dt {
   color: var(--text-primary);
+  font-size: var(--font-body);
   font-weight: 650;
 }
 
@@ -6540,6 +6543,7 @@ button > svg {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+  font-size: var(--font-body);
 }
 
 .runtime-overview__path {
@@ -8615,8 +8619,6 @@ details.settings-section > :not(summary) + :not(summary) {
   min-height: 36px;
   align-items: center;
   justify-content: space-between;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border-subtle);
   color: var(--text-secondary);
   cursor: pointer;
   font-size: var(--font-body);

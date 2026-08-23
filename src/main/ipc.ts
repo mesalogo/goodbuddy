@@ -119,6 +119,10 @@ import {
   speechModelSelectionInputSchema
 } from '../shared/speech-model-contracts'
 import {
+  embeddingConnectionIdRequestSchema,
+  embeddingModelActionInputSchema,
+  embeddingModelInstallInputSchema,
+  embeddingModelSnapshotSchema,
   embeddingSettingsSnapshotSchema,
   knowledgeEmbeddingIndexCancelRequestSchema,
   knowledgeEmbeddingIndexRequestSchema,
@@ -256,6 +260,8 @@ import type { SpeechModelManager } from './speech/speech-model-manager'
 import type { SpeechTranscriptionService } from './speech/speech-transcription-service'
 import { diagnoseEmbeddingProvider } from './knowledge/embedding-index-coordinator'
 import type { EmbeddingIndexCoordinator } from './knowledge/embedding-index-coordinator'
+import type { EmbeddingModelManager } from './knowledge/embedding-model-manager'
+import type { EmbeddingProvider } from './knowledge/types'
 import type { DocumentParsingService } from './document-parsing-service'
 import type { DocumentOcrModelManager } from './document-ocr-model-manager'
 import type { DocumentOcrBroker } from './document-ocr-broker'
@@ -264,7 +270,6 @@ import type {
   GoodBuddyConfigApplyEvent,
   GoodBuddyConfigService
 } from './goodbuddy-config-service'
-import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
 import {
   magicNotePlainText,
   validateMagicNoteRichContent
@@ -915,7 +920,19 @@ export function registerIpcHandlers(
   releaseNotesService?: ReleaseNotesService,
   goodbuddyConfigService?: GoodBuddyConfigService,
   runtimeExtensionStore?: RuntimeExtensionStore,
-  shortcutSettingsService?: ShortcutSettingsService
+  shortcutSettingsService?: ShortcutSettingsService,
+  embeddingModelManager?: EmbeddingModelManager & {
+    importArchive?(
+      modelId: string,
+      archivePath: string
+    ): Promise<unknown>
+  },
+  resolveEmbeddingProvider?: (
+    connectionId: string
+  ) => Promise<EmbeddingProvider>,
+  setCurrentEmbeddingConnection?: (
+    connectionId: string
+  ) => Promise<void>
 ): () => Promise<void> {
   type ActiveRequestLease = {
     controller: AbortController
@@ -4339,38 +4356,209 @@ export function registerIpcHandlers(
     }
   )
 
-  const requireEmbeddingProvider = async (): Promise<OpenAIEmbeddingClient> => {
+  const requireEmbeddingProvider = async (
+    connectionId: string
+  ): Promise<EmbeddingProvider> => {
     const settings = await settingsStore.getResolvedSettings()
     if (!settings.knowledgeEmbeddingEnabled) {
       throw new Error('请先启用并保存向量模型设置')
     }
-    return new OpenAIEmbeddingClient({
-      endpoint: settings.knowledgeEmbeddingBaseUrl,
-      model: settings.knowledgeEmbeddingModel,
-      apiKey: settings.knowledgeEmbeddingApiKey
+    if (
+      !settings.embeddingConnections?.some(
+        (connection) => connection.id === connectionId
+      )
+    ) {
+      throw new Error('当前向量连接不存在')
+    }
+    if (!resolveEmbeddingProvider) {
+      throw new Error('向量模型服务不可用')
+    }
+    return resolveEmbeddingProvider(connectionId)
+  }
+
+  const getEmbeddingSettingsSnapshot = async () => {
+    if (!embeddingModelManager) {
+      throw new Error('内置向量模型服务不可用')
+    }
+    const settings = await settingsStore.getPublicSettings()
+    const models = await embeddingModelManager.getSnapshot()
+    const connection = settings.embeddingConnections?.find(
+      (candidate) =>
+        candidate.id === settings.activeEmbeddingConnectionId
+    )
+    if (!connection || !settings.activeEmbeddingConnectionId) {
+      throw new Error('当前向量连接不存在')
+    }
+    const builtinModel =
+      models.catalog.find((model) => model.recommended) ??
+      models.catalog[0]
+    if (!builtinModel) {
+      throw new Error('内置向量模型目录为空')
+    }
+    return embeddingSettingsSnapshotSchema.parse({
+      configuration:
+        connection?.kind === 'builtin'
+          ? {
+              provider: 'builtin',
+              model: builtinModel.id,
+              credentialConfigured: false
+            }
+          : {
+              provider: 'openai-compatible',
+              model:
+                connection?.modelName ??
+                settings.knowledgeEmbeddingModel,
+              endpoint:
+                connection?.baseUrl ??
+                settings.knowledgeEmbeddingBaseUrl,
+              credentialConfigured:
+                connection?.apiKeyConfigured ??
+                settings.knowledgeEmbeddingApiKeyConfigured
+            },
+      connections: (settings.embeddingConnections ?? []).map(
+        (candidate) =>
+          candidate.kind === 'builtin'
+            ? {
+                id: candidate.id,
+                name: candidate.name,
+                kind: candidate.kind,
+                model: builtinModel.id,
+                credentialConfigured: false
+              }
+            : {
+                id: candidate.id,
+                name: candidate.name,
+                kind: candidate.kind,
+                model: candidate.modelName,
+                endpoint: candidate.baseUrl,
+                authentication: candidate.authentication,
+                credentialConfigured:
+                  candidate.apiKeyConfigured ?? false
+              }
+      ),
+      currentConnectionId: settings.activeEmbeddingConnectionId,
+      models
     })
   }
 
   registerHandler(ipcChannels.embeddingSettingsGet, async (event) => {
     assertTrustedSender(event, window)
-    const settings = await settingsStore.getPublicSettings()
-    return embeddingSettingsSnapshotSchema.parse({
-      configuration: {
-        provider: 'openai-compatible',
-        model: settings.knowledgeEmbeddingModel,
-        endpoint: settings.knowledgeEmbeddingBaseUrl,
-        credentialConfigured:
-          settings.knowledgeEmbeddingApiKeyConfigured
-      }
-    })
+    return getEmbeddingSettingsSnapshot()
   })
 
-  registerHandler(ipcChannels.embeddingDiagnose, async (event) => {
-    assertTrustedSender(event, window)
-    return diagnoseEmbeddingProvider(
-      await requireEmbeddingProvider()
-    )
-  })
+  registerHandler(
+    ipcChannels.embeddingDiagnose,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { connectionId } =
+        embeddingConnectionIdRequestSchema.parse(input)
+      const provider = await requireEmbeddingProvider(connectionId)
+      try {
+        return await diagnoseEmbeddingProvider(provider)
+      } finally {
+        await (
+          provider as EmbeddingProvider & {
+            dispose?: () => void | Promise<void>
+          }
+        ).dispose?.()
+      }
+    }
+  )
+
+  registerHandler(
+    ipcChannels.embeddingSetCurrent,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!setCurrentEmbeddingConnection) {
+        throw new Error('向量模型设置服务不可用')
+      }
+      const { connectionId } =
+        embeddingConnectionIdRequestSchema.parse(input)
+      await setCurrentEmbeddingConnection(connectionId)
+      return getEmbeddingSettingsSnapshot()
+    }
+  )
+
+  registerHandler(
+    ipcChannels.embeddingModelsInstall,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!embeddingModelManager || !applicationSettingsStore) {
+        throw new Error('内置向量模型服务不可用')
+      }
+      const { modelId, expectedDownloadSource } =
+        embeddingModelInstallInputSchema.parse(input)
+      const { modelDownloadSource } =
+        await applicationSettingsStore.get()
+      if (modelDownloadSource !== expectedDownloadSource) {
+        throw new Error('模型下载源已变化，请刷新后重试')
+      }
+      await embeddingModelManager.install(
+        modelId,
+        expectedDownloadSource
+      )
+      return embeddingModelSnapshotSchema.parse(
+        await embeddingModelManager.getSnapshot()
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.embeddingModelsCancel,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!embeddingModelManager) {
+        throw new Error('内置向量模型服务不可用')
+      }
+      const { modelId } =
+        embeddingModelActionInputSchema.parse(input)
+      return embeddingModelManager.cancel(modelId)
+    }
+  )
+
+  registerHandler(
+    ipcChannels.embeddingModelsImportArchive,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!embeddingModelManager?.importArchive) {
+        throw new Error('当前版本不支持导入向量模型 ZIP')
+      }
+      const { modelId } =
+        embeddingModelActionInputSchema.parse(input)
+      const result = await dialog.showOpenDialog(window, {
+        title: '导入向量模型 ZIP',
+        properties: ['openFile'],
+        filters: modelArchiveDialogFilters
+      })
+      const archivePath = result.filePaths[0]
+      if (result.canceled || !archivePath) {
+        return undefined
+      }
+      await embeddingModelManager.importArchive(
+        modelId,
+        archivePath
+      )
+      return embeddingModelSnapshotSchema.parse(
+        await embeddingModelManager.getSnapshot()
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.embeddingModelsRemove,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!embeddingModelManager) {
+        throw new Error('内置向量模型服务不可用')
+      }
+      const { modelId } =
+        embeddingModelActionInputSchema.parse(input)
+      await embeddingModelManager.remove(modelId)
+      return embeddingModelSnapshotSchema.parse(
+        await embeddingModelManager.getSnapshot()
+      )
+    }
+  )
 
   registerHandler(ipcChannels.speechModelsGet, (event) => {
     assertTrustedSender(event, window)
@@ -6091,13 +6279,28 @@ export function registerIpcHandlers(
 
   const embeddingConfiguration = async () => {
     const settings = await settingsStore.getPublicSettings()
-    return {
-      provider: 'openai-compatible',
-      model: settings.knowledgeEmbeddingModel,
-      endpoint: settings.knowledgeEmbeddingBaseUrl,
-      credentialConfigured:
-        settings.knowledgeEmbeddingApiKeyConfigured
-    }
+    const connection = settings.embeddingConnections?.find(
+      (candidate) =>
+        candidate.id === settings.activeEmbeddingConnectionId
+    )
+    return connection?.kind === 'builtin'
+      ? {
+          provider: 'builtin',
+          model: 'granite-embedding-97m-multilingual-r2',
+          credentialConfigured: false
+        }
+      : {
+          provider: 'openai-compatible',
+          model:
+            connection?.modelName ??
+            settings.knowledgeEmbeddingModel,
+          endpoint:
+            connection?.baseUrl ??
+            settings.knowledgeEmbeddingBaseUrl,
+          credentialConfigured:
+            connection?.apiKeyConfigured ??
+            settings.knowledgeEmbeddingApiKeyConfigured
+        }
   }
 
   registerHandler(

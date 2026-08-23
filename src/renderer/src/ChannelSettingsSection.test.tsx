@@ -628,8 +628,9 @@ describe('ChannelSettingsSection', () => {
     expect(dingtalkTab).toHaveAttribute('tabindex', '-1')
     expect(screen.getByText('项目设置')).toBeInTheDocument()
     expect(
-      screen.getByText('与左上角当前通道项目的设置保持同步。')
-    ).toBeInTheDocument()
+      screen.queryByText('与左上角当前通道项目的设置保持同步。')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('通道项目')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('switch', { name: '启用企业微信通道' })
     ).not.toBeInTheDocument()
@@ -708,7 +709,7 @@ describe('ChannelSettingsSection', () => {
     expect(
       screen.getByLabelText('微信 ClawBot default working directory')
     ).toHaveValue('C:\\Users\\tester')
-    expect(screen.getByText('微信 ClawBot')).toBeInTheDocument()
+    expect(screen.queryByText('Channel project')).not.toBeInTheDocument()
     expect(
       screen.getByText(
         'Remote Execute operations can run only within this project directory.'
