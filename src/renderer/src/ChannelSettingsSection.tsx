@@ -211,6 +211,7 @@ function ChannelProjectCard({
       <div className="capability-card__header">
         <div>
           <strong>{t('channels.project.cardTitle')}</strong>
+          <small>{t('channels.project.cardDescription')}</small>
         </div>
       </div>
       <ChannelProjectSettingsFields

@@ -646,7 +646,8 @@ const chatBottomProximity = 96
 function createConversation(
   projectId?: string,
   runtimeSelection?: AgentRuntimeSelection,
-  greeting = '你好，我是 GoodBuddy。'
+  greeting =
+    '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件，或使用知识库整理和检索信息。需要我操作文件或调用工具时，请选择合适的 Agent Runtime 和工作模式。'
 ): Conversation {
   const now = Date.now()
   return {
@@ -8541,7 +8542,7 @@ function App(): React.JSX.Element {
                         ? t('composer.voice.stopAndRecognize')
                         : voiceListening
                           ? t('composer.voice.cancel')
-                          : undefined
+                          : t('composer.voice.description')
                     }
                     type="button"
                   >

@@ -1269,6 +1269,13 @@ function DocumentsView({
             <h3 id="sources-title">
               {t('documents.sources.title')}
             </h3>
+            <p className="knowledge-section-description">
+              {t(
+                library.graphEnabled
+                  ? 'documents.sources.descriptionWithGraph'
+                  : 'documents.sources.description'
+              )}
+            </p>
           </div>
           <div className="knowledge-documents__import-actions">
             <button
@@ -2257,6 +2264,9 @@ function KnowledgeSettingsView({
           <h3 id="knowledge-graph-settings-title">
             {t('settings.graphConfiguration.title')}
           </h3>
+          <p className="knowledge-section-description">
+            {t('settings.graphConfiguration.description')}
+          </p>
         </div>
         <label className="knowledge-field">
           {t('fields.graphExtractionStrategy')}

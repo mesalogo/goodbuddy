@@ -270,7 +270,9 @@ describe('KnowledgeRetrievalWorkbench', () => {
     ).toHaveAttribute('aria-pressed', 'true')
     expect(
       document.querySelector('.knowledge-retrieval-pipeline')
-    ).not.toBeInTheDocument()
+    ).toBeInTheDocument()
+    expect(screen.getByText('召回候选')).toBeInTheDocument()
+    expect(screen.getByText('重排与上下文')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '测试检索' }))
 
     expect(onTest).toHaveBeenCalledWith({

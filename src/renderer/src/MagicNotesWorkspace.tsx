@@ -1537,6 +1537,10 @@ export function MagicNotesWorkspace({
               id="magic-library-panel-notes"
               role="tabpanel"
             >
+          <div className="magic-notes-pane-heading">
+            <strong>{t('notes.heading')}</strong>
+            <span>{notes.length}</span>
+          </div>
           <label className="magic-notes-search">
             <span className="sr-only">{t('notes.searchLabel')}</span>
             <input

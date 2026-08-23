@@ -860,8 +860,8 @@ describe('SettingsPanel runtime files', () => {
       })
     ).toBeInTheDocument()
     expect(
-      screen.queryByText('直连模型的历史压缩与原文保留')
-    ).not.toBeInTheDocument()
+      screen.getByRole('tab', { name: '上下文控制' })
+    ).toHaveTextContent('直连模型的历史压缩与原文保留')
     const enabled = screen.getByRole('switch', {
       name: '自动压缩较早的对话'
     })
@@ -1435,8 +1435,15 @@ describe('SettingsPanel runtime files', () => {
     expect(content.parentElement).toBe(navigation.parentElement)
     expect(content).toHaveClass('settings-panel__content')
     expect(
-      screen.getByRole('tab', { name: 'Agent Runtime' })
-    ).toHaveTextContent(/^Agent Runtime$/u)
+      screen.getByText('管理模型、Runtime、平台能力、消息通道与本地数据。')
+    ).toBeInTheDocument()
+    const runtimeTab = screen.getByRole('tab', {
+      name: 'Agent Runtime'
+    })
+    expect(runtimeTab).toHaveTextContent('Agent Runtime')
+    expect(runtimeTab).toHaveTextContent(
+      '配置 Agent Runtime、默认工作区与原生能力'
+    )
   })
 
   it('omits the redundant close-only footer on passive settings pages', () => {
@@ -2179,6 +2186,11 @@ describe('SettingsPanel runtime files', () => {
       screen.queryByRole('button', { name: '重新检测 Continue' })
     ).not.toBeVisible()
     fireEvent.click(screen.getByText('高级设置'))
+    expect(
+      screen.getByText(
+        '普通使用无需修改。这里可以切换模型来源、复用 Runtime 自有配置，或覆盖内置程序。'
+      )
+    ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', { name: '重新检测 Continue' })
     )
@@ -2462,6 +2474,11 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByText('高级设置'))
     expect(
+      screen.getByText(
+        '普通使用无需修改。这里可以切换模型来源、复用 Runtime 自有配置，或覆盖内置程序与服务。'
+      )
+    ).toBeInTheDocument()
+    expect(
       screen.getByLabelText('OpenCode 可执行文件路径')
     ).toBeInTheDocument()
     expect(
@@ -2489,6 +2506,12 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText('1.5.47')).toBeInTheDocument()
     expect(screen.getByText('高级设置').closest('details'))
       .not.toHaveAttribute('open')
+    fireEvent.click(screen.getByText('高级设置'))
+    expect(
+      screen.getByText(
+        '普通使用无需修改。这里可以切换模型来源、复用 Runtime 自有配置，或覆盖内置程序。'
+      )
+    ).toBeInTheDocument()
   })
 
   it('selects a native OpenCode Agent and excludes GoodBuddy assignments from inventory', async () => {

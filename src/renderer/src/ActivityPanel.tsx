@@ -674,6 +674,7 @@ export function ActivityPanel({
       className="activity-panel"
     >
       <PageHeader
+        description={t('header.description')}
         headingId="activity-panel-title"
         icon={<Activity size={20} />}
         scope={{ kind: 'all-projects' }}
@@ -801,6 +802,9 @@ export function ActivityPanel({
               aria-label={t('timeline.ariaLabel')}
               className="activity-tracks"
             >
+              <p className="activity-tracks__description">
+                {t('timeline.description')}
+              </p>
               <ul
                 aria-label={t('timeline.legendAriaLabel')}
                 className="activity-tracks__legend"

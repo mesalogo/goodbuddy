@@ -72,7 +72,8 @@ export const app = {
   conversation: {
     defaultTitle: 'New conversation',
     remoteTitle: 'Remote conversation',
-    greeting: 'Hi, I’m GoodBuddy.',
+    greeting:
+      'Hi, I’m GoodBuddy. Ask me a question, add local files, or use your knowledge base to organize and retrieve information. When you want me to operate on files or use tools, choose the appropriate Agent Runtime and work mode.',
     interrupted: 'The previous run stopped unexpectedly. You can resend your question.',
     active: 'Conversation is active',
     unread: 'Unread',
@@ -377,7 +378,8 @@ export const app = {
     inputLabel: 'Message GoodBuddy',
     placeholder: 'Message GoodBuddy…',
     imagePlaceholder: 'Describe the image you want to generate…',
-    keyboardHint: 'Enter to send, Shift+Enter for a new line',
+    keyboardHint:
+      'Enter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text',
     addContent: 'Add content',
     addAttachment: 'Add attachment',
     attachmentProgress: {
@@ -479,6 +481,7 @@ export const app = {
       cancel: 'Cancel speech recognition',
       input: 'Voice input',
       stopAndRecognize: 'Stop recording and recognize speech',
+      description: 'Convert speech to editable text before sending',
       unsupported:
         'Built-in speech recognition is unavailable. You can keep typing.',
       downloadingPack:

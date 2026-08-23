@@ -423,6 +423,7 @@ describe('MagicNotesWorkspace', () => {
     expect(
       screen.queryByRole('button', { name: '创建待办' })
     ).not.toBeInTheDocument()
+    expect(screen.getByText('全部笔记')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '待办' }))
     expect(

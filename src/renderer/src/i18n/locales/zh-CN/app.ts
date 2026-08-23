@@ -69,7 +69,8 @@ export const app = {
   conversation: {
     defaultTitle: '新对话',
     remoteTitle: '远程会话',
-    greeting: '你好，我是 GoodBuddy。',
+    greeting:
+      '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件，或使用知识库整理和检索信息。需要我操作文件或调用工具时，请选择合适的 Agent Runtime 和工作模式。',
     interrupted: '上次运行意外中断，可以重新发送问题',
     active: '会话正在活动',
     unread: '未读',
@@ -363,7 +364,8 @@ export const app = {
     inputLabel: '向 GoodBuddy 提问',
     placeholder: '给 GoodBuddy 发消息…',
     imagePlaceholder: '描述你想生成的图片…',
-    keyboardHint: 'Enter 发送，Shift+Enter 换行',
+    keyboardHint:
+      'Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本',
     addContent: '添加内容',
     addAttachment: '添加附件',
     attachmentProgress: {
@@ -460,6 +462,7 @@ export const app = {
       cancel: '取消语音识别',
       input: '语音输入',
       stopAndRecognize: '停止录音并开始识别',
+      description: '语音转文字，转写后可编辑再发送',
       unsupported: '当前系统不支持内置语音识别，可继续使用键盘输入',
       downloadingPack: '正在下载中文离线语音包，完成后将自动开始听写',
       transcribed: '语音已转为文字，可编辑后发送',

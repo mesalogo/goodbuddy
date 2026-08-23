@@ -8,6 +8,8 @@ export const settings = {
   },
   center: {
     title: 'Settings',
+    description:
+      'Manage models, Runtimes, platform capabilities, message channels, and local data.',
     close: 'Close settings',
     categoriesAriaLabel: 'Settings categories'
   },
@@ -345,6 +347,8 @@ export const settings = {
       title: 'OpenCode Agent',
       recommendation:
         'Following the GoodBuddy model is recommended. Use OpenCode configuration only when you need its native models, plugins, or MCP configuration.',
+      advancedDescription:
+        'Most users do not need to change these options. Use them to switch model sources, reuse Runtime-owned configuration, or override the bundled program and service.',
       followDescription:
         'Generates a secure runtime configuration automatically, with no Runtime configuration file to maintain.',
       ownDescription:
@@ -363,6 +367,8 @@ export const settings = {
       title: 'Continue CLI',
       recommendation:
         'Following the GoodBuddy model is recommended. Use Continue configuration only when you need its native models, rules, or MCP configuration.',
+      advancedDescription:
+        'Most users do not need to change these options. Use them to switch model sources, reuse Runtime-owned configuration, or override the bundled program.',
       followDescription:
         'Generates a secure temporary runtime configuration and deletes it when the task ends.',
       ownDescription:

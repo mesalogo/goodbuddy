@@ -1795,6 +1795,7 @@ export function SettingsPanel({
                   <X aria-hidden="true" size={19} />
                 </button>
               }
+              description={t('center.description')}
               headingId="settings-title"
               title={t('center.title')}
             />
@@ -1830,6 +1831,11 @@ export function SettingsPanel({
                 <strong>
                   {t(`categories.${category.translationKey}.label`)}
                 </strong>
+                <small>
+                  {t(
+                    `categories.${category.translationKey}.navigationDescription`
+                  )}
+                </small>
               </button>
             ))}
           </nav>
@@ -2129,6 +2135,9 @@ export function SettingsPanel({
               </div>
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
+                <p className="settings-panel__description">
+                  {t('runtime.opencode.advancedDescription')}
+                </p>
                 <fieldset className="runtime-source-options">
                   <legend>{t('runtime.sourceLegend')}</legend>
                   <label>
@@ -2357,6 +2366,9 @@ export function SettingsPanel({
               </div>
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
+                <p className="settings-panel__description">
+                  {t('runtime.continue.advancedDescription')}
+                </p>
                 <fieldset className="runtime-source-options">
                   <legend>{t('runtime.sourceLegend')}</legend>
                   <label>

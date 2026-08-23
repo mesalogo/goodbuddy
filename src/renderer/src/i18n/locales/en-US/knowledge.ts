@@ -164,9 +164,30 @@ export const knowledge = {
     close: 'Close retrieval test',
     query: {
       title: 'Test question',
+      help: 'Enter a real question to inspect channels, ranking, and final context.',
       label: 'Retrieval question',
       placeholder: 'For example: How do I configure document parsing offline?',
       count: '{{count}} / 4000 characters'
+    },
+    pipeline: {
+      recall: {
+        title: 'Recall candidates',
+        summary: 'Up to {{count}} fused candidates',
+        pending: 'Enter valid settings to calculate'
+      },
+      rerank: {
+        title: 'Rerank candidates',
+        enabled: 'Rerank up to {{count}} candidates',
+        disabled: 'Off; keep fused ranking'
+      },
+      select: {
+        title: 'Final results',
+        summary: 'Keep the top {{count}} chunks'
+      },
+      context: {
+        title: 'Assemble context',
+        summary: '{{count}} character budget'
+      }
     },
     settings: {
       title: 'Settings for this test',
@@ -174,10 +195,14 @@ export const knowledge = {
         'These changes apply only to this test. Save them as the current library defaults to keep using them.',
       groups: {
         recall: {
-          title: 'Candidate recall'
+          title: 'Candidate recall',
+          description:
+            'Control the initial search pool, filtering threshold, and each channel’s influence on fused ranking.'
         },
         output: {
-          title: 'Reranking and context'
+          title: 'Reranking and context',
+          description:
+            'Control candidate ordering, final result count, and the context sent to the model.'
         }
       },
       candidateMultiplier: 'Recall multiplier',
@@ -474,6 +499,10 @@ export const knowledge = {
   documents: {
     sources: {
       title: 'Content sources',
+      description:
+        'Imported content is parsed and added to the retrieval index automatically.',
+      descriptionWithGraph:
+        'Imported content is parsed, indexed for retrieval, and added to the knowledge graph with the current strategy.',
       emptyTitle: 'No content sources connected',
       emptyDescription:
         'Choose files, a folder, or a URL, or drag files into the area above.',
@@ -540,7 +569,9 @@ export const knowledge = {
     askDescription:
       '“Ask when needed” does not generate a graph automatically and cannot run re-extraction.',
     graphConfiguration: {
-      title: 'Extraction method'
+      title: 'Extraction method',
+      description:
+        'Control how new imports, resyncs, and explicit rebuilds generate entities, relations, and evidence.'
     },
     chunking: {
       title: 'Chunking strategy',

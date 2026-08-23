@@ -110,10 +110,10 @@ describe('ActivityPanel', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText('RUN HISTORY')).not.toBeInTheDocument()
     expect(
-      screen.queryByText(
+      screen.getByText(
         'Review execution details by project, task, and conversation, or browse the activity timeline and model usage.'
       )
-    ).not.toBeInTheDocument()
+    ).toBeInTheDocument()
     expect(
       screen.getByRole('tab', { name: 'Tasks and conversations' })
     ).toHaveAttribute('aria-selected', 'true')
@@ -616,10 +616,10 @@ describe('ActivityPanel', () => {
     ).toBeInTheDocument()
     expect(within(timeline).getByText('项目：项目甲')).toBeInTheDocument()
     expect(
-      within(timeline).queryByText(
-        '所有轨道共享同一执行顺序，节点按发生时间依次展开，点击节点查看身份和活动详情。'
+      within(timeline).getByText(
+        '所有轨道共享同一执行顺序，节点按发生时间依次展开；点击节点可查看身份和活动详情。'
       )
-    ).not.toBeInTheDocument()
+    ).toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('button', {

@@ -75,16 +75,20 @@ export const workspace = {
     categoriesAriaLabel: 'Workspace categories',
     tabs: {
       tasks: {
-        label: 'Task center'
+        label: 'Task center',
+        description: 'Review approvals and manage automations'
       },
       workspace: {
-        label: 'Files'
+        label: 'Files',
+        description: 'Browse project files, Git changes, and file contents'
       },
       browser: {
-        label: 'Browser'
+        label: 'Browser',
+        description: 'View the live browser while the Agent works'
       },
       results: {
-        label: 'Results'
+        label: 'Results',
+        description: 'View generated or imported standalone results'
       }
     },
     tasks: {
@@ -126,6 +130,7 @@ export const workspace = {
     workspace: {
       back: 'Back to workspace',
       title: 'Files',
+      projectTitle: 'Project workspace',
       fileSize: '{{formattedSize}} bytes',
       fileFallback: 'Project workspace file',
       reading: 'Reading file…',
@@ -138,12 +143,14 @@ export const workspace = {
     results: {
       back: 'Back to results',
       title: 'Results',
+      sectionTitle: 'Generated and imported results',
       loadingImage: 'Loading image…',
       import: 'Import PDF, image, or web page',
       empty:
         'Generated files, images, reports, and manually imported content will appear here.'
     },
     browser: {
+      title: 'Live browser',
       interact: 'Interact',
       interacting: 'Interacting',
       stop: 'Stop browser',

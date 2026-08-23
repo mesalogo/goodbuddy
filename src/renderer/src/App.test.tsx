@@ -1074,7 +1074,11 @@ describe('App', () => {
       expect(screen.getByText('Project: Default project')).toHaveClass(
         'scope-badge'
       )
-      expect(screen.getByText('Hi, I’m GoodBuddy.')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          /Hi, I’m GoodBuddy\. Ask me a question, add local files/u
+        )
+      ).toBeInTheDocument()
       expect(
         screen.getByLabelText('Message GoodBuddy')
       ).toHaveAttribute(
@@ -1085,7 +1089,7 @@ describe('App', () => {
         screen.getByLabelText('Message GoodBuddy')
       ).toHaveAttribute(
         'title',
-        'Enter to send, Shift+Enter for a new line'
+        'Enter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text'
       )
     } finally {
       cleanup()
@@ -1243,7 +1247,11 @@ describe('App', () => {
     await screen.findByRole('heading', {
       name: '今天想一起完成什么？'
     })
-    expect(screen.getByText('你好，我是 GoodBuddy。')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件/u
+      )
+    ).toBeInTheDocument()
     expect(screen.queryByText('桌面工作区')).not.toBeInTheDocument()
     expect(screen.queryByText('GOODBUDDY 工作台')).not.toBeInTheDocument()
     expect(
@@ -5395,7 +5403,7 @@ describe('App', () => {
     ).toHaveAttribute('title', '添加附件')
     expect(
       within(contentTools).getByRole('button', { name: '语音输入' })
-    ).not.toHaveAttribute('title')
+    ).toHaveAttribute('title', '语音转文字，转写后可编辑再发送')
 
     const conversationSettings = within(composer!).getByRole(
       'group',
@@ -8137,12 +8145,19 @@ describe('App', () => {
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
     expect(
+      screen.getByRole('tab', { name: '工作区' })
+    ).toHaveAttribute('title', '浏览项目文件、Git 变更与文件内容')
+    expect(
+      screen.getByRole('heading', { name: '项目工作区' })
+    ).toBeInTheDocument()
+    expect(
       screen.getByRole('button', { name: '刷新工作区文件' })
     ).toBeInTheDocument()
     expect(
       screen.queryByText(/选择文件后在当前工作区内预览/)
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
+    expect(screen.getByText('实时浏览器')).toBeInTheDocument()
     expect(
       screen.getByText(/Agent 打开网页后/)
     ).toBeInTheDocument()
@@ -8150,7 +8165,9 @@ describe('App', () => {
     expect(
       screen.getByRole('button', { name: '导入 PDF、图片或网页' })
     ).toBeInTheDocument()
-    expect(screen.queryByText('生成与导入成果')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '生成与导入成果' })
+    ).toBeInTheDocument()
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()

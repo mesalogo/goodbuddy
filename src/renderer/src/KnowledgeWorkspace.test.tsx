@@ -318,8 +318,8 @@ describe('KnowledgeWorkspace', () => {
     expect(screen.getByText('架构说明.md')).toBeInTheDocument()
     expect(screen.getByText('Local file · 架构说明.md')).toBeInTheDocument()
     expect(
-      screen.queryByText(/Imported content is parsed/u)
-    ).not.toBeInTheDocument()
+      screen.getByText(/Imported content is parsed/u)
+    ).toBeInTheDocument()
   })
 
   it('imports an HTTP URL into the selected library', async () => {

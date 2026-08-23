@@ -628,8 +628,8 @@ describe('ChannelSettingsSection', () => {
     expect(dingtalkTab).toHaveAttribute('tabindex', '-1')
     expect(screen.getByText('项目设置')).toBeInTheDocument()
     expect(
-      screen.queryByText('与左上角当前通道项目的设置保持同步。')
-    ).not.toBeInTheDocument()
+      screen.getByText('与左上角当前通道项目的设置保持同步。')
+    ).toBeInTheDocument()
     expect(screen.queryByText('通道项目')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('switch', { name: '启用企业微信通道' })

@@ -5,6 +5,7 @@ export const settings = {
   },
   center: {
     title: '设置中心',
+    description: '管理模型、Runtime、平台能力、消息通道与本地数据。',
     close: '关闭设置',
     categoriesAriaLabel: '设置分类'
   },
@@ -315,6 +316,8 @@ export const settings = {
       title: 'OpenCode Agent',
       recommendation:
         '推荐直接跟随 GoodBuddy 模型。只有需要复用 OpenCode 原生模型、插件或 MCP 配置时，才切换到 Runtime 自有配置。',
+      advancedDescription:
+        '普通使用无需修改。这里可以切换模型来源、复用 Runtime 自有配置，或覆盖内置程序与服务。',
       followDescription:
         '自动生成安全的运行期配置，无需维护 Runtime 配置文件。',
       ownDescription: '适合需要原生模型、插件或 MCP 配置的专业用户。',
@@ -332,6 +335,8 @@ export const settings = {
       title: 'Continue CLI',
       recommendation:
         '推荐直接跟随 GoodBuddy 模型。只有需要复用 Continue 原生模型、规则或 MCP 配置时，才切换到 Runtime 自有配置。',
+      advancedDescription:
+        '普通使用无需修改。这里可以切换模型来源、复用 Runtime 自有配置，或覆盖内置程序。',
       followDescription:
         '自动生成安全的临时运行期配置，任务结束后立即删除。',
       ownDescription: '适合需要原生模型、规则或 MCP 配置的专业用户。',

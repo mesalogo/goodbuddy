@@ -3,7 +3,9 @@ import type { activity as chineseActivity } from '../zh-CN/activity'
 
 export const activity = {
   header: {
-    title: 'Run history'
+    title: 'Run history',
+    description:
+      'Review execution details by project, task, and conversation, or browse the activity timeline and model usage.'
   },
   tabs: {
     ariaLabel: 'Run history views',
@@ -78,6 +80,8 @@ export const activity = {
   },
   timeline: {
     ariaLabel: 'Parallel activity tracks grouped by project and conversation',
+    description:
+      'All tracks share the same execution order. Nodes unfold by time; select one to inspect its identity and activity details.',
     lanes: 'Project / conversation',
     laneAriaLabel: 'Activity track for conversation {{title}}',
     nodeAriaLabel: '{{actor}}, {{kind}}, {{status}}, {{title}}, {{time}}',

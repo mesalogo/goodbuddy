@@ -159,19 +159,42 @@ export const knowledge = {
     close: '关闭检索测试',
     query: {
       title: '测试问题',
+      help: '输入一个真实问题，查看各检索通道、排名和最终上下文。',
       label: '检索问题',
       placeholder: '例如：如何为离线环境配置文档解析？',
       count: '{{count}} / 4000 字'
+    },
+    pipeline: {
+      recall: {
+        title: '召回候选',
+        summary: '最多 {{count}} 个融合候选',
+        pending: '设置有效参数后计算'
+      },
+      rerank: {
+        title: '候选重排',
+        enabled: '重排最多 {{count}} 个候选',
+        disabled: '已关闭，保留融合排名'
+      },
+      select: {
+        title: '最终结果',
+        summary: '保留前 {{count}} 个分块'
+      },
+      context: {
+        title: '组装上下文',
+        summary: '预算 {{count}} 字符'
+      }
     },
     settings: {
       title: '本次测试参数',
       temporary: '这些调整只影响本次测试。需要长期使用时，请保存为当前知识库默认值。',
       groups: {
         recall: {
-          title: '候选召回'
+          title: '候选召回',
+          description: '控制首轮检索范围、过滤阈值和各通道对融合排名的影响。'
         },
         output: {
-          title: '重排与上下文'
+          title: '重排与上下文',
+          description: '控制候选排序、最终保留数量，以及实际送入模型的上下文范围。'
         }
       },
       candidateMultiplier: '召回倍数',
@@ -443,6 +466,9 @@ export const knowledge = {
   documents: {
     sources: {
       title: '内容来源',
+      description: '导入内容后会自动解析并建立检索索引。',
+      descriptionWithGraph:
+        '导入内容后会自动解析、建立检索索引，并按当前策略更新知识图谱。',
       emptyTitle: '尚未连接内容来源',
       emptyDescription:
         '可选择文件、目录或 URL；也可以直接将文件拖入上方区域。',
@@ -505,7 +531,8 @@ export const knowledge = {
     strategyAriaLabel: '知识图谱抽取策略',
     askDescription: '“按需询问”不会自动生成图谱，也不能执行重新抽取。',
     graphConfiguration: {
-      title: '抽取方式'
+      title: '抽取方式',
+      description: '控制新导入、重新同步和显式重建时如何生成实体、关系与证据。'
     },
     chunking: {
       title: '分块策略',

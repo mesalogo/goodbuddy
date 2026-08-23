@@ -68,6 +68,7 @@ export const magicNotes = {
   notes: {
     listLabel: '笔记列表',
     streamLabel: '笔记记录',
+    heading: '全部笔记',
     searchLabel: '搜索当前范围的笔记',
     searchPlaceholder: '搜索笔记',
     titleLabel: '笔记标题',

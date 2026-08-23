@@ -72,16 +72,20 @@ export const workspace = {
     categoriesAriaLabel: '工作栏分类',
     tabs: {
       tasks: {
-        label: '任务中心'
+        label: '任务中心',
+        description: '处理待审批操作并管理自动化'
       },
       workspace: {
-        label: '工作区'
+        label: '工作区',
+        description: '浏览项目文件、Git 变更与文件内容'
       },
       browser: {
-        label: '浏览器'
+        label: '浏览器',
+        description: '查看 Agent 操作网页时的实时画面'
       },
       results: {
-        label: '成果'
+        label: '成果',
+        description: '查看生成或手动导入的独立成果'
       }
     },
     tasks: {
@@ -122,6 +126,7 @@ export const workspace = {
     workspace: {
       back: '返回工作区',
       title: '工作区',
+      projectTitle: '项目工作区',
       fileSize: '{{formattedSize}} 字节',
       fileFallback: '项目工作区文件',
       reading: '正在读取文件…',
@@ -134,11 +139,13 @@ export const workspace = {
     results: {
       back: '返回成果列表',
       title: '成果',
+      sectionTitle: '生成与导入成果',
       loadingImage: '正在加载图片…',
       import: '导入 PDF、图片或网页',
       empty: '生成的文件、图片、报告和手动导入内容会显示在这里。'
     },
     browser: {
+      title: '实时浏览器',
       interact: '交互',
       interacting: '交互中',
       stop: '停止浏览器',

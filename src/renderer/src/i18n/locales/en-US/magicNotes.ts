@@ -73,6 +73,7 @@ export const magicNotes = {
   notes: {
     listLabel: 'Notes list',
     streamLabel: 'Note entries',
+    heading: 'All notes',
     searchLabel: 'Search notes in the current scope',
     searchPlaceholder: 'Search notes',
     titleLabel: 'Note title',
