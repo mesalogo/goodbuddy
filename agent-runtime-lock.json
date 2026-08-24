@@ -1,0 +1,29 @@
+{
+  "formatVersion": 1,
+  "agentVersion": "0.11.2-e2e.10",
+  "protocol": {
+    "major": 2,
+    "minor": 0
+  },
+  "node": {
+    "version": "24.19.0",
+    "source": "https://nodejs.org/dist/v24.19.0/",
+    "targets": {
+      "linux-x64": {
+        "archive": "node-v24.19.0-linux-x64.tar.gz",
+        "sha256": "f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4",
+        "binaryPath": "node-v24.19.0-linux-x64/bin/node",
+        "licensePath": "node-v24.19.0-linux-x64/LICENSE"
+      },
+      "linux-arm64": {
+        "archive": "node-v24.19.0-linux-arm64.tar.gz",
+        "sha256": "d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f",
+        "binaryPath": "node-v24.19.0-linux-arm64/bin/node",
+        "licensePath": "node-v24.19.0-linux-arm64/LICENSE"
+      }
+    }
+  },
+  "koffi": {
+    "version": "3.1.4"
+  }
+}

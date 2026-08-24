@@ -1,61 +1,185 @@
 import {
   Archive,
+  ArrowUp,
   Check,
   ChevronDown,
   Folder,
   FolderOpen,
   Plus,
   RadioTower,
+  RefreshCw,
+  Server,
   Settings,
   Trash2,
   X
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantProject,
-  ProjectCreateInput,
-  WorkMode
+  ProjectCreateInput
 } from '../../shared/assistant-contracts'
 import {
-  interactiveWorkModes,
   normalizeInteractiveWorkMode,
   projectChannelLabels
 } from '../../shared/assistant-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
+import {
+  remoteProjectRootPathSchema,
+  type RemoteProjectSavePhase
+} from '../../shared/remote-project-candidate-contracts'
+import type {
+  SshDirectoryBrowseResult,
+  SshHostsSnapshot
+} from '../../shared/ssh-host-contracts'
 import { trapTabFocus } from './dialog-focus'
 import {
-  getDefaultRuntimeSelection,
-  getRuntimeSelectionForProvider
+  getDefaultRuntimeSelection
 } from './runtime-selection'
 import {
   channelProjectDraft,
   ChannelProjectSettingsFields
 } from './ChannelProjectSettingsFields'
 import { getProjectDisplayText } from './project-display'
+import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
+import { ProjectWorkModeFields } from './ProjectWorkModeFields'
+import { SegmentedControl } from './WorkspacePrimitives'
+import { sshHostErrorMessage } from './ssh-host-ui'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
   activeProjectId: string
+  remoteActivation?: {
+    projectId: string
+    phase: RemoteProjectSavePhase
+    cancelling: boolean
+  }
   runtimeSettings?: RuntimeSettings
   onArchive: (projectId: string) => Promise<void>
   onCreate: (input: ProjectCreateInput) => Promise<AssistantProject>
   onDelete: (projectId: string, confirmation: string) => Promise<void>
   onSelect: (projectId: string) => void
   onSelectRoot: () => Promise<string | undefined>
+  onRemoteCommitted: (project: AssistantProject) => Promise<void>
+  onCancelRemoteActivation?: () => void
   onUpdate: (
     projectId: string,
     input: ProjectCreateInput
   ) => Promise<AssistantProject>
 }
 
+const remoteProjectPhases: readonly RemoteProjectSavePhase[] = [
+  'host',
+  'agent',
+  'workspace',
+  'runtime',
+  'saving'
+]
+
+function RemoteProjectProgress({
+  cancelling = false,
+  onCancel,
+  phase,
+  title
+}: {
+  cancelling?: boolean
+  onCancel?: () => void
+  phase: RemoteProjectSavePhase
+  title: string
+}): React.JSX.Element {
+  const { t } = useTranslation('workspace')
+  const phaseIndex = remoteProjectPhases.indexOf(phase)
+  return (
+    <section
+      aria-live="polite"
+      className="remote-project-progress"
+      role="status"
+    >
+      <div className="remote-project-progress__header">
+        <strong>{title}</strong>
+        <span>
+          {cancelling
+            ? t('projectSwitcher.remote.activation.cancelling')
+            : t('projectSwitcher.remote.phaseStatus', {
+                phase: t(
+                  `projectSwitcher.remote.phases.${phase}`
+                )
+              })}
+        </span>
+      </div>
+      <progress
+        aria-label={t(
+          'projectSwitcher.remote.activation.progressLabel'
+        )}
+        max={remoteProjectPhases.length}
+        value={phaseIndex + 1}
+      />
+      <ol
+        aria-label={t(
+          'projectSwitcher.remote.activation.stepsLabel'
+        )}
+      >
+        {remoteProjectPhases.map((candidate, index) => {
+          const state =
+            index < phaseIndex
+              ? 'complete'
+              : index === phaseIndex
+                ? 'current'
+                : 'pending'
+          return (
+            <li
+              aria-current={
+                state === 'current' ? 'step' : undefined
+              }
+              data-state={state}
+              key={candidate}
+            >
+              <span aria-hidden="true">
+                {state === 'complete' ? (
+                  <Check size={11} />
+                ) : (
+                  index + 1
+                )}
+              </span>
+              <small>
+                {t(
+                  `projectSwitcher.remote.phases.${candidate}`
+                )}
+              </small>
+            </li>
+          )
+        })}
+      </ol>
+      {onCancel && (
+        <button
+          className="secondary-button"
+          disabled={cancelling}
+          onClick={onCancel}
+          type="button"
+        >
+          {cancelling
+            ? t('projectSwitcher.remote.activation.cancellingAction')
+            : t('projectSwitcher.remote.activation.cancel')}
+        </button>
+      )}
+    </section>
+  )
+}
+
+function isRemoteAbsolutePath(value: string): boolean {
+  return remoteProjectRootPathSchema.safeParse(value).success
+}
+
 export function ProjectSwitcher({
   projects,
   activeProjectId,
+  remoteActivation,
   runtimeSettings,
   onArchive,
   onCreate,
   onDelete,
+  onCancelRemoteActivation,
+  onRemoteCommitted,
   onSelect,
   onSelectRoot,
   onUpdate
@@ -70,8 +194,28 @@ export function ProjectSwitcher({
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [error, setError] = useState<string>()
+  const [executionSpaceKind, setExecutionSpaceKind] = useState<
+    'local' | 'ssh'
+  >('local')
+  const [sshHosts, setSshHosts] = useState<SshHostsSnapshot>()
+  const [loadingSshHosts, setLoadingSshHosts] = useState(false)
+  const [remoteHostId, setRemoteHostId] = useState('')
+  const [remoteRootPath, setRemoteRootPath] = useState('')
+  const [remoteSaving, setRemoteSaving] = useState(false)
+  const [remoteSavePhase, setRemoteSavePhase] =
+    useState<RemoteProjectSavePhase>()
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false)
+  const [directoryPickerLoading, setDirectoryPickerLoading] =
+    useState(false)
+  const [directoryPickerError, setDirectoryPickerError] =
+    useState<string>()
+  const [remoteDirectoryListing, setRemoteDirectoryListing] =
+    useState<SshDirectoryBrowseResult>()
   const createButtonRef = useRef<HTMLButtonElement>(null)
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
+  const directoryPickerTriggerRef = useRef<HTMLButtonElement>(null)
+  const directoryPickerRef = useRef<HTMLDivElement>(null)
+  const directoryBrowseRequestRef = useRef(0)
   const projectPickerRef = useRef<HTMLDivElement>(null)
   const projectPickerButtonRef = useRef<HTMLButtonElement>(null)
   const projectPickerMenuRef = useRef<HTMLDivElement>(null)
@@ -92,13 +236,167 @@ export function ProjectSwitcher({
   const activeProjectDisplay = activeProject
     ? getProjectDisplayText(activeProject, t)
     : undefined
-  const userProjects = projects.filter(
-    (project) => project.kind === 'user'
+  const localProjects = projects.filter(
+    (project) =>
+      project.kind === 'user' &&
+      project.executionSpace.kind === 'local'
+  )
+  const remoteProjects = projects.filter(
+    (project) =>
+      project.kind === 'user' &&
+      project.executionSpace.kind === 'ssh'
   )
   const channelProjects = projects.filter(
     (project) => project.kind === 'channel'
   )
-  const busy = saving || archiving || deleting
+  const userProjects = [...localProjects, ...remoteProjects]
+  const busy =
+    saving ||
+    remoteSaving ||
+    archiving ||
+    deleting ||
+    remoteActivation !== undefined
+  const remoteFieldsDisabled = busy
+  const remoteDirectoryBrowseDisabled =
+    remoteFieldsDisabled ||
+    loadingSshHosts ||
+    !remoteHostId ||
+    dialogMode === 'settings'
+  const remoteDraftReady =
+    Boolean(
+      draft.name.trim() &&
+        remoteHostId &&
+        isRemoteAbsolutePath(remoteRootPath)
+    )
+  const activatingProject = remoteActivation
+    ? projects.find(
+        (project) => project.id === remoteActivation.projectId
+      )
+    : undefined
+  const activatingProjectName = activatingProject
+    ? getProjectDisplayText(activatingProject, t).name
+    : t('projectSwitcher.selector.empty')
+
+  useEffect(() => {
+    if (!dialogMode || executionSpaceKind !== 'ssh') {
+      return
+    }
+    let active = true
+    const api = window.goodbuddy.sshHosts
+    if (!api) {
+      queueMicrotask(() => {
+        if (active) {
+          setError(
+            t('projectSwitcher.remote.errors.hostsUnavailable')
+          )
+          setLoadingSshHosts(false)
+        }
+      })
+      return
+    }
+    void api.getSnapshot().then(
+      (snapshot) => {
+        if (!active) {
+          return
+        }
+        setSshHosts(snapshot)
+        setRemoteHostId((current) =>
+          current &&
+          snapshot.hosts.some((host) => host.id === current)
+            ? current
+            : snapshot.hosts[0]?.id ?? ''
+        )
+        setLoadingSshHosts(false)
+      },
+      () => {
+        if (active) {
+          setError(t('projectSwitcher.remote.errors.loadHosts'))
+          setLoadingSshHosts(false)
+        }
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [dialogMode, executionSpaceKind, t])
+
+  useEffect(() => {
+    if (!dialogMode || executionSpaceKind !== 'ssh') {
+      return
+    }
+    const remoteApi = window.goodbuddy.projects.remote
+    if (!remoteApi) {
+      return
+    }
+    return remoteApi.onSaveProgress((progress) =>
+      setRemoteSavePhase(progress.phase)
+    )
+  }, [dialogMode, executionSpaceKind])
+
+  const resetRemoteDraft = (): void => {
+    directoryBrowseRequestRef.current += 1
+    setSshHosts(undefined)
+    setLoadingSshHosts(false)
+    setRemoteHostId('')
+    setRemoteRootPath('')
+    setRemoteSaving(false)
+    setRemoteSavePhase(undefined)
+    setDirectoryPickerOpen(false)
+    setDirectoryPickerLoading(false)
+    setDirectoryPickerError(undefined)
+    setRemoteDirectoryListing(undefined)
+  }
+
+  const cancelRemoteDirectoryBrowse = useCallback((): void => {
+    directoryBrowseRequestRef.current += 1
+    const api = window.goodbuddy.sshHosts
+    if (api) {
+      void api.cancelDirectoryBrowse().catch(() => undefined)
+    }
+    setDirectoryPickerOpen(false)
+    setDirectoryPickerLoading(false)
+    setDirectoryPickerError(undefined)
+    setRemoteDirectoryListing(undefined)
+    requestAnimationFrame(() =>
+      directoryPickerTriggerRef.current?.focus()
+    )
+  }, [])
+
+  const browseRemoteDirectories = async (
+    path?: string
+  ): Promise<void> => {
+    const api = window.goodbuddy.sshHosts
+    if (!api || !remoteHostId) {
+      return
+    }
+    const requestId = ++directoryBrowseRequestRef.current
+    setDirectoryPickerLoading(true)
+    setDirectoryPickerError(undefined)
+    try {
+      const response = await api.browseDirectories(remoteHostId, path)
+      if (requestId !== directoryBrowseRequestRef.current) {
+        return
+      }
+      setRemoteDirectoryListing(response)
+    } catch (reason) {
+      if (requestId !== directoryBrowseRequestRef.current) {
+        return
+      }
+      const message = sshHostErrorMessage(
+        reason,
+        t('projectSwitcher.remote.directoryPicker.unknownError')
+      )
+      setDirectoryPickerError(
+        t('projectSwitcher.remote.directoryPicker.loadError', {
+          message
+        })
+      )
+    } finally {
+      if (requestId === directoryBrowseRequestRef.current) {
+        setDirectoryPickerLoading(false)
+      }
+    }
+  }
 
   useEffect(() => {
     if (!projectMenuOpen) {
@@ -133,6 +431,20 @@ export function ProjectSwitcher({
   }, [projectMenuOpen])
 
   useEffect(() => {
+    if (!directoryPickerOpen) {
+      return
+    }
+    const focusFrame = requestAnimationFrame(() => {
+      const target =
+        directoryPickerRef.current?.querySelector<HTMLButtonElement>(
+          'button:not(:disabled)'
+        )
+      target?.focus()
+    })
+    return () => cancelAnimationFrame(focusFrame)
+  }, [directoryPickerOpen])
+
+  useEffect(() => {
     if (!dialogMode) {
       if (restoreFocusTarget.current === 'create') {
         createButtonRef.current?.focus()
@@ -143,8 +455,21 @@ export function ProjectSwitcher({
       return
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !busy) {
-        setError(undefined)
+      if (directoryPickerOpen) {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          cancelRemoteDirectoryBrowse()
+          return
+        }
+        trapTabFocus(event, directoryPickerRef.current)
+        return
+      }
+      if (event.key === 'Escape' && !archiving && !deleting) {
+        if (remoteSaving) {
+          void window.goodbuddy.projects.remote
+            .cancelCurrent()
+            .catch(() => undefined)
+        }
         setConfirmingDelete(false)
         setDeleteConfirmation('')
         setDialogMode(undefined)
@@ -154,13 +479,95 @@ export function ProjectSwitcher({
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [busy, dialogMode])
+  }, [
+    archiving,
+    cancelRemoteDirectoryBrowse,
+    deleting,
+    dialogMode,
+    directoryPickerOpen,
+    remoteSaving
+  ])
 
   const closeDialog = (): void => {
-    setError(undefined)
+    directoryBrowseRequestRef.current += 1
+    if (directoryPickerOpen) {
+      const api = window.goodbuddy.sshHosts
+      if (api) {
+        void api.cancelDirectoryBrowse().catch(() => undefined)
+      }
+    }
+    if (remoteSaving) {
+      void window.goodbuddy.projects.remote
+        .cancelCurrent()
+        .catch(() => undefined)
+    }
     setConfirmingDelete(false)
     setDeleteConfirmation('')
     setDialogMode(undefined)
+  }
+
+  const validateRemoteDraft = (): boolean => {
+    if (!remoteHostId) {
+      setError(t('projectSwitcher.remote.validation.host'))
+      return false
+    }
+    if (!isRemoteAbsolutePath(remoteRootPath)) {
+      setError(t('projectSwitcher.remote.validation.root'))
+      return false
+    }
+    return true
+  }
+
+  const saveRemoteProject = async (): Promise<void> => {
+    setError(undefined)
+    if (!draft.name.trim() || !validateRemoteDraft()) {
+      return
+    }
+    setRemoteSaving(true)
+    setRemoteSavePhase('host')
+    try {
+      const commonDraft = {
+        name: draft.name,
+        description: draft.description,
+        runtimeSelection:
+          draft.runtimeSelection?.provider === 'opencode'
+            ? draft.runtimeSelection
+            : ({ provider: 'opencode' } as const),
+        hostId: remoteHostId,
+        remoteRootPath
+      }
+      const modeDraft = {
+        ...commonDraft,
+        defaultWorkMode: draft.defaultWorkMode
+      }
+      const result =
+        await window.goodbuddy.projects.remote.save(
+          dialogMode === 'settings' && activeProject
+            ? {
+                intent: 'update',
+                draft: {
+                  ...modeDraft,
+                  projectId: activeProject.id
+                }
+              }
+            : {
+                intent: 'create',
+                draft: modeDraft
+              }
+        )
+      await onRemoteCommitted(result)
+      closeDialog()
+    } catch (reason) {
+      setError(
+        sshHostErrorMessage(
+          reason,
+          t('projectSwitcher.remote.errors.save')
+        )
+      )
+    } finally {
+      setRemoteSaving(false)
+      setRemoteSavePhase(undefined)
+    }
   }
 
   const save = async (): Promise<void> => {
@@ -261,6 +668,7 @@ export function ProjectSwitcher({
             aria-haspopup="menu"
             aria-label={t('projectSwitcher.selector.ariaLabel')}
             className="project-switcher__trigger"
+            disabled={remoteActivation !== undefined}
             onClick={() => setProjectMenuOpen((open) => !open)}
             onKeyDown={(event) => {
               if (
@@ -326,9 +734,14 @@ export function ProjectSwitcher({
             >
               {[
                 {
-                  projects: userProjects,
+                  projects: localProjects,
                   label: t('projectSwitcher.selector.userProjects'),
                   icon: Folder
+                },
+                {
+                  projects: remoteProjects,
+                  label: t('projectSwitcher.selector.remoteProjects'),
+                  icon: Server
                 },
                 {
                   projects: channelProjects,
@@ -361,15 +774,24 @@ export function ProjectSwitcher({
                                   ),
                               path: project.rootPath
                             })
-                          : t('projectSwitcher.selector.localDetail', {
-                              path: project.rootPath
-                            })
+                          : project.executionSpace.kind === 'ssh'
+                            ? t(
+                                'projectSwitcher.selector.managedSshDetail',
+                                { path: project.rootPath }
+                              )
+                            : t(
+                                'projectSwitcher.selector.localDetail',
+                                { path: project.rootPath }
+                              )
                       return (
                         <button
                           aria-checked={selected}
                           key={project.id}
                           onClick={() => {
-                            if (!selected) {
+                            if (
+                              !selected ||
+                              project.executionSpace.kind === 'ssh'
+                            ) {
                               onSelect(project.id)
                             }
                             setProjectMenuOpen(false)
@@ -401,11 +823,14 @@ export function ProjectSwitcher({
         <button
           aria-label={t('projectSwitcher.selector.create')}
           className="icon-button"
+          disabled={remoteActivation !== undefined}
           onClick={() => {
             setProjectMenuOpen(false)
             setError(undefined)
             setConfirmingDelete(false)
             setDeleteConfirmation('')
+            resetRemoteDraft()
+            setExecutionSpaceKind('local')
             setDraft({
               name: '',
               description: '',
@@ -426,7 +851,7 @@ export function ProjectSwitcher({
         <button
           aria-label={t('projectSwitcher.selector.settings')}
           className="icon-button"
-          disabled={!activeProject}
+          disabled={!activeProject || remoteActivation !== undefined}
           onClick={() => {
             if (!activeProject) {
               return
@@ -435,6 +860,19 @@ export function ProjectSwitcher({
             setError(undefined)
             setConfirmingDelete(false)
             setDeleteConfirmation('')
+            resetRemoteDraft()
+            const nextExecutionSpaceKind =
+              activeProject.executionSpace.kind === 'ssh'
+                ? 'ssh'
+                : 'local'
+            setExecutionSpaceKind(nextExecutionSpaceKind)
+            if (activeProject.executionSpace.kind === 'ssh') {
+              setLoadingSshHosts(true)
+              setRemoteHostId(activeProject.executionSpace.hostId)
+              setRemoteRootPath(
+                activeProject.executionSpace.remoteRootPath
+              )
+            }
             const nextDraft: ProjectCreateInput = {
               name: activeProject.name,
               description: activeProject.description,
@@ -462,6 +900,17 @@ export function ProjectSwitcher({
           <Settings size={15} />
         </button>
       </div>
+      {remoteActivation && (
+        <RemoteProjectProgress
+          cancelling={remoteActivation.cancelling}
+          onCancel={onCancelRemoteActivation}
+          phase={remoteActivation.phase}
+          title={t(
+            'projectSwitcher.remote.activation.title',
+            { project: activatingProjectName }
+          )}
+        />
+      )}
       {dialogMode && (
         <div
           className="project-create-backdrop"
@@ -490,9 +939,9 @@ export function ProjectSwitcher({
                     ? t('projectSwitcher.dialog.closeCreate')
                     : t('projectSwitcher.dialog.closeSettings')
                 }
-                className="icon-button"
+                className="icon-button project-create-card__close"
                 disabled={busy}
-                onClick={closeDialog}
+                onClick={() => closeDialog()}
                 type="button"
               >
                 <X size={14} />
@@ -512,116 +961,490 @@ export function ProjectSwitcher({
               />
             ) : (
               <>
-              <label>
-              <span>{t('projectSwitcher.dialog.fields.name')}</span>
-              <input
-                autoFocus={!confirmingDelete}
-                disabled={busy}
-                maxLength={120}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    name: event.target.value
-                  }))
-                }
-                value={draft.name}
-              />
-            </label>
-            <label>
-              <span>
-                {t('projectSwitcher.dialog.fields.description')}
-              </span>
-              <textarea
-                maxLength={2_000}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    description: event.target.value
-                  }))
-                }
-                rows={3}
-                value={draft.description}
-              />
-            </label>
-            <label>
-              <span>
-                {t('projectSwitcher.dialog.fields.rootPath')}
-              </span>
-              <div className="project-create-card__path">
-                <input readOnly value={draft.rootPath} />
-                <button
-                  aria-label={t('projectSwitcher.dialog.selectRoot')}
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={() => void selectRoot()}
-                  type="button"
-                >
-                  <FolderOpen size={14} />
-                </button>
-              </div>
-            </label>
-            <label>
-              <span>
-                {t('projectSwitcher.dialog.fields.defaultMode')}
-              </span>
-              <select
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    defaultWorkMode: event.target.value as WorkMode
-                  }))
-                }
-                value={draft.defaultWorkMode}
-              >
-                {interactiveWorkModes.map((value) => (
-                  <option key={value} value={value}>
-                    {t(`projectSwitcher.workModes.${value}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {runtimeSettings && (
-              <label>
-                <span>
-                  {t('projectSwitcher.dialog.fields.defaultRuntime')}
-                </span>
-                <select
-                  aria-label={t(
-                    'projectSwitcher.dialog.fields.defaultRuntime'
-                  )}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      runtimeSelection: getRuntimeSelectionForProvider(
-                        event.target.value as
-                          | 'model'
-                          | 'opencode'
-                          | 'continue',
-                        runtimeSettings
-                      )
-                    }))
-                  }
-                  value={
-                    draft.runtimeSelection?.provider === 'auto'
-                      ? 'model'
-                      : (draft.runtimeSelection?.provider ??
-                        getDefaultRuntimeSelection(runtimeSettings)
-                          .provider)
-                  }
-                >
-                  <option value="model">
+                <label>
+                  <span>{t('projectSwitcher.dialog.fields.name')}</span>
+                  <input
+                    autoFocus={!confirmingDelete}
+                    disabled={
+                      executionSpaceKind === 'ssh'
+                        ? remoteFieldsDisabled
+                        : busy
+                    }
+                    maxLength={120}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        name: event.target.value
+                      }))
+                    }
+                    value={draft.name}
+                  />
+                </label>
+                <label>
+                  <span>
+                    {t('projectSwitcher.dialog.fields.description')}
+                  </span>
+                  <textarea
+                    disabled={
+                      executionSpaceKind === 'ssh'
+                        ? remoteFieldsDisabled
+                        : busy
+                    }
+                    maxLength={2_000}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        description: event.target.value
+                      }))
+                    }
+                    rows={3}
+                    value={draft.description}
+                  />
+                </label>
+                <div className="project-execution-space">
+                  <span>
                     {t(
-                      'projectSwitcher.dialog.runtimeOptions.direct'
+                      'projectSwitcher.dialog.fields.executionSpace'
                     )}
-                  </option>
-                  <option value="opencode">OpenCode</option>
-                  <option value="continue">Continue</option>
-                </select>
-                <small>
-                  {t('projectSwitcher.dialog.defaultRuntimeHelp')}
-                </small>
-              </label>
-            )}
+                  </span>
+                  <SegmentedControl
+                    ariaLabel={t(
+                      'projectSwitcher.dialog.fields.executionSpace'
+                    )}
+                    disabled={dialogMode === 'settings' || busy}
+                    onChange={(kind) => {
+                      setError(undefined)
+                      setRemoteSavePhase(undefined)
+                      setExecutionSpaceKind(kind)
+                      if (kind === 'ssh') {
+                        setLoadingSshHosts(true)
+                        setDraft((current) => ({
+                          ...current,
+                          runtimeSelection:
+                            current.runtimeSelection?.provider ===
+                            'opencode'
+                              ? current.runtimeSelection
+                              : { provider: 'opencode' }
+                        }))
+                      }
+                    }}
+                    options={[
+                      {
+                        value: 'local',
+                        label: t(
+                          'projectSwitcher.remote.executionSpaces.local'
+                        )
+                      },
+                      {
+                        value: 'ssh',
+                        label: t(
+                          'projectSwitcher.remote.executionSpaces.ssh'
+                        )
+                      }
+                    ]}
+                    value={executionSpaceKind}
+                  />
+                  {dialogMode === 'settings' && (
+                    <small>
+                      {t(
+                        'projectSwitcher.remote.executionSpaceFixed'
+                      )}
+                    </small>
+                  )}
+                </div>
+                {executionSpaceKind === 'local' ? (
+                  <>
+                    <label>
+                      <span>
+                        {t('projectSwitcher.dialog.fields.rootPath')}
+                      </span>
+                      <div className="project-create-card__path">
+                        <input readOnly value={draft.rootPath} />
+                        <button
+                          aria-label={t(
+                            'projectSwitcher.dialog.selectRoot'
+                          )}
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={() => void selectRoot()}
+                          type="button"
+                        >
+                          <FolderOpen size={14} />
+                        </button>
+                      </div>
+                    </label>
+                    <ProjectWorkModeFields
+                      ariaLabel={t(
+                        'projectSwitcher.dialog.fields.defaultMode'
+                      )}
+                      disabled={busy}
+                      labels={{
+                        ask: t('projectSwitcher.workModes.ask'),
+                        execute: t('projectSwitcher.workModes.execute')
+                      }}
+                      legend={t(
+                        'projectSwitcher.dialog.fields.defaultMode'
+                      )}
+                      onChange={(defaultWorkMode) =>
+                        setDraft((current) => ({
+                          ...current,
+                          defaultWorkMode
+                        }))
+                      }
+                      value={draft.defaultWorkMode}
+                    />
+                    {runtimeSettings && (
+                      <>
+                        <ProjectRuntimeSelector
+                          ariaLabel={t(
+                            'projectSwitcher.dialog.fields.defaultRuntime'
+                          )}
+                          disabled={busy}
+                          label={t(
+                            'projectSwitcher.dialog.fields.defaultRuntime'
+                          )}
+                          onChange={(runtimeSelection) =>
+                            setDraft((current) => ({
+                              ...current,
+                              runtimeSelection
+                            }))
+                          }
+                          runtimeSettings={runtimeSettings}
+                          selection={draft.runtimeSelection}
+                        />
+                        <small className="project-runtime-selector__scope-help">
+                          {t(
+                            'projectSwitcher.dialog.defaultRuntimeHelp'
+                          )}
+                        </small>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <div className="remote-project-fields">
+                    <label>
+                      <span>
+                        {t('projectSwitcher.remote.fields.host')}
+                      </span>
+                      <select
+                        aria-label={t(
+                          'projectSwitcher.remote.fields.host'
+                        )}
+                        disabled={
+                          remoteFieldsDisabled ||
+                          loadingSshHosts ||
+                          dialogMode === 'settings'
+                        }
+                        onChange={(event) =>
+                          setRemoteHostId(event.target.value)
+                        }
+                        value={remoteHostId}
+                      >
+                        {loadingSshHosts && (
+                          <option value="">
+                            {t(
+                              'projectSwitcher.remote.loadingHosts'
+                            )}
+                          </option>
+                        )}
+                        {!loadingSshHosts &&
+                          sshHosts?.hosts.length === 0 && (
+                            <option value="">
+                              {t(
+                                'projectSwitcher.remote.noHosts'
+                              )}
+                            </option>
+                          )}
+                        {sshHosts?.hosts.map((host) => (
+                          <option key={host.id} value={host.id}>
+                            {host.name} · {host.username}@
+                            {host.hostname}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        {t('projectSwitcher.remote.hostHelp')}
+                      </small>
+                    </label>
+                    <label>
+                      <span>
+                        {t('projectSwitcher.remote.fields.root')}
+                      </span>
+                      <div className="project-create-card__path">
+                        <input
+                          aria-label={t(
+                            'projectSwitcher.remote.fields.root'
+                          )}
+                          disabled={
+                            remoteFieldsDisabled ||
+                            dialogMode === 'settings'
+                          }
+                          maxLength={4_096}
+                          onChange={(event) =>
+                            setRemoteRootPath(event.target.value)
+                          }
+                          placeholder="/home/user/project"
+                          value={remoteRootPath}
+                        />
+                        <button
+                          aria-label={t(
+                            'projectSwitcher.remote.directoryPicker.browse'
+                          )}
+                          className="secondary-button"
+                          disabled={remoteDirectoryBrowseDisabled}
+                          onClick={() => {
+                            setDirectoryPickerOpen(true)
+                            setRemoteDirectoryListing(undefined)
+                            void browseRemoteDirectories(
+                              isRemoteAbsolutePath(remoteRootPath)
+                                ? remoteRootPath
+                                : undefined
+                            )
+                          }}
+                          ref={directoryPickerTriggerRef}
+                          title={t(
+                            'projectSwitcher.remote.directoryPicker.browse'
+                          )}
+                          type="button"
+                        >
+                          <FolderOpen aria-hidden="true" size={14} />
+                        </button>
+                      </div>
+                      <small>
+                        {t('projectSwitcher.remote.rootHelp')}
+                      </small>
+                    </label>
+                    <div className="remote-project-runtime">
+                      <span>
+                        {t(
+                          'projectSwitcher.dialog.fields.defaultRuntime'
+                        )}
+                      </span>
+                      <strong>OpenCode</strong>
+                      <small>
+                        {t(
+                          'projectSwitcher.remote.runtimeHelp'
+                        )}
+                      </small>
+                    </div>
+                    <ProjectWorkModeFields
+                      ariaLabel={t(
+                        'projectSwitcher.dialog.fields.defaultMode'
+                      )}
+                      disabled={remoteFieldsDisabled}
+                      labels={{
+                        ask: t('projectSwitcher.workModes.ask'),
+                        execute: t('projectSwitcher.workModes.execute')
+                      }}
+                      legend={t(
+                        'projectSwitcher.dialog.fields.defaultMode'
+                      )}
+                      onChange={(defaultWorkMode) =>
+                        setDraft((current) => ({
+                          ...current,
+                          defaultWorkMode
+                        }))
+                      }
+                      value={draft.defaultWorkMode}
+                    />
+                    {remoteSaving && remoteSavePhase && (
+                      <RemoteProjectProgress
+                        phase={remoteSavePhase}
+                        title={t(
+                          'projectSwitcher.remote.actions.saving'
+                        )}
+                      />
+                    )}
+                  </div>
+                )}
+                {directoryPickerOpen && (
+                  <div
+                    className="remote-directory-picker-backdrop"
+                    onMouseDown={(event) => {
+                      if (event.currentTarget === event.target) {
+                        cancelRemoteDirectoryBrowse()
+                      }
+                    }}
+                  >
+                    <section
+                      aria-labelledby="remote-directory-picker-title"
+                      aria-modal="true"
+                      className="remote-directory-picker"
+                      ref={directoryPickerRef}
+                      role="dialog"
+                    >
+                      <header>
+                        <strong id="remote-directory-picker-title">
+                          {t(
+                            'projectSwitcher.remote.directoryPicker.title'
+                          )}
+                        </strong>
+                        <button
+                          aria-label={t(
+                            'projectSwitcher.remote.directoryPicker.close'
+                          )}
+                          className="icon-button"
+                          onClick={() =>
+                            cancelRemoteDirectoryBrowse()
+                          }
+                          title={t(
+                            'projectSwitcher.remote.directoryPicker.close'
+                          )}
+                          type="button"
+                        >
+                          <X aria-hidden="true" size={14} />
+                        </button>
+                      </header>
+                      <div className="remote-directory-picker__location">
+                        <span>
+                          {t(
+                            'projectSwitcher.remote.directoryPicker.currentPath'
+                          )}
+                        </span>
+                        <code>
+                          {remoteDirectoryListing?.path ??
+                            (isRemoteAbsolutePath(remoteRootPath)
+                              ? remoteRootPath
+                              : '…')}
+                        </code>
+                      </div>
+                      <div className="remote-directory-picker__toolbar">
+                        <button
+                          aria-label={t(
+                            'projectSwitcher.remote.directoryPicker.parent'
+                          )}
+                          className="icon-button"
+                          disabled={
+                            directoryPickerLoading ||
+                            !remoteDirectoryListing ||
+                            !remoteDirectoryListing.parentPath
+                          }
+                          onClick={() => {
+                            const parentPath =
+                              remoteDirectoryListing?.parentPath
+                            if (parentPath) {
+                              void browseRemoteDirectories(parentPath)
+                            }
+                          }}
+                          title={t(
+                            'projectSwitcher.remote.directoryPicker.parent'
+                          )}
+                          type="button"
+                        >
+                          <ArrowUp aria-hidden="true" size={15} />
+                        </button>
+                        <button
+                          aria-label={t(
+                            'projectSwitcher.remote.directoryPicker.refresh'
+                          )}
+                          className="icon-button"
+                          disabled={directoryPickerLoading}
+                          onClick={() =>
+                            void browseRemoteDirectories(
+                              remoteDirectoryListing?.path ??
+                                (isRemoteAbsolutePath(
+                                  remoteRootPath
+                                )
+                                  ? remoteRootPath
+                                  : undefined)
+                            )
+                          }
+                          title={t(
+                            'projectSwitcher.remote.directoryPicker.refresh'
+                          )}
+                          type="button"
+                        >
+                          <RefreshCw aria-hidden="true" size={15} />
+                        </button>
+                      </div>
+                      <div
+                        aria-busy={directoryPickerLoading}
+                        className="remote-directory-picker__content"
+                      >
+                        {directoryPickerLoading ? (
+                          <p aria-live="polite" role="status">
+                            {t(
+                              'projectSwitcher.remote.directoryPicker.loading'
+                            )}
+                          </p>
+                        ) : directoryPickerError ? (
+                          <p role="alert">{directoryPickerError}</p>
+                        ) : remoteDirectoryListing?.entries.length ? (
+                          <ul
+                            aria-label={t(
+                              'projectSwitcher.remote.directoryPicker.title'
+                            )}
+                          >
+                            {remoteDirectoryListing.entries.map(
+                              (directory) => (
+                                <li key={directory.path}>
+                                  <button
+                                    aria-label={t(
+                                      'projectSwitcher.remote.directoryPicker.directory',
+                                      { name: directory.name }
+                                    )}
+                                    onClick={() =>
+                                      void browseRemoteDirectories(
+                                        directory.path
+                                      )
+                                    }
+                                    type="button"
+                                  >
+                                    <Folder
+                                      aria-hidden="true"
+                                      size={16}
+                                    />
+                                    <span>{directory.name}</span>
+                                  </button>
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        ) : (
+                          <p>
+                            {t(
+                              'projectSwitcher.remote.directoryPicker.empty'
+                            )}
+                          </p>
+                        )}
+                      </div>
+                      <div className="remote-directory-picker__actions">
+                        <button
+                          className="secondary-button"
+                          onClick={() =>
+                            cancelRemoteDirectoryBrowse()
+                          }
+                          type="button"
+                        >
+                          {t(
+                            'projectSwitcher.remote.directoryPicker.cancel'
+                          )}
+                        </button>
+                        <button
+                          className="primary-button"
+                          disabled={
+                            directoryPickerLoading ||
+                            !remoteDirectoryListing
+                          }
+                          onClick={() => {
+                            if (!remoteDirectoryListing) {
+                              return
+                            }
+                            setRemoteRootPath(
+                              remoteDirectoryListing.path
+                            )
+                            cancelRemoteDirectoryBrowse()
+                          }}
+                          type="button"
+                        >
+                          {t(
+                            'projectSwitcher.remote.directoryPicker.select'
+                          )}
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+                )}
               </>
             )}
             {error && (
@@ -735,28 +1558,45 @@ export function ProjectSwitcher({
                 )}
               <button
                 className="secondary-button"
-                disabled={busy}
-                onClick={closeDialog}
+                disabled={archiving || deleting}
+                onClick={() => closeDialog()}
                 type="button"
               >
                 {t('projectSwitcher.dialog.cancel')}
               </button>
-              <button
-                className="primary-button"
-                disabled={
-                  busy || !draft.name.trim() || confirmingDelete
-                }
-                onClick={() => void save()}
-                type="button"
-              >
-                {saving
-                  ? dialogMode === 'create'
-                    ? t('projectSwitcher.dialog.creating')
-                    : t('projectSwitcher.dialog.saving')
-                  : dialogMode === 'create'
-                    ? t('projectSwitcher.dialog.create')
-                    : t('projectSwitcher.dialog.save')}
-              </button>
+              {executionSpaceKind === 'ssh' ? (
+                <button
+                  className="primary-button"
+                  disabled={
+                    busy ||
+                    confirmingDelete ||
+                    !remoteDraftReady
+                  }
+                  onClick={() => void saveRemoteProject()}
+                  type="button"
+                >
+                  {remoteSaving
+                    ? t('projectSwitcher.remote.actions.saving')
+                    : t('projectSwitcher.remote.actions.save')}
+                </button>
+              ) : (
+                <button
+                  className="primary-button"
+                  disabled={
+                    busy || !draft.name.trim() || confirmingDelete
+                  }
+                  onClick={() => void save()}
+                  type="button"
+                >
+                  {saving
+                    ? dialogMode === 'create'
+                      ? t('projectSwitcher.dialog.creating')
+                      : t('projectSwitcher.dialog.saving')
+                    : dialogMode === 'create'
+                      ? t('projectSwitcher.dialog.create')
+                      : t('projectSwitcher.dialog.save')}
+                </button>
+              )}
             </div>
           </div>
         </div>

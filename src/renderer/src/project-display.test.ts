@@ -11,6 +11,10 @@ const project: AssistantProject = {
   name: builtInDefaultProjectSeedName,
   description: builtInDefaultProjectSeedDescription,
   rootPath: 'C:\\Workspace',
+  executionSpace: {
+    kind: 'local',
+    rootPath: 'C:\\Workspace'
+  },
   defaultWorkMode: 'ask',
   kind: 'user',
   builtInDefault: true,

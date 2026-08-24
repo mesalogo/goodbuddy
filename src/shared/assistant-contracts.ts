@@ -1,5 +1,8 @@
 import { z } from 'zod'
+import { agentArchitectureSchema } from './agent-installation-contracts'
+import { sha256DigestSchema } from './agent-protocol/contracts'
 import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
+import { sshHostIdSchema } from './ssh-host-contracts'
 
 export const assistantIdSchema = z.string().uuid()
 export const interactiveWorkModes = ['ask', 'execute'] as const
@@ -27,6 +30,86 @@ export type LegacyWorkMode = z.infer<typeof legacyWorkModeSchema>
 export type InteractiveWorkMode = (typeof interactiveWorkModes)[number]
 export type ProjectKind = z.infer<typeof projectKindSchema>
 export type ProjectChannel = z.infer<typeof projectChannelSchema>
+
+const projectExecutionSpacePathSchema = z.string().max(4_096)
+const projectExecutionValidationTextSchema = z
+  .string()
+  .min(1)
+  .max(1_000)
+  .refine((value) => value.trim().length > 0)
+
+export const projectExecutionSpaceSchema = z.discriminatedUnion(
+  'kind',
+  [
+    z
+      .object({
+        kind: z.literal('local'),
+        rootPath: projectExecutionSpacePathSchema
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('ssh'),
+        hostId: sshHostIdSchema,
+        remoteRootPath: projectExecutionSpacePathSchema.refine(
+          (value) => value.trim().length > 0,
+          '远程项目目录不能为空'
+        )
+      })
+      .strict()
+  ]
+)
+
+export const sshExecutionValidationSchema = z
+  .object({
+    hostRevision: z.number().int().positive(),
+    hostKeyGeneration: z.number().int().positive(),
+    remoteUsername: projectExecutionValidationTextSchema,
+    workspaceIdentity: projectExecutionValidationTextSchema,
+    agentProtocolMajor: z.number().int().positive(),
+    agentInstallationIdAtValidation:
+      projectExecutionValidationTextSchema,
+    agentBinaryDigestAtValidation: sha256DigestSchema,
+    agentVersionAtValidation: z
+      .string()
+      .regex(/^[0-9A-Za-z][0-9A-Za-z.+_-]{0,127}$/u),
+    agentArchitectureAtValidation: agentArchitectureSchema,
+    validatedAt: z.string().datetime({ offset: true })
+  })
+  .strict()
+
+export const projectRuntimeValidationSchema = z
+  .object({
+    runtimeSelectionKey: z.string().trim().min(1).max(1_000),
+    runtimeBundleDigest: sha256DigestSchema,
+    runtimeAdapterDigest: sha256DigestSchema,
+    agentInstallationIdAtValidation:
+      projectExecutionValidationTextSchema,
+    validatedAt: z.string().datetime({ offset: true }),
+    workMode: workModeSchema
+  })
+  .strict()
+
+export type SshExecutionValidation = z.output<
+  typeof sshExecutionValidationSchema
+>
+export type ProjectRuntimeValidation = z.output<
+  typeof projectRuntimeValidationSchema
+>
+
+export const persistedProjectExecutionSpaceSchema =
+  z.discriminatedUnion('kind', [
+    projectExecutionSpaceSchema.options[0],
+    projectExecutionSpaceSchema.options[1]
+      .extend({
+        validation: sshExecutionValidationSchema.optional()
+      })
+      .strict()
+  ])
+
+export type ProjectExecutionSpace = z.output<
+  typeof persistedProjectExecutionSpaceSchema
+>
 
 export function normalizeInteractiveWorkMode(
   workMode: LegacyWorkMode | undefined
@@ -429,6 +512,8 @@ export type LocalConversationSaveBatch = z.infer<
 export type AssistantProject = ProjectCreateInput & {
   id: string
   kind: ProjectKind
+  executionSpace: ProjectExecutionSpace
+  runtimeValidation?: ProjectRuntimeValidation
   channel?: ProjectChannel
   readonly builtInDefault?: boolean
   status: 'active' | 'archived'

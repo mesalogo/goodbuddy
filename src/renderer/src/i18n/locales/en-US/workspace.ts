@@ -14,9 +14,11 @@ export const workspace = {
     selector: {
       ariaLabel: 'Current project',
       userProjects: 'Local projects',
+      remoteProjects: 'Remote projects',
       channelProjects: 'Remote channels',
       empty: 'No project selected',
       localDetail: 'Local folder · {{path}}',
+      managedSshDetail: 'Managed SSH · {{path}}',
       remoteDetail: '{{channel}} · Remote channel · {{path}}',
       remoteChannel: 'Remote channel',
       create: 'New project',
@@ -31,6 +33,7 @@ export const workspace = {
         name: 'Name',
         description: 'Description',
         rootPath: 'Root folder',
+        executionSpace: 'Execution space',
         defaultMode: 'Default mode',
         defaultRuntime: 'Default Runtime for new conversations'
       },
@@ -66,6 +69,71 @@ export const workspace = {
       selectRoot: 'Could not select the project root folder',
       archive: 'Could not archive the project',
       delete: 'Could not delete the project'
+    },
+    remote: {
+      executionSpaces: {
+        local: 'Local',
+        ssh: 'Managed SSH'
+      },
+      executionSpaceFixed:
+        'Existing projects cannot switch directly between local and managed SSH execution.',
+      fields: {
+        host: 'SSH host',
+        root: 'Remote work directory'
+      },
+      loadingHosts: 'Loading saved hosts…',
+      noHosts: 'No saved SSH hosts',
+      hostHelp:
+        'Host credentials remain centrally managed in Settings and are not copied into the project.',
+      rootHelp:
+        'Enter or choose a canonical absolute path beginning with /.',
+      directoryPicker: {
+        browse: 'Browse remote work directory',
+        title: 'Select remote work directory',
+        close: 'Close remote directory picker',
+        currentPath: 'Current directory',
+        parent: 'Go to parent directory',
+        refresh: 'Refresh current directory',
+        directory: 'Open directory {{name}}',
+        loading: 'Loading remote directories…',
+        empty: 'This directory has no subdirectories.',
+        loadError: 'Could not load remote directories: {{message}}',
+        unknownError: 'Check the SSH host connection and try again.',
+        cancel: 'Cancel',
+        select: 'Select this directory'
+      },
+      runtimeHelp:
+        'Managed SSH projects use OpenCode Runtime only. Ask is read-only; Execute can use every permission available to the selected SSH account. Saving checks the Host, Agent, workspace, and Runtime.',
+      actions: {
+        save: 'Save remote project',
+        saving: 'Saving remote project…'
+      },
+      activation: {
+        title: 'Connecting to remote project “{{project}}”',
+        progressLabel: 'Remote project connection progress',
+        stepsLabel: 'Remote project connection stages',
+        cancel: 'Cancel connection',
+        cancelling: 'Cancelling the remote connection…',
+        cancellingAction: 'Cancelling…'
+      },
+      phaseStatus: 'Current phase: {{phase}}',
+      phases: {
+        host: 'SSH host',
+        agent: 'Remote Agent',
+        workspace: 'Remote workspace',
+        runtime: 'OpenCode Runtime',
+        saving: 'Project settings'
+      },
+      validation: {
+        host: 'Select a saved SSH host.',
+        root:
+          'The remote work directory must be an absolute path beginning with /.'
+      },
+      errors: {
+        hostsUnavailable: 'The SSH host service is unavailable.',
+        loadHosts: 'Could not load SSH hosts.',
+        save: 'Could not save the remote project.'
+      }
     }
   },
   sidebar: {

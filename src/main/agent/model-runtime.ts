@@ -10,6 +10,7 @@ import type {
 } from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import type { WorkspaceAccess } from '../workspace'
 import {
   scopedReadToolNames,
   type KnowledgeMcpGateway
@@ -173,13 +174,7 @@ const maxChatResponseBytes = 2 * 1024 * 1024
 const maxStreamBlockBytes = 1024 * 1024
 const maxToolArgumentBytes = 128 * 1024
 const maxToolContextBytes = 1024 * 1024
-const maxToolCallsPerRun = 40
-const maxToolRounds = 24
-const maxRepeatedIdenticalCalls = 3
-const maxIdenticalRoundsWithoutProgress = 2
 const defaultModelRequestTimeoutMs = 10 * 60_000
-const defaultModelOutputTokens = 4_096
-const summaryModelOutputTokens = contextSummaryTokenBudget
 
 const noModelTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -220,6 +215,7 @@ export type ModelRuntimeOptions = {
   imageGenerationQuality?: ImageGenerationQuality
   skillInstructions?: string
   defaultWorkspace?: string
+  workspaceAccess?: WorkspaceAccess
   mcpServers?: ResolvedMcpServer[]
   browserService?: BrowserToolService
   knowledgeGateway?: KnowledgeMcpGateway
@@ -227,7 +223,6 @@ export type ModelRuntimeOptions = {
   toolProvider?: ModelToolProviderLike
   fetcher?: typeof fetch
   requestTimeoutMs?: number
-  maxOutputTokens?: number
   contextCompression?: {
     settings: ContextCompressionSettings
     contextWindowTokens?: number
@@ -663,26 +658,6 @@ function parseToolArguments(value: unknown): Record<string, unknown> {
     throw new Error('模型工具参数超过 128KB 安全限制')
   }
   return parsed as Record<string, unknown>
-}
-
-function canonicalizeToolArguments(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalizeToolArguments)
-  }
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, canonicalizeToolArguments(item)])
-    )
-  }
-  return value
-}
-
-function getToolCallFingerprint(call: ModelToolCall): string {
-  return `${call.name}:${JSON.stringify(
-    canonicalizeToolArguments(call.arguments)
-  )}`
 }
 
 function validateToolResult(result: ModelToolResult): number {
@@ -1344,7 +1319,6 @@ async function* readAnthropicToolStream(
   let answer = ''
   let reasoning = ''
   let stopReason: unknown
-  let toolCallCount = 0
 
   for await (const block of readBoundedSseBlocks(response)) {
     const parsed = parseSseData(block)
@@ -1421,10 +1395,6 @@ async function* readAnthropicToolStream(
           }
         }
       } else if (content.type === 'tool_use') {
-        toolCallCount += 1
-        if (toolCallCount > maxToolCallsPerRun) {
-          throw new Error('模型单轮工具调用超过安全限制')
-        }
         const identity = parseToolCallIdentity(content.id, content.name)
         next.kind = 'tool_use'
         next.initialInput = content.input
@@ -1555,31 +1525,23 @@ export class ModelAgentRuntime implements AgentRuntime {
   private readonly fetcher: typeof fetch
   private readonly toolProvider: ModelToolProviderLike
   private readonly requestTimeoutMs: number
-  private readonly maxOutputTokens: number
 
   constructor(private readonly options: ModelRuntimeOptions) {
     this.fetcher = options.fetcher ?? fetch
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? defaultModelRequestTimeoutMs
-    this.maxOutputTokens =
-      options.maxOutputTokens ?? defaultModelOutputTokens
     if (
       !Number.isSafeInteger(this.requestTimeoutMs) ||
       this.requestTimeoutMs < 1
     ) {
       throw new Error('模型接口请求超时设置无效')
     }
-    if (
-      !Number.isSafeInteger(this.maxOutputTokens) ||
-      this.maxOutputTokens < 1 ||
-      this.maxOutputTokens > summaryModelOutputTokens
-    ) {
-      throw new Error('模型最大输出设置无效')
-    }
     this.toolProvider =
       options.toolProvider ??
       new ModelToolProvider(
-        options.defaultWorkspace ?? process.cwd(),
+        options.workspaceAccess ??
+          options.defaultWorkspace ??
+          process.cwd(),
         options.mcpServers,
         options.browserService,
         options.knowledgeGateway,
@@ -1831,6 +1793,14 @@ export class ModelAgentRuntime implements AgentRuntime {
     )
   }
 
+  private get anthropicProtocolMaximumTokens(): number {
+    return Math.max(
+      this.options.contextCompression?.contextWindowTokens ??
+        minimumModelContextWindowTokens,
+      minimumModelContextWindowTokens
+    )
+  }
+
   private getHardSafetyTriggerTokens(): number | undefined {
     const contextWindowTokens =
       this.options.contextCompression?.contextWindowTokens
@@ -1842,8 +1812,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         contextWindowTokens,
         minimumModelContextWindowTokens
       ) -
-      this.maxOutputTokens -
-      2_048
+      12_000
     )
   }
 
@@ -1915,8 +1884,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       supportsImageInput: false,
       toolProvider: noModelTools,
       fetcher: this.fetcher,
-      requestTimeoutMs: this.requestTimeoutMs,
-      maxOutputTokens: summaryModelOutputTokens
+      requestTimeoutMs: this.requestTimeoutMs
     })
     const summaryRequest: AgentExecutionRequest = {
       requestId: request.requestId,
@@ -2543,7 +2511,6 @@ export class ModelAgentRuntime implements AgentRuntime {
       responses
         ? {
             model: this.options.model,
-            max_output_tokens: this.maxOutputTokens,
             stream: true,
             instructions: system,
             input: messages,
@@ -2554,7 +2521,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         : anthropic
           ? {
               model: this.options.model,
-              max_tokens: this.maxOutputTokens,
+              max_tokens: this.anthropicProtocolMaximumTokens,
               stream: true,
               system,
               messages,
@@ -2564,7 +2531,6 @@ export class ModelAgentRuntime implements AgentRuntime {
             }
           : {
               model: this.options.model,
-              max_tokens: this.maxOutputTokens,
               stream: true,
               stream_options: {
                 include_usage: true
@@ -2690,8 +2656,7 @@ export class ModelAgentRuntime implements AgentRuntime {
             const index = toolDelta?.index
             if (
               !Number.isSafeInteger(index) ||
-              (index as number) < 0 ||
-              (index as number) >= maxToolCallsPerRun
+              (index as number) < 0
             ) {
               throw new Error(
                 'OpenAI 模型接口返回了无效流式工具调用序号'
@@ -3011,14 +2976,9 @@ export class ModelAgentRuntime implements AgentRuntime {
       rounds: [],
       compressionCount: 0
     }
-    const seenCallIds = new Set<string>()
-    let totalToolCalls = 0
     let answer = ''
-    const identicalCallCounts = new Map<string, number>()
-    let previousRoundSignature: string | undefined
-    let identicalRoundsWithoutProgress = 0
 
-    for (let round = 0; round < maxToolRounds; round += 1) {
+    for (let round = 0; ; round += 1) {
       signal.throwIfAborted()
       if (round > 0) {
         toolSnapshot = await loadToolSnapshot()
@@ -3156,25 +3116,6 @@ export class ModelAgentRuntime implements AgentRuntime {
         }
         return
       }
-      const roundSignature = response.toolCalls
-        .map(getToolCallFingerprint)
-        .join('\n')
-      if (roundSignature === previousRoundSignature) {
-        identicalRoundsWithoutProgress += 1
-        if (
-          identicalRoundsWithoutProgress >=
-          maxIdenticalRoundsWithoutProgress
-        ) {
-          throw new Error('直连模型重复了相同工具调用且没有取得进展')
-        }
-      } else {
-        previousRoundSignature = roundSignature
-        identicalRoundsWithoutProgress = 0
-      }
-      totalToolCalls += response.toolCalls.length
-      if (totalToolCalls > maxToolCallsPerRun) {
-        throw new Error('直连模型单次运行的工具调用超过 40 个')
-      }
       if (responses) {
         if (!response.responsesOutput) {
           throw new Error('OpenAI Responses 工具调用缺少 output')
@@ -3205,19 +3146,13 @@ export class ModelAgentRuntime implements AgentRuntime {
       const responsesResults: Array<Record<string, unknown>> = []
       const chatImageCarrierContent: Array<Record<string, unknown>> = []
       let roundContextBytes = 0
+      const roundCallIds = new Set<string>()
       for (const call of response.toolCalls) {
         signal.throwIfAborted()
-        const callFingerprint = getToolCallFingerprint(call)
-        const identicalCallCount =
-          (identicalCallCounts.get(callFingerprint) ?? 0) + 1
-        identicalCallCounts.set(callFingerprint, identicalCallCount)
-        if (identicalCallCount > maxRepeatedIdenticalCalls) {
-          throw new Error('直连模型重复请求了完全相同的工具调用')
-        }
-        if (seenCallIds.has(call.id)) {
+        if (roundCallIds.has(call.id)) {
           throw new Error('模型重复使用了工具调用 ID')
         }
-        seenCallIds.add(call.id)
+        roundCallIds.add(call.id)
         const tool = toolSnapshot.toolsByName.get(call.name)
         const displayName = tool?.displayName ?? call.name.slice(0, 128)
         const input = boundedToolDetail(call.arguments, 4_000)
@@ -3421,7 +3356,6 @@ export class ModelAgentRuntime implements AgentRuntime {
       })
       signal.throwIfAborted()
     }
-    throw new Error('直连模型工具调用轮次超过 24 轮')
   }
 
   async *run(
@@ -3537,7 +3471,6 @@ export class ModelAgentRuntime implements AgentRuntime {
           responses
             ? {
                 model: this.options.model,
-                max_output_tokens: this.maxOutputTokens,
                 stream: true,
                 instructions: system,
                 input: messages
@@ -3545,14 +3478,13 @@ export class ModelAgentRuntime implements AgentRuntime {
             : anthropic
               ? {
                   model: this.options.model,
-                  max_tokens: this.maxOutputTokens,
+                  max_tokens: this.anthropicProtocolMaximumTokens,
                   stream: true,
                   system,
                   messages
                 }
               : {
                   model: this.options.model,
-                  max_tokens: this.maxOutputTokens,
                   stream: true,
                   stream_options: {
                     include_usage: true

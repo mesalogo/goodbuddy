@@ -8,6 +8,35 @@ GoodBuddy is a secure, cross-platform Electron desktop assistant. It uses
 Electron, React, TypeScript, Vite, Vitest, and SQLite. User-facing copy is
 primarily Simplified Chinese.
 
+## Product Priorities
+
+Use this order when requirements or implementation choices compete:
+
+1. Working product functionality.
+2. Performance and responsiveness.
+3. Clear, low-friction user experience.
+4. Simple, conventional, maintainable implementation.
+5. Security controls proportional to a concrete, realistic risk.
+
+Follow KISS and YAGNI. Do not add trust tiers, consent ceremonies, durable
+state machines, protocol phases, cryptographic identities, quotas, recovery
+machinery, or compatibility layers unless they are needed for an actual user
+workflow or a demonstrated failure mode. Prefer the normal platform mechanism
+and the smallest design that works. Test Hosts are test environments; do not
+turn their workflows into production compliance exercises.
+
+When the user asks to implement a feature, deliver the complete usable user
+workflow unless the user explicitly requests a prototype, scaffold, staged
+landing, or partial implementation. Internal contracts, managers, protocols,
+disabled UI, unavailable catalog entries, placeholders, and tests around
+injected fakes do not count as completion when the real product path still
+cannot be used. If required metadata, dependencies, or integration details are
+missing, investigate and resolve them as part of the implementation. Do not
+turn missing implementation work into a product "security gate", permanent
+unavailable state, or acceptance criterion. If a genuine external blocker
+cannot be resolved, stop and ask the user rather than presenting the partial
+work as the implemented feature.
+
 ## Architecture
 
 - `src/main`: privileged Electron main process, runtimes, persistence, IPC,
@@ -30,10 +59,17 @@ Keep Electron security boundaries intact:
 ## Runtime Behavior
 
 - Ask mode must remain read-only at the runtime boundary.
-- Execute mode may use tools only through the existing approval controls.
+- Execute mode is the user's full authorization for the selected SSH account.
+  It may use all tools, processes, network access, and writable paths available
+  to that account. Do not add T2/T3 trust tiers, separate consent checklists,
+  per-tool approvals, or a second "controlled execution" concept.
 - Preserve cancellation, timeout, bounded-output, and shutdown behavior.
-- Treat OpenCode and Continue as untrusted child runtimes. Preserve environment
-  allowlists, sandbox checks, and per-tool approval enforcement.
+- Keep model/provider credentials in Main, but do not otherwise reduce Execute
+  permissions with extra product policy gates. Keep child-process cleanup
+  straightforward and reliable.
+- On test Hosts, GoodBuddy may install and start its own test resources and
+  create dedicated work directories. Never delete or overwrite unrelated Host
+  files.
 - A successful image-model configuration check does not prove generation works.
   Only an actual generation request verifies the provider path.
 - Do not fetch provider-returned image URLs. Accept and validate bounded inline
@@ -52,6 +88,14 @@ Keep Electron security boundaries intact:
 - Follow surrounding TypeScript and React patterns.
 - Reuse installed libraries and shared contracts before adding dependencies.
 - Keep changes focused. Do not add unrelated refactors or documentation.
+- Validate the real end-to-end path, not only schemas, mocks, injected test
+  doubles, or isolated infrastructure. A feature is not complete until its
+  normal UI action reaches the production implementation and produces the
+  intended result.
+- Security work must remain proportional to a concrete risk and must not
+  replace missing product functionality. Use established platform and
+  repository mechanisms instead of inventing extra gates, ceremonies, or
+  disabled states.
 - Add or update focused tests for behavioral changes and regressions.
 - After completing any functional change, inspect the affected product,
   architecture, design, feature, setup, and operational documentation and
@@ -151,6 +195,25 @@ Release note: 修复左上角项目设置与消息通道项目设置不一致的
 - `build/build-release.cjs` verifies the unpacked application, `app.asar`,
   bundled Continue and OpenCode runtimes, executable architecture, and package
   signatures before atomically replacing a release directory.
+- Ordinary `build` and `dist*` commands package the Agent and remote Runtime
+  version locks plus the public signing-key registry without embedding
+  installable Linux bundles. Local `portable` builds also discover and strictly
+  verify any existing `.agent-resources/linux-{x64,arm64}` bundles before
+  embedding them; `GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS` can require an exact
+  local architecture set. A metadata-only package may reuse an
+  already-installed Host Agent/Runtime only after the installed signed
+  manifests, locked identities, managed ownership and modes, critical Agent
+  payload, Host-side full payload verification, and lifecycle health all pass;
+  it cannot install a missing or mismatched Host component. Manage Agent
+  artifacts only through `agent:build`, `agent:import`, and `agent:verify`.
+- Build Linux x64 and arm64 Agent artifacts on native GitHub Actions runners
+  from the exact desktop source commit/tag. Prefer dedicated jobs or a
+  reusable/manual workflow over a long-lived divergent Agent source branch.
+- `release:package` is the only release path that requires the complete Agent
+  matrix. It must verify both signed Linux x64 and arm64 bundles before
+  Electron Builder, then verify the embedded copies in the unpacked
+  application. A missing or invalid architecture must fail the release rather
+  than producing a partial package.
 - Keep electron-builder invocations on `--publish never`. Main-branch builds
   run validation and build the production bundle without running the native
   package matrix. Manual builds upload 30-day GitHub Actions artifacts.
@@ -351,8 +414,13 @@ npm run lint
 ```
 
 Run `npm run build` for production build changes. Use `npm run portable` only
-when a current Windows portable package is requested. Gated runtime tests may
-make paid or external calls, so run them only with explicit authorization.
+when a current Windows portable package is requested. The user has granted
+standing authorization in this repository for bounded real text-model calls
+needed to validate changed product paths; do not ask again for each such call.
+Keep each validation call minimal, disable tools and attachments where
+possible, and report the exact call count. This standing authorization does
+not cover bulk, high-cost, destructive, publishing, messaging, purchasing, or
+other consequential external actions.
 
 Before committing or pushing, inspect `git status`, `git diff`, and
 `git diff --cached`. Do not commit secrets, local databases, logs, generated

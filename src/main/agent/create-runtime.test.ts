@@ -7,6 +7,7 @@ import {
   createModelProfileRuntime
 } from './create-runtime'
 import { AgentRuntimeController } from './runtime-controller'
+import type { WorkspaceAccess } from '../workspace'
 
 function createBrowserService(): BrowserToolService & {
   dispose: ReturnType<typeof vi.fn>
@@ -420,5 +421,33 @@ describe('createAgentRuntime model compatibility', () => {
       available: true
     })
     await runtime.dispose()
+  })
+
+  it('rejects remote process runtimes before invoking any local launcher', () => {
+    const launch = vi.fn()
+    const workspaceAccess = {
+      dispose: vi.fn(async () => undefined)
+    } as unknown as WorkspaceAccess
+
+    expect(() =>
+      createAgentRuntime(
+        'C:\\SafeLocalDefault',
+        settings({
+          provider: 'deepseek-harness'
+        }),
+        {
+          deepseekHarnessLauncher: launch,
+          executionSpace: {
+            kind: 'ssh',
+            hostId: 'host-one',
+            remoteRootPath: '/srv/project',
+            cacheIdentity: 'remote-one',
+            routeIdentity: 'remote-one',
+            workspaceAccess
+          }
+        }
+      )
+    ).toThrow('远程执行空间尚不可用')
+    expect(launch).not.toHaveBeenCalled()
   })
 })

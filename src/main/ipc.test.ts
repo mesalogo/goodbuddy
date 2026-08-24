@@ -16,7 +16,10 @@ import type {
 import type { AgentEvent, BrowserLiveState } from '../shared/contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
-import { registerIpcHandlers } from './ipc'
+import {
+  registerIpcHandlers,
+  sendRemoteProjectSaveProgress
+} from './ipc'
 
 describe('embedding IPC boundary', () => {
   it('validates explicit IDs and keeps ZIP paths in the native dialog', async () => {
@@ -925,6 +928,444 @@ describe('registerIpcHandlers DSH runtime extensions', () => {
     ).toThrow('拒绝来自未知窗口的 IPC 请求')
 
     await dispose()
+  })
+})
+
+describe('registerIpcHandlers SSH hosts', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates narrow host requests and restricts them to the trusted renderer', async () => {
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const hostId = '00000000-0000-4000-8000-000000000105'
+    const candidateId = '00000000-0000-4000-8000-000000000106'
+    const fingerprint = `SHA256:${'A'.repeat(43)}`
+    const host = {
+      id: hostId,
+      name: 'Build host',
+      hostname: 'build.example.com',
+      port: 22,
+      username: 'builder',
+      authentication: 'system-agent' as const,
+      credentialConfigured: true,
+      credentialSource: 'system-agent' as const,
+      hostKey: { state: 'unverified' as const, generation: 0 },
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z'
+    }
+    const snapshot = {
+      hosts: [host],
+      secureStorageAvailable: true
+    }
+    const sshHostService = {
+      getSnapshot: vi.fn(async () => snapshot),
+      remove: vi.fn(async () => undefined),
+      inspectDraftHostKey: vi.fn(async () => ({
+        candidateId,
+        hostId,
+        state: 'unverified' as const,
+        algorithm: 'ssh-ed25519',
+        fingerprintSha256: fingerprint
+      })),
+      discardCandidate: vi.fn(),
+      validateAndSave: vi.fn(async () => ({
+        host,
+        connection: {
+          hostId,
+          connected: true as const,
+          latencyMs: 12,
+          platform: 'linux' as const,
+          architecture: 'x64' as const,
+          shell: '/bin/bash',
+          homeDirectory: '/home/builder',
+          detail: 'SSH 已连接，远端系统为 linux/x64'
+        }
+      }))
+    }
+    const listProjectIdsReferencingSshHost = vi.fn((): string[] => [])
+    const remoteProject = {
+      id: '00000000-0000-4000-8000-000000000107',
+      name: 'Remote project'
+    }
+    const remoteProjectSaveService = {
+      activate: vi.fn(async () => remoteProject),
+      save: vi.fn(async () => remoteProject),
+      cancelCurrent: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const directoryListing = {
+      path: '/srv',
+      homeDirectory: '/home/builder',
+      parentPath: '/',
+      entries: [
+        {
+          name: 'project',
+          path: '/srv/project'
+        }
+      ],
+      truncated: false
+    }
+    const listDirectories = vi.fn<
+      (
+        hostId: string,
+        path?: string,
+        signal?: AbortSignal
+      ) => Promise<typeof directoryListing>
+    >(async () => directoryListing)
+    const sshHostDirectoryBrowser = { listDirectories }
+    const remoteEnvironment = {
+      hostId,
+      checkedAt: '2030-01-01T00:00:00.000Z',
+      architecture: 'x64',
+      agent: {
+        state: 'current',
+        expected: {
+          version: '0.11.1',
+          architecture: 'x64'
+        },
+        installed: {
+          version: '0.11.1',
+          architecture: 'x64'
+        }
+      },
+      runtimes: [{
+        runtimeId: 'opencode',
+        provider: 'opencode',
+        state: 'current',
+        expected: {
+          version: '1.18.9',
+          architecture: 'x64'
+        },
+        installed: {
+          version: '1.18.9',
+          architecture: 'x64'
+        }
+      }]
+    } as const
+    const inspectRemoteEnvironment = vi.fn(
+      async () => remoteEnvironment
+    )
+    const sshHostRemoteEnvironmentInspector = {
+      inspect: inspectRemoteEnvironment
+    }
+    const selectedRuntimes = {
+      reset: vi.fn(async () => undefined)
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => []),
+        listProjectIdsReferencingSshHost
+      } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined),
+      undefined, // onBeforeClearLocalData
+      undefined, // browserControl
+      undefined, // subagentService
+      undefined, // channelSettingsStore
+      undefined, // applicationSettingsStore
+      undefined, // versionChecker
+      undefined, // speechModelManager
+      undefined, // embeddingIndexCoordinator
+      selectedRuntimes as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      sshHostService as never,
+      undefined,
+      remoteProjectSaveService as never,
+      sshHostDirectoryBrowser as never,
+      sshHostRemoteEnvironmentInspector as never
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const createInput = {
+      name: ' Build host ',
+      hostname: 'build.example.com',
+      port: 22,
+      username: 'builder',
+      authentication: 'system-agent',
+      password: { action: 'clear' }
+    }
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.sshHostsGet)?.(event)
+    ).resolves.toEqual(snapshot)
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsInspectDraftKey
+      )?.(
+        event,
+        {
+          hostId,
+          hostname: createInput.hostname,
+          port: createInput.port,
+          username: createInput.username
+        }
+      )
+    ).resolves.toMatchObject({ fingerprintSha256: fingerprint })
+    expect(
+      sshHostService.inspectDraftHostKey
+    ).toHaveBeenCalledWith({
+      hostId,
+      hostname: createInput.hostname,
+      port: createInput.port,
+      username: createInput.username
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsValidateAndSave
+      )?.(
+        event,
+        {
+          candidateId,
+          fingerprintSha256: fingerprint,
+          input: createInput
+        }
+      )
+    ).resolves.toMatchObject({
+      host,
+      connection: { connected: true }
+    })
+    expect(sshHostService.validateAndSave).toHaveBeenCalledWith({
+      candidateId,
+      fingerprintSha256: fingerprint,
+      input: {
+        ...createInput,
+        name: 'Build host'
+      }
+    })
+    expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsDiscardCandidate
+      )?.(event, { candidateId })
+    ).toBeUndefined()
+    expect(sshHostService.discardCandidate).toHaveBeenCalledWith(
+      candidateId
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.sshHostsRemove)?.(
+        event,
+        { hostId }
+      )
+    ).resolves.toBeUndefined()
+    listProjectIdsReferencingSshHost.mockReturnValue([
+      '00000000-0000-4000-8000-000000000107'
+    ])
+    expect(() =>
+      electronMocks.handlers.get(ipcChannels.sshHostsRemove)?.(
+        event,
+        { hostId }
+      )
+    ).toThrow('SSH 主机仍被项目引用，无法删除')
+    expect(sshHostService.remove).toHaveBeenCalledOnce()
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsRemoteEnvironment
+      )?.(event, { hostId })
+    ).resolves.toEqual(remoteEnvironment)
+    expect(inspectRemoteEnvironment).toHaveBeenCalledWith(hostId)
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsRemoteEnvironment
+      )?.(event, { hostId: 'not-a-uuid' })
+    ).rejects.toThrow()
+    expect(inspectRemoteEnvironment).toHaveBeenCalledOnce()
+
+    expect(() =>
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsValidateAndSave
+      )?.(event, {
+        candidateId: 'not-a-uuid',
+        fingerprintSha256: fingerprint,
+        input: { ...createInput, command: 'whoami' }
+      })
+    ).toThrow()
+    expect(sshHostService.validateAndSave).toHaveBeenCalledOnce()
+    expect(() =>
+      electronMocks.handlers.get(ipcChannels.sshHostsGet)?.({
+        sender: {},
+        senderFrame: webContents.mainFrame
+      })
+    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsBrowseDirectories
+      )?.(event, { hostId, path: '/srv' })
+    ).resolves.toEqual(directoryListing)
+    expect(
+      sshHostDirectoryBrowser.listDirectories
+    ).toHaveBeenCalledWith(
+      hostId,
+      '/srv',
+      expect.any(AbortSignal)
+    )
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsBrowseDirectories
+      )?.(event, { hostId, path: '../escape' })
+    ).rejects.toThrow()
+    expect(
+      sshHostDirectoryBrowser.listDirectories
+    ).toHaveBeenCalledOnce()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsBrowseDirectories
+      )?.(
+        { sender: {}, senderFrame: webContents.mainFrame },
+        { hostId }
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+
+    let browseSignal: AbortSignal | undefined
+    sshHostDirectoryBrowser.listDirectories.mockImplementationOnce(
+      async (...args): Promise<typeof directoryListing> => {
+        const signal = args[2]
+        if (!signal) {
+          throw new Error('Expected directory browse AbortSignal')
+        }
+        return new Promise<typeof directoryListing>((_resolve, reject) => {
+          browseSignal = signal
+          signal.addEventListener(
+            'abort',
+            () => reject(signal.reason),
+            { once: true }
+          )
+        })
+      }
+    )
+    const activeBrowse = electronMocks.handlers.get(
+      ipcChannels.sshHostsBrowseDirectories
+    )?.(event, { hostId })
+    await vi.waitFor(() =>
+      expect(browseSignal).toBeInstanceOf(AbortSignal)
+    )
+    expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsCancelDirectoryBrowse
+      )?.(event)
+    ).toBeUndefined()
+    await expect(activeBrowse).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+
+    const remoteDraft = {
+      intent: 'create',
+      draft: {
+        name: 'Remote project',
+        description: '',
+        runtimeSelection: { provider: 'opencode' },
+        hostId,
+        remoteRootPath: '/srv/project',
+        defaultWorkMode: 'ask'
+      }
+    }
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.remoteProjectActivate
+      )?.(event, remoteProject.id)
+    ).resolves.toEqual(remoteProject)
+    expect(remoteProjectSaveService.activate).toHaveBeenCalledWith(
+      webContents,
+      remoteProject.id
+    )
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.remoteProjectSave
+      )?.(event, remoteDraft)
+    ).resolves.toEqual(remoteProject)
+    expect(remoteProjectSaveService.save).toHaveBeenCalledWith(
+      webContents,
+      remoteDraft
+    )
+    expect(
+      electronMocks.handlers.get(
+        ipcChannels.remoteProjectCancelCurrent
+      )?.(event)
+    ).toBeUndefined()
+    expect(
+      remoteProjectSaveService.cancelCurrent
+    ).toHaveBeenCalledWith(webContents)
+    expect(selectedRuntimes.reset).not.toHaveBeenCalled()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.remoteProjectActivate
+      )?.(event, 'not-a-project-id')
+    ).rejects.toThrow()
+    expect(remoteProjectSaveService.activate).toHaveBeenCalledOnce()
+    remoteProjectSaveService.activate.mockRejectedValueOnce(
+      new Error('activation failed')
+    )
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.remoteProjectActivate
+      )?.(event, remoteProject.id)
+    ).rejects.toThrow('activation failed')
+    expect(selectedRuntimes.reset).not.toHaveBeenCalled()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.remoteProjectSave
+      )?.(
+        { sender: {}, senderFrame: webContents.mainFrame },
+        remoteDraft
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+
+    await dispose()
+    expect(remoteProjectSaveService.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('sends save progress only to a live owning WebContents', () => {
+    const owner = {
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn(),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const progress = { phase: 'agent' as const }
+
+    sendRemoteProjectSaveProgress(owner as never, progress)
+    expect(owner.send).toHaveBeenCalledWith(
+      ipcChannels.remoteProjectSaveProgress,
+      progress
+    )
+    owner.isDestroyed.mockReturnValue(true)
+    sendRemoteProjectSaveProgress(owner as never, progress)
+    expect(owner.send).toHaveBeenCalledOnce()
   })
 })
 
@@ -2689,6 +3130,81 @@ describe('registerIpcHandlers workspace files', () => {
 
     await dispose()
   })
+
+  it('fails remote workspace requests before filesystem, Git, or shell access', async () => {
+    const projectId = '00000000-0000-4000-8000-000000000102'
+    const assistantDatabase = {
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
+      getProject: vi.fn(() => ({
+        id: projectId,
+        name: 'Remote',
+        description: '',
+        rootPath: '/srv/project',
+        executionSpace: {
+          kind: 'ssh',
+          hostId: '00000000-0000-4000-8000-000000000202',
+          remoteRootPath: '/srv/project'
+        },
+        defaultWorkMode: 'ask',
+        kind: 'user',
+        status: 'active',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z'
+      }))
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html')
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      assistantDatabase as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => {})
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    for (const [channel, input] of [
+      [ipcChannels.workspaceChangesGet, projectId],
+      [
+        ipcChannels.workspaceDirectoryList,
+        { projectId, path: '' }
+      ],
+      [
+        ipcChannels.workspaceFileRead,
+        { projectId, path: 'README.md' }
+      ],
+      [
+        ipcChannels.workspacePathOpen,
+        { projectId, path: 'README.md', type: 'file' }
+      ]
+    ] as const) {
+      await expect(
+        electronMocks.handlers.get(channel)?.(event, input)
+      ).rejects.toThrow('远程执行空间尚不可用')
+    }
+    expect(electronMocks.openPath).not.toHaveBeenCalled()
+
+    await dispose()
+  })
 })
 
 describe('registerIpcHandlers token usage', () => {
@@ -3234,7 +3750,10 @@ describe('registerIpcHandlers Runtime customization', () => {
     ).resolves.toEqual(snapshot)
     expect(selectedRuntimes.getNativeSnapshot).toHaveBeenCalledWith(
       { provider: 'opencode' },
-      'C:\\ProjectWorkspace'
+      expect.objectContaining({
+        kind: 'local',
+        rootPath: 'C:\\ProjectWorkspace'
+      })
     )
 
     const compactInput = {
@@ -3268,7 +3787,10 @@ describe('registerIpcHandlers Runtime customization', () => {
     })
     expect(selectedRuntimes.compactConversation).toHaveBeenCalledWith(
       expect.objectContaining(compactInput),
-      'C:\\ProjectWorkspace',
+      expect.objectContaining({
+        kind: 'local',
+        rootPath: 'C:\\ProjectWorkspace'
+      }),
       expect.any(AbortSignal)
     )
     expect(assistantDatabase.createTask).toHaveBeenCalledWith(
@@ -3374,13 +3896,17 @@ describe('registerIpcHandlers agent terminal state', () => {
           name: '企业微信',
           description: '企业微信远程消息与受控任务',
           rootPath: 'C:\\ProjectWorkspace',
+          executionSpace: {
+            kind: 'local',
+            rootPath: 'C:\\ProjectWorkspace'
+          },
           defaultWorkMode: 'ask',
           runtimeSelection: {
             provider: 'model',
             profileId: '00000000-0000-4000-8000-000000000001'
           },
           kind: 'channel',
-        channel: 'wecom',
+          channel: 'wecom',
           status: 'active',
           createdAt: '2026-08-04T00:00:00.000Z',
           updatedAt: '2026-08-04T00:00:00.000Z'
@@ -5241,10 +5767,14 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(fallbackRuntime.run).not.toHaveBeenCalled()
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
       firstSelection,
-      'C:\\ProjectWorkspace'
+      expect.objectContaining({
+        kind: 'local',
+        rootPath: 'C:\\ProjectWorkspace'
+      })
     )
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
-      secondSelection
+      secondSelection,
+      undefined
     )
     await harness.dispose()
   })
@@ -6197,6 +6727,10 @@ describe('registerIpcHandlers agent terminal state', () => {
           name: channelLabel,
           description: `${channelLabel}远程消息与受控任务`,
           rootPath: 'C:\\ProjectWorkspace',
+          executionSpace: {
+            kind: 'local',
+            rootPath: 'C:\\ProjectWorkspace'
+          },
           defaultWorkMode: 'ask',
           runtimeSelection: {
             provider: 'model',
@@ -6874,6 +7408,10 @@ describe('registerIpcHandlers agent terminal state', () => {
         name: '企业微信',
         description: '企业微信远程消息与受控任务',
         rootPath: 'C:\\ProjectWorkspace',
+        executionSpace: {
+          kind: 'local',
+          rootPath: 'C:\\ProjectWorkspace'
+        },
         defaultWorkMode: 'execute',
         runtimeSelection: { provider: 'continue' },
         kind: 'channel',
@@ -6908,7 +7446,10 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
       { provider: 'continue', profileId: configuredProfileId },
-      'C:\\ProjectWorkspace'
+      expect.objectContaining({
+        kind: 'local',
+        rootPath: 'C:\\ProjectWorkspace'
+      })
     )
     expect(
       harness.assistantDatabase.getOrCreateRemoteConversation

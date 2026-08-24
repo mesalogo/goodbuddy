@@ -4,6 +4,8 @@ dist/
 coverage/
 .vite/
 .runtime-resources/
+.remote-runtime-resources/
+.agent-resources/
 *.log
 *.tsbuildinfo
 .env

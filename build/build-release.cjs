@@ -5,6 +5,7 @@ const {
   createWriteStream,
   existsSync,
   closeSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -35,6 +36,16 @@ const {
 } = require('@electron/asar')
 const { Zip, ZipDeflate } = require('fflate')
 const { sha256File } = require('./file-hash.cjs')
+const {
+  detectBinaryArchitecture
+} = require('./binary-architecture.cjs')
+const {
+  verifyAgentBundleMatrix
+} = require('./agent-bundle.cjs')
+const {
+  supportedArchitectures: remoteRuntimeArchitectures,
+  verifyBundleDirectory: verifyRemoteRuntimeBundle
+} = require('./remote-runtime-bundle.cjs')
 
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(
@@ -45,6 +56,11 @@ const packageLock = JSON.parse(
 )
 const productName = packageJson.build?.productName ?? packageJson.name
 const releaseRoot = join(root, 'dist', 'release')
+const releaseBuilderConfig = join(
+  root,
+  'build',
+  'electron-builder.release.cjs'
+)
 const manifestName = 'release-manifest.json'
 const portableMarkerName = '.goodbuddy-portable.json'
 const harnessHostEntry =
@@ -328,6 +344,8 @@ function buildElectronBuilderArguments(options, outputDirectory) {
   )]
   const builderArguments = [
     join(root, 'node_modules', 'electron-builder', 'cli.js'),
+    '--config',
+    releaseBuilderConfig,
     definition.builderFlag,
     ...builderFormats,
     `--${options.arch}`,
@@ -382,59 +400,101 @@ function electronBuilderEnvironment(
   return builderEnvironment
 }
 
-function detectBinaryArchitecture(buffer) {
-  if (
-    buffer.length >= 64 &&
-    buffer[0] === 0x4d &&
-    buffer[1] === 0x5a
-  ) {
-    const peOffset = buffer.readUInt32LE(0x3c)
-    if (
-      peOffset + 6 <= buffer.length &&
-      buffer.toString('ascii', peOffset, peOffset + 4) === 'PE\0\0'
-    ) {
-      const machine = buffer.readUInt16LE(peOffset + 4)
-      if (machine === 0x8664) {
-        return 'x64'
+function verifyReleaseAgentResources(
+  projectRoot = root,
+  verifyBundleMatrix = verifyAgentBundleMatrix
+) {
+  verifyBundleMatrix(
+    join(projectRoot, '.agent-resources'),
+    { projectRoot }
+  )
+}
+
+function verifyRemoteRuntimeBundleMatrix(
+  resourcesRoot,
+  options = {}
+) {
+  const projectRoot = options.projectRoot ?? root
+  const verifyBundleDirectory =
+    options.verifyBundleDirectory ?? verifyRemoteRuntimeBundle
+  const registry = readJsonFile(
+    options.registryPath ??
+      join(projectRoot, 'resources', 'agent-release-keys.json'),
+    'Remote Runtime trusted key registry'
+  )
+  const lock = readJsonFile(
+    options.lockPath ??
+      join(projectRoot, 'remote-runtime-lock.json'),
+    'Remote Runtime lock'
+  )
+  for (const architecture of remoteRuntimeArchitectures) {
+    const runtimeRoot = join(
+      resourcesRoot,
+      `linux-${architecture}`,
+      'opencode'
+    )
+    let rootStat
+    try {
+      rootStat = lstatSync(runtimeRoot)
+    } catch (error) {
+      throw new Error(
+        `Remote Runtime bundle root is missing for ${architecture}: ${runtimeRoot}`,
+        { cause: error }
+      )
+    }
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+      throw new Error(
+        `Remote Runtime bundle root must be a real directory for ${architecture}: ${runtimeRoot}`
+      )
+    }
+    let entries
+    try {
+      entries = readdirSync(runtimeRoot, { withFileTypes: true })
+    } catch (error) {
+      throw new Error(
+        `Remote Runtime bundle root cannot be read for ${architecture}: ${runtimeRoot}`,
+        { cause: error }
+      )
+    }
+    for (const entry of entries) {
+      if (!/^[a-f0-9]{64}$/u.test(entry.name)) {
+        throw new Error(
+          `Remote Runtime bundle root contains an unexpected entry for ${architecture}: ${entry.name}`
+        )
       }
-      if (machine === 0xaa64) {
-        return 'arm64'
+      const entryStat = lstatSync(join(runtimeRoot, entry.name))
+      if (entryStat.isSymbolicLink() || !entryStat.isDirectory()) {
+        throw new Error(
+          `Remote Runtime bundle entry must be a real directory for ${architecture}: ${entry.name}`
+        )
       }
     }
+    if (entries.length !== 1) {
+      throw new Error(
+        `Remote Runtime bundle root must contain exactly one digest directory for ${architecture}; found ${entries.length}`
+      )
+    }
+    verifyBundleDirectory(
+      join(runtimeRoot, entries[0].name),
+      {
+        projectRoot,
+        architecture,
+        registry,
+        lock,
+        verificationEnvironment: 'production'
+      }
+    )
   }
-  if (
-    buffer.length >= 20 &&
-    buffer[0] === 0x7f &&
-    buffer.toString('ascii', 1, 4) === 'ELF'
-  ) {
-    const machine =
-      buffer[5] === 2
-        ? buffer.readUInt16BE(18)
-        : buffer.readUInt16LE(18)
-    if (machine === 62) {
-      return 'x64'
-    }
-    if (machine === 183) {
-      return 'arm64'
-    }
-  }
-  if (buffer.length >= 8) {
-    const littleMagic = buffer.readUInt32LE(0)
-    const bigMagic = buffer.readUInt32BE(0)
-    const cpuType =
-      littleMagic === 0xfeedfacf
-        ? buffer.readUInt32LE(4)
-        : bigMagic === 0xfeedfacf
-          ? buffer.readUInt32BE(4)
-          : undefined
-    if (cpuType === 0x01000007) {
-      return 'x64'
-    }
-    if (cpuType === 0x0100000c) {
-      return 'arm64'
-    }
-  }
-  return undefined
+}
+
+function verifyReleaseRemoteRuntimeResources(
+  projectRoot = root,
+  verifyBundleMatrix = verifyRemoteRuntimeBundleMatrix
+) {
+  verifyBundleMatrix(
+    join(projectRoot, '.remote-runtime-resources'),
+    { projectRoot }
+  )
 }
 
 function binaryArchitecture(filePath) {
@@ -1086,6 +1146,34 @@ function verifyUnpackedOutput(directory, options) {
   assertFile(applicationExecutable, '应用主程序')
   assertFile(join(resources, 'app.asar'), '应用 ASAR')
   assertFile(join(resources, 'release-notes.json'), '版本更新说明')
+  assertFile(
+    join(resources, 'agent-release-keys.json'),
+    'Agent 受信任签名密钥'
+  )
+  assertFile(
+    join(resources, 'agent-runtime-lock.json'),
+    'Agent Runtime 锁定清单'
+  )
+  verifyAgentBundleMatrix(join(resources, 'agents'), {
+    projectRoot: root,
+    registryPath: join(resources, 'agent-release-keys.json'),
+    lockPath: join(resources, 'agent-runtime-lock.json')
+  })
+  assertFile(
+    join(resources, 'remote-runtime-lock.json'),
+    'Remote Runtime 锁定清单'
+  )
+  verifyRemoteRuntimeBundleMatrix(
+    join(resources, 'remote-runtimes'),
+    {
+      projectRoot: root,
+      registryPath: join(
+        resources,
+        'agent-release-keys.json'
+      ),
+      lockPath: join(resources, 'remote-runtime-lock.json')
+    }
+  )
   assertFile(runtimeExecutable, 'OpenCode Runtime')
   assertFile(
     join(resources, 'runtimes', 'continue', 'dist', 'index.js'),
@@ -1655,6 +1743,8 @@ async function main(argv = process.argv.slice(2)) {
     )
   }
 
+  verifyReleaseAgentResources()
+  verifyReleaseRemoteRuntimeResources()
   rmSync(stagingDirectory, { recursive: true, force: true })
   let cleanupTargetDependencies = () => undefined
   try {
@@ -1724,6 +1814,9 @@ module.exports = {
   verifyArtifacts,
   verifyArtifactSignature,
   verifyPortableZip,
+  verifyReleaseAgentResources,
+  verifyReleaseRemoteRuntimeResources,
+  verifyRemoteRuntimeBundleMatrix,
   writeManifest
 }
 

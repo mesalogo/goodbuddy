@@ -212,6 +212,29 @@ import {
 } from '../shared/runtime-extension-contracts'
 import type { RuntimeExtensionStore } from './agent/runtime-extension-store'
 import type { ShortcutSettingsService } from './shortcut-settings-service'
+import {
+  sshDirectoryBrowseRequestSchema,
+  sshDirectoryBrowseResultSchema,
+  sshHostCandidateRequestSchema,
+  sshHostDraftInspectionRequestSchema,
+  sshHostRequestSchema,
+  sshHostRemoteEnvironmentSchema,
+  sshHostValidationRequestSchema
+} from '../shared/ssh-host-contracts'
+import type { SshHostService } from './ssh/ssh-host-service'
+import type { SshHostDirectoryBrowser } from './ssh/ssh-host-directory-browser'
+import type {
+  SshHostRemoteEnvironmentInspector
+} from './ssh/ssh-host-remote-environment'
+import {
+  remoteProjectSaveProgressSchema,
+  remoteProjectSaveRequestSchema,
+  type RemoteProjectSaveProgress
+} from '../shared/remote-project-candidate-contracts'
+import type {
+  RemoteProjectSaveOwner,
+  RemoteProjectSaveService
+} from './remote-agent/remote-project-save-service'
 import type { ContextManager } from './context-manager'
 import type { KnowledgeService } from './knowledge/knowledge-service'
 import {
@@ -282,6 +305,11 @@ import {
   analyzeMagicTodo
 } from './magic-notes/magic-note-analyzer'
 import { AgentEventBuffer } from './agent-event-buffer'
+import {
+  ExecutionSpaceResolver,
+  REMOTE_EXECUTION_SPACE_UNAVAILABLE
+} from './execution-space'
+import { assertRemoteRuntimeRequestValidated } from './execution-space/remote-runtime-request-validation'
 
 const requestIdSchema = z.string().uuid()
 const BACKGROUND_QUESTION_REJECTION_TIMEOUT_MS = 1_000
@@ -660,6 +688,22 @@ function assertTrustedSender(
   }
 }
 
+export function sendRemoteProjectSaveProgress(
+  owner: RemoteProjectSaveOwner,
+  progress: RemoteProjectSaveProgress
+): void {
+  const webContents = owner as RemoteProjectSaveOwner & {
+    send?: (channel: string, payload: unknown) => void
+  }
+  if (owner.isDestroyed() || typeof webContents.send !== 'function') {
+    return
+  }
+  webContents.send(
+    ipcChannels.remoteProjectSaveProgress,
+    remoteProjectSaveProgressSchema.parse(progress)
+  )
+}
+
 async function readArtifactImportFile(
   path: string,
   maximumBytes: number,
@@ -921,6 +965,12 @@ export function registerIpcHandlers(
   goodbuddyConfigService?: GoodBuddyConfigService,
   runtimeExtensionStore?: RuntimeExtensionStore,
   shortcutSettingsService?: ShortcutSettingsService,
+  sshHostService?: SshHostService,
+  executionSpaceResolver?: ExecutionSpaceResolver,
+  remoteProjectSaveService?: RemoteProjectSaveService,
+  sshHostDirectoryBrowser?: SshHostDirectoryBrowser,
+  sshHostRemoteEnvironmentInspector?:
+    SshHostRemoteEnvironmentInspector,
   embeddingModelManager?: EmbeddingModelManager & {
     importArchive?(
       modelId: string,
@@ -966,6 +1016,7 @@ export function registerIpcHandlers(
     { requestId: string; runtime: AgentRuntime }
   >()
   const heartbeatControllers = new Set<AbortController>()
+  let activeSshDirectoryBrowse: AbortController | undefined
   let shuttingDown = false
   let executionPaused = false
   let clearLocalDataOperation: Promise<void> | undefined
@@ -987,6 +1038,8 @@ export function registerIpcHandlers(
   const executionTracker = createPromiseTracker()
   const maintenanceTracker = createPromiseTracker()
   const trackExecution = executionTracker.track
+  const spaceResolver: ExecutionSpaceResolver =
+    executionSpaceResolver ?? new ExecutionSpaceResolver()
   const registerHandler = (
     channel: Parameters<typeof ipcMain.handle>[0],
     listener: Parameters<typeof ipcMain.handle>[1],
@@ -1002,17 +1055,28 @@ export function registerIpcHandlers(
     })
   }
   const resolveRequestRuntime = async (
-    request: Pick<AgentRequest, 'projectId' | 'runtimeSelection'> & {
+    request: Pick<
+      AgentRequest,
+      'projectId' | 'runtimeSelection' | 'workMode'
+    > & {
       workspaceOverride?: string
       followConfiguredAgentRuntime?: boolean
     }
   ): Promise<AgentRuntime> => {
-    const projectWorkspace =
-      request.workspaceOverride?.trim() ??
-      (request.projectId
-        ? assistantDatabase.getProject(request.projectId).rootPath.trim()
-        : '')
-    if (!selectedRuntimes || (!request.runtimeSelection && !projectWorkspace)) {
+    const executionSpace = request.projectId
+      ? spaceResolver.resolveProject(
+          assistantDatabase.getProject(request.projectId)
+        )
+      : request.workspaceOverride?.trim()
+        ? spaceResolver.resolveLocal(request.workspaceOverride.trim())
+        : undefined
+    if (executionSpace?.kind === 'ssh' && !selectedRuntimes) {
+      throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
+    }
+    if (
+      !selectedRuntimes ||
+      (!request.runtimeSelection && !executionSpace)
+    ) {
       return runtime
     }
     let selection =
@@ -1023,9 +1087,15 @@ export function registerIpcHandlers(
         selection
       )
     }
-    return projectWorkspace
-      ? selectedRuntimes.getRuntime(selection, projectWorkspace)
-      : selectedRuntimes.getRuntime(selection)
+    if (executionSpace?.kind === 'ssh') {
+      const workMode = normalizeInteractiveWorkMode(request.workMode)
+      assertRemoteRuntimeRequestValidated(
+        executionSpace,
+        selection,
+        workMode
+      )
+    }
+    return selectedRuntimes.getRuntime(selection, executionSpace)
   }
   const channels = Object.values(ipcChannels).filter(
     (channel) =>
@@ -1036,6 +1106,7 @@ export function registerIpcHandlers(
       channel !== ipcChannels.versionCheckResult &&
       channel !== ipcChannels.weixinBindingChanged &&
       channel !== ipcChannels.remoteChannelActivity &&
+      channel !== ipcChannels.remoteProjectSaveProgress &&
       channel !== ipcChannels.conversationsChanged &&
       channel !== ipcChannels.windowMaximizedChanged
   )
@@ -1222,7 +1293,8 @@ export function registerIpcHandlers(
     {
       summarize: async (request) => {
         const requestRuntime = await resolveRequestRuntime({
-          projectId: request.projectId
+          projectId: request.projectId,
+          workMode: 'ask'
         })
         if (requestRuntime.capability === 'image-generation') {
           throw new Error('智能心跳需要文本模型，当前默认连接仅支持图像生成')
@@ -1675,6 +1747,7 @@ export function registerIpcHandlers(
             remoteContext?.runtimeSelection ??
             schedule.runtimeSelection,
           workspaceOverride: remoteContext?.rootPath,
+          workMode: schedule.workMode,
           followConfiguredAgentRuntime:
             remoteContext?.followConfiguredAgentRuntime
         }))
@@ -2457,6 +2530,7 @@ export function registerIpcHandlers(
           projectId: project.id,
           runtimeSelection,
           workspaceOverride: project.rootPath,
+          workMode: parsed.workMode,
           followConfiguredAgentRuntime: true
         })
         executionStatus = await executionRuntime.getStatus()
@@ -2818,10 +2892,13 @@ export function registerIpcHandlers(
         throw new Error('请求包含不存在的知识库')
       }
     }
-    const selectedRuntime = await resolveRequestRuntime(parsedInput)
     const normalizedWorkMode = normalizeInteractiveWorkMode(
       parsedInput.workMode
     )
+    const selectedRuntime = await resolveRequestRuntime({
+      ...parsedInput,
+      workMode: normalizedWorkMode
+    })
     const agentRuntimeSelected = isAgentRuntime(selectedRuntime)
     const parsedRequest = {
       ...parsedInput,
@@ -2877,11 +2954,19 @@ export function registerIpcHandlers(
       applicationSettings?.magicNotesEnabled ?? false
     const webSearchEnabled =
       webSearchCapability?.enabled === true
+    const configProject = enrichedRequest.projectId
+      ? assistantDatabase.getProject(enrichedRequest.projectId)
+      : undefined
+    const configExecutionSpace = configProject
+      ? spaceResolver.resolveProject(configProject)
+      : undefined
     const configWorkspacePath =
       configAccess === 'none'
         ? undefined
-        : enrichedRequest.projectId
-          ? assistantDatabase.getProject(enrichedRequest.projectId).rootPath
+        : configExecutionSpace
+          ? configExecutionSpace.kind === 'local'
+            ? configExecutionSpace.rootPath
+            : undefined
           : resolvedRuntimeSettings?.workspacePath
     const controller = new AbortController()
     const scopedCapability = grantScopedDataCapability({
@@ -3563,9 +3648,15 @@ export function registerIpcHandlers(
         settings,
         request.runtimeSelection
       )
-      const workspacePath = request.projectId
-        ? assistantDatabase.getProject(request.projectId).rootPath
-        : selected.settings.workspacePath
+      const executionSpace = request.projectId
+        ? spaceResolver.resolveProject(
+            assistantDatabase.getProject(request.projectId)
+          )
+        : spaceResolver.resolveLocal(selected.settings.workspacePath)
+      if (executionSpace.kind === 'ssh') {
+        throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
+      }
+      const workspacePath = executionSpace.rootPath
       const controller = new AbortController()
       const timeout = setTimeout(
         () =>
@@ -3596,7 +3687,7 @@ export function registerIpcHandlers(
           }
           outcome = await selectedRuntimes.compactConversation(
             trustedRequest,
-            workspacePath,
+            executionSpace,
             controller.signal
           )
         } else {
@@ -3725,13 +3816,17 @@ export function registerIpcHandlers(
           ? { profileId: request.profileId }
           : {})
       }
-      const workspacePath = request.projectId
-        ? assistantDatabase.getProject(request.projectId).rootPath
-        : (await settingsStore.getResolvedSettings()).workspacePath
+      const executionSpace = request.projectId
+        ? spaceResolver.resolveProject(
+            assistantDatabase.getProject(request.projectId)
+          )
+        : spaceResolver.resolveLocal(
+            (await settingsStore.getResolvedSettings()).workspacePath
+          )
       return runtimeNativeSnapshotSchema.parse(
         await selectedRuntimes.getNativeSnapshot(
           selection,
-          workspacePath
+          executionSpace
         )
       )
     }
@@ -3949,6 +4044,130 @@ export function registerIpcHandlers(
         throw new Error(status.detail)
       }
       return status
+    }
+  )
+
+  registerHandler(ipcChannels.sshHostsGet, (event) => {
+    assertTrustedSender(event, window)
+    if (!sshHostService) {
+      throw new Error('SSH 主机设置服务不可用')
+    }
+    return sshHostService.getSnapshot()
+  })
+
+  registerHandler(
+    ipcChannels.sshHostsRemove,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!sshHostService) {
+        throw new Error('SSH 主机设置服务不可用')
+      }
+      const hostId = sshHostRequestSchema.parse(input).hostId
+      const referencingProjectIds =
+        assistantDatabase.listProjectIdsReferencingSshHost(hostId)
+      if (referencingProjectIds.length > 0) {
+        throw new Error('SSH 主机仍被项目引用，无法删除')
+      }
+      return sshHostService.remove(hostId)
+    }
+  )
+
+  registerHandler(
+    ipcChannels.sshHostsInspectDraftKey,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!sshHostService) {
+        throw new Error('SSH 主机设置服务不可用')
+      }
+      return sshHostService.inspectDraftHostKey(
+        sshHostDraftInspectionRequestSchema.parse(input)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.sshHostsDiscardCandidate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!sshHostService) {
+        throw new Error('SSH 主机设置服务不可用')
+      }
+      sshHostService.discardCandidate(
+        sshHostCandidateRequestSchema.parse(input).candidateId
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.sshHostsValidateAndSave,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!sshHostService) {
+        throw new Error('SSH 主机设置服务不可用')
+      }
+      return sshHostService.validateAndSave(
+        sshHostValidationRequestSchema.parse(input)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.sshHostsRemoteEnvironment,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!sshHostRemoteEnvironmentInspector) {
+        throw new Error('SSH 远端运行环境服务不可用')
+      }
+      const hostId = sshHostRequestSchema.parse(input).hostId
+      return sshHostRemoteEnvironmentSchema.parse(
+        await sshHostRemoteEnvironmentInspector.inspect(hostId)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.sshHostsBrowseDirectories,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!sshHostDirectoryBrowser) {
+        throw new Error('SSH 远端目录浏览服务不可用')
+      }
+      const request = sshDirectoryBrowseRequestSchema.parse(input)
+      activeSshDirectoryBrowse?.abort(
+        new DOMException(
+          'SSH directory browse replaced',
+          'AbortError'
+        )
+      )
+      const controller = new AbortController()
+      activeSshDirectoryBrowse = controller
+      try {
+        return sshDirectoryBrowseResultSchema.parse(
+          await sshHostDirectoryBrowser.listDirectories(
+            request.hostId,
+            request.path,
+            controller.signal
+          )
+        )
+      } finally {
+        if (activeSshDirectoryBrowse === controller) {
+          activeSshDirectoryBrowse = undefined
+        }
+      }
+    }
+  )
+
+  registerHandler(
+    ipcChannels.sshHostsCancelDirectoryBrowse,
+    (event) => {
+      assertTrustedSender(event, window)
+      activeSshDirectoryBrowse?.abort(
+        new DOMException(
+          'SSH directory browse cancelled',
+          'AbortError'
+        )
+      )
+      activeSshDirectoryBrowse = undefined
     }
   )
 
@@ -4750,6 +4969,47 @@ export function registerIpcHandlers(
   )
 
   registerHandler(
+    ipcChannels.remoteProjectActivate,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!remoteProjectSaveService) {
+        throw new Error('远程项目验证服务不可用')
+      }
+      const result = await remoteProjectSaveService.activate(
+        event.sender,
+        assistantIdSchema.parse(input)
+      )
+      return result
+    }
+  )
+
+  registerHandler(
+    ipcChannels.remoteProjectSave,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      if (!remoteProjectSaveService) {
+        throw new Error('远程项目验证服务不可用')
+      }
+      const result = await remoteProjectSaveService.save(
+        event.sender,
+        remoteProjectSaveRequestSchema.parse(input)
+      )
+      return result
+    }
+  )
+
+  registerHandler(
+    ipcChannels.remoteProjectCancelCurrent,
+    (event) => {
+      assertTrustedSender(event, window)
+      if (!remoteProjectSaveService) {
+        throw new Error('远程项目验证服务不可用')
+      }
+      remoteProjectSaveService.cancelCurrent(event.sender)
+    }
+  )
+
+  registerHandler(
     ipcChannels.projectsUpdate,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
@@ -5021,7 +5281,14 @@ export function registerIpcHandlers(
       const project = assistantDatabase.getProject(
         assistantIdSchema.parse(input)
       )
-      return getWorkspaceChanges(project.rootPath)
+      const executionSpace = spaceResolver.resolveProject(project)
+      try {
+        return await getWorkspaceChanges(
+          executionSpace.workspaceAccess
+        )
+      } finally {
+        await executionSpace.workspaceAccess.dispose()
+      }
     }
   )
   registerHandler(
@@ -5030,7 +5297,15 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const value = workspaceDirectoryRequestSchema.parse(input)
       const project = assistantDatabase.getProject(value.projectId)
-      return listWorkspaceDirectory(project.rootPath, value.path)
+      const executionSpace = spaceResolver.resolveProject(project)
+      try {
+        return await listWorkspaceDirectory(
+          executionSpace.workspaceAccess,
+          value.path
+        )
+      } finally {
+        await executionSpace.workspaceAccess.dispose()
+      }
     }
   )
   registerHandler(
@@ -5039,7 +5314,15 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const value = workspaceFileRequestSchema.parse(input)
       const project = assistantDatabase.getProject(value.projectId)
-      return readWorkspaceFile(project.rootPath, value.path)
+      const executionSpace = spaceResolver.resolveProject(project)
+      try {
+        return await readWorkspaceFile(
+          executionSpace.workspaceAccess,
+          value.path
+        )
+      } finally {
+        await executionSpace.workspaceAccess.dispose()
+      }
     }
   )
   registerHandler(
@@ -5048,11 +5331,18 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const value = workspaceOpenPathRequestSchema.parse(input)
       const project = assistantDatabase.getProject(value.projectId)
-      const targetPath = await resolveWorkspaceEntryPath(
-        project.rootPath,
-        value.path,
-        value.type
-      )
+      const executionSpace = spaceResolver.resolveProject(project)
+      spaceResolver.assertLocal(executionSpace)
+      let targetPath: string
+      try {
+        targetPath = await resolveWorkspaceEntryPath(
+          executionSpace.rootPath,
+          value.path,
+          value.type
+        )
+      } finally {
+        await executionSpace.workspaceAccess.dispose()
+      }
       const error = await shell.openPath(targetPath)
       if (error) {
         throw new Error(
@@ -6538,7 +6828,16 @@ export function registerIpcHandlers(
       controller.abort(new Error('应用正在退出'))
     }
     heartbeatControllers.clear()
+    activeSshDirectoryBrowse?.abort(
+      new DOMException(
+        'SSH directory browse disposed',
+        'AbortError'
+      )
+    )
+    activeSshDirectoryBrowse = undefined
     speechTranscriptionService?.dispose()
+    const remoteProjectSaveCleanup =
+      remoteProjectSaveService?.dispose()
     const speechModelCleanup = speechModelManager
       ?.getSnapshot()
       .then((snapshot) => {
@@ -6567,6 +6866,7 @@ export function registerIpcHandlers(
     await Promise.allSettled([
       channelCleanup,
       speechModelCleanup,
+      remoteProjectSaveCleanup,
       remoteDelegation?.stop(),
       wechatBindingController?.stop(),
       executionTracker.drain(),

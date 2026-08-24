@@ -5,10 +5,10 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 设计中 |
-| 版本 | 0.4 |
-| 日期 | 2026-08-22 |
+| 版本 | 0.5 |
+| 日期 | 2026-08-21 |
 | 适用产品 | GoodBuddy 桌面端 |
-| 相关设计 | [统一界面设计系统](../../../UI-DESIGN.md) |
+| 相关设计 | [统一界面设计系统](../../../UI-DESIGN.md)、[SSH 远程主机与 GoodBuddy Agent 稳定终态设计](../../architecture/remote-host-and-goodbuddy-agent-design.md) |
 | 相关能力 | [会话监督](../supervision/conversation-supervision-prd.md)、[自动化平台](../../architecture/automation-platform-architecture.md)、[长期助手路线图](../../roadmap/long-term-assistant-roadmap.md) |
 
 ## 1. 背景
@@ -52,7 +52,7 @@ Runtime 统一抽象为“执行空间”。
 执行空间描述工作区、终端、受管进程和 Agent Runtime 实际运行的位置：
 
 ```ts
-type ExecutionSpace =
+type ExecutionSpaceSelection =
   | {
       kind: 'local'
       rootPath?: string
@@ -65,7 +65,9 @@ type ExecutionSpace =
 ```
 
 执行空间可以来自当前项目，也可以由用户在工作栏中临时选择。临时选择不会静默修改项目
-设置，只有用户显式保存时才成为项目默认值。
+设置，也不直接授予文件、终端或 Runtime 能力。Main 必须先把选择草稿验证为绑定窗口、
+controller、Host/Workspace identity、信任 revision、能力和 lease 的 opaque 临时 Grant；
+后续 IPC 只引用 Grant ID。只有用户显式保存并重新通过 Project 候选验证时才成为项目默认值。
 
 ## 3. 核心产品原则
 
@@ -132,7 +134,8 @@ Runtime
 - 当前 Runtime 不支持后台 Job 时，Runtime 能力仍可发现；打开后说明当前可监督的内容。
 - 当前执行空间没有 Git 仓库时，工作区文件功能仍可使用，Git 区域显示不可用原因。
 - 没有活动进程时，进程面板提供创建终端或启动 Runtime 的入口。
-- 没有项目时，终端和工作区允许用户选择本机目录或远程主机。
+- 没有项目时，终端和工作区允许用户选择本机目录或远程主机，但必须先取得有界临时
+  Execution Space Grant，不能把可选路径直接传给文件、Git、Process 或 Runtime。
 - 监督未启用时，监督面板提供目标、模式和“开始监督”，而不是隐藏能力。
 
 不得渲染成排没有解释的禁用按钮，也不得把“进程连通”描述为已经支持完整原生监督。
@@ -175,8 +178,8 @@ Runtime
 - 不允许 Agent 未经现有 Runtime 边界直接向用户终端注入输入。
 - 不自动执行 HTML 中的脚本或访问网络。
 - 不让监督器自动替用户发言、批准工具、扩大范围或修改安全策略。
-- 不在首期承诺网络断开后远程任务一定可恢复。
-- 不在首期支持任意 ProxyCommand、任意端口转发或 SSH Agent Forwarding。
+- 不提供以 SSH 连接为生命周期的临时远程 Agent；远程执行必须由用户级常驻 Daemon 承载。
+- 不支持任意 ProxyCommand、任意端口转发或 SSH Agent Forwarding。
 - 不要求所有 Runtime 提供相同的 Subagent、Job、Hook 或会话能力。
 
 ## 6. 信息架构
@@ -285,6 +288,8 @@ Conversation，默认 Execute，并持续显示 Runtime、Project、工作目录
 
 Runtime 能力统一监督直连模型、OpenCode、Continue、DeepSeek Harness 和后续 Runtime。
 能力在目录中稳定可发现，打开的面板实例依据所选 Runtime 的真实能力显示状态。
+远程实现先只交付 OpenCode 官方 ACP 闭环；Continue 与 DeepSeek Harness 后续复用同一
+面板和通道契约。产品不为并行建设多套后端而增加用户可见模式或临时入口。
 
 共同区域：
 
@@ -322,7 +327,7 @@ Runtime 能力统一监督直连模型、OpenCode、Continue、DeepSeek Harness 
 进程面板只展示 GoodBuddy 创建、托管或明确接管的进程：
 
 - 用户终端 Shell。
-- Runtime Host、Server、Utility 和远程 Helper。
+- Runtime Host、Server、Utility 和远程 GoodBuddy Agent。
 - Runtime 后台 Job。
 - 用户通过工作栏显式启动的长运行命令。
 - 浏览器或自动化中属于 GoodBuddy 的受管子进程摘要。
@@ -354,7 +359,7 @@ Renderer 不接收任意系统 PID 控制能力。控制动作引用 Main 签发
 - 显式打开、下载副本或在终端中打开。
 - HTML 文件的源码与安全预览。
 
-本机和远程访问都必须由 Main 或远程 Helper 在对应文件系统上执行路径规范化、相对路径和
+本机和远程访问都必须由 Main 或远程 GoodBuddy Agent 在对应文件系统上执行路径规范化、相对路径和
 符号链接边界检查。Renderer 只能提交受约束的相对路径和已授权范围 ID。
 
 ### 7.7 浏览器
@@ -463,6 +468,11 @@ type WorkbarPanelInstance = {
 
 ## 9. 主机管理与远程执行空间
 
+本节定义产品入口和用户行为。Host Key、凭据、远程 Agent 协议、模型请求代理、签名更新、
+断线和 Runtime 适配的技术边界以
+[SSH 远程主机与 GoodBuddy Agent 稳定终态设计](../../architecture/remote-host-and-goodbuddy-agent-design.md)
+为准。
+
 ### 9.1 设置入口
 
 设置中心增加“主机与远程执行”分类，管理：
@@ -470,11 +480,42 @@ type WorkbarPanelInstance = {
 - 主机名称、地址、端口和用户名。
 - 认证方式和凭据配置状态。
 - Host Key 算法与 SHA-256 指纹。
-- 连接测试、远程系统和架构。
-- Helper、Runtime 和能力状态。
+- 引导式身份/认证验证、远程系统和架构。
+- GoodBuddy Agent、Runtime 和能力状态。
 - 删除、重新验证或更新 Host Key。
 
 主机配置是全局资源。项目或工作栏只引用主机 ID，不能复制凭据。
+
+当前实施状态：设置中心已经实现主机 CRUD 和模态验证向导。新增或目标/认证编辑依次完成
+连接信息、认证前 Host Key 核对、密码/系统 SSH Agent 认证和平台/架构/Shell/Home 有界
+探针，全部成功后才原子保存主机、加密凭据和完整 Host Key。认证失败可在弹窗内修改凭据
+重试；取消或失败不保留新主机。Key 变化显示旧/新指纹并要求显式高风险确认。项目创建和
+设置现可选择托管 SSH、已保存 Host、远端工作目录、OpenCode 和 Ask/Execute，不要求
+额外 trust tier 或 consent checklist。候选完成签名 Agent/Runtime、Workspace、ACP、模型桥
+和文本模型 profile 验证后原子提交。私钥导入仍未开放。旧流程已保存但
+没有成功探针记录的主机继续读取，但在完成新向导前显示为“需要重新验证”。
+
+应用重启后固定进入项目列表中的第一个普通本地项目，不自动激活上次远程项目。用户主动
+打开已有托管 SSH 项目时，Main 会用数据库中的项目字段重新执行同一套
+Host/Agent/Workspace/Runtime 验证。桌面版本携带的 Agent 或 Runtime identity 已变化时，
+先 side-by-side 安装新候选，全部成功后再原子刷新项目 evidence 并切换当前项目；失败保留
+此前项目和安装绑定，不由 Renderer 用旧草稿重建更新请求。同一 Renderer 对同一项目的
+重复激活共享一个操作，不会并行启动第二次保存。
+主动打开期间，项目切换器在原位置展示 Host、Agent、Workspace、Runtime、Saving
+五个阶段及原生 `progressbar` 语义；用户可以取消，项目切换、创建和设置入口在操作结束前
+保持禁用。成功后才提交项目选择，失败或取消继续保留此前项目。
+
+已保存 Host 的地址、用户或固定 Host Key 变化后，Main 关闭旧连接并定向退役该 Host 的
+Runtime 缓存。当前项目引用该 Host 时，设置保存成功会立即运行上述完整激活流程并刷新
+项目验证；其他项目在下次选择时刷新。用户再次选择当前 SSH 项目也会执行完整激活，
+不能因为项目已经选中而跳过验证。从 Host 保存到项目成功激活之间，项目持续保持需要
+重新连接状态；失败或取消不会重新开放 Composer。已由 Main 派发的用户排队消息退回原
+持久队列，不生成失败消息、不丢失附件，并在成功激活后的 queue-ready 通知中继续派发。
+
+新建托管 SSH 项目时，远端工作目录既可手工输入，也可通过文件夹按钮打开 Main 管理的
+只读、有界 SFTP 目录选择器。选择器从 SSH 账号 Home 或当前有效绝对路径开始，只返回目录，
+支持上级、刷新、取消和选择当前目录；Host 变化、连接错误或取消都保留草稿，选择结果不会
+绕过正常项目验证与保存事务。
 
 ### 9.2 凭据和主机验证
 
@@ -482,33 +523,54 @@ type WorkbarPanelInstance = {
 - 导入私钥或密码时使用 Electron `safeStorage` 加密。
 - 凭据绑定主机 ID、地址、端口、用户名和认证类型。
 - Renderer 只接收 `credentialConfigured`、来源和错误状态。
-- 首次连接展示 Host Key 算法和 SHA-256 指纹，必须由用户显式接受。
+- Host Key 检查使用 Main 内五分钟有效、目标绑定的临时候选，检查阶段不接收认证凭据；
+  认证和系统探针成功前不持久化新增主机，取消或失败不留下主机或密码。
+- 首次连接必须在发送密码、私钥签名或 SSH Agent 签名前取得并展示 Host Key 算法和
+  SHA-256 指纹，由用户显式接受；持久化完整 Host Key 或可信 Host CA，不能只保存展示指纹。
 - Host Key 变化硬失败，并通过独立高风险流程替换。
 - 禁止 `StrictHostKeyChecking=no` 和默认 SSH Agent Forwarding。
-- 命令参数、URL、日志、SQLite 和 IPC 中不得出现私钥或密码。
+- 命令参数、URL、日志、SQLite 明文和 IPC 响应中不得出现私钥或密码；用户在受信任表单
+  输入的密码只通过严格校验的单用途 IPC 请求交给 Main，Renderer 不得读取已保存密码。
 
-### 9.3 远程 Helper
+### 9.3 远程 GoodBuddy Agent
 
-远程能力通过版本化 GoodBuddy Helper 提供：
+远程能力通过版本化 GoodBuddy Agent 提供：
 
-- 使用 SSH exec 或受控通道启动，不依赖字符串拼接 Shell 命令。
-- 安装到远程用户级受管目录，不要求 root。
-- 上传内容使用固定版本、大小和 SHA-256 校验，临时写入后原子替换。
-- 握手报告协议版本、系统、架构和能力。
+- 安装到远程当前用户的 GoodBuddy-owned 目录，不要求 root。首次连接先 attach，Agent
+  不存在或未运行时幂等 bootstrap 为 detached process，再重新 attach；不注册开机服务，
+  不依赖 systemd、D-Bus 或 `Linger=yes`。
+- SSH 负责 Host Key、认证、SFTP 安装和固定 `goodbuddy-agent attach` 中继；attach 只连接
+  用户私有 Unix socket。SSH relay 断开不终止 Agent 或活动 Runtime。
+- 上传内容使用应用内置公钥验证的签名 manifest，并校验组件版本、协议、平台、架构、大小
+  和 SHA-256。Agent 与 Runtime 各自维护版本，签名摘要标识精确工件；使用 side-by-side
+  安装、自检和健康切换，失败时不改变当前项目绑定。
+- 握手报告 installation、Daemon boot identity、协议、系统、架构、用户监督器和能力。
 - 在远程执行路径规范化、Git、文件、PTY、进程组和 Runtime 管理。
-- 对事件、日志、文件、帧、超时、并发和总传输量设置上限。
-- 断开或租约过期后终止孤儿进程。
+- 持久化有界 Agent 到 Main 输出；SSH 断开后 Agent 继续运行，同一 Agent 重连时只恢复
+  可确认的输出。Main 到 Runtime 的输入、工具、模型和 blob 请求不自动重放。
+- 对有副作用的请求使用稳定 operation ID 和 payload digest 去重；结果无法证明时进入
+  `outcome-unknown`，禁止自动重放。
+- 对事件、日志、journal、文件、帧、超时、并发、缓存和总传输量设置硬上限。
+- Daemon、Runtime、受管进程和用户终端分别具有明确 lease、取消、drain 和回收语义。
+- Agent 不可用或身份不匹配时远程执行失败，不退化为 SSH stdio Runtime。
 
-首期断线后把活动运行标记为 `interrupted`，撤销短期能力并要求用户重试；在事件序列、租约、
-重放和幂等附加完成前，不宣称可以无损恢复。
+Host Key、远端用户或目标变化会关闭旧连接，并使绑定旧 Host identity 的 Workspace 和
+Runtime 会话失效。产品不维护 T1/T2/T3 等附加信任层级。
 
 ### 9.4 远程 Runtime
 
 - Runtime 在远程执行空间内运行，不能让本机 Runtime 对远程路径进行伪本地操作。
-- Main 保持可信控制面，远程 Helper 只接受有范围、有期限的请求。
-- Ask 的只读限制在远程 Helper 和 Runtime 适配层共同强制。
-- Execute 继续经过 Runtime 工具策略、审批、取消、超时和审计。
-- 模型凭据优先留在 Main，通过仅绑定远程回环的 SSH 隧道和请求级代理提供。
+- Main 保持可信控制面，远程 GoodBuddy Agent 只接受有范围、有期限的请求。
+- GoodBuddy 控制协议负责 Agent、Workspace、Git、Process、Blob 和 Runtime supervision；
+  Runtime Session、stream、tool、permission、usage 和取消优先复用 ACP。
+- Ask 的只读限制在远程 GoodBuddy Agent 和 Runtime 适配层共同强制。
+- Execute 是用户对所选 SSH 账号完整权限的授权，直接以该账号可用的文件、进程、网络和
+  工具能力运行，不要求逐工具审批或第二个“受控执行”模式。取消、超时、输出上限和活动
+  记录继续保留。
+- GoodBuddy 模型凭据和 Provider URL 必须留在 Main。远程 Runtime 只获得不含凭据的模型
+  policy、私有 Unix socket、隔离 loopback endpoint 和 Prompt-bound blob channel；
+  Main 按 durable round、profile digest、调用次数、最坏输出 token 预留和最终 delivery ACK
+  代发，不得把原始 API Key 或认证头发送到远端。
 - 不向远程 Runtime 暴露通用本机 MCP、浏览器、文件系统或其他未分配能力。
 
 ## 10. Runtime 与进程统一生命周期
@@ -521,11 +583,13 @@ type ManagedLifecycleState =
   | 'running'
   | 'waiting_approval'
   | 'paused'
+  | 'reconciling'
   | 'stopping'
   | 'completed'
   | 'failed'
   | 'cancelled'
   | 'interrupted'
+  | 'outcome_unknown'
 ```
 
 每个 Runtime 会话、Task 级执行、终端或受管进程公开：
@@ -586,13 +650,16 @@ terminal_sessions
 managed_processes
 runtime_sessions
 runtime_jobs
+remote_agent_installations
+remote_operations
 ```
 
 其中：
 
 - 工作栏偏好只保存能力目录顺序、面板实例、停靠布局、尺寸和目标引用。
 - 主机表只保存非敏感元数据和加密凭据引用。
-- 活动终端和进程在应用重启时标记为中断，除非对应远程租约可验证恢复。
+- 应用重启后先通过远程 Daemon 的 journal、lease、boot identity 和 event cursor 核对活动
+  终端、进程与 Runtime；无法确认时标记 `interrupted` 或 `outcome_unknown`。
 - 日志使用有界环形缓冲或分页持久化，不能无限写入 SQLite。
 - Artifact 继续作为成果的权威实体，不把完整成果复制进工作栏状态。
 - 当前 Renderer `localStorage` 活动记录不能作为 Runtime、监督或进程的权威来源。
@@ -602,7 +669,7 @@ runtime_jobs
 Renderer 只通过显式方法访问：
 
 - 工作栏偏好和目标绑定。
-- 主机 CRUD、测试和 Host Key 确认。
+- 主机 CRUD、临时 Host Key 检查、验证并原子保存。
 - 终端创建、输入、调整大小、关闭和有界输出订阅。
 - 受管进程列表、日志和允许的控制动作。
 - Runtime Inspector 快照、事件和允许的控制动作。
@@ -653,7 +720,9 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - HTML、文件、目录、浏览器画面和远程传输沿用或收紧现有大小限制。
 - Runtime Snapshot 与事件流分离，重新打开时先取权威快照，再接增量事件。
 - 监督使用独立低优先级并发池和预算，不延迟前台回答。
-- 应用退出时停止新操作，取消订阅，关闭终端、隧道和 Helper，并在期限内标记未完成对象。
+- 应用退出时停止新操作并让用户选择取消、等待或 detach；关闭 SSH attach 不卸载或终止
+  用户级 GoodBuddy Agent Daemon。依赖 Main 模型网关、审批或本机工具的 Run 不能被描述为
+  可以无人值守继续。
 
 ## 15. 无障碍与响应式
 
@@ -667,6 +736,10 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - 文字缩放到 200% 时，当前目标、执行空间、风险状态和停止操作不能被裁切。
 
 ## 16. 分阶段实施
+
+本节只表示内部依赖顺序，不表示可以发布临时架构。SSH 远程执行只使用用户级 Daemon，
+不发布连接期 stdio Agent。OpenCode Ask、OpenCode Execute 和后续 Runtime 分别通过自身的
+安装、权限、取消和重连门槛后开放，未完成的能力继续显示不可用。
 
 ### 阶段 0：应用级工作栏壳层
 
@@ -703,15 +776,22 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 
 ### 阶段 4：SSH 主机与远程执行空间
 
-- 主机管理、加密凭据和 Host Key 固定。
-- Linux x64/arm64 Helper 安装与握手。
+- [x] 引导式主机管理、先验证后保存、密码安全存储、系统 SSH Agent、Host Key 固定和
+  有界系统探针。
+- [ ] 私钥与受限 OpenSSH config 导入。
+- 签名、side-by-side GoodBuddy Agent 安装和按需 detached Daemon。
+- SSH connection pool、固定 attach relay、Agent 控制协议、Agent 本地 ACP 日志和断线重连同步。
 - 远程工作区、Git、终端和受管进程。
-- 远程 Runtime 执行、取消、超时和审计。
-- 首期断线明确标记中断，不承诺恢复。
+- 先完成签名 OpenCode bundle、Ask bubblewrap、Execute 直接进程、官方 ACP channel、
+  Main 模型网关、取消、超时和活动记录。
+- OpenCode 闭环稳定后，Continue 与 DeepSeek Harness 复用相同面板和通道契约逐个接入。
+- 一次远程项目保存请求完成 Host/Agent/Workspace/Runtime 全量验证和 SQLite 原子提交。
+- 桌面更新后，用户主动首次打开远程项目时自动安装当前签名 Agent/Runtime，并在成功后原子刷新项目绑定；应用启动本身不连接远程项目。
+- SSH、Main、Daemon、Runtime 和远端重启后的核对、恢复与 `outcome_unknown`。
+- 支持平台的安装、Ask、Execute、取消和重连冒烟测试通过后开放对应 OpenCode 能力。
 
-### 阶段 5：恢复与扩展
+### 阶段 5：开放后的扩展
 
-- 远程租约、事件重放和幂等重连。
 - 更多远程系统和架构。
 - PDF、Office 和数据成果预览。
 - Conversation、Task 和实验的完整监督。
@@ -747,11 +827,16 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - [ ] Supervisor 不能自动发送消息、批准工具、切换工作模式或扩大范围。
 - [ ] SSH 首次连接和 Host Key 变化均经过明确验证流程。
 - [ ] 凭据不进入 Renderer、日志、SQLite 明文或命令参数。
+- [ ] Host 地址、用户或 Host Key 变化会关闭旧连接，并使旧 Workspace 和 Runtime 会话失效。
 
 ### 17.4 生命周期与恢复
 
 - [ ] Runtime、终端、Task 级执行和进程具有权威 Main 快照和有序增量事件。
 - [ ] 取消、终止、失败、断线和应用退出都有确定终态。
+- [ ] 远程执行只通过按需 detached Daemon 提供，SSH attach 断开不销毁 Daemon 状态。
+- [ ] 重连先恢复 event cursor 并查询 operation；有副作用操作不会自动重放，无法确认的
+  结果显示为 `outcome_unknown`。
+- [ ] Agent side-by-side 更新支持所需签名版本的健康切换，失败时保留旧项目绑定。
 - [ ] 切换跟随目标后不显示上一对象的过期状态。
 - [ ] 固定目标的订阅在页面切换后保持，关闭时正确释放。
 - [ ] 日志、终端、文件、成果和远程传输均有明确上限和背压。

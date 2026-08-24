@@ -8,6 +8,172 @@ export const settingsSections = {
     modelscope: 'ModelScope',
     'hugging-face': 'Hugging Face'
   },
+  sshHosts: {
+    loading: 'Loading SSH hosts…',
+    listLabel: 'SSH host list',
+    securityNotice:
+      'When a host is added or edited, GoodBuddy inspects its host key before sending credentials and running a bounded system probe. The host and encrypted password are saved only after every step succeeds.',
+    secureStorageUnavailable:
+      'System secure storage is unavailable, so SSH passwords cannot be added or replaced. System SSH Agent authentication remains available.',
+    empty: {
+      title: 'No SSH hosts configured',
+      description:
+        'Use the guided flow to verify the host identity, authenticate, and probe the remote system. Cancelled or failed hosts are not retained.'
+    },
+    fields: {
+      name: 'Host name',
+      hostname: 'Host address',
+      port: 'Port',
+      username: 'Username',
+      authentication: 'Authentication',
+      passwordAction: 'Password handling',
+      password: 'SSH password'
+    },
+    authentication: {
+      password: 'Password',
+      'system-agent': 'System SSH Agent'
+    },
+    passwordActions: {
+      keep: 'Keep saved password',
+      replace: 'Enter a new password'
+    },
+    passwordHelp:
+      'The password is used only for this authentication attempt. After validation succeeds, the Main process writes it to system secure storage. It is never written to command-line arguments, logs, or regular settings files.',
+    credentialSources: {
+      none: 'Not configured',
+      encrypted: 'Encrypted by system secure storage',
+      'system-agent': 'Using the system SSH Agent',
+      unreadable: 'Saved, but currently unreadable'
+    },
+    status: {
+      credential: 'Credential',
+      validation: 'Validation',
+      validated: 'Validated and saved',
+      needsValidation: 'Revalidation required'
+    },
+    hostKey: {
+      title: 'SSH host key',
+      verified: 'Pinned',
+      unverified: 'Not verified',
+      firstUse: 'This is the first host key observed for this host.',
+      matches: 'The observed host key matches the pinned key.',
+      changed:
+        'The host key changed. The server may have been reinstalled, or this may be a machine-in-the-middle attack.',
+      previousFingerprint: 'Previously pinned fingerprint',
+      observedFingerprint: 'Observed fingerprint',
+      verifyOutOfBand:
+        'Verify the SHA-256 fingerprint with an administrator or another trusted channel. Do not accept it solely because the address looks correct.',
+      confirmedOutOfBand:
+        'I verified this fingerprint through a trusted channel'
+    },
+    testResult:
+      'Connected · {{platform}}/{{architecture}} · {{latency}} ms',
+    environment: {
+      title: 'Remote environment',
+      description:
+        'Read-only view of versions registered on this Host. Installation and updates happen only when a remote project is opened.',
+      loading: 'Loading Agent and Runtime versions…',
+      refresh: 'Refresh versions',
+      refreshNamed: 'Refresh remote environment versions for {{name}}',
+      installed: 'Installed on Host',
+      expected: 'Required by GoodBuddy',
+      notInstalled: 'Not installed',
+      versionDetail: 'Linux · {{architecture}}',
+      states: {
+        current: 'Current',
+        'update-available': 'Update available',
+        'not-installed': 'Not installed'
+      }
+    },
+    wizard: {
+      eyebrow: 'SSH host validation',
+      createTitle: 'Add and validate SSH host',
+      editTitle: 'Edit and revalidate SSH host',
+      description:
+        'Confirm connection details, host identity, and authentication in order. This flow runs only a fixed system probe and does not install a remote Agent.',
+      progress: 'Step {{current}} of {{total}}',
+      stepsLabel: 'SSH host validation steps',
+      steps: {
+        details: 'Connection',
+        hostKey: 'Host identity',
+        authentication: 'Authentication',
+        success: 'Complete'
+      },
+      details: {
+        title: 'Enter connection details',
+        description:
+          'The next step performs only a pre-authentication SSH handshake to inspect the host key. It does not send a password or request an SSH Agent signature.',
+        passwordUnavailable:
+          'System secure storage is unavailable, so only System SSH Agent authentication can be selected.'
+      },
+      authentication: {
+        title: 'Verify authentication and the remote system',
+        description:
+          'GoodBuddy will trust only the host key you just reviewed and run a fixed system probe with timeout and output limits.',
+        agentHelp:
+          'The current system SSH Agent will be used. GoodBuddy does not enable Agent Forwarding or forward the Agent to the remote host.',
+        testingTitle: 'Authenticating and probing the remote system…',
+        testingDescription:
+          'The host has not been saved. If authentication fails, you can correct the credential and retry.'
+      },
+      success: {
+        title: 'Host validated and saved',
+        description:
+          'The host key, credential, and connection details for “{{name}}” were saved atomically.',
+        system: 'Remote system',
+        latency: 'Latency',
+        shell: 'Shell',
+        home: 'Home directory'
+      }
+    },
+    removeMessage:
+      'Deleting “{{name}}” clears the locally saved connection information and encrypted credential. Remote files are not deleted.',
+    actions: {
+      add: 'Add host',
+      edit: 'Edit and revalidate',
+      validate: 'Validate and save',
+      editNamed: 'Edit {{name}}',
+      validateNamed: 'Validate {{name}}',
+      inspecting: 'Inspecting…',
+      remove: 'Delete',
+      confirmRemove: 'Confirm delete',
+      cancel: 'Cancel',
+      closeDialog: 'Close SSH host validation',
+      inspectAndContinue: 'Inspect host key',
+      back: 'Back',
+      continueToAuthentication: 'Confirm identity and continue',
+      trustChangedAndContinue: 'Confirm replacement and continue',
+      validateAndSave: 'Validate and save',
+      validating: 'Validating…',
+      done: 'Done'
+    },
+    validation: {
+      nameRequired: 'Enter a host name',
+      hostnameRequired: 'Enter a host address',
+      portInvalid: 'Port must be an integer from 1 through 65535',
+      usernameRequired: 'Enter a username',
+      confirmFingerprint:
+        'Verify and confirm the host-key fingerprint through a trusted channel first',
+      passwordRequired: 'Enter the SSH password',
+      passwordStorageRequired:
+        'System secure storage is unavailable, so an SSH password cannot be saved for this configuration. Select System SSH Agent instead.'
+    },
+    errors: {
+      unavailable: 'SSH host settings are unavailable in this build',
+      readFailed: 'Could not load SSH hosts',
+      inspectFailed: 'Could not inspect the SSH host key',
+      validationFailed:
+        'SSH authentication or the remote system probe failed',
+      removeFailed: 'Could not delete the SSH host',
+      environmentUnavailable:
+        'Remote environment version service is unavailable',
+      environmentReadFailed:
+        'Could not read remote environment versions'
+    },
+    notifications: {
+      removed: 'SSH host “{{name}}” deleted'
+    }
+  },
   speech: {
     title: 'Speech models',
     description:

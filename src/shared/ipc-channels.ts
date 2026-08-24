@@ -34,6 +34,19 @@ export const ipcChannels = {
   runtimeCustomizationGet: 'settings:runtime-customization:get',
   runtimeCustomizationUpdate: 'settings:runtime-customization:update',
   runtimeNativeSnapshot: 'settings:runtime-native:snapshot',
+  sshHostsGet: 'settings:ssh-hosts:get',
+  sshHostsRemove: 'settings:ssh-hosts:remove',
+  sshHostsInspectDraftKey: 'settings:ssh-hosts:inspect-draft-key',
+  sshHostsDiscardCandidate:
+    'settings:ssh-hosts:discard-candidate',
+  sshHostsValidateAndSave:
+    'settings:ssh-hosts:validate-and-save',
+  sshHostsRemoteEnvironment:
+    'settings:ssh-hosts:remote-environment',
+  sshHostsBrowseDirectories:
+    'settings:ssh-hosts:directories:browse',
+  sshHostsCancelDirectoryBrowse:
+    'settings:ssh-hosts:directories:cancel',
   channelSettingsGet: 'settings:channels:get',
   channelSettingsApply: 'settings:channels:apply',
   channelSettingsTest: 'settings:channels:test',
@@ -98,6 +111,10 @@ export const ipcChannels = {
   projectsUpdate: 'projects:update',
   projectsSetArchived: 'projects:set-archived',
   projectsDelete: 'projects:delete',
+  remoteProjectActivate: 'projects:remote:activate',
+  remoteProjectSave: 'projects:remote:save',
+  remoteProjectCancelCurrent: 'projects:remote:cancel-current',
+  remoteProjectSaveProgress: 'projects:remote:save-progress',
   conversationsList: 'conversations:list',
   conversationsReplace: 'conversations:replace',
   conversationsSaveLocal: 'conversations:save-local',

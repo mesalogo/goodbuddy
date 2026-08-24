@@ -50,6 +50,13 @@ export const settings = {
       description:
         'Configure Agent Runtimes, the default workspace, and native capabilities'
     },
+    sshHosts: {
+      label: 'Hosts and remote execution',
+      navigationDescription:
+        'SSH hosts, identity verification, and connection probes',
+      description:
+        'Manage SSH hosts, pin host keys, and verify remote execution environments'
+    },
     security: {
       label: 'Security and data',
       navigationDescription: 'Tool policies and local privacy',

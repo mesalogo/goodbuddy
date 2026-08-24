@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
+import type { WorkspaceAccess } from '../workspace'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 
 const mocks = vi.hoisted(() => {
@@ -199,6 +200,216 @@ describe('ModelToolProvider', () => {
     await expect(
       readFile(join(workspace, 'docs', 'output.txt'), 'utf8')
     ).resolves.toBe('saved')
+  })
+
+  it('delegates workspace tools and disposal to WorkspaceAccess', async () => {
+    const readText = vi.fn(async () => ({
+      path: 'remote.txt',
+      name: 'remote.txt',
+      content: 'remote content',
+      size: 14
+    }))
+    const listDirectory = vi.fn(async () => ({
+      path: '',
+      entries: [
+        { name: 'remote.txt', path: 'remote.txt', type: 'file' as const }
+      ],
+      truncated: false
+    }))
+    const writeTextAtomic = vi.fn(async () => ({
+      path: 'output.txt',
+      bytesWritten: 5
+    }))
+    const dispose = vi.fn(async () => undefined)
+    const access = {
+      getIdentity: vi.fn(),
+      listDirectory,
+      stat: vi.fn(),
+      readText,
+      writeTextAtomic,
+      search: vi.fn(),
+      getChanges: vi.fn(),
+      dispose
+    } as unknown as WorkspaceAccess
+    const provider = new ModelToolProvider(access)
+    const signal = new AbortController().signal
+
+    await expect(
+      provider.callTool(
+        'workspace_read_text',
+        { path: 'remote.txt' },
+        signal,
+        toolContext
+      )
+    ).resolves.toEqual({
+      parts: [{ type: 'text', text: 'remote content' }],
+      contextBytes: 14
+    })
+    await provider.callTool(
+      'workspace_list_directory',
+      {},
+      signal,
+      toolContext
+    )
+    await provider.callTool(
+      'workspace_write_text',
+      { path: 'output.txt', content: 'saved' },
+      signal,
+      toolContext
+    )
+    expect(readText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'remote.txt',
+        maximumBytes: 256 * 1024,
+        signal
+      })
+    )
+    expect(listDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '.',
+        maximumEntries: 200,
+        includeOther: true,
+        signal
+      })
+    )
+    expect(writeTextAtomic).toHaveBeenCalledWith({
+      path: 'output.txt',
+      content: 'saved',
+      maximumBytes: 512 * 1024,
+      signal
+    })
+    await provider.dispose()
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('denies spoofed mutating tool calls in Ask before reaching sinks', async () => {
+    const readText = vi.fn(async () => ({
+      path: 'remote.txt',
+      name: 'remote.txt',
+      content: 'remote content',
+      size: 14
+    }))
+    const listDirectory = vi.fn(async () => ({
+      path: '',
+      entries: [],
+      truncated: false
+    }))
+    const writeTextAtomic = vi.fn()
+    const access = {
+      getIdentity: vi.fn(),
+      listDirectory,
+      stat: vi.fn(),
+      readText,
+      writeTextAtomic,
+      search: vi.fn(),
+      getChanges: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    } as unknown as WorkspaceAccess
+    const browserService = createBrowserService()
+    const createMagicNote = vi.fn()
+    const callGoodBuddyConfigTool = vi.fn()
+    const gateway = {
+      createMagicNote,
+      callGoodBuddyConfigTool,
+      getAvailableToolNames: vi.fn(() => [
+        'note_create',
+        'goodbuddy_config_apply'
+      ])
+    } as unknown as KnowledgeMcpGateway
+    const provider = new ModelToolProvider(
+      access,
+      [createMcpServer()],
+      browserService,
+      gateway
+    )
+    const signal = new AbortController().signal
+    const askContext = {
+      conversationId: 'spoofed-ask-tools',
+      workMode: 'ask',
+      knowledgeCapabilityToken: 'main-only-token'
+    } satisfies ModelToolCallContext
+    const denial = 'Ask 模式仅允许调用已声明的只读工具'
+
+    for (const [name, argumentsValue] of [
+      [
+        'workspace_write_text',
+        { path: 'output.txt', content: 'blocked' }
+      ],
+      ['browser_click', { ref: 'b_target' }],
+      ['note_create', { title: 'blocked' }],
+      [
+        'goodbuddy_config_apply',
+        { planId: '00000000-0000-4000-8000-000000000702' }
+      ],
+      ['mcp_spoofed_mutation', {}]
+    ] as const) {
+      await expect(
+        provider.callTool(
+          name,
+          argumentsValue,
+          signal,
+          askContext
+        )
+      ).rejects.toThrow(denial)
+    }
+
+    expect(writeTextAtomic).not.toHaveBeenCalled()
+    expect(browserService.click).not.toHaveBeenCalled()
+    expect(createMagicNote).not.toHaveBeenCalled()
+    expect(callGoodBuddyConfigTool).not.toHaveBeenCalled()
+    expect(mocks.Client).not.toHaveBeenCalled()
+
+    const writeTool = {
+      name: 'workspace_write_text',
+      displayName: '写入工作区文本',
+      description: 'write',
+      inputSchema: {},
+      source: 'builtin'
+    } as const
+    expect(() =>
+      provider.getApproval(
+        writeTool,
+        { path: 'output.txt', content: 'blocked' },
+        'output.txt',
+        askContext
+      )
+    ).toThrow(denial)
+    expect(() =>
+      provider.getApproval(
+        {
+          ...writeTool,
+          name: 'browser_click',
+          displayName: '点击浏览器元素'
+        },
+        { ref: 'b_target' },
+        'b_target',
+        askContext
+      )
+    ).toThrow(denial)
+    expect(browserService.getOrigin).not.toHaveBeenCalled()
+
+    await expect(
+      provider.callTool(
+        'workspace_read_text',
+        { path: 'remote.txt' },
+        signal,
+        askContext
+      )
+    ).resolves.toMatchObject({
+      parts: [{ type: 'text', text: 'remote content' }]
+    })
+    await expect(
+      provider.callTool(
+        'workspace_list_directory',
+        {},
+        signal,
+        askContext
+      )
+    ).resolves.toMatchObject({
+      parts: [{ type: 'text', text: expect.any(String) }]
+    })
+    expect(readText).toHaveBeenCalledOnce()
+    expect(listDirectory).toHaveBeenCalledOnce()
   })
 
   it('exposes scoped reads in Ask and Magic Notes writes only in Execute', async () => {

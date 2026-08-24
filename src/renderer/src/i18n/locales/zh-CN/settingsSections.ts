@@ -3,6 +3,166 @@ export const settingsSections = {
     modelscope: 'ModelScope',
     'hugging-face': 'Hugging Face'
   },
+  sshHosts: {
+    loading: '正在读取 SSH 主机…',
+    listLabel: 'SSH 主机列表',
+    securityNotice:
+      '添加或编辑主机时，GoodBuddy 会先检查 Host Key，再发送认证凭据并执行有界系统探测。只有全部成功后才会保存主机和加密密码。',
+    secureStorageUnavailable:
+      '系统安全存储当前不可用，不能新增或替换 SSH 密码。系统 SSH Agent 认证仍可使用。',
+    empty: {
+      title: '尚未配置 SSH 主机',
+      description:
+        '通过引导流程核对主机身份、验证认证并探测远端系统。取消或验证失败不会保留新主机。'
+    },
+    fields: {
+      name: '主机名称',
+      hostname: '主机地址',
+      port: '端口',
+      username: '用户名',
+      authentication: '认证方式',
+      passwordAction: '密码处理',
+      password: 'SSH 密码'
+    },
+    authentication: {
+      password: '密码',
+      'system-agent': '系统 SSH Agent'
+    },
+    passwordActions: {
+      keep: '保留已保存密码',
+      replace: '输入新密码'
+    },
+    passwordHelp:
+      '密码仅用于本次认证，并在验证成功后由 Main 进程写入系统安全存储；不会写入命令行、日志或普通设置文件。',
+    credentialSources: {
+      none: '尚未配置',
+      encrypted: '已由系统安全存储加密',
+      'system-agent': '使用系统 SSH Agent',
+      unreadable: '已保存，但当前无法读取'
+    },
+    status: {
+      credential: '认证凭据',
+      validation: '验证状态',
+      validated: '已验证并保存',
+      needsValidation: '需要重新验证'
+    },
+    hostKey: {
+      title: 'SSH 主机密钥',
+      verified: '已固定',
+      unverified: '尚未验证',
+      firstUse: '这是首次看到该主机密钥。',
+      matches: '本次看到的主机密钥与已固定密钥一致。',
+      changed: '主机密钥已变化，可能是服务器重装，也可能是中间人攻击。',
+      previousFingerprint: '此前固定的指纹',
+      observedFingerprint: '本次看到的指纹',
+      verifyOutOfBand:
+        '请通过管理员或其他可信渠道核对 SHA-256 指纹。不要仅因为地址看起来正确就接受。',
+      confirmedOutOfBand: '我已通过可信渠道核对并确认本次指纹'
+    },
+    testResult:
+      '已连接 · {{platform}}/{{architecture}} · {{latency}} 毫秒',
+    environment: {
+      title: '远程运行环境',
+      description:
+        '只读检查当前 Host 已登记版本；打开远程项目时才会安装或更新。',
+      loading: '正在读取 Agent 和 Runtime 版本…',
+      refresh: '刷新版本',
+      refreshNamed: '刷新 {{name}} 的远程运行环境版本',
+      installed: 'Host 已安装',
+      expected: 'GoodBuddy 所需',
+      notInstalled: '尚未安装',
+      versionDetail: 'Linux · {{architecture}}',
+      states: {
+        current: '当前版本',
+        'update-available': '待更新',
+        'not-installed': '未安装'
+      }
+    },
+    wizard: {
+      eyebrow: 'SSH 主机验证',
+      createTitle: '添加并验证 SSH 主机',
+      editTitle: '编辑并重新验证 SSH 主机',
+      description:
+        '依次确认连接信息、主机身份和认证。此流程只执行固定系统探针，不会安装远程 Agent。',
+      progress: '第 {{current}} / {{total}} 步',
+      stepsLabel: 'SSH 主机验证步骤',
+      steps: {
+        details: '连接信息',
+        hostKey: '主机身份',
+        authentication: '认证探测',
+        success: '完成'
+      },
+      details: {
+        title: '填写连接信息',
+        description:
+          '下一步只建立认证前 SSH 握手并读取 Host Key，不会发送密码或使用 SSH Agent 签名。',
+        passwordUnavailable:
+          '系统安全存储不可用，因此当前只能选择系统 SSH Agent。'
+      },
+      authentication: {
+        title: '验证认证和远端系统',
+        description:
+          'GoodBuddy 将只信任刚刚核对的 Host Key，并运行固定、有超时和输出上限的系统探针。',
+        agentHelp:
+          '将使用当前系统 SSH Agent。GoodBuddy 不启用 Agent Forwarding，也不会把 Agent 转发到远端。',
+        testingTitle: '正在认证并探测远端系统…',
+        testingDescription:
+          '主机尚未保存。认证失败后可修改凭据并重试。'
+      },
+      success: {
+        title: '主机已验证并保存',
+        description:
+          '“{{name}}”的 Host Key、认证凭据和连接信息已原子保存。',
+        system: '远端系统',
+        latency: '连接耗时',
+        shell: 'Shell',
+        home: 'Home 目录'
+      }
+    },
+    removeMessage:
+      '删除“{{name}}”会清除本机保存的连接信息和加密凭据，不会删除远端文件。',
+    actions: {
+      add: '添加主机',
+      edit: '编辑',
+      validate: '验证并保存',
+      editNamed: '编辑 {{name}}',
+      validateNamed: '验证 {{name}}',
+      inspecting: '正在检查…',
+      remove: '删除',
+      confirmRemove: '确认删除',
+      cancel: '取消',
+      closeDialog: '关闭 SSH 主机验证',
+      inspectAndContinue: '检查 Host Key',
+      back: '上一步',
+      continueToAuthentication: '确认身份并继续',
+      trustChangedAndContinue: '确认替换并继续',
+      validateAndSave: '验证并保存',
+      validating: '正在验证…',
+      done: '完成'
+    },
+    validation: {
+      nameRequired: '请输入主机名称',
+      hostnameRequired: '请输入主机地址',
+      portInvalid: '端口必须是 1 到 65535 之间的整数',
+      usernameRequired: '请输入用户名',
+      confirmFingerprint: '请先通过可信渠道核对并确认 Host Key 指纹',
+      passwordRequired: '请输入 SSH 密码',
+      passwordStorageRequired:
+        '系统安全存储不可用，无法为此配置保存 SSH 密码；请选择系统 SSH Agent'
+    },
+    errors: {
+      unavailable: '当前版本未提供 SSH 主机设置服务',
+      readFailed: '读取 SSH 主机失败',
+      inspectFailed: '检查 SSH 主机密钥失败',
+      validationFailed: 'SSH 认证或远端系统探测失败',
+      removeFailed: '删除 SSH 主机失败',
+      environmentUnavailable: '远程运行环境版本服务不可用',
+      environmentReadFailed: '读取远程运行环境版本失败'
+    },
+    notifications: {
+      removed: 'SSH 主机“{{name}}”已删除'
+    }
+  },
   speech: {
     title: '语音模型',
     description: '应用不内置模型权重，按需下载或通过 ZIP 离线迁移',

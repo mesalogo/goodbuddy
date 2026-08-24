@@ -1,23 +1,15 @@
-import spawn from 'cross-spawn'
-import { basename, extname, join } from 'node:path'
-import { stat } from 'node:fs/promises'
+import { extname } from 'node:path'
 import type {
-  WorkspaceChangedFile,
   WorkspaceChanges,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview
 } from '../../shared/assistant-contracts'
 import {
-  getCanonicalWorkspace,
-  listBoundedDirectoryEntries,
-  readBoundedUtf8File,
-  resolveExistingWorkspacePath
-} from '../workspace-file-access'
+  LocalWorkspaceAccess,
+  type WorkspaceAccess
+} from '../workspace'
 
-const MAX_OUTPUT_BYTES = 512 * 1024
-const COMMAND_TIMEOUT_MS = 10_000
 const MAX_DIRECTORY_ENTRIES = 500
-const MAX_CHANGED_FILES = 2_000
 const MAX_PREVIEW_BYTES = 256 * 1024
 const previewExtensions = new Set([
   '.c',
@@ -64,104 +56,89 @@ const previewFileNames = new Set([
   'readme'
 ])
 
-type CommandResult = {
-  code: number | null
-  stdout: string
-  stderr: string
-  truncated: boolean
-}
+export class WorkspaceChangesService {
+  constructor(private readonly workspace: WorkspaceAccess) {}
 
-function runGit(
-  rootPath: string,
-  args: string[]
-): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      cwd: rootPath,
-      shell: false,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe']
+  getChanges(signal?: AbortSignal): Promise<WorkspaceChanges> {
+    return this.workspace.getChanges({ signal })
+  }
+
+  async listDirectory(
+    inputPath: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceDirectoryListing> {
+    const listing = await this.workspace.listDirectory({
+      path: inputPath,
+      maximumEntries: MAX_DIRECTORY_ENTRIES,
+      includeGit: false,
+      includeOther: false,
+      signal
     })
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    let bytes = 0
-    let truncated = false
-    const capture = (target: Buffer[], chunk: Buffer | string): void => {
-      const buffer = Buffer.from(chunk)
-      const remaining = MAX_OUTPUT_BYTES - bytes
-      if (remaining <= 0) {
-        truncated = true
-        return
-      }
-      target.push(buffer.subarray(0, remaining))
-      bytes += Math.min(buffer.byteLength, remaining)
-      truncated ||= buffer.byteLength > remaining
+    return {
+      path: listing.path,
+      entries: listing.entries.map((entry) => {
+        if (entry.type === 'other') {
+          throw new Error('工作区目录返回了不支持的条目类型')
+        }
+        return {
+          name: entry.name,
+          path: entry.path,
+          type: entry.type
+        }
+      }),
+      truncated: listing.truncated
     }
-    child.stdout?.on('data', (chunk: Buffer | string) =>
-      capture(stdout, chunk)
-    )
-    child.stderr?.on('data', (chunk: Buffer | string) =>
-      capture(stderr, chunk)
-    )
-    const timeout = setTimeout(() => {
-      child.kill()
-      reject(new Error('读取文件更改超时'))
-    }, COMMAND_TIMEOUT_MS)
-    child.once('error', (error) => {
-      clearTimeout(timeout)
-      reject(error)
+  }
+
+  async readFile(
+    inputPath: string,
+    signal?: AbortSignal
+  ): Promise<WorkspaceFilePreview> {
+    const entry = await this.workspace.stat({
+      path: inputPath,
+      signal
     })
-    child.once('close', (code) => {
-      clearTimeout(timeout)
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-        truncated
-      })
+    if (entry.type !== 'file') {
+      throw new Error('目标不是普通文件')
+    }
+    const extension = extname(entry.name).toLowerCase()
+    if (
+      !previewExtensions.has(extension) &&
+      !previewFileNames.has(entry.name.toLowerCase())
+    ) {
+      throw new Error('当前文件类型不支持安全预览')
+    }
+    const preview = await this.workspace.readText({
+      path: inputPath,
+      maximumBytes: MAX_PREVIEW_BYTES,
+      tooLargeMessage: '工作区文件超过 256KB 预览限制',
+      invalidUtf8Message: '工作区文件不是有效 UTF-8 文本',
+      signal
     })
-  })
+    return {
+      path: preview.path,
+      name: preview.name,
+      content: preview.content,
+      mimeType:
+        extension === '.md' || extension === '.markdown'
+          ? 'text/markdown'
+          : extension === '.json'
+            ? 'application/json'
+            : 'text/plain',
+      size: preview.size
+    }
+  }
 }
 
-function pathSegments(inputPath: string, allowRoot: boolean): string[] {
-  const normalized = inputPath.replaceAll('\\', '/')
-  if (allowRoot && normalized === '') {
-    return []
-  }
-  if (
-    !normalized ||
-    normalized.startsWith('/') ||
-    /^[a-zA-Z]:\//u.test(normalized)
-  ) {
-    throw new Error('路径必须是工作区内的相对路径')
-  }
-  const segments = normalized.split('/')
-  if (
-    segments.some(
-      (segment) =>
-        !segment || segment === '.' || segment === '..' || segment.includes('\0')
-    )
-  ) {
-    throw new Error('路径必须是工作区内的相对路径')
-  }
-  return segments
-}
-
-async function resolveWorkspacePath(
+async function withLocalWorkspace<T>(
   rootPath: string,
-  inputPath: string,
-  expected: 'file' | 'directory'
-): Promise<{ canonicalPath: string; path: string }> {
-  const canonicalRoot = await getCanonicalWorkspace(rootPath)
-  const segments = pathSegments(inputPath, expected === 'directory')
-  const canonicalPath = await resolveExistingWorkspacePath(
-    canonicalRoot,
-    segments,
-    expected
-  )
-  return {
-    canonicalPath,
-    path: segments.join('/')
+  operation: (workspace: LocalWorkspaceAccess) => Promise<T>
+): Promise<T> {
+  const workspace = new LocalWorkspaceAccess(rootPath)
+  try {
+    return await operation(workspace)
+  } finally {
+    await workspace.dispose()
   }
 }
 
@@ -170,189 +147,42 @@ export async function resolveWorkspaceEntryPath(
   inputPath: string,
   expected: 'file' | 'directory'
 ): Promise<string> {
-  return (await resolveWorkspacePath(rootPath, inputPath, expected))
-    .canonicalPath
-}
-
-function parseChangedFiles(status: string): {
-  files: WorkspaceChangedFile[]
-  truncated: boolean
-} {
-  const records = status.split('\0')
-  const files: WorkspaceChangedFile[] = []
-  let index = 0
-  while (index < records.length && files.length < MAX_CHANGED_FILES) {
-    const record = records[index]
-    index += 1
-    if (!record) {
-      continue
-    }
-    const statusCode = record.slice(0, 2)
-    const path = record.slice(3)
-    if (!path) {
-      continue
-    }
-    const renamed = statusCode.includes('R') || statusCode.includes('C')
-    const previousPath = renamed ? records[index] : undefined
-    if (renamed) {
-      index += 1
-    }
-    files.push({
-      path,
-      status: statusCode,
-      ...(previousPath ? { previousPath } : {})
-    })
-  }
-  return {
-    files,
-    truncated: index < records.length - 1
-  }
-}
-
-function formatChangedFiles(files: WorkspaceChangedFile[]): string {
-  return files
-    .map((file) =>
-      file.previousPath
-        ? `${file.status} ${file.previousPath} -> ${file.path}`
-        : `${file.status} ${file.path}`
-    )
-    .join('\n')
+  return withLocalWorkspace(rootPath, (workspace) =>
+    workspace.resolveEntryPath(inputPath, expected)
+  )
 }
 
 export async function getWorkspaceChanges(
-  rootPath: string
+  workspace: string | WorkspaceAccess
 ): Promise<WorkspaceChanges> {
-  if (!rootPath.trim()) {
-    return {
-      rootPath,
-      available: false,
-      status: '',
-      patch: '',
-      files: [],
-      truncated: false,
-      error: '项目尚未配置工作区目录'
-    }
+  if (typeof workspace !== 'string') {
+    return new WorkspaceChangesService(workspace).getChanges()
   }
-  const gitMetadata = await stat(join(rootPath, '.git')).catch(
-    () => undefined
+  return withLocalWorkspace(workspace, (access) =>
+    new WorkspaceChangesService(access).getChanges()
   )
-  if (!gitMetadata) {
-    return {
-      rootPath,
-      available: false,
-      status: '',
-      patch: '',
-      files: [],
-      truncated: false
-    }
-  }
-  try {
-    const [status, patch] = await Promise.all([
-      runGit(rootPath, [
-        'status',
-        '--porcelain=v1',
-        '-z',
-        '--untracked-files=normal'
-      ]),
-      runGit(rootPath, ['diff', '--no-ext-diff', '--no-color', 'HEAD'])
-    ])
-    if (status.code !== 0 || patch.code !== 0) {
-      const detail = status.stderr || patch.stderr
-      return {
-        rootPath,
-        available: false,
-        status: '',
-        patch: '',
-        files: [],
-        truncated: status.truncated || patch.truncated,
-        error: detail.trim().slice(0, 2_000) || '无法读取 Git 工作区'
-      }
-    }
-    const changedFiles = parseChangedFiles(status.stdout)
-    return {
-      rootPath,
-      available: true,
-      status: formatChangedFiles(changedFiles.files),
-      patch: patch.stdout,
-      files: changedFiles.files,
-      truncated:
-        status.truncated || patch.truncated || changedFiles.truncated
-    }
-  } catch (error) {
-    return {
-      rootPath,
-      available: false,
-      status: '',
-      patch: '',
-      files: [],
-      truncated: false,
-      error:
-        error instanceof Error ? error.message : '无法读取 Git 工作区'
-    }
-  }
 }
 
 export async function listWorkspaceDirectory(
-  rootPath: string,
+  workspace: string | WorkspaceAccess,
   inputPath: string
 ): Promise<WorkspaceDirectoryListing> {
-  const directory = await resolveWorkspacePath(
-    rootPath,
-    inputPath,
-    'directory'
-  )
-  const listing = await listBoundedDirectoryEntries(
-    directory.canonicalPath,
-    MAX_DIRECTORY_ENTRIES,
-    (entry) =>
-      entry.name !== '.git' && (entry.isDirectory() || entry.isFile())
-  )
-  const entries = listing.entries.sort((left, right) => {
-      if (left.isDirectory() !== right.isDirectory()) {
-        return left.isDirectory() ? -1 : 1
-      }
-      return left.name.localeCompare(right.name)
-    })
-  return {
-    path: directory.path,
-    entries: entries.map((entry) => ({
-      name: entry.name,
-      path: [directory.path, entry.name].filter(Boolean).join('/'),
-      type: entry.isDirectory() ? 'directory' : 'file'
-    })),
-    truncated: listing.truncated
+  if (typeof workspace !== 'string') {
+    return new WorkspaceChangesService(workspace).listDirectory(inputPath)
   }
+  return withLocalWorkspace(workspace, (access) =>
+    new WorkspaceChangesService(access).listDirectory(inputPath)
+  )
 }
 
 export async function readWorkspaceFile(
-  rootPath: string,
+  workspace: string | WorkspaceAccess,
   inputPath: string
 ): Promise<WorkspaceFilePreview> {
-  const file = await resolveWorkspacePath(rootPath, inputPath, 'file')
-  const name = basename(file.canonicalPath)
-  const extension = extname(name).toLowerCase()
-  if (
-    !previewExtensions.has(extension) &&
-    !previewFileNames.has(name.toLowerCase())
-  ) {
-    throw new Error('当前文件类型不支持安全预览')
+  if (typeof workspace !== 'string') {
+    return new WorkspaceChangesService(workspace).readFile(inputPath)
   }
-  const preview = await readBoundedUtf8File(
-    file.canonicalPath,
-    MAX_PREVIEW_BYTES,
-    '工作区文件超过 256KB 预览限制',
-    '工作区文件不是有效 UTF-8 文本'
+  return withLocalWorkspace(workspace, (access) =>
+    new WorkspaceChangesService(access).readFile(inputPath)
   )
-  return {
-    path: file.path,
-    name,
-    content: preview.content,
-    mimeType:
-      extension === '.md' || extension === '.markdown'
-        ? 'text/markdown'
-        : extension === '.json'
-          ? 'application/json'
-          : 'text/plain',
-    size: preview.size
-  }
 }

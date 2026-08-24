@@ -72,7 +72,7 @@ const MAX_NATIVE_TOOLS = 200
 const NATIVE_SNAPSHOT_TIMEOUT_MS = 2_000
 const MAIN_WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const GOODBUDDY_EXECUTION_GUIDANCE = [
-  'GoodBuddy controlled execution rules:',
+  'GoodBuddy work mode rules:',
   '- In Execute mode, act through the available tools instead of writing a long implementation plan.',
   '- Inspect only what is needed, then create or update the requested workspace files promptly.',
   '- Work in small verifiable steps and use tool results as the source of truth.',

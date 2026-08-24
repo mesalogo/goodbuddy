@@ -131,9 +131,18 @@ npm run dist:linux:arm64
 
 打包产物位于 `dist`。
 
+以上 `dist*` 与 `portable` 命令用于普通本地桌面打包。它们会携带
+`agent-runtime-lock.json`、`remote-runtime-lock.json` 与公开的
+`agent-release-keys.json`。普通 `dist*` 仍为 metadata-only；本地 `portable`
+若发现 `.agent-resources/linux-x64` 或 `linux-arm64`，会先按当前 lock 与公钥
+registry 完整校验，再把已存在的 Agent 工件嵌入 Portable。设置
+`GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS=x64`（或 `x64,arm64`）可要求指定架构
+必须存在并成功嵌入，否则构建失败。没有本地工件时，Portable 仍可验证并复用 Host 上
+与 lock 完全匹配的签名 Agent，但不能安装缺失或不匹配的 Agent。
+
 ## Runtime 资源
 
-发布包会携带经过版本与完整性校验的 OpenCode、Continue 和 DSH 插件安装 Runtime：
+桌面包会携带经过版本与完整性校验的 OpenCode、Continue 和 DSH 插件安装 Runtime：
 
 - OpenCode 平台二进制来自 `.runtime-resources/<arch>`。
 - Continue Runtime 来自锁定版本的 `@continuedev/cli`。
@@ -143,18 +152,90 @@ npm run dist:linux:arm64
 
 跨架构打包前，确认目标架构的 OpenCode 资源已经准备完成。不要用其他架构的二进制替代目标资源。
 
+## GoodBuddy Agent 工件
+
+Linux Agent 工件与普通桌面构建相互独立，由专用命令管理：
+
+```bash
+# 只能在对应 Linux 架构上使用锁定的 Node Runtime 原生构建并签名
+npm run agent:build -- --arch <x64|arm64> --runtime-archive <node-runtime.tar.gz>
+
+# 导入由原生 CI 生成的签名归档，导入时会完整校验
+npm run agent:import -- --arch x64 --archive <goodbuddy-agent-linux-x64.tar>
+npm run agent:import -- --arch arm64 --archive <goodbuddy-agent-linux-arm64.tar>
+
+# 独立重新校验本地工件
+npm run agent:verify -- --arch x64
+npm run agent:verify -- --arch arm64
+```
+
+默认位置为 `.agent-resources/linux-x64` 和 `.agent-resources/linux-arm64`，该目录是
+生成内容，不提交到仓库。普通命令不会隐式构建或导入 Agent；`npm run portable`
+只会校验并嵌入已经存在的本地 Agent 工件。
+
+### Agent 原生 CI 策略
+
+Agent 的 Linux x64 与 arm64 构建应使用同一源码 commit/tag 上的原生 GitHub Actions
+job 或可复用 workflow，不维护长期分叉的 Agent 源码分支。这样桌面源码、协议、lock
+文件和签名 manifest 的来源保持一致。若后续把 Agent 构建从统一发布 workflow 拆出，
+应使用 `workflow_dispatch`、可复用 workflow 或 Agent tag 触发，明确 checkout 待发布
+桌面的精确 commit，并输出供发布 workflow 下载、`agent:import` 和 `agent:verify` 的
+两套签名归档；发布 job 仍必须在嵌入前后验证两种架构，不能信任分支名或未校验 artifact。
+
+### 远程 OpenCode Runtime 基础
+
+`remote-runtime-lock.json` 独立锁定首个远程 Runtime：OpenCode 1.18.9 的 Linux x64
+baseline 与 arm64 官方包 integrity、`bin/opencode` 入口和固定 `acp` 参数。它不同于
+`agent-runtime-lock.json`，后者锁定 Agent 自带 Node 以及用于 Linux `SO_PEERCRED`
+的 Koffi 版本。Agent bundle 将 Koffi loader 作为 external module，并只携带目标
+Linux 架构的 glibc/musl 原生 binding；构建与导入都会校验其 ELF 架构和 MIT 许可证。
+
+源码已经实现 Runtime bundle build/import/verify、Daemon 侧
+manifest/Ed25519/payload/ELF/lock 校验、digest registry、ACP v3、直接进程 ownership、
+Ask 的固定 `bwrap` 只读 profile 和 `runtime/model-bridge` v1。Agent 通过私有 Unix socket
+按需 detached 启动，不依赖 systemd、D-Bus 或 Linger。Execute 直接以所选 SSH 账号权限
+启动签名 Runtime；Ask 才使用只读 bubblewrap。
+
+OpenCode 通过已签名 Agent helper 和每次 Prompt 的私有 Unix socket 使用 Main-only 模型
+网关；Provider URL、API Key 和真实 Provider 认证头不进入远端。Anthropic/OpenAI SDK 只使用
+固定非秘密本地兼容标记，helper 核对后丢弃。
+
+`agent-runtime-lock.json` 维护独立于桌面应用的 Agent 版本，
+`remote-runtime-lock.json` 维护 OpenCode Runtime 版本。Agent 内容变化时必须更新
+`agentVersion`；Runtime 更新时使用 Runtime 自身版本。签名 manifest 或 bundle digest
+唯一标识对应版本的精确工件。变更后必须重新构建、签名并导入 Linux x64/arm64 两套工件；
+旧版本或旧 digest 会按设计校验失败。不要手工把本机 `.runtime-resources` 当作远程 bundle。
+
+桌面应用更新后，用户下次打开托管 SSH 项目会使用该桌面版本内置的签名 Agent/Runtime
+执行一次完整激活。所需版本健康且项目事务提交成功后才刷新项目绑定；失败不会覆盖旧安装或
+把未提交的新 identity 暴露给 Workspace/Runtime。
+
 ## 跨平台 CI 与 GitHub Release
 
 `.github/workflows/packages.yml` 是统一发布工作流。它先验证并生成一次
 `out` 生产 bundle，再在六个原生 Runner 上分别打包 Windows、macOS 和
 Linux 的 `x64`、`arm64` 版本。生产 bundle 仅作为短期 Actions artifact
-供打包任务复用，不会上传到 GitHub Release。
+供打包任务复用，不会上传到 GitHub Release。工作流另行在 Linux x64/arm64
+Runner 上原生构建并签名 Agent，桌面矩阵下载、导入并校验两套归档后才调用
+`release:package`；桌面 Runner 不重新构建 Agent。
 
 本地构建单个平台目标：
 
 ```bash
 npm run release:package -- --platform <windows|macos|linux> --arch <x64|arm64>
 ```
+
+`release:package` 是唯一会嵌入远程 Agent 和远程 OpenCode Runtime 的桌面打包入口。公开
+签名 key registry 已由基础打包配置统一携带；运行前
+必须已经导入 Linux x64 与 arm64 两套签名 Agent/Runtime 工件；脚本会在启动
+Electron Builder 前验证完整矩阵，
+使用 `build/electron-builder.release.cjs` 加入两套 bundle，并连同基础配置中的
+`agent-release-keys.json`、`agent-runtime-lock.json` 与 `remote-runtime-lock.json`
+在打包后再次验证
+应用内副本。任一架构缺失、签名无效、组件版本、digest、ELF 架构、许可证或 lock
+不匹配都会失败，不会生成不完整的发布包。当前仓库已包含 production 公钥 registry；
+production preflight 仍要求外部安全供应与当前源码、lock 完全匹配的 Linux x64/arm64
+签名工件，缺少任一架构时会故意失败。
 
 在 macOS 上明确生成未签名、未公证的开发验证包：
 

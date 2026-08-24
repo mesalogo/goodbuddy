@@ -41,6 +41,11 @@ export const settings = {
       navigationDescription: '配置 Agent Runtime、默认工作区与原生能力',
       description: '配置 Agent Runtime、默认工作区与原生能力'
     },
+    sshHosts: {
+      label: '主机与远程执行',
+      navigationDescription: 'SSH 主机、身份验证与连接探测',
+      description: '管理 SSH 主机、固定主机密钥并验证远端执行环境'
+    },
     security: {
       label: '安全与数据',
       navigationDescription: '工具策略与本地隐私',

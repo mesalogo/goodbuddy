@@ -11,9 +11,11 @@ export const workspace = {
     selector: {
       ariaLabel: '当前项目',
       userProjects: '本地项目',
+      remoteProjects: '远程项目',
       channelProjects: '远程通道',
       empty: '未选择项目',
       localDetail: '本地目录 · {{path}}',
+      managedSshDetail: '托管 SSH · {{path}}',
       remoteDetail: '{{channel}} · 远程通道 · {{path}}',
       remoteChannel: '远程通道',
       create: '新建项目',
@@ -28,6 +30,7 @@ export const workspace = {
         name: '名称',
         description: '说明',
         rootPath: '根目录',
+        executionSpace: '执行空间',
         defaultMode: '默认模式',
         defaultRuntime: '新对话默认 Runtime'
       },
@@ -63,6 +66,68 @@ export const workspace = {
       selectRoot: '选择项目根目录失败',
       archive: '归档项目失败',
       delete: '删除项目失败'
+    },
+    remote: {
+      executionSpaces: {
+        local: '本机',
+        ssh: '托管 SSH'
+      },
+      executionSpaceFixed:
+        '已有项目不能在本机与托管 SSH 之间直接切换。',
+      fields: {
+        host: 'SSH 主机',
+        root: '远端工作目录'
+      },
+      loadingHosts: '正在读取已保存主机…',
+      noHosts: '没有已保存的 SSH 主机',
+      hostHelp: '主机凭据由设置中心统一管理，不会复制到项目中。',
+      rootHelp: '请输入或选择以 / 开头的规范绝对路径。',
+      directoryPicker: {
+        browse: '浏览远端工作目录',
+        title: '选择远端工作目录',
+        close: '关闭远端目录选择器',
+        currentPath: '当前目录',
+        parent: '返回上级目录',
+        refresh: '刷新当前目录',
+        directory: '打开目录 {{name}}',
+        loading: '正在读取远端目录…',
+        empty: '当前目录中没有子目录。',
+        loadError: '读取远端目录失败：{{message}}',
+        unknownError: '请检查 SSH 主机连接后重试。',
+        cancel: '取消',
+        select: '选择此目录'
+      },
+      runtimeHelp:
+        '托管 SSH 项目仅使用 OpenCode Runtime。Ask 为只读；Execute 可使用所选 SSH 账户拥有的全部权限。保存时会检查主机、远端 Agent、工作区和 Runtime。',
+      actions: {
+        save: '保存远程项目',
+        saving: '正在保存远程项目…'
+      },
+      activation: {
+        title: '正在连接远程项目“{{project}}”',
+        progressLabel: '远程项目连接进度',
+        stepsLabel: '远程项目连接阶段',
+        cancel: '取消连接',
+        cancelling: '正在取消远程连接…',
+        cancellingAction: '取消中…'
+      },
+      phaseStatus: '当前阶段：{{phase}}',
+      phases: {
+        host: 'SSH 主机',
+        agent: '远端 Agent',
+        workspace: '远端工作区',
+        runtime: 'OpenCode Runtime',
+        saving: '项目设置'
+      },
+      validation: {
+        host: '请选择一个已保存的 SSH 主机。',
+        root: '远端工作目录必须是以 / 开头的绝对路径。'
+      },
+      errors: {
+        hostsUnavailable: 'SSH 主机服务不可用。',
+        loadHosts: '读取 SSH 主机失败。',
+        save: '保存远程项目失败。'
+      }
     }
   },
   sidebar: {

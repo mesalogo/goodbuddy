@@ -34,6 +34,7 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 - [全双工实时语音交互设计](./architecture/full-duplex-voice-design.md)
 - [DeepSeek Harness Runtime 设计](./architecture/deepseek-harness-runtime-design.md)
 - [应用内反馈系统设计与对接](./architecture/in-app-feedback-integration-design.md)
+- [SSH 远程主机与 GoodBuddy Agent 稳定终态设计](./architecture/remote-host-and-goodbuddy-agent-design.md)
 - [跨平台助手产品设计](./design/cross-platform-assistant-product-design.md)
 - [长期助手路线图](./roadmap/long-term-assistant-roadmap.md)
 - [电脑控制实施状态](./status/computer-control-implementation-status.md)

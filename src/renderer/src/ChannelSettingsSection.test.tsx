@@ -109,6 +109,10 @@ const projects: AssistantProject[] = [
   name: name!,
   description: `${name}通道项目`,
   rootPath: 'C:\\Users\\tester',
+  executionSpace: {
+    kind: 'local',
+    rootPath: 'C:\\Users\\tester'
+  },
   defaultWorkMode: 'ask',
   runtimeSelection: { provider: 'auto' },
   kind: 'channel',

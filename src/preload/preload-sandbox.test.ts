@@ -128,6 +128,57 @@ describe('sandboxed preload', () => {
     expect(source).not.toContain('globalShortcut.')
   })
 
+  it('exposes only explicit SSH host-management methods', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('sshHosts: {')
+    expect(source).toContain('getSnapshot:')
+    expect(source).toContain('inspectDraftHostKey:')
+    expect(source).toContain('discardCandidate:')
+    expect(source).toContain('validateAndSave:')
+    expect(source).toContain(
+      'browseDirectories: (hostId: string, path?: string)'
+    )
+    expect(source).toContain('cancelDirectoryBrowse: async ()')
+    expect(source).toContain('getRemoteEnvironment: (hostId: string)')
+    expect(source).toContain(
+      'ipcChannels.sshHostsRemoteEnvironment'
+    )
+    expect(source).toContain('ipcChannels.sshHostsBrowseDirectories')
+    expect(source).toContain(
+      'ipcChannels.sshHostsCancelDirectoryBrowse'
+    )
+    expect(source).not.toContain('sshHostsCreate')
+    expect(source).not.toContain('sshHostsAcceptKey')
+    expect(source).not.toContain('privateKey:')
+    expect(source).not.toContain('agentForward: true')
+    const sshHostsSource =
+      source.match(
+        /sshHosts: \{(?<body>[\s\S]*?)\n {2}\},\n {2}channels:/u
+      )
+        ?.groups?.body ?? ''
+    expect(sshHostsSource).not.toMatch(
+      /\b(?:credential|password|revision|sftp|shell|command)\b/iu
+    )
+  })
+
+  it('exposes narrow awaited remote project activation and save operations', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('remote: {')
+    expect(source).toContain('remoteProjectActivate')
+    expect(source).toContain('remoteProjectSave')
+    expect(source).toContain('remoteProjectCancelCurrent')
+    expect(source).toContain('remoteProjectSaveProgress')
+    expect(source).toContain('RemoteProjectSaveRequest')
+    expect(source).not.toContain('commitToken')
+    expect(source).toContain('ipcRenderer.removeListener(')
+  })
+
   it('exposes bounded knowledge task actions', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),

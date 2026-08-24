@@ -1,0 +1,39 @@
+{
+  "formatVersion": 1,
+  "runtimes": {
+    "opencode": {
+      "version": "1.18.9",
+      "provider": "opencode",
+      "entrypoint": "bin/opencode",
+      "entrypointIdentity": "opencode-acp",
+      "argvPrefix": [
+        "acp"
+      ],
+      "allowedEnvironmentNames": [
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME"
+      ],
+      "protocol": {
+        "major": 1,
+        "minor": 0
+      },
+      "targets": {
+        "x64": {
+          "package": "opencode-linux-x64-baseline",
+          "integrity": "sha512-x4KiJk9EF7ktM18Ru5Jue4kTntxMvlhWb7tHniQGGRvY2KeoK1iIkyAFd7ri5H/fSkM22hNv/Gg1Jk6/h9IlxQ=="
+        },
+        "arm64": {
+          "package": "opencode-linux-arm64",
+          "integrity": "sha512-2IN4lLjhx2FICcMDnBsKgwrey0AvAM0SlNzzj7L71uakNxWvrhcqPYVpEhrEYUjIn+uQGMY5PjA+uupXigJE2A=="
+        }
+      }
+    }
+  }
+}

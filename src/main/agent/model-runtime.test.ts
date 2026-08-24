@@ -621,7 +621,7 @@ describe('ModelAgentRuntime', () => {
     const summaryBody = JSON.parse(
       fetcher.mock.calls[0]![1]!.body as string
     ) as { max_tokens: number; system: string; messages: unknown[] }
-    expect(summaryBody.max_tokens).toBe(8_192)
+    expect(summaryBody.max_tokens).toBe(32_000)
     expect(summaryBody.system).toContain('Summarize earlier history.')
     expect(JSON.stringify(summaryBody.messages)).toContain('old-user-')
     expect(JSON.stringify(summaryBody.messages)).not.toContain('new-user-')
@@ -1847,13 +1847,15 @@ describe('ModelAgentRuntime', () => {
     })
     expect(JSON.parse(init?.body as string)).toMatchObject({
       model: 'gpt-5',
-      max_output_tokens: 4096,
       stream: true,
       instructions: expect.stringContaining('GoodBuddy'),
       input: [
         expect.objectContaining({ role: 'user', content: '你好' })
       ]
     })
+    expect(JSON.parse(init?.body as string)).not.toHaveProperty(
+      'max_output_tokens'
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'reasoning',
@@ -4418,8 +4420,9 @@ describe('ModelAgentRuntime', () => {
     expect(fetcher).toHaveBeenCalledOnce()
   })
 
-  it('terminates repeated identical tool rounds without exhausting hard limits', async () => {
+  it('allows repeated tool rounds until the run is cancelled', async () => {
     let callId = 0
+    const controller = new AbortController()
     const fetcher = vi.fn<typeof fetch>(async () => {
       callId += 1
       return Response.json({
@@ -4443,7 +4446,16 @@ describe('ModelAgentRuntime', () => {
         ]
       })
     })
-    const toolProvider = createToolProvider()
+    let completedCalls = 0
+    const toolProvider = createToolProvider({
+      callTool: vi.fn(async () => {
+        completedCalls += 1
+        if (completedCalls === 5) {
+          controller.abort()
+        }
+        return createTextToolResult('same result')
+      })
+    })
     const runtime = new ModelAgentRuntime({
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'qwen3',
@@ -4460,16 +4472,149 @@ describe('ModelAgentRuntime', () => {
           prompt: 'repeat',
           workMode: 'execute'
         },
-        new AbortController().signal,
+        controller.signal,
         async () => 'once'
       )) {
         void _event
       }
     }
 
-    await expect(consume()).rejects.toThrow('没有取得进展')
-    expect(fetcher).toHaveBeenCalledTimes(3)
-    expect(toolProvider.callTool).toHaveBeenCalledTimes(2)
+    await expect(consume()).rejects.toThrow()
+    expect(fetcher).toHaveBeenCalledTimes(5)
+    expect(toolProvider.callTool).toHaveBeenCalledTimes(5)
+  })
+
+  it('allows more than the legacy 40 tool calls in one model round', async () => {
+    const toolCalls = Array.from({ length: 45 }, (_, index) => ({
+      id: `call-bulk-${index}`,
+      type: 'function',
+      function: {
+        name: 'workspace_read_text',
+        arguments: JSON.stringify({ path: `file-${index}.txt` })
+      }
+    }))
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: toolCalls
+              }
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'all tools completed'
+              }
+            }
+          ]
+        })
+      )
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: 'conversation-bulk-tools',
+        prompt: 'run all tools',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    expect(toolProvider.callTool).toHaveBeenCalledTimes(45)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  it('continues beyond the legacy 24 model tool rounds', async () => {
+    let modelRound = 0
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      modelRound += 1
+      if (modelRound <= 25) {
+        return Response.json({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: `call-round-${modelRound}`,
+                    type: 'function',
+                    function: {
+                      name: 'workspace_read_text',
+                      arguments: JSON.stringify({
+                        path: `round-${modelRound}.txt`
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      }
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: 'completed after 25 rounds'
+            }
+          }
+        ]
+      })
+    })
+    const toolProvider = createToolProvider()
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: 'conversation-many-rounds',
+        prompt: 'continue until done',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    expect(toolProvider.callTool).toHaveBeenCalledTimes(25)
+    expect(fetcher).toHaveBeenCalledTimes(26)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
   it('releases provider state for only the requested conversation', async () => {

@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { WorkspaceAccess } from '../workspace'
 import {
   getWorkspaceChanges,
   listWorkspaceDirectory,
@@ -75,6 +76,71 @@ describe('getWorkspaceChanges', () => {
 })
 
 describe('workspace file browsing', () => {
+  it('delegates workspace operations through WorkspaceAccess', async () => {
+    const listDirectory = vi.fn(async () => ({
+      path: '',
+      entries: [
+        { name: 'remote.md', path: 'remote.md', type: 'file' as const }
+      ],
+      truncated: false
+    }))
+    const stat = vi.fn(async () => ({
+      name: 'remote.md',
+      path: 'remote.md',
+      type: 'file' as const,
+      size: 7,
+      modifiedAt: '2026-08-21T00:00:00.000Z'
+    }))
+    const readText = vi.fn(async () => ({
+      path: 'remote.md',
+      name: 'remote.md',
+      content: '# fake\n',
+      size: 7
+    }))
+    const getChanges = vi.fn(async () => ({
+      rootPath: '/remote',
+      available: false,
+      status: '',
+      patch: '',
+      files: [],
+      truncated: false
+    }))
+    const workspace = {
+      getIdentity: vi.fn(),
+      listDirectory,
+      stat,
+      readText,
+      writeTextAtomic: vi.fn(),
+      search: vi.fn(),
+      getChanges,
+      dispose: vi.fn()
+    } as unknown as WorkspaceAccess
+
+    await expect(
+      listWorkspaceDirectory(workspace, '')
+    ).resolves.toMatchObject({
+      entries: [{ name: 'remote.md', type: 'file' }]
+    })
+    await expect(
+      readWorkspaceFile(workspace, 'remote.md')
+    ).resolves.toMatchObject({
+      content: '# fake\n',
+      mimeType: 'text/markdown'
+    })
+    await expect(getWorkspaceChanges(workspace)).resolves.toMatchObject({
+      rootPath: '/remote'
+    })
+    expect(listDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '', maximumEntries: 500 })
+    )
+    expect(readText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'remote.md',
+        maximumBytes: 256 * 1024
+      })
+    )
+  })
+
   it('lists directories and reads bounded Markdown previews', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-files-'))
     temporaryDirectories.push(directory)

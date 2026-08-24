@@ -24,6 +24,8 @@ import {
   type RuntimeSettingsInput,
   type RuntimeConfigActionInput,
   type RuntimeFileSelectionKind,
+  type RemoteProjectSaveProgress,
+  type RemoteProjectSaveRequest,
   type WindowCaptureOption
 } from '../shared/contracts'
 import { ipcChannels } from '../shared/ipc-channels'
@@ -102,6 +104,15 @@ import type {
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
 import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
+import type {
+  SshHostDraftInspectionRequest,
+  SshDirectoryBrowseResult,
+  SshHostKeyInspection,
+  SshHostRemoteEnvironment,
+  SshHostsSnapshot,
+  SshHostValidationRequest,
+  SshHostValidationResult
+} from '../shared/ssh-host-contracts'
 import type {
   MagicNoteAnalysisStreamEvent,
   MagicNoteDraftAnalysis,
@@ -310,6 +321,48 @@ const desktopApi: DesktopApi = {
         ipcChannels.runtimeSettingsTest,
         selection
       ) as Promise<AgentRuntimeStatus>
+  },
+  sshHosts: {
+    getSnapshot: () =>
+      ipcRenderer.invoke(
+        ipcChannels.sshHostsGet
+      ) as Promise<SshHostsSnapshot>,
+    remove: async (hostId: string) => {
+      await ipcRenderer.invoke(ipcChannels.sshHostsRemove, {
+        hostId
+      })
+    },
+    inspectDraftHostKey: (input: SshHostDraftInspectionRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.sshHostsInspectDraftKey,
+        input
+      ) as Promise<SshHostKeyInspection>,
+    discardCandidate: async (candidateId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.sshHostsDiscardCandidate,
+        { candidateId }
+      )
+    },
+    validateAndSave: (input: SshHostValidationRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.sshHostsValidateAndSave,
+        input
+      ) as Promise<SshHostValidationResult>,
+    getRemoteEnvironment: (hostId: string) =>
+      ipcRenderer.invoke(
+        ipcChannels.sshHostsRemoteEnvironment,
+        { hostId }
+      ) as Promise<SshHostRemoteEnvironment>,
+    browseDirectories: (hostId: string, path?: string) =>
+      ipcRenderer.invoke(ipcChannels.sshHostsBrowseDirectories, {
+        hostId,
+        ...(path === undefined ? {} : { path })
+      }) as Promise<SshDirectoryBrowseResult>,
+    cancelDirectoryBrowse: async () => {
+      await ipcRenderer.invoke(
+        ipcChannels.sshHostsCancelDirectoryBrowse
+      )
+    }
   },
   channels: {
     getSnapshot: () =>
@@ -643,6 +696,36 @@ const desktopApi: DesktopApi = {
         projectId,
         confirmation
       })
+    },
+    remote: {
+      activate: (projectId: string) =>
+        ipcRenderer.invoke(
+          ipcChannels.remoteProjectActivate,
+          projectId
+        ) as Promise<AssistantProject>,
+      save: (input: RemoteProjectSaveRequest) =>
+        ipcRenderer.invoke(
+          ipcChannels.remoteProjectSave,
+          input
+        ) as Promise<AssistantProject>,
+      cancelCurrent: async () => {
+        await ipcRenderer.invoke(ipcChannels.remoteProjectCancelCurrent)
+      },
+      onSaveProgress: (listener) => {
+        const handler = (
+          _event: Electron.IpcRendererEvent,
+          progress: RemoteProjectSaveProgress
+        ): void => listener(progress)
+        ipcRenderer.on(
+          ipcChannels.remoteProjectSaveProgress,
+          handler
+        )
+        return () =>
+          ipcRenderer.removeListener(
+            ipcChannels.remoteProjectSaveProgress,
+            handler
+          )
+      }
     }
   },
   conversations: {

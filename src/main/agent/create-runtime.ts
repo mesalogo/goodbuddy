@@ -30,6 +30,14 @@ import type { ModelToolProviderLike } from './model-tool-provider'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { ModelToolProvider } from './model-tool-provider'
 import type { ControlledHarnessExtensionPackage } from './deepseek-harness-extension-loader'
+import {
+  LocalWorkspaceAccess,
+  type WorkspaceAccess
+} from '../workspace'
+import {
+  REMOTE_EXECUTION_SPACE_UNAVAILABLE,
+  type ExecutionSpaceDescriptor
+} from '../execution-space'
 
 const noSubagentTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -55,6 +63,8 @@ export type AgentCapabilityContext = {
   browserService?: BrowserToolService
   knowledgeGateway?: KnowledgeMcpGateway
   webSearchEnabled?: boolean
+  executionSpace?: ExecutionSpaceDescriptor
+  workspaceAccess?: WorkspaceAccess
 }
 
 function resolveContextCompression(
@@ -145,14 +155,33 @@ export function createAgentRuntime(
   settings?: ResolvedRuntimeSettings,
   capabilities: AgentCapabilityContext = {}
 ): AgentRuntime {
+  const executionSpace = capabilities.executionSpace
+  const remote = executionSpace?.kind === 'ssh'
   const baseUrl = (
     settings?.opencodeBaseUrl ||
     process.env.GOODBUDDY_OPENCODE_URL ||
     ''
   ).trim()
   const embedded = !baseUrl
-  const workspace = settings?.workspacePath || defaultWorkspace
+  const workspace =
+    executionSpace?.kind === 'local'
+      ? executionSpace.rootPath
+      : settings?.workspacePath || defaultWorkspace
+  const getWorkspaceAccess = (): WorkspaceAccess =>
+    capabilities.workspaceAccess ??
+    executionSpace?.workspaceAccess ??
+    new LocalWorkspaceAccess(workspace)
   const provider = settings?.provider ?? defaultRuntimeSettings.provider
+
+  if (
+    remote &&
+    (provider === 'continue' ||
+      provider === 'opencode' ||
+      provider === 'deepseek-harness' ||
+      provider === 'auto')
+  ) {
+    throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
+  }
 
   if (provider === 'deepseek-harness') {
     const profile = settings?.deepseekHarnessModelProfile
@@ -179,7 +208,7 @@ export function createAgentRuntime(
       skillPackages: capabilities.skillPackages,
       extensionPackages: capabilities.deepseekHarnessExtensions,
       toolProvider: new ModelToolProvider(
-        workspace,
+        getWorkspaceAccess(),
         capabilities.mcpServers,
         undefined,
         capabilities.knowledgeGateway,
@@ -311,7 +340,8 @@ export function createAgentRuntime(
       webSearchEnabled: capabilities.webSearchEnabled,
       contextCompression: settings
         ? resolveContextCompression(settings, defaultModelProfile)
-        : undefined
+        : undefined,
+      workspaceAccess: getWorkspaceAccess()
     })
   }
 

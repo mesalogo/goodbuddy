@@ -30,6 +30,12 @@
     "build:bundle": "electron-vite build && node build/check-renderer-bundle.cjs",
     "smoke:deepseek-harness": "npm run build:bundle && node build/run-deepseek-harness-utility-smoke.cjs",
     "smoke:deepseek-harness:packaged": "node build/run-packaged-deepseek-harness-smoke.cjs",
+    "agent:build": "node build/agent-bundle.cjs build",
+    "agent:verify": "node build/agent-bundle.cjs verify",
+    "agent:import": "node build/agent-bundle.cjs import",
+    "remote-runtime:build": "node build/remote-runtime-bundle.cjs build",
+    "remote-runtime:verify": "node build/remote-runtime-bundle.cjs verify",
+    "remote-runtime:import": "node build/remote-runtime-bundle.cjs import",
     "release:notes:verify": "node build/release-notes.cjs",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
@@ -86,6 +92,18 @@
         "to": "release-notes.json"
       },
       {
+        "from": "agent-runtime-lock.json",
+        "to": "agent-runtime-lock.json"
+      },
+      {
+        "from": "remote-runtime-lock.json",
+        "to": "remote-runtime-lock.json"
+      },
+      {
+        "from": "resources/agent-release-keys.json",
+        "to": "agent-release-keys.json"
+      },
+      {
         "from": "build/icon-taskbar.ico",
         "to": "icon.ico"
       },
@@ -131,6 +149,10 @@
       {
         "from": "node_modules/node-pty/LICENSE",
         "to": "licenses/node-pty-MIT.txt"
+      },
+      {
+        "from": "node_modules/ssh2/LICENSE",
+        "to": "licenses/ssh2-MIT.txt"
       },
       {
         "from": "node_modules/koffi/LICENSE.txt",
@@ -273,6 +295,7 @@
     "i18next": "^25.10.10",
     "json5": "^2.2.3",
     "katex": "^0.16.47",
+    "koffi": "3.1.4",
     "lucide-react": "^1.27.0",
     "mermaid": "^11.16.1",
     "npm": "11.19.0",
@@ -289,6 +312,7 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "sherpa-onnx": "1.13.4",
+    "ssh2": "^1.17.0",
     "undici": "^7.29.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
@@ -306,10 +330,12 @@
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@types/ssh2": "^1.15.5",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "esbuild": "0.25.12",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.8.0",

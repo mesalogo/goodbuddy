@@ -416,6 +416,10 @@ describe('ActivityPanel', () => {
             name: builtInDefaultProjectSeedName,
             description: builtInDefaultProjectSeedDescription,
             rootPath: 'C:\\Workspace',
+            executionSpace: {
+              kind: 'local',
+              rootPath: 'C:\\Workspace'
+            },
             defaultWorkMode: 'ask',
             kind: 'user',
             builtInDefault: true,
@@ -465,6 +469,10 @@ describe('ActivityPanel', () => {
             name: 'Renamed current project',
             description: '',
             rootPath: 'C:\\Renamed',
+            executionSpace: {
+              kind: 'local',
+              rootPath: 'C:\\Renamed'
+            },
             defaultWorkMode: 'ask',
             kind: 'user',
             status: 'active',

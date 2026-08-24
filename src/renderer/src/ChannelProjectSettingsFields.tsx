@@ -1,61 +1,12 @@
 import { FolderOpen } from 'lucide-react'
-import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { ProjectCreateInput } from '../../shared/assistant-contracts'
 import type { RuntimeSettings } from '../../shared/contracts'
 import {
-  agentRuntimeSelectionKey,
-  isChannelModelProfileUsable,
-  repairChannelRuntimeSelection,
-  type AgentRuntimeSelection
+  repairChannelRuntimeSelection
 } from '../../shared/runtime-selection-contracts'
-import { SegmentedControl } from './WorkspacePrimitives'
-
-function configuredRuntimeSelection(
-  provider: 'opencode' | 'continue' | 'deepseek-harness'
-): AgentRuntimeSelection {
-  return { provider }
-}
-
-function runtimeSelectionDescription(
-  selection: AgentRuntimeSelection,
-  settings: RuntimeSettings,
-  t: TFunction<'integrations'>
-): string {
-  if (selection.provider === 'model') {
-    const profile = settings.modelProfiles.find(
-      (candidate) => candidate.id === selection.profileId
-    )
-    if (!profile) {
-      return t('channels.project.missingSelection')
-    }
-    if (profile.protocol === 'openai-images-generations') {
-      return t('channels.project.imageOnlySelection')
-    }
-    if (
-      profile.authentication === 'api-key' &&
-      !profile.apiKeyConfigured
-    ) {
-      return t('channels.project.missingCredential')
-    }
-    return t('channels.project.directDescription', {
-      name: profile.name,
-      modelName: profile.modelName
-    })
-  }
-  if (selection.provider === 'auto') {
-    return t('channels.project.automaticDescription')
-  }
-  const runtimeLabel =
-    selection.provider === 'opencode'
-      ? 'OpenCode'
-      : selection.provider === 'continue'
-        ? 'Continue'
-        : 'DeepSeek Harness'
-  return t('channels.project.runtimeDescription', {
-    runtime: runtimeLabel
-  })
-}
+import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
+import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 
 export function channelProjectDraft(
   project: ProjectCreateInput,
@@ -91,45 +42,6 @@ export function ChannelProjectSettingsFields({
   variant?: 'card' | 'dialog'
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
-  const runtimeSelection = repairChannelRuntimeSelection(
-    value.runtimeSelection ?? { provider: 'auto' },
-    runtimeSettings
-  )
-  const directProfiles = runtimeSettings.modelProfiles.filter(
-    isChannelModelProfileUsable
-  )
-  const selectedDirectProfileId =
-    runtimeSelection.provider === 'model'
-      ? runtimeSelection.profileId
-      : undefined
-  const selectedDirectProfile = runtimeSettings.modelProfiles.find(
-    (profile) => profile.id === selectedDirectProfileId
-  )
-  const selectedDirectUnavailable =
-    selectedDirectProfileId !== undefined &&
-    !directProfiles.some(
-      (profile) => profile.id === selectedDirectProfileId
-    )
-  const openCodeSelection = configuredRuntimeSelection('opencode')
-  const continueSelection = configuredRuntimeSelection('continue')
-  const deepseekHarnessSelection =
-    configuredRuntimeSelection('deepseek-harness')
-  const selections: AgentRuntimeSelection[] = [
-    ...directProfiles.map((profile) => ({
-      provider: 'model' as const,
-      profileId: profile.id
-    })),
-    openCodeSelection,
-    continueSelection,
-    deepseekHarnessSelection
-  ]
-  const selectionByKey = new Map(
-    selections.map((selection) => [
-      agentRuntimeSelectionKey(selection),
-      selection
-    ])
-  )
-
   return (
     <section
       aria-label={t('channels.project.sectionAriaLabel', {
@@ -182,103 +94,35 @@ export function ChannelProjectSettingsFields({
         </div>
         <small>{t('channels.project.rootHelp')}</small>
       </label>
-      <label className="field">
-        <span>{t('channels.project.backendLabel')}</span>
-        <select
-          aria-label={t('channels.project.backendAriaLabel', {
-            name: value.name
-          })}
-          disabled={disabled}
-          onChange={(event) => {
-            const nextSelection = selectionByKey.get(event.target.value)
-            if (nextSelection) {
-              onChange({
-                ...value,
-                runtimeSelection: nextSelection
-              })
-            }
-          }}
-          value={agentRuntimeSelectionKey(runtimeSelection)}
-        >
-          <optgroup label={t('channels.project.directModels')}>
-            {selectedDirectUnavailable && (
-              <option
-                disabled
-                value={agentRuntimeSelectionKey(runtimeSelection)}
-              >
-                {selectedDirectProfile
-                  ? t('channels.project.unavailableProfile', {
-                      name: selectedDirectProfile.name,
-                      modelName: selectedDirectProfile.modelName
-                    })
-                  : t('channels.project.missingProfile')}
-              </option>
-            )}
-            {directProfiles.length === 0 && (
-              <option disabled value="model:unavailable">
-                {t('channels.project.noTextModels')}
-              </option>
-            )}
-            {directProfiles.map((profile) => {
-              const selection = {
-                provider: 'model' as const,
-                profileId: profile.id
-              }
-              return (
-                <option
-                  key={profile.id}
-                  value={agentRuntimeSelectionKey(selection)}
-                >
-                  {profile.name} · {profile.modelName}
-                </option>
-              )
-            })}
-          </optgroup>
-          <optgroup label="Agent Runtime">
-            <option value={agentRuntimeSelectionKey(openCodeSelection)}>
-              OpenCode
-            </option>
-            <option value={agentRuntimeSelectionKey(continueSelection)}>
-              Continue
-            </option>
-            <option
-              value={agentRuntimeSelectionKey(
-                deepseekHarnessSelection
-              )}
-            >
-              {t('channels.project.deepseekHarnessOption')}
-            </option>
-          </optgroup>
-        </select>
-        <small>
-          {runtimeSelectionDescription(
-            runtimeSelection,
-            runtimeSettings,
-            t
-          )}
-        </small>
-      </label>
-      <fieldset className="channel-work-mode">
-        <legend>{t('channels.project.defaultMode')}</legend>
-        <SegmentedControl
-          ariaLabel={t('channels.project.defaultModeAriaLabel', {
-            name: value.name
-          })}
-          disabled={disabled}
-          onChange={(defaultWorkMode) =>
-            onChange({ ...value, defaultWorkMode })
-          }
-          options={[
-            { value: 'ask', label: t('channels.project.modes.ask') },
-            {
-              value: 'execute',
-              label: t('channels.project.modes.execute')
-            }
-          ]}
-          value={value.defaultWorkMode}
-        />
-        <small>{t('channels.project.overrideHelp')}</small>
-      </fieldset>
+      <ProjectRuntimeSelector
+        ariaLabel={t('channels.project.backendAriaLabel', {
+          name: value.name
+        })}
+        disabled={disabled}
+        label={t('channels.project.backendLabel')}
+        onChange={(runtimeSelection) =>
+          onChange({ ...value, runtimeSelection })
+        }
+        runtimeSettings={runtimeSettings}
+        selection={value.runtimeSelection}
+        selectionMode="channel"
+      />
+      <ProjectWorkModeFields
+        ariaLabel={t('channels.project.defaultModeAriaLabel', {
+          name: value.name
+        })}
+        disabled={disabled}
+        help={t('channels.project.overrideHelp')}
+        labels={{
+          ask: t('channels.project.modes.ask'),
+          execute: t('channels.project.modes.execute')
+        }}
+        legend={t('channels.project.defaultMode')}
+        onChange={(defaultWorkMode) =>
+          onChange({ ...value, defaultWorkMode })
+        }
+        value={value.defaultWorkMode}
+      />
       <p className="channel-project-settings__risk">
         {value.defaultWorkMode === 'execute'
           ? t('channels.project.executeRisk')

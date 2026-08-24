@@ -49,6 +49,7 @@ import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSecti
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
+import { SshHostsSettingsSection } from './SshHostsSettingsSection'
 import {
   RuntimeCustomizationSection,
   type RuntimeCustomizationSectionHandle
@@ -204,6 +205,7 @@ type SettingsPanelProps = {
   initialCategory?: SettingsCategoryId
   initialChannel?: ProjectChannel
   onClose: () => void
+  onSshHostUpdated?: (hostId: string) => void
   onSaved: (settings: RuntimeSettings) => void
   onNotify?: (notification: AppNotificationInput) => void
   onUpdateProject: (
@@ -573,6 +575,7 @@ export function SettingsPanel({
   initialCategory,
   initialChannel,
   onClose,
+  onSshHostUpdated = () => {},
   onSaved,
   onNotify = () => {},
   onUpdateProject,
@@ -724,6 +727,7 @@ export function SettingsPanel({
     useState(false)
   const [documentParsingDirty, setDocumentParsingDirty] =
     useState(false)
+  const [sshHostsDirty, setSshHostsDirty] = useState(false)
   const [pendingLeave, setPendingLeave] = useState<
     | { kind: 'close' }
     | { kind: 'navigate'; category: SettingsCategoryId }
@@ -805,6 +809,7 @@ export function SettingsPanel({
   const categoryRendersOwnHeader =
     activeTab === 'platform-features' ||
     activeTab === 'document-parsing' ||
+    activeTab === 'ssh-hosts' ||
     activeTab === 'channels' ||
     activeTab === 'skills' ||
     activeTab === 'mcp' ||
@@ -908,17 +913,20 @@ export function SettingsPanel({
     speechModelSelectionDirty ||
     runtimeCustomizationDirty ||
     platformFeaturesDirty ||
-    documentParsingDirty
+    documentParsingDirty ||
+    sshHostsDirty
   const navigationWouldLoseDraft =
     runtimeCustomizationDirty ||
     platformFeaturesDirty ||
-    documentParsingDirty
+    documentParsingDirty ||
+    sshHostsDirty
   const unsavedCloseMessage =
     runtimeCustomizationDirty &&
     !runtimeDraftDirty &&
     !speechModelSelectionDirty &&
     !platformFeaturesDirty &&
-    !documentParsingDirty
+    !documentParsingDirty &&
+    !sshHostsDirty
       ? t('runtime.customization.unsavedClose')
       : t('unsaved.close')
 
@@ -999,6 +1007,7 @@ export function SettingsPanel({
         setSpeechModelSelectionDirty(false)
         setPlatformFeaturesDirty(false)
         setDocumentParsingDirty(false)
+        setSshHostsDirty(false)
         setPendingLeave(undefined)
         setAgentRuntimeType('opencode')
         hydrateSettings(value)
@@ -1132,6 +1141,7 @@ export function SettingsPanel({
     setSpeechModelSelectionDirty(false)
     setPlatformFeaturesDirty(false)
     setDocumentParsingDirty(false)
+    setSshHostsDirty(false)
     setPendingLeave(undefined)
     setError(undefined)
   }
@@ -1156,6 +1166,7 @@ export function SettingsPanel({
     setRuntimeCustomizationDirty(false)
     setPlatformFeaturesDirty(false)
     setDocumentParsingDirty(false)
+    setSshHostsDirty(false)
     const leave = pendingLeave
     setPendingLeave(undefined)
     setError(undefined)
@@ -3570,6 +3581,14 @@ export function SettingsPanel({
               onOpenModelDownloadSourceSettings={() =>
                 requestTabChange('platform-features')
               }
+            />
+          )}
+
+          {activeTab === 'ssh-hosts' && (
+            <SshHostsSettingsSection
+              onDirtyChange={setSshHostsDirty}
+              onHostUpdated={onSshHostUpdated}
+              onNotify={onNotify}
             />
           )}
 

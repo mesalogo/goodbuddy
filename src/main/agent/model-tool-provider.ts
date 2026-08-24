@@ -1,18 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { randomUUID } from 'node:crypto'
-import {
-  lstat,
-  open,
-  rename,
-  realpath,
-  rm,
-  stat
-} from 'node:fs/promises'
-import {
-  dirname,
-  isAbsolute,
-  resolve
-} from 'node:path'
+import { isAbsolute } from 'node:path'
 import { isIP } from 'node:net'
 import { z } from 'zod'
 import { builtinModelTools } from '../../shared/builtin-model-tools'
@@ -26,11 +13,9 @@ import {
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import { createMcpTransport } from '../capabilities/mcp-client-transport'
 import {
-  getCanonicalWorkspace,
-  isPathInside,
-  listBoundedDirectoryEntries,
-  readBoundedUtf8File
-} from '../workspace-file-access'
+  LocalWorkspaceAccess,
+  type WorkspaceAccess
+} from '../workspace'
 import type { RuntimeApprovalRequest } from './runtime'
 import {
   BrowserModelTools,
@@ -88,6 +73,11 @@ const goodbuddyConfigWriteToolNameSet = new Set<string>(
   goodbuddyConfigWriteToolNames
 )
 const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
+const builtinModelToolAccessByName = new Map<string, 'read' | 'write'>(
+  builtinModelTools.map((tool) => [tool.name, tool.access])
+)
+const ASK_TOOL_DENIAL_MESSAGE =
+  'Ask 模式仅允许调用已声明的只读工具'
 const scopedToolJsonSchemas = new Map(
   [...scopedDataToolByName].map(([name, definition]) => {
     const schema = z.toJSONSchema(
@@ -309,6 +299,23 @@ function createTextToolResult(text: string): ModelToolResult {
   }
 }
 
+function assertToolAuthorizedForWorkMode(
+  name: string,
+  context: ModelToolCallContext
+): void {
+  if (context.workMode !== 'ask') {
+    return
+  }
+  const access =
+    builtinModelToolAccessByName.get(name) ??
+    scopedDataToolByName.get(
+      name as Parameters<typeof scopedDataToolByName.get>[0]
+    )?.access
+  if (access !== 'read') {
+    throw new Error(ASK_TOOL_DENIAL_MESSAGE)
+  }
+}
+
 function parseMcpImage(
   content: Record<string, unknown>
 ): Extract<ModelToolResultPart, { type: 'image' }> {
@@ -472,7 +479,6 @@ function normalizeMcpResult(result: unknown): ModelToolResult {
 }
 
 export class ModelToolProvider implements ModelToolProviderLike {
-  private canonicalWorkspace?: Promise<string>
   private mcpConnections?: Promise<ConnectedMcp[]>
   private webSearchBindings?: Promise<Map<string, McpToolBinding>>
   private readonly clients = new Set<Client>()
@@ -480,12 +486,19 @@ export class ModelToolProvider implements ModelToolProviderLike {
   private readonly webSearchClients = new Set<Client>()
 
   constructor(
-    private readonly workspace: string,
+    workspace: string | WorkspaceAccess,
     private readonly mcpServers: ResolvedMcpServer[] = [],
     private readonly browserService?: BrowserToolService,
     private readonly knowledgeGateway?: KnowledgeMcpGateway,
     private readonly webSearchEnabled = false
-  ) {}
+  ) {
+    this.workspaceAccess =
+      typeof workspace === 'string'
+        ? new LocalWorkspaceAccess(workspace)
+        : workspace
+  }
+
+  private readonly workspaceAccess: WorkspaceAccess
 
   private getScopedTools(
     context: ModelToolCallContext
@@ -605,71 +618,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
         source: 'builtin'
       }
     ]
-  }
-
-  private async getWorkspace(): Promise<string> {
-    this.canonicalWorkspace ??= getCanonicalWorkspace(
-      this.workspace,
-      '直连模型工作区不是目录'
-    )
-    return this.canonicalWorkspace
-  }
-
-  private async resolveExistingPath(
-    inputPath: string,
-    expected: 'file' | 'directory'
-  ): Promise<string> {
-    const root = await this.getWorkspace()
-    const relativePath = workspacePathSchema.parse(inputPath)
-    const candidate = resolve(root, relativePath)
-    if (!isPathInside(root, candidate)) {
-      throw new Error('工具路径不能超出工作区')
-    }
-    const canonical = await realpath(candidate)
-    if (!isPathInside(root, canonical)) {
-      throw new Error('工具路径不能通过符号链接超出工作区')
-    }
-    const metadata = await stat(canonical)
-    if (
-      (expected === 'file' && !metadata.isFile()) ||
-      (expected === 'directory' && !metadata.isDirectory())
-    ) {
-      throw new Error(
-        expected === 'file' ? '工具路径不是普通文件' : '工具路径不是目录'
-      )
-    }
-    return canonical
-  }
-
-  private async resolveWritablePath(inputPath: string): Promise<string> {
-    const root = await this.getWorkspace()
-    const relativePath = workspacePathSchema.parse(inputPath)
-    const candidate = resolve(root, relativePath)
-    if (!isPathInside(root, candidate) || candidate === root) {
-      throw new Error('工具路径不能超出工作区')
-    }
-    const canonicalParent = await realpath(dirname(candidate))
-    if (!isPathInside(root, canonicalParent)) {
-      throw new Error('工具路径不能通过符号链接超出工作区')
-    }
-    const existing = await lstat(candidate).catch((error: unknown) => {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
-        return undefined
-      }
-      throw error
-    })
-    if (existing?.isSymbolicLink()) {
-      throw new Error('工作区写入工具拒绝符号链接')
-    }
-    if (existing && !existing.isFile()) {
-      throw new Error('工作区写入目标不是普通文件')
-    }
-    return candidate
   }
 
   private getBuiltinTools(): ModelToolDefinition[] {
@@ -1005,6 +953,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     argumentSummary: string,
     context: ModelToolCallContext
   ): RuntimeApprovalRequest {
+    assertToolAuthorizedForWorkMode(tool.name, context)
     const browserTools = this.getBrowserTools(context)
     if (browserTools?.ownsTool(tool.name)) {
       return browserTools.getApproval(
@@ -1082,6 +1031,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     context: ModelToolCallContext
   ): Promise<ModelToolResult> {
     signal.throwIfAborted()
+    assertToolAuthorizedForWorkMode(name, context)
     if (name === 'knowledge_list') {
       if (
         !this.knowledgeGateway ||
@@ -1369,28 +1319,27 @@ export class ModelToolProvider implements ModelToolProviderLike {
     }
     if (name === 'workspace_read_text') {
       const input = readInputSchema.parse(argumentsValue)
-      const filePath = await this.resolveExistingPath(input.path, 'file')
       return createTextToolResult(
         (
-          await readBoundedUtf8File(
-            filePath,
-            MAX_READ_BYTES,
-            '工作区文本文件超过 256KB 安全限制',
-            '工作区读取目标不是有效 UTF-8 文本'
-          )
+          await this.workspaceAccess.readText({
+            path: input.path,
+            maximumBytes: MAX_READ_BYTES,
+            tooLargeMessage: '工作区文本文件超过 256KB 安全限制',
+            invalidUtf8Message: '工作区读取目标不是有效 UTF-8 文本',
+            signal
+          })
         ).content
       )
     }
     if (name === 'workspace_list_directory') {
       const input = listInputSchema.parse(argumentsValue)
-      const directoryPath = await this.resolveExistingPath(
-        input.path,
-        'directory'
-      )
-      const listing = await listBoundedDirectoryEntries(
-        directoryPath,
-        200
-      )
+      const listing = await this.workspaceAccess.listDirectory({
+        path: input.path,
+        maximumEntries: 200,
+        includeGit: true,
+        includeOther: true,
+        signal
+      })
       return createTextToolResult(
         boundedJson(
           {
@@ -1398,11 +1347,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
               .sort((left, right) => left.name.localeCompare(right.name))
               .map((entry) => ({
                 name: entry.name,
-                type: entry.isDirectory()
-                  ? 'directory'
-                  : entry.isFile()
-                    ? 'file'
-                    : 'other'
+                type: entry.type
               })),
             truncated: listing.truncated
           },
@@ -1415,26 +1360,15 @@ export class ModelToolProvider implements ModelToolProviderLike {
       if (Buffer.byteLength(input.content) > MAX_WRITE_BYTES) {
         throw new Error('写入内容超过 512KB 安全限制')
       }
-      const filePath = await this.resolveWritablePath(input.path)
-      const temporaryPath = `${filePath}.${randomUUID()}.tmp`
-      const handle = await open(temporaryPath, 'wx', 0o600)
-      try {
-        try {
-          await handle.writeFile(input.content, 'utf8')
-        } finally {
-          await handle.close()
-        }
-        await rename(temporaryPath, filePath)
-      } catch (error) {
-        await rm(temporaryPath, { force: true }).catch(() => undefined)
-        throw new Error('无法安全写入工作区文件', { cause: error })
-      }
+      const written = await this.workspaceAccess.writeTextAtomic({
+        path: input.path,
+        content: input.content,
+        maximumBytes: MAX_WRITE_BYTES,
+        signal
+      })
       return createTextToolResult(
         boundedJson(
-          {
-            path: input.path,
-            bytesWritten: Buffer.byteLength(input.content)
-          },
+          written,
           '工作区写入结果无法序列化'
         )
       )
@@ -1499,7 +1433,10 @@ export class ModelToolProvider implements ModelToolProviderLike {
     this.webSearchClients.clear()
     this.mcpConnections = undefined
     this.webSearchBindings = undefined
-    await Promise.allSettled(clients.map((client) => client.close()))
+    await Promise.allSettled([
+      ...clients.map((client) => client.close()),
+      this.workspaceAccess.dispose()
+    ])
   }
 
   async releaseConversation(conversationId: string): Promise<void> {

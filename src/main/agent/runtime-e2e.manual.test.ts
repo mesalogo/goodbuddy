@@ -331,8 +331,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         baseUrl,
         model: modelName,
         protocol,
-        authentication: 'api-key',
-        maxOutputTokens: 128
+        authentication: 'api-key'
       })
 
       try {
@@ -382,7 +381,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         protocol,
         authentication: 'api-key',
         supportsImageInput: true,
-        maxOutputTokens: 128,
         contextCompression: {
           settings: {
             ...defaultContextCompressionSettings,
@@ -593,7 +591,6 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         model: modelName,
         protocol,
         authentication: 'api-key',
-        maxOutputTokens: 128,
         contextCompression: {
           settings: {
             ...defaultContextCompressionSettings,

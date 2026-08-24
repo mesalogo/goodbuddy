@@ -5,7 +5,11 @@ import type {
   AgentRuntimeStatus
 } from '../../shared/contracts'
 import type { AgentRuntime, RuntimeAuthorizer } from './runtime'
-import { AgentRuntimeController } from './runtime-controller'
+import {
+  AgentRuntimeController,
+  MAX_DRAINING_RUNTIME_GENERATIONS,
+  RuntimeReplacementCapacityError
+} from './runtime-controller'
 
 class TestRuntime implements AgentRuntime {
   readonly dispose = vi.fn(async () => {})
@@ -64,6 +68,33 @@ class TestRuntime implements AgentRuntime {
 
   finish(): void {
     this.release?.()
+  }
+
+  releaseConversation(): Promise<void> {
+    return Promise.resolve()
+  }
+}
+
+class DrainableTestRuntime extends TestRuntime {
+  readonly beginDrain = vi.fn(async () => {})
+  readonly forceShutdown = vi.fn(async () => {})
+  private readonly drained: Promise<void>
+  private resolveDrained!: () => void
+
+  constructor() {
+    super(true)
+    this.drained = new Promise((resolve) => {
+      this.resolveDrained = resolve
+    })
+  }
+
+  waitForDrain(): Promise<void> {
+    return this.drained
+  }
+
+  releaseConversation(): Promise<void> {
+    this.resolveDrained()
+    return Promise.resolve()
   }
 }
 
@@ -133,6 +164,212 @@ describe('AgentRuntimeController', () => {
     await replacement
     expect(previous.dispose).toHaveBeenCalledOnce()
     await controller.dispose()
+  })
+
+  it('drains remote sessions without interrupting their active prompt', async () => {
+    const previous = new DrainableTestRuntime()
+    const next = new TestRuntime()
+    const controller = new AgentRuntimeController(previous)
+    const stream = controller.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b13',
+        conversationId: 'conversation-drain',
+        prompt: 'test',
+        workMode: 'ask'
+      },
+      new AbortController().signal
+    )
+    const pending = stream.next()
+    await previous.started
+
+    await controller.replace(next)
+    expect(previous.beginDrain).toHaveBeenCalledOnce()
+    expect(previous.dispose).not.toHaveBeenCalled()
+
+    previous.finish()
+    await expect(pending).resolves.toMatchObject({
+      value: { type: 'text' }
+    })
+    await stream.return()
+    expect(previous.dispose).not.toHaveBeenCalled()
+
+    await controller.releaseConversation('conversation-drain')
+    await vi.waitFor(() =>
+      expect(previous.dispose).toHaveBeenCalledOnce()
+    )
+    await controller.dispose()
+  })
+
+  it('clears conversation ownership when a Runtime release fails', async () => {
+    const runtime = new TestRuntime()
+    runtime.releaseConversation = vi.fn(async () => {
+      throw new Error('release failed')
+    })
+    const controller = new AgentRuntimeController(runtime)
+    const stream = controller.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b16',
+        conversationId: 'conversation-release-failure',
+        prompt: 'test',
+        workMode: 'ask'
+      },
+      new AbortController().signal
+    )
+    await stream.next()
+    await stream.return()
+
+    expect(controller.ownedConversationCount).toBe(1)
+    await expect(
+      controller.releaseConversation(
+        'conversation-release-failure'
+      )
+    ).rejects.toBeInstanceOf(AggregateError)
+    expect(controller.ownedConversationCount).toBe(0)
+    expect(controller.canRetire).toBe(true)
+    await controller.dispose()
+  })
+
+  it('counts a draining generation until disposal actually settles', async () => {
+    const previous = new DrainableTestRuntime()
+    let finishDisposal!: () => void
+    previous.dispose.mockImplementation(
+      async () =>
+        await new Promise<void>((resolve) => {
+          finishDisposal = resolve
+        })
+    )
+    const controller = new AgentRuntimeController(previous)
+
+    await controller.replace(new TestRuntime())
+    await controller.releaseConversation('conversation-disposal')
+    await vi.waitFor(() =>
+      expect(previous.dispose).toHaveBeenCalledOnce()
+    )
+    expect(controller.replacementStatus.drainingGenerations).toBe(1)
+
+    finishDisposal()
+    await vi.waitFor(() =>
+      expect(
+        controller.replacementStatus.drainingGenerations
+      ).toBe(0)
+    )
+    await controller.dispose()
+  })
+
+  it('bounds retained draining generations and rejects further replacements', async () => {
+    const first = new DrainableTestRuntime()
+    const second = new DrainableTestRuntime()
+    const third = new DrainableTestRuntime()
+    const rejected = new TestRuntime()
+    const controller = new AgentRuntimeController(first)
+
+    await controller.replace(second)
+    await controller.replace(third)
+
+    expect(controller.replacementStatus).toEqual({
+      drainingGenerations: MAX_DRAINING_RUNTIME_GENERATIONS,
+      failedDrainingGenerations: 0,
+      pendingReplacements: 0,
+      maximumDrainingGenerations: MAX_DRAINING_RUNTIME_GENERATIONS,
+      saturated: true
+    })
+    const replacement = controller.replace(rejected)
+    await expect(replacement).rejects.toBeInstanceOf(
+      RuntimeReplacementCapacityError
+    )
+    await expect(replacement).rejects.toMatchObject({
+      code: 'runtime-drain-capacity',
+      occupiedGenerations: MAX_DRAINING_RUNTIME_GENERATIONS,
+      maximumGenerations: MAX_DRAINING_RUNTIME_GENERATIONS
+    })
+    expect(rejected.dispose).toHaveBeenCalledOnce()
+    expect(first.forceShutdown).not.toHaveBeenCalled()
+    expect(second.forceShutdown).not.toHaveBeenCalled()
+
+    await controller.releaseConversation('conversation-drain')
+    await vi.waitFor(() => {
+      expect(first.dispose).toHaveBeenCalledOnce()
+      expect(second.dispose).toHaveBeenCalledOnce()
+    })
+    await controller.dispose()
+  })
+
+  it('retains a recoverable generation when drain observation fails', async () => {
+    const previous = new DrainableTestRuntime()
+    previous.waitForDrain = vi.fn(async () => {
+      throw new Error('temporary drain status failure')
+    })
+    const controller = new AgentRuntimeController(previous, 1)
+
+    await controller.replace(new TestRuntime())
+    await vi.waitFor(() =>
+      expect(controller.replacementStatus).toMatchObject({
+        drainingGenerations: 1,
+        failedDrainingGenerations: 1
+      })
+    )
+    expect(previous.dispose).not.toHaveBeenCalled()
+    expect(previous.forceShutdown).not.toHaveBeenCalled()
+
+    await controller.dispose()
+    expect(previous.forceShutdown).toHaveBeenCalledOnce()
+    expect(previous.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('uses the configured shutdown grace while replacing a busy runtime', async () => {
+    vi.useFakeTimers()
+    try {
+      const previous = new TestRuntime(true)
+      const controller = new AgentRuntimeController(previous, 25)
+      const stream = controller.run(
+        {
+          requestId: '1c608898-ecb7-4081-8174-2b6a52f53b14',
+          conversationId: 'conversation-replacement-grace',
+          prompt: 'test',
+          workMode: 'ask'
+        },
+        new AbortController().signal
+      )
+      const pending = stream.next()
+      await previous.started
+
+      const replacement = controller.replace(new TestRuntime())
+      await vi.advanceTimersByTimeAsync(24)
+      let replaced = false
+      void replacement.then(() => {
+        replaced = true
+      })
+      await Promise.resolve()
+      expect(replaced).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await replacement
+      expect(replaced).toBe(true)
+
+      previous.finish()
+      await expect(pending).rejects.toThrow('Runtime 已切换')
+      await stream.return()
+      await controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears bounded-wait timers after fast lifecycle operations', async () => {
+    vi.useFakeTimers()
+    try {
+      const controller = new AgentRuntimeController(
+        new TestRuntime(),
+        25
+      )
+      await controller.replace(new TestRuntime())
+      expect(vi.getTimerCount()).toBe(0)
+
+      await controller.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('forces runtime disposal when active work does not stop during shutdown', async () => {

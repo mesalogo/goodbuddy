@@ -26,6 +26,10 @@ export const settingsCategoryList = [
     translationKey: 'runtime'
   },
   {
+    id: 'ssh-hosts',
+    translationKey: 'sshHosts'
+  },
+  {
     id: 'security',
     translationKey: 'security'
   },

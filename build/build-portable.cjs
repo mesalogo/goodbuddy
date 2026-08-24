@@ -11,6 +11,11 @@ const {
   writeFileSync
 } = require('node:fs')
 const { dirname, join, parse, resolve } = require('node:path')
+const {
+  supportedArchitectures,
+  targetName,
+  verifyLockedBundle
+} = require('./agent-bundle.cjs')
 
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(
@@ -28,19 +33,6 @@ const portablePath = process.env.GOODBUDDY_OUT_DIR
   : join(outputRoot, portableName)
 const markerName = '.goodbuddy-portable.json'
 const portableLocales = new Set(['zh-CN.pak', 'en-US.pak'])
-
-if (process.platform !== 'win32' || process.arch !== 'x64') {
-  throw new Error('Portable 目录当前必须在 Windows x64 上构建')
-}
-if (
-  portablePath === parse(portablePath).root ||
-  portablePath === root ||
-  portablePath === outputRoot
-) {
-  throw new Error(
-    `拒绝使用不安全的输出目录：${portablePath}`
-  )
-}
 
 function assertOutputUnlocked(directory) {
   if (!existsSync(directory)) {
@@ -138,10 +130,106 @@ function pruneLocales(directory) {
   }
 }
 
-function portableRequiredPaths(directory) {
+function parseRequiredAgentArchitectures(value) {
+  if (value === undefined) {
+    return []
+  }
+  const architectures = value
+    .split(',')
+    .map((architecture) => architecture.trim())
+  if (
+    architectures.length === 0 ||
+    architectures.some(
+      (architecture) =>
+        !supportedArchitectures.includes(architecture)
+    )
+  ) {
+    throw new Error(
+      'GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS 仅支持逗号分隔的 x64 和 arm64'
+    )
+  }
+  return [...new Set(architectures)]
+}
+
+function discoverLocalAgentResources(projectRoot = root) {
+  return supportedArchitectures.filter((architecture) =>
+    statSync(
+      join(
+        projectRoot,
+        '.agent-resources',
+        targetName(architecture)
+      ),
+      { throwIfNoEntry: false }
+    )?.isDirectory()
+  )
+}
+
+function embedPortableAgentResources(directory, options = {}) {
+  const projectRoot = options.projectRoot ?? root
+  const requiredArchitectures =
+    options.requiredArchitectures ??
+    parseRequiredAgentArchitectures(
+      process.env.GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS
+    )
+  const verifyBundle =
+    options.verifyLockedBundle ?? verifyLockedBundle
+  const availableArchitectures =
+    discoverLocalAgentResources(projectRoot)
+  const missingArchitectures = requiredArchitectures.filter(
+    (architecture) =>
+      !availableArchitectures.includes(architecture)
+  )
+  if (missingArchitectures.length > 0) {
+    throw new Error(
+      `Portable 构建缺少要求的 Agent 资源：${missingArchitectures
+        .map(targetName)
+        .join(', ')}`
+    )
+  }
+
+  for (const architecture of availableArchitectures) {
+    verifyBundle(
+      join(
+        projectRoot,
+        '.agent-resources',
+        targetName(architecture)
+      ),
+      architecture,
+      { projectRoot }
+    )
+  }
+  for (const architecture of availableArchitectures) {
+    const target = targetName(architecture)
+    const source = join(
+      projectRoot,
+      '.agent-resources',
+      target
+    )
+    const destination = join(
+      directory,
+      'resources',
+      'agents',
+      target
+    )
+    rmSync(destination, { recursive: true, force: true })
+    cpSync(source, destination, {
+      recursive: true,
+      force: true
+    })
+  }
+  return availableArchitectures
+}
+
+function portableRequiredPaths(
+  directory,
+  agentArchitectures = []
+) {
   return [
     join(directory, 'GoodBuddy.exe'),
     join(directory, 'resources', 'app.asar'),
+    join(directory, 'resources', 'agent-runtime-lock.json'),
+    join(directory, 'resources', 'remote-runtime-lock.json'),
+    join(directory, 'resources', 'agent-release-keys.json'),
     join(directory, 'resources', 'icon.ico'),
     join(directory, 'resources', 'tray-icon.png'),
     join(
@@ -157,12 +245,33 @@ function portableRequiredPaths(directory) {
       'runtimes',
       'continue',
       'package.json'
-    )
+    ),
+    ...agentArchitectures.flatMap((architecture) => {
+      const agentDirectory = join(
+        directory,
+        'resources',
+        'agents',
+        targetName(architecture)
+      )
+      return [
+        join(agentDirectory, 'manifest.json'),
+        join(agentDirectory, 'manifest.sig'),
+        join(agentDirectory, 'goodbuddy-agent'),
+        join(agentDirectory, 'node'),
+        join(agentDirectory, 'lib', 'agent.cjs')
+      ]
+    })
   ]
 }
 
-function assertPortableOutput(directory) {
-  const requiredPaths = portableRequiredPaths(directory)
+function assertPortableOutput(
+  directory,
+  agentArchitectures = []
+) {
+  const requiredPaths = portableRequiredPaths(
+    directory,
+    agentArchitectures
+  )
   const missing = requiredPaths.filter(
     (filePath) => !statSync(filePath, { throwIfNoEntry: false })?.isFile()
   )
@@ -219,7 +328,11 @@ function writePortableMarker(directory) {
   )
 }
 
-function replacePortableOutput(source, destination) {
+function replacePortableOutput(
+  source,
+  destination,
+  agentArchitectures = []
+) {
   const replacement = `${destination}.replacement-${process.pid}`
   const backup = `${destination}.previous-${process.pid}`
   mkdirSync(dirname(destination), { recursive: true })
@@ -228,7 +341,7 @@ function replacePortableOutput(source, destination) {
   copyDirectoryContents(source, replacement)
   try {
     writePortableMarker(replacement)
-    assertPortableOutput(replacement)
+    assertPortableOutput(replacement, agentArchitectures)
 
     if (!existsSync(destination)) {
       renameSync(replacement, destination)
@@ -250,7 +363,7 @@ function replacePortableOutput(source, destination) {
         }
         renameSync(preservedData, destinationData)
       }
-      assertPortableOutput(destination)
+      assertPortableOutput(destination, agentArchitectures)
     } catch (error) {
       try {
         const movedData = join(destination, 'data')
@@ -279,36 +392,80 @@ function replacePortableOutput(source, destination) {
   }
 }
 
-const electronDist = ensureElectronRuntime()
-mkdirSync(outputRoot, { recursive: true })
-rmSync(stagingRoot, { recursive: true, force: true })
+function main() {
+  if (process.platform !== 'win32' || process.arch !== 'x64') {
+    throw new Error('Portable 目录当前必须在 Windows x64 上构建')
+  }
+  if (
+    portablePath === parse(portablePath).root ||
+    portablePath === root ||
+    portablePath === outputRoot
+  ) {
+    throw new Error(
+      `拒绝使用不安全的输出目录：${portablePath}`
+    )
+  }
+  const requiredAgentArchitectures =
+    parseRequiredAgentArchitectures(
+      process.env.GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS
+    )
+  const electronDist = ensureElectronRuntime()
+  mkdirSync(outputRoot, { recursive: true })
+  rmSync(stagingRoot, { recursive: true, force: true })
 
-for (const [label, script, args] of [
-  [
-    'Node 类型检查',
-    join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
-    ['--noEmit', '-p', 'tsconfig.node.json']
-  ],
-  [
-    'Renderer 类型检查',
-    join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
-    ['--noEmit', '-p', 'tsconfig.web.json']
-  ],
-  [
-    'Production bundle',
-    join(
-      root,
-      'node_modules',
-      'electron-vite',
-      'bin',
-      'electron-vite.js'
-    ),
-    ['build']
-  ]
-]) {
-  const buildResult = spawnSync(
+  for (const [label, script, args] of [
+    [
+      'Node 类型检查',
+      join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
+      ['--noEmit', '-p', 'tsconfig.node.json']
+    ],
+    [
+      'Renderer 类型检查',
+      join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
+      ['--noEmit', '-p', 'tsconfig.web.json']
+    ],
+    [
+      'Production bundle',
+      join(
+        root,
+        'node_modules',
+        'electron-vite',
+        'bin',
+        'electron-vite.js'
+      ),
+      ['build']
+    ]
+  ]) {
+    const buildResult = spawnSync(
+      process.execPath,
+      [script, ...args],
+      {
+        cwd: root,
+        env: process.env,
+        shell: false,
+        stdio: 'inherit',
+        windowsHide: true
+      }
+    )
+    if (buildResult.error) {
+      throw buildResult.error
+    }
+    if (buildResult.status !== 0) {
+      throw new Error(
+        `${label}失败（code ${buildResult.status ?? 1}）`
+      )
+    }
+  }
+
+  const result = spawnSync(
     process.execPath,
-    [script, ...args],
+    [
+      join(root, 'node_modules', 'electron-builder', 'cli.js'),
+      '--dir',
+      '--x64',
+      `--config.directories.output=${stagingRoot}`,
+      `--config.electronDist=${electronDist}`
+    ],
     {
       cwd: root,
       env: process.env,
@@ -317,55 +474,54 @@ for (const [label, script, args] of [
       windowsHide: true
     }
   )
-  if (buildResult.error) {
-    throw buildResult.error
+
+  if (result.error) {
+    rmSync(stagingRoot, { recursive: true, force: true })
+    throw result.error
   }
-  if (buildResult.status !== 0) {
+  if (result.status !== 0) {
+    rmSync(stagingRoot, { recursive: true, force: true })
     throw new Error(
-      `${label}失败（code ${buildResult.status ?? 1}）`
+      `Electron Builder 构建失败（code ${result.status ?? 1}）`
     )
   }
-}
-
-const result = spawnSync(
-  process.execPath,
-  [
-    join(root, 'node_modules', 'electron-builder', 'cli.js'),
-    '--dir',
-    '--x64',
-    `--config.directories.output=${stagingRoot}`,
-    `--config.electronDist=${electronDist}`
-  ],
-  {
-    cwd: root,
-    env: process.env,
-    shell: false,
-    stdio: 'inherit',
-    windowsHide: true
+  if (!statSync(unpackedPath, {
+    throwIfNoEntry: false
+  })?.isDirectory()) {
+    rmSync(stagingRoot, { recursive: true, force: true })
+    throw new Error('Electron Builder 未生成 portable 目录')
   }
-)
+  try {
+    pruneLocales(unpackedPath)
+    const embeddedAgentArchitectures =
+      embedPortableAgentResources(unpackedPath, {
+        requiredArchitectures: requiredAgentArchitectures
+      })
+    assertPortableOutput(
+      unpackedPath,
+      embeddedAgentArchitectures
+    )
+    replacePortableOutput(
+      unpackedPath,
+      portablePath,
+      embeddedAgentArchitectures
+    )
+  } finally {
+    rmSync(stagingRoot, { recursive: true, force: true })
+  }
 
-if (result.error) {
-  rmSync(stagingRoot, { recursive: true, force: true })
-  throw result.error
-}
-if (result.status !== 0) {
-  rmSync(stagingRoot, { recursive: true, force: true })
-  throw new Error(
-    `Electron Builder 构建失败（code ${result.status ?? 1}）`
-  )
-}
-if (!statSync(unpackedPath, { throwIfNoEntry: false })?.isDirectory()) {
-  rmSync(stagingRoot, { recursive: true, force: true })
-  throw new Error('Electron Builder 未生成 portable 目录')
-}
-try {
-  pruneLocales(unpackedPath)
-  assertPortableOutput(unpackedPath)
-  replacePortableOutput(unpackedPath, portablePath)
-} finally {
-  rmSync(stagingRoot, { recursive: true, force: true })
+  console.log(`Portable 目录构建完成：${portablePath}`)
+  console.log(`启动文件：${join(portablePath, 'GoodBuddy.exe')}`)
 }
 
-console.log(`Portable 目录构建完成：${portablePath}`)
-console.log(`启动文件：${join(portablePath, 'GoodBuddy.exe')}`)
+module.exports = {
+  assertPortableOutput,
+  discoverLocalAgentResources,
+  embedPortableAgentResources,
+  parseRequiredAgentArchitectures,
+  portableRequiredPaths
+}
+
+if (require.main === module) {
+  main()
+}

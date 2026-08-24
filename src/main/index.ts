@@ -28,11 +28,15 @@ import { KnowledgeMcpGateway } from './agent/knowledge-mcp-gateway'
 import {
   applyRuntimeSelection,
   getConfiguredRuntimeTarget,
+  resolveConfiguredAgentRuntimeSelection,
   type SelectedRuntimeTarget
 } from './agent/runtime-selection'
 import { CapabilityService } from './capabilities/capability-service'
 import { ContextManager } from './context-manager'
-import { registerIpcHandlers } from './ipc'
+import {
+  registerIpcHandlers,
+  sendRemoteProjectSaveProgress
+} from './ipc'
 import { KnowledgeService } from './knowledge/knowledge-service'
 import { AssistantDatabase } from './assistant/assistant-database'
 import { createModelGraphExtractor } from './knowledge/model-extractor'
@@ -105,10 +109,26 @@ import {
 } from './windows-notification-identity'
 import { ShortcutSettingsStore } from './shortcut-settings-store'
 import { ShortcutSettingsService } from './shortcut-settings-service'
+import { SshHostStore } from './ssh/ssh-host-store'
+import { Ssh2Transport } from './ssh/ssh-transport'
+import { SshHostService } from './ssh/ssh-host-service'
+import { SshHostDirectoryBrowser } from './ssh/ssh-host-directory-browser'
+import {
+  SshHostRemoteEnvironmentInspector
+} from './ssh/ssh-host-remote-environment'
 import { defaultGlobalShortcutSettings } from '../shared/shortcut'
 import { requestProcessTreeTermination } from './agent/child-process-termination'
 import { createContinueUtilityProcessChild } from './agent/continue-utility-process-adapter'
-import type { RuntimeSettings, RuntimeSettingsInput } from '../shared/contracts'
+import {
+  ExecutionSpaceResolver,
+  type ExecutionSpaceDescriptor
+} from './execution-space'
+import { RemoteAgentServices } from './remote-agent/remote-agent-services'
+import { ManagedRemoteExecutionServices } from './remote-agent/managed-remote-execution-services'
+import type {
+  RuntimeSettings,
+  RuntimeSettingsInput
+} from '../shared/contracts'
 
 const legacyDefaultShortcut =
   defaultGlobalShortcutSettings.accelerator
@@ -157,6 +177,10 @@ let embeddingModelManager: EmbeddingModelManager | undefined
 const embeddingBrokers = new Set<EmbeddingInferenceBroker>()
 let stopRuntimeReconfiguration: (() => Promise<void>) | undefined
 let dshExtensionInstaller: DshNpmExtensionInstaller | undefined
+let remoteAgentServices: RemoteAgentServices | undefined
+let managedRemoteExecutionServices:
+  | ManagedRemoteExecutionServices
+  | undefined
 
 type ManagedEmbeddingProvider = EmbeddingProvider & {
   dispose?: () => void | Promise<void>
@@ -597,6 +621,80 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'runtime-settings.json'),
       secureCipher
     )
+    const sshHostStore = new SshHostStore(
+      join(app.getPath('userData'), 'ssh-hosts.json'),
+      secureCipher
+    )
+    const startupRemoteAgentServices = new RemoteAgentServices({
+      sshHostStore,
+      goodBuddyVersion: app.getVersion(),
+      userDataPath: app.getPath('userData'),
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged
+    })
+    remoteAgentServices = startupRemoteAgentServices
+    const startupManagedRemoteExecutionServices =
+      new ManagedRemoteExecutionServices({
+        sshHostStore,
+        agentServices: startupRemoteAgentServices,
+        userDataPath: app.getPath('userData'),
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+        packaged: app.isPackaged,
+        resolveRuntimeSelection: async (selection) =>
+          resolveConfiguredAgentRuntimeSelection(
+            await settingsStore.getResolvedSettings(),
+            selection
+          ),
+        resolveModelProfile: async (selection) =>
+          applyRuntimeSelection(
+            await settingsStore.getResolvedSettings(),
+            selection
+          ).settings.opencodeModelProfile
+      })
+    await startupManagedRemoteExecutionServices.initialize()
+    managedRemoteExecutionServices =
+      startupManagedRemoteExecutionServices
+    const beginRemoteHostInvalidation = (hostId: string): void => {
+      const invalidations = [
+        startupRemoteAgentServices.invalidateHost(hostId)
+      ]
+      if (selectedRuntimeManager) {
+        invalidations.push(
+          selectedRuntimeManager.invalidateHost(hostId)
+        )
+      }
+      void Promise.allSettled(invalidations).then((results) => {
+        if (results.some((result) => result.status === 'rejected')) {
+          console.warn(
+            'Failed to invalidate complete remote Host state'
+          )
+        }
+      })
+    }
+    const sshHostService = new SshHostService(
+      sshHostStore,
+      new Ssh2Transport(),
+      {
+        onHostEdited: beginRemoteHostInvalidation,
+        onHostRemoved: beginRemoteHostInvalidation
+      }
+    )
+    const sshHostDirectoryBrowser = new SshHostDirectoryBrowser({
+      sshHosts: sshHostStore,
+      sshPool: startupRemoteAgentServices.sshPool
+    })
+    const sshHostRemoteEnvironmentInspector =
+      new SshHostRemoteEnvironmentInspector({
+        sshHosts: sshHostStore,
+        sshPool: startupRemoteAgentServices.sshPool,
+        agentRuntimeLockPath:
+          startupRemoteAgentServices.resourcePaths.runtimeLockPath,
+        remoteRuntimeLockPath:
+          startupManagedRemoteExecutionServices.runtimeResourcePaths
+            .runtimeLockPath
+      })
     const [initialRuntimeSettings, initialResolvedSettings] =
       await Promise.all([
         settingsStore.getPublicSettings(),
@@ -745,6 +843,9 @@ if (hasSingleInstanceLock) {
       }
     )
     assistantDatabase = startupAssistantDatabase
+    const executionSpaceResolver = new ExecutionSpaceResolver(
+      startupManagedRemoteExecutionServices.workspaceAccessFactory
+    )
     const goodbuddyConfigService = new GoodBuddyConfigService(
       applicationSettingsStore,
       capabilityService
@@ -759,7 +860,8 @@ if (hasSingleInstanceLock) {
     knowledgeGateway = startupKnowledgeGateway
     const createRuntimeWithCapabilities = async (
       settings: ResolvedRuntimeSettings,
-      target: SelectedRuntimeTarget
+      target: SelectedRuntimeTarget,
+      executionSpace?: ExecutionSpaceDescriptor
     ): Promise<AgentRuntime> => {
       const [
         skillContext,
@@ -800,7 +902,9 @@ if (hasSingleInstanceLock) {
             ? browserService
             : undefined,
         knowledgeGateway: startupKnowledgeGateway,
-        webSearchEnabled: webSearchCapability?.enabled
+        webSearchEnabled: webSearchCapability?.enabled,
+        executionSpace,
+        workspaceAccess: executionSpace?.workspaceAccess
       })
     }
     const createConfiguredRuntime = async (
@@ -815,17 +919,38 @@ if (hasSingleInstanceLock) {
     }
     const createSelectedRuntime = async (
       selection: AgentRuntimeSelection,
-      workspacePath?: string
+      executionSpace?: ExecutionSpaceDescriptor
     ): Promise<AgentRuntime> => {
       const resolved = applyRuntimeSelection(
         await settingsStore.getResolvedSettings(),
         selection
       )
+      if (executionSpace?.kind === 'ssh') {
+        const profile = resolved.settings.opencodeModelProfile
+        if (profile === undefined) {
+          throw new Error(
+            '托管远程 OpenCode 需要选择一个可用的文本模型配置'
+          )
+        }
+        return await startupManagedRemoteExecutionServices.createRuntime({
+          executionSpace,
+          selection,
+          modelProfile: profile,
+          usage: {
+            provider: profile.protocol,
+            model: profile.modelName
+          }
+        })
+      }
       return createRuntimeWithCapabilities(
-        workspacePath
-          ? { ...resolved.settings, workspacePath }
+        executionSpace?.kind === 'local'
+          ? {
+              ...resolved.settings,
+              workspacePath: executionSpace.rootPath
+            }
           : resolved.settings,
-        resolved.target
+        resolved.target,
+        executionSpace
       )
     }
     const configuredRuntime = await runStartupPrerequisites({
@@ -1063,6 +1188,11 @@ if (hasSingleInstanceLock) {
       }
     }
 
+    const remoteProjectSaveService =
+      startupManagedRemoteExecutionServices.createProjectSaveService({
+        database: startupAssistantDatabase,
+        notify: sendRemoteProjectSaveProgress
+      })
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
@@ -1096,6 +1226,11 @@ if (hasSingleInstanceLock) {
       goodbuddyConfigService,
       runtimeExtensionStore,
       shortcutSettingsService,
+      sshHostService,
+      executionSpaceResolver,
+      remoteProjectSaveService,
+      sshHostDirectoryBrowser,
+      sshHostRemoteEnvironmentInspector,
       startupEmbeddingModelManager,
       async (connectionId) => {
         const settings = await settingsStore.getResolvedSettings()
@@ -1207,6 +1342,8 @@ app.on('before-quit', (event) => {
           () => documentOcrModelManager?.dispose(),
           () => documentOcrBroker?.dispose()
         ],
+        [() => managedRemoteExecutionServices?.dispose()],
+        [() => remoteAgentServices?.dispose()],
         [() => knowledgeGateway?.dispose()],
         [() => knowledgeService?.dispose()]
       ])

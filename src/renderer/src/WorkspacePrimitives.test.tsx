@@ -100,6 +100,12 @@ describe('WorkspacePrimitives', () => {
     expect(platformFeaturesTabs).toMatch(/flex:\s*0 0 auto;/u)
   })
 
+  it('keeps whole-surface dialog scrollbars outside close-button hitboxes', () => {
+    expect(stylesheet).toMatch(
+      /:is\(\s*\.project-create-card,\s*\.knowledge-citation-dialog__surface,\s*\.channel-qr-dialog,\s*\.document-parsing-diagnostic,\s*\.mcp-editor\s*\)\s*\{[^}]*scrollbar-gutter:\s*stable;/u
+    )
+  })
+
   it('uses bundled variable fonts and readable shared type tokens', () => {
     expect(rendererEntry).toContain(
       "@fontsource-variable/noto-sans-sc/wght.css"
@@ -217,7 +223,9 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).toMatch(
       /\.assistant-sidebar--open\s*\{[^}]*width:\s*var\(--assistant-sidebar-width,\s*30%\);[^}]*flex-basis:\s*var\(--assistant-sidebar-width,\s*30%\);/u
     )
-    expect(stylesheet).not.toContain('@media (max-width: 719px)')
+    expect(stylesheet).not.toMatch(
+      /@media \(max-width: 719px\)\s*\{(?:[^{}]|\{[^{}]*\})*?\.assistant-sidebar/u
+    )
     expect(stylesheet).toMatch(
       /\.composer-wrap\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*padding:\s*var\(--space-3\)\s*max\(var\(--page-gutter\),\s*calc\(\(100% - var\(--content-reading\)\) \/ 2\)\)\s*var\(--space-2\);/u
     )

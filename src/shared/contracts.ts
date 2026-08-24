@@ -136,6 +136,10 @@ import type { KnowledgeOntologySettings } from './knowledge-ontology'
 import type {
   KnowledgeTaskItem
 } from './knowledge-task-contracts'
+import type {
+  RemoteProjectSaveProgress,
+  RemoteProjectSaveRequest
+} from './remote-project-candidate-contracts'
 export type {
   KnowledgeTaskError,
   KnowledgeTaskItem,
@@ -144,8 +148,24 @@ export type {
   KnowledgeTaskStage,
   KnowledgeTaskStatus
 } from './knowledge-task-contracts'
+export type {
+  RemoteProjectCreateDraft,
+  RemoteProjectSavePhase,
+  RemoteProjectSaveProgress,
+  RemoteProjectSaveRequest,
+  RemoteProjectUpdateDraft
+} from './remote-project-candidate-contracts'
 import type { WeixinBindingSnapshot } from './weixin-channel-contracts'
 import type { RemoteChannelActivity } from './remote-channel-contracts'
+import type {
+  SshHostDraftInspectionRequest,
+  SshHostKeyInspection,
+  SshHostRemoteEnvironment,
+  SshHostsSnapshot,
+  SshDirectoryBrowseResult,
+  SshHostValidationRequest,
+  SshHostValidationResult
+} from './ssh-host-contracts'
 import {
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
@@ -1522,6 +1542,25 @@ export type DesktopApi = {
       selection: AgentRuntimeSelection
     ) => Promise<AgentRuntimeStatus>
   }
+  sshHosts?: {
+    getSnapshot: () => Promise<SshHostsSnapshot>
+    remove: (hostId: string) => Promise<void>
+    inspectDraftHostKey: (
+      input: SshHostDraftInspectionRequest
+    ) => Promise<SshHostKeyInspection>
+    discardCandidate: (candidateId: string) => Promise<void>
+    validateAndSave: (
+      input: SshHostValidationRequest
+    ) => Promise<SshHostValidationResult>
+    getRemoteEnvironment: (
+      hostId: string
+    ) => Promise<SshHostRemoteEnvironment>
+    browseDirectories: (
+      hostId: string,
+      path?: string
+    ) => Promise<SshDirectoryBrowseResult>
+    cancelDirectoryBrowse: () => Promise<void>
+  }
   channels?: {
     getSnapshot: () => Promise<ChannelSettingsSnapshot>
     apply: (input: ChannelSettingsApply) => Promise<ChannelSettingsSnapshot>
@@ -1648,6 +1687,16 @@ export type DesktopApi = {
     ) => Promise<AssistantProject>
     setArchived: (projectId: string, archived: boolean) => Promise<void>
     delete: (projectId: string, confirmation: string) => Promise<void>
+    remote: {
+      activate: (projectId: string) => Promise<AssistantProject>
+      save: (
+        input: RemoteProjectSaveRequest
+      ) => Promise<AssistantProject>
+      cancelCurrent: () => Promise<void>
+      onSaveProgress: (
+        listener: (progress: RemoteProjectSaveProgress) => void
+      ) => () => void
+    }
   }
   conversations: {
     list: () => Promise<ConversationSnapshot[]>

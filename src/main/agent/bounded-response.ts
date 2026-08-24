@@ -2,29 +2,56 @@ export type BoundedResponseTextOptions = {
   maxBytes: number
   missingBodyMessage?: string
   tooLargeMessage: string
+  truncatedMessage?: string
 }
 
-export async function readBoundedResponseText(
+export class BoundedResponseTooLargeError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BoundedResponseTooLargeError'
+  }
+}
+
+export class BoundedResponseTruncatedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BoundedResponseTruncatedError'
+  }
+}
+
+export async function readBoundedResponseBytes(
   response: Response,
   options: BoundedResponseTextOptions
-): Promise<string> {
+): Promise<Uint8Array> {
   const declaredLength = response.headers.get('content-length')
+  let parsedLength: number | undefined
   if (declaredLength !== null) {
-    const parsedLength = Number(declaredLength)
+    parsedLength = Number(declaredLength)
     if (
       !Number.isSafeInteger(parsedLength) ||
       parsedLength < 0 ||
       parsedLength > options.maxBytes
     ) {
       await response.body?.cancel().catch(() => undefined)
-      throw new Error(options.tooLargeMessage)
+      throw new BoundedResponseTooLargeError(
+        options.tooLargeMessage
+      )
     }
   }
   if (!response.body) {
     if (options.missingBodyMessage) {
       throw new Error(options.missingBodyMessage)
     }
-    return ''
+    if (
+      options.truncatedMessage !== undefined &&
+      parsedLength !== undefined &&
+      parsedLength !== 0
+    ) {
+      throw new BoundedResponseTruncatedError(
+        options.truncatedMessage
+      )
+    }
+    return new Uint8Array()
   }
 
   const reader = response.body.getReader()
@@ -40,7 +67,9 @@ export async function readBoundedResponseText(
       }
       total += value.byteLength
       if (total > options.maxBytes) {
-        throw new Error(options.tooLargeMessage)
+        throw new BoundedResponseTooLargeError(
+          options.tooLargeMessage
+        )
       }
       chunks.push(value)
     }
@@ -50,5 +79,24 @@ export async function readBoundedResponseText(
     }
     reader.releaseLock()
   }
-  return Buffer.concat(chunks, total).toString('utf8')
+  if (
+    options.truncatedMessage !== undefined &&
+    parsedLength !== undefined &&
+    response.headers.get('content-encoding') === null &&
+    total !== parsedLength
+  ) {
+    throw new BoundedResponseTruncatedError(
+      options.truncatedMessage
+    )
+  }
+  return Buffer.concat(chunks, total)
+}
+
+export async function readBoundedResponseText(
+  response: Response,
+  options: BoundedResponseTextOptions
+): Promise<string> {
+  return Buffer.from(
+    await readBoundedResponseBytes(response, options)
+  ).toString('utf8')
 }

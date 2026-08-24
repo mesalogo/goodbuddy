@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AssistantDatabase } from './assistant-database'
+import {
+  ASSISTANT_DATABASE_SCHEMA_VERSION,
+  AssistantDatabase
+} from './assistant-database'
 
 const temporaryDirectories: string[] = []
 
@@ -102,7 +105,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
     ).count
     check.close()
     migrated.close()
-    expect(version).toBe(26)
+    expect(version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
     expect(heartbeatTableCount).toBe(4)
   })
 

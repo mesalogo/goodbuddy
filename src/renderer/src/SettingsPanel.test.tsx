@@ -733,6 +733,18 @@ describe('SettingsPanel runtime files', () => {
           testModelConnection,
           testRuntime
         },
+        sshHosts: {
+          getSnapshot: vi.fn(async () => ({
+            hosts: [],
+            secureStorageAvailable: true
+          })),
+          create: vi.fn(),
+          update: vi.fn(),
+          remove: vi.fn(async () => undefined),
+          inspectHostKey: vi.fn(),
+          acceptHostKey: vi.fn(),
+          testConnection: vi.fn()
+        },
         capabilities: {
           getSnapshot: getCapabilitySnapshot,
           importSkill,
@@ -1834,6 +1846,58 @@ describe('SettingsPanel runtime files', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('protects unsaved SSH host drafts across settings navigation', async () => {
+    const onClose = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        initialCategory="ssh-hosts"
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={onClose}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByText('尚未配置 SSH 主机')
+    fireEvent.click(
+      screen.getAllByRole('button', { name: '添加主机' })[0]!
+    )
+    fireEvent.change(screen.getByLabelText('主机名称'), {
+      target: { value: '尚未保存的主机' }
+    })
+
+    const appearanceTab = screen.getByRole('tab', { name: '外观' })
+    fireEvent.click(appearanceTab)
+    expect(
+      screen.getByRole('tab', { name: '主机与远程执行' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '当前设置有未保存更改'
+    )
+    expect(screen.getByLabelText('主机名称')).toHaveValue(
+      '尚未保存的主机'
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '继续编辑' })
+    )
+    fireEvent.click(appearanceTab)
+    fireEvent.click(
+      screen.getByRole('button', { name: '放弃更改并切换' })
+    )
+    expect(appearanceTab).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: '主机与远程执行' })
+    )
+    await screen.findByText('尚未配置 SSH 主机')
+    expect(screen.queryByLabelText('主机名称')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('keeps shortcut input after a registration conflict', async () => {
     updateShortcutSettings.mockResolvedValueOnce({
       ok: false,
@@ -1982,15 +2046,15 @@ describe('SettingsPanel runtime files', () => {
     runtimeTab.focus()
     fireEvent.keyDown(runtimeTab, { key: 'ArrowRight' })
 
-    const securityTab = screen.getByRole('tab', {
-      name: '安全与数据'
+    const sshHostsTab = screen.getByRole('tab', {
+      name: '主机与远程执行'
     })
-    expect(securityTab).toHaveFocus()
-    expect(securityTab).toHaveAttribute('aria-selected', 'true')
-    expect(securityTab).toHaveAttribute('tabindex', '0')
+    expect(sshHostsTab).toHaveFocus()
+    expect(sshHostsTab).toHaveAttribute('aria-selected', 'true')
+    expect(sshHostsTab).toHaveAttribute('tabindex', '0')
     expect(runtimeTab).toHaveAttribute('tabindex', '-1')
 
-    fireEvent.keyDown(securityTab, { key: 'End' })
+    fireEvent.keyDown(sshHostsTab, { key: 'End' })
     const aboutTab = screen.getByRole('tab', { name: '关于与更新' })
     expect(aboutTab).toHaveFocus()
     expect(aboutTab).toHaveAttribute('aria-selected', 'true')
