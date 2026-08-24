@@ -6245,6 +6245,7 @@ button > svg {
   width: fit-content;
   max-width: 100%;
   overflow-x: auto;
+  flex: 0 0 auto;
 }
 
 .platform-features-tabs + .settings-section,

@@ -91,6 +91,15 @@ describe('WorkspacePrimitives', () => {
     expect(toggleRowStyles).not.toMatch(/padding-top:/u)
   })
 
+  it('keeps Platform Features tabs visible in scrollable Settings', () => {
+    const platformFeaturesTabs = stylesheet.match(
+      /\.platform-features-tabs\s*\{(?<rules>[^}]*)\}/u
+    )?.groups?.rules
+
+    expect(platformFeaturesTabs).toBeDefined()
+    expect(platformFeaturesTabs).toMatch(/flex:\s*0 0 auto;/u)
+  })
+
   it('uses bundled variable fonts and readable shared type tokens', () => {
     expect(rendererEntry).toContain(
       "@fontsource-variable/noto-sans-sc/wght.css"
