@@ -1421,6 +1421,15 @@ function getProjectDefaultRuntimeSelection(
     : selection
 }
 
+function isOrdinaryLocalProject(
+  project: AssistantProject
+): boolean {
+  return (
+    project.kind === 'user' &&
+    project.executionSpace.kind === 'local'
+  )
+}
+
 function resolveContextMetricsRuntimeSelection(
   selection: AgentRuntimeSelection,
   settings: RuntimeSettings
@@ -2322,6 +2331,8 @@ function App(): React.JSX.Element {
     useState<SettingsCategoryId>()
   const [settingsInitialChannel, setSettingsInitialChannel] =
     useState<ProjectChannel>()
+  const [remoteProjectsEnabled, setRemoteProjectsEnabled] =
+    useState(false)
   const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
   const [
     magicNotesShowIncompleteTodoCount,
@@ -2728,6 +2739,7 @@ function App(): React.JSX.Element {
     void updates
       .getSettings()
       .then(async (settings) => {
+        setRemoteProjectsEnabled(settings.remoteProjectsEnabled)
         setMagicNotesEnabled(settings.magicNotesEnabled)
         setMagicNotesShowIncompleteTodoCount(
           settings.magicNotesShowIncompleteTodoCount
@@ -4843,6 +4855,12 @@ function App(): React.JSX.Element {
       project: AssistantProject
       current: boolean
     }> => {
+      if (
+        !remoteProjectsEnabled ||
+        project.executionSpace.kind !== 'ssh'
+      ) {
+        return { project, current: false }
+      }
       const requestId = remoteProjectActivationRequestRef.current + 1
       remoteProjectActivationRequestRef.current = requestId
       const control = {
@@ -4938,7 +4956,7 @@ function App(): React.JSX.Element {
         }
       }
     },
-    [notify]
+    [notify, remoteProjectsEnabled]
   )
 
   const cancelRemoteProjectActivation = useCallback((): void => {
@@ -5044,6 +5062,9 @@ function App(): React.JSX.Element {
 
   const handleSshHostUpdated = useCallback(
     (hostId: string): void => {
+      if (!remoteProjectsEnabled) {
+        return
+      }
       const affectedProjects = projects.filter(
         (candidate) =>
           candidate.executionSpace.kind === 'ssh' &&
@@ -5085,6 +5106,7 @@ function App(): React.JSX.Element {
       markRemoteProjectsRequiringActivation,
       notify,
       projects,
+      remoteProjectsEnabled,
       resumeProjectConversationQueues
     ]
   )
@@ -5100,11 +5122,7 @@ function App(): React.JSX.Element {
           return
         }
         setProjects(value)
-        const project = value.find(
-          (candidate) =>
-            candidate.kind === 'user' &&
-            candidate.executionSpace.kind === 'local'
-        )
+        const project = value.find(isOrdinaryLocalProject)
         if (!project) {
           throw new Error('没有可用的本地项目')
         }
@@ -5806,6 +5824,9 @@ function App(): React.JSX.Element {
       commitProjectSelection(project)
       return
     }
+    if (!remoteProjectsEnabled) {
+      return
+    }
     void activateRemoteProject(project).then(
       (activated) => {
         if (activated.current) {
@@ -5871,6 +5892,12 @@ function App(): React.JSX.Element {
   const loadCommittedRemoteProject = async (
     project: AssistantProject
   ): Promise<void> => {
+    if (
+      !remoteProjectsEnabled ||
+      project.executionSpace.kind !== 'ssh'
+    ) {
+      return
+    }
     setProjects((current) =>
       current.some((candidate) => candidate.id === project.id)
         ? current.map((candidate) =>
@@ -5884,12 +5911,34 @@ function App(): React.JSX.Element {
     resumeProjectConversationQueues(project.id)
   }
 
+  const handleRemoteProjectsEnabledChange = (
+    enabled: boolean
+  ): void => {
+    setRemoteProjectsEnabled(enabled)
+    if (enabled) {
+      return
+    }
+    remoteProjectActivationRequestRef.current += 1
+    if (remoteProjectActivationControlRef.current) {
+      cancelRemoteProjectActivation()
+    }
+    if (activeProject?.executionSpace.kind !== 'ssh') {
+      return
+    }
+    const localProject = projects.find(isOrdinaryLocalProject)
+    if (localProject) {
+      commitProjectSelection(localProject)
+    }
+  }
+
   const archiveProject = async (projectId: string): Promise<void> => {
     await window.goodbuddy.projects.setArchived(projectId, true)
     clearRemoteProjectActivationRequirement(projectId)
     const remaining = projects.filter((project) => project.id !== projectId)
     setProjects(remaining)
-    const next = remaining[0]
+    const next = remoteProjectsEnabled
+      ? remaining[0]
+      : remaining.find(isOrdinaryLocalProject)
     if (next) {
       selectProject(next.id)
     }
@@ -5940,7 +5989,9 @@ function App(): React.JSX.Element {
           : []
       })
     )
-    const next = remainingProjects[0]
+    const next = remoteProjectsEnabled
+      ? remainingProjects[0]
+      : remainingProjects.find(isOrdinaryLocalProject)
     if (next) {
       setActiveProjectId(next.id)
       setWorkMode(
@@ -7839,6 +7890,7 @@ function App(): React.JSX.Element {
           onUpdate={updateProject}
           projects={projects}
           remoteActivation={remoteProjectActivation}
+          remoteProjectsEnabled={remoteProjectsEnabled}
         />
 
         {activeProject?.kind !== 'channel' && (
@@ -10013,6 +10065,7 @@ function App(): React.JSX.Element {
             initialCategory={settingsInitialCategory}
             initialChannel={settingsInitialChannel}
             magicNotesEnabled={magicNotesEnabled}
+            remoteProjectsEnabled={remoteProjectsEnabled}
             onAppearanceThemeChange={setAppearanceTheme}
             onClearLocalData={clearLocalData}
             onClose={() => {
@@ -10046,6 +10099,9 @@ function App(): React.JSX.Element {
                   setIncompleteMagicTodoCount(0)
                 }
               }
+            }
+            onRemoteProjectsEnabledChange={
+              handleRemoteProjectsEnabledChange
             }
             onNotify={notify}
             onLeaveRequestReady={registerSettingsLeaveRequester}

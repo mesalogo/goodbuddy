@@ -65,6 +65,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: false,
       magicNoteCommentMode: 'immediate',
@@ -74,16 +75,18 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: false,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 8,
+      version: 9,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: false,
       magicNoteCommentMode: 'immediate',
@@ -93,6 +96,29 @@ describe('ApplicationSettingsStore', () => {
     expect(
       (await readdir(directory)).filter((name) => name.endsWith('.tmp'))
     ).toEqual([])
+  })
+
+  it('persists the Remote Projects preference', async () => {
+    const { filePath, store } = await createStore()
+
+    await expect(
+      store.update({ remoteProjectsEnabled: true })
+    ).resolves.toEqual({
+      ...defaultApplicationSettings,
+      remoteProjectsEnabled: true
+    })
+    await expect(
+      new ApplicationSettingsStore(filePath).get()
+    ).resolves.toEqual({
+      ...defaultApplicationSettings,
+      remoteProjectsEnabled: true
+    })
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      version: 9,
+      lastSeenReleaseNotesVersion: null,
+      ...defaultApplicationSettings,
+      remoteProjectsEnabled: true
+    })
   })
 
   it('creates the parent directory and can reload persisted settings', async () => {
@@ -110,6 +136,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
@@ -134,6 +161,7 @@ describe('ApplicationSettingsStore', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
+        remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate',
@@ -158,6 +186,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
@@ -182,6 +211,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-manual',
@@ -209,10 +239,11 @@ describe('ApplicationSettingsStore', () => {
       new ApplicationSettingsStore(filePath).getLastSeenReleaseNotesVersion()
     ).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 8,
+      version: 9,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-manual',
@@ -240,6 +271,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-auto',
@@ -267,6 +299,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'mirror',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'after-save-auto',
@@ -279,8 +312,9 @@ describe('ApplicationSettingsStore', () => {
     await store.update({ modelDownloadSource: 'hugging-face' })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionSix,
-      version: 8,
+      version: 9,
       modelDownloadSource: 'hugging-face',
+      remoteProjectsEnabled: false,
       magicNotesShowIncompleteTodoCount: true
     })
   })
@@ -303,6 +337,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
@@ -313,7 +348,53 @@ describe('ApplicationSettingsStore', () => {
     )
   })
 
+  it('lazily migrates version 8 with Remote Projects disabled', async () => {
+    const { filePath, store } = await createStore()
+    const versionEight = {
+      version: 8,
+      checkUpdatesOnStartup: false,
+      updateSource: 'mirror',
+      modelDownloadSource: 'hugging-face',
+      magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: false,
+      magicNoteCommentMode: 'after-save-manual',
+      magicNoteCommentFormat: 'narrative',
+      warnings: [{ code: 'application-settings-recovered' }],
+      lastSeenReleaseNotesVersion: '0.8.18'
+    }
+    await writeFile(filePath, JSON.stringify(versionEight), 'utf8')
+
+    await expect(store.get()).resolves.toEqual({
+      checkUpdatesOnStartup: false,
+      updateSource: 'mirror',
+      modelDownloadSource: 'hugging-face',
+      remoteProjectsEnabled: false,
+      magicNotesEnabled: true,
+      magicNotesShowIncompleteTodoCount: false,
+      magicNoteCommentMode: 'after-save-manual',
+      magicNoteCommentFormat: 'narrative'
+    })
+    await expect(store.getLastSeenReleaseNotesVersion()).resolves.toBe(
+      '0.8.18'
+    )
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual(
+      versionEight
+    )
+
+    await store.update({ checkUpdatesOnStartup: true })
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...versionEight,
+      version: 9,
+      checkUpdatesOnStartup: true,
+      remoteProjectsEnabled: false
+    })
+  })
+
   it('strictly rejects incomplete full settings', () => {
+    expect(
+      applicationSettingsSchema.safeParse(defaultApplicationSettings)
+        .success
+    ).toBe(true)
     for (const input of [
       {},
       { checkUpdatesOnStartup: 'true' },
@@ -337,6 +418,7 @@ describe('ApplicationSettingsStore', () => {
       {},
       { checkUpdatesOnStartup: 'true' },
       { modelDownloadSource: 'automatic' },
+      { remoteProjectsEnabled: 'false' },
       { anotherSetting: true },
       null
     ]) {
@@ -358,6 +440,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
@@ -473,16 +556,18 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 8,
+      version: 9,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
@@ -509,6 +594,7 @@ describe('ApplicationSettingsStore', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',

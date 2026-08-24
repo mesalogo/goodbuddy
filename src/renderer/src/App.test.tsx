@@ -899,6 +899,35 @@ function deferred<T>(): {
   return { promise, resolve, reject }
 }
 
+function installRemoteProjectsSetting(enabled: boolean): {
+  updateSettings: NonNullable<DesktopApi['updates']>['updateSettings']
+} {
+  let settings: ApplicationSettings = {
+    checkUpdatesOnStartup: false,
+    updateSource: 'github',
+    modelDownloadSource: 'modelscope',
+    remoteProjectsEnabled: enabled,
+    magicNotesEnabled: false,
+    magicNotesShowIncompleteTodoCount: true,
+    magicNoteCommentMode: 'immediate',
+    magicNoteCommentFormat: 'combined'
+  }
+  const updateSettings = vi.fn<
+    NonNullable<DesktopApi['updates']>['updateSettings']
+  >(async (input) => {
+    settings = { ...settings, ...input }
+    return { ...settings }
+  })
+  api.updates = {
+    getSettings: vi.fn(async () => ({ ...settings })),
+    updateSettings,
+    check: vi.fn(),
+    openReleasePage: vi.fn(),
+    onResult: vi.fn(() => () => {})
+  }
+  return { updateSettings }
+}
+
 describe('App', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -1008,6 +1037,7 @@ describe('App', () => {
     vi.mocked(api.tasks.list).mockReset().mockResolvedValue([])
     vi.mocked(api.schedules.list).mockReset().mockResolvedValue([])
     api.channels = undefined
+    api.updates = undefined
     newConversationListener = undefined
     beforeQuitListener = undefined
     browserListener = undefined
@@ -1930,6 +1960,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -2024,6 +2055,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -2033,6 +2065,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -2128,6 +2161,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -2137,6 +2171,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -3973,6 +4008,7 @@ describe('App', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
@@ -5592,8 +5628,19 @@ describe('App', () => {
     await waitFor(() =>
       expect(api.conversationQueue.enqueueUser).toHaveBeenCalledOnce()
     )
+    const projectSaveIndex = vi
+      .mocked(api.conversations.saveLocal)
+      .mock.calls.findIndex(([batch]) =>
+        batch.some(
+          (conversation) =>
+            conversation.header.projectId === secondProject.id
+        )
+      )
+    expect(projectSaveIndex).toBeGreaterThanOrEqual(0)
     expect(
-      vi.mocked(api.conversations.saveLocal).mock.invocationCallOrder.at(-1)
+      vi.mocked(api.conversations.saveLocal).mock.invocationCallOrder[
+        projectSaveIndex
+      ]
     ).toBeLessThan(
       vi.mocked(
         api.conversationQueue.enqueueUser
@@ -5637,7 +5684,169 @@ describe('App', () => {
     )
   })
 
+  it('keeps saved remote projects hidden while the preview is disabled', async () => {
+    installRemoteProjectsSetting(false)
+    const remoteProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000116',
+      name: '已保存远程项目',
+      rootPath: '/srv/project',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000216',
+        remoteRootPath: '/srv/project'
+      },
+      builtInDefault: false
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      remoteProject
+    ])
+
+    render(<App />)
+
+    const trigger = await screen.findByRole('button', {
+      name: '当前项目'
+    })
+    fireEvent.click(trigger)
+    const menu = screen.getByRole('menu', { name: '当前项目' })
+    expect(
+      within(menu).queryByText(remoteProject.name)
+    ).not.toBeInTheDocument()
+    expect(api.projects.remote.activate).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a local project when the remote preview is disabled', async () => {
+    const { updateSettings } = installRemoteProjectsSetting(true)
+    const remoteProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000117',
+      name: '预览远程项目',
+      rootPath: '/srv/project',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000217',
+        remoteRootPath: '/srv/project'
+      },
+      builtInDefault: false
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      remoteProject
+    ])
+    vi.mocked(api.projects.remote.activate).mockResolvedValueOnce(
+      remoteProject
+    )
+
+    render(<App />)
+    await screen.findByRole('button', { name: '当前项目' })
+    selectProjectOption(remoteProject.name)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: '当前项目' })
+      ).toHaveTextContent(remoteProject.name)
+    )
+
+    fireEvent.click(screen.getByText('本地工作区'))
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '平台功能' })
+    )
+    fireEvent.click(
+      await screen.findByRole('tab', {
+        name: '远程项目（技术预览）'
+      })
+    )
+    const remoteProjectsSwitch = await screen.findByRole('switch', {
+      name: '远程项目（技术预览）'
+    })
+    expect(remoteProjectsSwitch).toBeChecked()
+    fireEvent.click(remoteProjectsSwitch)
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        remoteProjectsEnabled: false
+      })
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: '当前项目' })
+      ).toHaveTextContent(project.name)
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '当前项目' })
+    )
+    expect(
+      screen.queryByText(remoteProject.name)
+    ).not.toBeInTheDocument()
+    expect(api.projects.setArchived).not.toHaveBeenCalled()
+    expect(api.projects.delete).not.toHaveBeenCalled()
+  })
+
+  it('cancels pending remote activation when the preview is disabled', async () => {
+    const { updateSettings } = installRemoteProjectsSetting(true)
+    const remoteProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000118',
+      name: '连接中的远程项目',
+      rootPath: '/srv/project',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000218',
+        remoteRootPath: '/srv/project'
+      },
+      builtInDefault: false
+    }
+    const activation = deferred<typeof remoteProject>()
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      remoteProject
+    ])
+    vi.mocked(api.projects.remote.activate).mockReturnValueOnce(
+      activation.promise
+    )
+
+    render(<App />)
+    await screen.findByRole('button', { name: '当前项目' })
+    selectProjectOption(remoteProject.name)
+    await screen.findByRole('progressbar', {
+      name: '远程项目连接进度'
+    })
+
+    fireEvent.click(screen.getByText('本地工作区'))
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '平台功能' })
+    )
+    fireEvent.click(
+      await screen.findByRole('tab', {
+        name: '远程项目（技术预览）'
+      })
+    )
+    fireEvent.click(
+      await screen.findByRole('switch', {
+        name: '远程项目（技术预览）'
+      })
+    )
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        remoteProjectsEnabled: false
+      })
+    )
+    expect(api.projects.remote.cancelCurrent).toHaveBeenCalledOnce()
+    await act(async () => {
+      activation.resolve(remoteProject)
+      await activation.promise
+    })
+    expect(
+      screen.getByRole('button', { name: '当前项目' })
+    ).toHaveTextContent(project.name)
+  })
+
   it('keeps the current project active when remote activation fails', async () => {
+    installRemoteProjectsSetting(true)
     const remoteProject = {
       ...project,
       id: '00000000-0000-4000-8000-000000000104',
@@ -5659,9 +5868,11 @@ describe('App', () => {
       new Error('Agent upload failed')
     )
     render(<App />)
-    expect(
-      await screen.findByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: '当前项目' })
+      ).toHaveTextContent(project.name)
+    )
 
     selectProjectOption(remoteProject.name)
 
@@ -5676,6 +5887,7 @@ describe('App', () => {
   })
 
   it('revalidates the current SSH project when it is selected again', async () => {
+    installRemoteProjectsSetting(true)
     const remoteProject = {
       ...project,
       id: '00000000-0000-4000-8000-000000000114',
@@ -5718,6 +5930,7 @@ describe('App', () => {
   })
 
   it('keeps Host-stale projects blocked and preserves queued dispatches until reactivation succeeds', async () => {
+    installRemoteProjectsSetting(true)
     const hostId = '00000000-0000-4000-8000-000000000215'
     const candidateId =
       '00000000-0000-4000-8000-000000000315'
@@ -5967,6 +6180,7 @@ describe('App', () => {
   })
 
   it('shows every direct remote activation phase and blocks conflicting project actions', async () => {
+    installRemoteProjectsSetting(true)
     const remoteProject = {
       ...project,
       id: '00000000-0000-4000-8000-000000000105',
@@ -6041,6 +6255,7 @@ describe('App', () => {
   })
 
   it('cancels direct remote activation without switching projects', async () => {
+    installRemoteProjectsSetting(true)
     const remoteProject = {
       ...project,
       id: '00000000-0000-4000-8000-000000000106',
@@ -8111,6 +8326,19 @@ describe('App', () => {
   })
 
   it('edits and safely deletes the current project from project settings', async () => {
+    const hiddenRemoteProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000119',
+      name: '隐藏远程项目',
+      rootPath: '/srv/hidden',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000219',
+        remoteRootPath: '/srv/hidden'
+      },
+      builtInDefault: false
+    }
     const secondProject = {
       ...project,
       id: '00000000-0000-4000-8000-000000000102',
@@ -8122,6 +8350,7 @@ describe('App', () => {
       }
     }
     vi.mocked(api.projects.list).mockResolvedValueOnce([
+      hiddenRemoteProject,
       project,
       secondProject
     ])
@@ -9309,6 +9538,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -9318,6 +9548,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -9363,6 +9594,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -9415,6 +9647,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: false,
         magicNoteCommentMode: 'immediate' as const,
@@ -9446,6 +9679,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -9455,6 +9689,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate' as const,
@@ -9489,6 +9724,7 @@ describe('App', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',

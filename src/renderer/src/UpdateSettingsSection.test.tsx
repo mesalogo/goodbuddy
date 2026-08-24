@@ -21,6 +21,7 @@ describe('UpdateSettingsSection', () => {
       checkUpdatesOnStartup: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate' as const,

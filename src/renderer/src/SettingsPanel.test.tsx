@@ -364,7 +364,8 @@ const heartbeatSettingsProps = {
   onUpdateProject: vi.fn(async () => {
     throw new Error('Project update is not used in this test')
   }),
-  projects: []
+  projects: [],
+  remoteProjectsEnabled: true
 }
 const assistantExpert: AssistantExpert = {
   id: '00000000-0000-4000-8000-000000000101',
@@ -461,6 +462,7 @@ let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
+  remoteProjectsEnabled: false,
   magicNotesEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
@@ -683,6 +685,7 @@ describe('SettingsPanel runtime files', () => {
       checkUpdatesOnStartup: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
@@ -1731,6 +1734,122 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(
       await screen.findByText('已注册：CommandOrControl+Alt+K')
+    ).toBeInTheDocument()
+  })
+
+  it('persists Remote Projects from its own tab and notifies its parent', async () => {
+    const onRemoteProjectsEnabledChange = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onRemoteProjectsEnabledChange={
+          onRemoteProjectsEnabledChange
+        }
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const remoteProjectsTab = await screen.findByRole('tab', {
+      name: '远程项目（技术预览）'
+    })
+    expect(remoteProjectsTab).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+    expect(
+      screen.queryByRole('switch', {
+        name: '远程项目（技术预览）'
+      })
+    ).not.toBeInTheDocument()
+    fireEvent.click(remoteProjectsTab)
+    expect(remoteProjectsTab).toHaveAttribute('aria-selected', 'true')
+    const remoteProjectsSwitch = await screen.findByRole('switch', {
+      name: '远程项目（技术预览）'
+    })
+    expect(remoteProjectsSwitch).not.toBeChecked()
+
+    fireEvent.click(remoteProjectsSwitch)
+
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        remoteProjectsEnabled: true
+      })
+    )
+    expect(onRemoteProjectsEnabledChange).toHaveBeenCalledWith(true)
+    expect(remoteProjectsSwitch).toBeChecked()
+  })
+
+  it('shows the SSH Hosts category only while Remote Projects is enabled', () => {
+    const commonProps = {
+      ...heartbeatSettingsProps,
+      open: true,
+      onClearLocalData: vi.fn(async () => {}),
+      onClose: vi.fn(),
+      onSaved: vi.fn()
+    }
+    const { rerender } = render(
+      <SettingsPanel
+        {...commonProps}
+        remoteProjectsEnabled={false}
+      />
+    )
+
+    expect(
+      screen.queryByRole('tab', { name: '主机与远程执行' })
+    ).not.toBeInTheDocument()
+
+    rerender(
+      <SettingsPanel
+        {...commonProps}
+        remoteProjectsEnabled
+      />
+    )
+
+    expect(
+      screen.getByRole('tab', { name: '主机与远程执行' })
+    ).toBeInTheDocument()
+  })
+
+  it('falls back to Platform features when Remote Projects is disabled from SSH Hosts', async () => {
+    const commonProps = {
+      ...heartbeatSettingsProps,
+      initialCategory: 'ssh-hosts' as const,
+      open: true,
+      onClearLocalData: vi.fn(async () => {}),
+      onClose: vi.fn(),
+      onSaved: vi.fn()
+    }
+    const { rerender } = render(
+      <SettingsPanel
+        {...commonProps}
+        remoteProjectsEnabled
+      />
+    )
+    await screen.findByText('尚未配置 SSH 主机')
+
+    rerender(
+      <SettingsPanel
+        {...commonProps}
+        remoteProjectsEnabled={false}
+      />
+    )
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('tab', { name: '平台功能' })
+      ).toHaveAttribute('aria-selected', 'true')
+    )
+    expect(
+      screen.queryByRole('tab', { name: '主机与远程执行' })
+    ).not.toBeInTheDocument()
+    expect(
+      await screen.findByRole('tab', {
+        name: '远程项目（技术预览）'
+      })
     ).toBeInTheDocument()
   })
 

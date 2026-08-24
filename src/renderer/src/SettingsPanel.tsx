@@ -60,7 +60,7 @@ import {
   SettingsWarningList
 } from './SettingsPrimitives'
 import {
-  settingsCategoryList,
+  getSettingsCategoryList,
   type SettingsCategoryId
 } from './settings-categories'
 import type { AppearanceTheme } from './theme'
@@ -115,7 +115,6 @@ function toEmbeddingConnectionDrafts(
     }))
 }
 
-const settingsTabs = settingsCategoryList.map(({ id }) => id)
 const contextCompressionTokenScale = 1_000
 const minimumContextCompressionTriggerThousands = 8
 const maximumContextCompressionTriggerThousands = 1_000
@@ -218,7 +217,9 @@ type SettingsPanelProps = {
   appearanceTheme?: AppearanceTheme
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
   magicNotesEnabled?: boolean
+  remoteProjectsEnabled?: boolean
   onMagicNotesEnabledChange?: (enabled: boolean) => void
+  onRemoteProjectsEnabledChange?: (enabled: boolean) => void
   onMagicNotesShowIncompleteTodoCountChange?: (
     enabled: boolean
   ) => void
@@ -585,7 +586,9 @@ export function SettingsPanel({
   appearanceTheme = 'system',
   onAppearanceThemeChange = () => {},
   magicNotesEnabled = false,
+  remoteProjectsEnabled = false,
   onMagicNotesEnabledChange = () => {},
+  onRemoteProjectsEnabledChange = () => {},
   onMagicNotesShowIncompleteTodoCountChange = () => {},
   onShortcutSettingsChanged = () => {},
   onLeaveRequestReady = () => {}
@@ -707,8 +710,16 @@ export function SettingsPanel({
   const [clearingLocalData, setClearingLocalData] = useState(false)
   const [detection, setDetection] = useState<AgentRuntimeDetection>()
   const [detecting, setDetecting] = useState(false)
-  const [activeTab, setActiveTab] =
-    useState<SettingsCategoryId>(initialCategory ?? 'runtime')
+  const [selectedTab, setActiveTab] =
+    useState<SettingsCategoryId>(
+      initialCategory === 'ssh-hosts' && !remoteProjectsEnabled
+        ? 'platform-features'
+        : initialCategory ?? 'runtime'
+    )
+  const activeTab =
+    selectedTab === 'ssh-hosts' && !remoteProjectsEnabled
+      ? 'platform-features'
+      : selectedTab
   const [modelType, setModelType] = useState<ModelType>('llm')
   const [speechModelDraftId, setSpeechModelDraftId] = useState<
     string | null | undefined
@@ -958,6 +969,11 @@ export function SettingsPanel({
     setActiveTab(category)
     return true
   }
+
+  const visibleSettingsCategories = getSettingsCategoryList(
+    remoteProjectsEnabled
+  )
+  const settingsTabs = visibleSettingsCategories.map(({ id }) => id)
 
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -1820,7 +1836,7 @@ export function SettingsPanel({
             className="settings-tabs"
             role="tablist"
           >
-            {settingsCategoryList.map((category) => (
+            {visibleSettingsCategories.map((category) => (
               <button
                 aria-controls={`settings-panel-${category.id}`}
                 aria-label={t(
@@ -2035,6 +2051,9 @@ export function SettingsPanel({
               onMagicNotesEnabledChange={onMagicNotesEnabledChange}
               onMagicNotesShowIncompleteTodoCountChange={
                 onMagicNotesShowIncompleteTodoCountChange
+              }
+              onRemoteProjectsEnabledChange={
+                onRemoteProjectsEnabledChange
               }
               onNotify={onNotify}
               onShortcutSettingsChanged={onShortcutSettingsChanged}
@@ -3584,7 +3603,7 @@ export function SettingsPanel({
             />
           )}
 
-          {activeTab === 'ssh-hosts' && (
+          {remoteProjectsEnabled && activeTab === 'ssh-hosts' && (
             <SshHostsSettingsSection
               onDirtyChange={setSshHostsDirty}
               onHostUpdated={onSshHostUpdated}

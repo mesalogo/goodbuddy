@@ -69,7 +69,14 @@ afterEach(async () => {
 })
 
 function renderSwitcher(
-  currentProject: AssistantProject = project
+  currentProject: AssistantProject = project,
+  {
+    projects = [currentProject],
+    remoteProjectsEnabled = true
+  }: {
+    projects?: AssistantProject[]
+    remoteProjectsEnabled?: boolean
+  } = {}
 ): {
   onCreate: ReturnType<typeof vi.fn>
   onRemoteCommitted: ReturnType<typeof vi.fn>
@@ -96,7 +103,8 @@ function renderSwitcher(
       onSelect={vi.fn()}
       onSelectRoot={onSelectRoot}
       onUpdate={onUpdate}
-      projects={[currentProject]}
+      projects={projects}
+      remoteProjectsEnabled={remoteProjectsEnabled}
       runtimeSettings={runtimeSettings}
     />
   )
@@ -154,39 +162,43 @@ function installRemoteApi() {
     ])
   )
   const cancelDirectoryBrowse = vi.fn(async () => undefined)
+  const getSnapshot = vi.fn(async () => ({
+    hosts: [
+      {
+        id: hostId,
+        name: 'Build host',
+        hostname: 'build.example.com',
+        port: 22,
+        username: 'builder',
+        authentication: 'system-agent' as const,
+        credentialConfigured: true,
+        credentialSource: 'system-agent' as const,
+        hostKey: { state: 'verified' as const, generation: 1 },
+        createdAt: '2026-08-04T00:00:00.000Z',
+        updatedAt: '2026-08-04T00:00:00.000Z'
+      }
+    ],
+    secureStorageAvailable: true
+  }))
+  const onSaveProgress = vi.fn(
+    (listener: (value: { phase: 'host' | 'agent' }) => void) => {
+    progress = listener
+    return vi.fn()
+    }
+  )
   Object.defineProperty(window, 'goodbuddy', {
     configurable: true,
     value: {
       sshHosts: {
         browseDirectories,
         cancelDirectoryBrowse,
-        getSnapshot: vi.fn(async () => ({
-          hosts: [
-            {
-              id: hostId,
-              name: 'Build host',
-              hostname: 'build.example.com',
-              port: 22,
-              username: 'builder',
-              authentication: 'system-agent',
-              credentialConfigured: true,
-              credentialSource: 'system-agent',
-              hostKey: { state: 'verified', generation: 1 },
-              createdAt: '2026-08-04T00:00:00.000Z',
-              updatedAt: '2026-08-04T00:00:00.000Z'
-            }
-          ],
-          secureStorageAvailable: true
-        }))
+        getSnapshot
       },
       projects: {
         remote: {
           save,
           cancelCurrent,
-          onSaveProgress: vi.fn((listener) => {
-            progress = listener
-            return vi.fn()
-          })
+          onSaveProgress
         }
       }
     }
@@ -196,6 +208,8 @@ function installRemoteApi() {
     cancelCurrent,
     browseDirectories,
     cancelDirectoryBrowse,
+    getSnapshot,
+    onSaveProgress,
     emit: (phase: 'host' | 'agent') => progress?.({ phase })
   }
 }
@@ -308,6 +322,70 @@ describe('ProjectSwitcher runtime fields', () => {
 })
 
 describe('ProjectSwitcher managed SSH projects', () => {
+  it('hides remote projects and APIs when the feature is disabled', async () => {
+    await i18n.changeLanguage('en-US')
+    const api = installRemoteApi()
+    const remoteProject: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'Remote project',
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/project'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    renderSwitcher(project, {
+      projects: [project, remoteProject],
+      remoteProjectsEnabled: false
+    })
+
+    fireEvent.click(screen.getByLabelText('Current project'))
+    const menu = screen.getByRole('menu', { name: 'Current project' })
+    expect(
+      within(menu).queryByRole('group', { name: 'Remote projects' })
+    ).not.toBeInTheDocument()
+    expect(within(menu).queryByText('Remote project')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('New project'))
+    const dialog = screen.getByRole('dialog', { name: 'New project' })
+    expect(
+      within(dialog).queryByRole('button', { name: 'Managed SSH' })
+    ).not.toBeInTheDocument()
+    expect(api.getSnapshot).not.toHaveBeenCalled()
+    expect(api.onSaveProgress).not.toHaveBeenCalled()
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
+  it('refuses settings for a saved SSH project while disabled', () => {
+    const api = installRemoteApi()
+    const remoteProject: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'Remote project',
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/project'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    renderSwitcher(remoteProject, { remoteProjectsEnabled: false })
+
+    const settings = screen.getByLabelText('项目设置')
+    expect(settings).toBeDisabled()
+    fireEvent.click(settings)
+    expect(
+      screen.queryByRole('dialog', { name: '项目设置' })
+    ).not.toBeInTheDocument()
+    expect(api.getSnapshot).not.toHaveBeenCalled()
+    expect(api.onSaveProgress).not.toHaveBeenCalled()
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
   it('uses remote work directory copy and opens from a valid typed path', async () => {
     await i18n.changeLanguage('en-US')
     const api = installRemoteApi()

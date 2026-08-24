@@ -444,6 +444,8 @@ export const settingsSections = {
       serviceUnavailable:
         'Application settings are not available in this version',
       readFailed: 'Could not load platform feature settings',
+      saveRemoteProjectsFailed:
+        'Could not save the Remote Projects setting. Try again.',
       saveMagicNotesFailed: 'Could not save Magic Notes settings. Try again.',
       saveIncompleteTodoCountFailed:
         'Could not save the incomplete to-do count setting. Try again.',
@@ -459,6 +461,12 @@ export const settingsSections = {
       ariaLabel: 'Platform feature settings',
       general: 'General',
       magicNotes: 'Magic Notes'
+    },
+    remoteProjects: {
+      title: 'Remote Projects (Technical Preview)',
+      description:
+        'Enables SSH Host management and GoodBuddy-managed remote projects.',
+      enabled: 'Enable Remote Projects'
     },
     shortcut: {
       title: 'Global quick access',

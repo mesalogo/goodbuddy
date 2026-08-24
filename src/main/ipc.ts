@@ -1040,6 +1040,19 @@ export function registerIpcHandlers(
   const trackExecution = executionTracker.track
   const spaceResolver: ExecutionSpaceResolver =
     executionSpaceResolver ?? new ExecutionSpaceResolver()
+  const requireRemoteProjectsEnabled = async (): Promise<void> => {
+    try {
+      if (
+        (await applicationSettingsStore?.get())
+          ?.remoteProjectsEnabled === true
+      ) {
+        return
+      }
+    } catch {
+      // Keep the feature closed when its settings cannot be read.
+    }
+    throw new Error('远程项目（技术预览）未启用')
+  }
   const registerHandler = (
     channel: Parameters<typeof ipcMain.handle>[0],
     listener: Parameters<typeof ipcMain.handle>[1],
@@ -1063,10 +1076,14 @@ export function registerIpcHandlers(
       followConfiguredAgentRuntime?: boolean
     }
   ): Promise<AgentRuntime> => {
-    const executionSpace = request.projectId
-      ? spaceResolver.resolveProject(
-          assistantDatabase.getProject(request.projectId)
-        )
+    const project = request.projectId
+      ? assistantDatabase.getProject(request.projectId)
+      : undefined
+    if (project?.executionSpace?.kind === 'ssh') {
+      await requireRemoteProjectsEnabled()
+    }
+    const executionSpace = project
+      ? spaceResolver.resolveProject(project)
       : request.workspaceOverride?.trim()
         ? spaceResolver.resolveLocal(request.workspaceOverride.trim())
         : undefined
@@ -3648,10 +3665,14 @@ export function registerIpcHandlers(
         settings,
         request.runtimeSelection
       )
-      const executionSpace = request.projectId
-        ? spaceResolver.resolveProject(
-            assistantDatabase.getProject(request.projectId)
-          )
+      const project = request.projectId
+        ? assistantDatabase.getProject(request.projectId)
+        : undefined
+      if (project?.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
+      const executionSpace = project
+        ? spaceResolver.resolveProject(project)
         : spaceResolver.resolveLocal(selected.settings.workspacePath)
       if (executionSpace.kind === 'ssh') {
         throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
@@ -3816,10 +3837,14 @@ export function registerIpcHandlers(
           ? { profileId: request.profileId }
           : {})
       }
-      const executionSpace = request.projectId
-        ? spaceResolver.resolveProject(
-            assistantDatabase.getProject(request.projectId)
-          )
+      const project = request.projectId
+        ? assistantDatabase.getProject(request.projectId)
+        : undefined
+      if (project?.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
+      const executionSpace = project
+        ? spaceResolver.resolveProject(project)
         : spaceResolver.resolveLocal(
             (await settingsStore.getResolvedSettings()).workspacePath
           )
@@ -4047,8 +4072,9 @@ export function registerIpcHandlers(
     }
   )
 
-  registerHandler(ipcChannels.sshHostsGet, (event) => {
+  registerHandler(ipcChannels.sshHostsGet, async (event) => {
     assertTrustedSender(event, window)
+    await requireRemoteProjectsEnabled()
     if (!sshHostService) {
       throw new Error('SSH 主机设置服务不可用')
     }
@@ -4057,8 +4083,9 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.sshHostsRemove,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!sshHostService) {
         throw new Error('SSH 主机设置服务不可用')
       }
@@ -4074,8 +4101,9 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.sshHostsInspectDraftKey,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!sshHostService) {
         throw new Error('SSH 主机设置服务不可用')
       }
@@ -4087,8 +4115,9 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.sshHostsDiscardCandidate,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!sshHostService) {
         throw new Error('SSH 主机设置服务不可用')
       }
@@ -4100,8 +4129,9 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.sshHostsValidateAndSave,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!sshHostService) {
         throw new Error('SSH 主机设置服务不可用')
       }
@@ -4115,6 +4145,7 @@ export function registerIpcHandlers(
     ipcChannels.sshHostsRemoteEnvironment,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!sshHostRemoteEnvironmentInspector) {
         throw new Error('SSH 远端运行环境服务不可用')
       }
@@ -4129,6 +4160,7 @@ export function registerIpcHandlers(
     ipcChannels.sshHostsBrowseDirectories,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!sshHostDirectoryBrowser) {
         throw new Error('SSH 远端目录浏览服务不可用')
       }
@@ -4159,7 +4191,7 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.sshHostsCancelDirectoryBrowse,
-    (event) => {
+    async (event) => {
       assertTrustedSender(event, window)
       activeSshDirectoryBrowse?.abort(
         new DOMException(
@@ -4972,6 +5004,7 @@ export function registerIpcHandlers(
     ipcChannels.remoteProjectActivate,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!remoteProjectSaveService) {
         throw new Error('远程项目验证服务不可用')
       }
@@ -4987,6 +5020,7 @@ export function registerIpcHandlers(
     ipcChannels.remoteProjectSave,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      await requireRemoteProjectsEnabled()
       if (!remoteProjectSaveService) {
         throw new Error('远程项目验证服务不可用')
       }
@@ -5000,7 +5034,7 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.remoteProjectCancelCurrent,
-    (event) => {
+    async (event) => {
       assertTrustedSender(event, window)
       if (!remoteProjectSaveService) {
         throw new Error('远程项目验证服务不可用')
@@ -5014,6 +5048,10 @@ export function registerIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = projectUpdateRequestSchema.parse(input)
+      const current = assistantDatabase.getProject(value.projectId)
+      if (current.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
       const project = assistantDatabase.updateProject(
         value.projectId,
         value.input
@@ -5025,9 +5063,13 @@ export function registerIpcHandlers(
 
   registerHandler(
     ipcChannels.projectsSetArchived,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = projectArchiveRequestSchema.parse(input)
+      const project = assistantDatabase.getProject(value.projectId)
+      if (project.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
       assistantDatabase.setProjectArchived(
         value.projectId,
         value.archived
@@ -5039,6 +5081,10 @@ export function registerIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const value = projectDeleteRequestSchema.parse(input)
+      const project = assistantDatabase.getProject(value.projectId)
+      if (project.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
       assistantDatabase.deleteProject(
         value.projectId,
         value.confirmation
@@ -5281,6 +5327,9 @@ export function registerIpcHandlers(
       const project = assistantDatabase.getProject(
         assistantIdSchema.parse(input)
       )
+      if (project.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
       const executionSpace = spaceResolver.resolveProject(project)
       try {
         return await getWorkspaceChanges(
@@ -5297,6 +5346,9 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const value = workspaceDirectoryRequestSchema.parse(input)
       const project = assistantDatabase.getProject(value.projectId)
+      if (project.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
       const executionSpace = spaceResolver.resolveProject(project)
       try {
         return await listWorkspaceDirectory(
@@ -5314,6 +5366,9 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const value = workspaceFileRequestSchema.parse(input)
       const project = assistantDatabase.getProject(value.projectId)
+      if (project.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
       const executionSpace = spaceResolver.resolveProject(project)
       try {
         return await readWorkspaceFile(
@@ -5331,6 +5386,9 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const value = workspaceOpenPathRequestSchema.parse(input)
       const project = assistantDatabase.getProject(value.projectId)
+      if (project.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
       const executionSpace = spaceResolver.resolveProject(project)
       spaceResolver.assertLocal(executionSpace)
       let targetPath: string

@@ -28,6 +28,7 @@ type PlatformFeaturesSettingsSectionProps = {
   onMagicNotesShowIncompleteTodoCountChange: (
     enabled: boolean
   ) => void
+  onRemoteProjectsEnabledChange: (enabled: boolean) => void
   onNotify?: (notification: AppNotificationInput) => void
   onDirtyChange?: (dirty: boolean) => void
   onShortcutSettingsChanged?: (
@@ -35,7 +36,10 @@ type PlatformFeaturesSettingsSectionProps = {
   ) => void
 }
 
-type PlatformFeaturesTab = 'general' | 'magic-notes'
+type PlatformFeaturesTab =
+  | 'general'
+  | 'remote-projects'
+  | 'magic-notes'
 
 const shortcutErrorTranslationKeys: Record<
   GlobalShortcutUpdateErrorCode,
@@ -52,6 +56,7 @@ const shortcutErrorTranslationKeys: Record<
 export function PlatformFeaturesSettingsSection({
   onMagicNotesEnabledChange,
   onMagicNotesShowIncompleteTodoCountChange,
+  onRemoteProjectsEnabledChange,
   onNotify,
   onDirtyChange,
   onShortcutSettingsChanged
@@ -296,6 +301,32 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
+  const changeRemoteProjects = async (
+    enabled: boolean
+  ): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates || !settings) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      const nextSettings = await updates.updateSettings({
+        remoteProjectsEnabled: enabled
+      })
+      setSettings(nextSettings)
+      onRemoteProjectsEnabledChange(
+        nextSettings.remoteProjectsEnabled
+      )
+    } catch {
+      setError(
+        t('platformFeatures.errors.saveRemoteProjectsFailed')
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const changeCommentMode = async (
     magicNoteCommentMode: MagicNoteCommentMode
   ): Promise<void> => {
@@ -379,6 +410,10 @@ export function PlatformFeaturesSettingsSection({
             {
               id: 'general',
               label: t('platformFeatures.tabs.general')
+            },
+            {
+              id: 'remote-projects',
+              label: t('platformFeatures.remoteProjects.title')
             },
             {
               id: 'magic-notes',
@@ -559,6 +594,54 @@ export function PlatformFeaturesSettingsSection({
             </p>
           )}
         </article>
+        ) : (
+          !error && (
+            <p className="settings-notice" role="status">
+              {t('platformFeatures.loading')}
+            </p>
+          )
+        )}
+      </section>
+
+      <section
+        aria-labelledby="platform-features-tab-remote-projects"
+        className="settings-section"
+        hidden={activeSection !== 'remote-projects'}
+        id="platform-features-panel-remote-projects"
+        role="tabpanel"
+      >
+        {settings ? (
+          <article className="capability-card">
+            <div className="capability-card__header">
+              <div>
+                <strong>
+                  {t('platformFeatures.remoteProjects.title')}
+                </strong>
+                <small>
+                  {t(
+                    'platformFeatures.remoteProjects.description'
+                  )}
+                </small>
+              </div>
+            </div>
+            <label className="toggle-row">
+              <input
+                aria-label={t(
+                  'platformFeatures.remoteProjects.title'
+                )}
+                checked={settings.remoteProjectsEnabled}
+                disabled={saving}
+                onChange={(event) =>
+                  void changeRemoteProjects(event.target.checked)
+                }
+                role="switch"
+                type="checkbox"
+              />
+              <span>
+                {t('platformFeatures.remoteProjects.enabled')}
+              </span>
+            </label>
+          </article>
         ) : (
           !error && (
             <p className="settings-notice" role="status">

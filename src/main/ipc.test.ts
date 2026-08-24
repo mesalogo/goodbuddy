@@ -1086,7 +1086,9 @@ describe('registerIpcHandlers SSH hosts', () => {
       undefined, // browserControl
       undefined, // subagentService
       undefined, // channelSettingsStore
-      undefined, // applicationSettingsStore
+      {
+        get: vi.fn(async () => ({ remoteProjectsEnabled: true }))
+      } as never, // applicationSettingsStore
       undefined, // versionChecker
       undefined, // speechModelManager
       undefined, // embeddingIndexCoordinator
@@ -1167,11 +1169,11 @@ describe('registerIpcHandlers SSH hosts', () => {
         name: 'Build host'
       }
     })
-    expect(
+    await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsDiscardCandidate
       )?.(event, { candidateId })
-    ).toBeUndefined()
+    ).resolves.toBeUndefined()
     expect(sshHostService.discardCandidate).toHaveBeenCalledWith(
       candidateId
     )
@@ -1184,12 +1186,12 @@ describe('registerIpcHandlers SSH hosts', () => {
     listProjectIdsReferencingSshHost.mockReturnValue([
       '00000000-0000-4000-8000-000000000107'
     ])
-    expect(() =>
+    await expect(
       electronMocks.handlers.get(ipcChannels.sshHostsRemove)?.(
         event,
         { hostId }
       )
-    ).toThrow('SSH 主机仍被项目引用，无法删除')
+    ).rejects.toThrow('SSH 主机仍被项目引用，无法删除')
     expect(sshHostService.remove).toHaveBeenCalledOnce()
 
     await expect(
@@ -1205,7 +1207,7 @@ describe('registerIpcHandlers SSH hosts', () => {
     ).rejects.toThrow()
     expect(inspectRemoteEnvironment).toHaveBeenCalledOnce()
 
-    expect(() =>
+    await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsValidateAndSave
       )?.(event, {
@@ -1213,14 +1215,14 @@ describe('registerIpcHandlers SSH hosts', () => {
         fingerprintSha256: fingerprint,
         input: { ...createInput, command: 'whoami' }
       })
-    ).toThrow()
+    ).rejects.toThrow()
     expect(sshHostService.validateAndSave).toHaveBeenCalledOnce()
-    expect(() =>
+    await expect(
       electronMocks.handlers.get(ipcChannels.sshHostsGet)?.({
         sender: {},
         senderFrame: webContents.mainFrame
       })
-    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
 
     await expect(
       electronMocks.handlers.get(
@@ -1274,11 +1276,11 @@ describe('registerIpcHandlers SSH hosts', () => {
     await vi.waitFor(() =>
       expect(browseSignal).toBeInstanceOf(AbortSignal)
     )
-    expect(
+    await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsCancelDirectoryBrowse
       )?.(event)
-    ).toBeUndefined()
+    ).resolves.toBeUndefined()
     await expect(activeBrowse).rejects.toMatchObject({
       name: 'AbortError'
     })
@@ -1312,11 +1314,11 @@ describe('registerIpcHandlers SSH hosts', () => {
       webContents,
       remoteDraft
     )
-    expect(
+    await expect(
       electronMocks.handlers.get(
         ipcChannels.remoteProjectCancelCurrent
       )?.(event)
-    ).toBeUndefined()
+    ).resolves.toBeUndefined()
     expect(
       remoteProjectSaveService.cancelCurrent
     ).toHaveBeenCalledWith(webContents)
@@ -1347,6 +1349,241 @@ describe('registerIpcHandlers SSH hosts', () => {
 
     await dispose()
     expect(remoteProjectSaveService.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('blocks disabled and unavailable preview access before remote services', async () => {
+    const hostId = '00000000-0000-4000-8000-000000000105'
+    const candidateId = '00000000-0000-4000-8000-000000000106'
+    const projectId = '00000000-0000-4000-8000-000000000107'
+    const fingerprint = `SHA256:${'A'.repeat(43)}`
+    const remoteProject = {
+      id: projectId,
+      name: 'Remote project',
+      description: '',
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId,
+        remoteRootPath: '/srv/project'
+      },
+      defaultWorkMode: 'ask' as const,
+      kind: 'user' as const,
+      status: 'active' as const,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z'
+    }
+    const applicationSettingsStore = {
+      get: vi.fn(async () => ({ remoteProjectsEnabled: false }))
+    }
+    const sshHostService = {
+      getSnapshot: vi.fn(),
+      remove: vi.fn(),
+      inspectDraftHostKey: vi.fn(),
+      discardCandidate: vi.fn(),
+      validateAndSave: vi.fn()
+    }
+    const remoteProjectSaveService = {
+      activate: vi.fn(),
+      save: vi.fn(),
+      cancelCurrent: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const sshHostDirectoryBrowser = {
+      listDirectories: vi.fn()
+    }
+    const sshHostRemoteEnvironmentInspector = {
+      inspect: vi.fn()
+    }
+    const executionSpaceResolver = {
+      resolveProject: vi.fn()
+    }
+    const assistantDatabase = {
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
+      listProjectIdsReferencingSshHost: vi.fn(() => []),
+      getProject: vi.fn(() => remoteProject),
+      updateProject: vi.fn(),
+      setProjectArchived: vi.fn(),
+      deleteProject: vi.fn()
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const dispose = registerIpcHandlers(
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      assistantDatabase as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => undefined),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      applicationSettingsStore as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      sshHostService as never,
+      executionSpaceResolver as never,
+      remoteProjectSaveService as never,
+      sshHostDirectoryBrowser as never,
+      sshHostRemoteEnvironmentInspector as never
+    )
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+    const createInput = {
+      name: 'Build host',
+      hostname: 'build.example.com',
+      port: 22,
+      username: 'builder',
+      authentication: 'system-agent',
+      password: { action: 'clear' }
+    }
+    const remoteDraft = {
+      intent: 'create',
+      draft: {
+        name: remoteProject.name,
+        description: '',
+        runtimeSelection: { provider: 'opencode' },
+        hostId,
+        remoteRootPath: '/srv/project',
+        defaultWorkMode: 'ask'
+      }
+    }
+    const disabledRequests: Array<[string, unknown?]> = [
+      [ipcChannels.sshHostsGet],
+      [ipcChannels.sshHostsRemove, { hostId }],
+      [
+        ipcChannels.sshHostsInspectDraftKey,
+        {
+          hostId,
+          hostname: createInput.hostname,
+          port: createInput.port,
+          username: createInput.username
+        }
+      ],
+      [ipcChannels.sshHostsDiscardCandidate, { candidateId }],
+      [
+        ipcChannels.sshHostsValidateAndSave,
+        { candidateId, fingerprintSha256: fingerprint, input: createInput }
+      ],
+      [ipcChannels.sshHostsRemoteEnvironment, { hostId }],
+      [
+        ipcChannels.sshHostsBrowseDirectories,
+        { hostId, path: '/srv' }
+      ],
+      [ipcChannels.remoteProjectActivate, projectId],
+      [ipcChannels.remoteProjectSave, remoteDraft]
+    ]
+    for (const [channel, input] of disabledRequests) {
+      await expect(
+        electronMocks.handlers.get(channel)?.(event, input)
+      ).rejects.toThrow('远程项目（技术预览）未启用')
+    }
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.projectsUpdate)?.(event, {
+        projectId,
+        input: {
+          name: remoteProject.name,
+          description: '',
+          rootPath: remoteProject.rootPath,
+          defaultWorkMode: 'ask'
+        }
+      })
+    ).rejects.toThrow('远程项目（技术预览）未启用')
+    await expect(
+      electronMocks.handlers.get(ipcChannels.projectsSetArchived)?.(
+        event,
+        { projectId, archived: true }
+      )
+    ).rejects.toThrow('远程项目（技术预览）未启用')
+    await expect(
+      electronMocks.handlers.get(ipcChannels.projectsDelete)?.(event, {
+        projectId,
+        confirmation: remoteProject.name
+      })
+    ).rejects.toThrow('远程项目（技术预览）未启用')
+    await expect(
+      electronMocks.handlers.get(ipcChannels.workspaceFileRead)?.(
+        event,
+        { projectId, path: 'README.md' }
+      )
+    ).rejects.toThrow('远程项目（技术预览）未启用')
+
+    expect(sshHostService.getSnapshot).not.toHaveBeenCalled()
+    expect(sshHostService.remove).not.toHaveBeenCalled()
+    expect(sshHostService.inspectDraftHostKey).not.toHaveBeenCalled()
+    expect(sshHostService.discardCandidate).not.toHaveBeenCalled()
+    expect(sshHostService.validateAndSave).not.toHaveBeenCalled()
+    expect(
+      sshHostRemoteEnvironmentInspector.inspect
+    ).not.toHaveBeenCalled()
+    expect(
+      sshHostDirectoryBrowser.listDirectories
+    ).not.toHaveBeenCalled()
+    expect(remoteProjectSaveService.activate).not.toHaveBeenCalled()
+    expect(remoteProjectSaveService.save).not.toHaveBeenCalled()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsCancelDirectoryBrowse
+      )?.(event)
+    ).resolves.toBeUndefined()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.remoteProjectCancelCurrent
+      )?.(event)
+    ).resolves.toBeUndefined()
+    expect(remoteProjectSaveService.cancelCurrent).toHaveBeenCalledWith(
+      webContents
+    )
+    expect(
+      assistantDatabase.listProjectIdsReferencingSshHost
+    ).not.toHaveBeenCalled()
+    expect(assistantDatabase.updateProject).not.toHaveBeenCalled()
+    expect(assistantDatabase.setProjectArchived).not.toHaveBeenCalled()
+    expect(assistantDatabase.deleteProject).not.toHaveBeenCalled()
+    expect(executionSpaceResolver.resolveProject).not.toHaveBeenCalled()
+
+    applicationSettingsStore.get.mockRejectedValueOnce(
+      new Error('settings unavailable')
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.sshHostsGet)?.(event)
+    ).rejects.toThrow('远程项目（技术预览）未启用')
+    expect(sshHostService.getSnapshot).not.toHaveBeenCalled()
+
+    await dispose()
   })
 
   it('sends save progress only to a live owning WebContents', () => {
@@ -3096,7 +3333,16 @@ describe('registerIpcHandlers workspace files', () => {
       assistantDatabase as never,
       { clear: vi.fn() } as never,
       {} as never,
-      vi.fn(async () => {})
+      vi.fn(async () => {}),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        get: vi.fn(async () => {
+          throw new Error('settings unavailable')
+        })
+      } as never
     )
     const event = {
       sender: webContents,
@@ -3175,7 +3421,14 @@ describe('registerIpcHandlers workspace files', () => {
       assistantDatabase as never,
       { clear: vi.fn() } as never,
       {} as never,
-      vi.fn(async () => {})
+      vi.fn(async () => {}),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        get: vi.fn(async () => ({ remoteProjectsEnabled: true }))
+      } as never
     )
     const event = {
       sender: webContents,

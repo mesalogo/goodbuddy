@@ -29,6 +29,7 @@ const applicationPreferencesSchema = z
     checkUpdatesOnStartup: z.boolean(),
     updateSource: updateSourceSchema,
     modelDownloadSource: modelDownloadSourceSchema,
+    remoteProjectsEnabled: z.boolean(),
     magicNotesEnabled: z.boolean(),
     magicNotesShowIncompleteTodoCount: z.boolean(),
     magicNoteCommentMode: magicNoteCommentModeSchema,

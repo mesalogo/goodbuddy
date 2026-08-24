@@ -59,6 +59,14 @@ export type SettingsCategoryDefinition =
   (typeof settingsCategoryList)[number]
 export type SettingsCategoryId = SettingsCategoryDefinition['id']
 
+export function getSettingsCategoryList(
+  remoteProjectsEnabled: boolean
+): readonly SettingsCategoryDefinition[] {
+  return remoteProjectsEnabled
+    ? settingsCategoryList
+    : settingsCategoryList.filter(({ id }) => id !== 'ssh-hosts')
+}
+
 type LocalizedSettingsCategoryDefinition = SettingsCategoryDefinition & {
   readonly label: string
   readonly navigationDescription: string

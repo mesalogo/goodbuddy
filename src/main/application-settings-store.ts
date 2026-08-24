@@ -20,7 +20,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 8
+const CURRENT_SETTINGS_VERSION = 9
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -50,6 +50,7 @@ const versionFourStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     updateSource: true,
     modelDownloadSource: true,
+    remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
   .extend({
@@ -61,6 +62,7 @@ const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     updateSource: true,
     modelDownloadSource: true,
+    remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
   .extend({
@@ -72,6 +74,7 @@ const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
 const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     modelDownloadSource: true,
+    remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
   .extend({
@@ -82,9 +85,21 @@ const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
 
 const versionSevenStoredApplicationSettingsSchema =
   applicationSettingsSchema
-    .omit({ magicNotesShowIncompleteTodoCount: true })
+    .omit({
+      remoteProjectsEnabled: true,
+      magicNotesShowIncompleteTodoCount: true
+    })
     .extend({
       version: z.literal(7),
+      lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
+    })
+    .strict()
+
+const versionEightStoredApplicationSettingsSchema =
+  applicationSettingsSchema
+    .omit({ remoteProjectsEnabled: true })
+    .extend({
+      version: z.literal(8),
       lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
     })
     .strict()
@@ -104,6 +119,7 @@ export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
+  remoteProjectsEnabled: false,
   magicNotesEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
@@ -161,12 +177,23 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionEightResult =
+          versionEightStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionEightResult.success) {
+          this.settings = {
+            ...versionEightResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            remoteProjectsEnabled: false
+          }
+          return this.settings
+        }
         const versionSevenResult =
           versionSevenStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionSevenResult.success) {
           this.settings = {
             ...versionSevenResult.data,
             version: CURRENT_SETTINGS_VERSION,
+            remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true
           }
           return this.settings
@@ -178,6 +205,7 @@ export class ApplicationSettingsStore {
             ...versionSixResult.data,
             version: CURRENT_SETTINGS_VERSION,
             modelDownloadSource: 'modelscope',
+            remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true
           }
           return this.settings
@@ -190,6 +218,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true
           }
           return this.settings
@@ -202,6 +231,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true,
             lastSeenReleaseNotesVersion: null
           }
@@ -215,6 +245,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
@@ -229,6 +260,7 @@ export class ApplicationSettingsStore {
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
@@ -245,6 +277,7 @@ export class ApplicationSettingsStore {
               legacyResult.data.checkUpdatesOnStartup,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
+            remoteProjectsEnabled: false,
             magicNotesEnabled: false,
             magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentMode: 'immediate',
@@ -287,6 +320,7 @@ export class ApplicationSettingsStore {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
       updateSource: stored.updateSource,
       modelDownloadSource: stored.modelDownloadSource,
+      remoteProjectsEnabled: stored.remoteProjectsEnabled,
       magicNotesEnabled: stored.magicNotesEnabled,
       magicNotesShowIncompleteTodoCount:
         stored.magicNotesShowIncompleteTodoCount,
@@ -322,6 +356,7 @@ export class ApplicationSettingsStore {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
+        remoteProjectsEnabled: next.remoteProjectsEnabled,
         magicNotesEnabled: next.magicNotesEnabled,
         magicNotesShowIncompleteTodoCount:
           next.magicNotesShowIncompleteTodoCount,

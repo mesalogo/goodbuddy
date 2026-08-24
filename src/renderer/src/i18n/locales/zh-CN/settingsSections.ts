@@ -421,6 +421,7 @@ export const settingsSections = {
     errors: {
       serviceUnavailable: '当前版本未提供应用设置服务',
       readFailed: '读取平台功能设置失败',
+      saveRemoteProjectsFailed: '保存远程项目设置失败，请重试',
       saveMagicNotesFailed: '保存魔法笔记设置失败，请重试',
       saveIncompleteTodoCountFailed:
         '保存未完成待办数量设置失败，请重试',
@@ -433,6 +434,11 @@ export const settingsSections = {
       ariaLabel: '平台功能设置',
       general: '通用设置',
       magicNotes: '魔法笔记'
+    },
+    remoteProjects: {
+      title: '远程项目（技术预览）',
+      description: '启用 SSH Host 管理和由 GoodBuddy 托管的远程项目。',
+      enabled: '启用远程项目'
     },
     shortcut: {
       title: '全局快捷唤起',

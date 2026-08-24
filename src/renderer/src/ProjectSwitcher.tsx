@@ -49,6 +49,7 @@ import { sshHostErrorMessage } from './ssh-host-ui'
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
   activeProjectId: string
+  remoteProjectsEnabled?: boolean
   remoteActivation?: {
     projectId: string
     phase: RemoteProjectSavePhase
@@ -173,6 +174,7 @@ function isRemoteAbsolutePath(value: string): boolean {
 export function ProjectSwitcher({
   projects,
   activeProjectId,
+  remoteProjectsEnabled = false,
   remoteActivation,
   runtimeSettings,
   onArchive,
@@ -249,13 +251,16 @@ export function ProjectSwitcher({
   const channelProjects = projects.filter(
     (project) => project.kind === 'channel'
   )
-  const userProjects = [...localProjects, ...remoteProjects]
+  const userProjects = [
+    ...localProjects,
+    ...(remoteProjectsEnabled ? remoteProjects : [])
+  ]
   const busy =
     saving ||
     remoteSaving ||
     archiving ||
     deleting ||
-    remoteActivation !== undefined
+    (remoteProjectsEnabled && remoteActivation !== undefined)
   const remoteFieldsDisabled = busy
   const remoteDirectoryBrowseDisabled =
     remoteFieldsDisabled ||
@@ -278,7 +283,11 @@ export function ProjectSwitcher({
     : t('projectSwitcher.selector.empty')
 
   useEffect(() => {
-    if (!dialogMode || executionSpaceKind !== 'ssh') {
+    if (
+      !remoteProjectsEnabled ||
+      !dialogMode ||
+      executionSpaceKind !== 'ssh'
+    ) {
       return
     }
     let active = true
@@ -318,10 +327,14 @@ export function ProjectSwitcher({
     return () => {
       active = false
     }
-  }, [dialogMode, executionSpaceKind, t])
+  }, [dialogMode, executionSpaceKind, remoteProjectsEnabled, t])
 
   useEffect(() => {
-    if (!dialogMode || executionSpaceKind !== 'ssh') {
+    if (
+      !remoteProjectsEnabled ||
+      !dialogMode ||
+      executionSpaceKind !== 'ssh'
+    ) {
       return
     }
     const remoteApi = window.goodbuddy.projects.remote
@@ -331,7 +344,28 @@ export function ProjectSwitcher({
     return remoteApi.onSaveProgress((progress) =>
       setRemoteSavePhase(progress.phase)
     )
-  }, [dialogMode, executionSpaceKind])
+  }, [dialogMode, executionSpaceKind, remoteProjectsEnabled])
+
+  useEffect(() => {
+    if (
+      remoteProjectsEnabled ||
+      dialogMode !== 'settings' ||
+      activeProject?.executionSpace.kind !== 'ssh'
+    ) {
+      return
+    }
+    let active = true
+    queueMicrotask(() => {
+      if (active) {
+        setConfirmingDelete(false)
+        setDeleteConfirmation('')
+        setDialogMode(undefined)
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [activeProject, dialogMode, remoteProjectsEnabled])
 
   const resetRemoteDraft = (): void => {
     directoryBrowseRequestRef.current += 1
@@ -349,7 +383,9 @@ export function ProjectSwitcher({
 
   const cancelRemoteDirectoryBrowse = useCallback((): void => {
     directoryBrowseRequestRef.current += 1
-    const api = window.goodbuddy.sshHosts
+    const api = remoteProjectsEnabled
+      ? window.goodbuddy.sshHosts
+      : undefined
     if (api) {
       void api.cancelDirectoryBrowse().catch(() => undefined)
     }
@@ -360,11 +396,14 @@ export function ProjectSwitcher({
     requestAnimationFrame(() =>
       directoryPickerTriggerRef.current?.focus()
     )
-  }, [])
+  }, [remoteProjectsEnabled])
 
   const browseRemoteDirectories = async (
     path?: string
   ): Promise<void> => {
+    if (!remoteProjectsEnabled) {
+      return
+    }
     const api = window.goodbuddy.sshHosts
     if (!api || !remoteHostId) {
       return
@@ -465,7 +504,7 @@ export function ProjectSwitcher({
         return
       }
       if (event.key === 'Escape' && !archiving && !deleting) {
-        if (remoteSaving) {
+        if (remoteProjectsEnabled && remoteSaving) {
           void window.goodbuddy.projects.remote
             .cancelCurrent()
             .catch(() => undefined)
@@ -485,18 +524,21 @@ export function ProjectSwitcher({
     deleting,
     dialogMode,
     directoryPickerOpen,
+    remoteProjectsEnabled,
     remoteSaving
   ])
 
   const closeDialog = (): void => {
     directoryBrowseRequestRef.current += 1
     if (directoryPickerOpen) {
-      const api = window.goodbuddy.sshHosts
+      const api = remoteProjectsEnabled
+        ? window.goodbuddy.sshHosts
+        : undefined
       if (api) {
         void api.cancelDirectoryBrowse().catch(() => undefined)
       }
     }
-    if (remoteSaving) {
+    if (remoteProjectsEnabled && remoteSaving) {
       void window.goodbuddy.projects.remote
         .cancelCurrent()
         .catch(() => undefined)
@@ -520,7 +562,11 @@ export function ProjectSwitcher({
 
   const saveRemoteProject = async (): Promise<void> => {
     setError(undefined)
-    if (!draft.name.trim() || !validateRemoteDraft()) {
+    if (
+      !remoteProjectsEnabled ||
+      !draft.name.trim() ||
+      !validateRemoteDraft()
+    ) {
       return
     }
     setRemoteSaving(true)
@@ -668,7 +714,9 @@ export function ProjectSwitcher({
             aria-haspopup="menu"
             aria-label={t('projectSwitcher.selector.ariaLabel')}
             className="project-switcher__trigger"
-            disabled={remoteActivation !== undefined}
+            disabled={
+              remoteProjectsEnabled && remoteActivation !== undefined
+            }
             onClick={() => setProjectMenuOpen((open) => !open)}
             onKeyDown={(event) => {
               if (
@@ -738,11 +786,17 @@ export function ProjectSwitcher({
                   label: t('projectSwitcher.selector.userProjects'),
                   icon: Folder
                 },
-                {
-                  projects: remoteProjects,
-                  label: t('projectSwitcher.selector.remoteProjects'),
-                  icon: Server
-                },
+                ...(remoteProjectsEnabled
+                  ? [
+                      {
+                        projects: remoteProjects,
+                        label: t(
+                          'projectSwitcher.selector.remoteProjects'
+                        ),
+                        icon: Server
+                      }
+                    ]
+                  : []),
                 {
                   projects: channelProjects,
                   label: t('projectSwitcher.selector.channelProjects'),
@@ -823,7 +877,9 @@ export function ProjectSwitcher({
         <button
           aria-label={t('projectSwitcher.selector.create')}
           className="icon-button"
-          disabled={remoteActivation !== undefined}
+          disabled={
+            remoteProjectsEnabled && remoteActivation !== undefined
+          }
           onClick={() => {
             setProjectMenuOpen(false)
             setError(undefined)
@@ -851,9 +907,20 @@ export function ProjectSwitcher({
         <button
           aria-label={t('projectSwitcher.selector.settings')}
           className="icon-button"
-          disabled={!activeProject || remoteActivation !== undefined}
+          disabled={
+            !activeProject ||
+            (remoteProjectsEnabled && remoteActivation !== undefined) ||
+            (!remoteProjectsEnabled &&
+              activeProject.executionSpace.kind === 'ssh')
+          }
           onClick={() => {
             if (!activeProject) {
+              return
+            }
+            if (
+              !remoteProjectsEnabled &&
+              activeProject.executionSpace.kind === 'ssh'
+            ) {
               return
             }
             setProjectMenuOpen(false)
@@ -900,7 +967,7 @@ export function ProjectSwitcher({
           <Settings size={15} />
         </button>
       </div>
-      {remoteActivation && (
+      {remoteProjectsEnabled && remoteActivation && (
         <RemoteProjectProgress
           cancelling={remoteActivation.cancelling}
           onCancel={onCancelRemoteActivation}
@@ -1035,12 +1102,16 @@ export function ProjectSwitcher({
                           'projectSwitcher.remote.executionSpaces.local'
                         )
                       },
-                      {
-                        value: 'ssh',
-                        label: t(
-                          'projectSwitcher.remote.executionSpaces.ssh'
-                        )
-                      }
+                      ...(remoteProjectsEnabled
+                        ? [
+                            {
+                              value: 'ssh' as const,
+                              label: t(
+                                'projectSwitcher.remote.executionSpaces.ssh'
+                              )
+                            }
+                          ]
+                        : [])
                     ]}
                     value={executionSpaceKind}
                   />
