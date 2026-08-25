@@ -186,7 +186,7 @@ async function buildCiAgentBundle(options) {
       remoteRuntimeVersion:
         runtimeLock.runtimes.opencode.version,
       architecture: options.arch,
-      archive: second.package.archive,
+      archive: second.archive,
       archiveSha256: archiveDigest
     }
   } finally {

@@ -176,6 +176,10 @@ describe('GoodBuddy Agents workflow', () => {
     )
     expect(ciBundleSource).toContain('assembleAgentPackage')
     expect(ciBundleSource).toContain('buildRuntimeBundle')
+    expect(ciBundleSource).toContain('archive: second.archive')
+    expect(ciBundleSource).not.toContain(
+      'second.package.archive'
+    )
     expect(build).toContain('.gbagent')
     expect(ciBundleSource).not.toContain(
       'readTrustedKeyRegistry'
