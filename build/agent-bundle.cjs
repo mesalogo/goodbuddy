@@ -1171,6 +1171,7 @@ module.exports = {
   createAgentArchive,
   createManifest,
   detectElfArchitecture,
+  expectedManifestMode,
   importAgentArchive,
   lockedRuntimeInput,
   preflightProductionSigningKey,

@@ -107,6 +107,14 @@ type AgentPackageModule = {
 }
 
 type AgentCatalogModule = {
+  readPackageMetadata(
+    archivePath: string,
+    registry: AgentReleaseKeyRegistry
+  ): {
+    descriptor: AgentPackageDescriptor
+    size: number
+    sha256: string
+  }
   createCatalog(options: {
     projectRoot: string
     x64Package: string
@@ -288,6 +296,12 @@ describe('compound Agent packages', () => {
         'agent-runtime-lock.json',
         'remote-runtime-lock.json'
       ])
+    )
+    expect(packageResult.descriptor.files).toContainEqual(
+      expect.objectContaining({
+        path: 'agent/helpers/fixture-helper',
+        mode: '0755'
+      })
     )
 
     const contentRoot = join(temporaryRoot, 'verified')
@@ -576,12 +590,15 @@ describe('compound Agent packages', () => {
       changedRoot,
       agentPackageArchiveName(agentLock.agentVersion, 'x64')
     )
-    const changedEntries = unzipSync(
-      new Uint8Array(readFileSync(packagePath))
-    )
+    const originalPackage = readFileSync(packagePath)
+    const changedPackage = Buffer.concat([
+      originalPackage,
+      Buffer.from([0])
+    ])
+    changedPackage.writeUInt16LE(1, originalPackage.length - 2)
     writeFileSync(
       changedPath,
-      Buffer.from(zipSync(changedEntries, { level: 1 }))
+      changedPackage
     )
     expect(() =>
       agentCatalog.createCatalog({
@@ -606,6 +623,18 @@ describe('compound Agent packages', () => {
         }
       })
     ).toThrow('identity is immutable')
+  })
+
+  it('verifies stored payload bytes that contain a ZIP descriptor signature', () => {
+    expect(
+      agentCatalog.readPackageMetadata(packagePath, registry)
+    ).toMatchObject({
+      descriptor: {
+        architecture: 'x64'
+      },
+      size: packageResult.size,
+      sha256: packageResult.sha256
+    })
   })
 
   it('imports and exports a fully verified offline package atomically', async () => {
@@ -884,6 +913,7 @@ function writeAgentBundle(
 ): void {
   mkdirSync(join(directory, 'lib'), { recursive: true })
   mkdirSync(join(directory, 'licenses'), { recursive: true })
+  mkdirSync(join(directory, 'helpers'), { recursive: true })
   writeFileSync(join(directory, 'node'), elf(architecture))
   writeFileSync(
     join(directory, 'goodbuddy-agent'),
@@ -892,6 +922,10 @@ function writeAgentBundle(
   writeFileSync(
     join(directory, 'lib', 'agent.cjs'),
     'module.exports={}\n'
+  )
+  writeFileSync(
+    join(directory, 'helpers', 'fixture-helper'),
+    '#!/bin/sh\n'
   )
   for (const [name, contents] of [
     ['GoodBuddy-0BSD.txt', '0BSD'],
@@ -903,7 +937,11 @@ function writeAgentBundle(
     writeFileSync(join(directory, 'licenses', name), contents)
   }
   writeKoffiPayload(directory, architecture)
-  for (const path of ['node', 'goodbuddy-agent']) {
+  for (const path of [
+    'node',
+    'goodbuddy-agent',
+    'helpers/fixture-helper'
+  ]) {
     chmodSync(join(directory, path), 0o755)
   }
   const manifest = agentBundle.createManifest(directory, {
@@ -1027,7 +1065,11 @@ function createRuntimeInput(
   )
   writeFileSync(
     join(packageRoot, 'bin', 'opencode'),
-    elf(architecture)
+    Buffer.concat([
+      elf(architecture),
+      Buffer.from([0x50, 0x4b, 0x07, 0x08]),
+      Buffer.from('runtime payload')
+    ])
   )
   chmodSync(join(packageRoot, 'bin', 'opencode'), 0o755)
   const archive = join(

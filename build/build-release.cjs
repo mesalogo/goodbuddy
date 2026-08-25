@@ -5,6 +5,7 @@ const {
   createWriteStream,
   existsSync,
   closeSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -38,6 +39,9 @@ const { sha256File } = require('./file-hash.cjs')
 const {
   detectBinaryArchitecture
 } = require('./binary-architecture.cjs')
+const {
+  readZipCentralDirectory
+} = require('./zip-central-directory.cjs')
 
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(
@@ -522,9 +526,10 @@ function targetHarnessPaths(options) {
     koffiPackage,
     koffiBinary,
     nodePtyBinary:
-      options.platform === 'linux'
-        ? 'build/Release/pty.node'
-        : `prebuilds/${platformName}-${options.arch}/pty.node`,
+      `prebuilds/${platformName}-${options.arch}/` +
+      (options.platform === 'windows'
+        ? 'conpty.node'
+        : 'pty.node'),
     nodePtyDirectory: `${platformName}-${options.arch}`
   }
 }
@@ -1000,7 +1005,7 @@ function verifyHarnessPackage(
     'DeepSeek Harness Canvas'
   )
 
-  if (options.platform === 'darwin') {
+  if (options.platform === 'macos') {
     const helper = join(
       unpackedRoot,
       'node_modules',
@@ -1274,98 +1279,42 @@ async function createPortableZip(
 }
 
 function readZipEntryNames(filePath) {
-  const fileSize = statSync(filePath).size
-  if (fileSize < 22) {
-    throw new Error('Portable ZIP 缺少中央目录')
-  }
-  const endChunkSize = Math.min(fileSize, 65_557)
-  const endChunkStart = fileSize - endChunkSize
-  const endChunk = readChunk(
-    filePath,
-    endChunkSize,
-    endChunkStart
-  )
-  let endOffset = -1
-  for (let index = endChunk.length - 22; index >= 0; index -= 1) {
-    if (
-      endChunk.readUInt32LE(index) === 0x06054b50 &&
-      index + 22 + endChunk.readUInt16LE(index + 20) ===
-        endChunk.length
-    ) {
-      endOffset = index
-      break
-    }
-  }
-  if (endOffset < 0) {
-    throw new Error('Portable ZIP 缺少中央目录')
-  }
-  const diskNumber = endChunk.readUInt16LE(endOffset + 4)
-  const centralDisk = endChunk.readUInt16LE(endOffset + 6)
-  const diskEntryCount = endChunk.readUInt16LE(endOffset + 8)
-  const entryCount = endChunk.readUInt16LE(endOffset + 10)
-  const centralSize = endChunk.readUInt32LE(endOffset + 12)
-  const centralOffset = endChunk.readUInt32LE(endOffset + 16)
-  const absoluteEndOffset = endChunkStart + endOffset
-  if (
-    diskNumber !== 0 ||
-    centralDisk !== 0 ||
-    diskEntryCount !== entryCount ||
-    entryCount === 0xffff ||
-    centralSize === 0xffffffff ||
-    centralOffset === 0xffffffff ||
-    entryCount < portableRequiredFiles.length + 1 ||
-    entryCount > maxPortableZipEntries ||
-    centralSize < 46 ||
-    centralSize > maxPortableCentralDirectoryBytes ||
-    centralOffset + centralSize !== absoluteEndOffset
-  ) {
-    throw new Error('Portable ZIP 中央目录无效')
-  }
-  const centralDirectory = readChunk(
-    filePath,
-    centralSize,
-    centralOffset
-  )
-  const names = []
-  let offset = 0
-  for (let index = 0; index < entryCount; index += 1) {
-    if (
-      offset + 46 > centralDirectory.length ||
-      centralDirectory.readUInt32LE(offset) !== 0x02014b50
-    ) {
-      throw new Error('Portable ZIP 中央目录条目无效')
-    }
-    const nameLength = centralDirectory.readUInt16LE(offset + 28)
-    const extraLength = centralDirectory.readUInt16LE(offset + 30)
-    const commentLength = centralDirectory.readUInt16LE(offset + 32)
-    const entryLength = 46 + nameLength + extraLength + commentLength
-    if (offset + entryLength > centralDirectory.length) {
-      throw new Error('Portable ZIP 中央目录条目越界')
-    }
-    const name = centralDirectory
-      .subarray(offset + 46, offset + 46 + nameLength)
-      .toString(
-        centralDirectory.readUInt16LE(offset + 8) & 0x0800
-          ? 'utf8'
-          : 'latin1'
+  const handle = openSync(filePath, 'r')
+  try {
+    let parsed
+    try {
+      parsed = readZipCentralDirectory(
+        handle,
+        fstatSync(handle).size,
+        {
+          label: 'Portable ZIP',
+          minimumEntries: portableRequiredFiles.length + 1,
+          maximumEntries: maxPortableZipEntries,
+          maximumCentralDirectoryBytes:
+            maxPortableCentralDirectoryBytes
+        }
       )
-      .replaceAll('\\', '/')
-    if (
-      !name ||
-      name.startsWith('/') ||
-      /^[a-z]:\//iu.test(name) ||
-      name.includes('\0') ||
-      name.split('/').some((part) => part === '..')
-    ) {
-      throw new Error(`Portable ZIP 包含不安全路径：${name}`)
+    } catch (error) {
+      throw new Error('Portable ZIP 中央目录无效', {
+        cause: error
+      })
     }
-    names.push(name)
-    offset += entryLength
+    return parsed.entries.map((entry) => {
+      const name = entry.name.replaceAll('\\', '/')
+      if (
+        !name ||
+        name.startsWith('/') ||
+        /^[a-z]:\//iu.test(name) ||
+        name.includes('\0') ||
+        name.split('/').some((part) => part === '..')
+      ) {
+        throw new Error(`Portable ZIP 包含不安全路径：${name}`)
+      }
+      return name
+    })
+  } finally {
+    closeSync(handle)
   }
-  if (offset !== centralDirectory.length) {
-    throw new Error('Portable ZIP 中央目录数量不一致')
-  }
-  return names
 }
 
 function verifyPortableZip(filePath) {
@@ -1698,6 +1647,7 @@ module.exports = {
   replaceOutput,
   stageTargetRuntimeDependencies,
   targetRuntimePackageNames,
+  targetHarnessPaths,
   verifyHarnessPackage,
   verifyArchiveIntegrity,
   verifyUnpackedOutput,

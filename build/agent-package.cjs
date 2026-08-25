@@ -19,9 +19,10 @@ const {
 } = require('node:fs')
 const { basename, dirname, join, relative, resolve, sep } = require('node:path')
 const { tmpdir } = require('node:os')
-const { Zip, ZipPassThrough } = require('fflate')
+const { crc32 } = require('node:zlib')
 const {
   buildAgentBundle,
+  expectedManifestMode: expectedAgentManifestMode,
   preflightProductionSigningKey,
   productionSigningKey,
   publicKeySpkiBase64,
@@ -36,6 +37,11 @@ const {
   readRemoteRuntimeLock,
   verifyBundleDirectory: verifyRuntimeBundle
 } = require('./remote-runtime-bundle.cjs')
+const {
+  centralDirectoryHeaderSignature: zipCentralHeaderSignature,
+  endOfCentralDirectorySignature: zipEndSignature,
+  localFileHeaderSignature: zipLocalHeaderSignature
+} = require('./zip-central-directory.cjs')
 
 const root = join(__dirname, '..')
 const packageDescriptorName = 'agent-package.json'
@@ -44,7 +50,10 @@ const signatureDomain = Buffer.from(
   'GoodBuddy Agent Package Descriptor Signature v1\0',
   'utf8'
 )
-const archiveEpoch = new Date('1980-01-01T00:00:00.000Z')
+const zipUtf8Flag = 0x0800
+const zipVersion = 20
+const zipMadeByUnix = (3 << 8) | zipVersion
+const zipDosDate = (1 << 5) | 1
 const semanticVersionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*))(?:\.(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*)))*)?$/u
 
@@ -89,10 +98,11 @@ function listFiles(directory) {
   )
 }
 
-function sha256File(filePath) {
+function fileDigests(filePath) {
   const hash = createHash('sha256')
   const handle = openSync(filePath, 'r')
   const buffer = Buffer.allocUnsafe(1024 * 1024)
+  let checksum = 0
   try {
     while (true) {
       const bytesRead = readSync(
@@ -105,12 +115,17 @@ function sha256File(filePath) {
       if (bytesRead === 0) {
         break
       }
-      hash.update(buffer.subarray(0, bytesRead))
+      const chunk = buffer.subarray(0, bytesRead)
+      hash.update(chunk)
+      checksum = crc32(chunk, checksum)
     }
   } finally {
     closeSync(handle)
   }
-  return hash.digest('hex')
+  return {
+    crc32: checksum >>> 0,
+    sha256: hash.digest('hex')
+  }
 }
 
 function copyTree(source, destination) {
@@ -120,6 +135,13 @@ function copyTree(source, destination) {
     mkdirSync(dirname(target), { recursive: true })
     copyFileSync(filePath, target)
   }
+}
+
+function packageFileMode(path) {
+  if (path.startsWith('agent/')) {
+    return expectedAgentManifestMode(path.slice('agent/'.length))
+  }
+  return /\/bin\/opencode$/u.test(path) ? '0755' : '0644'
 }
 
 function stagePackagePayload(options) {
@@ -157,20 +179,18 @@ function stagePackagePayload(options) {
 }
 
 function payloadFiles(staging) {
-  return listFiles(staging)
+  const crc32ByPath = new Map()
+  const files = listFiles(staging)
     .map((filePath) => {
       const path = relative(staging, filePath).split(sep).join('/')
       const size = statSync(filePath).size
+      const digests = fileDigests(filePath)
+      crc32ByPath.set(path, digests.crc32)
       return {
         path,
         size,
-        sha256: sha256File(filePath),
-        mode:
-          path === 'agent/goodbuddy-agent' ||
-          path === 'agent/node' ||
-          /\/bin\/opencode$/u.test(path)
-            ? '0755'
-            : '0644'
+        sha256: digests.sha256,
+        mode: packageFileMode(path)
       }
     })
     .filter(
@@ -178,18 +198,44 @@ function payloadFiles(staging) {
         file.path !== packageDescriptorName &&
         file.path !== packageSignatureName
     )
+  return { crc32ByPath, files }
 }
 
-function createPackageArchive(staging, output) {
+function createPackageArchive(
+  staging,
+  output,
+  knownCrc32 = new Map()
+) {
   mkdirSync(dirname(output), { recursive: true })
-  const outputHandle = openSync(output, 'w')
-  let archiveError
-  let completed = false
-  const archive = new Zip((error, data, final) => {
-    if (error) {
-      archiveError ??= error
-      return
+  const entries = listFiles(staging).map((filePath) => {
+    const name = relative(staging, filePath).split(sep).join('/')
+    const nameBytes = Buffer.from(name, 'utf8')
+    const size = statSync(filePath).size
+    if (
+      nameBytes.length === 0 ||
+      nameBytes.length > 0xffff ||
+      size > 0xffffffff
+    ) {
+      throw new Error(`Agent package ZIP entry is too large: ${name}`)
     }
+    return {
+      filePath,
+      name,
+      nameBytes,
+      size,
+      crc32:
+        knownCrc32.get(name) ?? fileDigests(filePath).crc32,
+      mode: packageFileMode(name),
+      offset: 0
+    }
+  })
+  if (entries.length === 0 || entries.length > 0xffff) {
+    throw new Error('Agent package ZIP entry count is invalid')
+  }
+  const outputHandle = openSync(output, 'w')
+  let outputOffset = 0
+  const archiveHash = createHash('sha256')
+  const writeBytes = (data) => {
     let offset = 0
     while (offset < data.byteLength) {
       const written = writeSync(
@@ -199,68 +245,100 @@ function createPackageArchive(staging, output) {
         data.byteLength - offset
       )
       if (written <= 0) {
-        archiveError ??= new Error(
-          'Agent package archive write made no progress'
-        )
-        return
+        throw new Error('Agent package archive write made no progress')
       }
       offset += written
     }
-    completed ||= final
-  })
+    archiveHash.update(data)
+    outputOffset += data.byteLength
+  }
   const buffer = Buffer.allocUnsafe(1024 * 1024)
   try {
-    for (const filePath of listFiles(staging)) {
-      const name = relative(staging, filePath).split(sep).join('/')
-      const input = new ZipPassThrough(name)
-      input.mtime = archiveEpoch
-      archive.add(input)
-      const inputHandle = openSync(filePath, 'r')
-      const fileSize = statSync(filePath).size
+    for (const entry of entries) {
+      entry.offset = outputOffset
+      const header = Buffer.alloc(30)
+      header.writeUInt32LE(zipLocalHeaderSignature, 0)
+      header.writeUInt16LE(zipVersion, 4)
+      header.writeUInt16LE(zipUtf8Flag, 6)
+      header.writeUInt16LE(0, 8)
+      header.writeUInt16LE(0, 10)
+      header.writeUInt16LE(zipDosDate, 12)
+      header.writeUInt32LE(entry.crc32, 14)
+      header.writeUInt32LE(entry.size, 18)
+      header.writeUInt32LE(entry.size, 22)
+      header.writeUInt16LE(entry.nameBytes.length, 26)
+      header.writeUInt16LE(0, 28)
+      writeBytes(header)
+      writeBytes(entry.nameBytes)
+
+      const inputHandle = openSync(entry.filePath, 'r')
       try {
         let position = 0
-        if (fileSize === 0) {
-          input.push(new Uint8Array(), true)
-        }
-        while (position < fileSize) {
+        while (position < entry.size) {
           const bytesRead = readSync(
             inputHandle,
             buffer,
             0,
-            buffer.length,
+            Math.min(buffer.length, entry.size - position),
             null
           )
           if (bytesRead <= 0) {
             throw new Error(
-              `Agent package source read made no progress: ${name}`
+              `Agent package source read made no progress: ${entry.name}`
             )
           }
           position += bytesRead
-          input.push(
-            Uint8Array.from(buffer.subarray(0, bytesRead)),
-            position === fileSize
-          )
+          writeBytes(buffer.subarray(0, bytesRead))
         }
       } finally {
         closeSync(inputHandle)
       }
-      if (archiveError) {
-        throw archiveError
-      }
     }
-    archive.end()
-    if (archiveError) {
-      throw archiveError
+
+    const centralOffset = outputOffset
+    for (const entry of entries) {
+      const record = Buffer.alloc(46)
+      record.writeUInt32LE(zipCentralHeaderSignature, 0)
+      record.writeUInt16LE(zipMadeByUnix, 4)
+      record.writeUInt16LE(zipVersion, 6)
+      record.writeUInt16LE(zipUtf8Flag, 8)
+      record.writeUInt16LE(0, 10)
+      record.writeUInt16LE(0, 12)
+      record.writeUInt16LE(zipDosDate, 14)
+      record.writeUInt32LE(entry.crc32, 16)
+      record.writeUInt32LE(entry.size, 20)
+      record.writeUInt32LE(entry.size, 24)
+      record.writeUInt16LE(entry.nameBytes.length, 28)
+      record.writeUInt16LE(0, 30)
+      record.writeUInt16LE(0, 32)
+      record.writeUInt16LE(0, 34)
+      record.writeUInt16LE(0, 36)
+      const unixMode =
+        0o100000 | Number.parseInt(entry.mode, 8)
+      record.writeUInt32LE((unixMode << 16) >>> 0, 38)
+      record.writeUInt32LE(entry.offset, 42)
+      writeBytes(record)
+      writeBytes(entry.nameBytes)
     }
-    if (!completed) {
-      throw new Error('Agent package archive did not finish')
-    }
+
+    const centralSize = outputOffset - centralOffset
+    const end = Buffer.alloc(22)
+    end.writeUInt32LE(zipEndSignature, 0)
+    end.writeUInt16LE(0, 4)
+    end.writeUInt16LE(0, 6)
+    end.writeUInt16LE(entries.length, 8)
+    end.writeUInt16LE(entries.length, 10)
+    end.writeUInt32LE(centralSize, 12)
+    end.writeUInt32LE(centralOffset, 16)
+    end.writeUInt16LE(0, 20)
+    writeBytes(end)
     fsyncSync(outputHandle)
-  } catch (error) {
-    archive.terminate()
-    throw error
   } finally {
     closeSync(outputHandle)
+  }
+  return {
+    size: outputOffset,
+    sha256: archiveHash.digest('hex')
   }
 }
 
@@ -345,6 +423,7 @@ function assembleAgentPackage(options) {
       agentBundle: resolve(options.agentBundle),
       runtimeBundle: runtime.bundleDirectory
     })
+    const payload = payloadFiles(staging)
     const initial = {
       format: 'goodbuddy-agent-package',
       formatVersion: 1,
@@ -364,7 +443,7 @@ function assembleAgentPackage(options) {
         protocol: runtime.manifest.protocol
       },
       contentDigest: `sha256:${'0'.repeat(64)}`,
-      files: payloadFiles(staging)
+      files: payload.files
     }
     const descriptor = {
       ...initial,
@@ -382,12 +461,16 @@ function assembleAgentPackage(options) {
       `${signature.toString('base64')}\n`,
       'utf8'
     )
-    createPackageArchive(staging, options.output)
+    const archive = createPackageArchive(
+      staging,
+      options.output,
+      payload.crc32ByPath
+    )
     return {
       descriptor,
       archive: basename(options.output),
-      size: statSync(options.output).size,
-      sha256: sha256File(options.output)
+      size: archive.size,
+      sha256: archive.sha256
     }
   } finally {
     rmSync(staging, { recursive: true, force: true })

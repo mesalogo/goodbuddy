@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已转为正式 Agent `0.11.3`，尚未复用旧版本号。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
+本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已转为正式 Agent `0.11.4`。失败的 `agent-v0.11.3` 保持不可变且未发布。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
 
 ## 产品语义
 
@@ -170,7 +170,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。当前源码 lock 是正式版本 `0.11.3`，需要由新的复合包发布流程另行验证。
+  的双架构验收。当前源码 lock 是正式版本 `0.11.4`，需要由新的复合包发布流程另行验证。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生

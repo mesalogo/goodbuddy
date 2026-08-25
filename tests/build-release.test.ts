@@ -93,6 +93,12 @@ interface ReleaseBuilderModule {
   targetRuntimePackageNames: (
     options: ReleaseOptions
   ) => string[]
+  targetHarnessPaths: (
+    options: ReleaseOptions
+  ) => {
+    nodePtyBinary: string
+    nodePtyDirectory: string
+  }
   stageTargetRuntimeDependencies: (
     options: ReleaseOptions,
     dependencies?: {
@@ -446,6 +452,10 @@ describe('release build arguments', () => {
       build: {
         asarUnpack: string[]
         npmRebuild: boolean
+        extraResources: Array<{
+          from: string
+          to: string
+        }>
       }
       optionalDependencies: Record<string, string>
     }
@@ -468,6 +478,10 @@ describe('release build arguments', () => {
     expect(packageJson.build.asarUnpack).not.toContain(
       'node_modules/npm/**/*'
     )
+    expect(packageJson.build.extraResources).toContainEqual({
+      from: 'resources/licenses/onnxruntime-MIT.txt',
+      to: 'licenses/onnxruntime-web-MIT.txt'
+    })
     expect(packageJson.optionalDependencies).toEqual({
       '@koromix/koffi-darwin-arm64': '3.1.4',
       '@koromix/koffi-darwin-x64': '3.1.4',
@@ -948,6 +962,26 @@ describe('release binary architecture detection', () => {
 })
 
 describe('release Harness package verification', () => {
+  it.each([
+    ['windows', 'x64', 'prebuilds/win32-x64/conpty.node'],
+    ['windows', 'arm64', 'prebuilds/win32-arm64/conpty.node'],
+    ['macos', 'x64', 'prebuilds/darwin-x64/pty.node'],
+    ['macos', 'arm64', 'prebuilds/darwin-arm64/pty.node'],
+    ['linux', 'x64', 'prebuilds/linux-x64/pty.node'],
+    ['linux', 'arm64', 'prebuilds/linux-arm64/pty.node']
+  ] as const)(
+    'verifies the rc.8 node-pty prebuild for %s %s',
+    (platform, arch, expected) => {
+      expect(
+        releaseBuilder.targetHarnessPaths({
+          ...windowsOptions,
+          platform,
+          arch
+        }).nodePtyBinary
+      ).toBe(expected)
+    }
+  )
+
   it('fails closed when the packaged Harness Host is missing', () => {
     const directory = mkdtempSync(
       join(tmpdir(), 'goodbuddy-harness-closure-')

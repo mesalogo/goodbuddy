@@ -6,18 +6,14 @@ const {
 } = require('node:crypto')
 const {
   closeSync,
+  fstatSync,
   openSync,
   readFileSync,
   readSync,
-  statSync,
   writeFileSync
 } = require('node:fs')
 const { basename, resolve } = require('node:path')
-const {
-  Unzip,
-  UnzipInflate,
-  UnzipPassThrough
-} = require('fflate')
+const { crc32 } = require('node:zlib')
 const {
   productionSigningKey,
   publicKeySpkiBase64,
@@ -29,6 +25,11 @@ const {
   descriptorContentDigest,
   signatureDomain: packageSignatureDomain
 } = require('./agent-package.cjs')
+const {
+  localFileHeaderSignature,
+  readExactZipBytes,
+  readZipCentralDirectory
+} = require('./zip-central-directory.cjs')
 
 const root = resolve(__dirname, '..')
 const catalogName = 'agent-catalog.json'
@@ -41,6 +42,11 @@ const semanticVersionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*))(?:\.(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*)))*)?$/u
 const sha256Pattern = /^[a-f0-9]{64}$/u
 const maximumPackageBytes = 512 * 1024 * 1024
+const maximumPackageEntries = 50_002
+const maximumPackageEntryBytes = 384 * 1024 * 1024
+const maximumExpandedPackageBytes = 1024 * 1024 * 1024
+const maximumMetadataBytes = 1024 * 1024
+const maximumCentralDirectoryBytes = 32 * 1024 * 1024
 const maximumCatalogEntries = 200
 const windowsReservedNamePattern =
   /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu
@@ -183,14 +189,6 @@ function assertPackageDescriptor(descriptor) {
 
 function readPackageMetadata(archivePath, registry) {
   const archive = resolve(archivePath)
-  const status = statSync(archive)
-  if (
-    !status.isFile() ||
-    status.size <= 0 ||
-    status.size > maximumPackageBytes
-  ) {
-    throw new Error('Agent package archive is not a bounded file')
-  }
   const streamed = streamPackageMetadata(archive)
   const descriptorBytes = streamed.descriptor
   const signatureBytes = streamed.signature
@@ -225,7 +223,7 @@ function readPackageMetadata(archivePath, registry) {
   return {
     archive: expectedArchive,
     descriptor,
-    size: status.size,
+    size: streamed.size,
     sha256: streamed.sha256
   }
 }
@@ -282,126 +280,231 @@ function verifyPackageFileInventory(descriptor, actualFiles) {
   }
 }
 
-function streamPackageMetadata(archivePath) {
-  const handle = openSync(archivePath, 'r')
-  const hash = createHash('sha256')
-  const buffer = Buffer.allocUnsafe(64 * 1024)
-  const values = new Map()
-  const files = new Map()
+function centralDirectoryEntries(handle, archiveSize) {
+  const parsed = readZipCentralDirectory(handle, archiveSize, {
+    label: 'Agent package',
+    minimumEntries: 1,
+    maximumEntries: maximumPackageEntries,
+    maximumCentralDirectoryBytes
+  })
+  const entries = []
   const seen = new Set()
-  let fatalError
-  let entries = 0
   let expandedBytes = 0
-  const unzip = new Unzip((file) => {
-    entries += 1
-    if (entries > 50_002) {
-      fatalError ??= new Error(
-        'Agent package contains too many entries'
-      )
-      file.terminate()
-      return
+  for (const entry of parsed.entries) {
+    if (
+      entry.flags !== 0x0800 ||
+      entry.compression !== 0 ||
+      entry.compressedSize === 0xffffffff ||
+      entry.size === 0xffffffff ||
+      entry.compressedSize !== entry.size ||
+      entry.size > maximumPackageEntryBytes ||
+      entry.diskStart !== 0 ||
+      entry.localOffset === 0xffffffff
+    ) {
+      throw new Error('Agent package ZIP entry is unsupported')
     }
-    if (!safePackagePath(file.name) || seen.has(file.name)) {
-      fatalError ??= new Error(
+    if (
+      !safePackagePath(entry.name) ||
+      seen.has(entry.name)
+    ) {
+      throw new Error(
         'Agent package contains an unsafe or duplicate path'
       )
-      file.terminate()
-      return
     }
-    seen.add(file.name)
-    const wanted =
-      file.name === 'agent-package.json' ||
-      file.name === 'agent-package.sig'
-    if (wanted && values.has(file.name)) {
-      fatalError ??= new Error(
-        'Agent package contains duplicate metadata'
+    seen.add(entry.name)
+    expandedBytes += entry.size
+    if (expandedBytes > maximumExpandedPackageBytes) {
+      throw new Error(
+        'Agent package expanded payload exceeds its limit'
       )
-      file.terminate()
-      return
     }
-    const chunks = []
-    let size = 0
-    const fileHash = createHash('sha256')
-    file.ondata = (error, data, final) => {
-      if (error) {
-        fatalError ??= error
-        return
-      }
-      size += data.byteLength
-      expandedBytes += data.byteLength
-      if (
-        size > 384 * 1024 * 1024 ||
-        expandedBytes > 1024 * 1024 * 1024
-      ) {
-        fatalError ??= new Error(
-          'Agent package expanded payload exceeds its limit'
-        )
-        file.terminate()
-        return
-      }
-      fileHash.update(data)
-      if (wanted) {
-        if (size > 1024 * 1024) {
-          fatalError ??= new Error(
-            'Agent package metadata exceeds its limit'
-          )
-          file.terminate()
-          return
-        }
-        chunks.push(Buffer.from(data))
-      }
-      if (final) {
-        files.set(file.name, {
-          size,
-          sha256: fileHash.digest('hex')
-        })
-        if (wanted) {
-          values.set(file.name, Buffer.concat(chunks, size))
-        }
-      }
+    const local = readExactZipBytes(
+      handle,
+      30,
+      entry.localOffset,
+      'Agent package local file header'
+    )
+    const localNameLength = local.readUInt16LE(26)
+    const localExtraLength = local.readUInt16LE(28)
+    if (
+      local.readUInt32LE(0) !== localFileHeaderSignature ||
+      local.readUInt16LE(6) !== entry.flags ||
+      local.readUInt16LE(8) !== entry.compression ||
+      local.readUInt32LE(14) !== entry.checksum ||
+      local.readUInt32LE(18) !== entry.compressedSize ||
+      local.readUInt32LE(22) !== entry.size ||
+      localNameLength !== entry.nameBytes.length
+    ) {
+      throw new Error('Agent package local file header is invalid')
     }
-    try {
-      file.start()
-    } catch (error) {
-      fatalError ??= error
-      file.terminate()
+    const localName = readExactZipBytes(
+      handle,
+      localNameLength,
+      entry.localOffset + 30,
+      'Agent package local file name'
+    )
+    if (!localName.equals(entry.nameBytes)) {
+      throw new Error('Agent package local file name is invalid')
     }
-  })
-  unzip.register(UnzipPassThrough)
-  unzip.register(UnzipInflate)
+    const dataOffset =
+      entry.localOffset +
+      30 +
+      localNameLength +
+      localExtraLength
+    const recordEnd = dataOffset + entry.compressedSize
+    if (recordEnd > parsed.centralOffset) {
+      throw new Error('Agent package entry exceeds its data region')
+    }
+    entries.push({
+      checksum: entry.checksum,
+      dataOffset,
+      name: entry.name,
+      recordStart: entry.localOffset,
+      recordEnd
+    })
+  }
+  entries.sort(
+    (left, right) => left.recordStart - right.recordStart
+  )
+  for (let index = 1; index < entries.length; index += 1) {
+    if (entries[index].recordStart < entries[index - 1].recordEnd) {
+      throw new Error('Agent package ZIP entries overlap')
+    }
+  }
+  return entries
+}
+
+function sameFileSnapshot(left, right) {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  )
+}
+
+function streamPackageMetadata(archivePath) {
+  const handle = openSync(archivePath, 'r')
+  const values = new Map()
+  const files = new Map()
   try {
-    while (true) {
+    const initialStatus = fstatSync(handle)
+    if (
+      !initialStatus.isFile() ||
+      initialStatus.size <= 0 ||
+      initialStatus.size > maximumPackageBytes
+    ) {
+      throw new Error(
+        'Agent package archive is not a bounded file'
+      )
+    }
+    const entries = centralDirectoryEntries(
+      handle,
+      initialStatus.size
+    )
+    const states = entries.map((entry) => {
+      const wanted =
+        entry.name === 'agent-package.json' ||
+        entry.name === 'agent-package.sig'
+      const size = entry.recordEnd - entry.dataOffset
+      if (wanted && size > maximumMetadataBytes) {
+        throw new Error('Agent package metadata exceeds its limit')
+      }
+      return {
+        ...entry,
+        bytes: 0,
+        contents: wanted
+          ? Buffer.allocUnsafe(size)
+          : undefined,
+        crc32: 0,
+        hash: createHash('sha256')
+      }
+    })
+    const archiveHash = createHash('sha256')
+    const buffer = Buffer.allocUnsafe(1024 * 1024)
+    let position = 0
+    let firstEntry = 0
+    while (position < initialStatus.size) {
       const bytesRead = readSync(
         handle,
         buffer,
         0,
-        buffer.length,
-        null
+        Math.min(buffer.length, initialStatus.size - position),
+        position
       )
-      if (bytesRead === 0) {
-        unzip.push(new Uint8Array(), true)
-        break
+      if (bytesRead <= 0) {
+        throw new Error('Agent package archive is truncated')
       }
-      const chunk = Uint8Array.from(
-        buffer.subarray(0, bytesRead)
+      const chunk = buffer.subarray(0, bytesRead)
+      const chunkEnd = position + bytesRead
+      archiveHash.update(chunk)
+      while (
+        firstEntry < states.length &&
+        states[firstEntry].recordEnd <= position
+      ) {
+        firstEntry += 1
+      }
+      for (
+        let index = firstEntry;
+        index < states.length &&
+        states[index].dataOffset < chunkEnd;
+        index += 1
+      ) {
+        const state = states[index]
+        const dataStart = Math.max(position, state.dataOffset)
+        const dataEnd = Math.min(chunkEnd, state.recordEnd)
+        if (dataStart >= dataEnd) {
+          continue
+        }
+        const data = chunk.subarray(
+          dataStart - position,
+          dataEnd - position
+        )
+        state.hash.update(data)
+        state.crc32 = crc32(data, state.crc32)
+        if (state.contents) {
+          data.copy(
+            state.contents,
+            dataStart - state.dataOffset
+          )
+        }
+        state.bytes += data.byteLength
+      }
+      position = chunkEnd
+    }
+    if (!sameFileSnapshot(initialStatus, fstatSync(handle))) {
+      throw new Error(
+        'Agent package archive changed during verification'
       )
-      hash.update(chunk)
-      unzip.push(chunk, false)
-      if (fatalError) {
-        throw fatalError
+    }
+    for (const state of states) {
+      const size = state.recordEnd - state.dataOffset
+      if (
+        state.bytes !== size ||
+        (state.crc32 >>> 0) !== state.checksum
+      ) {
+        throw new Error(
+          `Agent package ZIP checksum verification failed: ${state.name}`
+        )
       }
+      files.set(state.name, {
+        size,
+        sha256: state.hash.digest('hex')
+      })
+      if (state.contents) {
+        values.set(state.name, state.contents)
+      }
+    }
+    return {
+      descriptor: values.get('agent-package.json'),
+      signature: values.get('agent-package.sig'),
+      files,
+      sha256: archiveHash.digest('hex'),
+      size: initialStatus.size
     }
   } finally {
     closeSync(handle)
-  }
-  if (fatalError) {
-    throw fatalError
-  }
-  return {
-    descriptor: values.get('agent-package.json'),
-    signature: values.get('agent-package.sig'),
-    files,
-    sha256: hash.digest('hex')
   }
 }
 
