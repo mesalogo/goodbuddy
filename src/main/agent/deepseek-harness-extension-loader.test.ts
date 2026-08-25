@@ -112,9 +112,10 @@ describe('DeepSeek Harness extension loader', () => {
 
   it('bounds the complete extension startup sequence', async () => {
     const ctx = new Context()
-    const importModule = vi.fn(
-      () => new Promise<never>(() => undefined)
-    )
+    const importModule = vi.fn(async () => {
+      blockEventLoop(25)
+      return {}
+    })
 
     const result = await loadControlledHarnessExtensions(
       ctx,
