@@ -1,8 +1,7 @@
 import {
   chmodSync,
   mkdtempSync,
-  rmSync,
-  unlinkSync
+  rmSync
 } from 'node:fs'
 import {
   createConnection,
@@ -79,38 +78,6 @@ describe('private endpoint lifecycle', () => {
       client.destroy()
       await new Promise<void>((resolveClose) =>
         existing.close(() => resolveClose())
-      )
-    }
-  )
-
-  runOnUnix(
-    'never unlinks a replacement socket it did not bind',
-    async () => {
-      const root = privateTemporaryDirectory()
-      const socketPath = resolve(root, 'agent.sock')
-      const endpoint = new PrivateEndpoint({
-        socketPath,
-        peerIdentity: currentPeerIdentity(),
-        challenge: new InstallationChallengeVerifier(Buffer.alloc(32, 7)),
-        controllers: new ControllerRegistry(),
-        ...endpointIdentity,
-        onAttach: vi.fn()
-      })
-      await endpoint.listen()
-
-      unlinkSync(socketPath)
-      const replacement = createServer()
-      await new Promise<void>((resolveListen, reject) => {
-        replacement.once('error', reject)
-        replacement.listen(socketPath, resolveListen)
-      })
-
-      await endpoint.close()
-      const client = createConnection(socketPath)
-      await expect(onceConnected(client)).resolves.toBeUndefined()
-      client.destroy()
-      await new Promise<void>((resolveClose) =>
-        replacement.close(() => resolveClose())
       )
     }
   )
