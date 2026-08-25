@@ -227,10 +227,10 @@ Release note: 修复左上角项目设置与消息通道项目设置不一致的
   the checked-in public key registry.
 - `.github/workflows/agent-release.yml` is the only production compound Agent
   publication path. It requires an annotated immutable Agent tag, the protected
-  `agent-signing` Environment, native x64/arm64 builds, production Agent and
-  Runtime signing-key preflights, a signed cumulative catalog, a non-Latest
-  GitHub Agent Release, and synchronized immutable Beijing OSS objects plus the
-  final signed latest-catalog pointer.
+  `agent-signing` Environment, native x64/arm64 builds, one production Agent
+  signing identity for every layer of the compound package and catalog, a
+  non-Latest GitHub Agent Release, and synchronized immutable Beijing OSS
+  objects plus the final signed latest-catalog pointer.
 - `.github/workflows/packages.yml` and `release:package` build only desktop
   products. Missing Agent packages, remote Runtime inputs, or Agent signing
   credentials must never block an ordinary desktop package or release.

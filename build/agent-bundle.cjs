@@ -791,7 +791,9 @@ function buildAgentBundle(options) {
     options.registry ?? readTrustedKeyRegistry(projectRoot)
   const signingEnvironment = options.environment ?? process.env
   const signingIdentity =
-    options.testSigningIdentity ?? productionSigningKey(signingEnvironment)
+    options.testSigningIdentity ??
+    options.signingIdentity ??
+    productionSigningKey(signingEnvironment)
   const signingRecord = options.testSigningIdentity
     ? registry.keys.find(
         (key) => key.keyId === signingIdentity.keyId
@@ -816,6 +818,7 @@ function buildAgentBundle(options) {
   }
   if (
     !options.testSigningIdentity &&
+    !options.signingIdentity &&
     signingEnvironment === process.env
   ) {
     delete process.env[signingPrivateKeyEnvironment]

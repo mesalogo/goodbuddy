@@ -78,9 +78,6 @@ describe('desktop packages workflow', () => {
     expect(workflow).not.toContain(
       'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
     )
-    expect(workflow).not.toContain(
-      'GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY'
-    )
   })
 
   it('packages all six desktop targets without remote component dependencies', () => {

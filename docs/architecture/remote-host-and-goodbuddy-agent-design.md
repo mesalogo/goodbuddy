@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已转为正式 Agent `0.11.2`，尚未复用旧版本号。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
+本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已转为正式 Agent `0.11.3`，尚未复用旧版本号。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
 
 ## 产品语义
 
@@ -170,7 +170,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。当前源码 lock 是正式版本 `0.11.2`，需要由新的复合包发布流程另行验证。
+  的双架构验收。当前源码 lock 是正式版本 `0.11.3`，需要由新的复合包发布流程另行验证。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
@@ -216,7 +216,9 @@ Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转
   `.remote-runtime-resources` 或任何可安装 Linux 远端 payload。
 - `build/agent-package.cjs` 在对应原生 Linux 架构组装确定性 `.gbagent`，外层签名覆盖
   描述符和每个内部文件身份；内部 Agent 与 Runtime 仍分别使用既有签名 manifest 和 lock
-  校验。`build/agent-catalog.cjs` 为双架构包生成签名累计目录，拒绝同一版本/架构改变字节。
+  校验，但所有 production 层统一使用一组 GoodBuddy Agent 发布身份并通过签名域区分用途，
+  不要求内部 Runtime 单独配置密钥。`build/agent-catalog.cjs` 为双架构包生成签名累计目录，
+  拒绝同一版本/架构改变字节。
 - `.github/workflows/agents.yml` 只使用进程内临时测试 key 做分支/PR 原生验证，不发布。
   `.github/workflows/agent-release.yml` 才可在 annotated `agent-v<version>` 标签和受保护
   `agent-signing` Environment 中构建 production 包。Agent GitHub Release 必须

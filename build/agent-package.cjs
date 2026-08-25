@@ -400,6 +400,7 @@ function buildAgentPackage(options) {
     options.registry ?? readTrustedKeyRegistry(projectRoot)
   const signingIdentity =
     options.testSigningIdentity ??
+    options.signingIdentity ??
     productionSigningKey(options.environment ?? process.env)
   const agentRoot = mkdtempSync(
     join(tmpdir(), `goodbuddy-agent-build-${options.architecture}-`)
@@ -417,7 +418,7 @@ function buildAgentPackage(options) {
       ...(options.agentLock ? { lock: options.agentLock } : {}),
       ...(options.testSigningIdentity
         ? { testSigningIdentity: options.testSigningIdentity }
-        : {})
+        : { signingIdentity })
     })
     const runtime = buildRuntimeBundle({
       projectRoot,
@@ -428,7 +429,7 @@ function buildAgentPackage(options) {
       ...(options.runtimeLock ? { lock: options.runtimeLock } : {}),
       ...(options.testSigningIdentity
         ? { testSigningIdentity: options.testSigningIdentity }
-        : {})
+        : { signingIdentity })
     })
     return assembleAgentPackage({
       ...options,

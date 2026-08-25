@@ -67,6 +67,7 @@ const MAXIMUM_EXPANDED_BYTES = 1024 * 1024 * 1024
 const MAXIMUM_FILE_BYTES = 384 * 1024 * 1024
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
 const MAXIMUM_ENTRIES = 50_002
+const PRIVATE_DIRECTORY_MODE = 0o700
 const SIGNATURE_DOMAIN = Buffer.from(
   'GoodBuddy Agent Package Descriptor Signature v1\0',
   'utf8'
@@ -91,7 +92,10 @@ export async function extractAndVerifyAgentPackage(options: {
   const archivePath = resolve(options.archivePath)
   const destinationDirectory = resolve(options.destinationDirectory)
   await assertArchiveFile(archivePath)
-  await mkdir(destinationDirectory, { recursive: false })
+  await mkdir(destinationDirectory, {
+    recursive: false,
+    mode: PRIVATE_DIRECTORY_MODE
+  })
   try {
     await extractArchive(archivePath, destinationDirectory)
     return await verifyExtractedAgentPackage({
@@ -354,7 +358,8 @@ async function extractArchive(
         throw new Error('Agent package entry escapes its destination')
       }
       const handlePromise = mkdir(dirname(destinationPath), {
-        recursive: true
+        recursive: true,
+        mode: PRIVATE_DIRECTORY_MODE
       }).then(async () => {
         const handle = await open(destinationPath, 'wx')
         openHandles.add(handle)

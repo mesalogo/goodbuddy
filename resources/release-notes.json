@@ -2,12 +2,12 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.11.2",
+      "version": "0.11.3",
       "releasedAt": "2026-08-25",
       "notes": {
         "zh-CN": {
           "highlights": [
-            "GoodBuddy 0.11.2 新增托管 SSH 远程项目、内置 Granite 向量模型、会话分支和应用内反馈，并改进魔法笔记、知识图谱、模型下载及桌面布局。"
+            "GoodBuddy 0.11.3 新增托管 SSH 远程项目、内置 Granite 向量模型、会话分支和应用内反馈，并改进魔法笔记、知识图谱、模型下载及桌面布局。"
           ],
           "features": [
             "**托管 SSH 远程项目（技术预览）。** 在“设置 → 平台功能”中启用后，可管理 Linux x64/arm64 Host，并通过 Ask 或 Execute 使用签名 Agent 与兼容的 OpenCode Runtime。Agent 包需在设置中手动下载、更新或离线导入，打开项目不会自动下载；SSH 断线后，Host 上的任务可继续运行并恢复未同步输出。",
@@ -18,6 +18,7 @@
             "**Linux 与 LoongArch 构建。** Linux x64/arm64 桌面版新增 RPM 安装包，并提供独立、可复现的 Debian loong64 实验性预览构建流程。"
           ],
           "fixes": [
+            "**Agent 包验证与安装。** 修复 Linux 上解压 `.gbagent` 后目录权限不符合校验要求、导致复合 Agent 包无法通过验证的问题；托管 SSH Agent 包现在可按预期验证并安装其内置 Runtime。",
             "**向量模型下载反馈。** 修复点击内置向量模型“下载”后界面看似无响应的问题；现在会立即显示下载来源、模型信息、实时进度和取消操作，行为与语音模型下载一致。",
             "**长文档知识图谱。** 图谱抽取改为按 Token 分批、重试和超时处理；图谱失败不再导致新文档全文检索一并失败，并改进中文检索与关系上下文。",
             "**ModelScope 语音模型。** 修复选择 ModelScope 后部分语音模型仍无法下载的问题，六个支持的模型现在均使用固定且经过完整性验证的来源。",
@@ -26,14 +27,14 @@
             "**界面信息与会话列表。** 恢复关键页面说明和视觉层级；会话更多操作仅在悬停、键盘聚焦或菜单打开时显示，为标题和时间保留更多空间。"
           ],
           "notices": [
-            "远程项目默认关闭且完全可选。首次使用前必须手动准备兼容的 `.gbagent` 包，下载源跟随“关于与更新”中的 GitHub 或镜像节点选择；本次正式 Agent 版本为 `0.11.2`。",
-            "LoongArch 仍是独立实验性预览，不进入标准更新索引；当前不包含 Agent、Remote Runtime、OpenCode 和原生 Canvas。",
+            "远程项目默认关闭且完全可选。首次使用前必须手动准备兼容的 `.gbagent` 包，下载源跟随“关于与更新”中的 GitHub 或镜像节点选择；本次正式 Agent 版本为 `0.11.3`。",
+            "LoongArch 仍是独立实验性预览，不进入标准更新索引；当前不包含 Agent、Remote Runtime、OpenCode 和原生 Canvas。本次 `0.11.3` 不提供 LoongArch 预览包。",
             "反馈不会自动附带会话、日志、文件、设置或凭据。"
           ]
         },
         "en-US": {
           "highlights": [
-            "GoodBuddy 0.11.2 adds managed SSH remote projects, a built-in Granite embedding model, conversation branching, and in-app feedback, with improvements to Magic Notes, knowledge graphs, model downloads, and desktop layout."
+            "GoodBuddy 0.11.3 adds managed SSH remote projects, a built-in Granite embedding model, conversation branching, and in-app feedback, with improvements to Magic Notes, knowledge graphs, model downloads, and desktop layout."
           ],
           "features": [
             "**Managed SSH remote projects (technical preview).** Enable Remote Projects under Settings → Platform Features to manage Linux x64/arm64 Hosts and use signed Agents with a compatible OpenCode Runtime in Ask or Execute. Agent packages must be downloaded, updated, or imported manually in Settings; opening a project never downloads one automatically. Host work can continue through an SSH disconnect and recover unsynchronized output.",
@@ -44,6 +45,7 @@
             "**Linux and LoongArch builds.** Linux x64/arm64 desktop releases add RPM installers, and the repository now provides a separate reproducible experimental Debian loong64 preview build."
           ],
           "fixes": [
+            "**Agent package verification and installation.** Fixed extracted `.gbagent` directory permissions on Linux preventing compound Agent packages from passing verification. Managed SSH Agent packages can now verify and install their bundled Runtime as intended.",
             "**Embedding model download feedback.** Fixed the built-in model Download action appearing unresponsive. It now immediately shows the source, model details, live progress, and cancellation, matching speech model downloads.",
             "**Long-document knowledge graphs.** Graph extraction now uses token-bounded batches, retries, and timeouts. Graph failures no longer discard a new document’s full-text index, and Chinese retrieval and relationship context are improved.",
             "**ModelScope speech models.** Fixed supported speech models remaining unavailable after selecting ModelScope. All six models now use fixed, integrity-verified sources.",
@@ -52,8 +54,8 @@
             "**Interface guidance and conversation rows.** Restored essential workflow guidance and visual hierarchy. Conversation actions now appear only on hover, keyboard focus, or while their menu is open, leaving more room for titles and timestamps."
           ],
           "notices": [
-            "Remote Projects are disabled by default and remain optional. A compatible `.gbagent` package must be prepared manually before first use, and its source follows the GitHub or mirror selection in About & Updates. This release uses the formal Agent version `0.11.2`.",
-            "LoongArch remains a separate experimental preview outside the standard update index. It currently excludes Agent, Remote Runtime, OpenCode, and native Canvas.",
+            "Remote Projects are disabled by default and remain optional. A compatible `.gbagent` package must be prepared manually before first use, and its source follows the GitHub or mirror selection in About & Updates. This release uses the formal Agent version `0.11.3`.",
+            "LoongArch remains a separate experimental preview outside the standard update index. It currently excludes Agent, Remote Runtime, OpenCode, and native Canvas. No LoongArch preview package is provided for `0.11.3`.",
             "Feedback never automatically includes conversations, logs, files, settings, or credentials."
           ]
         }

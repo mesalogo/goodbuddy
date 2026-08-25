@@ -6,6 +6,7 @@ import {
 } from 'node:crypto'
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -269,7 +270,7 @@ afterAll(() => {
 })
 
 describe('compound Agent packages', () => {
-  it('assembles deterministic signed Agent and Runtime archives', async () => {
+  it('assembles deterministic signed archives with private extraction', async () => {
     const secondRoot = join(temporaryRoot, 'second')
     mkdirSync(secondRoot)
     const secondPath = join(
@@ -290,15 +291,14 @@ describe('compound Agent packages', () => {
     )
 
     const contentRoot = join(temporaryRoot, 'verified')
-    await expect(
-      extractAndVerifyAgentPackage({
-        archivePath: packagePath,
-        destinationDirectory: contentRoot,
-        architecture: 'x64',
-        desktopVersion: '0.11.0',
-        trustedRegistry: registry
-      })
-    ).resolves.toMatchObject({
+    const verified = await extractAndVerifyAgentPackage({
+      archivePath: packagePath,
+      destinationDirectory: contentRoot,
+      architecture: 'x64',
+      desktopVersion: '0.11.0',
+      trustedRegistry: registry
+    })
+    expect(verified).toMatchObject({
       descriptor: {
         version: agentLock.agentVersion,
         architecture: 'x64',
@@ -308,6 +308,15 @@ describe('compound Agent packages', () => {
         }
       }
     })
+    if (process.platform !== 'win32') {
+      for (const directory of [
+        verified.rootDirectory,
+        verified.agentBundle.bundleDirectory,
+        verified.runtimeBundle.bundleDirectory
+      ]) {
+        expect(lstatSync(directory).mode & 0o777).toBe(0o700)
+      }
+    }
 
     const second = agentPackage.assembleAgentPackage({
       projectRoot: process.cwd(),
@@ -412,7 +421,10 @@ describe('compound Agent packages', () => {
     )
     const mismatched = {
       ...descriptor,
-      version: '0.11.3'
+      version:
+        descriptor.version === '999.0.0'
+          ? '999.0.1'
+          : '999.0.0'
     }
     mismatched.contentDigest =
       agentPackage.descriptorContentDigest(mismatched)

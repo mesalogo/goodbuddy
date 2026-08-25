@@ -44,9 +44,9 @@ const supportedArchitectures = Object.freeze(['x64', 'arm64'])
 const manifestFileName = 'manifest.json'
 const signatureFileName = 'manifest.sig'
 const signingPrivateKeyEnvironment =
-  'GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY'
+  'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
 const signingKeyIdEnvironment =
-  'GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID'
+  'GOODBUDDY_AGENT_SIGNING_KEY_ID'
 const signatureDomain = Buffer.from(
   'GoodBuddy Remote Runtime Bundle Manifest Signature v1\0',
   'utf8'
@@ -265,7 +265,7 @@ function productionSigningIdentity(environment = process.env) {
   const privateKey = environment[signingPrivateKeyEnvironment]
   if (!keyId || !privateKey) {
     throw new Error(
-      `${signingKeyIdEnvironment} and ${signingPrivateKeyEnvironment} are required for production Runtime signing`
+      `${signingKeyIdEnvironment} and ${signingPrivateKeyEnvironment} are required to sign the bundled Runtime`
     )
   }
   return { keyId, privateKey }
@@ -318,11 +318,11 @@ function preflightProductionSigningKey(options = {}) {
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
   return preflightRegisteredProductionKey({
-    component: 'Runtime',
+    component: 'Agent',
     keyId,
     registry,
     missingKeyIdMessage:
-      `${signingKeyIdEnvironment} is not configured; provision the production Runtime signing key ID before building a release`
+      `${signingKeyIdEnvironment} is not configured; provision the production Agent signing key ID before building a release`
   })
 }
 
@@ -768,6 +768,7 @@ function buildRuntimeBundle(options) {
     options.registry ?? readTrustedKeyRegistry(projectRoot)
   const signingIdentity =
     options.testSigningIdentity ??
+    options.signingIdentity ??
     productionSigningIdentity(options.environment ?? process.env)
   const verificationEnvironment =
     options.testSigningIdentity ? 'test' : 'production'
@@ -1050,7 +1051,7 @@ function main(argv = process.argv.slice(2)) {
   if (options.command === 'preflight') {
     const record = preflightProductionSigningKey()
     console.log(
-      `Production Runtime signing preflight passed: ${record.keyId}`
+      `Production Agent signing preflight passed for bundled Runtime: ${record.keyId}`
     )
     return
   }

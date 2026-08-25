@@ -99,8 +99,8 @@ describe('independent Agent release workflow', () => {
     expect(build).toContain(
       'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
     )
-    expect(build).toContain(
-      'GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY'
+    expect(workflow).not.toContain(
+      'GOODBUDDY_REMOTE_RUNTIME_SIGNING_'
     )
     expect(buildScripts).toContain('.gbagent')
   })
@@ -170,9 +170,6 @@ describe('independent Agent release workflow', () => {
     expect(serializedJob('authorize')).not.toContain('secrets.')
     expect(serializedJob('publish')).not.toContain(
       'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
-    )
-    expect(serializedJob('publish')).not.toContain(
-      'GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY'
     )
   })
 })

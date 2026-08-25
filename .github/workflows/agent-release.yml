@@ -189,15 +189,13 @@ jobs:
           }
           NODE
 
-      - name: Preflight production signing identities
+      - name: Preflight production Agent signing identity
         shell: bash
         env:
           GOODBUDDY_AGENT_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_AGENT_SIGNING_KEY_ID }}
-          GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID }}
         run: |
           set -euo pipefail
           node build/agent-bundle.cjs preflight
-          node build/remote-runtime-bundle.cjs preflight
 
       - name: Build production compound Agent package
         shell: bash
@@ -206,8 +204,6 @@ jobs:
           AGENT_VERSION: ${{ needs.authorize.outputs.version }}
           GOODBUDDY_AGENT_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_AGENT_SIGNING_KEY_ID }}
           GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY: ${{ secrets.GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY }}
-          GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID }}
-          GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY: ${{ secrets.GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY }}
           NODE_ARCHIVE: ${{ steps.inputs.outputs.node-archive }}
           OPENCODE_ARCHIVE: ${{ steps.inputs.outputs.opencode-archive }}
         run: |

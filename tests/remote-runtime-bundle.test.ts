@@ -51,7 +51,11 @@ type RemoteRuntimeBundleModule = {
     outputRoot: string
     lock: RemoteRuntimeLock
     registry: AgentReleaseKeyRegistry
-    testSigningIdentity: {
+    testSigningIdentity?: {
+      keyId: string
+      privateKey: KeyObject
+    }
+    signingIdentity?: {
       keyId: string
       privateKey: KeyObject
     }
@@ -311,7 +315,7 @@ describe('Remote Runtime bundle tooling', () => {
       runtimeBundle.preflightProductionSigningKey({
         projectRoot: process.cwd(),
         environment: {
-          GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID:
+          GOODBUDDY_AGENT_SIGNING_KEY_ID:
             'runtime-fixture'
         },
         registry: productionRegistry
@@ -320,6 +324,31 @@ describe('Remote Runtime bundle tooling', () => {
       keyId: 'runtime-fixture',
       environment: 'production'
     })
+  })
+
+  it('signs the bundled Runtime with the shared Agent identity', () => {
+    const productionRegistry: AgentReleaseKeyRegistry = {
+      ...registry,
+      keys: registry.keys.map((key) => ({
+        ...key,
+        environment: 'production'
+      }))
+    }
+    const built = runtimeBundle.buildRuntimeBundle({
+      projectRoot: process.cwd(),
+      architecture: 'x64',
+      runtimeArchive,
+      outputRoot: join(temporaryRoot, 'production'),
+      lock,
+      registry: productionRegistry,
+      signingIdentity: {
+        keyId: 'runtime-fixture',
+        privateKey
+      },
+      enforceFilesystemMode: false
+    })
+
+    expect(built.manifest.signingKeyId).toBe('runtime-fixture')
   })
 })
 
