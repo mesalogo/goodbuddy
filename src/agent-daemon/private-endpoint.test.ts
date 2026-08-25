@@ -4,7 +4,11 @@ import {
   rmSync,
   unlinkSync
 } from 'node:fs'
-import { createConnection, type Socket } from 'node:net'
+import {
+  createConnection,
+  createServer,
+  type Socket
+} from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'

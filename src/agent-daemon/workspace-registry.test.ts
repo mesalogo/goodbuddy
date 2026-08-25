@@ -243,7 +243,10 @@ describe('WorkspaceRegistry', () => {
     abort.abort(new Error('cancelled'))
     releaseInspection?.('not-a-repository')
 
-    await expect(pending).rejects.toThrow('cancelled')
+    await expect(pending).rejects.toMatchObject({
+      code: 'aborted',
+      message: 'Workspace operation was aborted'
+    })
     expect(registry.activeHandleCount()).toBe(0)
     expect(existsSync(storagePath)).toBe(false)
   })

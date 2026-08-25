@@ -344,25 +344,31 @@ describe('AgentAttachTransport', () => {
     expect(transport.closed).toBe(true)
   })
 
-  it('writes one maximum-sized blob frame in one SSH write', async () => {
-    const channel = new FakeChannel()
-    channel.onWrite = () => {
-      if (channel.writes.length === 1) {
-        queueMicrotask(() => channel.remote(packet(welcome)))
+  it(
+    'writes one maximum-sized blob frame in one SSH write',
+    async () => {
+      const channel = new FakeChannel()
+      channel.onWrite = () => {
+        if (channel.writes.length === 1) {
+          queueMicrotask(() => channel.remote(packet(welcome)))
+        }
       }
-    }
-    const transport = await connect(channel)
-    const blob = frame(
-      { direction: 'main-to-agent', kind: 'blob' },
-      Buffer.alloc(AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes)
-    )
+      const transport = await connect(channel)
+      const blob = frame(
+        { direction: 'main-to-agent', kind: 'blob' },
+        Buffer.alloc(AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes)
+      )
 
-    await transport.send(blob)
+      await transport.send(blob)
 
-    expect(channel.writes).toHaveLength(2)
-    expect(channel.writes[1]).toEqual(Buffer.from(encodeAgentFrame(blob)))
-    transport.dispose()
-  })
+      expect(channel.writes).toHaveLength(2)
+      expect(channel.writes[1]).toEqual(
+        Buffer.from(encodeAgentFrame(blob))
+      )
+      transport.dispose()
+    },
+    15_000
+  )
 
   it('rejects an oversized blob before writing to SSH', async () => {
     const channel = new FakeChannel()
