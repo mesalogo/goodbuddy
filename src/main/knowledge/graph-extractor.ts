@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { estimateTextTokens } from '../../shared/context-window'
 import {
   defaultKnowledgeOntologySettings,
   isRelationEndpointAllowed,
@@ -12,6 +13,10 @@ import {
 export const GRAPH_LIMITS = {
   maximumChunks: 64,
   maximumChunkLength: 16_000,
+  maximumModelBatchTokens: 8_192,
+  maximumModelBatchFailures: 3,
+  modelExtractionAttempts: 2,
+  modelRetryBackoffMilliseconds: 2_000,
   maximumEntities: 200,
   maximumRelations: 400,
   maximumFieldLength: 120,
@@ -71,11 +76,19 @@ export type ExtractStructured = (
   signal?: AbortSignal
 ) => unknown | Promise<unknown>
 
+export class RetryableGraphExtractionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'RetryableGraphExtractionError'
+  }
+}
+
 export interface ExtractKnowledgeGraphOptions {
   strategy?: ExtractionStrategy
   extractStructured?: ExtractStructured
   signal?: AbortSignal
   ontology?: KnowledgeOntologySettings
+  modelRetryBackoffMilliseconds?: number
 }
 
 export interface GraphSearchOptions {
@@ -801,6 +814,109 @@ function createModelPrompt(
   ].join('\n')
 }
 
+function createModelBatches(
+  chunks: readonly GraphChunk[]
+): GraphChunk[][] {
+  const batches: GraphChunk[][] = []
+  let batch: GraphChunk[] = []
+  for (const chunk of chunks) {
+    const candidate = [...batch, chunk]
+    const candidateTokens = estimateTextTokens(
+      JSON.stringify(
+        candidate.map((item) => ({
+          chunkId: item.id,
+          content: item.content
+        }))
+      )
+    )
+    if (
+      batch.length > 0 &&
+      (batch.length >= GRAPH_LIMITS.maximumChunks ||
+        candidateTokens >
+          GRAPH_LIMITS.maximumModelBatchTokens)
+    ) {
+      batches.push(batch)
+      batch = [chunk]
+    } else {
+      batch = candidate
+    }
+  }
+  if (batch.length > 0) {
+    batches.push(batch)
+  }
+  return batches
+}
+
+async function extractModelBatch(
+  batch: readonly GraphChunk[],
+  options: ExtractKnowledgeGraphOptions,
+  context: OntologyContext
+): Promise<KnowledgeGraph> {
+  if (!options.extractStructured) {
+    throw new Error('Model extraction is unavailable')
+  }
+  let lastError: unknown
+  for (
+    let attempt = 1;
+    attempt <= GRAPH_LIMITS.modelExtractionAttempts;
+    attempt += 1
+  ) {
+    try {
+      const output = await options.extractStructured(
+        createModelPrompt(batch, context.settings),
+        options.signal
+      )
+      throwIfAborted(options.signal)
+      const parsedOutput = parseModelOutput(output)
+      if (!modelEnvelopeSchema.safeParse(parsedOutput).success) {
+        throw new RetryableGraphExtractionError(
+          '模型返回的图谱结构无效'
+        )
+      }
+      return validateModelGraphInternal(parsedOutput, batch, context)
+    } catch (error) {
+      throwIfAborted(options.signal)
+      if (!(error instanceof RetryableGraphExtractionError)) {
+        throw error
+      }
+      lastError = error
+      if (attempt < GRAPH_LIMITS.modelExtractionAttempts) {
+        await waitForModelRetry(
+          options.modelRetryBackoffMilliseconds ??
+            GRAPH_LIMITS.modelRetryBackoffMilliseconds,
+          options.signal
+        )
+      }
+    }
+  }
+  throw lastError
+}
+
+async function waitForModelRetry(
+  milliseconds: number,
+  signal?: AbortSignal
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const complete = (): void => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }
+    const abort = (): void => {
+      clearTimeout(timer)
+      reject(
+        signal?.reason ??
+          new DOMException('Graph extraction was cancelled', 'AbortError')
+      )
+    }
+    const timer = setTimeout(complete, Math.max(0, milliseconds))
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+  })
+}
+
 export async function extractKnowledgeGraph(
   chunks: readonly GraphChunk[],
   options: ExtractKnowledgeGraphOptions = {}
@@ -818,13 +934,21 @@ export async function extractKnowledgeGraph(
     }
   }
   let graph = emptyGraph()
-  for (
-    let offset = 0;
-    offset < prepared.length;
-    offset += GRAPH_LIMITS.maximumChunks
-  ) {
+  const failedModelBatches: Error[] = []
+  let successfulModelBatches = 0
+  const batches =
+    strategy === 'model' || strategy === 'hybrid'
+      ? createModelBatches(prepared)
+      : Array.from(
+          { length: Math.ceil(prepared.length / GRAPH_LIMITS.maximumChunks) },
+          (_, index) =>
+            prepared.slice(
+              index * GRAPH_LIMITS.maximumChunks,
+              (index + 1) * GRAPH_LIMITS.maximumChunks
+            )
+        )
+  for (const batch of batches) {
     throwIfAborted(options.signal)
-    const batch = prepared.slice(offset, offset + GRAPH_LIMITS.maximumChunks)
     const batchContext = createOntologyContext(
       context.settings,
       context.warnings
@@ -837,23 +961,27 @@ export async function extractKnowledgeGraph(
       graph = mergeKnowledgeGraphsInternal(graph, rules, context)
       continue
     }
-    if (!options.extractStructured) {
-      throw new Error('Model extraction is unavailable')
+    if (
+      failedModelBatches.length >=
+      GRAPH_LIMITS.maximumModelBatchFailures
+    ) {
+      continue
     }
-    const output = await options.extractStructured(
-      createModelPrompt(batch, context.settings),
-      options.signal
-    )
-    throwIfAborted(options.signal)
-    const parsedOutput = parseModelOutput(output)
-    if (!modelEnvelopeSchema.safeParse(parsedOutput).success) {
-      throw new Error('模型返回的图谱结构无效')
+    let model: KnowledgeGraph
+    try {
+      model = await extractModelBatch(batch, options, batchContext)
+      successfulModelBatches += 1
+    } catch (error) {
+      if (!(error instanceof RetryableGraphExtractionError)) {
+        throw error
+      }
+      failedModelBatches.push(error)
+      addWarning(
+        context,
+        `模型图谱抽取有一个批次失败：${error.message}`
+      )
+      continue
     }
-    const model = validateModelGraphInternal(
-      parsedOutput,
-      batch,
-      batchContext
-    )
     graph = mergeKnowledgeGraphsInternal(
       graph,
       strategy === 'hybrid'
@@ -861,6 +989,12 @@ export async function extractKnowledgeGraph(
         : model,
       context
     )
+  }
+  if (
+    failedModelBatches.length > 0 &&
+    successfulModelBatches === 0
+  ) {
+    throw failedModelBatches[0]
   }
   return {
     ...graph,

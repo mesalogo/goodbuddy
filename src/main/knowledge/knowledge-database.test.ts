@@ -1170,7 +1170,8 @@ describe('KnowledgeDatabase', () => {
     const source = database.createEntity({
       knowledgeBaseId: first.id,
       name: 'GoodBuddy',
-      type: 'product'
+      type: 'product',
+      aliases: ['好伙伴']
     })
     const target = database.createEntity({
       knowledgeBaseId: first.id,
@@ -1241,6 +1242,11 @@ describe('KnowledgeDatabase', () => {
       foreign.chunkId
     )
     expect(database.graphSearch(first.id, unbacked.name)).toEqual([])
+    expect(
+      database
+        .graphSearch(first.id, '好伙伴使用了什么框架？', 10, 1)
+        .map((result) => result.chunk.id)
+    ).toEqual(expect.arrayContaining([goodBuddy.chunkId, electron.chunkId]))
   })
 
   it('lists rebuild work by document and updates embedding state incrementally', async () => {

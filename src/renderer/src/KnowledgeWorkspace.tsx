@@ -3422,16 +3422,41 @@ function GraphView({
   )
   const visibleNodes = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase(locale)
-    return graphNodes.filter(
+    const typeFilteredNodes = graphNodes.filter(
       (node) =>
-        (typeFilter === 'all' ||
-          normalizeEntityTypeAlias(node.type, ontology) === typeFilter) &&
-        (!normalized ||
+        typeFilter === 'all' ||
+        normalizeEntityTypeAlias(node.type, ontology) === typeFilter
+    )
+    if (!normalized) {
+      return typeFilteredNodes
+    }
+    const matchedIds = new Set(
+      typeFilteredNodes
+        .filter((node) =>
           `${node.label} ${node.type} ${node.description ?? ''} ${(node.aliases ?? []).join(' ')}`
             .toLocaleLowerCase(locale)
-            .includes(normalized))
+            .includes(normalized)
+        )
+        .map((node) => node.id)
     )
-  }, [graphNodes, locale, ontology, query, typeFilter])
+    const visibleIds = new Set(matchedIds)
+    for (const relation of graphRelations) {
+      if (matchedIds.has(relation.sourceId)) {
+        visibleIds.add(relation.targetId)
+      }
+      if (matchedIds.has(relation.targetId)) {
+        visibleIds.add(relation.sourceId)
+      }
+    }
+    return typeFilteredNodes.filter((node) => visibleIds.has(node.id))
+  }, [
+    graphNodes,
+    graphRelations,
+    locale,
+    ontology,
+    query,
+    typeFilter
+  ])
   const visibleIds = useMemo(
     () => new Set(visibleNodes.map((node) => node.id)),
     [visibleNodes]

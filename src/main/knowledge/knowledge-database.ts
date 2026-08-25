@@ -4259,13 +4259,16 @@ export class KnowledgeDatabase {
   ): ScoredSearchResult[] {
     const terms = [
       ...new Set(
-        [query, ...query.split(/[^\p{L}\p{N}_.$/@-]+/u)]
+        [
+          query.normalize('NFKC').trim().toLowerCase(),
+          ...knowledgeRetrievalTerms(query, 24)
+        ]
           .map((term) => term.normalize('NFKC').trim().toLowerCase())
           .filter((term) => term.length > 1)
       )
     ]
       .sort((left, right) => right.length - left.length)
-      .slice(0, 8)
+      .slice(0, 24)
     if (terms.length === 0) {
       return []
     }

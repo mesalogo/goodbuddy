@@ -1237,7 +1237,7 @@ describe('KnowledgeWorkspace', () => {
     )
   })
 
-  it('renders and filters graph nodes with their relationships', async () => {
+  it('renders graph filters while preserving matched entity context', async () => {
     render(<KnowledgeWorkspace {...createProps()} />)
 
     fireEvent.click(screen.getByRole('tab', { name: '知识图谱' }))
@@ -1257,18 +1257,25 @@ describe('KnowledgeWorkspace', () => {
       target: { value: 'Electron' }
     })
     expect(
-      screen.queryByRole('option', { name: 'GoodBuddy · 概念 (CONCEPT)' })
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText('使用 (USES)')).not.toBeInTheDocument()
+      screen.getByRole('option', { name: 'GoodBuddy · 概念 (CONCEPT)' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('使用 (USES)')).toBeInTheDocument()
     expect(g6Mock.graph.setOptions).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: {
-          nodes: [
+          nodes: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'entity-1'
+            }),
             expect.objectContaining({
               id: 'entity-2'
             })
-          ],
-          edges: []
+          ]),
+          edges: [
+            expect.objectContaining({
+              id: 'relation-1'
+            })
+          ]
         }
       })
     )
@@ -1535,7 +1542,7 @@ describe('KnowledgeWorkspace', () => {
     )
     const renderCalls = g6Mock.graph.render.mock.calls.length
     fireEvent.change(screen.getByLabelText('搜索图谱实体'), {
-      target: { value: 'Electron' }
+      target: { value: '不存在的实体' }
     })
     await waitFor(() =>
       expect(g6Mock.graph.render.mock.calls.length).toBeGreaterThan(

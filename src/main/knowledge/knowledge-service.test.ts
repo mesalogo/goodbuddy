@@ -447,6 +447,50 @@ describe('KnowledgeService', () => {
     await service.dispose()
   })
 
+  it('publishes a new document when model graph extraction fails', async () => {
+    const extractStructured = vi.fn(async () => {
+      throw new Error('模型图谱抽取暂时不可用')
+    })
+    const { directory, service } = await createService(
+      undefined,
+      undefined,
+      extractStructured
+    )
+    const sourcePath = join(directory, 'model-graph-failure.md')
+    await writeFile(
+      sourcePath,
+      '# 可检索文档\n即使图谱失败，全文内容仍应可用。',
+      'utf8'
+    )
+    const library = service.createLibrary({
+      name: '模型图谱容错',
+      storageMode: 'reference',
+      graphEnabled: true,
+      graphStrategy: 'model'
+    })
+
+    await expect(
+      service.importPaths(library.id, [sourcePath])
+    ).resolves.toBeUndefined()
+
+    const snapshot = service.snapshot(library.id)
+    expect(snapshot.documents).toHaveLength(1)
+    expect(service.search(library.id, '全文内容')).toHaveLength(1)
+    expect(snapshot.tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'graph',
+          status: 'failed',
+          message: '模型图谱抽取暂时不可用'
+        }),
+        expect.objectContaining({
+          kind: 'parsing',
+          status: 'succeeded'
+        })
+      ])
+    )
+  })
+
   it('reextracts graph evidence and removes only stale generated entities', async () => {
     const { directory, service } = await createService()
     const sourcePath = join(directory, 'reextract.md')

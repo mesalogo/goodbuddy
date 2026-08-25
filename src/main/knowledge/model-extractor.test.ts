@@ -3,6 +3,7 @@ import type {
   ResolvedRuntimeSettings,
   RuntimeSettingsStore
 } from '../runtime-settings-store'
+import { RetryableGraphExtractionError } from './graph-extractor'
 import { createModelGraphExtractor } from './model-extractor'
 
 function store(
@@ -167,5 +168,64 @@ describe('createModelGraphExtractor', () => {
     )
 
     await expect(extract('extract this')).rejects.toThrow('API Key')
+  })
+
+  it('classifies empty successful responses as retryable with diagnostics', async () => {
+    const extract = createModelGraphExtractor(
+      store({ modelProtocol: 'openai-chat-completions' }),
+      vi.fn(async () =>
+        jsonResponse({
+          choices: [{
+            finish_reason: 'length',
+            message: { content: '' }
+          }]
+        })
+      )
+    )
+
+    await expect(extract('extract this')).rejects.toMatchObject({
+      name: 'RetryableGraphExtractionError',
+      message: '模型未返回图谱内容（结束原因：length）'
+    })
+  })
+
+  it('classifies request timeouts as retryable', async () => {
+    const fetcher = vi.fn(
+      async (_input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(init.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const extract = createModelGraphExtractor(
+      store({ modelProtocol: 'openai-chat-completions' }),
+      fetcher,
+      5
+    )
+
+    const result = extract('extract this')
+    await expect(result).rejects.toBeInstanceOf(
+      RetryableGraphExtractionError
+    )
+    await expect(result).rejects.toThrow(
+      '模型图谱抽取响应超时'
+    )
+  })
+
+  it('preserves non-retryable HTTP status with a malformed error body', async () => {
+    const extract = createModelGraphExtractor(
+      store({ modelProtocol: 'openai-chat-completions' }),
+      vi.fn(async () =>
+        new Response('<html>unauthorized</html>', { status: 401 })
+      )
+    )
+
+    await expect(extract('extract this')).rejects.toMatchObject({
+      name: 'Error',
+      message: '模型图谱抽取失败（HTTP 401）'
+    })
   })
 })

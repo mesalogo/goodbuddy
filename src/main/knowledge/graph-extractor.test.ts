@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { estimateTextTokens } from '../../shared/context-window'
 import {
   GRAPH_LIMITS,
+  RetryableGraphExtractionError,
   extractGraphWithRules,
   extractKnowledgeGraph,
   mergeKnowledgeGraphs,
@@ -525,7 +527,8 @@ describe('extraction strategies', () => {
           strategy,
           extractStructured: async () => {
             throw new Error('模型未返回图谱内容')
-          }
+          },
+          modelRetryBackoffMilliseconds: 0
         })
       ).rejects.toThrow('模型未返回图谱内容')
     }
@@ -534,7 +537,8 @@ describe('extraction strategies', () => {
         strategy: 'hybrid',
         extractStructured: async () => {
           return { invalid: true }
-        }
+        },
+        modelRetryBackoffMilliseconds: 0
       })
     ).rejects.toThrow()
   })
@@ -575,9 +579,11 @@ describe('extraction strategies', () => {
           .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
           .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
       ) as Array<{ chunkId: string; content: string }>
-      const chunk = parsed[0]!
+      const chunk = parsed.find(({ content }) =>
+        content.includes('Late Batch')
+      )
       return {
-        entities: chunk.content.includes('Late Batch')
+        entities: chunk
           ? [{
               id: 'late',
               name: 'Late Batch Entity',
@@ -617,6 +623,202 @@ describe('extraction strategies', () => {
     ).toBe(true)
   })
 
+  it('uses a token budget without truncating model input', async () => {
+    const chunks = Array.from({ length: 12 }, (_, index) => ({
+      id: `large-${index}`,
+      content: `${index}: ${'内容'.repeat(1_200)}`
+    }))
+    const receivedIds = new Set<string>()
+    const modelCalls = vi.fn(async (prompt: string) => {
+      const parsed = JSON.parse(
+        prompt
+          .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+          .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+      ) as Array<{ chunkId: string }>
+      for (const chunk of parsed) {
+        receivedIds.add(chunk.chunkId)
+      }
+      return { entities: [], relations: [] }
+    })
+
+    await extractKnowledgeGraph(chunks, {
+      strategy: 'model',
+      extractStructured: modelCalls
+    })
+
+    expect(modelCalls.mock.calls.length).toBeGreaterThan(1)
+    expect(receivedIds).toEqual(new Set(chunks.map(({ id }) => id)))
+    expect(
+      modelCalls.mock.calls.every(([prompt]) => {
+        const parsed = JSON.parse(
+          prompt
+            .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+            .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+        ) as Array<{ chunkId: string; content: string }>
+        return estimateTextTokens(JSON.stringify(parsed)) <=
+          GRAPH_LIMITS.maximumModelBatchTokens
+      })
+    ).toBe(true)
+  })
+
+  it('keeps one large source chunk intact for evidence offsets', async () => {
+    const chunk = {
+      id: 'oversized-source',
+      content: '中文证据'.repeat(1_300)
+    }
+    const modelCalls = vi.fn(async (prompt: string) => {
+      const parsed = JSON.parse(
+        prompt
+          .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+          .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+      ) as Array<{ chunkId: string; content: string }>
+      expect(parsed).toEqual([{
+        chunkId: chunk.id,
+        content: chunk.content
+      }])
+      return { entities: [], relations: [] }
+    })
+
+    await extractKnowledgeGraph([chunk], {
+      strategy: 'model',
+      extractStructured: modelCalls
+    })
+
+    expect(modelCalls).toHaveBeenCalledOnce()
+  })
+
+  it('retries the same token-bounded batch after a retryable failure', async () => {
+    const chunks = Array.from({ length: 8 }, (_, index) => ({
+      id: `retry-${index}`,
+      content: `Entity ${index}`
+    }))
+    let attempt = 0
+    const modelCalls = vi.fn(async (prompt: string) => {
+      const parsed = JSON.parse(
+        prompt
+          .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+          .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+      ) as Array<{ chunkId: string; content: string }>
+      attempt += 1
+      if (attempt === 1) {
+        throw new RetryableGraphExtractionError(
+          '模型未返回图谱内容'
+        )
+      }
+      return {
+        entities: parsed.map(({ chunkId, content }) => {
+          const chunk = { id: chunkId, content }
+          return {
+            id: chunk.id,
+            name: chunk.content,
+            evidence: [indexedEvidence(chunk, chunk.content)]
+          }
+        }),
+        relations: []
+      }
+    })
+
+    const graph = await extractKnowledgeGraph(chunks, {
+      strategy: 'model',
+      extractStructured: modelCalls,
+      modelRetryBackoffMilliseconds: 0
+    })
+
+    expect(graph.entities).toHaveLength(chunks.length)
+    expect(modelCalls).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps successful token batches when one model batch fails', async () => {
+    const chunks = [
+      { id: 'failed', content: '失败内容'.repeat(2_000) },
+      { id: 'successful', content: 'Successful Entity'.repeat(150) }
+    ]
+    const modelCalls = vi.fn(async (prompt: string) => {
+      const parsed = JSON.parse(
+        prompt
+          .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+          .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+      ) as Array<{ chunkId: string; content: string }>
+      const chunk = parsed[0]!
+      if (chunk.chunkId === 'failed') {
+        throw new RetryableGraphExtractionError(
+          '模型未返回图谱内容'
+        )
+      }
+      return {
+        entities: [{
+          id: 'successful',
+          name: 'Successful Entity',
+          evidence: [{
+            chunkId: chunk.chunkId,
+            start: 0,
+            end: 'Successful Entity'.length
+          }]
+        }],
+        relations: []
+      }
+    })
+
+    const graph = await extractKnowledgeGraph(chunks, {
+      strategy: 'model',
+      extractStructured: modelCalls,
+      modelRetryBackoffMilliseconds: 0
+    })
+
+    expect(graph.entities.map(({ name }) => name)).toEqual([
+      'Successful Entity'
+    ])
+    expect(graph.warnings).toEqual([
+      '模型图谱抽取有一个批次失败：模型未返回图谱内容'
+    ])
+    expect(modelCalls).toHaveBeenCalledTimes(3)
+  })
+
+  it('bounds repeated failures without discarding an earlier successful batch', async () => {
+    const chunks = Array.from({ length: 5 }, (_, index) => ({
+      id: `bounded-${index}`,
+      content: `${index === 0 ? 'Successful Entity' : `Failure ${index}`}${'内容'.repeat(2_050)}`
+    }))
+    const modelCalls = vi.fn(async (prompt: string) => {
+      const [chunk] = JSON.parse(
+        prompt
+          .split('<UNTRUSTED_DOCUMENT_JSON>')[1]!
+          .split('</UNTRUSTED_DOCUMENT_JSON>')[0]!
+      ) as Array<{ chunkId: string; content: string }>
+      if (chunk?.chunkId !== 'bounded-0') {
+        throw new RetryableGraphExtractionError(
+          '模型未返回图谱内容'
+        )
+      }
+      return {
+        entities: [{
+          id: 'successful',
+          name: 'Successful Entity',
+          evidence: [{
+            chunkId: chunk.chunkId,
+            start: 0,
+            end: 'Successful Entity'.length
+          }]
+        }],
+        relations: []
+      }
+    })
+
+    const graph = await extractKnowledgeGraph(chunks, {
+      strategy: 'model',
+      extractStructured: modelCalls,
+      modelRetryBackoffMilliseconds: 0
+    })
+
+    expect(graph.entities.map(({ name }) => name)).toEqual([
+      'Successful Entity'
+    ])
+    expect(modelCalls).toHaveBeenCalledTimes(
+      1 + GRAPH_LIMITS.maximumModelBatchFailures *
+        GRAPH_LIMITS.modelExtractionAttempts
+    )
+  })
+
   it('honors cancellation before and after the injected model callback', async () => {
     const preCancelled = new AbortController()
     preCancelled.abort()
@@ -642,6 +844,26 @@ describe('extraction strategies', () => {
         }
       })
     ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('cancels retry backoff without starting another model call', async () => {
+    const controller = new AbortController()
+    const callback = vi.fn(async () => {
+      controller.abort()
+      throw new RetryableGraphExtractionError(
+        '模型未返回图谱内容'
+      )
+    })
+
+    await expect(
+      extractKnowledgeGraph([{ id: 'cancel-retry', content: 'Entity' }], {
+        strategy: 'model',
+        extractStructured: callback,
+        signal: controller.signal,
+        modelRetryBackoffMilliseconds: 10_000
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(callback).toHaveBeenCalledOnce()
   })
 })
 

@@ -512,6 +512,15 @@ export class KnowledgeService {
     return message.slice(0, 1_000) || '任务失败'
   }
 
+  private static graphWarningsSuffix(
+    result: GraphExtractionResult
+  ): string {
+    const warning = result.warnings[0]
+    return warning
+      ? `，${result.warnings.length} 条抽取警告：${warning.slice(0, 500)}`
+      : ''
+  }
+
   private failKnowledgeTask(taskId: string, error: unknown): void {
     const current = this.database.getKnowledgeTask(taskId)
     if (
@@ -713,7 +722,8 @@ export class KnowledgeService {
     parsed: ParsedDocument,
     library: KnowledgeBase,
     signal?: AbortSignal,
-    parentTaskId?: string
+    parentTaskId?: string,
+    options: { allowGraphFailure?: boolean } = {}
   ): Promise<PreparedDocumentPublication> {
     signal?.throwIfAborted()
     const documentId = input.id ?? randomUUID()
@@ -795,7 +805,9 @@ export class KnowledgeService {
         graph = await this.extractGraphChunks(library, chunks, signal)
         this.updateKnowledgeTask(graphTask.id, {
           progress: 90,
-          message: `已生成 ${graph.entities.length} 个候选实体、${graph.relations.length} 条候选关系`
+          message:
+            `已生成 ${graph.entities.length} 个候选实体、${graph.relations.length} 条候选关系` +
+            KnowledgeService.graphWarningsSuffix(graph)
         })
       } else {
         this.updateKnowledgeTask(graphTask.id, {
@@ -807,6 +819,17 @@ export class KnowledgeService {
       }
       signal?.throwIfAborted()
     } catch (error) {
+      if (!signal?.aborted && options.allowGraphFailure) {
+        this.failKnowledgeTask(graphTask.id, error)
+        return {
+          input: { ...input, id: documentId },
+          chunks,
+          embeddingReplacement,
+          embeddingFailure,
+          embeddingTaskId: embeddingTask.id,
+          graphTaskId: graphTask.id
+        }
+      }
       if (embeddingReplacement) {
         this.database.discardDocumentEmbeddingReplacement(
           embeddingReplacement.replacementId
@@ -894,7 +917,9 @@ export class KnowledgeService {
           documentId: document.id,
           documentName: document.title,
           status: 'succeeded',
-          message: `已发布 ${prepared.graph.entities.length} 个实体、${prepared.graph.relations.length} 条关系`
+          message:
+            `已发布 ${prepared.graph.entities.length} 个实体、${prepared.graph.relations.length} 条关系` +
+            KnowledgeService.graphWarningsSuffix(prepared.graph)
         })
       } else {
         this.updateKnowledgeTask(prepared.graphTaskId, {
@@ -2044,7 +2069,8 @@ export class KnowledgeService {
               result.document,
               effectiveLibrary,
               effectiveSignal,
-              parsingTask.id
+              parsingTask.id,
+              { allowGraphFailure: previousDocument === undefined }
             )
             return this.publishPreparedDocument(effectiveLibrary, prepared)
         }
@@ -2655,7 +2681,9 @@ export class KnowledgeService {
               effectiveSignal.throwIfAborted()
               this.updateKnowledgeTask(task.id, {
                 status: 'succeeded',
-                message: `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系`
+                message:
+                  `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系` +
+                  KnowledgeService.graphWarningsSuffix(result)
               })
             },
             effectiveSignal
@@ -2982,7 +3010,8 @@ export class KnowledgeService {
               parsed,
               effectiveLibrary,
               signal,
-              parsingTask.id
+              parsingTask.id,
+              { allowGraphFailure: previous === undefined }
             )
             return this.publishPreparedDocument(effectiveLibrary, prepared)
           },
@@ -3348,7 +3377,9 @@ export class KnowledgeService {
       signal?.throwIfAborted()
       this.updateKnowledgeTask(task.id, {
         status: 'succeeded',
-        message: `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系`
+        message:
+          `已抽取 ${result.entities.length} 个实体、${result.relations.length} 条关系` +
+          KnowledgeService.graphWarningsSuffix(result)
       })
     } catch (error) {
       if (signal?.aborted) {
