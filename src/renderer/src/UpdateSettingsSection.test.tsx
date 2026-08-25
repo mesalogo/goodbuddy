@@ -69,6 +69,13 @@ describe('UpdateSettingsSection', () => {
             shortcut: 'Ctrl+Shift+Space'
           }))
         },
+        feedback: {
+          submit: vi.fn(async () => ({
+            ok: true as const,
+            reference: 'GOODBUDDY-000001',
+            duplicate: false
+          }))
+        },
         updates: {
           getSettings: vi.fn(async () => ({
             ...applicationSettings
@@ -125,6 +132,25 @@ describe('UpdateSettingsSection', () => {
     expect(
       screen.getByText('GoodBuddy-0.9.0-windows-x64-setup.exe')
     ).toBeInTheDocument()
+
+    const feedbackTrigger = screen.getByRole('button', {
+      name: '提交反馈'
+    })
+    feedbackTrigger.focus()
+    fireEvent.click(feedbackTrigger)
+    const dialog = screen.getByRole('dialog', {
+      name: '提交反馈'
+    })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(screen.getByLabelText('反馈类型')).toHaveFocus()
+    expect(
+      screen.getByText(/不会自动发送对话、日志、文件/)
+    ).toBeInTheDocument()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(
+      screen.queryByRole('dialog', { name: '提交反馈' })
+    ).not.toBeInTheDocument()
+    expect(feedbackTrigger).toHaveFocus()
   })
 
   it('replaces Electron fetch wrappers with an actionable network error', async () => {
@@ -176,5 +202,42 @@ describe('UpdateSettingsSection', () => {
       '版本检查失败：无法连接更新源“GitHub”，请检查网络或代理后重试'
     )
     expect(alert).not.toHaveTextContent('Error invoking remote method')
+  })
+
+  it('keeps feedback available when update settings are unavailable', async () => {
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        app: {
+          getInfo: vi.fn(async () => ({
+            name: 'GoodBuddy',
+            version: '0.11.0',
+            platform: 'linux',
+            arch: 'arm64',
+            shortcut: 'Ctrl+Shift+Space'
+          }))
+        },
+        feedback: {
+          submit: vi.fn(async () => ({
+            ok: true as const,
+            reference: 'GOODBUDDY-000010',
+            duplicate: false
+          }))
+        }
+      } as unknown as DesktopApi
+    })
+
+    render(<UpdateSettingsSection />)
+    const feedbackTrigger = await screen.findByRole('button', {
+      name: '提交反馈'
+    })
+    expect(feedbackTrigger).toBeEnabled()
+    fireEvent.click(feedbackTrigger)
+    expect(
+      screen.getByRole('dialog', { name: '提交反馈' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('反馈服务当前不可用')
+    ).not.toBeInTheDocument()
   })
 })

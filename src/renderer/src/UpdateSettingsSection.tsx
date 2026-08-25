@@ -1,4 +1,8 @@
-import { ExternalLink, RefreshCw } from 'lucide-react'
+import {
+  ExternalLink,
+  MessageSquarePlus,
+  RefreshCw
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -11,6 +15,7 @@ import {
   SettingsCategoryHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
+import { FeedbackDialog } from './FeedbackDialog'
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
@@ -48,23 +53,34 @@ export function UpdateSettingsSection(): React.JSX.Element {
   const [checking, setChecking] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   useEffect(() => {
     const updates = window.goodbuddy.updates
     let active = true
-    void (async () => {
-      if (!updates) {
-        throw new Error(t('updates.errors.serviceUnavailable'))
+    void window.goodbuddy.app
+      .getInfo()
+      .then((info) => {
+        if (active) {
+          setAppInfo(info)
+        }
+      })
+      .catch(() => undefined)
+    if (!updates) {
+      queueMicrotask(() => {
+        if (active) {
+          setError(t('updates.errors.serviceUnavailable'))
+        }
+      })
+      return () => {
+        active = false
       }
-      return Promise.all([
-        updates.getSettings(),
-        window.goodbuddy.app.getInfo()
-      ])
-    })()
-      .then(([nextSettings, info]) => {
+    }
+    void updates
+      .getSettings()
+      .then((nextSettings) => {
         if (active) {
           setSettings(nextSettings)
-          setAppInfo(info)
         }
       })
       .catch((reason: unknown) => {
@@ -293,7 +309,32 @@ export function UpdateSettingsSection(): React.JSX.Element {
           </p>
         </article>
       )}
+      <article className="capability-card feedback-entry-card">
+        <div className="capability-card__header">
+          <div>
+            <strong>{t('feedback.entry.title')}</strong>
+            <small>{t('feedback.entry.description')}</small>
+          </div>
+        </div>
+        <div className="feedback-entry-card__actions">
+          <button
+            className="primary-button"
+            disabled={!appInfo}
+            onClick={() => setFeedbackOpen(true)}
+            type="button"
+          >
+            <MessageSquarePlus aria-hidden="true" size={14} />
+            {t('feedback.entry.action')}
+          </button>
+        </div>
+      </article>
       </section>
+      {feedbackOpen && appInfo && (
+        <FeedbackDialog
+          appInfo={appInfo}
+          onClose={() => setFeedbackOpen(false)}
+        />
+      )}
     </>
   )
 }

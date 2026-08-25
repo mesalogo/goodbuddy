@@ -5,9 +5,9 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档类型 | 跨功能产品与技术架构 |
-| 状态 | 待实施 |
-| 版本 | 0.1 |
-| 日期 | 2026-08-24 |
+| 状态 | 已实施并完成生产联调，待发布 |
+| 版本 | 1.0 |
+| 日期 | 2026-08-25 |
 | 适用产品 | GoodBuddy 桌面端 |
 | 目标平台 | Windows、macOS、Linux，x64 与 arm64 |
 | 相关基线 | [统一界面设计系统](../../UI-DESIGN.md)、[GoodBuddy 文档导航](../README.md) |
@@ -49,8 +49,8 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
     Runtime 配置、API Key、Token、Cookie、SSH 信息、剪贴板或屏幕内容。
 12. 反馈提交失败时保留全部表单内容和截图，成功后显示可复制的服务端反馈编号。
 13. 首版不提供反馈历史、状态查询、编辑、撤回、自动日志收集或服务端管理入口。
-14. 在真实反馈域名和可用服务尚未就绪时，不上线不可用按钮或占位入口。客户端和服务端应
-    在同一发布窗口完成可用性验证。
+14. 生产接口固定为 `https://imp.mesalogo.com/api/v1/feedback`。域名健康检查、
+    TLS、v1 请求校验和客户端调用链必须在发布前一起通过。
 
 ---
 
@@ -127,7 +127,7 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
 截图区域必须包含：
 
 - 缩略预览。
-- 尺寸和标准化后的大小。
+- 尺寸和所选文件大小；Main 仍在发送前独立执行 PNG 标准化和大小检查。
 - `替换截图` 与 `移除截图`。
 - `截图可能包含画面中可见的个人信息，请在发送前检查。`
 
@@ -219,10 +219,10 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
 反馈平台负责维护公共 API 的权威定义。GoodBuddy 只固定客户端实际需要的版本 1 子集：
 
 ```text
-POST <trusted-feedback-origin>/api/v1/feedback
+POST https://imp.mesalogo.com/api/v1/feedback
 ```
 
-GoodBuddy 实现前必须获得真实生产 Origin，并完成以下检查：
+当前生产 Endpoint 已作为 Main-only 产品常量固定。实现和发布验证必须持续保证：
 
 - 使用 `https:`。
 - URL 不含用户名、密码、查询参数或 fragment。
@@ -230,8 +230,8 @@ GoodBuddy 实现前必须获得真实生产 Origin，并完成以下检查：
 - 对应产品 `goodbuddy` 已在服务端启用。
 - 桌面端所在网络能够直接访问该 Origin。
 
-生产 Endpoint 不写入文档示例值后直接发布。域名迁移必须同时修改客户端受信常量、测试、
-服务端 CORS/Origin 配置和部署文档。
+Renderer、Preload、用户设置、环境变量和远程配置都不能覆盖该 Endpoint。域名迁移必须
+同时修改客户端受信常量、测试、服务端 Origin 配置和部署文档。
 
 ### 5.2 请求 JSON
 
@@ -364,9 +364,12 @@ Main handler 必须：
 1. 调用现有 `assertTrustedSender(event, window)`。
 2. 使用 Shared Zod schema 解析 `unknown` 输入。
 3. 不接收 URL、文件路径、Cookie、Header 或任意请求选项。
-4. 把 Promise 纳入现有 IPC 操作追踪，应用关闭时有界等待或取消。
+4. 由 `FeedbackService` 跟踪活动 Promise，应用关闭或清除数据时先取消再有界等待。
 
 Preload 只转发已声明输入，不做网络请求或图片文件读取。
+
+反馈 handler 独立放在 `feedback/feedback-ipc.ts`，复用共享的
+`assertTrustedSender()`，避免继续扩展通用 `registerIpcHandlers()` 的位置参数列表。
 
 ### 6.4 FeedbackIdentityStore
 
@@ -431,10 +434,8 @@ new Agent({
 每次请求必须满足：
 
 - 固定、预先校验的 HTTPS URL。
-- `redirect: "manual"`，任何 3xx 都失败。
-- `credentials: "omit"`。
-- `cache: "no-store"`。
-- `referrerPolicy: "no-referrer"`。
+- 使用 Undici 原始 `request()`，不安装重定向处理器；任何 3xx 都按服务不可用处理。
+- 不使用 Cookie Jar、缓存、Referrer 或浏览器凭据模式。
 - `Accept: application/json`。
 - 固定、非敏感 `User-Agent`，例如 `GoodBuddy-Feedback/<version>`。
 - 不发送 `Authorization`、Cookie、API Key 或自定义代理凭据。
@@ -446,7 +447,7 @@ new Agent({
 - 日志只记录有界错误类别和 HTTP 状态，不记录请求正文、邮箱、截图、安装 UUID、
   `clientRequestId` 或响应编号。
 
-测试可以注入 Endpoint、Dispatcher 和 Transport。生产构造路径不得读取测试覆盖值或
+测试可以注入 Endpoint、Dispatcher 和 Request Transport。生产构造路径不得读取测试覆盖值或
 环境变量。
 
 ---
@@ -529,7 +530,9 @@ Main 不信任 Renderer 声明的 MIME：
 
 - 对话框同一时间只允许一个提交。
 - Main 同一 `clientRequestId` 只运行一个请求。
-- 重复 IPC 调用合并或拒绝，不能并行上传两份截图。
+- Main 全局同一时间只发送一条反馈；相同 ID 的重复调用合并，不同 ID 在已有请求期间返回
+  有界 `busy` 结果，不能并行保留多份 5 MiB 截图。
+- 读取截图使用选择代次；旧文件后完成时必须丢弃并释放 Object URL，不能覆盖较新的截图。
 
 ### 9.3 应用退出与清除数据
 
@@ -549,9 +552,9 @@ Main 不信任 Renderer 声明的 MIME：
 
 ---
 
-## 10. 文件变更计划
+## 10. 实施文件
 
-实施时预计触及：
+当前实现涉及：
 
 | 文件或目录 | 变更 |
 | --- | --- |
@@ -562,8 +565,9 @@ Main 不信任 Renderer 声明的 MIME：
 | `src/main/feedback/feedback-screenshot.ts` | 签名、解码和 PNG 标准化 |
 | `src/main/feedback/feedback-http-client.ts` | 固定 Endpoint、严格 TLS、有界响应 |
 | `src/main/feedback/feedback-service.ts` | payload 组装与生命周期 |
+| `src/main/feedback/feedback-ipc.ts` | 独立 trusted sender、schema parse 和 submit handler |
+| `src/main/trusted-ipc-sender.ts` | Main IPC 共享 sender / main Frame 校验 |
 | `src/main/index.ts` | Main service 构造、清理和 IPC 注入 |
-| `src/main/ipc.ts` | trusted sender、schema parse 和 submit handler |
 | `src/preload/index.ts` | 窄 `feedback.submit()` bridge |
 | `src/renderer/src/FeedbackDialog.tsx` | 表单和成功/失败流程 |
 | `src/renderer/src/UpdateSettingsSection.tsx` | About 入口卡片 |
@@ -575,7 +579,10 @@ Main 不信任 Renderer 声明的 MIME：
 
 ---
 
-## 11. 验证计划
+## 11. 验证
+
+以下 Shared、Main、IPC、Preload 和 Renderer 行为均由相邻或现有自动化测试覆盖；生产
+Endpoint 的健康检查和无副作用 schema 探针也必须在发布前通过。
 
 ### 11.1 Shared 合同
 
@@ -595,6 +602,7 @@ Main 不信任 Renderer 声明的 MIME：
 - 拒绝重定向、非 HTTPS、错误 Origin、超时、超大响应、非 JSON 和错误 response schema。
 - 4xx、429、5xx 和网络错误映射。
 - 手动重试复用 `clientRequestId`。
+- 不同 ID 的并发请求被有界拒绝，清除本地数据期间不能开始新提交。
 
 ### 11.3 IPC 与 Preload
 
@@ -609,6 +617,7 @@ Main 不信任 Renderer 声明的 MIME：
 - 表单字段、字符限制、中英文文案和隐私说明。
 - 普通文本粘贴不被图片处理拦截。
 - 截图选择、预览、替换、移除和 Object URL 清理。
+- 并发截图读取按最新选择生效，关闭对话框后不会留下待处理 Object URL。
 - 失败保留字段，重试使用原 `clientRequestId`。
 - 成功显示真实编号并清空后续新草稿。
 - Dialog role、初始焦点、Tab 循环、Escape 和焦点恢复。
@@ -616,7 +625,16 @@ Main 不信任 Renderer 声明的 MIME：
 
 ### 11.5 真实集成
 
-在反馈平台部署到最终 HTTPS 域名后：
+2026-08-25 已从隔离配置的真实 Electron 生产构建完成一次端到端合成提交：
+
+- 标题：`[GOODBUDDY INTEGRATION TEST] 2026-08-25`
+- 类型：`other`
+- 联系邮箱：未填写
+- 截图：GoodBuddy 公共应用图标，经 Main 重编码后以 PNG multipart 上传
+- 服务端编号：`GOODBUDDY-000001`
+
+该结果确认 About UI、Renderer、Preload、trusted IPC、安装身份、Main 图片处理、独立严格
+TLS Dispatcher 和生产 v1 API 调用链可以共同工作。发布候选仍应按以下清单复验：
 
 1. 从打包候选的 About 页面提交一条明确标记的合成反馈。
 2. 可选添加一张不含个人数据的测试截图。
@@ -646,22 +664,22 @@ npm run build
   API 版本。
 - GoodBuddy 对响应执行严格解析。服务端需要扩展响应时，应先协调客户端兼容策略。
 - Endpoint 域名变化属于客户端发布变更，不能依赖 301/302 迁移。
-- 若服务尚未部署或 `goodbuddy` 产品尚未启用，不把入口发布到用户。
+- 入口发布与 `goodbuddy` 产品启用状态、生产 TLS 和 v1 契约保持同一发布门槛。
 - 此功能不迁移现有用户数据；只新增可重置的随机反馈安装身份。
 - 发布说明应明确：用户现在可以在“关于与更新”内直接提交反馈，邮箱和截图可选，应用不会
   自动附加对话、日志、文件或凭据。
 
 ---
 
-## 13. 实施前置条件
+## 13. 当前对接状态
 
-编码开始前必须确认：
+截至 2026-08-25：
 
-1. 生产反馈 HTTPS Origin。
-2. `/api/v1/feedback` 在该 Origin 可用。
-3. `goodbuddy` 产品已启用。
-4. 服务端公开 schema、截图上限和本文一致。
-5. 反馈平台的数据保留和隐私说明已可供产品文案引用。
-6. 真实集成测试应使用的环境和测试记录处理方式。
-
-前置条件不满足时，本文保持“待实施”，不在产品中加入不可用入口。
+1. 生产 Origin 已确定为 `https://imp.mesalogo.com`，HTTPS、HSTS 和健康检查正常。
+2. `/api/v1/feedback` 已返回符合 v1 契约的严格校验错误，无副作用探针未创建记录。
+3. `goodbuddy` 产品已启用，实际提交返回 `GOODBUDDY-000001`。
+4. GoodBuddy 客户端已完成 Shared、Main、IPC、Preload、About UI、双语文案、截图和
+   生命周期实现。
+5. 服务端公开 schema、字段长度和 5 MiB 截图上限与客户端一致。
+6. 隔离 Electron 实例已完成浅色、深色、600×800 窄窗口、焦点与背景隔离、截图预览和
+   真实生产提交验收。

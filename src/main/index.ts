@@ -75,6 +75,13 @@ import { VersionChecker } from './version-checker'
 import { SpeechModelManager } from './speech/speech-model-manager'
 import { SpeechTranscriptionService } from './speech/speech-transcription-service'
 import { GlobalTlsPolicy } from './global-tls-policy'
+import { FeedbackIdentityStore } from './feedback/feedback-identity-store'
+import {
+  createStrictFeedbackDispatcher,
+  StrictFeedbackHttpClient
+} from './feedback/feedback-http-client'
+import { FeedbackService } from './feedback/feedback-service'
+import { registerFeedbackIpcHandler } from './feedback/feedback-ipc'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
 import {
   runCleanupBeforeDeadline,
@@ -164,6 +171,7 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let isQuitting = false
 let removeIpcHandlers: (() => Promise<void>) | undefined
+let removeFeedbackIpcHandler: (() => void) | undefined
 let runtime: AgentRuntimeController | undefined
 let selectedRuntimeManager: SelectedRuntimeManager | undefined
 let knowledgeService: KnowledgeService | undefined
@@ -171,6 +179,7 @@ let knowledgeGateway: KnowledgeMcpGateway | undefined
 let assistantDatabase: AssistantDatabase | undefined
 let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
+let feedbackService: FeedbackService | undefined
 let documentOcrBroker: DocumentOcrBroker | undefined
 let documentOcrModelManager: DocumentOcrModelManager | undefined
 let embeddingModelManager: EmbeddingModelManager | undefined
@@ -717,6 +726,19 @@ if (hasSingleInstanceLock) {
     const applicationSettingsStore = new ApplicationSettingsStore(
       join(app.getPath('userData'), 'application-settings.json')
     )
+    const startupFeedbackService = new FeedbackService({
+      appVersion: app.getVersion(),
+      platform: process.platform,
+      architecture: process.arch,
+      identityStore: new FeedbackIdentityStore(
+        join(app.getPath('userData'), 'feedback-identity.json')
+      ),
+      client: new StrictFeedbackHttpClient({
+        appVersion: app.getVersion(),
+        dispatcher: createStrictFeedbackDispatcher()
+      })
+    })
+    feedbackService = startupFeedbackService
     const startupEmbeddingModelManager = new EmbeddingModelManager({
       userDataDirectory: app.getPath('userData'),
       fetch: globalThis.fetch,
@@ -1206,7 +1228,10 @@ if (hasSingleInstanceLock) {
       bundledRuntimePaths,
       reconfigureRuntimes,
       async () => {
-        await browserService?.clearSessions()
+        await Promise.all([
+          browserService?.clearSessions(),
+          startupFeedbackService.clear()
+        ])
       },
       browserService,
       subagentService,
@@ -1245,6 +1270,10 @@ if (hasSingleInstanceLock) {
         return provider
       },
       setCurrentEmbeddingConnection
+    )
+    removeFeedbackIpcHandler = registerFeedbackIpcHandler(
+      mainWindow,
+      startupFeedbackService
     )
     loadMainWindow(mainWindow)
     setImmediate(() => {
@@ -1325,6 +1354,8 @@ app.on('before-quit', (event) => {
     try {
       const cleanup = settleCleanupPhases([
         [
+          () => feedbackService?.dispose(),
+          () => removeFeedbackIpcHandler?.(),
           () => dshExtensionInstaller?.dispose(),
           () => removeIpcHandlers?.()
         ],

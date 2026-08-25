@@ -574,6 +574,113 @@ export const settingsSections = {
     assignedTo: 'Assigned to',
     deleteAria: 'Delete {{name}}'
   },
+  feedback: {
+    entry: {
+      title: 'Help improve GoodBuddy',
+      description:
+        'Report a problem, suggest a feature, or share your experience. We will handle it in our independent feedback system.',
+      action: 'Submit feedback'
+    },
+    dialog: {
+      title: 'Submit feedback',
+      description:
+        'Tell us what happened or what you would like improved. Your draft is preserved if submission fails.'
+    },
+    categories: {
+      bug: 'Problem',
+      feature: 'Feature request',
+      experience: 'User experience',
+      other: 'Other'
+    },
+    fields: {
+      category: 'Feedback type',
+      title: 'Title',
+      titlePlaceholder: 'Summarize the problem or suggestion',
+      description: 'Detailed description',
+      descriptionPlaceholder:
+        'Describe what happened, what you expected, and any steps needed to reproduce it.',
+      contactEmail: 'Contact email (optional)',
+      emailPlaceholder: 'user@example.com',
+      emailHelp:
+        'Used only if we need to contact you for more information.',
+      characterCount: '{{count}} / {{maximum}} characters'
+    },
+    screenshot: {
+      title: 'Screenshot (optional)',
+      help:
+        'Select or paste one PNG, JPEG, or WebP image, up to 5 MB.',
+      fileInput: 'Select a feedback screenshot',
+      previewAlt: 'Preview of the feedback screenshot to be sent',
+      privacy:
+        'Screenshots may contain personal information visible on screen. Review the image before sending.',
+      unsupported: 'Only PNG, JPEG, and WebP images are supported.',
+      tooLarge: 'The screenshot must be 5 MB or smaller.',
+      invalid:
+        'The screenshot could not be read or its dimensions exceed the limit.'
+    },
+    environment: {
+      title: 'Application information to be sent',
+      version: 'GoodBuddy version',
+      system: 'Operating system',
+      locale: 'Interface language',
+      platforms: {
+        windows: 'Windows',
+        macos: 'macOS',
+        linux: 'Linux',
+        unknown: 'Unknown system'
+      }
+    },
+    privacy:
+      'GoodBuddy will send the feedback type, title, description, optional email, app version, operating system, architecture, interface language, and any screenshot you add. Conversations, logs, files, project paths, model settings, and credentials are never attached automatically.',
+    validation: {
+      titleRequired: 'Enter a feedback title.',
+      descriptionMinimum:
+        'The detailed description must contain at least 10 characters.',
+      emailInvalid: 'Enter a valid contact email or leave it blank.'
+    },
+    actions: {
+      close: 'Close feedback dialog',
+      cancel: 'Cancel',
+      submit: 'Submit feedback',
+      submitting: 'Submitting…',
+      retry: 'Retry submission',
+      addScreenshot: 'Add screenshot',
+      processingScreenshot: 'Reading screenshot…',
+      replaceScreenshot: 'Replace screenshot',
+      removeScreenshot: 'Remove screenshot',
+      copyReference: 'Copy feedback reference',
+      copied: 'Copied',
+      done: 'Done'
+    },
+    success: {
+      title: 'Feedback submitted',
+      description:
+        'Thank you for your feedback. Save this reference for future communication.'
+    },
+    errors: {
+      title: 'Feedback was not submitted',
+      'invalid-submission':
+        'The submission does not meet the feedback service requirements. Check the fields and screenshot, then try again.',
+      'incompatible-client':
+        'This GoodBuddy version does not match the feedback service configuration. Update the app and try again.',
+      unavailable:
+        'The feedback service is temporarily unavailable. Try again later.',
+      busy:
+        'Another feedback submission is in progress. Wait for it to finish, then try again.',
+      'screenshot-too-large':
+        'The screenshot or request is too large. Remove it or choose a smaller image, then try again.',
+      'rate-limited':
+        'Feedback is being submitted too frequently. Try again later.',
+      'service-error':
+        'The feedback service has a temporary problem. Try again later.',
+      network:
+        'Could not connect to the feedback service. Check your network and try again.',
+      timeout:
+        'The feedback service connection timed out. Check your network and try again.',
+      'invalid-response':
+        'The feedback service returned an invalid result. Try again later.'
+    }
+  },
   updates: {
     label: 'Update settings',
     errors: {

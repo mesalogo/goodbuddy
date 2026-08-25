@@ -112,6 +112,7 @@ import {
   weComChannelSettingsInputSchema
 } from '../shared/channel-settings-contracts'
 import { applicationSettingsUpdateSchema } from '../shared/application-settings-contracts'
+import { assertTrustedSender } from './trusted-ipc-sender'
 import { releaseNotesAcknowledgeSchema } from '../shared/release-notes-contracts'
 import {
   speechModelActionInputSchema,
@@ -675,19 +676,6 @@ const knowledgeUpdateRelationSchema = z
   })
   .strict()
 
-function assertTrustedSender(
-  event: Electron.IpcMainInvokeEvent,
-  window: BrowserWindow
-): void {
-  if (
-    event.sender !== window.webContents ||
-    event.senderFrame !== window.webContents.mainFrame ||
-    event.senderFrame.url !== window.webContents.getURL()
-  ) {
-    throw new Error('拒绝来自未知窗口的 IPC 请求')
-  }
-}
-
 export function sendRemoteProjectSaveProgress(
   owner: RemoteProjectSaveOwner,
   progress: RemoteProjectSaveProgress
@@ -1121,6 +1109,7 @@ export function registerIpcHandlers(
       channel !== ipcChannels.conversationNew &&
       channel !== ipcChannels.settingsOpen &&
       channel !== ipcChannels.versionCheckResult &&
+      channel !== ipcChannels.feedbackSubmit &&
       channel !== ipcChannels.weixinBindingChanged &&
       channel !== ipcChannels.remoteChannelActivity &&
       channel !== ipcChannels.remoteProjectSaveProgress &&

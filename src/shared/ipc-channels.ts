@@ -65,6 +65,7 @@ export const ipcChannels = {
   versionCheck: 'application:update:check',
   versionOpenReleasePage: 'application:update:open-release-page',
   versionCheckResult: 'application:update:result',
+  feedbackSubmit: 'feedback:submit',
   releaseNotesGetPending: 'application:release-notes:get-pending',
   releaseNotesAcknowledge: 'application:release-notes:acknowledge',
   speechModelsGet: 'settings:speech-models:get',

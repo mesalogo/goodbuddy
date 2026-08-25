@@ -726,6 +726,22 @@ describe('SettingsPanel runtime files', () => {
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
+        app: {
+          getInfo: vi.fn(async () => ({
+            name: 'GoodBuddy',
+            version: '0.11.0',
+            platform: 'win32',
+            arch: 'x64',
+            shortcut: 'Ctrl+Shift+Space'
+          }))
+        },
+        feedback: {
+          submit: vi.fn(async () => ({
+            ok: true as const,
+            reference: 'GOODBUDDY-000001',
+            duplicate: false
+          }))
+        },
         settings: {
           getRuntime,
           updateRuntime,

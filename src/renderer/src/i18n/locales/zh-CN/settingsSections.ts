@@ -535,6 +535,103 @@ export const settingsSections = {
     assignedTo: '分配给',
     deleteAria: '删除 {{name}}'
   },
+  feedback: {
+    entry: {
+      title: '帮助改进 GoodBuddy',
+      description:
+        '报告问题、提出建议或反馈使用体验，我们会在独立反馈系统中处理。',
+      action: '提交反馈'
+    },
+    dialog: {
+      title: '提交反馈',
+      description:
+        '告诉我们遇到的问题或希望改进的地方。提交失败时，当前内容会保留以便重试。'
+    },
+    categories: {
+      bug: '问题',
+      feature: '功能建议',
+      experience: '使用体验',
+      other: '其他'
+    },
+    fields: {
+      category: '反馈类型',
+      title: '标题',
+      titlePlaceholder: '简要概括问题或建议',
+      description: '详细描述',
+      descriptionPlaceholder:
+        '请描述发生了什么、你期望的结果，以及必要的复现步骤。',
+      contactEmail: '联系邮箱（可选）',
+      emailPlaceholder: 'user@example.com',
+      emailHelp: '仅在需要进一步了解情况时用于联系你。',
+      characterCount: '已输入 {{count}} / {{maximum}} 个字符'
+    },
+    screenshot: {
+      title: '截图（可选）',
+      help: '选择或粘贴一张 PNG、JPEG 或 WebP 图片，最大 5 MB。',
+      fileInput: '选择反馈截图',
+      previewAlt: '待发送反馈截图预览',
+      privacy:
+        '截图可能包含画面中可见的个人信息，请在发送前检查。',
+      unsupported: '仅支持 PNG、JPEG 或 WebP 图片。',
+      tooLarge: '截图必须小于或等于 5 MB。',
+      invalid: '无法读取该截图，或图片尺寸超出限制。'
+    },
+    environment: {
+      title: '将发送的应用信息',
+      version: 'GoodBuddy 版本',
+      system: '操作系统',
+      locale: '界面语言',
+      platforms: {
+        windows: 'Windows',
+        macos: 'macOS',
+        linux: 'Linux',
+        unknown: '未知系统'
+      }
+    },
+    privacy:
+      '将发送反馈类型、标题、描述、可选邮箱、GoodBuddy 版本、操作系统、架构、界面语言，以及你主动添加的截图。不会自动发送对话、日志、文件、项目路径、模型配置或凭据。',
+    validation: {
+      titleRequired: '请输入反馈标题。',
+      descriptionMinimum: '详细描述至少需要 10 个字符。',
+      emailInvalid: '请输入有效的联系邮箱，或将其留空。'
+    },
+    actions: {
+      close: '关闭反馈对话框',
+      cancel: '取消',
+      submit: '提交反馈',
+      submitting: '正在提交…',
+      retry: '重试提交',
+      addScreenshot: '添加截图',
+      processingScreenshot: '正在读取截图…',
+      replaceScreenshot: '替换截图',
+      removeScreenshot: '移除截图',
+      copyReference: '复制反馈编号',
+      copied: '已复制',
+      done: '完成'
+    },
+    success: {
+      title: '反馈已提交',
+      description:
+        '感谢你的反馈。请保存下面的编号，以便后续沟通。'
+    },
+    errors: {
+      title: '未能提交反馈',
+      'invalid-submission':
+        '提交内容不符合反馈服务要求，请检查字段和截图后重试。',
+      'incompatible-client':
+        '当前 GoodBuddy 版本与反馈服务配置不匹配，请更新应用后重试。',
+      unavailable: '反馈服务暂时不可用，请稍后重试。',
+      busy: '已有一条反馈正在提交，请等待完成后再试。',
+      'screenshot-too-large':
+        '截图或请求内容过大，请移除截图或更换较小图片后重试。',
+      'rate-limited': '提交过于频繁，请稍后再试。',
+      'service-error': '反馈服务暂时异常，请稍后重试。',
+      network: '无法连接反馈服务，请检查网络后重试。',
+      timeout: '连接反馈服务超时，请检查网络后重试。',
+      'invalid-response':
+        '反馈服务返回了无效结果，请稍后重试。'
+    }
+  },
   updates: {
     label: '更新设置',
     errors: {

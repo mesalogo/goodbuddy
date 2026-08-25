@@ -140,6 +140,10 @@ import type {
   RemoteProjectSaveProgress,
   RemoteProjectSaveRequest
 } from './remote-project-candidate-contracts'
+import type {
+  FeedbackSubmitInput,
+  FeedbackSubmitResult
+} from './feedback-contracts'
 export type {
   KnowledgeTaskError,
   KnowledgeTaskItem,
@@ -1591,6 +1595,11 @@ export type DesktopApi = {
     onResult: (
       listener: (result: VersionCheckResult) => void
     ) => () => void
+  }
+  feedback: {
+    submit: (
+      input: FeedbackSubmitInput
+    ) => Promise<FeedbackSubmitResult>
   }
   shortcuts?: {
     getSettings: () => Promise<GlobalShortcutSettingsSnapshot>

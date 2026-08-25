@@ -146,6 +146,10 @@ import type {
   GlobalShortcutSettingsSnapshot,
   GlobalShortcutSettingsUpdateResult
 } from '../shared/shortcut'
+import type {
+  FeedbackSubmitInput,
+  FeedbackSubmitResult
+} from '../shared/feedback-contracts'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -450,6 +454,13 @@ const desktopApi: DesktopApi = {
       return () =>
         ipcRenderer.removeListener(ipcChannels.versionCheckResult, handler)
     }
+  },
+  feedback: {
+    submit: (input: FeedbackSubmitInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.feedbackSubmit,
+        input
+      ) as Promise<FeedbackSubmitResult>
   },
   shortcuts: {
     getSettings: () =>

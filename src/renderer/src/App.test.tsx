@@ -178,6 +178,13 @@ const api: DesktopApi = {
     }),
     onOpenSettings: vi.fn(() => () => {})
   },
+  feedback: {
+    submit: vi.fn<DesktopApi['feedback']['submit']>(async () => ({
+      ok: true,
+      reference: 'GOODBUDDY-000001',
+      duplicate: false
+    }))
+  },
   agent: {
     getStatus: vi.fn<DesktopApi['agent']['getStatus']>(async () => ({
       id: 'model' as const,

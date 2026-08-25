@@ -117,6 +117,22 @@ describe('sandboxed preload', () => {
     expect(source).toContain('ipcChannels.releaseNotesAcknowledge')
   })
 
+  it('exposes only the narrow feedback submission method', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    const feedback =
+      source.match(
+        /feedback: \{(?<body>[\s\S]*?)\n {2}\},\n {2}shortcuts:/u
+      )?.groups?.body ?? ''
+    expect(feedback).toContain('submit: (input: FeedbackSubmitInput)')
+    expect(feedback).toContain('ipcChannels.feedbackSubmit')
+    expect(feedback).not.toMatch(
+      /\b(?:url|endpoint|header|cookie|authorization|path)\b/iu
+    )
+  })
+
   it('exposes only get and validated-update shortcut settings methods', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),
