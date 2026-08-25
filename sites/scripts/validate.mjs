@@ -250,6 +250,8 @@ for (const breakpoint of ["1199px", "959px", "719px"]) {
 const requiredCopy = [
   "免注册",
   "支持信创软硬件的一站式 AI 助手",
+  "首个支持龙芯的开源桌面 AI 助理产品",
+  "龙芯 LoongArch 独立编译预览版",
   "桌面助手",
   "AI 编程工具台",
   "Windows、macOS、Linux",

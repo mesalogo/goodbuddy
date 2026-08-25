@@ -185,6 +185,13 @@ Release note: 修复左上角项目设置与消息通道项目设置不一致的
 - `.github/workflows/packages.yml` is the canonical cross-platform packaging
   workflow. It validates and builds `out` once, then packages on six native
   runners: Windows, macOS, and Linux, each for x64 and arm64.
+- The experimental Linux LoongArch (`loong64`) preview is built separately
+  through `build/loongarch-cross` by following
+  `docs/development/loongarch-preview-build.md`. It is not part of
+  `.github/workflows/packages.yml`, the six-runner GitHub Actions matrix,
+  standard release manifests, GitHub Release asset expectations, or the
+  production update index. Do not add it to those paths unless the user
+  explicitly requests a future production-support migration.
 - Run the unified packager with
   `npm run release:package -- --platform <platform> --arch <arch>`. It only
   packages for the native host and writes to
@@ -271,7 +278,9 @@ Every version-tag release must follow this sequence. A branch-only push does
 not require release notes.
 
 1. Confirm that the user wants a release tag and identify the exact release
-   commit and the new `package.json` version.
+   commit and the new `package.json` version. Separately ask whether this
+   release should also receive an experimental LoongArch preview build; never
+   infer that choice from an earlier release.
 2. Find the latest stable version tag reachable before the release commit and
    inspect the complete commit and file diff from that tag to the release
    commit. For the first tagged release, inspect the relevant repository
@@ -294,6 +303,10 @@ not require release notes.
    `npm run release:notes:verify`, the required source validators, the
    production build, and any native candidate launch probe available on the
    current host. The six native CI jobs remain the cross-platform authority.
+   If the user requested a LoongArch preview in step 1, build it separately
+   from this exact candidate by following the LoongArch build document, record
+   its size and SHA-256, and keep it outside the standard GitHub/OSS release
+   asset set unless the user separately authorizes publishing it.
 7. Fetch both remotes immediately before tagging. Inspect any remote branch
    movement instead of overwriting or silently merging it. Confirm the working
    tree is clean, the candidate tag is unused locally and remotely, and the
