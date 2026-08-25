@@ -315,7 +315,7 @@ describe('Remote Runtime bundle tooling', () => {
       runtimeBundle.preflightProductionSigningKey({
         projectRoot: process.cwd(),
         environment: {
-          GOODBUDDY_AGENT_SIGNING_KEY_ID:
+          GOODBUDDY_SIGNING_KEY_ID:
             'runtime-fixture'
         },
         registry: productionRegistry
@@ -326,7 +326,7 @@ describe('Remote Runtime bundle tooling', () => {
     })
   })
 
-  it('signs the bundled Runtime with the shared Agent identity', () => {
+  it('signs the bundled Runtime with the shared GoodBuddy identity', () => {
     const productionRegistry: AgentReleaseKeyRegistry = {
       ...registry,
       keys: registry.keys.map((key) => ({

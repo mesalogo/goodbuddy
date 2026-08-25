@@ -2,23 +2,8 @@
   "formatVersion": 1,
   "keys": [
     {
-      "keyId": "e2e-20260823-020914-ce95d6f6",
-      "publicKeySpkiBase64": "MCowBQYDK2VwAyEA8w12MNcxOrU18MArvcuJmVkGKzJsa/r93q14HGX7DUU=",
-      "environment": "production"
-    },
-    {
-      "keyId": "goodbuddy-e2e-agent-8b0b39d2e63d7cf163c23bb7",
-      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAx5lS8/stctKe/ri3kSNLR3nmkTV1eTpS0c1TYtJuHoM=",
-      "environment": "production"
-    },
-    {
-      "keyId": "goodbuddy-e2e-v8-de8355f998071143411bc075",
-      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAY7rOjqPT3FAw2+F5roTqyssz4Zzzx0iJhk6tGhCVivc=",
-      "environment": "production"
-    },
-    {
-      "keyId": "goodbuddy-e2e-v12-b5adef071b79b4fdec57ea98",
-      "publicKeySpkiBase64": "MCowBQYDK2VwAyEATKD9wXjCeC35SMDrczzpou5PusRkxqSgNb5Se/jYOFU=",
+      "keyId": "goodbuddy-signing-2026-08",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAfUkXqa3WYwb1QevpHW/XWNhGo59dETJYjrJONx6SKEQ=",
       "environment": "production"
     }
   ],

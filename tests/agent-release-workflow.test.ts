@@ -97,7 +97,7 @@ describe('independent Agent release workflow', () => {
     )
     expect(buildScripts).toContain('--ignore-scripts')
     expect(build).toContain(
-      'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
+      'GOODBUDDY_SIGNING_PRIVATE_KEY'
     )
     expect(workflow).not.toContain(
       'GOODBUDDY_REMOTE_RUNTIME_SIGNING_'
@@ -169,7 +169,7 @@ describe('independent Agent release workflow', () => {
   it('keeps private keys out of authorization and public publication jobs', () => {
     expect(serializedJob('authorize')).not.toContain('secrets.')
     expect(serializedJob('publish')).not.toContain(
-      'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
+      'GOODBUDDY_SIGNING_PRIVATE_KEY'
     )
   })
 })

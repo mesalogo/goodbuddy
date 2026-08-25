@@ -76,7 +76,7 @@ describe('desktop packages workflow', () => {
     expect(workflow).not.toContain('agent-signing:')
     expect(workflow).not.toContain('remote-runtime-signing:')
     expect(workflow).not.toContain(
-      'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
+      'GOODBUDDY_SIGNING_PRIVATE_KEY'
     )
   })
 

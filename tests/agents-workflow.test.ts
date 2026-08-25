@@ -162,7 +162,7 @@ describe('GoodBuddy Agents workflow', () => {
     )
     expect(workflow).not.toContain('secrets.')
     expect(workflow).not.toContain(
-      'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
+      'GOODBUDDY_SIGNING_PRIVATE_KEY'
     )
     expect(ciBundleSource).toContain(
       "generateKeyPairSync('ed25519')"

@@ -512,7 +512,7 @@ describe('Agent production input handling', () => {
   it('requires CI-only production key variables and redacts them', () => {
     expect(() =>
       agentBundle.productionSigningKey({})
-    ).toThrow('required for production Agent signing')
+    ).toThrow('required for production GoodBuddy signing')
 
     const secret = [
       '-----BEGIN PRIVATE KEY-----',
@@ -521,8 +521,8 @@ describe('Agent production input handling', () => {
     ].join('\n')
     const error = `signing_key=${secret} key id prod-secret-id`
     const redacted = agentBundle.redactSecrets(error, {
-      GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY: secret,
-      GOODBUDDY_AGENT_SIGNING_KEY_ID: 'prod-secret-id'
+      GOODBUDDY_SIGNING_PRIVATE_KEY: secret,
+      GOODBUDDY_SIGNING_KEY_ID: 'prod-secret-id'
     })
     expect(redacted).not.toContain('fixture-secret-material')
     expect(redacted).not.toContain('prod-secret-id')
@@ -536,7 +536,7 @@ describe('Agent production input handling', () => {
         registry
       })
     ).toThrow(
-      'Production Agent public signing key ID "production-release-key" is absent from resources/agent-release-keys.json'
+      'Production GoodBuddy public signing key ID "production-release-key" is absent from resources/agent-release-keys.json'
     )
   })
 

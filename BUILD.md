@@ -197,15 +197,15 @@ Linux x64/arm64 复合包。每个 job 从 `agent-runtime-lock.json` 解析官�
 发布路径：只接受指向受保护 `main` 历史的 annotated
 `agent-v${agent-runtime-lock.agentVersion}` 标签，在 `agent-signing` Environment 中
 原生构建两种架构，生成并签名累计目录，然后同步到非 Latest 的 GitHub Agent Release
-与北京 OSS。该 Environment 只保护一组 GoodBuddy Agent 发布变量与 Secret：
+与北京 OSS。该 Environment 只保护一组 GoodBuddy 通用发布变量与 Secret：
 
-- `GOODBUDDY_AGENT_SIGNING_KEY_ID` /
-  `GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY`
+- `GOODBUDDY_SIGNING_KEY_ID` /
+  `GOODBUDDY_SIGNING_PRIVATE_KEY`
 
-该身份统一签署内部 Agent、固定 Runtime manifest、外层 `.gbagent` 描述符和累计目录，
-各层通过既有签名域区分用途，不再要求内部 Runtime 单独配置生产身份。私钥只注入签名
-步骤；预检只读取 key ID 并确认公钥已在 `resources/agent-release-keys.json`
-注册为 production 且未撤销。
+该 GoodBuddy 身份统一签署内部 Agent、固定 Runtime manifest、外层 `.gbagent`
+描述符和累计目录，各层通过既有签名域区分用途，不再要求内部 Runtime 单独配置生产
+身份。私钥只注入签名步骤；预检只读取 key ID 并确认公钥已在
+`resources/agent-release-keys.json` 注册为 production 且未撤销。
 
 累计目录使用 `agent-catalog.json` 与 `agent-catalog.sig`。每个条目绑定 Agent 版本、
 最低桌面版本、Agent 协议、远端 OpenCode 版本/digest、架构、文件名、大小、SHA-256

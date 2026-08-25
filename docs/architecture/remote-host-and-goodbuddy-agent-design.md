@@ -216,7 +216,7 @@ Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转
   `.remote-runtime-resources` 或任何可安装 Linux 远端 payload。
 - `build/agent-package.cjs` 在对应原生 Linux 架构组装确定性 `.gbagent`，外层签名覆盖
   描述符和每个内部文件身份；内部 Agent 与 Runtime 仍分别使用既有签名 manifest 和 lock
-  校验，但所有 production 层统一使用一组 GoodBuddy Agent 发布身份并通过签名域区分用途，
+  校验，但所有 production 层统一使用一组 GoodBuddy 通用发布身份并通过签名域区分用途，
   不要求内部 Runtime 单独配置密钥。`build/agent-catalog.cjs` 为双架构包生成签名累计目录，
   拒绝同一版本/架构改变字节。
 - `.github/workflows/agents.yml` 只使用进程内临时测试 key 做分支/PR 原生验证，不发布。

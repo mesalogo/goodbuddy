@@ -47,9 +47,9 @@ const manifestFileName = 'manifest.json'
 const signatureFileName = 'manifest.sig'
 const koffiPackageName = 'koffi'
 const signingPrivateKeyEnvironment =
-  'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
+  'GOODBUDDY_SIGNING_PRIVATE_KEY'
 const signingKeyIdEnvironment =
-  'GOODBUDDY_AGENT_SIGNING_KEY_ID'
+  'GOODBUDDY_SIGNING_KEY_ID'
 const semanticVersionPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+((?:[0-9a-zA-Z-]+)(?:\.[0-9a-zA-Z-]+)*))?$/u
 
@@ -372,7 +372,7 @@ function productionSigningKey(environment = process.env) {
   const privateKey = environment[signingPrivateKeyEnvironment]
   if (!keyId || !privateKey) {
     throw new Error(
-      `${signingKeyIdEnvironment} and ${signingPrivateKeyEnvironment} are required for production Agent signing`
+      `${signingKeyIdEnvironment} and ${signingPrivateKeyEnvironment} are required for production GoodBuddy signing`
     )
   }
   return { keyId, privateKey }
@@ -385,11 +385,11 @@ function preflightProductionSigningKey(options = {}) {
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
   return preflightRegisteredProductionKey({
-    component: 'Agent',
+    component: 'GoodBuddy',
     keyId,
     registry,
     missingKeyIdMessage:
-      `${signingKeyIdEnvironment} is not configured; provision the production Agent signing key ID before building a release`
+      `${signingKeyIdEnvironment} is not configured; provision the production GoodBuddy signing key ID before building a release`
   })
 }
 
@@ -427,7 +427,7 @@ function trustedKeyForManifest(
     (candidate) => candidate.keyId === key.keyId
   )
   if (revocation) {
-    throw new Error(`Agent signing key is revoked: ${key.keyId}`)
+    throw new Error(`GoodBuddy signing key is revoked: ${key.keyId}`)
   }
   return key
 }
@@ -814,7 +814,9 @@ function buildAgentBundle(options) {
     publicKeySpkiBase64(signingIdentity.privateKey) !==
     signingRecord.publicKeySpkiBase64
   ) {
-    throw new Error('Agent signing private key does not match the trusted key')
+    throw new Error(
+      'GoodBuddy signing private key does not match the trusted key'
+    )
   }
   if (
     !options.testSigningIdentity &&
@@ -1105,7 +1107,7 @@ function parseArguments(argv) {
   }
   if (command === 'preflight') {
     if (Object.keys(options).length > 0) {
-      throw new Error('Agent signing preflight does not accept arguments')
+      throw new Error('GoodBuddy signing preflight does not accept arguments')
     }
     return { command }
   }
@@ -1118,7 +1120,7 @@ function main(argv = process.argv.slice(2)) {
   if (options.command === 'preflight') {
     const signingRecord = preflightProductionSigningKey()
     console.log(
-      `Production Agent signing registry preflight passed: ${signingRecord.keyId}`
+      `Production GoodBuddy signing registry preflight passed: ${signingRecord.keyId}`
     )
     return
   }

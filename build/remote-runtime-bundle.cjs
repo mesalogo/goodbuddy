@@ -44,9 +44,9 @@ const supportedArchitectures = Object.freeze(['x64', 'arm64'])
 const manifestFileName = 'manifest.json'
 const signatureFileName = 'manifest.sig'
 const signingPrivateKeyEnvironment =
-  'GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY'
+  'GOODBUDDY_SIGNING_PRIVATE_KEY'
 const signingKeyIdEnvironment =
-  'GOODBUDDY_AGENT_SIGNING_KEY_ID'
+  'GOODBUDDY_SIGNING_KEY_ID'
 const signatureDomain = Buffer.from(
   'GoodBuddy Remote Runtime Bundle Manifest Signature v1\0',
   'utf8'
@@ -318,11 +318,11 @@ function preflightProductionSigningKey(options = {}) {
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
   return preflightRegisteredProductionKey({
-    component: 'Agent',
+    component: 'GoodBuddy',
     keyId,
     registry,
     missingKeyIdMessage:
-      `${signingKeyIdEnvironment} is not configured; provision the production Agent signing key ID before building a release`
+      `${signingKeyIdEnvironment} is not configured; provision the production GoodBuddy signing key ID before building a release`
   })
 }
 
@@ -1051,7 +1051,7 @@ function main(argv = process.argv.slice(2)) {
   if (options.command === 'preflight') {
     const record = preflightProductionSigningKey()
     console.log(
-      `Production Agent signing preflight passed for bundled Runtime: ${record.keyId}`
+      `Production GoodBuddy signing preflight passed for bundled Runtime: ${record.keyId}`
     )
     return
   }
