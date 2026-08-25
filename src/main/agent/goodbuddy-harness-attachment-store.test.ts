@@ -8,6 +8,7 @@ const canvas = createCanvas(1, 1)
 const transparentPng = canvas.toBuffer('image/png')
 const jpeg = canvas.toBuffer('image/jpeg')
 const secondPng = createCanvas(2, 1).toBuffer('image/png')
+const overwidePng = createCanvas(8_193, 1).toBuffer('image/png')
 
 describe('GoodBuddy Harness attachment store', () => {
   it('decodes, stores, verifies, and releases inline images', async () => {
@@ -32,12 +33,18 @@ describe('GoodBuddy Harness attachment store', () => {
     const stored = await store.readImage(first)
     expect(stored.ref).toBe(first)
     expect(Buffer.from(stored.data).equals(transparentPng)).toBe(true)
+    await expect(
+      store.readImage({
+        ...first,
+        width: first.width + 1
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_ATTACHMENT_REF' })
 
     store.releaseImage(first)
     await expect(store.readImage(first)).resolves.toBeDefined()
     store.releaseImage(second)
     await expect(store.readImage(first)).rejects.toMatchObject({
-      code: 'NOT_FOUND'
+      code: 'ATTACHMENT_NOT_FOUND'
     })
 
     const jpegRef = await store.saveImage({
@@ -62,7 +69,7 @@ describe('GoodBuddy Harness attachment store', () => {
         data: transparentPng,
         mediaType: 'image/jpeg'
       })
-    ).rejects.toMatchObject({ code: 'INVALID_IMAGE' })
+    ).rejects.toMatchObject({ code: 'IMAGE_TYPE_MISMATCH' })
     await expect(
       store.saveImage({
         data: Buffer.from([
@@ -81,6 +88,14 @@ describe('GoodBuddy Harness attachment store', () => {
         mediaType: 'image/png'
       })
     ).rejects.toMatchObject({ code: 'INVALID_IMAGE' })
+    await expect(
+      store.saveImage({
+        data: overwidePng,
+        mediaType: 'image/png'
+      })
+    ).rejects.toMatchObject({
+      code: 'IMAGE_DIMENSION_TOO_LARGE'
+    })
 
     await store.saveImage({
       data: transparentPng,
@@ -91,7 +106,7 @@ describe('GoodBuddy Harness attachment store', () => {
         data: secondPng,
         mediaType: 'image/png'
       })
-    ).rejects.toMatchObject({ code: 'STORAGE_LIMIT' })
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_WRITE_FAILED' })
   })
 
   it('does not retain a partial batch when capacity is exceeded', async () => {
@@ -104,7 +119,7 @@ describe('GoodBuddy Harness attachment store', () => {
         { data: transparentPng, mediaType: 'image/png' },
         { data: jpeg, mediaType: 'image/jpeg' }
       ])
-    ).rejects.toMatchObject({ code: 'STORAGE_LIMIT' })
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_WRITE_FAILED' })
     await expect(
       store.saveImage({
         data: jpeg,
@@ -129,5 +144,22 @@ describe('GoodBuddy Harness attachment store', () => {
       width: 1,
       height: 1
     })
+  })
+
+  it('enforces the upstream per-message image count', async () => {
+    const store = new GoodBuddyHarnessAttachmentStore(new Context())
+    const input = {
+      data: transparentPng,
+      mediaType: 'image/png' as const
+    }
+
+    await expect(
+      store.saveImages(
+        Array.from(
+          { length: store.imageLimits.maxImagesPerMessage + 1 },
+          () => input
+        )
+      )
+    ).rejects.toMatchObject({ code: 'TOO_MANY_IMAGES' })
   })
 })

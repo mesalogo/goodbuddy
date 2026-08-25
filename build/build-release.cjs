@@ -59,11 +59,17 @@ const harnessHostEntry =
   'out/main/deepseek-harness-host-bootstrap.js'
 const harnessBundleManifest = 'out/main/package.json'
 const harnessPackageVersions = {
-  '@deepseek-ai/dsh-agent': '0.1.0-rc.6',
-  '@napi-rs/canvas': '1.0.3',
-  'node-pty': '1.1.0'
+  '@deepseek-ai/dsh-agent':
+    packageLock.packages['node_modules/@deepseek-ai/dsh-agent']
+      ?.version,
+  '@napi-rs/canvas':
+    packageLock.packages['node_modules/@napi-rs/canvas']
+      ?.version,
+  'node-pty':
+    packageLock.packages['node_modules/node-pty']?.version
 }
-const koffiVersion = '3.1.4'
+const koffiVersion =
+  packageLock.packages['node_modules/koffi']?.version
 const harnessLicenseFiles = [
   'agent-client-protocol-Apache-2.0.txt',
   'deepseek-cordis-MIT.txt',

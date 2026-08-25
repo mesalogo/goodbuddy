@@ -7,7 +7,7 @@ export type BundledRuntimePaths = {
 }
 
 export const bundledContinueVersion = '1.5.47'
-export const bundledDeepSeekHarnessVersion = '0.1.0-rc.6'
+export const bundledDeepSeekHarnessVersion = '0.1.0-rc.8'
 
 export function resolveBundledRuntimePaths(input: {
   appPath: string

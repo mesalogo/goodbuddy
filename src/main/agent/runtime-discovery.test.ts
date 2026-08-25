@@ -192,7 +192,7 @@ describe('runtime discovery', () => {
       binaryPath: '',
       bundledPath: bundledScript,
       bundledValidation: 'canonical-file',
-      bundledVersion: '0.1.0-rc.6',
+      bundledVersion: '0.1.0-rc.8',
       binaryNames: [],
       label: 'GoodBuddy DeepSeek Harness Host'
     })
@@ -200,7 +200,7 @@ describe('runtime discovery', () => {
     expect(detection).toMatchObject({
       available: true,
       path: await realpath(bundledScript),
-      version: '0.1.0-rc.6',
+      version: '0.1.0-rc.8',
       source: 'bundled'
     })
     expect(detection.detail).toContain('内置')

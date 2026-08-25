@@ -6,6 +6,7 @@ import {
   AttachmentError,
   AttachmentId,
   AttachmentStore,
+  type ImageAdmissionErrorCode,
   type ImageAttachmentLimits,
   type ImageAttachmentRef,
   type ImageMediaType,
@@ -23,6 +24,7 @@ export const GOODBUDDY_HARNESS_IMAGE_LIMITS: ImageAttachmentLimits =
     maxImagesPerMessage: 8,
     maxMessageImageBytes: 2 * 1024 * 1024,
     maxImagePixels: 16_000_000,
+    maxImageDimension: 8_192,
     mediaTypes: Object.freeze([
       'image/png',
       'image/jpeg'
@@ -47,8 +49,12 @@ export type GoodBuddyHarnessAttachmentStoreConfig = {
   maxBatchImagePixels?: number
 }
 
-function invalidImage(message: string, cause?: unknown): AttachmentError {
-  return new AttachmentError(message, 'INVALID_IMAGE', {
+function imageError(
+  message: string,
+  code: ImageAdmissionErrorCode,
+  cause?: unknown
+): AttachmentError {
+  return new AttachmentError(message, code, {
     ...(cause === undefined ? {} : { cause })
   })
 }
@@ -86,6 +92,57 @@ function matchesSignature(
     data.at(-2) === 0xff &&
     data.at(-1) === 0xd9
   )
+}
+
+function validateImageInputBounds(
+  input: SaveImageAttachment,
+  limits: ImageAttachmentLimits
+): void {
+  if (!limits.mediaTypes.includes(input.mediaType)) {
+    throw imageError(
+      'Image media type is not supported',
+      'UNSUPPORTED_IMAGE_TYPE'
+    )
+  }
+  if (input.data.byteLength === 0) {
+    throw imageError('Image data is empty', 'INVALID_IMAGE')
+  }
+  if (input.data.byteLength > limits.maxImageBytes) {
+    throw imageError(
+      'Image exceeds the per-image byte limit',
+      'IMAGE_TOO_LARGE'
+    )
+  }
+}
+
+function validateImageDimensions(
+  width: number,
+  height: number,
+  limits: ImageAttachmentLimits
+): void {
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width < 1 ||
+    height < 1
+  ) {
+    throw imageError('Image dimensions are invalid', 'INVALID_IMAGE')
+  }
+  if (
+    width > limits.maxImageDimension ||
+    height > limits.maxImageDimension
+  ) {
+    throw imageError(
+      'Image exceeds the per-side dimension limit',
+      'IMAGE_DIMENSION_TOO_LARGE'
+    )
+  }
+  if (width * height > limits.maxImagePixels) {
+    throw imageError(
+      'Image dimensions exceed the pixel limit',
+      'IMAGE_TOO_MANY_PIXELS'
+    )
+  }
 }
 
 function pngDimensions(data: Buffer): {
@@ -200,34 +257,26 @@ async function inspectImage(
   input: SaveImageAttachment,
   limits: ImageAttachmentLimits
 ): Promise<InspectedImage> {
-  if (!limits.mediaTypes.includes(input.mediaType)) {
-    throw invalidImage('Image media type is not supported')
-  }
-  if (
-    input.data.byteLength === 0 ||
-    input.data.byteLength > limits.maxImageBytes
-  ) {
-    throw invalidImage('Image exceeds the per-image byte limit')
-  }
+  validateImageInputBounds(input, limits)
   const data = Buffer.from(input.data)
   if (!matchesSignature(data, input.mediaType)) {
-    throw invalidImage('Image media type does not match its bytes')
+    throw imageError(
+      'Image media type does not match its bytes',
+      'IMAGE_TYPE_MISMATCH'
+    )
   }
   const encodedDimensions =
     input.mediaType === 'image/png'
       ? pngDimensions(data)
       : jpegDimensions(data)
   if (!encodedDimensions) {
-    throw invalidImage('Image container is malformed')
+    throw imageError('Image container is malformed', 'INVALID_IMAGE')
   }
-  if (
-    encodedDimensions.width < 1 ||
-    encodedDimensions.height < 1 ||
-    encodedDimensions.width * encodedDimensions.height >
-      limits.maxImagePixels
-  ) {
-    throw invalidImage('Image dimensions exceed the pixel limit')
-  }
+  validateImageDimensions(
+    encodedDimensions.width,
+    encodedDimensions.height,
+    limits
+  )
   let width: number
   let height: number
   let loadImage: typeof import('@napi-rs/canvas')['loadImage']
@@ -237,7 +286,7 @@ async function inspectImage(
   } catch (error) {
     throw new AttachmentError(
       'Harness image decoder is unavailable',
-      'DECODER_UNAVAILABLE',
+      'ATTACHMENT_WRITE_FAILED',
       { cause: error }
     )
   }
@@ -246,18 +295,21 @@ async function inspectImage(
     width = image.naturalWidth || image.width
     height = image.naturalHeight || image.height
   } catch (error) {
-    throw invalidImage('Image bytes could not be decoded', error)
+    throw imageError(
+      'Image bytes could not be decoded',
+      'INVALID_IMAGE',
+      error
+    )
   }
+  validateImageDimensions(width, height, limits)
   if (
-    !Number.isSafeInteger(width) ||
-    !Number.isSafeInteger(height) ||
-    width < 1 ||
-    height < 1 ||
-    width * height > limits.maxImagePixels ||
     width !== encodedDimensions.width ||
     height !== encodedDimensions.height
   ) {
-    throw invalidImage('Image dimensions exceed the pixel limit')
+    throw imageError(
+      'Decoded image dimensions do not match its container',
+      'INVALID_IMAGE'
+    )
   }
   return { data, width, height }
 }
@@ -314,6 +366,23 @@ export class GoodBuddyHarnessAttachmentStore extends AttachmentStore {
   async saveImages(
     inputs: readonly SaveImageAttachment[]
   ): Promise<ImageAttachmentRef[]> {
+    if (inputs.length > this.imageLimits.maxImagesPerMessage) {
+      throw new AttachmentError(
+        'Images exceed the per-message count limit',
+        'TOO_MANY_IMAGES'
+      )
+    }
+    let batchBytes = 0
+    for (const input of inputs) {
+      validateImageInputBounds(input, this.imageLimits)
+      batchBytes += input.data.byteLength
+      if (batchBytes > this.imageLimits.maxMessageImageBytes) {
+        throw new AttachmentError(
+          'Images exceed the per-message byte limit',
+          'IMAGES_TOO_LARGE'
+        )
+      }
+    }
     const inspectedByContent = new Map<string, InspectedImage>()
     const candidates: Array<{
       input: SaveImageAttachment
@@ -322,13 +391,6 @@ export class GoodBuddyHarnessAttachmentStore extends AttachmentStore {
     }> = []
     let batchPixels = 0
     for (const input of inputs) {
-      if (
-        !this.imageLimits.mediaTypes.includes(input.mediaType) ||
-        input.data.byteLength === 0 ||
-        input.data.byteLength > this.imageLimits.maxImageBytes
-      ) {
-        throw invalidImage('Image exceeds the attachment limits')
-      }
       const digest = createHash('sha256')
         .update(input.data)
         .digest('hex')
@@ -340,7 +402,10 @@ export class GoodBuddyHarnessAttachmentStore extends AttachmentStore {
       }
       batchPixels += inspected.width * inspected.height
       if (batchPixels > this.maxBatchImagePixels) {
-        throw invalidImage('Images exceed the batch pixel limit')
+        throw imageError(
+          'Images exceed the batch pixel limit',
+          'INVALID_IMAGE'
+        )
       }
       candidates.push({
         input,
@@ -370,7 +435,7 @@ export class GoodBuddyHarnessAttachmentStore extends AttachmentStore {
     ) {
       throw new AttachmentError(
         'Harness attachment store is full',
-        'STORAGE_LIMIT'
+        'ATTACHMENT_WRITE_FAILED'
       )
     }
     return candidates.map(({ input, inspected, attachmentId }) => {
@@ -407,7 +472,7 @@ export class GoodBuddyHarnessAttachmentStore extends AttachmentStore {
     if (!stored) {
       throw new AttachmentError(
         'Harness image attachment was not found',
-        'NOT_FOUND'
+        'ATTACHMENT_NOT_FOUND'
       )
     }
     if (
@@ -419,8 +484,8 @@ export class GoodBuddyHarnessAttachmentStore extends AttachmentStore {
       stored.ref.name !== ref.name
     ) {
       throw new AttachmentError(
-        'Harness image attachment failed integrity validation',
-        'INTEGRITY'
+        'Harness image attachment reference is invalid',
+        'INVALID_ATTACHMENT_REF'
       )
     }
     return {

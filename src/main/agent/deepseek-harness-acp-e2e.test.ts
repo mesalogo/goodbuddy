@@ -329,7 +329,7 @@ function createInProcessLaunch(
         provider: 'goodbuddy',
         model: options.model,
         supportsImageInput: options.supportsImageInput,
-        harnessVersion: '0.1.0-rc.6',
+        harnessVersion: '0.1.0-rc.8',
         credentialRefs: options.credentialRefs,
         skillPackages: options.skillPackages,
         extensionPackages: options.extensionPackages,

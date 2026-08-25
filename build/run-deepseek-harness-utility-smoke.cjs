@@ -88,7 +88,7 @@ async function main() {
     `${JSON.stringify(
       {
         name: '@deepseek-ai/dsh-llm',
-        version: '0.1.0-rc.6',
+        version: '0.1.0-rc.8',
         private: true,
         type: 'module'
       },

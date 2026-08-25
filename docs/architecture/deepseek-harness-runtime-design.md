@@ -7,7 +7,7 @@
 | 文档状态 | 实现与发布验收基线 |
 | 设计目标 | 将 DeepSeek Harness 作为 GoodBuddy 的第三个 Agent Runtime |
 | Runtime 标识 | `deepseek-harness` |
-| 首版依赖基线 | 实际使用的 `@deepseek-ai/dsh-*` 底层库，精确锁定 `0.1.0-rc.6` |
+| 当前依赖基线 | 实际使用的 `@deepseek-ai/dsh-*` 底层库，精确锁定 `0.1.0-rc.8` |
 | 上游状态 | Developer Preview，允许出现破坏性变更 |
 | 上游许可证 | MIT |
 | GoodBuddy 目标平台 | Windows、macOS、Linux，x64 与 arm64 |
@@ -446,7 +446,7 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 - 文本模型收到图片时必须在启动 Host 或发起模型网络调用前返回明确错误，不能静默丢弃图片。
 - 图片模型只接受内联 JPEG/PNG，不接受 URL、文件路径、ACP `uri` 或其他媒体类型。
 - Main 已通过 `nativeImage` 解码用户选择的图片并生成有界模型输入；Utility 仍须独立执行严格 base64、签名、容器结构、CRC（PNG）、完整解码、尺寸和摘要校验，不能把 Main 校验当作跨进程信任替代。
-- 每条消息最多 8 张图，单图编码后最多 1 MiB，图片合计最多 2 MiB，单图最多 1,600 万像素，累计解码像素最多 3,200 万（重复引用也计入预算）。进程内 Store 另设 32 MiB、256 个唯一对象的总上限。
+- 每条消息最多 8 张图，单图编码后最多 1 MiB，图片合计最多 2 MiB，单边最长 8,192 px，单图最多 1,600 万像素，累计解码像素最多 3,200 万（重复引用也计入预算）。进程内 Store 另设 32 MiB、256 个唯一对象的总上限。
 - Attachment Store 只服务当前非持久 Harness Session；引用按 Session 释放，Host 退出时清空，不写入磁盘或 GoodBuddy 第二份会话日志。
 - GoodBuddy 历史、Prompt、系统指令分别保持不同信任层。
 - 任何用户文本都不能进入 Cordis 配置表达式或模块名。
@@ -459,7 +459,7 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 | --- | --- |
 | 单个 JSON-RPC 帧 | 8 MiB |
 | 单图 / 单条消息图片 | 1 MiB / 8 张且合计 2 MiB |
-| 单图 / 单条消息解码像素 | 1,600 万 / 3,200 万 |
+| 单图尺寸 / 单条消息解码像素 | 单边最长 8,192 px 且 1,600 万像素 / 3,200 万像素 |
 | Host 临时图片存储 | 32 MiB 且最多 256 个唯一对象 |
 | 单个文本或推理事件 | 64 KiB |
 | 单次请求累计协议输出 | 4 MiB |
@@ -497,7 +497,7 @@ Runtime：       GoodBuddy 内置 DeepSeek Harness
 模型配置：      跟随 GoodBuddy · 企业网关（qwen-plus）
 状态：          已就绪
 路径：          <受控 Host 路径>
-版本：          0.1.0-rc.6
+版本：          0.1.0-rc.8
 执行权限：      当前用户权限
 
 Host 始终由当前 GoodBuddy 版本提供，不存在自定义 Host 入口。

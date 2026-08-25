@@ -13,6 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import {
   AttachmentError,
+  isImageAdmissionError,
   type ImageAttachmentRef,
   type SaveImageAttachment
 } from '@deepseek-ai/dsh-attachment'
@@ -1059,16 +1060,13 @@ export class GoodBuddyHarnessControlPlane {
       return await store.saveImages(inputs)
     } catch (error) {
       if (error instanceof AttachmentError) {
-        if (error.code === 'INVALID_IMAGE') {
+        if (isImageAdmissionError(error)) {
           throw RequestError.invalidParams(
             undefined,
             'invalid inline image prompt content'
           )
         }
-        if (
-          error.code === 'STORAGE_LIMIT' ||
-          error.code === 'DECODER_UNAVAILABLE'
-        ) {
+        if (error.code === 'ATTACHMENT_WRITE_FAILED') {
           throw RequestError.internalError(
             undefined,
             'Harness image attachment service is unavailable'

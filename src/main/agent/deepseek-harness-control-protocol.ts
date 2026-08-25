@@ -5,11 +5,13 @@ import {
   runtimeExtensionConfigurationSchema,
   runtimeExtensionIdSchema
 } from '../../shared/runtime-extension-contracts'
+import { bundledDeepSeekHarnessVersion } from './bundled-runtimes'
 
 export const DEEPSEEK_HARNESS_CONTROL_PROTOCOL =
   'goodbuddy.deepseek-harness.control'
 export const DEEPSEEK_HARNESS_CONTROL_VERSION = 2
-export const DEEPSEEK_HARNESS_HOST_VERSION = '0.1.0-rc.6'
+export const DEEPSEEK_HARNESS_HOST_VERSION =
+  bundledDeepSeekHarnessVersion
 export const DEEPSEEK_HARNESS_CREDENTIAL_REF =
   'GOODBUDDY_HARNESS_MODEL_API_KEY'
 export const DEEPSEEK_HARNESS_MAX_FRAME_BYTES =

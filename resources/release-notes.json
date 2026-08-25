@@ -15,6 +15,7 @@
             "**独立会话分支。** 本地会话可通过“在新会话中继续”创建独立分支并保留来源，不复制原会话的任务、队列、运行记录、记忆或成果归属。",
             "**应用内反馈。** 可在“关于与更新”中提交问题、建议或体验反馈；邮箱和单张截图均为可选项，失败后会保留草稿供重试。",
             "**魔法笔记待办数量。** 左侧导航可显示未完成待办数量，并可在“平台功能 → 魔法笔记”中关闭；超过 99 项时显示“99+”。",
+            "**DeepSeek Harness Runtime。** 内置 DeepSeek Harness 已从 `0.1.0-rc.6` 升级至 `0.1.0-rc.8`；GoodBuddy 同步适配新版图片附件限制，现有受控 Host、Ask/Execute 与插件边界保持不变。",
             "**Linux 与 LoongArch 构建。** Linux x64/arm64 桌面版新增 RPM 安装包，并提供独立、可复现的 Debian loong64 实验性预览构建流程。"
           ],
           "fixes": [
@@ -41,6 +42,7 @@
             "**Independent conversation branches.** Continue a local conversation in a new branch that records its source without copying Tasks, queued input, runs, memories, or artifact ownership.",
             "**In-app feedback.** Submit problems, ideas, or experience notes from About & Updates. An email address and one screenshot are optional, and failed submissions retain the draft for retry.",
             "**Magic Notes todo count.** The primary navigation can show incomplete todo counts, with an option under Platform Features → Magic Notes to hide the badge. Counts above 99 display as “99+”.",
+            "**DeepSeek Harness Runtime.** The bundled DeepSeek Harness is updated from `0.1.0-rc.6` to `0.1.0-rc.8`. GoodBuddy now matches the updated image attachment limits while preserving its controlled Host, Ask/Execute, and plugin boundaries.",
             "**Linux and LoongArch builds.** Linux x64/arm64 desktop releases add RPM installers, and the repository now provides a separate reproducible experimental Debian loong64 preview build."
           ],
           "fixes": [

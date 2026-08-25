@@ -863,7 +863,7 @@ describe('release build arguments', () => {
         join(projectRoot, 'package.json'),
         JSON.stringify({
           dependencies: {
-            '@deepseek-ai/dsh-llm': '0.1.0-rc.6'
+            '@deepseek-ai/dsh-llm': '0.1.0-rc.8'
           }
         })
       )
@@ -923,7 +923,7 @@ describe('release build arguments', () => {
         )
       ).toMatchObject({
         name: '@deepseek-ai/dsh-llm',
-        version: '0.1.0-rc.6'
+        version: '0.1.0-rc.8'
       })
     } finally {
       rmSync(projectRoot, { recursive: true, force: true })
