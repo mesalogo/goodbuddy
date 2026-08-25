@@ -18,7 +18,6 @@
             "**Linux 与 LoongArch 构建。** Linux x64/arm64 桌面版新增 RPM 安装包，并提供独立、可复现的 Debian loong64 实验性预览构建流程。"
           ],
           "fixes": [
-            "**Agent 包验证与安装。** 修复 Linux 上解压 `.gbagent` 后目录权限不符合校验要求、导致复合 Agent 包无法通过验证的问题；托管 SSH Agent 包现在可按预期验证并安装其内置 Runtime。",
             "**向量模型下载反馈。** 修复点击内置向量模型“下载”后界面看似无响应的问题；现在会立即显示下载来源、模型信息、实时进度和取消操作，行为与语音模型下载一致。",
             "**长文档知识图谱。** 图谱抽取改为按 Token 分批、重试和超时处理；图谱失败不再导致新文档全文检索一并失败，并改进中文检索与关系上下文。",
             "**ModelScope 语音模型。** 修复选择 ModelScope 后部分语音模型仍无法下载的问题，六个支持的模型现在均使用固定且经过完整性验证的来源。",
@@ -45,7 +44,6 @@
             "**Linux and LoongArch builds.** Linux x64/arm64 desktop releases add RPM installers, and the repository now provides a separate reproducible experimental Debian loong64 preview build."
           ],
           "fixes": [
-            "**Agent package verification and installation.** Fixed extracted `.gbagent` directory permissions on Linux preventing compound Agent packages from passing verification. Managed SSH Agent packages can now verify and install their bundled Runtime as intended.",
             "**Embedding model download feedback.** Fixed the built-in model Download action appearing unresponsive. It now immediately shows the source, model details, live progress, and cancellation, matching speech model downloads.",
             "**Long-document knowledge graphs.** Graph extraction now uses token-bounded batches, retries, and timeouts. Graph failures no longer discard a new document’s full-text index, and Chinese retrieval and relationship context are improved.",
             "**ModelScope speech models.** Fixed supported speech models remaining unavailable after selecting ModelScope. All six models now use fixed, integrity-verified sources.",
